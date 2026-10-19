@@ -111,6 +111,7 @@ erDiagram
 | `stage_review` / `review_decision` | 阶段目标、读入 Task/Document/KnowledgeRef 固定版本、消费者实际使用观察、下一步选择、决定者、时间、被取代决定 | 每次决定是不可变记录，复合 FK 到本项目固定 TaskRevision/DocumentRevision；知识端只存固定外部 revision 引用；新判断追加而非改旧结论 |
 | `impact_review` | 来源撤回、文档改版或知识失效触发的影响对象/基线、责任者、待复核/已处理及决定 | 复合 FK 到本地 Task/Document/Relation 固定版本及可用的 KnowledgeRefRevision；外部知识内部依赖仍由 KnowledgeRepository 查询 |
 | `knowledge_contribution` | 贡献者、输入来源固定版本、提交操作、外部 candidate ID/revision、回读状态和审核结果引用 | 只存外置候选的身份与回执，绝不复制候选或 Wiki 正文；同一来源/操作可查重复与撤回影响 |
+| `evaluation` / `evaluation_case` / `consumer_outcome` | 评价的冻结协议/条件与输入引用；各 case 的 TaskRevision、Run、首次产物/重试、独立判断、成本和缺项 | 项目内复合 FK 指向固定 Task/Run/Review，协议与原件保留受控引用；条件修改产生新修订，结果追加。采用、产物合格、真人效果分列，未知不填零；大原件不复制进这些表 |
 
 这些记录为讨论页提供查询与交接锚点，不把聊天文本或通知送达当作判断已被消费的证据。关联到外部 Git/Wiki 的字段只能保存经权限检查的固定引用；没有外部修订可核验时显示缺项，而不是伪造本库 FK。
 

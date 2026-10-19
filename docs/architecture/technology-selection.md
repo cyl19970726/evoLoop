@@ -1,6 +1,6 @@
 # 技术选型：核心栈、Wiki 基座与改造边界
 
-状态：**推荐基线 v0.4；用户已选择 PostgreSQL 承载 evoLoop 主数据、飞书作为 connector 与协作入口，其余主要技术待确认。** 本文记录已选数据边界与实现建议；不是已安装依赖清单，也不表示服务已经上线。代码责任见[包架构](packages.md)，产品目标仍以[产品定义](../product/definition.md)为准。
+状态：**推荐基线 v0.5；用户已选择 PostgreSQL 承载 evoLoop 主数据、飞书作为 connector 与协作入口，其余主要技术待确认。** 本文记录已选数据边界与实现建议；不是已安装依赖清单，也不表示服务已经上线。代码责任见[包架构](packages.md)，产品目标仍以[产品定义](../product/definition.md)为准。
 
 ## 1. 推荐决定
 
@@ -30,7 +30,7 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 表中 PostgreSQL 主数据与飞书 connector 的权威边界已确定；其版本/驱动和其他主要技术仍是推荐方案。依赖的精确补丁版、锁文件、Node/数据库驱动兼容性须在首个代码切片中共同验证；本轮没有安装它们。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
 
-前端补充采用[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；页面、依赖和部署均尚未实现。
+前端补充按[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；页面、依赖和部署均尚未实现。
 
 ## 2. 为什么主语言选 TypeScript
 
@@ -82,7 +82,7 @@ PostgreSQL 事务不能覆盖飞书、Codex 或 Wiki 的网络副作用。丢失
 
 依据有两类：一是 OpenViking 已有面向多客户端的内容/检索服务边界和真正的 Wiki compile；二是已有固定版实验观察到纠正合并、保留未决解释和外置恢复的有限可行性。nashsu 也有 HTTP/MCP 写页，但完整摄入依赖桌面前端状态、队列、文件调用和模型客户端；把它变成无人值守服务需要实质拆分。我们的核心目标是多 session 持续维护与消费项目认知，因而更适合前者。具体证据和相反条件见[已有基座比较](../research/wiki-base-selection-20261019.md)。
 
-**不选择 nashsu 作为底座，并不否认它的阅读与整理价值。** Wiki 前端明确参考它的知识树、类型/来源筛选、知识页、来源卡片、双向链接、图谱和 Review，按[Wiki 工作区架构](wiki-workspace.md)适配为服务数据驱动的组件；purpose/schema、合并与维护流程按[Wiki 维护机制](wiki-maintenance.md)借鉴。首期先借鉴机制；复制模块前单独核依赖、许可证和与目标知识模型的兼容性。不能假设把 nashsu UI 指向 OpenViking URL 就能获得兼容产品。
+**不选择 nashsu 作为底座，并不否认它的阅读与整理价值。** Wiki 前端明确参考它的知识树、类型/来源筛选、知识页、来源卡片、双向链接、图谱和 Review，按[Wiki 工作区架构](wiki-workspace.md)适配为服务数据驱动的组件；purpose/schema、合并与维护流程按[Wiki 维护机制](wiki-maintenance.md)借鉴。首期先借鉴机制；复制模块前单独核依赖、许可证和与目标知识模型的兼容性。不能假设把 nashsu UI 指向 OpenViking URL 就能获得兼容产品。具体文件/符号与锁定技术栈见[复用研究](../research/nashsu-llm-wiki/frontend-reuse.md)，组件、API、OpenViking 能力映射和 PG/Git 数据装配见[集成设计](wiki-integration.md)。
 
 ### 候选版本与证据不能混用
 

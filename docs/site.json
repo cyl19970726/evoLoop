@@ -78,6 +78,11 @@
       "group": "架构与协作"
     },
     {
+      "path": "docs/architecture/wiki-integration.md",
+      "title": "Wiki 前端与知识服务集成",
+      "group": "架构与协作"
+    },
+    {
       "path": "docs/architecture/wiki-maintenance.md",
       "title": "Wiki 编纂与审阅机制",
       "group": "架构与协作"
@@ -140,6 +145,11 @@
     {
       "path": "docs/research/wiki-base-selection-20261019.md",
       "title": "Wiki 基座与代码复用",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/workbench-prototype-review.md",
+      "title": "工作台原型覆盖审阅",
       "group": "研究 · 综合判断"
     },
     {
@@ -210,6 +220,11 @@
     {
       "path": "docs/research/nashsu-llm-wiki/architecture.md",
       "title": "架构、数据与接入图",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/frontend-reuse.md",
+      "title": "前端代码复用边界",
       "group": "研究 · nashsu Wiki"
     },
     {

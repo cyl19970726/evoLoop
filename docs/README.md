@@ -15,6 +15,7 @@
 | [项目数据与 Connector](architecture/project-data.md) | 任务、需求文档与 Wiki 如何关联，飞书如何接入 | 产品、架构与集成责任者 |
 | [前端架构](architecture/frontend.md) | 工作台技术、路由、查询/命令、会话衔接与部署边界 | 前端与核心接口责任者 |
 | [Wiki 工作区架构](architecture/wiki-workspace.md) | 参考 nashsu 怎样做知识点、专题、双链、来源、图谱与 Review 前端 | Wiki 产品与前端责任者 |
+| [Wiki 具体集成](architecture/wiki-integration.md) | 组件接缝、共同 API、OpenViking 能力映射、Task/Document/Git 读写怎样实现 | 前端、知识与核心接口责任者 |
 | [Wiki 维护机制](architecture/wiki-maintenance.md) | 参考哪些编纂机制，如何形成候选、审阅发布和纠正旧认识 | 认知与知识集成责任者 |
 | [存储逻辑](architecture/storage.md) | 表、固定版本、外键、事务、外置原件和恢复怎么设计 | 数据与架构责任者 |
 | [知识关联](architecture/knowledge-flow.md) | Task、需求、Git 规范如何进入 Wiki，纠正怎样影响后续工作 | 认知与集成责任者 |

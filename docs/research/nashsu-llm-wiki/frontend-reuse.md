@@ -1,0 +1,43 @@
+# nashsu/llm_wiki 前端代码复用边界
+
+状态：2026-10-20 **固定源码只读核查，非移植结果**。本地隔离源码 HEAD 为 `48fd970e206a02a6d2028d1dbfc41b7a0345bf0b`，`package.json` 标 v0.6.12，工作树干净；本轮未复制业务源码、未安装依赖、未运行 UI/模型或移植测试。下文“原样候选”只指所列纯函数在保留输入语义时具有浅依赖，仍须做许可证、类型和行为验收；不是整文件或组件可直接并入 evoLoop。[固定源码](https://github.com/nashsu/llm_wiki/tree/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b) · [本项目工作台提议](../../architecture/wiki-workspace.md)
+
+## 技术栈：声明范围与锁定实物
+
+主包是 React/TypeScript 的 Vite WebView，桌面能力走 Tauri 2；样式为 Tailwind 4、shadcn 样式和 Base UI 基元。以下为 `package-lock.json` **实际锁定**版本，不能把 `package.json` 的 `^` 范围当精确版本。来源：[声明](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/package.json#L1-L76)、[锁文件](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/package-lock.json)、[Vite/Tauri 开发配置](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/vite.config.ts#L1-L48)。
+
+| 用途 | 锁定版本 | 在固定版的实际职责 |
+| --- | --- | --- |
+| 框架/构建 | React/React DOM 19.2.4；Vite 8.0.3；TypeScript 5.9.3；Vitest 4.1.4 | WebView 页面、TS 构建和测试；Vite 配置含 Tauri 专用端口/HMR |
+| UI/样式/状态 | Tailwind CSS 与 `@tailwindcss/vite` 4.2.2；`@base-ui/react` 1.3.0；Zustand 5.0.12；`@milkdown/kit`/`react` 7.20.0 | 组件基元、设计 token、桌面全局状态、编辑器；Geist 字体和应用 CSS token 另有本地样式 |
+| 阅读 | `react-markdown` 10.1.0；`remark-gfm` 4.0.1；`remark-math` 6.0.0；`rehype-katex` 7.0.1；KaTeX 0.16.45；Mermaid 11.14.0 | Markdown/GFM、公式和图表的**只读**渲染；Milkdown 编辑路径不能与只读渲染混为一谈 |
+| 图谱 | Graphology 0.26.0；`@react-sigma/core` 5.0.6；Sigma 3.0.2；ForceAtlas2 0.10.1 | 页图展示、布局和交互；Louvain 包另锁 `graphology-communities-louvain` 2.0.2 |
+| 桌面 | `@tauri-apps/api` 2.11.0；CLI 2.11.1 | 文件、对话框、应用事件与原生宿主桥；不能作为 evoLoop 浏览器前端的服务 API |
+
+前端是否采用这些具体版本要以 evoLoop 实际实现时的相容性和维护状态另定；此表仅说明 nashsu 的被研究版本如何工作。
+
+## 按导出符号和直接依赖分级
+
+| 级别 | 源码与导出符号／组件 | 直接 import 与为何这样判 | 接 OpenViking / Task / Document 的改动 |
+| --- | --- | --- | --- |
+| **原样候选，仅纯逻辑** | [`parseFrontmatter`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/frontmatter.ts#L1-L65) | 整文件仅引 `js-yaml`；返回 frontmatter、body、原始块，能保留 YAML 原字节 | 后端返回正文/修订后可用于只读显示；不能由客户端解析结果决定授权或版本 |
+| **原样候选，仅纯逻辑** | [`transformImageEmbeds`、`transformWikilinks`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wikilink-transform.ts#L40-L105) | 文件无 import，避开围栏/行内代码；输出 `#slug` 与相对图片路径 | 仅适合兼容上游 Markdown 显示；实际导航/资源 URL 必须由稳定 ID、授权 API 和安全解析器接管，不能把 `#slug` 当最终链接 |
+| **原样候选，单个函数** | [`wikiTypeLabel`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-page-types.ts#L41-L50) | 无 import、纯字符串转换；同文件 `inferWikiTypeFromPath` 却依赖 `/wiki/<dir>/` 路径约定 | 可作显示兜底；知识点/专题类型由服务端 schema 返回，不能从目录猜权威类型 |
+| **少量适配** | [`normalizeSourceIdentity` / `filterPagesBySource`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/knowledge-source-filter.ts#L1-L37)、[`applyGraphSearch`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/graph-search.ts#L1-L42) | 前者引 `path-utils`，按文件名/路径归一来源；后者只有来自 `wiki-graph` 的 type import，却搜索 `node.path` | 换成稳定 `sourceId+revision`、`knowledgeId`；过滤由授权分页 query 主导，前端仅对已载入子集做临时筛选 |
+| **少量适配** | [`unwrapWikilink` / `resolveRelatedSlug` / `resolveSourceName`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-page-resolver.ts#L1-L17)；[解析细节](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-page-resolver.ts#L56-L181) | `unwrapWikilink` 本身纯字符串；其余围绕 `FileNode` 文件树、同名文件、`wiki/` 与 `raw/sources/` 定位 | 只可把旧 slug 当导入映射线索；同名、改名、撤回用后端稳定身份解析并返回 missing/ambiguous 状态 |
+| **少量适配或重写** | [`applyGraphFilters`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/graph-filters.ts#L1-L87)、[`detectCommunities`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-graph-analysis.ts#L1-L25) | 前者依赖其 GraphNode/Edge 与隐藏类型规则；后者依赖 Graphology/Louvain 和上游图类型 | 输入必须先是授权、限量、带稳定 ID 的子图；社区与相关性只是导航信号，不能写成知识证据或事实关系 |
+| **实质改造** | [`KnowledgeTree`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/layout/knowledge-tree.tsx#L1-L110)、[`PreviewPanel`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/layout/preview-panel.tsx#L1-L85) | 直接用 `useWikiStore`、`readFile/listDirectory/writeFile`；树逐页读整个 vault，预览自动保存原路径 | 改为按 project/type/topic/source/cursor 查询，固定 revision 页面和候选命令；绝不能将自动写原页搬进浏览器 |
+| **实质改造** | [`WikiReader`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/wiki-reader.tsx#L1-L53)、[`WikiEditor`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/wiki-editor.tsx#L1-L46)、[`FrontmatterPanel`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/frontmatter-panel.tsx#L17-L79) | 阅读器虽用 react-markdown/KaTeX/Mermaid，却直接取 Wiki store、路径索引与文件图片解析；编辑器再连模型客户端/搜索/文件修改；元数据面板用 Tauri opener | 渲染库和阅读布局可选，组件需重接授权 URL、稳定 ID、来源修订、候选差异；不能原样复制整个阅读器 |
+| **实质改造** | [`PageLinksPanel`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/page-links-panel.tsx#L1-L25)、[`buildWikiGraph`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-graph.ts#L170-L245)、[`GraphView`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/graph/graph-view.tsx#L1-L26) | 双链走 Tauri `getPageLinks` 且可调用模型造缺页；图生成扫描 Markdown，依赖文件名 ID、`related`/wikilink、`useWikiStore`；图组件再连文件读写、ResearchStore/Deep Research | OV 适配器提供有界图/出链/反链与缺链；PG Relation 只装跨 Task/Document 的固定关系。Sigma/worker 展示可参考，但需抽成纯 props + 点击回调 |
+| **实质改造** | [`SourcesView`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/sources/sources-view.tsx#L1-L36)、[`ReviewView`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/review/review-view.tsx#L1-L52) | 来源视图引 Tauri dialog、前端队列/缓存；Review 视图引文件写、研究队列、多个 store；[`useReviewStore.resolveItem`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/review-store.ts#L166-L171) 只改本地状态 | 来源按 SourceBridge 固定修订和权限查询；PG 记审阅决定/维护任务，外置 Wiki 存候选和修订；resolve、发布、消费分开 |
+| **不搬** | [`useWikiStore`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/wiki-store.ts#L390-L455)、[`commands/fs.ts`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/commands/fs.ts#L1-L34)、[`ingest.ts`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/ingest.ts#L1-L50) | store 合并项目文件树、导航、模型凭据、图/摄入配置；fs 封装 Tauri invoke；ingest 直连三类 store、文件命令和模型客户端 | evoLoop React 只存临时 UI 状态与查询缓存；共同 API 持身份/权限/操作 ID；认知 session 编纂，避免第二套桌面 runtime/队列/凭据 |
+
+[`MermaidDiagram`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/mermaid-diagram.tsx#L1-L45) 的懒渲染、放大和错误 UI 可参考，但含 React/i18n/样式、动态渲染和 SVG 插入；应按本项目 Markdown 安全策略单独封装。`src/components/ui/button.tsx` 也直接依赖 Base UI、CVA、`cn` 及全局 [Tailwind token](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/index.css#L1-L70)，不能因是通用按钮就宣称零成本移植。[Button 源码](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/ui/button.tsx#L1-L56)
+
+## 具体接入形状与先验收什么
+
+保持 evoLoop 已拟的 React 工作台：`KnowledgeQuery` 用 `projectId + knowledgeId + revision` 从外置 KnowledgeRepository 取授权正文、来源、知识内部边和候选；同一响应包含修订校验、状态、`observedAt`、缺项。`Task/DocumentQuery` 从 PG 的 `KnowledgeRef/Relation` 取跨对象固定依据和维护/采用回执；飞书继续 Task connector。浏览器通过共同 API 分页获取专题/知识点、来源筛选、出入链、焦点一跳子图和待审项。图节点为稳定知识 ID，边给方向/类型/所读修订；不要在浏览器遍历全部 Markdown、用 basename 合并同名页，或把来源重合分数当事实支持。[工作台接口提议](../../architecture/wiki-workspace.md#3-evoloop-前端查询层和知识端) · [知识流](../../architecture/knowledge-flow.md)
+
+首个代码复用验证应在独立试验分支对 1–2 个**纯函数符号**做许可证审查、边界/回归测试和与项目 API 形状的类型比对；再做一页只读知识点和一跳图的 props 驱动样片。比对源码复制量、传递依赖、构建体积、同名/改名/撤回/权限/旧 revision 表现。若适配成本超过重写清晰组件，就保留交互参考而不搬源码。组件移植通过编译并不证明知识维护效果；还需按[Wiki 维护首片](../../architecture/wiki-maintenance.md#首片与发布门槛)让新 session 实际用修订完成任务。
+
+仓库根 [LICENSE](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/LICENSE#L1-L19) 标 GPL-3.0，主包 `private: true` 不改变上游源码许可证。evoLoop 自身许可证和分发方式仍未定；复制组件、算法或模板之前需逐模块核来源、依赖与许可证安排。本报告只给复用工程边界，不作法律兼容性保证。当前本地源码没有 `node_modules`，所以未运行上游 Vitest；已有 `frontmatter.test.ts`、`wikilink-transform.test.ts`、`wiki-page-resolver.test.ts` 等可供之后针对性复核。本轮只是静态导入/实现核查，尚未验证移植编译、运行时行为、性能或安全。

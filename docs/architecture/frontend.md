@@ -60,23 +60,43 @@ React 官方说明从构建工具开始的 SPA 需补齐路由和数据获取，
 
 Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完整阅读、双链、图谱和 Review 结构；单独的[知识工作区架构](wiki-workspace.md)说明固定源码、组件迁移与服务数据模型。知识浏览是独立入口，不能缩成认知讨论旁的一条 Wiki 链接。
 
+### nashsu 的技术组合如何取舍
+
+[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录 v0.6.12 的锁定版本。下面是 evoLoop 的实现建议，不能把上游锁文件当成本项目已经验证的依赖集。
+
+| 能力 | evoLoop 推荐使用方式 | 与 nashsu 的差异和采用条件 |
+| --- | --- | --- |
+| React / TypeScript / Vite | 沿用相同技术方向，首个实现切片再锁兼容版本 | 移除 Tauri 专用开发/HMR/文件入口，构建普通同源 Web 工作台 |
+| Markdown 阅读 | 优先评估 `react-markdown` + `remark-gfm`；公式按需要加 `remark-math` / `rehype-katex`；图块按需加载 Mermaid | 拆取只读展示布局，重写链接/图片解析为授权 API 和稳定 ID；原文 HTML 不启用，插件输出与危险 URL 另验 |
+| 图关系展示 | 在真实子图规模需要时采用 Graphology + Sigma + ForceAtlas2 worker | 保留焦点、高亮和布局交互；输入由 API 限量提供，浏览器不扫描全库；小型首片可用文字关系/简单 SVG，图算法不证明关系成立 |
+| 状态 | TanStack Query 管服务数据，URL/组件 state 管导航与临时交互 | 不移植 `useWikiStore`；只有跨组件临时交互确有负担才增 Zustand，它不再持凭据、文件树和模型队列 |
+| UI 基元与样式 | 先保持项目 CSS tokens；需要复杂交互基元时单独评估 Base UI | 上游 Button/Panel 依赖 Tailwind/CVA/token，不整包拖入；要复制组件时连同样式依赖计算成本，不声称原样可用 |
+| 知识编辑 | 首片 Markdown 候选表单、预览与版本差异 | Milkdown 可在富文本确有需求时引入；编辑只创建候选，不自动保存到现行知识页 |
+
+`react-markdown` 提供自定义组件与 URL 转换，但自定义插件仍可破坏默认安全边界。采用时保持授权图片入口和受控链接解析；Mermaid 单独封装严格配置、错误状态和懒渲染，避免把上游 SVG 注入逻辑直接当作已安全。具体复用须按[移植验证约定](../development/standards.md#上游前端复用与工作台验证)执行。[Markdown 官方安全说明](https://github.com/remarkjs/react-markdown#security) · [Mermaid 配置](https://mermaid.js.org/config/usage.html)
+
 ## 3. 组件、路由与查询模型
 
-`apps/workbench` 按页面领域组织：`project`、`inbox`、`tasks`、`documents`、`knowledge`、`roles`、`operations`。共用组件包括对象引用、修订标签、差异阅读、依据列表、关系路径、状态标签和命令结果。仅浏览器可用的公开 schema 从 `contracts` 单独出口导入；浏览器不得引入 core、数据库驱动、平台 SDK、凭据或上游客户端。
+`apps/workbench` 按页面领域组织：`project`、`inbox`、`tasks`、`documents`、`knowledge`、`roles`、`schedules`、`evaluations`、`operations`。共用组件包括对象引用、修订标签、差异阅读、依据列表、关系路径、状态标签和命令结果。仅浏览器可用的公开 schema 从 `contracts` 单独出口导入；浏览器不得引入 core、数据库驱动、平台 SDK、凭据或上游客户端。
 
 | 页面路由示意 | 页面装配的读取模型 | 常见命令 |
 | --- | --- | --- |
 | `/app/p/:projectId` | 阶段目标、待判断事项、两个讨论入口、最近影响与数据新鲜度 | 创建讨论准备任务、记录反馈 |
+| `/inbox` | 提议类型/来源、接受状态、证据、判断责任者、需补内容 | 提交 dogfood/需求、归并依据、接受/补证/暂缓/拒绝；不直接派发 |
 | `/tasks/:taskId` | 当前 Task、执行基线、交付/验收、关系与投影状态 | 提议、接受、提交交付、复核基线；按权限开放 |
 | `/documents/:documentId?revision=...` | 当前已采纳版、所选历史版、草稿、维护位置、使用者 | 保存新修订、提交审阅、采纳；Git 引用只提出变更任务 |
 | `/knowledge`、`/knowledge/topics/:knowledgeId` | 按类型、专题和来源分组的知识卡片，主题说明、近期变化和待审入口 | 筛选、搜索、打开专题与知识页 |
 | `/knowledge/:knowledgeId?revision=...` | 认识、适用条件、反例、来源、当前与任务使用版差异 | 提交纠正、请求维护；不直接接受其关联任务 |
 | `/roles`、`/roles/:roleId` | 责任约定、承载会话、历史证据、试行与待回看 | 提出职责调整、记录试行评审 |
+| `/schedules/:scheduleId` | 定义修订、时区、下次计划、错过/重叠策略、触发实例与 Task | 修改或暂停后续触发；停止在途工作须另发命令 |
+| `/evaluations/:evaluationId` | 冻结协议/条件、输入与知识修订、case 产物、独立判据、成本与缺项 | 记录观察、提出复核或补证；不把模型评分直接改成已证明收益 |
 | `/operations/:operationId` | 已接受的操作、业务提交、外部结果和下一核对 | 查看恢复进展；授权范围内请求对账 |
 
 子路径均位于项目路由下。对象目录使用稳定 ID；标题变化或 Git 路径移动不改变应用链接。历史修订 URL 不跳到最新版，另给“比较当前版本”。列表查询返回有边界的游标页；不要首次加载全项目 Wiki 和所有 trace。搜索按任务、文档、知识分组，分别给来源、命中字段、版本和新鲜度，不把不同后端分数直接排名成统一正确率。
 
 QueryService 返回 `observedAt`、对象及 revision、权限能力、分源状态和缺项。PG 部分在一致的只读事务内取得；Wiki/Git 是分别读取的固定版本，标明校验结果，不能声称跨系统原子快照。知识服务不可用时显示“依据暂不可核对”，任务本体仍可读；需要该依据的接受/派发由服务端规则阻止。后端只对已授权的对象装配标题、摘要、链接和关系，前端隐藏按钮不是授权。
+
+所有列表/详情围绕同一稳定对象查询，列表不能保留已被详情推翻的旧状态。Review 按候选 revision 读取差异；决定已记录、正文已回读发布、索引已更新、消费者实际采用是独立字段。日程暂停只失效日程/后续计划查询，不把在途 Run 改为停止。评价读取模型保留每个 case 与条件、不比较不可比后端分数；具体记录见[评价合同](contracts.md#6a-evaluationrecord评价证据与条件)。前端复用代码和三端接入落点见[Wiki 集成方案](wiki-integration.md)。
 
 ## 4. 修改、刷新与失败如何呈现
 

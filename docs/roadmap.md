@@ -12,6 +12,7 @@
 - 已补 dogfood/需求判断、日常讨论和定时任务的产品约定，以及包架构与 Codex 接入设计；独立 [PR #2](https://github.com/cyl19970726/evoLoop/pull/2)进一步验证了自管线程的隔离夹具闭环和桌面宿主通知消费，尚未成为本分支已合并的生产适配器。
 - [技术选型](architecture/technology-selection.md)已确定 PostgreSQL 项目主数据与运行存储方向，飞书改为 connector；任务/需求文档与 Wiki 的版本关系进入正式设计；TS/Node 核心、OpenViking 服务及具体部署仍待确认，v0.5.1 尚未实测。
 - 已补[工作台产品](product/workbench.md)、[前端](architecture/frontend.md)、[存储](architecture/storage.md)和[知识关联](architecture/knowledge-flow.md)设计；可点击原型使用示例数据，尚无业务工作台。
+- 已按固定 nashsu 源码形成[逐模块复用边界](research/nashsu-llm-wiki/frontend-reuse.md)和[Wiki 集成方案](architecture/wiki-integration.md)，并按完整产品路径[审阅原型](research/workbench-prototype-review.md)。纯函数、组件适配与桌面流程分别处理；当前未复制上游源码、接通服务或证明实际效果。
 - 尚未发布项目子域名文档站、创建常设业务角色或运行定时管理任务。
 
 ## 阶段及进入条件

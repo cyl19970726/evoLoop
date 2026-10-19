@@ -26,6 +26,7 @@
 | DEC-018 | evoLoop 保存任务与需求文档主数据，飞书作为 connector 和协作入口 | PostgreSQL 管理 Task/Schedule、原生 Document 修订和跨对象关系；Git 正式正文与外置 Wiki 继续各有权威。修订 DEC-005，扩展 DEC-017，按 [项目数据](architecture/project-data.md)落实 |
 | DEC-019 | 补齐工作台前端的产品与架构、存储层及 Task/Document/Git 文档与 Wiki 的关联设计 | 按日常讨论与实际工作定义页面，固定来源和执行依据，描述变更传播；要求设计不等于批准全部前端库或上线 |
 | DEC-020 | Wiki 前端架构明确参考 nashsu/llm_wiki 的知识组织与阅读方式 | 知识点、专题、来源、双链与审阅是独立工作区；认知讨论页及摘要外链不能代替它。代码复用范围仍需按模块设计和验证 |
+| DEC-021 | 按具体源码确定 nashsu 前端复用/改造范围，并把完整产品与架构用于审阅和改进原型 | 发布逐文件证据、三端集成方案与场景覆盖报告；研究和模拟交互不能当作实际移植或生产闭环 |
 
 ## 当前设计提议
 
@@ -41,6 +42,7 @@
 | PROP-008 | 推荐 OpenViking 独立服务作为 Wiki 基座，认知维护留在 evoLoop；必要时有限 fork | v0.5.1 是新候选而非已通过版本；核所有写入入口、来源撤回、修订/恢复及许可安排后再确定补丁 |
 | PROP-009 | 推荐同源 React/TS/Vite 工作台，Router + Query 管理导航和读取；共用协调 API | 见[前端架构](architecture/frontend.md)；首期本机读取/提议/复核，远程手机访问需登录/常在线部署，原型只验证页面路径 |
 | PROP-010 | 采用固定 Task/Document 修订、类型化关系和来源桥接，连接 PG、Git 与外置 Wiki | 见[存储](architecture/storage.md)与[知识关联](architecture/knowledge-flow.md)；需实测约束、纠正传播、权限变化和跨系统恢复 |
+| PROP-011 | 经共同 API 改造知识阅读/关系/Review，按固定来源接 OpenViking 与 PG/Git；原型覆盖六条产品路径 | [集成方案](architecture/wiki-integration.md)和[原型审阅](research/workbench-prototype-review.md)说明切片；待验证代码移植、许可安排、发布恢复和真实效果 |
 
 ## 仍未选定或未实施
 

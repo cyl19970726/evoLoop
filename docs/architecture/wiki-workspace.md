@@ -34,6 +34,8 @@ URL 中的 `knowledgeId` 与 `revision` 均不可静默改成最新版。跨对�
 
 ## 2. 从 nashsu 固定版抽取的前端机制
 
+下面概括交互来源；精确到导出符号、直接依赖、锁定版本和复用等级的证据见[前端源码复用核查](../research/nashsu-llm-wiki/frontend-reuse.md)。组件 props/事件、共同 API 示例、OpenViking 原生路由与需要补齐的能力见[集成方案](wiki-integration.md)，避免将“可参考的界面”误作“已可直接导入的组件”。
+
 | 固定源码里的实现 | 可借的交互或算法 | evoLoop 落点与适配差异 |
 | --- | --- | --- |
 | [KnowledgeTree](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/layout/knowledge-tree.tsx) 读 Markdown 的 title/type/tags/origin/sources，按类型列页；[来源筛选](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/knowledge-source-filter.ts) | 类型树、来源筛选、知识点列表和原始材料入口 | `knowledge` 模块的专题/类型导航；服务端分页和权限过滤，来源按稳定 source ID/revision，不让浏览器遍历 vault |
