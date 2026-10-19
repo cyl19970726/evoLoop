@@ -48,6 +48,11 @@
       "group": "架构与协作"
     },
     {
+      "path": "docs/architecture/technology-selection.md",
+      "title": "技术选型与 Wiki 改造",
+      "group": "架构与协作"
+    },
+    {
       "path": "docs/architecture/packages.md",
       "title": "包架构与运行分层",
       "group": "架构与协作"

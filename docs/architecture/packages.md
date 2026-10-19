@@ -1,137 +1,104 @@
-# 包架构：把项目规则与运行时分开
+# 包架构：实现边界与运行装配
 
-2026-10-19 · 拟议实现结构。当前仓库只有文档与 `scripts/docs/` 工具；本页列出的应用、包和接口尚未实现，也未部署。包名表达责任边界，应用语言、构建框架和运行存储选型仍待首个切片确认。产品行为见[日常工作闭环](../product/daily-loop.md)，Codex 的协议映射见[运行时接入](codex-integration.md)。
+推荐包架构 v0.2 · **拟议实现架构，待确认，尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
 
-## 四部分如何落到代码
+首期推荐 TypeScript `strict`、Node.js 24 LTS、npm workspaces：一个模块化 `core` 包，Fastify 本地协调 API，SQLite（`better-sqlite3`）运行记录，飞书任务与日程适配器，独立 OpenViking 服务的 HTTP 适配器，以及 evoLoop 自管的 Codex App Server stdio 适配器。**这是待确认的实现提案，不是已批准技术栈或已运行系统。** OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定，本页不锁版本。本机 Python 证明已在[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)跑通，是运行机制的研究证据，不决定生产实现语言。
 
-| 产品部分 | 所属模块 | 要做的事 |
-| --- | --- | --- |
-| ① 认知循环 | `core/cognition`、`core/reviews` | 准备阶段目标与证据引用，生成认知任务，接收并核对结构化判断，形成下一步或结束决定；判断由责任 session 完成。 |
-| ② 动态多 session | `core/roles`、`core/sessions` | 职责与实例关联、分工评估任务、试行和退出条件；决定是否拆角色仍依据实际工作。 |
-| ③ Task 与状态机 | `core/tasks`、`core/coordination`、`core/scheduling` | 提议与接受、派发、交付核对、定时实例、对账和恢复。 |
-| ④ Wiki 与 evaluator | `core/knowledge`、`core/evaluation` | 知识贡献/修订/消费约定，评价任务与证据；通过外置知识适配器访问正文。 |
+## 源码依赖
 
-这些先是一个 `core` 包内的模块，随真实复杂度再拆包；角色数量不决定包数量。产品和架构 session 是责任者，不能等同于某个固定软件服务。
-
-## 包依赖与层级
-
-图中箭头表示**源码依赖**，不是调用顺序。平台适配器和核心都依赖中立合同，核心不引用飞书字段或 Codex 生成类型。运行时由应用装配实现并注入接口。
+箭头 `A --> B` 仅表示 **A 可在源码中依赖 B**；不表示运行请求、数据复制或权威转移。`contracts` 持有跨包语义和端口；平台生成类型、鉴权和协议细节留在适配器。应用负责装配端口实现，`core` 不导入适配器。
 
 ```mermaid
-%%{init: {"flowchart":{"wrappingWidth":260,"nodeSpacing":35,"rankSpacing":50}}}%%
+%%{init: {"flowchart":{"wrappingWidth":320,"nodeSpacing":30,"rankSpacing":42}}}%%
 flowchart TB
-  subgraph entry["入口与进程装配"]
-    CLI["apps/cli<br/>人和 Agent 的窄操作入口"]:::entry
-    HOST["apps/daemon<br/>单活协调进程与接口装配"]:::entry
-  end
-  subgraph logic["项目业务规则"]
-    CORE["packages/core<br/>四部分的用例、状态转换和恢复策略"]:::core
-  end
-  subgraph outside["外部系统适配"]
-    EXT["adapters/feishu · wiki · codex<br/>字段、知识后端与运行协议转换"]:::adapter
-    LOCAL["adapters/local-state<br/>操作日志、运行映射与检查水位"]:::adapter
-    TOOLS["packages/agent-tools<br/>将窄工具调用转给协调进程"]:::adapter
-  end
-  CONTRACT["packages/contracts<br/>领域类型、端口和版本化消息"]:::contract
-  TEST["packages/testkit<br/>故障替身与跨适配验收用例"]:::test
-  HOST --> CORE
-  HOST --> EXT
-  HOST --> LOCAL
-  HOST --> TOOLS
-  CORE --> CONTRACT
-  EXT --> CONTRACT
-  LOCAL --> CONTRACT
-  TOOLS --> CONTRACT
-  CLI --> CONTRACT
-  TEST --> CONTRACT
-  classDef entry fill:#FFF1D6,stroke:#A86412,color:#402700
+  D["应用装配<br/>apps/coordinator"]:::app
+  C["调用入口<br/>apps/cli · packages/agent-tools"]:::app
+  K["业务规则<br/>packages/core"]:::core
+  A["四个独立平台适配包<br/>adapter-feishu<br/>adapter-wiki-openviking<br/>adapter-codex-app-server<br/>adapter-local-state"]:::adapter
+  P["共同合同与端口<br/>packages/contracts<br/>Zod schema · JSON Schema"]:::port
+  D --> K
+  D --> A
+  D --> P
+  C --> P
+  K --> P
+  A --> P
+  classDef app fill:#FFF1D6,stroke:#A86412,color:#402700
   classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
+  classDef port fill:#E2F4F2,stroke:#297A73,color:#154B47
   classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
-  classDef contract fill:#E2F4F2,stroke:#297A73,color:#154B47
-  classDef test fill:#E7F2E9,stroke:#3C7654,color:#183C28
 ```
 
-图例：黄＝入口和装配；紫＝项目规则；蓝＝平台与持久化适配；青＝共享合同；绿＝验证工具。`apps/cli` 和 `agent-tools` 使用合同定义的协调服务接口；图中没有 CLI 直接导入整个 daemon 实现。集成测试在应用边界组合 core、真实或替身适配器；testkit 自身不依赖生产包来制造循环依赖。
+图例：黄＝装配/调用入口；紫＝核心规则；青＝中立合同与端口；蓝＝边界适配器。四个适配包合框展示共同依赖，每包独立实现自己的端口。`cli` 与 Agent 工具只依赖协调 API 的公开合同，不导入 `apps/coordinator`，也不持有飞书或 Wiki 的写入凭据。适配器实现端口，由应用注入 `core`；端口的完整领域字段只在[合同](contracts.md)维护。
 
-建议目录如下，实施时按切片创建，不预先生成空包：
+## 拟议 npm 工作区与包责任
 
-```text
-apps/
-  daemon/                  单活协调、事件接收、调度、装配、运行健康
-  cli/                     inspect / propose / deliver / review 等窄入口
-packages/
-  contracts/               领域消息与端口；不导入平台 SDK
-  core/
-    tasks/                 提议、分流、接受、交付、验收
-    coordination/          派发意图、结果回收、对账、接续
-    scheduling/            到期计算、错过与重叠策略、触发实例
-    roles/                 职责说明、试行、回看与撤回
-    sessions/              逻辑实例、工作说明和运行关联
-    cognition/             目标/证据装配与下一步选择约定
-    reviews/               阶段回看和需求判断的责任路由
-    knowledge/             贡献、修订、失效与当前知识引用
-    evaluation/            独立消费和真实效果评价约定
-  adapters/
-    feishu/                TaskStore 与 ScheduleStore；字段/身份映射
-    wiki/                  KnowledgeRepository；候选后端独立实现
-    codex/                 SessionRuntime；App Server 客户端及版本类型
-    local-state/           OperationJournal 与 RoleRegistry 的首期实现
-  agent-tools/             CLI/MCP 等工具封装，统一走协调服务
-  testkit/                 可控时钟、事件与故障模拟、合同验收
-scripts/docs/              现有文档构建，继续保持独立
-```
+目录按首个切片逐步建立，不预造空包。每行的“可依赖”是源码允许范围，第三方库只在实际负责的包引入。
 
-## 每个包拥有什么
+| 工作区／包 | 对外接口与责任 | 可依赖 | 禁止承担 |
+| --- | --- | --- | --- |
+| `packages/contracts` | Zod 版本化输入/输出边界 schema、由其导出的 JSON Schema、中立 ID/结果类型及 `TaskStore`、`ScheduleStore`、`EvidenceStore`、`KnowledgeRepository`、`RoleRegistry`、`SessionRuntime`、`OperationJournal` 端口；对外提供协议版本与校验入口 | Zod 等校验库 | 飞书列 ID、Codex 生成类型、OpenViking DTO、数据库 schema 或运行时业务判断 |
+| `packages/core` | `proposeTask`、`reviewProposal`、`planDispatch`、`reconcileRun`、`computeDueOccurrences`、`proposeKnowledgeRevision`、`reviewStage` 等用例；接收端口与时钟；确定性状态转换和授权/基线检查 | `contracts`、cron-parser 等纯计算依赖 | 平台 SDK、HTTP/SQLite 的直接调用、把模型回答视作已批准决定 |
+| `packages/adapter-feishu` | `TaskStore` 与 `ScheduleStore` 实现，租户鉴权、列/身份映射、分页、回读、变更提示与全量对账；对未验证能力报告 `unsupported` | `contracts`、飞书 SDK/HTTP | 第二份任务状态、日程权威或虚构 CAS/原子领取保证 |
+| `packages/adapter-wiki-openviking` | `EvidenceStore`/`KnowledgeRepository` 的 OpenViking HTTP 映射；外置 immutable revision 文件和 manifest 的存取；读取、检索、发布及能力报告；原生 compile 仅在另行验证后启用；贡献、候选、审核、修订、撤回依赖进入 `core` 的维护流程 | `contracts`、HTTP/文件客户端 | 自建第二个认知执行栈、把普通写页当自动 compile、直接认定搜索摘要为原始证据 |
+| `packages/adapter-codex-app-server` | `SessionRuntime` 实现；自管 stdio 子进程、握手、Thread/Turn 请求与事件、断线回读和版本能力探测 | `contracts`、局部协议类型 | 任务验收、调度权威、推断 Desktop 聊天已受控 |
+| `packages/adapter-local-state` | SQLite `OperationJournal`、outbox、运行 ID 关联、检查水位、到期实例和 `RoleRegistry` 引用；职责正式说明保留在受管项目配置，SQLite 仅引用其修订；为重启对账保存意图与结果 | `contracts`、`better-sqlite3` | 飞书任务/日程状态、Wiki 来源或修订正文的可编辑副本 |
+| `packages/agent-tools` | 窄 MCP/Agent 工具：查询、提议、交付、审阅和贡献，调用协调 API；可供 Desktop 与自管线程配置使用，Codex 宿主专有桥接单独声明能力 | `contracts`、API 客户端、MCP SDK | 常驻自动协调进程、直接写适配器、假定独立 daemon 能调用当前桌面宿主工具或自动唤醒/监听 Desktop |
+| `apps/coordinator` | 单活进程；Fastify 本地 API、身份/凭据装配、事件接收、到期计算循环、outbox 与周期对账、健康状态 | `core`、`contracts`、所需适配器 | 第二个可编辑业务权威、绕过 `core` 的快速写入路径 |
+| `apps/cli` | 本地检查、提出和管理命令，经同一 API 调用用例 | `contracts`、API 客户端 | 再启动一个写入协调者或独立实现业务状态机 |
 
-| 包／入口 | 拥有 | 边界 |
+`packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
+
+## 四部分映射到一个 `core`
+
+| 产品部分 | `core` 内部模块 | 主要责任 |
 | --- | --- | --- |
-| `contracts` | Task、TaskProposal、ReviewDecision、Schedule、Occurrence、Role、Session、Run、KnowledgeRef、Delivery 等语义；外部端口及版本 | `threadId`、`turnId`、飞书列 ID 等平台细节由适配器映射，业务合同只保留可追溯的运行引用。 |
-| `core` | 状态转换、接受条件、责任路由、派发和恢复策略、证据包约定 | 通过注入的端口调用系统；不从某个数据库、模型字符串或聊天标题推断真值。认知策略准备任务和检查结果，不把确定性代码包装成自动认知。 |
-| `adapters/feishu` | 平台鉴权、字段映射、分页、读写、事件转换、能力声明 | 飞书仍是任务权威；适配器不能用本地缓存悄悄接管业务状态。无实测条件写则明确不支持。 |
-| `adapters/codex` | 进程连接、握手、请求/事件分发、线程/轮次映射、审批请求和断线观测 | 固定版本协议类型只在该包；不得把一次 `turn/completed` 自动解释为任务验收通过。 |
-| `adapters/wiki` | 项目知识命名空间、读修订、贡献/发布与后端能力映射 | 活 Wiki 正文、修订和索引在仓库外；后端不支持的维护语义上报缺口，不能静默降级。 |
-| `adapters/local-state` | 操作意图和回执、运行 ID 映射、触发实例、对账水位、待处理服务器请求、职责登记 | 这是恢复与配置记录。任务优先级、接受和完成状态回读飞书；不维护另一份可编辑任务表。职责说明在受管项目正式配置中，运行登记引用其版本。 |
-| `agent-tools` / `apps/cli` | 接收可校验的提议、交付、认知贡献、查询和审阅操作 | 携带项目、实例、任务和操作身份，经统一服务检查权限与当前基线；不能凭模型自报角色获得权限。不会各自启动第二个自动写入协调者。 |
-| `apps/daemon` | 注入配置与适配器、服务启动/停止、单活控制、事件与周期对账、运行限额 | 可以首期合为一个常驻进程，不要求微服务。凭据与私有运行记录在用户指定的外置运行目录，不进公共仓库。 |
+| ① 认知循环 | `cognition/`、`reviews/` | 装配目标、来源和反例，形成有依据的回看任务；记录责任 session 的选择及下一动作，检查是否被后续工作实际采用。 |
+| ② 动态多 session | `roles/`、`sessions/` | 逻辑 Role 与承载 Session 分离，职责试行、交接、回看与撤回；新聊天窗口不自动生新 Role。 |
+| ③ Task 与状态机 | `tasks/`、`coordination/`、`scheduling/` | 提议/判断/交付、派发意图与 `unknown` 恢复、到期实例和周期对账；接受状态以飞书回读为准。 |
+| ④ Wiki 与 evaluator | `knowledge/`、`evaluation/` | 来源与相反解释、候选/审核/修订/撤回依赖、独立消费和真实效果评价；正文通过外置 Wiki 端口读取。 |
 
-任务、日程和触发实例的具体字段由[领域合同](contracts.md)维护。本页只说明代码责任，避免另建一份可冲突的协议定义。
+四部分是**产品能力**，不是四个进程或四个固定 Role。项目和架构 session 是责任承载者，软件模块只是使其工作可追溯。模块间经包内清晰接口协作；只有实际独立发布、团队边界或依赖冲突出现后再考虑拆 `core`。
 
-## 运行时怎样合作
+## 进程与权威边界
 
-以下是目标调用关系，与上面的源码依赖图分开阅读。图中入口与服务尚未建设。
+下图箭头表示**运行调用或回读**，与源码依赖图不同；虚线表示人可在权威系统中原生编辑，协调者必须回读并对账。OpenViking 是独立服务与独立数据位置，Python/Rust 留在其上游部署，evoLoop 通过 HTTP 接入；不是 npm 包、`core` 子进程或本仓库的 fork。
 
 ```mermaid
-%%{init: {"flowchart":{"wrappingWidth":240,"nodeSpacing":35,"rankSpacing":45}}}%%
-flowchart TB
-  HUMAN["人类与日常讨论会话<br/>分工评估／下一阶段选择"]:::entry
-  FEISHU["飞书多维表格<br/>任务与日程定义权威"]:::store
-  TOOLS["CLI / Agent 工具入口<br/>提议、查询、交付、审阅"]:::entry
-  DAEMON["evoLoop 单活协调进程<br/>状态规则、到期触发、结果回收"]:::core
-  CODEX["Codex App Server<br/>线程、轮次、工具执行与运行事件"]:::runtime
-  WIKI["外置认知 Wiki<br/>当前认识、来源与修订"]:::store
-  JOURNAL["外置运行记录<br/>意图、回执、映射、对账水位"]:::store
-  HUMAN --> TOOLS --> DAEMON
-  HUMAN -->|原生查看和调整| FEISHU
-  DAEMON <-->|读写与对账| FEISHU
-  DAEMON <-->|创建／继续与观察| CODEX
-  CODEX -->|工作中发现问题或提交成果| TOOLS
-  DAEMON <-->|按任务贡献或读取| WIKI
-  DAEMON --> JOURNAL
-  classDef entry fill:#FFF1D6,stroke:#A86412,color:#402700
-  classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
-  classDef runtime fill:#E5F0FF,stroke:#4270A8,color:#172F4B
-  classDef store fill:#E2F4F2,stroke:#297A73,color:#154B47
+%%{init: {"flowchart":{"wrappingWidth":210,"nodeSpacing":27,"rankSpacing":37}}}%%
+flowchart LR
+  H["人／Desktop 讨论"]:::human --> B["CLI／Agent 工具入口"]:::entry
+  B --> A["Fastify 本地协调 API<br/>单活 Node 进程"]:::app
+  A --> C["core 用例与检查"]:::core
+  C --> F["飞书适配器"]:::adapter --> FS["飞书 Bitable<br/>Task／Schedule 权威"]:::authority
+  C --> W["Wiki HTTP 适配器"]:::adapter --> OV["独立 OpenViking 服务<br/>外置 Wiki 数据"]:::authority
+  C --> R["App Server 适配器"]:::adapter <-->|请求与运行事件| AS["自管 Codex App Server<br/>stdio Thread／Turn"]:::external
+  C --> L["SQLite 适配器"]:::adapter --> DB["外置运行库<br/>Journal／outbox／水位"]:::state
+  H -.->|原生编辑| FS
+  classDef human fill:#FFF1D6,stroke:#A86412,color:#402700
+  classDef entry fill:#FBE7CA,stroke:#A86412,color:#402700
+  classDef app fill:#EFE7FA,stroke:#8056A8,color:#40275D
+  classDef core fill:#E7E3F6,stroke:#8056A8,color:#40275D
+  classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
+  classDef authority fill:#E2F4F2,stroke:#297A73,color:#154B47
+  classDef external fill:#E7F2E9,stroke:#3C7654,color:#183C28
+  classDef state fill:#F3EBDF,stroke:#8A6B45,color:#493822
 ```
 
-各领域 session 只需承担自己的目标、发现、交付和实际使用责任；协调进程统一核对完成及接续。它不要求工作 session 记住“完成后再去通知认知会话”，也不能只依赖某一条完成事件。结果丢失时通过操作记录、运行时回读和任务对账补回；缺少可核验证据时保留未知。
+图例：黄＝人/入口；紫＝evoLoop 进程与规则；蓝＝适配器；青＝外部业务权威；绿＝外部执行运行时；棕＝仅供恢复的本地状态。源码 npm 包、操作系统进程、业务 Session/Role、上游 OpenViking 仓库是四种不同边界，不能用包数推断部署数或职责数。
 
-桌面中的日常讨论会话与系统管理的 App Server 工作线程是两种入口。前者可通过拟建工具读取依据、提交决定，后者由协调进程派发和观察；上下文通过任务和知识修订明确传递。当前没有桌面聊天自动接管或侧栏同步的保证，详见[Codex 接入边界](codex-integration.md)。
+**统一写路径。** Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与当前身份 → `core` 重读飞书/知识修订并检查授权、接受状态和冲突 → `OperationJournal` 记录意图 → 适配器执行写入 → 回读确认 `applied`、标 `pending` 或保留 `unknown` → outbox/对账接续。飞书中人的原生编辑是例外入口；事件只是回读提示，协调者需按修订/字段比较，冲突时停止并交给责任者复核。没有实测条件写时不承诺排除并发覆盖；自动写由单活协调者串行，飞书的人类旁路通过字段归属、回读和恢复限制风险。
 
-## 最小切片怎么落包
+Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位置**，以 immutable revision 文件及 manifest 记录固定修订和依赖；这是 evoLoop 需实现的版本层设计，不能假定 OpenViking 原生提供相同事务。SQLite 只记修订引用、操作结果与对账水位，不存正文。贡献先成候选，由单一维护发布者回读基线、审阅冲突与撤回影响、发布经审阅的修订、再核对结果；必须关闭 OpenViking 及其他工具的旁路写入。若无法关闭旁路或缺少经验证的原子条件写，安全多写者发布仍不支持。知识存入、通知成功、认知 session 实际使用及目标消费者效果分别核验。
 
-1. **任务提议与判断。** contracts、core/tasks、feishu 与窄工具入口支持一条 dogfood issue，从证据到接受/拒绝/调查；用真实测试表验证人和 Agent 的编辑冲突。先不加自动调度。
-2. **一次 Codex 工作及回收。** 接入 codex 和 operation journal，记录派发意图、线程/轮次关联；事件完成后核成果，独立使用通过后更新任务。模拟响应丢失，确认不会盲目重发。
-3. **一次定时任务。** 加入 scheduling 的可控时钟和飞书日程定义，每个到期生成独立实例；验证重启、重复触发、重叠、错过、暂停和取消。不会另起绕过接受条件的执行路径。
-4. **认知与分工接续。** 加 wiki、认知评估和分工试行用例，把实际使用变为下一阶段选择；让两类日常讨论读取现行依据。使用者负担是否下降需独立验证。
+首期认知执行由已登记的 Codex App Server Session 承载，不同时启用 VikingBot 再养一套默认派发、权限和恢复栈。OpenViking 只承担本方案明确验证过的知识服务能力；若它的原生工作流参与写入，也必须走同一候选审核与单维护者发布规则。
 
-完成一个切片才把相应包标为已实现。核心逻辑可用端口替身测试；真实平台合同必须用固定版本/环境实测。协议握手、任务验收、用户体验与长期收益分别报告，具体验证见[开发规范](../development/standards.md)。
+调度采用确定性状态表：从飞书当前 `ScheduleStore` 计算到期 UTC 实例，以稳定触发键记意图，按错过/重叠策略创建或关联独立任务；重启先对账 `unknown`、outbox 和水位，周期全量对账补事件遗漏。定时器响起本身不接受新需求，也不证明任务完成。首期无需 Redis、Temporal、Postgres 或 Web 前端；若将来出现多协调者、租约或高吞吐要求，再以真实负载和条件写证据修订。
+
+## 切片与验证
+
+1. **提议与判断：** 创建 `contracts`、`core/tasks`、飞书适配器、最小 SQLite Journal、协调 API/CLI；用真实测试表验证原生人工编辑交错、分页/事件丢失和接受决定。此时不建空 Wiki/Codex 包。
+2. **一次执行与恢复：** 加 Codex App Server、扩展 Journal/outbox 与 `core/coordination`；验证写成后丢响应、已知/未知 Turn ID、重启回读与成果核验。`turn/completed` 只推进运行状态。
+3. **一次日程：** 加 `core/scheduling` 与 `ScheduleStore`；以可控时钟验证到期、漏触发、重叠、暂停/改期、时区和恢复，再用真实飞书表/进程验证对账。
+4. **知识与真实使用：** 加 OpenViking HTTP 适配器、外置修订层、`core/knowledge` 与 evaluation；验证相反解释、同基线写、来源撤回、审阅发布、独立 session 消费，以及与直接读原始材料的成本/效果比较。Desktop 工具桥接随真正需要的人类讨论操作加入。
+
+核心规则用端口替身和固定时钟验证；每个适配器以固定版本/测试环境做合同测试；跨系统用故障与恢复演练；用户面对的效果由真实消费者亲用单独记录。通过局部测试不等于部署或整个认知闭环有效。具体失败语义和验收范围以[领域合同](contracts.md)及[开发规范](../development/standards.md)为准。

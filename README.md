@@ -17,6 +17,7 @@ evoLoop 面向一个人和多个 Agent session 共同推进的项目。它连接
 | 认识怎样进入 Wiki、被使用及证明有效 | [Wiki 建设与有效性评价](docs/product/wiki-evaluation.md) |
 | Dogfood、新需求、日常讨论和定时工作如何接续 | [日常工作闭环](docs/product/daily-loop.md) |
 | 包怎样分层，怎样集成 Codex | [包架构](docs/architecture/packages.md) · [Codex 接入](docs/architecture/codex-integration.md) |
+| 选择什么语言与核心技术，集成或修改哪个 Wiki | [技术选型与 Wiki 改造](docs/architecture/technology-selection.md) |
 | 层级、组件、数据归属和失败恢复 | [架构总览](docs/architecture/overview.md) |
 | 任务、会话、知识和交接的最小接口语义 | [接口与协作合同](docs/architecture/contracts.md) |
 | 如何开展开发、验证和文档维护 | [开发规范](docs/development/standards.md) · [文档维护](docs/development/documentation.md) |
