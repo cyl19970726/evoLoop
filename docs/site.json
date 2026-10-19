@@ -14,6 +14,8 @@
     { "path": "CONTRIBUTING.md", "title": "贡献指南", "group": "开发与维护" },
     { "path": "AGENTS.md", "title": "Agent 工作入口", "group": "开发与维护" },
     { "path": "docs/references/lineage.md", "title": "来源与演进", "group": "依据" },
-    { "path": "docs/references/validation-summary.md", "title": "知识底座验证", "group": "依据" }
+    { "path": "docs/references/validation-summary.md", "title": "知识底座验证", "group": "依据" },
+    { "path": "docs/references/wiki-feature-comparison.md", "title": "Wiki 功能与流程对比", "group": "依据" },
+    { "path": "docs/references/wiki-effectiveness.md", "title": "Wiki 机制与有效性验证", "group": "依据" }
   ]
 }

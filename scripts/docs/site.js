@@ -2,11 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import MarkdownIt from 'markdown-it';
+import { build as bundle } from 'esbuild';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const marker = '.evoloop-docs-build';
 const privateLocation = /(?:\/Users\/|file:\/\/|codex:\/\/)/i;
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false });
+const defaultFence = markdown.renderer.rules.fence;
+markdown.renderer.rules.fence = (tokens, index, options, env, self) => {
+  const token = tokens[index];
+  if (!/^mermaid(?:\s|$)/i.test(token.info.trim())) return defaultFence(tokens, index, options, env, self);
+  const source = escapeHtml(token.content);
+  return `<figure class="diagram"><div class="diagram-bar"><span>流程图 · 可横向滚动</span><button type="button" class="diagram-zoom" aria-pressed="false" hidden>放大</button></div><div class="diagram-view" tabindex="0" aria-label="流程图，可横向滚动"><p class="diagram-status">图表加载中…</p><pre class="mermaid">${source}</pre></div><details class="diagram-source"><summary>查看 Mermaid 源码</summary><pre><code>${source}</code></pre></details></figure>\n`;
+};
 
 function fail(message) { throw new Error(message); }
 function escapeHtml(value) { return markdown.utils.escapeHtml(String(value)); }
@@ -116,7 +124,7 @@ export async function check(root) {
     const content = await fs.readFile(filename, 'utf8');
     if (privateLocation.test(content)) fail(`${source}: contains a private local address`);
     const tokens = markdown.parse(content, {});
-    pages.push({ ...entry, source, output, tokens, anchors: headings(tokens) });
+    pages.push({ ...entry, source, output, tokens, anchors: headings(tokens), hasMermaid: tokens.some(token => token.type === 'fence' && /^mermaid(?:\s|$)/i.test(token.info.trim())) });
   }
   const byPath = new Map(pages.map(page => [page.source, page]));
   const assets = new Set();
@@ -152,7 +160,8 @@ function pageHtml(manifest, page, pages) {
   const nav = [...groups].map(([group, items]) => `<section class="nav-group"><h2>${escapeHtml(group)}</h2>${items.map(item =>
     `<a href="${escapeHtml(relUrl(page.output, item.output))}"${item.source === page.source ? ' aria-current="page"' : ''}>${escapeHtml(item.title)}</a>`).join('')}</section>`).join('');
   const stylesheet = relUrl(page.output, 'assets/style.css');
-  return `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(manifest.description)}"><title>${escapeHtml(page.title)} · ${escapeHtml(manifest.title)}</title><link rel="stylesheet" href="${escapeHtml(stylesheet)}"></head><body><div class="layout"><aside class="sidebar"><a class="brand" href="${escapeHtml(relUrl(page.output, 'index.html'))}">${escapeHtml(manifest.title)}</a><details class="mobile-nav"><summary>目录</summary><nav>${nav}</nav></details><nav class="desktop-nav">${nav}</nav></aside><main class="content"><p class="eyebrow">${escapeHtml(page.group)}</p><article class="markdown">${markdown.renderer.render(page.tokens, markdown.options, {})}</article><footer>${escapeHtml(manifest.title)}</footer></main></div></body></html>\n`;
+  const script = page.hasMermaid ? `<script defer src="${escapeHtml(relUrl(page.output, 'assets/mermaid.js'))}"></script>` : '';
+  return `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(manifest.description)}"><title>${escapeHtml(page.title)} · ${escapeHtml(manifest.title)}</title><link rel="stylesheet" href="${escapeHtml(stylesheet)}">${script}</head><body><div class="layout"><aside class="sidebar"><a class="brand" href="${escapeHtml(relUrl(page.output, 'index.html'))}">${escapeHtml(manifest.title)}</a><details class="mobile-nav"><summary>目录</summary><nav>${nav}</nav></details><nav class="desktop-nav">${nav}</nav></aside><main class="content"><p class="eyebrow">${escapeHtml(page.group)}</p><article class="markdown">${markdown.renderer.render(page.tokens, markdown.options, {})}</article><footer>${escapeHtml(manifest.title)}</footer></main></div></body></html>\n`;
 }
 
 export async function build(root) {
@@ -169,6 +178,18 @@ export async function build(root) {
     await fs.writeFile(path.join(staging, marker), 'evoloop-docs-v1\n');
     await fs.mkdir(path.join(staging, 'assets'), { recursive: true });
     await fs.copyFile(path.join(here, 'style.css'), path.join(staging, 'assets/style.css'));
+    if (result.pages.some(page => page.hasMermaid)) {
+      await bundle({
+        entryPoints: [path.join(here, 'mermaid-client.js')],
+        outfile: path.join(staging, 'assets/mermaid.js'),
+        bundle: true,
+        minify: true,
+        format: 'iife',
+        platform: 'browser',
+        target: 'es2022',
+        logLevel: 'silent',
+      });
+    }
     for (const page of result.pages) {
       const output = path.join(staging, page.output);
       await fs.mkdir(path.dirname(output), { recursive: true });

@@ -79,3 +79,23 @@ test('copies only referenced assets from docs/assets and builds repeatably', asy
   await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n![bad](docs/research/private.svg)\n');
   await assert.rejects(check(root), /local asset must be under docs\/assets/);
 });
+
+test('bundles Mermaid locally only for diagram pages and escapes source', async t => {
+  const root = await fixture(t, [
+    { path: 'README.md', title: 'Home', group: 'Start' },
+    { path: 'docs/chart.md', title: 'Chart', group: 'Guide' },
+  ]);
+  await fs.writeFile(path.join(root, 'docs/chart.md'), '# Chart\n\n```mermaid\nflowchart LR\n  A["<script>alert(1)</script>"] --> B[Done]\n```\n');
+  await build(root);
+  const chart = await fs.readFile(path.join(root, 'site/docs/chart.html'), 'utf8');
+  const home = await fs.readFile(path.join(root, 'site/index.html'), 'utf8');
+  const browserBundle = await fs.readFile(path.join(root, 'site/assets/mermaid.js'), 'utf8');
+  assert.match(chart, /src="\.\.\/assets\/mermaid\.js"/);
+  assert.match(chart, /class="diagram-source"/);
+  assert.match(chart, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(chart, /<script>alert\(1\)<\/script>/);
+  assert.doesNotMatch(home, /mermaid\.js/);
+  assert.ok(browserBundle.length > 100_000);
+  assert.doesNotMatch(browserBundle, /import\s*\(/);
+  assert.doesNotMatch(chart, /https?:\/\//);
+});

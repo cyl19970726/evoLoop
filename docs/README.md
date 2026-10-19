@@ -20,6 +20,9 @@
 
 - [来源与演进](references/lineage.md)：觉察、工作台协作经历与本轮方向之间的关系，以及哪些旧方案被替换。
 - [知识底座验证摘要](references/validation-summary.md)：OpenViking 与 nashsu/llm_wiki 的有限实测、缺口和下一步判据。
+- [Wiki 功能与流程对比](references/wiki-feature-comparison.md)：两个固定版本的功能清单、分色流程图与接入 evoLoop 的边界。
+
+- [Wiki 机制与有效性验证](references/wiki-effectiveness.md)：从两条原验证会话解释机制、反例和成立条件，提出统一对照、接力与真实使用测试。
 
 **方向已定**表示用户已明确边界；**设计提议**表示当前有理由采用但尚未实现或验收的方案；**已验证**必须同时写出版本、样本与范围。具体能力阶段在阶段路线中汇总，其他文档引用它，避免多个当前状态相互矛盾。
 
