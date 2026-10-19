@@ -25,7 +25,7 @@
 
 ## 运行时与协作接入
 
-[Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。已运行范围为版本、schema 与初始化握手；真实任务、模型执行、桌面聊天互通和定时恢复均未验证。实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
+[Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。该首次调查只做初始化握手。后续[执行、恢复与认知接收实测](codex-app-server-proof-20261019.md)已跑通四轮真实模型任务、自管服务重启与分页历史对账、认知证据消费，并分开记录桌面只读发现和宿主桥接；飞书、生产 Wiki、定时器及桌面实时统一控制仍未验证。实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
 
 ## 早期候选与其他探索
 

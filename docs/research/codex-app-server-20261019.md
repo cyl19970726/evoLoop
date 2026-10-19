@@ -2,6 +2,8 @@
 
 > 2026-10-19。**调查与接口提议，未采纳为生产实现。** 范围为本机 `codex-cli 0.154.0`、当日官方 [Codex App Server 文档](https://learn.chatgpt.com/docs/app-server)及一次只初始化的本机握手。本文不声称已创建业务 Thread、运行模型 Turn、连接飞书、部署 Wiki 或完成定时任务。
 
+> 后续记录：同日的[执行、恢复与认知接收实测](codex-app-server-proof-20261019.md)已完成四轮真实模型任务及自管线程恢复；本调查保留首次仅握手时点的事实和矩阵，最新状态以后续报告为准。
+
 ## 问题、方法与版本
 
 evoLoop 需要让多个实际工作的 session 承接飞书任务，记录从需求、缺陷到交付、实际使用与认知修订的链路，并在约定时间推动待办。调查问题是：Codex App Server 能提供哪些会话原语，哪些责任必须由 evoLoop 自己承担？当前仓库只有正式文档与隔离 Wiki 实验；[领域合同](../architecture/contracts.md)中的 `SessionRuntime`、协调者、飞书适配器均未实现。
