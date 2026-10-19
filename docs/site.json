@@ -23,6 +23,11 @@
       "group": "产品与阶段"
     },
     {
+      "path": "docs/product/daily-loop.md",
+      "title": "Dogfood 与日常工作",
+      "group": "产品与阶段"
+    },
+    {
       "path": "docs/product/wiki-evaluation.md",
       "title": "Wiki 建设与有效性评价",
       "group": "产品与阶段"
@@ -43,8 +48,18 @@
       "group": "架构与协作"
     },
     {
+      "path": "docs/architecture/packages.md",
+      "title": "包架构与运行分层",
+      "group": "架构与协作"
+    },
+    {
       "path": "docs/architecture/contracts.md",
       "title": "接口与协作合同",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/codex-integration.md",
+      "title": "Codex 运行时接入",
       "group": "架构与协作"
     },
     {
@@ -76,6 +91,11 @@
       "path": "docs/research/README.md",
       "title": "研究与探索",
       "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/codex-app-server-20261019.md",
+      "title": "Codex App Server 调查",
+      "group": "研究 · 运行时"
     },
     {
       "path": "docs/research/wiki-base-selection-20261019.md",
