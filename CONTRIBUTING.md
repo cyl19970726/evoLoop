@@ -12,4 +12,4 @@ evoLoop 目前处于正式文档整理与隔离实验阶段。仓库还没有可
 
 本地文档工具已提供 `npm ci`、`npm test`、`npm run docs:check`、`npm run docs:build`，在 Git checkout 中再运行 `git diff --check`。检查与构建命令可执行，不代表公网站点已发布。仓库已有 GitHub Actions 工作流；远程 CI 是否通过以对应提交的实际运行记录为准，也不据此推断分支保护已启用。
 
-公开仓库只收正式 `docs/`、代码、必要配置与可发布资产。不提交 `sessions/` 原始归档、外置 Wiki 正文、密钥、真实身份材料、模型输入输出原件或本地运行产物。项目专用技能默认放 `.agents/skills/<name>/SKILL.md`；技能安装范围按项目约定处理。
+公开仓库保存正式文档、`docs/research/` 中可公开的探索报告、代码、必要配置与可发布资产。新的选型、机制调查、实验方案和结果统一从[研究入口](docs/research/README.md)登记，保留版本与证据边界；研究建议经明确采纳后再更新正式文档。不提交 `sessions/` 原始归档、外置 Wiki 正文、密钥、真实身份材料、模型输入输出原件或本地运行产物。项目专用技能默认放 `.agents/skills/<name>/SKILL.md`；技能安装范围按项目约定处理。

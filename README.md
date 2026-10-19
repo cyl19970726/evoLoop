@@ -16,6 +16,7 @@ evoLoop 面向一个人和多个 Agent session 共同推进的项目。它连接
 | 如何开展开发、验证和文档维护 | [开发规范](docs/development/standards.md) · [文档维护](docs/development/documentation.md) |
 | 哪些方向已确定、哪些仍需验证 | [决定记录](docs/decisions.md) · [阶段路线](docs/roadmap.md) |
 | 与觉察的关系、知识底座试验结果 | [来源与演进](docs/references/lineage.md) · [验证摘要](docs/references/validation-summary.md) |
+| 选型探索、实验方法、完整结果与改造建议 | [研究与探索](docs/research/README.md) |
 
 完整导航见 [docs](docs/README.md)。开始贡献请读 [CONTRIBUTING](CONTRIBUTING.md)；Agent 的项目入口为 [AGENTS](AGENTS.md)。
 
@@ -24,7 +25,7 @@ evoLoop 面向一个人和多个 Agent session 共同推进的项目。它连接
 - **分工随项目演进。** 从实际工作、成果和使用反馈判断是否增加、合并或撤回角色；同职责换会话不等于新角色。
 - **各领域都形成和使用认识。** 业务 session 可以发现并解决问题；Wiki 维护者综合知识，分工管理者评估职责安排。
 - **任务先用飞书多维表格。** 通过适配接口保持未来可迁移，当前不另建任务数据库。
-- **认知保存在开发仓库外。** 独立 Markdown vault 或知识服务都可；仓库保存代码、正式产品/架构/规范、接入配置和可发布摘要。
+- **认知保存在开发仓库外。** 独立 Markdown vault 或知识服务都可；仓库保存代码、正式产品/架构/规范、接入配置和可公开的研究报告。
 - **阶段结束要实际使用。** 看交付是否有效、哪些判断需要改、下一阶段为什么值得做。
 
 ## 阅读 HTML 文档
