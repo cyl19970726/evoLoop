@@ -34,7 +34,7 @@
 | [LLM Wiki 候选调查](llm-wiki-candidates-direct-20261019.md) | 直接采用 LLM Wiki 思路的多个项目、部署与接口 | 作为候选发现记录；两个入选项目以后续固定版实测与修正为准 |
 | [知识后端调查](knowledge-backends-20261019.md) | Graphiti、Cognee、LightRAG 与 OpenViking 的不同边界 | 理解图、检索、记忆与持续知识页维护的差别 |
 | [TencentDB-Agent-Memory 核查](tencent-wiki-20261019.md) | 指定提交的增量编译、来源、写页与部署边界 | 静态源码研究，未运行候选 |
-| [任务表后端调查](task-backends-20261018.md) | 飞书多维表格与 Notion 的接口、事件及竞态 | 用户已选飞书；实际租户接入能力尚未验证 |
+| [任务表后端调查](task-backends-20261018.md) | 飞书多维表格与 Notion 的接口、事件及竞态 | 飞书仍为首个协作入口；主数据改归 evoLoop，connector 能力尚未验证 |
 
 ## 后续研究怎样加入
 

@@ -58,6 +58,11 @@
       "group": "架构与协作"
     },
     {
+      "path": "docs/architecture/project-data.md",
+      "title": "任务、文档、Wiki 与 Connector",
+      "group": "架构与协作"
+    },
+    {
       "path": "docs/architecture/contracts.md",
       "title": "接口与协作合同",
       "group": "架构与协作"
