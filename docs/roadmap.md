@@ -10,7 +10,7 @@
 - 本轮建立正式产品、架构、开发规范及文档构建脚手架。具体仓库检查以提交对应的 CI 和本地检查结果为准。
 - 尚无 evoLoop 业务 harness、正式飞书任务适配或生产认知库；未接入真实项目的持续协作。
 - 已补 dogfood/需求判断、日常讨论和定时任务的产品约定，以及包架构与 Codex 接入设计；独立 [PR #2](https://github.com/cyl19970726/evoLoop/pull/2)进一步验证了自管线程的隔离夹具闭环和桌面宿主通知消费，尚未成为本分支已合并的生产适配器。
-- [技术选型](architecture/technology-selection.md)已形成 TS/Node 核心、SQLite 运行记录、OpenViking 服务的明确推荐；语言、部署和基座仍待确认，v0.5.1 尚未实测。
+- [技术选型](architecture/technology-selection.md)已确定 PostgreSQL 运行存储方向以减少以后更换引擎的迁移成本；TS/Node 核心、OpenViking 服务及具体部署仍待确认，v0.5.1 尚未实测。
 - 尚未发布项目子域名文档站、创建常设业务角色或运行定时管理任务。
 
 ## 阶段及进入条件

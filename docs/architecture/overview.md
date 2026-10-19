@@ -58,7 +58,7 @@ flowchart TB
 
 **共享资产层**保存任务、原材料、认知页、正式文档和职责约定；各类资产各有权威，不通过同步副本争夺真相。每个受管项目有隔离的任务、知识与 Role 命名空间。evoLoop 仓库拥有 harness、接口适配、工具和自身正式文档；受管业务项目的代码及其正式产品/架构文档仍在各自仓库，不迁入 evoLoop。**运行层**只负责把已决定的规则落实为状态查询、关联、派发、恢复和结果回收。**阅读发布层**向人和 Agent 提供当前版本，反馈重新进入任务与认识循环。
 
-代码责任划分见[包架构与依赖图](packages.md)，运行时协议与 Desktop 入口边界见[Codex 接入](codex-integration.md)。业务实现前先确认[技术选型](technology-selection.md)：当前推荐 TypeScript/Node 模块化单体、SQLite 运行记录、OpenViking 独立知识服务，尚未将建议记为用户已采纳。真实使用暴露的 dogfood issue 与新需求进入同一飞书提议/判断路径；定时检查也经同一任务规则接续，具体见[日常工作闭环](../product/daily-loop.md)。
+代码责任划分见[包架构与依赖图](packages.md)，运行时协议与 Desktop 入口边界见[Codex 接入](codex-integration.md)。业务实现前先确认[技术选型](technology-selection.md)：运行存储已按用户意见选择 PostgreSQL；TypeScript/Node 模块化单体与 OpenViking 独立知识服务仍为待确认建议。真实使用暴露的 dogfood issue 与新需求进入同一飞书提议/判断路径；定时检查也经同一任务规则接续，具体见[日常工作闭环](../product/daily-loop.md)。
 
 ## 3. 数据归属和引用
 

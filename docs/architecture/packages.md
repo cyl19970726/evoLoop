@@ -1,8 +1,8 @@
 # 包架构：实现边界与运行装配
 
-推荐包架构 v0.2 · **拟议实现架构，待确认，尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
+推荐包架构 v0.3 · **拟议实现架构，待确认，尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
 
-首期推荐 TypeScript `strict`、Node.js 24 LTS、npm workspaces：一个模块化 `core` 包，Fastify 本地协调 API，SQLite（`better-sqlite3`）运行记录，飞书任务与日程适配器，独立 OpenViking 服务的 HTTP 适配器，以及 evoLoop 自管的 Codex App Server stdio 适配器。**这是待确认的实现提案，不是已批准技术栈或已运行系统。** OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定，本页不锁版本。本机 Python 证明已在[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)跑通，是运行机制的研究证据，不决定生产实现语言。
+首期架构提议为 TypeScript `strict`、Node.js 24 LTS、npm workspaces：一个模块化 `core` 包，Fastify 本地协调 API，飞书任务与日程适配器，独立 OpenViking 服务的 HTTP 适配器，以及 evoLoop 自管的 Codex App Server stdio 适配器。**运行记录采用 PostgreSQL 是用户已选定的方向；其余技术与整体装配仍待确认，系统尚未实现或部署。** 推荐通过 `pg`（node-postgres）接入 PostgreSQL，驱动与固定版本仍待首片验证。OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定，本页不锁版本。本机 Python 证明已在[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)跑通，是运行机制的研究证据，不决定生产实现语言。
 
 ## 源码依赖
 
@@ -14,7 +14,7 @@ flowchart TB
   D["应用装配<br/>apps/coordinator"]:::app
   C["调用入口<br/>apps/cli · packages/agent-tools"]:::app
   K["业务规则<br/>packages/core"]:::core
-  A["四个独立平台适配包<br/>adapter-feishu<br/>adapter-wiki-openviking<br/>adapter-codex-app-server<br/>adapter-local-state"]:::adapter
+  A["四个独立平台适配包<br/>adapter-feishu<br/>adapter-wiki-openviking<br/>adapter-codex-app-server<br/>adapter-postgres"]:::adapter
   P["共同合同与端口<br/>packages/contracts<br/>Zod schema · JSON Schema"]:::port
   D --> K
   D --> A
@@ -37,13 +37,13 @@ flowchart TB
 | 工作区／包 | 对外接口与责任 | 可依赖 | 禁止承担 |
 | --- | --- | --- | --- |
 | `packages/contracts` | Zod 版本化输入/输出边界 schema、由其导出的 JSON Schema、中立 ID/结果类型及 `TaskStore`、`ScheduleStore`、`EvidenceStore`、`KnowledgeRepository`、`RoleRegistry`、`SessionRuntime`、`OperationJournal` 端口；对外提供协议版本与校验入口 | Zod 等校验库 | 飞书列 ID、Codex 生成类型、OpenViking DTO、数据库 schema 或运行时业务判断 |
-| `packages/core` | `proposeTask`、`reviewProposal`、`planDispatch`、`reconcileRun`、`computeDueOccurrences`、`proposeKnowledgeRevision`、`reviewStage` 等用例；接收端口与时钟；确定性状态转换和授权/基线检查 | `contracts`、cron-parser 等纯计算依赖 | 平台 SDK、HTTP/SQLite 的直接调用、把模型回答视作已批准决定 |
+| `packages/core` | `proposeTask`、`reviewProposal`、`planDispatch`、`reconcileRun`、`computeDueOccurrences`、`proposeKnowledgeRevision`、`reviewStage` 等用例；接收端口与时钟；确定性状态转换和授权/基线检查 | `contracts`、cron-parser 等纯计算依赖 | 平台 SDK、HTTP/PostgreSQL 的直接调用、把模型回答视作已批准决定 |
 | `packages/adapter-feishu` | `TaskStore` 与 `ScheduleStore` 实现，租户鉴权、列/身份映射、分页、回读、变更提示与全量对账；对未验证能力报告 `unsupported` | `contracts`、飞书 SDK/HTTP | 第二份任务状态、日程权威或虚构 CAS/原子领取保证 |
 | `packages/adapter-wiki-openviking` | `EvidenceStore`/`KnowledgeRepository` 的 OpenViking HTTP 映射；外置 immutable revision 文件和 manifest 的存取；读取、检索、发布及能力报告；原生 compile 仅在另行验证后启用；贡献、候选、审核、修订、撤回依赖进入 `core` 的维护流程 | `contracts`、HTTP/文件客户端 | 自建第二个认知执行栈、把普通写页当自动 compile、直接认定搜索摘要为原始证据 |
 | `packages/adapter-codex-app-server` | `SessionRuntime` 实现；自管 stdio 子进程、握手、Thread/Turn 请求与事件、断线回读和版本能力探测 | `contracts`、局部协议类型 | 任务验收、调度权威、推断 Desktop 聊天已受控 |
-| `packages/adapter-local-state` | SQLite `OperationJournal`、outbox、运行 ID 关联、检查水位、到期实例和 `RoleRegistry` 引用；职责正式说明保留在受管项目配置，SQLite 仅引用其修订；为重启对账保存意图与结果 | `contracts`、`better-sqlite3` | 飞书任务/日程状态、Wiki 来源或修订正文的可编辑副本 |
+| `packages/adapter-postgres` | PostgreSQL `OperationJournal`、outbox、运行 ID 与到期实例关联、检查水位和 `RoleRegistry` 引用；职责正式说明保留在受管项目配置，数据库仅引用其修订；包内维护版本化 SQL 迁移，为重启对账保存意图与结果 | `contracts`、`pg`（node-postgres） | 飞书任务/日程状态、Wiki 来源或修订正文的可编辑副本 |
 | `packages/agent-tools` | 窄 MCP/Agent 工具：查询、提议、交付、审阅和贡献，调用协调 API；可供 Desktop 与自管线程配置使用，Codex 宿主专有桥接单独声明能力 | `contracts`、API 客户端、MCP SDK | 常驻自动协调进程、直接写适配器、假定独立 daemon 能调用当前桌面宿主工具或自动唤醒/监听 Desktop |
-| `apps/coordinator` | 单活进程；Fastify 本地 API、身份/凭据装配、事件接收、到期计算循环、outbox 与周期对账、健康状态 | `core`、`contracts`、所需适配器 | 第二个可编辑业务权威、绕过 `core` 的快速写入路径 |
+| `apps/coordinator` | 单活进程；Fastify 本地 API、身份/凭据与数据库连接装配、事件接收、到期计算循环、outbox 与周期对账、健康状态 | `core`、`contracts`、所需适配器 | 第二个可编辑业务权威、绕过 `core` 的快速写入路径 |
 | `apps/cli` | 本地检查、提出和管理命令，经同一 API 调用用例 | `contracts`、API 客户端 | 再启动一个写入协调者或独立实现业务状态机 |
 
 `packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
@@ -72,7 +72,7 @@ flowchart LR
   C --> F["飞书适配器"]:::adapter --> FS["飞书 Bitable<br/>Task／Schedule 权威"]:::authority
   C --> W["Wiki HTTP 适配器"]:::adapter --> OV["独立 OpenViking 服务<br/>外置 Wiki 数据"]:::authority
   C --> R["App Server 适配器"]:::adapter <-->|请求与运行事件| AS["自管 Codex App Server<br/>stdio Thread／Turn"]:::external
-  C --> L["SQLite 适配器"]:::adapter --> DB["外置运行库<br/>Journal／outbox／水位"]:::state
+  C --> L["PostgreSQL 适配器"]:::adapter --> DB["PostgreSQL 运行库<br/>Journal／outbox／水位"]:::state
   H -.->|原生编辑| FS
   classDef human fill:#FFF1D6,stroke:#A86412,color:#402700
   classDef entry fill:#FBE7CA,stroke:#A86412,color:#402700
@@ -88,15 +88,15 @@ flowchart LR
 
 **统一写路径。** Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与当前身份 → `core` 重读飞书/知识修订并检查授权、接受状态和冲突 → `OperationJournal` 记录意图 → 适配器执行写入 → 回读确认 `applied`、标 `pending` 或保留 `unknown` → outbox/对账接续。飞书中人的原生编辑是例外入口；事件只是回读提示，协调者需按修订/字段比较，冲突时停止并交给责任者复核。没有实测条件写时不承诺排除并发覆盖；自动写由单活协调者串行，飞书的人类旁路通过字段归属、回读和恢复限制风险。
 
-Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位置**，以 immutable revision 文件及 manifest 记录固定修订和依赖；这是 evoLoop 需实现的版本层设计，不能假定 OpenViking 原生提供相同事务。SQLite 只记修订引用、操作结果与对账水位，不存正文。贡献先成候选，由单一维护发布者回读基线、审阅冲突与撤回影响、发布经审阅的修订、再核对结果；必须关闭 OpenViking 及其他工具的旁路写入。若无法关闭旁路或缺少经验证的原子条件写，安全多写者发布仍不支持。知识存入、通知成功、认知 session 实际使用及目标消费者效果分别核验。
+Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位置**，以 immutable revision 文件及 manifest 记录固定修订和依赖；这是 evoLoop 需实现的版本层设计，不能假定 OpenViking 原生提供相同事务。PostgreSQL 只记修订引用、操作结果与对账水位，不存正文。贡献先成候选，由单一维护发布者回读基线、审阅冲突与撤回影响、发布经审阅的修订、再核对结果；必须关闭 OpenViking 及其他工具的旁路写入。若无法关闭旁路或缺少经验证的原子条件写，安全多写者发布仍不支持。知识存入、通知成功、认知 session 实际使用及目标消费者效果分别核验。
 
 首期认知执行由已登记的 Codex App Server Session 承载，不同时启用 VikingBot 再养一套默认派发、权限和恢复栈。OpenViking 只承担本方案明确验证过的知识服务能力；若它的原生工作流参与写入，也必须走同一候选审核与单维护者发布规则。
 
-调度采用确定性状态表：从飞书当前 `ScheduleStore` 计算到期 UTC 实例，以稳定触发键记意图，按错过/重叠策略创建或关联独立任务；重启先对账 `unknown`、outbox 和水位，周期全量对账补事件遗漏。定时器响起本身不接受新需求，也不证明任务完成。首期无需 Redis、Temporal、Postgres 或 Web 前端；若将来出现多协调者、租约或高吞吐要求，再以真实负载和条件写证据修订。
+调度采用确定性状态表：从飞书当前 `ScheduleStore` 计算到期 UTC 实例，以稳定触发键记意图，按错过/重叠策略创建或关联独立任务；重启先对账 `unknown`、outbox 和水位，周期全量对账补事件遗漏。PostgreSQL 事务只保证本库内意图、outbox 等记录的一致性，不能把飞书、Wiki 或 App Server 的副作用变成跨系统原子操作。定时器响起本身不接受新需求，也不证明任务完成。首期保持一个活动协调者，无需 Redis、Temporal 或 Web 前端；若将来出现多协调者、租约或高吞吐要求，再以真实负载和条件写证据修订。
 
 ## 切片与验证
 
-1. **提议与判断：** 创建 `contracts`、`core/tasks`、飞书适配器、最小 SQLite Journal、协调 API/CLI；用真实测试表验证原生人工编辑交错、分页/事件丢失和接受决定。此时不建空 Wiki/Codex 包。
+1. **提议与判断：** 创建 `contracts`、`core/tasks`、飞书适配器、最小 PostgreSQL Journal、协调 API/CLI；用真实测试表验证原生人工编辑交错、分页/事件丢失和接受决定。此时不建空 Wiki/Codex 包。
 2. **一次执行与恢复：** 加 Codex App Server、扩展 Journal/outbox 与 `core/coordination`；验证写成后丢响应、已知/未知 Turn ID、重启回读与成果核验。`turn/completed` 只推进运行状态。
 3. **一次日程：** 加 `core/scheduling` 与 `ScheduleStore`；以可控时钟验证到期、漏触发、重叠、暂停/改期、时区和恢复，再用真实飞书表/进程验证对账。
 4. **知识与真实使用：** 加 OpenViking HTTP 适配器、外置修订层、`core/knowledge` 与 evaluation；验证相反解释、同基线写、来源撤回、审阅发布、独立 session 消费，以及与直接读原始材料的成本/效果比较。Desktop 工具桥接随真正需要的人类讨论操作加入。

@@ -1,6 +1,6 @@
 # 贡献指南
 
-evoLoop 目前处于正式文档整理与隔离实验阶段。仓库还没有可运行的项目 harness、正式飞书适配器或生产 Wiki，应用技术栈也未决定。按任务涉及的范围阅读[产品定义](docs/product/definition.md)、[架构总览](docs/architecture/overview.md)、[接口约定](docs/architecture/contracts.md)或[开发规范](docs/development/standards.md)；其他资料从[文档入口](docs/README.md)查找。
+evoLoop 目前处于正式文档整理与隔离实验阶段。仓库还没有可运行的项目 harness、正式飞书适配器或生产 Wiki，已选择 PostgreSQL 保存运行记录，其余应用技术栈仍待确认。按任务涉及的范围阅读[产品定义](docs/product/definition.md)、[架构总览](docs/architecture/overview.md)、[接口约定](docs/architecture/contracts.md)或[开发规范](docs/development/standards.md)；其他资料从[文档入口](docs/README.md)查找。
 
 ## 提出与完成变更
 
