@@ -60,6 +60,8 @@ flowchart TB
 
 代码责任划分见[包架构与依赖图](packages.md)，运行时协议与 Desktop 入口边界见[Codex 接入](codex-integration.md)。业务实现前先确认[技术选型](technology-selection.md)：PostgreSQL 是已选主数据存储；TypeScript/Node 模块化单体与 OpenViking 独立知识服务仍为待确认建议。真实使用暴露的 dogfood issue 与新需求进入同一 PostgreSQL TaskStore 的提议／判断路径，可从飞书协作入口进入；定时检查也经同一任务规则接续，具体见[日常工作闭环](../product/daily-loop.md)。
 
+工作台作为交互层承接两类日常讨论、需求/任务操作和依据追溯，[前端架构](frontend.md)定义它与共同 Query/Command API 的关系。它不增加第五种产品能力，也不替代 Codex 会话运行时。[存储逻辑](storage.md)将权威边界落实为实体、固定修订和约束；[知识关联](knowledge-flow.md)说明 PG 对象和 Git 正式文档如何成为外置 Wiki 的可追溯来源，以及修订如何返回待复核任务。
+
 ## 3. 数据归属和引用
 
 | 数据 | 权威位置 | 其他地方保存什么 |

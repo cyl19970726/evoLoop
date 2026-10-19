@@ -18,6 +18,11 @@
       "group": "产品与阶段"
     },
     {
+      "path": "docs/product/workbench.md",
+      "title": "项目工作台设计",
+      "group": "产品与阶段"
+    },
+    {
       "path": "docs/product/agent-loop.md",
       "title": "Agent loop：四部分协作",
       "group": "产品与阶段"
@@ -60,6 +65,31 @@
     {
       "path": "docs/architecture/project-data.md",
       "title": "任务、文档、Wiki 与 Connector",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/frontend.md",
+      "title": "前端架构与交互边界",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/wiki-workspace.md",
+      "title": "Wiki 知识工作区前端",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/wiki-maintenance.md",
+      "title": "Wiki 编纂与审阅机制",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/storage.md",
+      "title": "存储逻辑与固定依据",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/knowledge-flow.md",
+      "title": "Task、文档与 Wiki 的关联",
       "group": "架构与协作"
     },
     {

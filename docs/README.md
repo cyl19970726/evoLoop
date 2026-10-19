@@ -7,11 +7,17 @@
 | 文档 | 负责回答的问题 | 谁在变更时维护 |
 | --- | --- | --- |
 | [产品定义](product/definition.md) | 用户要去哪里，哪些场景值得做，什么体验算成功 | 负责该产品变化的 session |
+| [项目工作台](product/workbench.md) | 每天讨论什么、页面怎样组织、怎样查看依据并复核变化 | 产品与前端责任者 |
 | [Agent loop](product/agent-loop.md) | 认知怎样推动下一步，分工怎样演进，任务怎样可靠接续 | 负责行为及协作变化的 session |
 | [Wiki 建设与评价](product/wiki-evaluation.md) | 怎样积累、修订和使用认识，怎样判断它是否有效 | 认知维护与相应验证的责任者 |
 | [Dogfood 与日常工作](product/daily-loop.md) | 发现如何进入任务、需求谁判断、日常讨论和定时工作怎样接续 | 对应领域与整体协调责任者 |
 | [技术选型](architecture/technology-selection.md) | 推荐语言与核心技术、Wiki 基座/版本和有限改造边界 | 架构及选型责任者 |
 | [项目数据与 Connector](architecture/project-data.md) | 任务、需求文档与 Wiki 如何关联，飞书如何接入 | 产品、架构与集成责任者 |
+| [前端架构](architecture/frontend.md) | 工作台技术、路由、查询/命令、会话衔接与部署边界 | 前端与核心接口责任者 |
+| [Wiki 工作区架构](architecture/wiki-workspace.md) | 参考 nashsu 怎样做知识点、专题、双链、来源、图谱与 Review 前端 | Wiki 产品与前端责任者 |
+| [Wiki 维护机制](architecture/wiki-maintenance.md) | 参考哪些编纂机制，如何形成候选、审阅发布和纠正旧认识 | 认知与知识集成责任者 |
+| [存储逻辑](architecture/storage.md) | 表、固定版本、外键、事务、外置原件和恢复怎么设计 | 数据与架构责任者 |
+| [知识关联](architecture/knowledge-flow.md) | Task、需求、Git 规范如何进入 Wiki，纠正怎样影响后续工作 | 认知与集成责任者 |
 | [包架构](architecture/packages.md) | 四部分如何落到语言、包、接口、依赖与运行边界 | 架构及实现责任者 |
 | [Codex 接入](architecture/codex-integration.md) | 线程/轮次如何承接任务、回收和恢复，与桌面入口如何衔接 | 运行时适配责任者 |
 | [架构总览](architecture/overview.md) | 组件和层级怎样支撑场景，数据和责任归谁 | 负责架构或接口变化的 session |

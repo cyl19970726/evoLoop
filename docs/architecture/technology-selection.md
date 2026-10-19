@@ -1,6 +1,6 @@
 # 技术选型：核心栈、Wiki 基座与改造边界
 
-状态：**推荐基线 v0.3；用户已选择 PostgreSQL 承载 evoLoop 主数据、飞书作为 connector 与协作入口，其余主要技术待确认。** 本文记录已选数据边界与实现建议；不是已安装依赖清单，也不表示服务已经上线。代码责任见[包架构](packages.md)，产品目标仍以[产品定义](../product/definition.md)为准。
+状态：**推荐基线 v0.4；用户已选择 PostgreSQL 承载 evoLoop 主数据、飞书作为 connector 与协作入口，其余主要技术待确认。** 本文记录已选数据边界与实现建议；不是已安装依赖清单，也不表示服务已经上线。代码责任见[包架构](packages.md)，产品目标仍以[产品定义](../product/definition.md)为准。
 
 ## 1. 推荐决定
 
@@ -23,12 +23,14 @@
 | Wiki 基座 | **独立 OpenViking 服务，HTTP 接入** | 复用内容、解析/检索、知识空间等基础能力；普通写页与 Wiki 综合编译的语义分开。下一候选版本为 v0.5.1，见下文门槛。 |
 | 上游语言 | **沿用 OpenViking 的 Python/Rust 等实现** | 上游独立构建，不把 Python 嵌入 Node core；HTTP 是语言和升级边界。Python 协议研究工具继续作为实验资产。 |
 | Agent 工具 | **CLI 优先，按需要加官方 MCP TypeScript SDK** | 两者都调用协调 API；MCP 是工具传输，不是第二个协调者或另一套业务权限。 |
-| 阅读界面 | **飞书协作投影 + Codex 日常讨论 + 现有静态文档站** | 飞书不能替代 PG 原生文档版本或审核；Wiki 阅读先对现有入口做实际体验验证。暂不选 React/Next/Tauri 重建整套前端。 |
+| 项目工作台 | **推荐 React + TypeScript / Vite SPA，React Router + TanStack Query** | 工作台通过同一 API 组合任务、文档、认识与分工，支持依据追溯和复核；首期本机同源部署。飞书、Codex、公开静态站保留各自入口；具体取舍见[前端架构](frontend.md)，尚未安装实现。 |
 | 检查与观测 | **node:test、合同用例、真实切片、结构化 JSON 日志** | 沿用当前检查工具；按 task/run/operation/knowledge revision 关联，日志脱敏并记录模型和维护成本。 |
 
 Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 workspaces，Zod 提供 JSON Schema 转换。这里的项目选择是基于职责和代价的判断，并非这些官方文档证明了 evoLoop 的效果。[Node 生命周期][node] · [TS strict][ts] · [Fastify][fastify] · [npm workspaces][npm] · [Zod][zod]
 
 表中 PostgreSQL 主数据与飞书 connector 的权威边界已确定；其版本/驱动和其他主要技术仍是推荐方案。依赖的精确补丁版、锁文件、Node/数据库驱动兼容性须在首个代码切片中共同验证；本轮没有安装它们。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
+
+前端补充采用[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；页面、依赖和部署均尚未实现。
 
 ## 2. 为什么主语言选 TypeScript
 
@@ -60,7 +62,7 @@ Codex 隔离研究已经使用 Python 跑通了受限闭环，[PR #2](https://gi
 
 主数据和运行记录的拟议实现约定如下，尚未成为实测保证：
 
-- `adapter-postgres` 持有 SQL、参数化查询、连接池和版本化迁移，`core` 只调用端口。首期用 `pg` 和显式 SQL，不同时引入 ORM；新增 ORM 必须能解释其对迁移与合同维护的实际收益。
+- `adapter-postgres` 持有 SQL、参数化查询、连接池和版本化迁移，`core` 只调用端口。首期用 `pg` 和显式 SQL，推荐 `node-pg-migrate` 作为版本化迁移 runner；具体字段、原件与检索取舍见[存储设计](storage.md)。不同时引入 ORM；新增 ORM 必须能解释其对迁移与合同维护的实际收益。
 - 用稳定的对象/operation/occurrence 键、版本列和数据库唯一约束避免重复登记；PostgreSQL 适配器通过中立 `UnitOfWork` 绑定同一连接，Task/Document/Relation 更新、操作去重和 outbox 在一个事务提交；core 不直接使用驱动 client。Task、文档审核、运行、同步和实际效果分开建状态，避免一个“完成”替代所有判断。外部请求不放进长事务里，未知结果仍需对账。一次事务须使用同一个借出的 client，完成/失败后归还，不能用独立 `pool.query` 拼接事务。[驱动事务][pg-transactions] · [连接池][pg-pool]
 - 为 evoLoop 使用独立数据库或受限 schema，数据和备份在开发仓库外；表按项目范围隔离。记录 schema 版本，迁移由单一部署步骤执行；空库建立、旧版升级、失败恢复及备份恢复要用真实 PostgreSQL 验证。迁移文件进 Git，运行数据和连接凭据不进 Git。
 
@@ -80,7 +82,7 @@ PostgreSQL 事务不能覆盖飞书、Codex 或 Wiki 的网络副作用。丢失
 
 依据有两类：一是 OpenViking 已有面向多客户端的内容/检索服务边界和真正的 Wiki compile；二是已有固定版实验观察到纠正合并、保留未决解释和外置恢复的有限可行性。nashsu 也有 HTTP/MCP 写页，但完整摄入依赖桌面前端状态、队列、文件调用和模型客户端；把它变成无人值守服务需要实质拆分。我们的核心目标是多 session 持续维护与消费项目认知，因而更适合前者。具体证据和相反条件见[已有基座比较](../research/wiki-base-selection-20261019.md)。
 
-**不选择 nashsu 作为底座，并不否认它的阅读与整理价值。** 它的 purpose/schema、来源展示、合并与 Review 设计可作为体验参照。首期先借鉴机制；复制模块前单独核依赖、许可证和与目标知识模型的兼容性。不能假设把 nashsu UI 指向 OpenViking URL 就能获得兼容产品。
+**不选择 nashsu 作为底座，并不否认它的阅读与整理价值。** Wiki 前端明确参考它的知识树、类型/来源筛选、知识页、来源卡片、双向链接、图谱和 Review，按[Wiki 工作区架构](wiki-workspace.md)适配为服务数据驱动的组件；purpose/schema、合并与维护流程按[Wiki 维护机制](wiki-maintenance.md)借鉴。首期先借鉴机制；复制模块前单独核依赖、许可证和与目标知识模型的兼容性。不能假设把 nashsu UI 指向 OpenViking URL 就能获得兼容产品。
 
 ### 候选版本与证据不能混用
 
@@ -130,7 +132,7 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 | --- | --- |
 | 多台机器需要并行调度、无法由一个写者管理，且已有单机瓶颈证据 | 在既有 PostgreSQL 上评估多协调者的租约/队列；重新验证 fencing、抢占和副作用幂等，飞书继续作为投影和受控编辑入口 |
 | 很多跨天流程、补偿/人工等待难以在现有状态表可靠维护 | 评估 Temporal 等持久工作流；它不能替代外部 API 的幂等和项目价值判断 |
-| 现有阅读入口让人持续找不到依据、不能审阅或纠错 | 再确定专门 Web 前端及页面合同；先用使用记录决定界面，不预设完整后台 |
+| 工作台使用记录显示复杂协同编辑、大规模表格或公网渲染确有需要 | 在已有页面合同上评估富文本协作、虚拟化或全栈渲染；本轮已提出首期工作台，仍按实际使用推进 |
 | 部署和运行成本成为主要负担 | 比较打包/容器/常驻服务或 Go 的收益；先测量再迁移 |
 | OpenViking 固定版及可维护的小补丁仍不满足来源/修订/恢复，或桌面阅读成为主要目标 | 重开 Wiki 选型；保留可导出的来源、正文和修订，不把后端 URI 当永久业务主键 |
 
