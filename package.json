@@ -1,0 +1,16 @@
+{
+  "name": "evoloop-docs",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "docs:check": "node scripts/docs/cli.js check",
+    "docs:build": "node scripts/docs/cli.js build",
+    "test": "node --test scripts/docs/*.test.js"
+  },
+  "dependencies": {
+    "markdown-it": "15.0.3"
+  }
+}

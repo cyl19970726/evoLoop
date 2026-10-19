@@ -1,0 +1,20 @@
+# Local history is preserved but is not part of the public repository.
+/sessions/
+/session-maps/
+/.archify/
+/docs/design/
+/docs/research/
+/docs/validation/
+
+# Generated documentation, local dependencies and runtime files.
+/site/
+/.site-build-*/
+/node_modules/
+/.local/
+/.data/
+/wiki/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store

@@ -1,0 +1,42 @@
+# evoLoop
+
+**让项目从真实工作中形成认识，用认识推动下一步，再用实际效果改进产品、方法和 Agent 分工。**
+
+evoLoop 面向一个人和多个 Agent session 共同推进的项目。它连接阶段目标、工作材料、独立认知 Wiki、任务与交接，让每个领域都能发现问题、负责修复，并根据证据逐渐形成适合项目的协作结构。
+
+当前处于**产品与架构定义、知识底座验证阶段**。仓库提供正式文档与静态文档构建工具；业务 harness、飞书适配器及生产知识服务尚未实现或部署。候选系统的有限实测不等于整个产品已经可用。
+
+## 从这里开始
+
+| 你想了解什么 | 文档 |
+| --- | --- |
+| 产品是什么、解决谁的什么问题、如何验收 | [产品定义](docs/product/definition.md) |
+| 层级、组件、数据归属和失败恢复 | [架构总览](docs/architecture/overview.md) |
+| 任务、会话、知识和交接的最小接口语义 | [接口与协作合同](docs/architecture/contracts.md) |
+| 如何开展开发、验证和文档维护 | [开发规范](docs/development/standards.md) · [文档维护](docs/development/documentation.md) |
+| 哪些方向已确定、哪些仍需验证 | [决定记录](docs/decisions.md) · [阶段路线](docs/roadmap.md) |
+| 与觉察的关系、知识底座试验结果 | [来源与演进](docs/references/lineage.md) · [验证摘要](docs/references/validation-summary.md) |
+
+完整导航见 [docs](docs/README.md)。开始贡献请读 [CONTRIBUTING](CONTRIBUTING.md)；Agent 的项目入口为 [AGENTS](AGENTS.md)。
+
+## 当前边界
+
+- **分工随项目演进。** 从实际工作、成果和使用反馈判断是否增加、合并或撤回角色；同职责换会话不等于新角色。
+- **各领域都形成和使用认识。** 业务 session 可以发现并解决问题；Wiki 维护者综合知识，分工管理者评估职责安排。
+- **任务先用飞书多维表格。** 通过适配接口保持未来可迁移，当前不另建任务数据库。
+- **认知保存在开发仓库外。** 独立 Markdown vault 或知识服务都可；仓库保存代码、正式产品/架构/规范、接入配置和可发布摘要。
+- **阶段结束要实际使用。** 看交付是否有效、哪些判断需要改、下一阶段为什么值得做。
+
+## 阅读 HTML 文档
+
+使用 Node.js 22 或更新的受支持版本，在仓库根目录运行：
+
+```bash
+npm ci
+npm run docs:check
+npm run docs:build
+```
+
+打开生成的 `site/index.html`，即可离线阅读。Markdown 是正文来源，HTML 是可重建视图；生成目录不提交。发布内容由 `docs/site.json` 显式列出，可发布文档默认公开。项目子域名、托管与自动发布仍待实施。
+
+仓库地址：[cyl19970726/evoLoop](https://github.com/cyl19970726/evoLoop)。本地历史归档、实验知识库、凭据与运行日志不属于公开仓库内容。

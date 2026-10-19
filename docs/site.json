@@ -1,0 +1,19 @@
+{
+  "title": "evoLoop",
+  "description": "从实际工作形成认识，让认识推动项目与协作分工的演进。",
+  "pages": [
+    { "path": "README.md", "title": "项目概览", "group": "开始" },
+    { "path": "docs/README.md", "title": "文档导航", "group": "开始" },
+    { "path": "docs/product/definition.md", "title": "产品定义", "group": "产品与阶段" },
+    { "path": "docs/roadmap.md", "title": "阶段路线", "group": "产品与阶段" },
+    { "path": "docs/decisions.md", "title": "决定与设计状态", "group": "产品与阶段" },
+    { "path": "docs/architecture/overview.md", "title": "架构总览", "group": "架构与协作" },
+    { "path": "docs/architecture/contracts.md", "title": "接口与协作合同", "group": "架构与协作" },
+    { "path": "docs/development/standards.md", "title": "开发规范", "group": "开发与维护" },
+    { "path": "docs/development/documentation.md", "title": "文档维护", "group": "开发与维护" },
+    { "path": "CONTRIBUTING.md", "title": "贡献指南", "group": "开发与维护" },
+    { "path": "AGENTS.md", "title": "Agent 工作入口", "group": "开发与维护" },
+    { "path": "docs/references/lineage.md", "title": "来源与演进", "group": "依据" },
+    { "path": "docs/references/validation-summary.md", "title": "知识底座验证", "group": "依据" }
+  ]
+}
