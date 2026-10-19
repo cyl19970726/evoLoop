@@ -18,6 +18,16 @@
       "group": "产品与阶段"
     },
     {
+      "path": "docs/product/agent-loop.md",
+      "title": "Agent loop：四部分协作",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/wiki-evaluation.md",
+      "title": "Wiki 建设与有效性评价",
+      "group": "产品与阶段"
+    },
+    {
       "path": "docs/roadmap.md",
       "title": "阶段路线",
       "group": "产品与阶段"
@@ -113,6 +123,11 @@
       "group": "研究 · OpenViking"
     },
     {
+      "path": "docs/research/openviking/architecture.md",
+      "title": "架构、数据与接入图",
+      "group": "研究 · OpenViking"
+    },
+    {
       "path": "docs/research/nashsu-llm-wiki/plan.md",
       "title": "计划与执行补记",
       "group": "研究 · nashsu Wiki"
@@ -130,6 +145,11 @@
     {
       "path": "docs/research/nashsu-llm-wiki/feature-workflows.md",
       "title": "完整机制研究",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/architecture.md",
+      "title": "架构、数据与接入图",
       "group": "研究 · nashsu Wiki"
     },
     {

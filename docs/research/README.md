@@ -16,10 +16,10 @@
 
 两条研究会话的完整报告保留为独立证据链，不能只凭综合摘要替代它们：
 
-| 候选与固定版本 | 计划与执行补记 | 结果与限制 | 接入分析 | 功能、机制与测试设计 |
-| --- | --- | --- | --- | --- |
-| OpenViking 0.5.0 | [计划](openviking/plan.md) | [结果](openviking/results.md) | [接入](openviking/integration.md) | [完整研究](openviking/feature-workflows.md) |
-| nashsu/llm_wiki v0.6.12 | [计划](nashsu-llm-wiki/plan.md) | [结果](nashsu-llm-wiki/results.md) | [接入](nashsu-llm-wiki/integration.md) | [完整研究](nashsu-llm-wiki/feature-workflows.md) |
+| 候选与固定版本 | 计划与执行补记 | 结果与限制 | 接入分析 | 功能、机制与测试设计 | 架构与数据流程 |
+| --- | --- | --- | --- | --- | --- |
+| OpenViking 0.5.0 | [计划](openviking/plan.md) | [结果](openviking/results.md) | [接入](openviking/integration.md) | [完整研究](openviking/feature-workflows.md) | [架构图](openviking/architecture.md) |
+| nashsu/llm_wiki v0.6.12 | [计划](nashsu-llm-wiki/plan.md) | [结果](nashsu-llm-wiki/results.md) | [接入](nashsu-llm-wiki/integration.md) | [完整研究](nashsu-llm-wiki/feature-workflows.md) | [架构图](nashsu-llm-wiki/architecture.md) |
 
 本次公开整理保留实验事实、模型差异、失败和未测项，没有重新运行模型实验。原始日志、消费产物、实验 Wiki 与运行环境继续外置；报告中的证据文件名用于定位保留记录，不代表这些原件已经公开，也不构成公开可完整复现的实验包。
 
