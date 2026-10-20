@@ -27,6 +27,9 @@ export const documentPayloadCommandSchema = z.strictObject({
 });
 export type DocumentPayloadCommand = z.infer<typeof documentPayloadCommandSchema>;
 
+const documentUploadSchema = z.strictObject({ blobId: id, base64: z.string().max(22_400_000) });
+export const documentImportSchema = z.strictObject({ command: documentPayloadCommandSchema, uploads: z.array(documentUploadSchema).max(51) });
+
 export interface DocumentAsset { path: string; blobId: string; contentHash: string; size: number; mediaType: string }
 export interface DocumentPayloadRevision {
   projectId: string; documentId: string; id: string; previousRevisionId: string | null;
