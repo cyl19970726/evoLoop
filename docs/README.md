@@ -24,7 +24,7 @@
 | 判断产品是否适合、现在能体验什么 | [为什么做](product/definition.md#为什么要做) → [当前基线](roadmap.md#当前基线) | 想理解整体行为再读 [Agent loop](product/agent-loop.md#一轮循环应留下什么)；不必先读接口。 |
 | 阶段检查全绿，但使用者仍不会用；需要选下一步 | [当前阶段的一个小任务](roadmap.md#当前阶段的一个小任务) → [阶段回看](product/daily-loop.md#阶段交付后怎样选择下一步) | 具体界面失败查[工作台使用路径](product/workbench.md#六条端到端使用路径)；先区分这一任务、阶段与整套工作台的完成。 |
 | 发现缺陷或提出小功能，准备接受与执行 | [提议怎样成为任务](product/daily-loop.md#一条提议怎样变成可做的任务) → [当前贡献流程](../CONTRIBUTING.md#提出与完成变更) | 跨目标、争议或超出授权再找适当判断者；常规领域修复可直接负责完成。 |
-| 收到需求纠正，或把技术讨论结论纳入正式文档 | [纠正处理步骤](product/daily-loop.md#需求纠正怎样处理) → [P11 的结果与验收](product/definition.md#p11--工作文档驱动任务并把成立结论沉淀为正式文档) | 需要精确版本/旧任务影响查[项目数据 §3](architecture/project-data.md#3-过程文档怎样设计)；整理到 Git 查[§3a](architecture/project-data.md#6-工作文档怎样沉淀为仓库正式文档)。 |
+| 收到需求纠正，或把技术讨论结论纳入正式文档 | [纠正处理步骤](product/daily-loop.md#需求纠正怎样处理) → [P11 的结果与验收](product/definition.md#p11--工作文档驱动任务并把成立结论沉淀为正式文档) | 需要精确版本/旧任务影响查[项目数据 §4](architecture/project-data.md#4-文档表怎样设计)；整理到 Git 查[§6](architecture/project-data.md#6-工作文档怎样沉淀为仓库正式文档)。 |
 | 因返工或积压考虑增加长期审核职责 | [分工诊断与试行](product/agent-loop.md#②-动态多-session先诊断再改变分工) | 先比较方法、容量、临时专项和独立职责；具体事实和试行指标来自当次任务，不由目录预设岗位。 |
 | 设计页面，或验证 Wiki 是否影响行动 | [工作台](product/workbench.md#工作台要帮助人完成什么) / [Wiki 评价](product/wiki-evaluation.md#evaluator-要回答的问题) | 实现时再查下方架构合同与固定研究；页面模拟、独立 Agent 消费和真人效果分别记录。 |
 
