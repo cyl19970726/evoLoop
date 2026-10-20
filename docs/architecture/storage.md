@@ -174,7 +174,7 @@ sequenceDiagram
 
 附件、原始会话、Evidence 原件、大型成果和较大过程报告/资源 bundle 在仓库外受控 blob/原权威位置；PG 的 `blob_ref` 仅登记 project、稳定 ID、存储 URI、字节 hash、大小、媒体类型、权限范围、生命周期状态及唯一所属 revision/payload。路径不能作为永久身份，读取前再授权并核 hash。
 
-过程报告载荷先 prepare 到临时位置、核验主文件和 manifest 中全部资源的字节 hash、再原子发布 immutable blob；随后在 PG 单一事务登记 BlobRef、DocumentRevision、canonical payloadRef 与当前指针。PG 事务失败时发布物尚未成为可读文档，由对账清理未引用 blob；缺资源只可记录 incomplete，不得登记成完整可读报告。PG 内联正文直接在 revision 事务提交，且与 payloadRef 互斥。
+过程报告载荷先 prepare、核验主文件和 manifest 中全部资源的字节 hash、形成不可覆盖的完整载荷；随后在 PG 单一事务登记 BlobRef、DocumentRevision、canonical payloadRef 与当前指针。**对使用者的发布点是 PG 登记成功，不能把多文件上传描述成存储层原子事务。** PG 事务失败时载荷尚未成为可读文档，由对账清理未引用 blob；缺资源只可记录 incomplete，不得登记成完整可读报告。PG 内联正文直接在 revision 事务提交，且与 payloadRef 互斥。
 
 ### 来源传递的校验与回执
 
@@ -182,7 +182,7 @@ sequenceDiagram
 
 ### 文件与数据库的恢复边界
 
-BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系统原子移入受控位置 → PG 登记可读引用；未登记的文件不通过 API 暴露，失败孤儿由对账按保留策略清理。PG 与文件没有共同事务，不能提前承诺“上传完成”；备份清单固定已登记 blob 的 ID/hash 与 PG 恢复点，恢复时核缺失和多余项。
+BlobStore 的**本机适配器**发布顺序为临时写入 → 核字节 hash → 同文件系统原子移入受控位置 → PG 登记可读引用。未来对象存储适配器则使用不可覆盖的对象键、完整 manifest 与独立内容校验，全部准备好后再登记；不能假设具有文件系统式原子改名，也不能把任意 ETag 当作本合同的内容 hash。两者都不暴露未登记载荷，失败孤儿、未完成上传和多余对象按保留策略对账清理。PG 与 blob 后端没有共同事务；备份清单固定已登记 blob 的 ID/hash 与 PG 恢复点，恢复时核缺失和多余项。对象存储的搬移语义须按具体后端核验，例如 [S3 的复制、移动与改名](https://docs.aws.amazon.com/AmazonS3/latest/userguide/copy-object.html)不能据本机 rename 行为推定。
 
 ### 权限、删除与跨系统恢复
 
@@ -192,7 +192,7 @@ BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系�
 
 ## 技术选择是否合理
 
-**当前推荐是“一套业务数据库 + 各自权威的文档/知识存储 + 可重建索引”。** PostgreSQL 已由用户选定，其余实现选择仍待首片确认。表多不等于每片都要建立所有表；下面先确定边界，按实际功能建立必需结构。
+**当前推荐是“一套业务数据库 + 各自权威的文档/知识存储 + 可重建索引”。** PostgreSQL 与首个知识后端 OpenViking 已由用户选定，具体版本、部署方式及其余实现选择仍待首片确认。表多不等于每片都要建立所有表；下面先确定边界，按实际功能建立必需结构。
 
 | 层 | 首期具体建议 | 选择理由与避免的重复 |
 | --- | --- | --- |
@@ -205,6 +205,27 @@ BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系�
 | 检索与关系展示 | PG 先按 ID、标题和结构化过滤检索；Wiki 语义检索沿用知识后端；前端图谱是有权限的有界关系视图 | 首期不新增 Elasticsearch、Neo4j、Redis 或第二向量库；关系可视化不要求图数据库。中文全文效果和跨源排序单独验证 |
 
 依据：[PostgreSQL JSON 类型](https://www.postgresql.org/docs/18/datatype-json.html)说明 JSONB 的存储与查询能力；[pg 事务](https://node-postgres.com/features/transactions)要求同一 client；[node-pg-migrate](https://salsita.github.io/node-pg-migrate/migrations/)提供迁移记录、锁和事务执行机制。项目选择不等于这些库已经通过本项目验证。迁移只用已锁版本支持的 SQL 路径；已经执行的迁移不可编辑，变更追加新文件。需要非事务 DDL 的迁移单独设计恢复，数据不可逆时采用向前修复/备份恢复，不假定自动 down 无损。
+
+### 两个参考 Wiki 的存储是什么
+
+以下为固定版本的官方文档/源码核查，不是 evoLoop 已部署的组件清单。OpenViking 此处核查 0.5.1；此前隔离运行实验使用 0.5.0，不能据此宣称 0.5.1 已通过运行验证。
+
+| 参考实现 | 正文、来源与附件 | 配置、历史与检索 | 对 evoLoop 的含义 |
+| --- | --- | --- | --- |
+| nashsu/llm_wiki v0.6.12 | 用户选定的本地 vault：`wiki/**/*.md`、`raw/sources`、`raw/assets` | 应用配置用 Tauri JSON store；项目标识在 `.llm-wiki/project.json`；向量索引可用本地 `.llm-wiki/lancedb`。Timeline 默认关闭，开启后的 `.llm-wiki/history` 有限量保留；摄入另有条件性 page-history | 核心存储可只用本地文件；引用其前端体验不要求引入这套 vault 或 LanceDB，更不能把其可选备份当作完整不可变修订历史 |
+| OpenViking 0.5.1 | VikingFS 提供统一 URI；AGFS/RAGFS 内容层可选本地文件系统、S3 兼容后端，或测试用内存后端 | 向量索引独立配置为 local、HTTP 服务或 Volcengine/VikingDB；索引除向量外还可能含摘要和其他文本。摘要/索引异步更新可落后于内容写入 | 可先接本地内容存储，部署时再选对象存储；S3 只解决内容存放，不替代索引、页修订或发布并发语义 |
+
+依据：[nashsu 项目目录](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src-tauri/src/commands/project.rs)、[应用配置](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/project-store.ts)、[向量索引](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src-tauri/src/commands/vectorstore.rs)、[历史实现](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src-tauri/src/commands/file_history.rs)；[OpenViking 固定版存储说明](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/docs/en/concepts/05-storage.md)。本项目要求的“索引可重建”以完整保留其来源为前提，不能在未核对来源覆盖时直接删除上游索引中的文本。
+
+### evoLoop 何时接入对象存储
+
+**建议把 BlobStore 作为必需边界；对象存储作为正式托管时优先评估的实现，当前尚未选定供应商或部署。** 本机验证可以使用仓库外受控目录；正式托管并保存真实 HTML 资源包、图片、PDF 或其他成果时，应在接收第一份不可重建原件前确定持久存储、备份和恢复方案。多端访问通过统一 API 即可实现，本身不强制要求对象存储；单机持久卷也可行，但需承担该主机的容量、备份和搬迁。
+
+数据归属保持清楚：PG 保存任务、过程文档元数据/小型正文及 blob 引用；BlobStore 保存较大过程文档的唯一载荷与原件；Git 保存正式文档；外置 Wiki 保存知识正文、受控来源副本及自身索引。送入 Wiki 的提取文本记录源修订/hash，不替代 BlobStore 原始报告。HTML 的隔离展示与资源授权仍由[前端读取边界](frontend.md)处理，不能把公开 bucket 当作报告阅读器。
+
+evoLoop 的 BlobStore 与 OpenViking 内容层可以复用同一家存储服务，但使用分离的 bucket 或受隔离的前缀及访问策略，各自负责版本、生命周期和恢复；evoLoop 不直接改 OpenViking 私有对象，OpenViking 也不管理过程文档的 canonical payload。对象存储不自动提供应用的历史语义、跨 PG 事务或备份恢复证明。
+
+从本机目录迁到对象存储时保留 blob 稳定 ID、字节 hash、资源 manifest 和旧 DocumentRevision，只在适配绑定里调整物理位置。先复制、核验并试读，再切换绑定、按保留策略处理旧副本；Task/Wiki 的来源引用无需跟着本机路径变化。端口归[领域合同](contracts.md)，供应商 SDK 和迁移实现归[包架构](packages.md)，不为当前未部署的服务预建空包。
 
 **仍需明确的部署项**是数据库实例位置、容量/保留、备份频率与恢复目标、Wiki 固定版的底层后端及真实写入能力。这些在保存第一份真实且不可重建材料前落实。开发和 CI 用同主版本真实 PG 验约束，部署步骤先验空库建立、旧版升级和中断恢复。没有测量依据时不增加新的存储引擎；若 OpenViking 复用收益不足，重新比较薄知识后端，而不是在其旁边补一整套重复系统。
 

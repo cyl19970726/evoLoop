@@ -130,6 +130,8 @@ flowchart TB
 
 Wiki 前端代码按[集成方案](wiki-integration.md)拆为组件、数据 hooks 和共同 DTO：显示组件只收 props/事件；服务数据走共同 API；OpenViking DTO、目录及发布清单细节只留适配器。`SourceBridge` 是 `core/knowledge` 的组合用例，所用来源/知识端口属于 contracts；不把它再造为独立服务。上游可抽取代码须登记固定来源与依赖闭包，不直接导入 nashsu 的整个 Zustand/Tauri/摄入链。评价记录暂由 PG 适配器随真实切片支持，复用 Task/Run/Review 的固定引用，不能把 Wiki 正文移入评价表。
 
+对象存储接入时，可新增实现同一 `BlobStore` 的适配包（拟名 `adapter-object-storage`），由协调应用装配；SDK、上传方式、物理 key 与访问 URL 只留该包，不渗入 `core`、前端或业务 ID。当前不创建空包，12 个拟议包的现有索引保持当前切片范围。OpenViking 自身内容存储由其服务配置管理，`adapter-wiki-openviking` 仍走知识 API，不借 BlobStore 直接改它的私有对象；即使共用同家对象存储，也要隔离命名空间、访问与生命周期策略。部署时机、源文件归属及迁移条件见[存储设计](storage.md#evoloop-何时接入对象存储)。
+
 ## 知识图谱与后端替换的包边界
 
 按 DEC-027，先接 OpenViking，保留以后自研替换的路径。图谱是知识读取的一种表现；前端依赖 evoLoop 的知识合同，后端更换通过适配和数据迁移完成。这里细化现有包职责，不增加图数据库、独立图谱服务或第二套知识权威。

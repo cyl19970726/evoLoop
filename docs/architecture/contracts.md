@@ -104,7 +104,9 @@ HTML 原件保存为数据，不直接执行。默认阅读策略是静态预览
 
 页发布须声明读入基线与操作 ID。当前选型未能承诺可靠的页级条件写；在受限试点中采用单维护者串行发布、发布前回读与快照，旁路写入视为必须对账的风险。只有固定版本证明服务器确实拒绝旧基线写入，才可宣称多维护者安全发布。两候选的已观察结果见[验证摘要](../references/validation-summary.md)；按 DEC-027，首个集成后端选择 OpenViking，具体版本及生产能力尚未验收。
 
-`BlobStore` 管理仓库外受控原件的准备、按 hash 核验、发布读取与撤回；PG 只登记 blob 引用。发布顺序和恢复边界见[存储设计](storage.md)，PG 事务不覆盖文件系统。知识查询还须提供带权限和固定 revision 的类型/专题分页、正文、来源、出链/反链和有界邻域，详见[Wiki 前端模型](wiki-workspace.md)；这些是适配器需支持或明确报告缺失的合同，不假定 OpenViking 已有对应实体/API。
+`BlobStore` 管理仓库外受控原件的准备、按 hash 核验、发布读取与撤回；PG 只登记 blob 引用。发布顺序和恢复边界见[存储设计](storage.md)，PG 事务不覆盖文件系统或对象存储。知识查询还须提供带权限和固定 revision 的类型/专题分页、正文、来源、出链/反链和有界邻域，详见[Wiki 前端模型](wiki-workspace.md)；这些是适配器需支持或明确报告缺失的合同，不假定 OpenViking 已有对应实体/API。
+
+Blob 身份使用稳定 ID，附内容 hash、大小、媒体类型和资源 manifest；本机路径、bucket/key 与短期访问 URL 是适配层定位，不是业务身份。迁移存储实现保留原 ID/hash 与 DocumentRevision，只切换经核验的物理绑定。端口的 prepare/verify/publish 表达完整性及业务可读状态，不要求底层提供多对象原子改名；实现必须验证未完成上传不可读、缺资源拒绝发布、PG 登记失败后对账及旧修订回读。对象存储推荐与上游存储核查见[存储选择](storage.md#evoloop-何时接入对象存储)。
 
 较大 Markdown/HTML 报告和资源 bundle 沿用同一 BlobStore；原始小型 Markdown 或小型自包含 HTML 可内联存 PG。blob 先 prepare、校验 hash 与完整 assets manifest，再由 PG 事务登记不可变 DocumentRevision 及唯一 canonical payloadRef；只有 PG 提交成功后修订才可读。未准备完成的 blob 不可见，资源不全的修订最多标记 incomplete，不能标为完整可读。`body` 与 `payloadRef` 必须互斥且恰有一个；payloadRef 指向该 revision 唯一的不可变载荷，不是另一份可编辑正文。读写都再次核权限、有效性与 hash；撤回或权限收紧时停止新读取，保留历史状态及缺项记录。
 
