@@ -1,4 +1,5 @@
 import { renderPlainSvg } from './plain-svg.js';
+import { sourceUrl } from './viewer.js';
 export const STRUCTURE_ALIASES = { ports: 'contracts' };
 const routes = {
   'responsibility-to-entry': { points:[[210,116],[270,116]], label:'判断与授权', at:[240,102] },
@@ -22,9 +23,9 @@ export function structureDiagram(architecture, { expanded = false } = {}) {
     const shortContext={postgres:'Task／Document 主数据',codex:'Thread／Turn 历史'};
     const nodes = ['actors','entry',...external].map(id => {
       const n=lookup.get(id), index=external.indexOf(id);
-      return {id,label:n.label,lines:id==='entry'?['工作台／CLI／Agent 工具']:[shortContext[id]||n.sublabel],x:id==='actors'?30:id==='entry'?310:30+index*205,y:index<0?80:310,w:index<0?205:180,h:index<0?90:100};
+      return {id,label:n.label,lines:id==='entry'?['人：工作台观察与反馈','Agent：业务 skill → CLI']:[shortContext[id]||n.sublabel],x:id==='actors'?30:id==='entry'?310:30+index*205,y:index<0?80:310,w:index<0?205:180,h:index<0?90:100};
     });
-    nodes.push({id:'coordinator',x:650,y:65,w:360,h:120,label:'同一协调进程 · 拟议',lines:['共同 API · core 业务用例','中立合同与端口 · 适配器装配']});
+    nodes.push({id:'coordinator',x:650,y:65,w:360,h:120,label:'同一协调进程 · 本机切片',lines:['共同 API · core 业务用例','中立合同与端口 · 适配器装配']});
     const edges = [
       {id:'responsibility-to-entry',from:'actors',to:'entry',points:[[235,125],[310,125]],label:'判断／授权',at:[272,110]},
       {id:'entry-to-api',from:'entry',to:'coordinator',points:[[515,125],[650,125]],label:'受控命令／查询',at:[582,110]},
@@ -37,9 +38,9 @@ export function structureDiagram(architecture, { expanded = false } = {}) {
       ].map(([id,x,y,end,label,labelX],index)=>({id,from:'coordinator',to:external[index],points:[[x,185],[x,y],[end,y],[end,310]],label,at:[labelX,y-12]})),
       {id:'feishu-edit-to-adapters',from:'feishu',to:'coordinator',points:[[1030,360],[1048,360],[1048,195],[1020,195],[1020,145],[1010,145]],label:'编辑后受控核验',at:[1015,285],kind:'feedback'},
     ];
-    return {title:'evoLoop 系统结构 · 目标设计',description:'判断责任通过共同入口使用同一协调进程；进程装配核心、接口与适配器，连接五个各守权威的外部边界。展开协调进程可查看内部装配。',width:1060,height:445,nodes,edges,groups:[]};
+    return {title:'evoLoop 系统结构 · 目标设计',description:'人类工作台与 Agent 的业务 skill/CLI 共用同一协调进程；进程装配核心、接口与适配器，连接五个各守权威的外部边界。展开协调进程可查看内部装配。',width:1060,height:445,nodes,edges,groups:[]};
   }
-  const nodes = architecture.components.map(node => ({ id:node.id, x:node.pos[0], y:node.pos[1], w:node.size[0], h:node.size[1], label:node.label, lines:node.id==='entry'?['工作台／CLI','Agent 工具']:[node.sublabel], dashed:['actors','ports'].includes(node.id) }));
+  const nodes = architecture.components.map(node => ({ id:node.id, x:node.pos[0], y:node.pos[1], w:node.size[0], h:node.size[1], label:node.label, lines:node.id==='entry'?['人：工作台','Agent：业务 skill → CLI']:[node.sublabel], dashed:['actors','ports'].includes(node.id) }));
   const byId = new Map(nodes.map(node => [node.id,node]));
   const groups = architecture.boundaries.map(boundary => {
     const members = boundary.wraps.map(id => byId.get(id));
@@ -50,7 +51,7 @@ export function structureDiagram(architecture, { expanded = false } = {}) {
     if (!routes[edge.id]) throw new Error(`Structural route missing: ${edge.id}`);
     return {...edge,...routes[edge.id]};
   });
-  return { title:'evoLoop 系统结构 · 目标设计', description:'责任者经客户端使用受控 API；协调进程装配 core、合同与适配器。PG、外置 Wiki、Git、运行时与飞书各有边界。虚线连线表示代码接口依赖，端口不是运行服务。',width:1200,height:645,nodes,edges,groups };
+  return { title:'evoLoop 系统结构 · 目标设计', description:'人类经工作台观察，Agent 经业务 skill/CLI 执行，共用受控 API；协调进程装配 core、合同与适配器。PG、外置 Wiki、Git、运行时与飞书各有边界。虚线连线表示代码接口依赖，端口不是运行服务。',width:1200,height:645,nodes,edges,groups };
 }
 function el(tag, text, cls) { const n=document.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n; }
 export function parseStructureState(model,hash='') {
@@ -63,7 +64,7 @@ export function mountStructure(root,model,architecture,{onExplore,documentationH
   function update() { const p=new URLSearchParams({view:'structure'});if(state.scope)p.set('scope',state.scope);for(const id of state.expanded)p.append('expand',id);location.hash=p.toString();render(); }
   function sourceList(node,parent) {
     const list=el('div',null,'structure-sources');
-    for(const s of node.sources){const a=el('a',`${s.path}:${s.line}`);a.href=`${model.repository.url}/blob/${model.repository.revision}/${s.path}#L${s.line}`;a.target='_blank';a.rel='noopener noreferrer';list.append(a);}
+    for(const s of node.sources){const a=el('a',`${s.path}:${s.line}`);a.href=sourceUrl(model,s);a.target='_blank';a.rel='noopener noreferrer';list.append(a);}
     parent.append(list);
   }
   function tree(node,depth=0) {

@@ -1,5 +1,6 @@
 // A hand-composed reading layer over the sourced architecture model. It describes
 // the target design; the module explorer remains the exhaustive model browser.
+import { sourceUrl } from './viewer.js';
 const READ_IDS = ['loop', 'revision', 'recovery', 'authority'];
 
 export const READING_REGIONS = Object.freeze({
@@ -84,10 +85,6 @@ function makeButton(label, className, action) {
   node.addEventListener('click', action);
   return node;
 }
-function sourceHref(model, source) {
-  const base = model.repository.url.replace(/\/$/, '');
-  return `${base}/blob/${encodeURIComponent(model.repository.revision)}/${source.path.split('/').map(encodeURIComponent).join('/')}#L${source.line}`;
-}
 function addSources(container, model, ids) {
   const seen = new Set();
   const byId = new Map(model.nodes.map(node => [node.id, node]));
@@ -95,11 +92,11 @@ function addSources(container, model, ids) {
     const node = byId.get(id);
     if (!node) continue;
     for (const source of node.sources.slice(0, 2)) {
-      const key = `${source.path}:${source.line}`;
+      const key = `${source.revision ?? model.repository.revision}:${source.path}:${source.line}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const a = element('a', 'sys-source', `${source.path}:${source.line}`);
-      a.href = sourceHref(model, source);
+      a.href = sourceUrl(model, source);
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       container.append(a);

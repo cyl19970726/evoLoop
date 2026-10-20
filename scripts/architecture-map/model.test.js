@@ -16,7 +16,8 @@ test('published target map covers all target packages and distinguishes the one 
   for (const { path, unbuilt } of rows) {
     const nodes = model.nodes.filter(node => node.path === path);
     assert.equal(nodes.length, 1, `${path} needs exactly one map location`);
-    assert.equal(nodes[0].status, 'proposed', `${path} is a target-map location`);
+    const expectedStatus = ['apps/cli', 'apps/workbench'].includes(path) ? 'existing' : 'proposed';
+    assert.equal(nodes[0].status, expectedStatus, `${path}: distinguish existing entry clients from target responsibilities`);
     const manifest = new URL(`../../${path}/package.json`, import.meta.url);
     const exists = await fs.access(manifest).then(() => true, () => false);
     assert.equal(exists, !unbuilt, `${path} documentation and workspace state disagree`);
@@ -25,10 +26,13 @@ test('published target map covers all target packages and distinguishes the one 
   for (const item of [...model.nodes, ...model.edges]) {
     assert.ok(item.sources.length, `${item.id} needs evidence`);
     for (const source of item.sources) {
-      assert.match(source.path, /^docs\/architecture\/[a-z-]+\.md$/);
-      if (!cache.has(source.path)) cache.set(source.path, execFileSync('git', ['show', `${model.repository.revision}:${source.path}`], { cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8' }).split('\n'));
+      assert.ok(/^docs\/architecture\/[a-z-]+\.md$/.test(source.path) ||
+        source.path === '.agents/skills/evoloop-workflow/SKILL.md', `${item.id}: unexpected source path ${source.path}`);
+      const revision = source.revision ?? model.repository.revision;
+      const key = `${revision}:${source.path}`;
+      if (!cache.has(key)) cache.set(key, execFileSync('git', ['show', key], { cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8' }).split('\n'));
       assert.ok(source.line <= (source.endLine || source.line));
-      assert.ok((source.endLine || source.line) <= cache.get(source.path).length, `${item.id}: source span exceeds file`);
+      assert.ok((source.endLine || source.line) <= cache.get(key).length, `${item.id}: source span exceeds file at ${key}`);
     }
   }
 });

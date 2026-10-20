@@ -47,3 +47,17 @@ test('plain SVG safely escapes content and keeps Latin labels intact when wrappi
   assert.ok(svg.includes('&lt;script&gt;'));assert.ok(!svg.includes('<script>'));
   assert.throws(()=>renderPlainSvg({width:100,height:100,nodes:[],edges:[{id:'bad',from:'a',to:'b'}]}),/endpoint/);
 });
+
+test('Agent responsibilities reach the shared API through CLI without depending on optional MCP',()=>{
+  for(const actor of ['domain-session','cognition-role','division-role']){
+    const calls=model.edges.filter(e=>e.kind==='runtime'&&e.from===actor);
+    assert.ok(calls.some(e=>e.to==='cli'),actor);
+    assert.ok(!calls.some(e=>e.to==='agent-tools'),actor);
+  }
+  assert.ok(model.edges.some(e=>e.kind==='runtime'&&e.from==='cli'&&e.to==='api'));
+  const agent=model.nodes.find(n=>n.id==='agent-entry');
+  assert.equal(agent.parent,'entry');
+  for(const id of ['cli','business-skill','agent-tools'])assert.equal(model.nodes.find(n=>n.id===id).parent,agent.id);
+  assert.equal(model.nodes.find(n=>n.id==='workbench').parent,'entry');
+  assert.equal(model.nodes.find(n=>n.id==='agent-tools').status,'proposed');
+});
