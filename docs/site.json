@@ -138,6 +138,11 @@
       "group": "研究 · 综合判断"
     },
     {
+      "path": "docs/research/product-docs-evaluation-20261020.md",
+      "title": "产品文档评估与改进",
+      "group": "研究 · 综合判断"
+    },
+    {
       "path": "docs/research/codex-app-server-20261019.md",
       "title": "Codex App Server 调查",
       "group": "研究 · 运行时"
