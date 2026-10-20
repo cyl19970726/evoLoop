@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { workflowCommands } from "./workflow.js";
+import { runtimeCommands } from "./runtime.js";
+import { roleCommands } from "./roles.js";
+import { scheduleCommands } from "./scheduling.js";
+export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
+export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
 
 export const idSchema = z.uuid();
 const text = z.string().trim().min(1).max(4000);
@@ -14,9 +20,13 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536) }),
   z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text }),
   z.strictObject({ ...common, type: z.literal("document.adopt"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
-  z.strictObject({ ...common, type: z.literal("task.propose"), taskId: idSchema, title, goal: text, acceptance: text, owner: text, documentIds: z.array(idSchema).max(20) }),
+  z.strictObject({ ...common, type: z.literal("task.propose"), taskId: idSchema, title, goal: text, acceptance: text, owner: text, documentIds: z.array(idSchema).max(20), stageId: idSchema.optional(), consumer: text.optional(), useRequired: z.boolean().optional(), evidence: text.optional(), stopCondition: text.optional() }),
   z.strictObject({ ...common, type: z.literal("task.accept"), taskId: idSchema, expectedVersion: version, basis: basisSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("task.reviewBasis"), taskId: idSchema, expectedVersion: version, impactId: idSchema, decision: z.enum(["adopt", "retain"]), reason: text, acceptance: text.optional() }),
+  ...workflowCommands,
+  ...runtimeCommands,
+  ...roleCommands,
+  ...scheduleCommands,
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type Permission = "read" | "write" | "review";
@@ -27,7 +37,9 @@ export interface Document {
   currentRevisionId: string; adoptedRevisionId: string | null;
 }
 export interface DocumentRevision {
-  projectId: string; documentId: string; id: string; body: string; format: "markdown";
+  projectId: string; documentId: string; id: string; body: string | null; format: "markdown" | "html";
+  mediaType: "text/markdown" | "text/html"; originalName: string; payloadRef: string | null;
+  entrypoint: string | null; assetsManifest: import("./process-documents.js").DocumentAsset[];
   contentHash: string; author: string; createdAt: string; previousRevisionId: string | null; reason: string;
 }
 export interface DocumentDecision {
@@ -71,13 +83,13 @@ export interface RejectedResult {
 export type CommandResult = AppliedResult | RejectedResult;
 export interface Operation {
   projectId: string; id: string; actorId: string; commandHash: string;
-  commandType: Command["type"]; result: CommandResult; createdAt: string;
+  commandType: Command["type"] | "document.payload" | "reference.git" | "reference.formal" | "reference.task"; result: CommandResult; createdAt: string;
 }
 export interface OutboxEvent {
   projectId: string; id: string; operationId: string; effectKey: string;
   kind: string; entityId: string; version: number; createdAt: string;
 }
 export interface Page<T> { items: T[]; nextCursor: string | null }
-export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[] }
+export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[]; proposal?: import("./workflow.js").TaskProposal | null; judgements?: import("./workflow.js").TaskJudgement[]; deliveries?: import("./workflow.js").Delivery[]; observations?: import("./workflow.js").ConsumerObservation[]; closures?: import("./workflow.js").TaskClosure[] }
 export interface DocumentDetail { document: Document; current: DocumentRevision; adopted: DocumentRevision | null }
 export const capabilities = { processMarkdown: true, basisReview: true, git: false, html: false, feishu: false, wiki: false, runtime: false } as const;

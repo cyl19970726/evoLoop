@@ -1,9 +1,10 @@
+import type { Operation } from "@evoloop/contracts";
 export interface OperationReceipt {
   actorId: string;
   projectId: string;
   taskId: string;
   operationId: string;
-  commandType: "task.reviewBasis";
+  commandType: Operation["commandType"];
   createdAt: string;
 }
 
@@ -21,7 +22,7 @@ function isReceipt(value: unknown): value is OperationReceipt {
   const item = value as Partial<OperationReceipt>;
   return typeof item.actorId === "string" && item.actorId.length > 0
     && typeof item.projectId === "string" && typeof item.taskId === "string"
-    && typeof item.operationId === "string" && item.commandType === "task.reviewBasis"
+    && typeof item.operationId === "string" && typeof item.commandType === "string" && /^[a-z]+(?:\.[a-zA-Z]+)+$/.test(item.commandType)
     && typeof item.createdAt === "string";
 }
 

@@ -1,7 +1,32 @@
+import type { ReferenceReader, ReferenceTransaction } from "./references.js";
 import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
+import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageRevision, StageReview, TaskClosure, TaskJudgement, TaskProposal } from "./workflow.js";
+import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "./runtime.js";
+import type { RoleReader, RoleTransaction } from "./roles.js";
+import type { SchedulingReader, SchedulingTransaction } from "./scheduling.js";
+import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./process-documents.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
-export interface Reader {
+export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader {
+  getRuntimeSession(id: string): Promise<RuntimeSessionRecord | null>;
+  listRuntimeSessions(): Promise<RuntimeSessionRecord[]>;
+  getRuntimeRun(id: string): Promise<RuntimeRunRecord | null>;
+  listRuntimeRuns(taskId?: string): Promise<RuntimeRunRecord[]>;
+  listRuntimeEvents(runId: string): Promise<RuntimeRecordEvent[]>;
+  listRuntimeSessionEvents(sessionId: string): Promise<RuntimeRecordEvent[]>;
+  getGoal(id: string): Promise<Goal | null>;
+  listGoals(limit: number, cursor?: string): Promise<Page<Goal>>;
+  listGoalRevisions(goalId: string): Promise<GoalRevision[]>;
+  getStage(id: string): Promise<Stage | null>;
+  listStages(goalId?: string): Promise<Stage[]>;
+  listStageRevisions(stageId: string): Promise<StageRevision[]>;
+  listStageReviews(stageId: string): Promise<StageReview[]>;
+  getTaskProposal(taskId: string, taskRevisionId?: string): Promise<TaskProposal | null>;
+  listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
+  getDelivery(id: string): Promise<Delivery | null>;
+  listDeliveries(taskId: string): Promise<Delivery[]>;
+  listObservations(taskId: string): Promise<ConsumerObservation[]>;
+  listTaskClosures(taskId: string): Promise<TaskClosure[]>;
   getProject(): Promise<Project | null>;
   getDocument(id: string): Promise<Document | null>;
   getDocumentRevision(documentId: string, revisionId: string): Promise<DocumentRevision | null>;
@@ -17,7 +42,22 @@ export interface Reader {
   getOperation(id: string): Promise<Operation | null>;
   findTasksUsingDocument(documentId: string): Promise<Task[]>;
 }
-export interface Transaction extends Reader {
+export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction {
+  insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;
+  updateRuntimeSession(session: RuntimeSessionRecord, expectedVersion: number): Promise<void>;
+  insertRuntimeRun(run: RuntimeRunRecord): Promise<void>;
+  updateRuntimeRun(run: RuntimeRunRecord, expectedVersion: number): Promise<void>;
+  appendRuntimeEvent(event: RuntimeRecordEvent): Promise<void>;
+  insertGoal(goal: Goal, reason: string): Promise<void>;
+  updateGoal(goal: Goal, expectedVersion: number, reason: string): Promise<void>;
+  insertStage(stage: Stage, revision: StageRevision): Promise<void>;
+  updateStage(stage: Stage, revision: StageRevision, expectedVersion: number): Promise<void>;
+  insertStageReview(review: StageReview): Promise<void>;
+  insertTaskProposal(proposal: TaskProposal): Promise<void>;
+  insertTaskJudgement(judgement: TaskJudgement): Promise<void>;
+  insertDelivery(delivery: Delivery): Promise<void>;
+  insertObservation(observation: ConsumerObservation): Promise<void>;
+  insertTaskClosure(closure: TaskClosure): Promise<void>;
   savepoint<T>(action: () => Promise<T>): Promise<T>;
   insertProject(project: Project): Promise<void>;
   insertDocument(document: Document): Promise<void>;

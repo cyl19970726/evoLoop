@@ -26,3 +26,10 @@ test("recovery index keeps only receipt fields and isolates identities", () => {
   assert.deepEqual(visibleReceipts(parsed, "reviewer-a", ["different-project"]), []);
   assert.deepEqual(parseReceipts("malformed"), []);
 });
+
+
+test("reload preserves nested runtime operation receipts without retaining input", () => {
+  const receipt: OperationReceipt = { ...a, taskId: "", commandType: "runtime.session.reserve" };
+  assert.deepEqual(parseReceipts(JSON.stringify([{ ...receipt, input: "private task input" }])), [receipt]);
+  assert.deepEqual(parseReceipts(JSON.stringify([{ ...receipt, commandType: "runtime..reserve" }])), []);
+});

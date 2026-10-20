@@ -9,7 +9,14 @@
     "@evoloop/adapter-postgres": "0.1.0",
     "fastify": "5.12.7",
     "@fastify/static": "10.1.6",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "@evoloop/adapter-codex-app-server": "0.1.0",
+    "@evoloop/adapter-local-blobs": "0.1.0",
+    "@evoloop/adapter-wiki-openviking": "0.1.0",
+    "@evoloop/connector-feishu": "0.1.0",
+    "@evoloop/adapter-git-documents": "0.1.0"
   },
-  "devDependencies": { "@types/pg": "8.15.6" }
+  "devDependencies": {
+    "@types/pg": "8.15.6"
+  }
 }

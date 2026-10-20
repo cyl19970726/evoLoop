@@ -5,6 +5,12 @@ import type {
   Task, TaskDetail, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
+import { applyWorkflow } from "./workflow.js";
+import { reserveRuntime } from "./runtime/reserve.js";
+import { applyRole, RoleRuleError } from "./roles/index.js";
+import { applySchedule } from "./scheduling/commands.js";
+import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
+export { RuntimeWorkflowService } from "./runtime/service.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 
 export { DomainError } from "@evoloop/contracts/ports";
@@ -36,6 +42,12 @@ function requirePermission(principal: Principal, projectId: string, permission: 
 function required<T>(value: T | null, kind: string): T {
   if (value === null) throw new DomainError("NOT_FOUND", `${kind} was not found`);
   return value;
+}
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function requireAssignableOwner(tx: Transaction, owner: string): Promise<void> {
+  if (!uuid.test(owner)) return; // A temporary responsibility need not be a persistent Role.
+  const role = await tx.getRole(owner);
+  if (role?.state === "retired") throw new DomainError("ROLE_RETIRED", "retired role cannot receive new work");
 }
 
 function requireVersion(actual: number, expected: number): void {
@@ -107,13 +119,17 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
-    return command.type === "document.adopt" || command.type === "task.accept" || command.type === "task.reviewBasis"
+    return command.type === "document.adopt" || command.type === "task.accept" || command.type === "task.reviewBasis" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "task.judge" || command.type === "task.close" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose"
       ? "review" : "write";
   }
 
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
     const base = { status: "applied" as const, operationId: command.operationId };
     const actorId = principal.actorId;
+    if (command.type === "task.propose" || command.type === "task.revise") await requireAssignableOwner(tx, command.owner);
+    if (command.type === "task.accept") await requireAssignableOwner(tx, required(await tx.getTask(command.taskId), "Task").owner);
+    if (command.type === "runtime.session.reserve") await requireAssignableOwner(tx, command.roleId);
+    if (command.type === "schedule.create" || command.type === "schedule.revise") await requireAssignableOwner(tx, command.template.owner);
     switch (command.type) {
       case "project.create": {
         if (await tx.getProject()) throw new DomainError("ALREADY_EXISTS", "Project already exists");
@@ -131,7 +147,8 @@ export class WorkflowService {
         };
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
-          format: "markdown", contentHash: this.deps.hasher.hash(command.body), author: actorId,
+          format: "markdown", mediaType: "text/markdown", originalName: `${document.id}.md`, payloadRef: null,
+          entrypoint: null, assetsManifest: [], contentHash: this.deps.hasher.hash(command.body), author: actorId,
           createdAt: now, previousRevisionId: null, reason: "Initial draft",
         };
         await tx.insertDocument(document);
@@ -141,11 +158,14 @@ export class WorkflowService {
       case "document.revise": {
         const document = required(await tx.getDocument(command.documentId), "Document");
         requireVersion(document.version, command.expectedVersion);
+        const previous = required(await tx.getDocumentRevision(document.id, document.currentRevisionId), "Document revision");
+        if (previous.format !== "markdown") throw new DomainError("FORMAT_CHANGE_REQUIRES_PAYLOAD", "HTML revisions require the payload workflow");
         requireBody(command.body);
         const revisionId = this.deps.ids.next();
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
-          format: "markdown", contentHash: this.deps.hasher.hash(command.body), author: actorId,
+          format: "markdown", mediaType: "text/markdown", originalName: `${document.id}.md`, payloadRef: null,
+          entrypoint: null, assetsManifest: [], contentHash: this.deps.hasher.hash(command.body), author: actorId,
           createdAt: now, previousRevisionId: document.currentRevisionId, reason: command.reason,
         };
         await tx.insertDocumentRevision(revision);
@@ -193,6 +213,11 @@ export class WorkflowService {
       case "task.propose": {
         if (await tx.getTask(command.taskId)) throw new DomainError("ALREADY_EXISTS", "Task already exists");
         if (new Set(command.documentIds).size !== command.documentIds.length) throw new DomainError("DUPLICATE_DOCUMENT", "Linked documents must be unique");
+        if (command.stageId) {
+          const stage = required(await tx.getStage(command.stageId), "Stage");
+          if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "Task proposals require an active stage");
+          if (!command.consumer || !command.evidence || !command.stopCondition) throw new DomainError("INCOMPLETE_PROPOSAL", "Stage task needs consumer, evidence and stop condition");
+        }
         for (const id of command.documentIds) required(await tx.getDocument(id), "Linked document");
         const revisionId = this.deps.ids.next();
         const task: Task = {
@@ -206,6 +231,11 @@ export class WorkflowService {
         };
         await tx.insertTask(task);
         await tx.insertTaskRevision(revision);
+        if (command.stageId || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
+          await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
+            stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: command.useRequired ?? false,
+            evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
+        }
         for (const documentId of command.documentIds) {
           const link: TaskDocumentLink = {
             projectId: command.projectId, id: this.deps.ids.next(), taskId: task.id,
@@ -219,6 +249,17 @@ export class WorkflowService {
         const task = required(await tx.getTask(command.taskId), "Task");
         requireVersion(task.version, command.expectedVersion);
         if (task.state !== "proposed") throw new DomainError("INVALID_STATE", "Only proposed tasks can be accepted");
+        const proposal = await tx.getTaskProposal(task.id, task.currentRevisionId);
+        const judgements = await tx.listTaskJudgements(task.id);
+        if (proposal?.stageId && (await tx.getStage(proposal.stageId))?.state !== "active") {
+          throw new DomainError("INVALID_STAGE", "The proposed task's stage is no longer active");
+        }
+        if (proposal?.stageId || judgements.length) {
+          const latest = judgements.at(-1);
+          if (!latest || latest.taskRevisionId !== task.currentRevisionId || latest.decision !== "approve") {
+            throw new DomainError("PROPOSAL_NOT_APPROVED", "Current proposal revision needs an approval judgement");
+          }
+        }
         const linked = new Set((await tx.listLinks(task.id)).map((link) => link.documentId));
         if (new Set(command.basis.map((item) => item.documentId)).size !== command.basis.length) {
           throw new DomainError("DUPLICATE_DOCUMENT", "Basis documents must be unique");
@@ -295,6 +336,29 @@ export class WorkflowService {
         }
         return { result: { ...base, entityId: task.id, version: revision.version, revisionId, decisionId, impactIds }, effects };
       }
+      case "role.propose":
+      case "role.decide":
+      case "role.review":
+      case "role.handoff":
+      case "role.ackHandoff":
+      case "role.bindSession":
+      case "role.retire": {
+          try {
+            const result = await applyRole(tx, principal, command, { nowUtc: now, nextId: () => this.deps.ids.next() });
+            return { result: { ...base, ...result }, effects: [{ kind: "role", entityId: result.entityId, version: result.version }] };
+          } catch (error) {
+            if (error instanceof RoleRuleError) throw new DomainError(error.code, error.message, error.currentVersion);
+            throw error;
+          }
+      }
+      default:
+        if (command.type === "schedule.create" || command.type === "schedule.revise") {
+          return applySchedule(tx, principal, command as ScheduleCommand, now);
+        }
+        if (command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
+          return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value) });
+        }
+        return applyWorkflow({ tx, command, principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
     }
   }
 
@@ -326,7 +390,7 @@ export class WorkflowService {
       const task = required(await reader.getTask(taskId), "Task");
       const revision = required(await reader.getTaskRevision(taskId, task.currentRevisionId), "Task revision");
       const basis = revision.basisSetId ? required(await reader.getBasisSet(taskId, revision.id, revision.basisSetId), "Basis set") : null;
-      return { task, revision, basis, links: await reader.listLinks(taskId), impacts: await reader.listImpacts(taskId), decisions: await reader.listBasisDecisions(taskId) };
+      return { task, revision, basis, links: await reader.listLinks(taskId), impacts: await reader.listImpacts(taskId), decisions: await reader.listBasisDecisions(taskId), proposal: await reader.getTaskProposal(taskId), judgements: await reader.listTaskJudgements(taskId), deliveries: await reader.listDeliveries(taskId), observations: await reader.listObservations(taskId), closures: await reader.listTaskClosures(taskId) };
     });
   }
   getTaskRevision(principal: Principal, projectId: string, taskId: string, revisionId: string): Promise<{ revision: TaskRevision; basis: BasisSet | null }> {
@@ -353,4 +417,31 @@ export class WorkflowService {
       return operation;
     });
   }
+  getGoal(principal: Principal, projectId: string, goalId: string) { return this.read(principal, projectId, reader => Promise.resolve(reader.getGoal(goalId)).then(goal => required(goal,"Goal"))); }
+  listGoals(principal: Principal, projectId: string, limit?: number, cursor?: string) { return this.read(principal, projectId, reader => reader.listGoals(pageLimit(limit), cursor)); }
+  listGoalRevisions(principal: Principal, projectId: string, goalId: string) { return this.read(principal, projectId, async reader => { required(await reader.getGoal(goalId),"Goal"); return reader.listGoalRevisions(goalId); }); }
+  getStage(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, reader => Promise.resolve(reader.getStage(stageId)).then(stage => required(stage,"Stage"))); }
+  listStages(principal: Principal, projectId: string, goalId?: string) { return this.read(principal, projectId, reader => reader.listStages(goalId)); }
+  listStageRevisions(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageRevisions(stageId); }); }
+  listStageReviews(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageReviews(stageId); }); }
+  getRuntimeSession(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeSession(sessionId), "Runtime session")); }
+  listRuntimeSessions(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listRuntimeSessions()); }
+  getRuntimeRun(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeRun(runId), "Runtime run")); }
+  listRuntimeRuns(principal: Principal, projectId: string, taskId?: string) { return this.read(principal, projectId, reader => reader.listRuntimeRuns(taskId)); }
+  listRuntimeEvents(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRuntimeRun(runId), "Runtime run"); return reader.listRuntimeEvents(runId); }); }
+  listRuntimeSessionEvents(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRuntimeSession(sessionId), "Runtime session"); return reader.listRuntimeSessionEvents(sessionId); }); }
+  getRole(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => required(await reader.getRole(roleId), "Role")); }
+  listRoles(principal: Principal, projectId: string, limit = 50, cursor?: string) { return this.read(principal, projectId, reader => reader.listRoles(pageLimit(limit), cursor)); }
+  listRoleRevisions(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listRevisions(roleId); }); }
+  listRoleReviews(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listReviews(roleId); }); }
+  listRoleHandoffs(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listHandoffs(roleId); }); }
+  listRoleSessionBindings(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listSessionBindings(roleId); }); }
+  getSchedule(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => required(await reader.getSchedule(scheduleId), "Schedule")); }
+  listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
+  listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }
+  listScheduleOccurrences(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listOccurrences(scheduleId); }); }
+  getDocumentPayloadRevision(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision")); }
+  listDocumentAssets(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision"); return reader.listDocumentAssets(documentId, revisionId); }); }
+  getRegisteredBlob(principal: Principal, projectId: string, blobId: string) { return this.read(principal, projectId, async reader => required(await reader.getRegisteredBlob(blobId), "Registered blob")); }
+  getGitSourceRef(principal: Principal, projectId: string, refId: string) { return this.read(principal, projectId, async reader => required(await reader.getGitSourceRef(refId), "Git source reference")); }
 }

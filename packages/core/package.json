@@ -3,7 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./dist/index.js" },
-  "scripts": { "test": "node --import tsx --test test/*.test.ts" },
-  "dependencies": { "@evoloop/contracts": "0.1.0" }
+  "exports": {
+    ".": "./dist/index.js",
+    "./scheduling": "./dist/scheduling/index.js",
+    "./documents": "./dist/documents/index.js",
+    "./runtime": "./dist/runtime/index.js",
+    "./roles": "./dist/roles/index.js",
+    "./delivery": "./dist/delivery/index.js",
+    "./references": "./dist/references/index.js"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@evoloop/contracts": "0.1.0"
+  }
 }

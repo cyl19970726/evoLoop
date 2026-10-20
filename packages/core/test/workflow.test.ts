@@ -4,9 +4,12 @@ import test from "node:test";
 import type {
   BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, Impact, Operation,
   OutboxEvent, Principal, Project, Task, TaskDocumentLink, TaskRevision,
+  Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure,
 } from "@evoloop/contracts";
 import type { Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError, WorkflowService } from "../src/index.ts";
+import type { RoleRecord, RoleRevision, RoleTrialReview, RoleHandoff, RoleSessionBinding } from "@evoloop/contracts/roles";
+import type { ScheduleDefinition, ScheduleRevision, Occurrence } from "@evoloop/contracts/scheduling";
 
 const projectId = "00000000-0000-4000-8000-000000000001";
 const documentId = "00000000-0000-4000-8000-000000000002";
@@ -28,16 +31,77 @@ type State = {
   basisDecisions: BasisDecision[];
   operations: Record<string, Operation>;
   outbox: OutboxEvent[];
+  goals: Record<string, Goal>;
+  goalRevisions: GoalRevision[];
+  stages: Record<string, Stage>;
+  stageRevisions: StageRevision[];
+  stageReviews: StageReview[];
+  proposals: TaskProposal[];
+  judgements: TaskJudgement[];
+  deliveries: Delivery[];
+  observations: ConsumerObservation[];
+  closures: TaskClosure[];
+  roles: Record<string, RoleRecord>;
+  roleRevisions: RoleRevision[];
+  roleReviews: RoleTrialReview[];
+  roleHandoffs: RoleHandoff[];
+  roleBindings: RoleSessionBinding[];
+  schedules: Record<string, ScheduleDefinition>;
+  scheduleRevisions: ScheduleRevision[];
+  occurrences: Occurrence[];
 };
 
 class MemoryUow implements UnitOfWork {
   state: State = {
     project: null, documents: {}, documentRevisions: {}, documentDecisions: [], tasks: {},
     taskRevisions: {}, bases: {}, links: [], impacts: {}, basisDecisions: [], operations: {}, outbox: [],
+    goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [],
+    roles: {}, roleRevisions: [], roleReviews: [], roleHandoffs: [], roleBindings: [], schedules: {}, scheduleRevisions: [], occurrences: [],
   };
   async transaction<T>(_projectId: string, action: (tx: Transaction) => Promise<T>): Promise<T> {
     let state = structuredClone(this.state);
     const reader = (): Reader => ({
+      getRole: async id => state.roles[id] ?? null,
+      listRoles: async (limit = 50, cursor) => {
+        const values = Object.values(state.roles).sort((a, b) => a.id.localeCompare(b.id));
+        const start = cursor ? Math.max(0, values.findIndex(item => item.id === cursor) + 1) : 0;
+        return { items: values.slice(start, start + limit), nextCursor: values[start + limit]?.id ?? null };
+      },
+      listRevisions: async id => state.roleRevisions.filter(item => item.roleId === id),
+      listReviews: async id => state.roleReviews.filter(item => item.roleId === id),
+      listHandoffs: async id => state.roleHandoffs.filter(item => item.roleId === id),
+      listSessionBindings: async id => state.roleBindings.filter(item => item.roleId === id),
+      getSchedule: async id => state.schedules[id] ?? null,
+      listSchedules: async () => Object.values(state.schedules),
+      listScheduleRevisions: async id => state.scheduleRevisions.filter(item => item.scheduleId === id),
+      listOccurrences: async id => state.occurrences.filter(item => item.scheduleId === id),
+      getDocumentPayloadRevision: async (documentId, revisionId) => {
+        const item = state.documentRevisions[revisionId];
+        return item?.documentId === documentId ? item : null;
+      },
+      listDocumentAssets: async (documentId, revisionId) => {
+        const item = state.documentRevisions[revisionId];
+        return item?.documentId === documentId ? item.assetsManifest : [];
+      },
+      getRegisteredBlob: async () => null,
+      getGitSourceRef: async () => null,
+      getGoal: async id => state.goals[id] ?? null,
+      listGoals: async (limit, cursor) => {
+        const values = Object.values(state.goals).sort((a, b) => a.id.localeCompare(b.id));
+        const start = cursor ? Math.max(0, values.findIndex(item => item.id === cursor) + 1) : 0;
+        return { items: values.slice(start, start + limit), nextCursor: values[start + limit]?.id ?? null };
+      },
+      listGoalRevisions: async goalId => state.goalRevisions.filter(item => item.id === goalId).sort((a, b) => a.version - b.version),
+      getStage: async id => state.stages[id] ?? null,
+      listStages: async goalId => Object.values(state.stages).filter(item => !goalId || item.goalId === goalId),
+      listStageRevisions: async stageId => state.stageRevisions.filter(item => item.stageId === stageId).sort((a, b) => a.version - b.version),
+      listStageReviews: async stageId => state.stageReviews.filter(item => item.stageId === stageId),
+      getTaskProposal: async (taskId, revisionId) => state.proposals.filter(item => item.taskId === taskId && (!revisionId || item.taskRevisionId === revisionId)).at(-1) ?? null,
+      listTaskJudgements: async taskId => state.judgements.filter(item => item.taskId === taskId),
+      getDelivery: async id => state.deliveries.find(item => item.id === id) ?? null,
+      listDeliveries: async taskId => state.deliveries.filter(item => item.taskId === taskId),
+      listObservations: async taskId => state.observations.filter(item => item.taskId === taskId),
+      listTaskClosures: async taskId => state.closures.filter(item => item.taskId === taskId),
       getProject: async () => state.project,
       getDocument: async (id) => state.documents[id] ?? null,
       getDocumentRevision: async (document, revision) => {
@@ -75,6 +139,39 @@ class MemoryUow implements UnitOfWork {
     });
     const tx: Transaction = {
       ...reader(),
+      createRole: async (item, revision) => { state.roles[item.id] = item; state.roleRevisions.push(revision); },
+      advanceRole: async (item, expected, revision) => { assert.equal(state.roles[item.id]?.version, expected); state.roles[item.id] = item; state.roleRevisions.push(revision); },
+      addDecision: async () => {},
+      addReview: async item => { state.roleReviews.push(item); },
+      getHandoff: async id => state.roleHandoffs.find(item => item.id === id) ?? null,
+      addHandoff: async item => { state.roleHandoffs.push(item); },
+      acknowledgeHandoff: async item => { const index = state.roleHandoffs.findIndex(value => value.id === item.id); assert.notEqual(index, -1); state.roleHandoffs[index] = item; },
+      listUnacknowledgedHandoffs: async id => state.roleHandoffs.filter(item => item.roleId === id && item.state === "prepared"),
+      listUnfinishedOwnedTasks: async id => Object.values(state.tasks).filter(item => item.owner === id && item.state !== "done" && item.state !== "cancelled"),
+      listOpenRuntimeSessions: async () => [],
+      addSessionBinding: async item => { state.roleBindings.push(item); },
+      insertSchedule: async item => { state.schedules[item.id] = item; state.scheduleRevisions.push(item.revision); },
+      updateSchedule: async (item, expected) => { assert.equal(state.schedules[item.id]?.version, expected); state.schedules[item.id] = item; state.scheduleRevisions.push(item.revision); },
+      insertDocumentPayloadRevision: async item => { state.documentRevisions[item.id] = item; },
+      registerDocumentBlob: async () => {},
+      insertGoal: async (item, reason) => { state.goals[item.id] = item; state.goalRevisions.push({ ...item, reason }); },
+      updateGoal: async (item, expected, reason) => {
+        assert.equal(state.goals[item.id]?.version, expected);
+        state.goals[item.id] = item;
+        state.goalRevisions.push({ ...item, reason });
+      },
+      insertStage: async (item, revision) => { state.stages[item.id] = item; state.stageRevisions.push(revision); },
+      updateStage: async (item, revision, expected) => {
+        assert.equal(state.stages[item.id]?.version, expected);
+        state.stages[item.id] = item;
+        state.stageRevisions.push(revision);
+      },
+      insertStageReview: async item => { state.stageReviews.push(item); },
+      insertTaskProposal: async item => { state.proposals.push(item); },
+      insertTaskJudgement: async item => { state.judgements.push(item); },
+      insertDelivery: async item => { state.deliveries.push(item); },
+      insertObservation: async item => { state.observations.push(item); },
+      insertTaskClosure: async item => { state.closures.push(item); },
       savepoint: async (work) => {
         const before = structuredClone(state);
         try { return await work(); } catch (error) { state = before; throw error; }

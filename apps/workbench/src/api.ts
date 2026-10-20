@@ -1,6 +1,6 @@
 import type {
   Command, CommandResult, Document, DocumentDetail, DocumentRevision,
-  Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet,
+  Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, Goal, GoalRevision, Stage, StageRevision, StageReview,
 } from "@evoloop/contracts";
 
 export interface Session {
@@ -14,7 +14,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(token: string, path: string, timeoutMs: number, init?: RequestInit): Promise<T> {
+export async function request<T>(token: string, path: string, timeoutMs: number, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -66,6 +66,11 @@ export function api(token: string, timeoutMs = 15000) {
   return {
     session: () => call<Session>("/api/session"),
     project: (p: string) => call<Project>(projectPath(p)),
+    goals: (p: string, cursor?: string) => call<Page<Goal>>(`${projectPath(p)}/goals?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    goalRevisions: (p: string, id: string) => call<GoalRevision[]>(`${projectPath(p)}/goals/${key(id)}/revisions`),
+    stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
+    stages: (p: string) => call<Stage[]>(`${projectPath(p)}/stages`),
+    stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
     documents: (p: string, cursor?: string) => call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     document: (p: string, id: string) => call<DocumentDetail>(`${projectPath(p)}/documents/${key(id)}`),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
