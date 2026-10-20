@@ -1,5 +1,6 @@
 import { ReferencePanel } from "./references/ReferencePanel";
 import { CollaborationPanel } from "./collaboration/CollaborationPanel";
+import { DiscussionPanel } from "./discussions/DiscussionPanel";
 import { KnowledgePanel } from "./knowledge/KnowledgePanel";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type {
@@ -164,6 +165,7 @@ function ProjectChooser({ token, principal, receipts, onRefreshSession, context 
 function Board({ token, projectId, section, refresh, context }: { token: string; projectId: string; section: "overview" | "work"; refresh: number; context: MutationContext }) {
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Page<Task> | null>(null);
+  const [taskJudgements, setTaskJudgements] = useState<Record<string, string>>({});
   const [documents, setDocuments] = useState<Page<Document> | null>(null);
   const [impacts, setImpacts] = useState<Impact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,6 +185,24 @@ function Board({ token, projectId, section, refresh, context }: { token: string;
       .finally(() => { if (active && epoch === epochRef.current) setLoading(false); });
     return () => { active = false; };
   }, [token, projectId, refresh]);
+  useEffect(() => {
+    let active = true;
+    const proposed = (tasks?.items ?? []).filter(task => task.state === "proposed");
+    setTaskJudgements({});
+    let next = 0;
+    void Promise.all(Array.from({ length: Math.min(6, proposed.length) }, async () => {
+      while (active && next < proposed.length) {
+        const task = proposed[next++]!;
+        try {
+          const detail = await api(token).task(projectId, task.id);
+          const current = (detail.judgements ?? []).filter(j => j.taskRevisionId === detail.revision.id)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
+          if (active) setTaskJudgements(previous => ({ ...previous, [task.id]: current?.decision ?? "none" }));
+        } catch { if (active) setTaskJudgements(previous => ({ ...previous, [task.id]: "unavailable" })); }
+      }
+    }));
+    return () => { active = false; };
+  }, [token, projectId, tasks]);
   async function more(kind: "tasks" | "documents") {
     if (moreInFlightRef.current.has(kind)) return;
     const epoch = epochRef.current;
@@ -212,13 +232,13 @@ function Board({ token, projectId, section, refresh, context }: { token: string;
     <div className="eyebrow">{section === "overview" ? "项目总览" : "工作"}</div>
     <h1>{project?.title || "项目"}</h1>
     <p className="lede">读目标与依据，推进工作，用实际交付和反馈决定下一步。</p>
-    {section === "overview" && <JourneyBoard context={context} refresh={refresh} />}
+    {section === "overview" && <><JourneyBoard context={context} refresh={refresh} /><DiscussionPanel context={context} refresh={refresh} /></>}
     <div className="stats"><div><strong>{impacts.filter(i => i.state === "pending").length}</strong><span>待复核影响</span></div><div><strong>{tasks?.items.length || 0}</strong><span>已载入任务</span></div><div><strong>{documents?.items.length || 0}</strong><span>已载入过程文档</span></div></div>
     <section className="panel"><div className="panel-head"><h2>待复核</h2><span>依据变化需要明确决定</span></div>
       {impacts.filter(i => i.state === "pending").length ? <ul className="impact-list">{impacts.filter(i => i.state === "pending").map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>任务 <ShortId value={i.taskId} /></strong><span>过程文档版本 <ShortId value={i.fromRevisionId} /> → <ShortId value={i.toRevisionId} /></span><span className="arrow">查看影响 →</span></a></li>)}</ul> : <p className="empty">当前没有待复核影响。</p>}
     </section>
     <section className="panel"><div className="panel-head"><h2>任务</h2><span>固定执行依据见任务详情</span></div>
-      <div className="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>负责人</th><th>版本</th></tr></thead><tbody>{tasks?.items.map(t => <tr key={t.id}><td><a href={href(projectId, "task", t.id)}>{t.title}</a><small><ShortId value={t.id} /></small></td><td><span className="pill">{t.state}</span></td><td>{t.owner}</td><td>v{t.version}</td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>任务</th><th>执行状态</th><th>接受判断</th><th>负责人</th><th>版本</th></tr></thead><tbody>{tasks?.items.map(t => <tr key={t.id}><td><a href={href(projectId, "task", t.id)}>{t.title}</a><small><ShortId value={t.id} /></small></td><td><span className="pill">{t.state}</span></td><td><span className="pill subtle">{t.state !== "proposed" ? "已接受" : ({ approve: "可接受", reject: "已拒绝", defer: "暂缓判断", needsEvidence: "待补证", none: "待判断", unavailable: "判断不可读" } as Record<string, string>)[taskJudgements[t.id] ?? ""] ?? "读取中…"}</span></td><td>{t.owner}</td><td>v{t.version}</td></tr>)}</tbody></table></div>
       {!tasks?.items.length && <p className="empty">还没有任务。请从总览提出首项工作。</p>}
       {tasks?.nextCursor && <button className="more" disabled={loadingMore.includes("tasks")} onClick={() => more("tasks")}>{loadingMore.includes("tasks") ? "加载中…" : "加载更多任务"}</button>}
     </section>
@@ -229,7 +249,7 @@ function Board({ token, projectId, section, refresh, context }: { token: string;
       <UploadDocument context={context} />
       {documents?.nextCursor && <button className="more" disabled={loadingMore.includes("documents")} onClick={() => more("documents")}>{loadingMore.includes("documents") ? "加载中…" : "加载更多文档"}</button>}
     </section>
-    {section === "work" && <><ReferencePanel context={context} /><CollaborationPanel context={context} refresh={refresh} /><RuntimePanel context={context} refresh={refresh} /><SchedulingPanel context={context} refresh={refresh} /><RolesPanel context={context} refresh={refresh} /></>}
+    {section === "work" && <><DiscussionPanel context={context} refresh={refresh} /><ReferencePanel context={context} /><CollaborationPanel context={context} refresh={refresh} /><RuntimePanel context={context} refresh={refresh} /><SchedulingPanel context={context} refresh={refresh} /><RolesPanel context={context} refresh={refresh} /></>}
   </div>;
 }
 
@@ -363,8 +383,9 @@ function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, 
   </div>;
 }
 
-function TaskPage({ context, token, projectId, id, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
+function TaskPage({ context, token, projectId, id, selectedRevision, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
   context: MutationContext; token: string; projectId: string; id: string; refresh: number;
+  selectedRevision?: string;
   onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -391,6 +412,10 @@ function TaskPage({ context, token, projectId, id, refresh, onChanged, onAttempt
       if (sequence === historyRequestRef.current) setHistorical({ taskId: id, ...value });
     } catch (cause) { if (sequence === historyRequestRef.current) setError(errorText(cause)); }
   }
+  useEffect(() => {
+    if (selectedRevision) void showHistory(selectedRevision);
+    else { ++historyRequestRef.current; setHistorical(null); }
+  }, [selectedRevision, token, projectId, id]);
   if (error && !detail) return <div className="content"><Alert kind="error">{error}</Alert></div>;
   if (!detail || detail.task.id !== id) return <div className="content"><p>正在读取任务…</p></div>;
   const pending = detail.impacts.filter(i => i.state === "pending");
@@ -399,6 +424,12 @@ function TaskPage({ context, token, projectId, id, refresh, onChanged, onAttempt
     <a className="back" href={href(projectId, "work")}>← 返回工作</a>
     <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
     <div className="task-header"><span className="pill">{detail.task.state}</span><span>负责人：{detail.task.owner}</span><span>当前修订 <ShortId value={detail.revision.id} /></span></div>
+    {selectedRevision && <section className="panel" id="fixed-task-revision"><h2>固定历史任务修订</h2>
+      {!historical && !error && <p>正在读取指定修订与当时的完整依据…</p>}
+      {!historical && error && <Alert kind="error">固定修订不可读取；不能把当前任务当成当时依据。</Alert>}
+      {historical?.taskId === id && <><p><strong>v{historical.revision.version} · {historical.revision.state}</strong> · {date(historical.revision.createdAt)} · {historical.revision.actorId}</p><p><strong>当次理由：</strong>{historical.revision.reason}</p><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></>}
+      <p><a href={href(projectId, "task", id)}>返回当前任务 →</a></p>
+    </section>}
     {error && <Alert kind="error">{error}</Alert>}
     <section className="panel"><h2>目标与验收</h2><p>{detail.task.goal}</p><h3>验收条件</h3><p>{detail.task.acceptance}</p></section>
     <RuntimePanel context={context} refresh={refresh} task={detail.task} />
@@ -413,7 +444,7 @@ function TaskPage({ context, token, projectId, id, refresh, onChanged, onAttempt
     <section className="panel"><h2>已作决定</h2>
       {!detail.decisions.length && <p className="empty">尚无复核决定。</p>}
       {detail.decisions.map(d => <div className="decision" key={d.id}><strong>{d.decision === "adopt" ? "采用新修订" : "保留原依据"}</strong><span>{date(d.createdAt)} · {d.actorId}</span><p>{d.reason}</p><button className="quiet" onClick={() => showHistory(d.previousTaskRevisionId)}>查看决定前的任务依据</button></div>)}
-      {historical?.taskId === id && <div className="history"><h3>决定前 · Task v{historical.revision.version}</h3><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></div>}
+      {!selectedRevision && historical?.taskId === id && <div className="history"><h3>固定任务修订 v{historical.revision.version} · {historical.revision.state}</h3><p><strong>当次理由：</strong>{historical.revision.reason}</p><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></div>}
     </section>
   </div>;
 }
@@ -441,7 +472,7 @@ export function App() {
     const next = addReceipt(receiptsRef.current, {
       actorId: session!.principal.actorId,
       projectId: command.projectId,
-      taskId: command.taskId ?? command.goalId ?? command.stageId ?? command.documentId ?? command.projectId,
+      taskId: command.discussionId ?? command.taskId ?? command.goalId ?? command.stageId ?? command.documentId ?? command.projectId,
       operationId: command.operationId,
       commandType: command.type,
       createdAt: new Date().toISOString(),
@@ -496,7 +527,7 @@ export function App() {
       {projectError ? <div className="content"><Alert kind="error">项目暂不可读取：{projectError}</Alert><button onClick={() => setRefresh(v => v + 1)}>重试读取项目</button></div> : <>
         {(route.section === "overview" || route.section === "work") && <Board context={context} token={token} projectId={projectId} section={route.section} refresh={refresh} />}
         {route.section === "knowledge" && <div className="content"><div className="eyebrow">知识</div><h1>知识空间</h1><KnowledgePanel context={context} refresh={refresh} /></div>}
-        {route.section === "task" && route.id && <TaskPage context={context} token={token} projectId={projectId} id={route.id} refresh={refresh} onChanged={() => setRefresh(v => v + 1)} onAttempt={beginAttempt} onKnown={finishKnown} blockedByUnknown={visibleReceipts.some(r => r.projectId === projectId && r.taskId === route.id)} canReview={principal.permissions.includes("review")} />}
+        {route.section === "task" && route.id && <TaskPage context={context} token={token} projectId={projectId} id={route.id} selectedRevision={route.revision} refresh={refresh} onChanged={() => setRefresh(v => v + 1)} onAttempt={beginAttempt} onKnown={finishKnown} blockedByUnknown={visibleReceipts.some(r => r.projectId === projectId && r.taskId === route.id)} canReview={principal.permissions.includes("review")} />}
         {route.section === "document" && route.id && <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={route.id} selectedRevision={route.revision} />}
       </>}
     </> : <ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} />}

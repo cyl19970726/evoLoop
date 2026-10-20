@@ -1,6 +1,7 @@
 import type {
   Command, CommandResult, Document, DocumentDetail, DocumentRevision,
   Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, Goal, GoalRevision, Stage, StageRevision, StageReview,
+  DiscussionRecord, DiscussionEvent,
 } from "@evoloop/contracts";
 
 export interface Session {
@@ -71,11 +72,15 @@ export function api(token: string, timeoutMs = 15000) {
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
     stages: (p: string) => call<Stage[]>(`${projectPath(p)}/stages`),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
+    discussions: (p: string, cursor?: string) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),
+    discussionEvents: (p: string, id: string) => call<DiscussionEvent[]>(`${projectPath(p)}/discussions/${key(id)}/events`),
     documents: (p: string, cursor?: string) => call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     document: (p: string, id: string) => call<DocumentDetail>(`${projectPath(p)}/documents/${key(id)}`),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
+    taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),
     impacts: (p: string) => call<Impact[]>(`${projectPath(p)}/impacts`),
     operation: async (p: string, id: string) => checkedOperation(await call<unknown>(`${projectPath(p)}/operations/${key(id)}`), id),
@@ -83,8 +88,34 @@ export function api(token: string, timeoutMs = 15000) {
   };
 }
 
+/** Only navigate to this project's known hash routes or ordinary web URLs. */
+export function safeArtifactHref(value: string, projectId: string): string | null {
+  const reference = value.trim();
+  if (reference.startsWith("#/p/")) {
+    const match = /^#\/p\/([^/?#]+)\/(overview|work|knowledge|tasks\/[0-9a-f-]{36}|documents\/[0-9a-f-]{36})(?:\?revision=[0-9a-f-]{36})?$/i.exec(reference);
+    if (!match) return null;
+    try { return decodeURIComponent(match[1]!) === projectId ? reference : null; }
+    catch { return null; }
+  }
+  try {
+    const url = new URL(reference);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname && !url.username && !url.password
+      ? url.href : null;
+  } catch { return null; }
+}
+
 export function isUnconfirmed(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 0 || error.status >= 500);
+}
+
+const staleConflictCodes = new Set([
+  "VERSION_CONFLICT", "BASELINE_CHANGED", "DOCUMENT_CHANGED", "DECISION_TARGET_CHANGED",
+  "REVIEW_TARGET_CHANGED", "TARGET_CHANGED",
+]);
+/** A 409 can be a correct business refusal; only changed observed versions or pointers require readback. */
+export function isStaleConflict(value: unknown): boolean {
+  const code = value instanceof ApiError && isRecord(value.detail) ? value.detail.code : value;
+  return typeof code === "string" && staleConflictCodes.has(code);
 }
 
 export function errorText(error: unknown): string {

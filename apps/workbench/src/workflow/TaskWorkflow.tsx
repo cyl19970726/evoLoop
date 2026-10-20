@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
-import type { DocumentDetail, TaskDetail } from "@evoloop/contracts";
-import { api, errorText } from "../api";
+import type { DocumentDetail, TaskDetail, TaskRevision } from "@evoloop/contracts";
+import { api, errorText, safeArtifactHref } from "../api";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "./ActionForm";
+import { RevisionHistory } from "./RevisionHistory";
+
+const stateLabel: Record<TaskRevision["state"], string> = {
+  proposed: "待判断", ready: "可做", active: "进行中", review: "待验收", done: "已完成",
+  blocked: "阻塞", deferred: "暂缓", cancelled: "已取消",
+};
 
 export function TaskWorkflow({ context, detail }: { context: MutationContext; detail: TaskDetail }) {
   const task = detail.task;
   const [linked, setLinked] = useState<DocumentDetail[]>([]);
+  const [revisions, setRevisions] = useState<TaskRevision[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
@@ -17,7 +24,19 @@ export function TaskWorkflow({ context, detail }: { context: MutationContext; de
   const deliveries = detail.deliveries ?? [];
   const latest = deliveries[deliveries.length - 1];
   const proposal = detail.proposal;
+  const latestStateDecision = revisions.filter((revision, index) => index > 0 && revision.state !== revisions[index - 1]?.state).at(-1);
   return <section className="panel"><div className="panel-head"><h2>执行、交付与实际使用</h2><button onClick={context.onChanged}>回读当前状态</button></div>
+    <h3>任务状态与决定</h3>
+    {latestStateDecision ? <article className="decision"><strong>{stateLabel[latestStateDecision.state]}</strong><p>理由：{latestStateDecision.reason}</p><small>{latestStateDecision.actorId} · {latestStateDecision.createdAt} · 固定修订 v{latestStateDecision.version}</small><p><a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(latestStateDecision.id)}`}>打开当次固定修订与依据 →</a></p></article>
+      : <p className="muted">{revisions.length ? "目前只有初始提议，尚无状态变更决定。" : "正在读取状态决定历史；读取失败时不能据当前状态推断理由。"}</p>}
+    <RevisionHistory label="重新读取完整任务状态时间线" autoLoad load={async () => {
+      const rows = await api(context.token).taskRevisions(context.projectId, task.id);
+      setRevisions(rows.map(row => row.revision));
+      return rows.map(({ revision, basis }) => ({ key: revision.id, title: `v${revision.version} · ${stateLabel[revision.state]}`,
+        body: `目标：${revision.goal}\n验收：${revision.acceptance}\n固定过程依据：${basis?.members.length ?? 0} 项`,
+        reason: revision.reason, actorId: revision.actorId, createdAt: revision.createdAt,
+        href: `#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(revision.id)}` }));
+    }} />
     {proposal && <dl><div><dt>目标消费者</dt><dd>{proposal.consumer}</dd></div><div><dt>完成要求</dt><dd>{proposal.useRequired ? "需有本次交付的实际使用记录" : "技术子任务；不据此判阶段效果"}</dd></div><div><dt>提议证据</dt><dd>{proposal.evidence}</dd></div><div><dt>停止条件</dt><dd>{proposal.stopCondition}</dd></div></dl>}
     {error && <Notice error>关联依据暂不可读：{error}</Notice>}
     {task.state === "proposed" && <>
@@ -64,7 +83,10 @@ export function TaskWorkflow({ context, detail }: { context: MutationContext; de
     {(detail.judgements ?? []).map(j => <article className="decision" key={j.id}><strong>{j.decision}</strong><p>{j.reason}</p><p>证据：{j.evidence}</p>{j.relookCondition && <p>重看条件：{j.relookCondition}</p>}<small>{j.actorId} · {j.createdAt}</small></article>)}
     <h3>交付与使用历史</h3>{deliveries.length === 0 && <p className="empty">还没有交付；任务状态不代替产物和使用证据。</p>}
     {deliveries.map(delivery => <article className="decision" key={delivery.id}><strong>{delivery.id === latest?.id ? "最新交付" : "历史交付"} · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"}</strong>
-      <p className="break-anywhere">{delivery.artifactRef} · {delivery.artifactRevision}</p><small className="break-anywhere">SHA-256 {delivery.contentHash}</small><p>{delivery.technicalEvidence}</p>
+      <p className="break-anywhere">{safeArtifactHref(delivery.artifactRef, context.projectId)
+        ? <a href={safeArtifactHref(delivery.artifactRef, context.projectId)!} target={delivery.artifactRef.startsWith("#") ? undefined : "_blank"} rel={delivery.artifactRef.startsWith("#") ? undefined : "noopener noreferrer"}>{delivery.artifactRef}</a>
+        : delivery.artifactRef} · {delivery.artifactRevision}</p><small className="break-anywhere">SHA-256 {delivery.contentHash}</small><p>{delivery.technicalEvidence}</p>
+      <p className="muted">链接只帮助打开产物位置；固定修订、哈希与实际内容仍须独立核对。</p>
       {(detail.observations ?? []).filter(o => o.deliveryId === delivery.id).map(o => <div className="history" key={o.id}><strong>{o.observer}（{o.observerKind}） · {o.result}</strong><p>{o.evidence}</p><p>{o.reason}</p><small>登记者 {o.actorId} · {o.createdAt}</small></div>)}
     </article>)}
     {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}>

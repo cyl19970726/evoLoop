@@ -54,6 +54,29 @@ test("auth rejects malformed, short and duplicate credentials", () => {
   assert.equal(authConfigSchema.safeParse([{ ...credentials[0], token: "short" }]).success, false);
 });
 
+test("owner history and discussion queries preserve authenticated identity and project scope", async () => {
+  const id = "00000000-0000-4000-8000-000000000003";
+  const seen: unknown[][] = [];
+  const query = async (...args: unknown[]) => { seen.push(args); return []; };
+  const app = await buildServer({ credentials, service: { ...workManagementQueries,
+    listTaskRevisions: query, listDiscussions: query, getDiscussion: query, listDiscussionEvents: query,
+  } as unknown as WorkflowService });
+  try {
+    const paths = [`tasks/${id}/revisions`, "discussions?limit=10", `discussions/${id}`, `discussions/${id}/events`];
+    for (const path of paths) {
+      assert.equal((await app.inject({ url: `/api/projects/${projectId}/${path}` })).statusCode, 401);
+      assert.equal((await app.inject({ url: `/api/projects/${projectId}/${path}`, headers: { authorization: `Bearer ${token}` } })).statusCode, 200);
+    }
+    assert.equal(seen.length, 4);
+    for (const args of seen) {
+      assert.equal((args[0] as { actorId: string }).actorId, "local-owner");
+      assert.equal(args[1], projectId);
+    }
+    assert.equal(seen[1]![2], 10);
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/tasks/not-an-id/revisions`, headers: { authorization: `Bearer ${token}` } })).statusCode, 400);
+  } finally { await app.close(); }
+});
+
 test("schedule status scopes grants to the caller and active commands require an exact current grant", async () => {
   const otherProject = "00000000-0000-4000-8000-000000000099";
   const otherToken = "b".repeat(40);

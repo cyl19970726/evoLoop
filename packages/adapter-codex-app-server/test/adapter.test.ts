@@ -193,6 +193,15 @@ test("read and resume reject a changed native session tree", async t => {
   await assert.rejects(() => adapter.resume(binding), /resumed thread does not match registered binding/);
 });
 
+test("owned read remains available when native resume is rejected", async t => {
+  const adapter = await open("resume-rejected"); t.after(() => adapter.close());
+  const binding = await adapter.create(spec);
+  await assert.rejects(() => adapter.resume(binding), RuntimeServerError);
+  assert.equal((await adapter.inspect(binding) as { thread: { id: string } }).thread.id, binding.nativeThreadId);
+  assert.equal((await adapter.listTurns(binding)).data.length, 1);
+  assert.equal((await adapter.listItems(binding, "turn-1")).data.length, 1);
+});
+
  test("owned binding comparison survives persistence key order", async t => {
   const adapter = await open(); t.after(() => adapter.close());
   const binding = await adapter.create(spec);

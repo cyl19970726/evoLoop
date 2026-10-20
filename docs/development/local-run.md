@@ -1,6 +1,6 @@
 # 本机运行与恢复
 
-当前是可运行的本机试用切片：11 个工作区、PostgreSQL 迁移至 009；目标、阶段、过程 Document、Task、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
+当前是可运行的本机试用切片：11 个工作区、PostgreSQL 迁移至 011；目标、阶段、过程 Document、Task、负责人讨论、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
 
 ## 环境与启动
 

@@ -1,10 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { commandSchema, type Command, type Principal, type Operation } from "@evoloop/contracts";
-import { api, errorText, isUnconfirmed } from "../api";
+import { api, errorText, isStaleConflict, isUnconfirmed } from "../api";
 
 export interface RecoverableCommand {
   projectId: string; operationId: string; type: Operation["commandType"];
-  taskId?: string; goalId?: string; stageId?: string; documentId?: string;
+  taskId?: string; goalId?: string; stageId?: string; documentId?: string; discussionId?: string;
 }
 export interface MutationContext {
   token: string; projectId: string; principal: Principal; blocked: boolean;
@@ -17,6 +17,9 @@ export interface Field {
 export function Notice({ children, error = false }: { children: ReactNode; error?: boolean }) {
   return <div className={`notice ${error ? "error" : "info"}`} role={error ? "alert" : "status"}>{children}</div>;
 }
+export function readableDraft(title: string, fields: Field[], values: Record<string, string>): string {
+  return `${title}\n\n${fields.map(field => `${field.label} (${field.name})\n${values[field.name] ?? ""}`).join("\n\n")}`;
+}
 
 /** Shared command submission preserves the draft and persists the operation ID before any write. */
 export function ActionForm({ context, title, fields, build, review = false, onApplied }: {
@@ -28,6 +31,8 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
   const [stale, setStale] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [copyFallback, setCopyFallback] = useState(false);
   const allowed = context.principal.permissions.includes(review ? "review" : "write");
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -42,32 +47,50 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
       const result = await api(context.token).command(command);
       context.onKnown(command.operationId);
       if (result.status === "rejected") {
-        setMessage(result.message); setFailed(true); setStale(result.code === "VERSION_CONFLICT");
+        setMessage(result.message); setFailed(true); setStale(isStaleConflict(result.code));
       } else {
         setMessage("已保存，正在读取持久记录。");
         onApplied?.(result); context.onChanged();
       }
     } catch (cause) {
       if (!isUnconfirmed(cause)) context.onKnown(command.operationId);
-      setMessage(`${errorText(cause)}${isUnconfirmed(cause) ? "。请在上方按原操作 ID 核对，确认前不要再次提交。" : "。草稿已保留；版本冲突时先回读当前内容。"}`);
+      const unconfirmed = isUnconfirmed(cause);
+      const changed = isStaleConflict(cause);
+      setMessage(`${errorText(cause)}${unconfirmed ? "。请在上方按原操作 ID 核对，确认前不要再次提交。" : changed
+        ? "。所见版本或固定指针已变化；先保存草稿，再回读当前状态。" : "。这次请求已被明确拒绝；草稿保留，可修改选择后以新操作提交。"}`);
       setFailed(true);
-      // A 409 may mean a stale object; require explicit readback before trying a fresh command.
-      if (!isUnconfirmed(cause) && typeof cause === "object" && cause && "status" in cause && cause.status === 409) setStale(true);
+      if (!unconfirmed && changed) setStale(true);
     } finally { setBusy(false); }
+  }
+  async function copyDraft() {
+    const draft = readableDraft(title, fields, values);
+    try { await navigator.clipboard.writeText(draft); setDraftSaved(true); setCopyFallback(false); }
+    catch { setCopyFallback(true); setDraftSaved(false); }
+  }
+  function updateValue(name: string, value: string) {
+    setValues(current => ({ ...current, [name]: value }));
+    setDraftSaved(false);
   }
   return <form className="workflow-form" onSubmit={submit}>
     <h3>{title}</h3>
     {fields.map(field => <label key={field.name}>{field.label}
-      {field.kind === "textarea" ? <textarea required={!field.optional} value={values[field.name]} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))} />
-        : field.kind === "select" || field.kind === "multi" ? <select required={!field.optional} multiple={field.kind === "multi"} value={field.kind === "multi" ? JSON.parse(values[field.name] || "[]") as string[] : values[field.name]} onChange={e => setValues(v => ({ ...v, [field.name]: field.kind === "multi" ? JSON.stringify(Array.from(e.target.selectedOptions, o => o.value)) : e.target.value }))}>
+      {field.kind === "textarea" ? <textarea required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />
+        : field.kind === "select" || field.kind === "multi" ? <select required={!field.optional} multiple={field.kind === "multi"} value={field.kind === "multi" ? JSON.parse(values[field.name] || "[]") as string[] : values[field.name]} onChange={e => updateValue(field.name, field.kind === "multi" ? JSON.stringify(Array.from(e.target.selectedOptions, o => o.value)) : e.target.value)}>
           {field.kind !== "multi" && <option value="">请选择</option>}{field.options?.map(o => <option value={o.value} key={o.value}>{o.label}</option>)}
-        </select> : <input required={!field.optional} value={values[field.name]} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))} />}
+        </select> : <input required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />}
       {field.hint && <small>{field.hint}</small>}
     </label>)}
     {!allowed && <Notice>当前身份没有{review ? "审阅" : "写入"}权限。</Notice>}
     {context.blocked && <Notice>本项目仍有结果未确认的操作，请先核对上方回执。</Notice>}
     {message && <Notice error={failed}>{message}</Notice>}
-    {stale && <p>当前草稿保持原样。请复制所需内容，再使用页面的“回读当前状态”更新基线。</p>}
+    {stale && <div className="notice error"><p>当前版本或固定指针已经变化。回读会重建表单并清除这里的输入，请先保存完整草稿。</p>
+      <div className="actions"><button type="button" onClick={() => void copyDraft()}>复制当前草稿</button>
+        <button type="button" disabled={!draftSaved} onClick={context.onChanged}>回读当前状态（重建表单）</button></div>
+      {draftSaved && <p>草稿已复制或由你确认手动保存，可以回读后对照新基线重填。</p>}
+      {copyFallback && <><p>剪贴板不可用。请选择并手动复制下方全部字段，再确认保存。</p>
+        <textarea className="draft-fallback" readOnly value={readableDraft(title, fields, values)} onFocus={event => event.currentTarget.select()} rows={12} />
+        <button type="button" onClick={() => setDraftSaved(true)}>我已手动保存完整草稿</button></>}
+    </div>}
     <button type="submit" className="primary" disabled={busy || !allowed || context.blocked || stale}>{busy ? "保存中…" : title}</button>
   </form>;
 }

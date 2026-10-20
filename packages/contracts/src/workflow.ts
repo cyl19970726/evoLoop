@@ -153,6 +153,19 @@ export const workflowCommands = [
     evidence: text,
     reason: text,
   }),
+  z.strictObject({
+    ...common,
+    type: z.literal("stage.review.correct"),
+    stageId: id,
+    expectedVersion: version,
+    supersedesReviewId: id,
+    adopted: text,
+    rejected: text,
+    gap: text,
+    nextChoice: z.enum(["continue", "newTask", "research", "stop"]),
+    evidence: text,
+    reason: text,
+  }),
 ] as const;
 
 export interface Goal {
@@ -199,6 +212,7 @@ export interface StageReview {
   id: string;
   stageId: string;
   stageVersion: number;
+  supersedesReviewId: string | null;
   adopted: string;
   rejected: string;
   gap: string;

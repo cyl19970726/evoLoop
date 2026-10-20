@@ -5,6 +5,7 @@ import type {
   BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, Impact, Operation,
   OutboxEvent, Principal, Project, Task, TaskDocumentLink, TaskRevision,
   Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure,
+  DiscussionRecord, DiscussionEvent,
 } from "@evoloop/contracts";
 import type { Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError, WorkflowService } from "../src/index.ts";
@@ -41,6 +42,8 @@ type State = {
   deliveries: Delivery[];
   observations: ConsumerObservation[];
   closures: TaskClosure[];
+  discussions: Record<string, DiscussionRecord>;
+  discussionEvents: DiscussionEvent[];
   roles: Record<string, RoleRecord>;
   roleRevisions: RoleRevision[];
   roleReviews: RoleTrialReview[];
@@ -56,11 +59,19 @@ class MemoryUow implements UnitOfWork {
     project: null, documents: {}, documentRevisions: {}, documentDecisions: [], tasks: {},
     taskRevisions: {}, bases: {}, links: [], impacts: {}, basisDecisions: [], operations: {}, outbox: [],
     goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [],
+    discussions: {}, discussionEvents: [],
     roles: {}, roleRevisions: [], roleReviews: [], roleHandoffs: [], roleBindings: [], schedules: {}, scheduleRevisions: [], occurrences: [],
   };
   async transaction<T>(_projectId: string, action: (tx: Transaction) => Promise<T>): Promise<T> {
     let state = structuredClone(this.state);
     const reader = (): Reader => ({
+      getDiscussion: async id => state.discussions[id] ?? null,
+      listDiscussions: async (limit, cursor) => {
+        const values = Object.values(state.discussions).sort((a, b) => a.id.localeCompare(b.id));
+        const start = cursor ? values.findIndex(item => item.id === cursor) + 1 : 0;
+        return { items: values.slice(start, start + limit), nextCursor: values[start + limit]?.id ?? null };
+      },
+      listDiscussionEvents: async id => state.discussionEvents.filter(item => item.discussionId === id).sort((a, b) => a.version - b.version),
       getRole: async id => state.roles[id] ?? null,
       listRoles: async (limit = 50, cursor) => {
         const values = Object.values(state.roles).sort((a, b) => a.id.localeCompare(b.id));
@@ -119,6 +130,8 @@ class MemoryUow implements UnitOfWork {
         const found = state.taskRevisions[revision];
         return found?.taskId === task ? found : null;
       },
+      listTaskRevisions: async task => Object.values(state.taskRevisions)
+        .filter(item => item.taskId === task).sort((a, b) => a.version - b.version),
       getBasisSet: async (task, revision, id) => {
         const found = state.bases[id];
         return found?.taskId === task && found.taskRevisionId === revision ? found : null;
@@ -139,6 +152,11 @@ class MemoryUow implements UnitOfWork {
     });
     const tx: Transaction = {
       ...reader(),
+      insertDiscussion: async (item, event) => { state.discussions[item.id] = item; state.discussionEvents.push(event); },
+      updateDiscussion: async (item, expected, event) => {
+        assert.equal(state.discussions[item.id]?.version, expected);
+        state.discussions[item.id] = item; state.discussionEvents.push(event);
+      },
       createRole: async (item, revision) => { state.roles[item.id] = item; state.roleRevisions.push(revision); },
       advanceRole: async (item, expected, revision) => { assert.equal(state.roles[item.id]?.version, expected); state.roles[item.id] = item; state.roleRevisions.push(revision); },
       addDecision: async () => {},

@@ -3,8 +3,10 @@ import { workflowCommands } from "./workflow.js";
 import { runtimeCommands } from "./runtime.js";
 import { roleCommands } from "./roles.js";
 import { scheduleCommands } from "./scheduling.js";
+import { discussionCommands } from "./discussions.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
+export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionStatus } from "./discussions.js";
 
 export const idSchema = z.uuid();
 const text = z.string().trim().min(1).max(4000);
@@ -27,6 +29,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...runtimeCommands,
   ...roleCommands,
   ...scheduleCommands,
+  ...discussionCommands,
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type Permission = "read" | "write" | "review";
