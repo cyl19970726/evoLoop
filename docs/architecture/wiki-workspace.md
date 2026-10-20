@@ -1,6 +1,6 @@
 # Wiki 工作台：知识点、专题与关系浏览
 
-状态：2026-10-20 **前端设计提议，尚未实现**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；当前没有复制组件或代码。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](frontend.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。OpenViking 仍只是外置内容服务候选，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。
+状态：2026-10-20 **前端设计提议，尚未实现**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；当前没有复制组件或代码。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](frontend.md)及[Wiki 集成方案](wiki-integration.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。按 DEC-027，当前先用 OpenViking 承载外置知识空间，后续可能换成自研知识库；浏览器只依赖 evoLoop 的读取模型，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。
 
 本页先回答读者如何进入专题、读完整知识页并追踪修订，再说明查询与权限如何保证这些阅读路径；固定上游组件仅是后面的实现参考。
 
@@ -71,6 +71,18 @@ flowchart LR
 
 建议的只读 query 形状是 `listKnowledge(project, type/topic/status/source, cursor)`、`getKnowledge(id, revision)`、`getTopicMembers(id, revision, cursor)`、`getLinks(id, revision, direction, cursor)`、`getGraphNeighborhood(focus, depth≤1, limit)`、`listReview(project, state, cursor)`。每个响应返回稳定 ID、固定 revision、内容/来源校验、状态、权限能力、`observedAt` 与缺项；图边另给类型、方向、两端 revision 和来源。搜索结果标记命中的是正文、来源摘要还是原件。服务端对列表、关系遍历、搜索和原件逐项鉴权并限量；不可达时显示最后核对时间和缺项，不把缓存旧页显示为当前有效。
 
+### 焦点图的组件接缝与阅读联动
+
+图谱留在 `/knowledge/graph`，作为知识入口内的关系导航；总览／工作／知识仍是三个主入口，首个交付切片仍按[前端架构](frontend.md#6-实现切片与验收)先完成 Task、过程文档及固定依据的可导航读取。图在知识阅读切片中加入，不要求首次进入就加载全库或完成全局布局。
+
+建议 `GraphScene` 接收共同 API 返回的有界 `GraphNeighborhood`、焦点/选中稳定 ID、过滤条件、加载/截断/缺项状态与可用能力，只上抛 `onFocus`、`onSelectNode`、`onSelectEdge`、`onExpand(cursor)`、`onOpenKnowledge(id, revision)`、`onOpenEvidence(edgeId)` 等意图事件；页面容器负责路由、授权查询、版本比较和缓存失效。`RendererGraphologySigma` 是可替换的渲染实现建议，只接收 `GraphScene` 的可视节点/边并回报命中与视口事件，不导入 OpenViking SDK、Tauri/store，也不自行推断关系或读取全库。关系列表与图使用同一查询结果和事件；以后换 SVG、Canvas 或别的渲染器，阅读与查询合同不变。具体字段以[Wiki 集成方案的拟议 DTO](wiki-integration.md#5-查询-dto-与错误语义)和后续浏览器 schema 为准，这里的组件名/事件是实施建议。
+
+节点以 `knowledgeId` 标识知识页，以固定 `revision` 标识所读内容；边有独立 ID、起止 ID/修订、方向、关系类型、来源定位和解析状态。关系类型与确认状态分开：显式链接或有来源的支持/反驳/取代关系须显示是否已确认；仅由共来源、相似度或共同邻居推得的边只能标“可能相关”。推断边以不同线型和文字标签显示，不能混入已确认关系；“已确认”只指关系的登记/审阅状态，不保证相关认识为真。点节点使阅读面板打开该固定修订，并同步高亮出链/反链；点边显示关系说明、依据和来源可达性，能从来源回到对应知识页及 Task 的固定依据。断链和无权查看的端点保留可解释缺项，但不能泄露其标题、摘要或存在细节；键盘可到达的关系列表提供同样的选择、展开与来源入口。
+
+邻域查询由共同 API 限深度、节点/边数和游标，响应标记 `truncated`、`nextCursor`、分源缺项和水位；界面明确显示“仅部分关系”，展开只请求下一页。搜索、筛选和邻域均逐项执行项目权限；缓存键至少隔离身份、项目、授权版本、焦点/过滤/游标、固定修订与知识投影代次。权限收紧、切项目/身份、发布或撤回后丢弃相应图/列表/页缓存并重新核对，旧图不得继续以当前可见关系呈现。切换知识修订时取消旧请求和布局计算；若后续使用 ForceAtlas2 worker，由 `GraphScene` 创建/中止并在卸载时释放，渲染器释放图实例、监听器和画布资源。布局只影响坐标，不改变边语义；小邻域可先用确定性简单布局。
+
+图页可固定焦点修订，也可请求“当前”投影；两种视图都显示各自的知识 manifest/索引水位与 `observedAt`。固定页修订并不保证整个邻域来自同一历史瞬间：邻居、反链索引、PG Task 关系和来源端可能各有核对时间。版本切换保留焦点 ID，但重查邻域、双链和来源，明确标记缺项/滞后；不得把局部版本比较呈现为全库历史原子快照。[跨源一致性](frontend.md#2-组件路由与查询模型)
+
 命令仅走共同 API：`submitKnowledgeCorrection` 创建候选，`reviewKnowledgeCandidate` 记录决定，`publishKnowledgeCandidate` 在受控写入口核旧 revision 并回读，`requestImpactReview` 连接 PG 跨对象影响。写入成功后回包丢失用同一 operation ID 查询和核对；Review 状态、Wiki 发布、派生索引完成及新 session 实际采用分别显示。[维护机制](wiki-maintenance.md#首片与发布门槛) · [前端命令流程](frontend.md#3-修改刷新与失败如何呈现)
 
 ## 3. 从 nashsu 固定版抽取的前端机制
@@ -88,8 +100,15 @@ flowchart LR
 
 nashsu 的组件并非可直接导入的无状态 UI：多处调用大型 [wiki-store](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/wiki-store.ts)；树、预览、图和双链依赖 [`commands/fs.ts`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/commands/fs.ts) 的 Tauri `invoke`，来源导入还依赖 Tauri dialog、前端摄入队列，图谱构建会遍历读取 vault。UI 层仅参考布局、反馈和纯解析/筛选函数；需复用代码时单独核 GPL-3.0、依赖与替换成本。本阶段未复制。[固定版组件边界](../research/nashsu-llm-wiki/architecture.md#1-组件依赖与进程边界)
 
-## 4. 首片验收
+## 4. 阅读与图谱验收
 
 先做一条专题、一条知识点、两条相互争议的来源、两条页关系和一条 Task/Document 固定关系。用户能从专题进入知识点，沿来源读原文，沿出链/反链看解释和缺链；随后提交纠正，比较候选与旧修订、审阅发布，旧 URL 仍读旧版，新 URL 读新版，图与来源筛选随核实的发布结果刷新。撤回来源后，相关页与跨对象 Task 显示待复核，派发被阻止，不能只消失一个来源标签。让新 session 据新修订完成任务，并用交付内容而非“通知已发送”判定采用。
 
 检查还应覆盖权限收紧后列表/搜索/图/原件不可见、同名知识点不串链、长列表分页和焦点图限量、Wiki 不可达、两人同基线发布冲突、成功后回包丢失及恢复后旧 revision 可读。尤其在查询索引滞后时，服务端仍须按当前权限和有效性逐项过滤，不能仅依赖缓存失效；客户端重新进入页面或恢复连接时也应先核对可见性。桌面上游的图和阅读体验是设计参考；性能、可用性与知识效果须在 evoLoop 的真实 API 和用户操作中另验。[nashsu 有限实测](../research/nashsu-llm-wiki/results.md) · [Wiki 有效性](../product/wiki-evaluation.md)
+
+| 验收情形 | 可观察结果 |
+| --- | --- |
+| 焦点、边与来源联动 | 从专题/知识页进入焦点图，选择节点打开固定修订；选择显式/推断边能看清类型、方向和来源，并经出链/反链及来源返回原页。键盘关系列表完成同一路径。 |
+| 有界与不完整结果 | 分页或截断时明确显示已载范围和继续展开入口；取消、断线、索引滞后及来源不可达时保留缺项/水位，不把部分结果画成全库图。 |
+| 身份、项目与版本隔离 | 切身份/项目、收紧权限、发布/撤回和切修订后，旧画布/列表不泄露已无权内容；历史焦点仍可按授权深链回读，邻域分别标明各源核对状态。 |
+| 知识后端替换 | 用同一组浏览器 DTO、路由与图组件接入另一个 `KnowledgeRepository` 适配器；同一个 `knowledgeId` 固定修订深链仍能定位正文/来源，同一 Task 的固定 KnowledgeRef/BasisSet 仍能解释当时依据。若原来源不可达，要返回缺项而非悄悄改绑新页。 |

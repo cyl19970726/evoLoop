@@ -1,6 +1,6 @@
 # 包架构：实现边界与运行装配
 
-推荐包架构 v0.5 · **主数据与连接器方向已由用户选定，具体实现仍是提案；尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
+推荐包架构 v0.6 · **主数据、连接器方向及首个 Wiki 后端 OpenViking 已由用户选定，具体实现仍是提案；尚未实现或部署。** 当前分支是文档与阅读工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
 
 本页把[总览](overview.md)的逻辑责任映射到拟议实现。先看核心模块承担什么、它们怎样装配到运行单位，再查源码依赖和完整包表。包是代码边界，进程是部署单位，Role/Session 是职责与承载关系，三者不逐一对应。
 
@@ -23,7 +23,7 @@
 
 ## 进程与权威边界
 
-这里分两幅图读同一套推荐装配：先看**受控写入如何到 PG 主数据、飞书如何成为投影**，再看**同一进程怎样接入运行时和外部正文**。箭头表示运行调用、投影或回读，和后文源码依赖箭头的含义不同。两幅图中的协调服务是**同一个单活进程**；所有服务仍待实现，OpenViking 是候选。它们细化实施边界，不能代替[总览的责任结构图](overview.md#2-四部分如何组成系统)。
+这里分两幅图读同一套推荐装配：先看**受控写入如何到 PG 主数据、飞书如何成为投影**，再看**同一进程怎样接入运行时和外部正文**。箭头表示运行调用、投影或回读，和后文源码依赖箭头的含义不同。两幅图中的协调服务是**同一个单活进程**；所有服务仍待实现，OpenViking 是首个接入后端，固定版本仍待验。它们细化实施边界，不能代替[总览的责任结构图](overview.md#2-四部分如何组成系统)。
 
 ### 主数据与协作投影
 
@@ -59,7 +59,7 @@ flowchart TB
   C --> W["Wiki HTTP 适配器"]:::adapter
   C --> G["Git 文档适配器"]:::adapter
   R <-->|stdio 请求与运行事件| AS["自管 Codex App Server<br/>Thread／Turn"]:::runtime
-  W <-->|受控发布与固定修订读取| OV["外置 Wiki 服务候选<br/>OpenViking"]:::authority
+  W <-->|受控发布与固定修订读取| OV["外置 Wiki 服务<br/>首期 OpenViking · 版本待验"]:::authority
   G -->|固定 commit 只读| GR["受管项目 Git<br/>正式文档正文"]:::authority
   classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
   classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
@@ -67,7 +67,7 @@ flowchart TB
   classDef runtime fill:#E7F2E9,stroke:#3C7654,color:#183C28
 ```
 
-紫＝同一协调进程；蓝＝其中的边界适配包；绿＝独立执行运行时；青＝外部正文权威。若采用 OpenViking，其上游 Python/Rust 部署留在独立服务，evoLoop 通过 HTTP 接入。Git 正式正文与外置 Wiki 不迁入 PG；PG 只记录固定引用和跨对象关系。完整包名与依赖范围在后文表中查阅。
+紫＝同一协调进程；蓝＝其中的边界适配包；绿＝独立执行运行时；青＝外部正文权威。首期 OpenViking 的上游 Python/Rust 部署留在独立服务，evoLoop 通过 HTTP 接入。Git 正式正文与外置 Wiki 不迁入 PG；PG 只记录固定引用和跨对象关系。完整包名与依赖范围在后文表中查阅。
 
 **统一写路径。** 工作台、Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与身份 → `core` 读取 PG 当前版本并检查授权、接受/文档审核状态与冲突 → PG 同一事务提交 Task/Document/Relation 变更及出站 outbox → connector 投影到飞书并回读同步结果。飞书原生编辑是受控入口：事件提示回读，connector 将变化映射为带可核验行为者与基线的 command，仍经 `core` 审核后写 PG；身份或基线不足、字段冲突时停下并显式复核，不采用最后写入覆盖。Task、文档审核、运行、同步、实际效果状态分别维护；投影成功不等于交付或效果完成。
 
@@ -130,6 +130,25 @@ flowchart TB
 
 Wiki 前端代码按[集成方案](wiki-integration.md)拆为组件、数据 hooks 和共同 DTO：显示组件只收 props/事件；服务数据走共同 API；OpenViking DTO、目录及发布清单细节只留适配器。`SourceBridge` 是 `core/knowledge` 的组合用例，所用来源/知识端口属于 contracts；不把它再造为独立服务。上游可抽取代码须登记固定来源与依赖闭包，不直接导入 nashsu 的整个 Zustand/Tauri/摄入链。评价记录暂由 PG 适配器随真实切片支持，复用 Task/Run/Review 的固定引用，不能把 Wiki 正文移入评价表。
 
+对象存储接入时，可新增实现同一 `BlobStore` 的适配包（拟名 `adapter-object-storage`），由协调应用装配；SDK、上传方式、物理 key 与访问 URL 只留该包，不渗入 `core`、前端或业务 ID。当前不创建空包，12 个拟议包的现有索引保持当前切片范围。OpenViking 自身内容存储由其服务配置管理，`adapter-wiki-openviking` 仍走知识 API，不借 BlobStore 直接改它的私有对象；即使共用同家对象存储，也要隔离命名空间、访问与生命周期策略。部署时机、源文件归属及迁移条件见[存储设计](storage.md#evoloop-何时接入对象存储)。
+
+## 知识图谱与后端替换的包边界
+
+按 DEC-027，先接 OpenViking，保留以后自研替换的路径。图谱是知识读取的一种表现；前端依赖 evoLoop 的知识合同，后端更换通过适配和数据迁移完成。这里细化现有包职责，不增加图数据库、独立图谱服务或第二套知识权威。
+
+| 现有包内的落点（拟议） | 应持有的逻辑 | 替换 OpenViking 时 |
+| --- | --- | --- |
+| `contracts` 的浏览器出口 | KnowledgePage、来源/链接、有界图视图及状态；稳定业务 ID 与修订 | 保持页面与深链合同；不包含 `viking://`、上游 DTO 或数据库行类型 |
+| `contracts` 的服务端端口 | KnowledgeRepository 的读取、受控写入、能力与迁移分组 | 新后端实现同一语义，缺能力明确返回；详见[可替换合同](contracts.md#知识后端可替换合同) |
+| 知识界面：`apps/workbench/knowledge` | 导航/查询 hooks、阅读与来源面板、GraphScene 和可替换渲染器；布局算法包只在这里依赖 | 页面继续读共同 API；Graphology/Sigma 的渲染细节也不成为后端合同 |
+| `core/knowledge` | 来源桥接、候选/审阅/发布用例和迁移编排；决定哪些变更允许生效 | 保留业务规则，按能力决定开放范围；不出现按供应商名称分支的知识规则 |
+| `core/queries` | 将外置知识页/内部边与 PG 跨对象关系组合成授权、有界的页面视图 | 保留读取语义，报告不同来源水位；无图库扫描或私有协议解析 |
+| `adapter-wiki-openviking` | HTTP、URI 绑定、外置修订/关系清单、可重建索引、迁移导入导出及故障回读；包内可分 client / mapping / revisions / relations / transfer | 替换供应商实现；可移植知识格式由合同定义、在外置空间持久化，不藏进上游专属 DTO |
+| `adapter-postgres` | Task/Document/Review/Relation、KnowledgeRef、操作及切换记录 | 不迁入 Wiki 正文；旧任务仍引用原 knowledgeId/revision |
+| 协调装配：`apps/coordinator` | 选择一个活动知识端口实现，配置空间绑定、能力和数据代次 | 停写、核对、切换绑定和失效缓存；不让新旧后端同时接收生产写入 |
+
+将来确实自研时，再新增实现相同端口的适配包；先跑同一合同套件和迁移演练，包名及自研服务技术由当时证据决定。当前不预建空适配器，也不为“以后可能替换”抽象通用向量数据库或解析引擎。如外置修订格式的公共实现实际被两个后端重复使用，再提取共同库；现在先固定格式与测试样例。具体停写、验收和回退边界见[迁移流程](wiki-integration.md#9-以后替换知识后端怎样保留前端与历史)。
+
 ## 切片与验证
 
 本节集中维护**推荐实施顺序**，不是新增路线或任务状态表；产品阶段和验收仍见[阶段路线](../roadmap.md)。S1—S4 是包含多个可独立审阅交付的小切片组，实际任务只取其中有明确输入、产物和验收的一项。专题页的“首片”指该专题首次接入，不表示所有专题必须在 S1 同时完成。技术栈提案未采纳前不据此自动开始业务实现。
@@ -142,6 +161,6 @@ Wiki 前端代码按[集成方案](wiki-integration.md)拆为组件、数据 hoo
 
 2. **S2 受控编辑与执行恢复：** 在真实测试表验证飞书字段权限、行为者、版本标记、分页与事件；仅能获得足够身份/基线的字段开放入站 command，冲突保留待处理。另加 Codex App Server、扩展 Journal/outbox 与 `core/coordination`；验证丢响应、已知/未知 Turn ID、重启回读与成果核验。`turn/completed` 只推进运行状态。
 3. **S3 一次日程：** 加 `core/scheduling` 与 PG `ScheduleStore`；以可控时钟验证到期、漏触发、重叠、暂停/改期、时区和恢复。若需飞书日程投影，单独验证字段与同步语义；不把首期 Bitable Task 投影扩写成日程权威。
-4. **S4 知识与真实使用：** 加 OpenViking HTTP 适配器、外置修订层、`core/knowledge` 与 evaluation；验证相反解释、同基线写、来源撤回、审阅发布、独立 session 消费，以及与直接读原始材料的成本/效果比较。飞书云文档 connector 属另一套 API，待明确文档映射与审核边界后单独验证；Agent 工具随真实操作需要加入。
+4. **S4 知识与真实使用：** 加 OpenViking HTTP 适配器、外置修订层、`core/knowledge` 与 evaluation；先接固定页、来源、出/反链和有界图，再接受控发布。验证相反解释、同基线写、来源撤回、审阅发布、独立 session 消费，以及与直接读原始材料的成本/效果比较。首批知识进入真实使用前，对代表性来源、历史修订、内部边和 Task 引用做导出→隔离重导入演练；自研替代尚不存在时，只证明格式与 OpenViking 适配器恢复，不能声称跨后端替换已验证。飞书云文档 connector 属另一套 API，待明确文档映射与审核边界后单独验证；Agent 工具随真实操作需要加入。
 
 核心规则用端口替身和固定时钟验证；每个适配器以固定版本/测试环境做合同测试；跨系统用故障与恢复演练；用户面对的效果由真实消费者亲用单独记录。通过局部测试不等于部署或整个认知闭环有效。具体失败语义和验收范围以[领域合同](contracts.md)及[开发规范](../development/standards.md)为准。

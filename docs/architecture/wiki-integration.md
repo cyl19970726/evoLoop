@@ -1,6 +1,6 @@
 # Wiki 前端与知识服务集成
 
-状态：2026-10-20 **可实施设计提议，尚未编码或部署**。用户已确定 PostgreSQL 持有 evoLoop 任务、日程、原生文档与跨对象关系；OpenViking **v0.5.1 是待验证的外置 Wiki 候选**，nashsu/llm_wiki **v0.6.12（`48fd970e`）是前端参考**。本页给两者之间的最小接缝，不改变[领域合同](contracts.md)、[存储权威](storage.md)、[知识流](knowledge-flow.md)、[Wiki 维护](wiki-maintenance.md)和[工作台架构](frontend.md)。本地 OpenViking checkout 为 v0.5.0；v0.5.1 能力判断来自固定上游源码，旧版实测不能当作新版验收。[候选核查](../research/wiki-base-selection-20261019.md) · [技术取舍](technology-selection.md)
+状态：2026-10-20 **可实施设计提议，尚未编码或部署**。用户已确定 PostgreSQL 持有 evoLoop 任务、日程、原生文档与跨对象关系；按 DEC-027，**OpenViking 是首个接入的外置 Wiki 后端，v0.5.1 仍是待验证版本**，nashsu/llm_wiki **v0.6.12（`48fd970e`）是前端参考**。本页给两者之间的最小接缝，不改变[领域合同](contracts.md)、[存储权威](storage.md)、[知识流](knowledge-flow.md)、[Wiki 维护](wiki-maintenance.md)和[工作台架构](frontend.md)。本地 OpenViking checkout 为 v0.5.0；v0.5.1 能力判断来自固定上游源码，旧版实测不能当作新版验收。[候选核查](../research/wiki-base-selection-20261019.md) · [技术取舍](technology-selection.md)
 
 本页是工作台与外置知识服务的实现接缝：先沿一次读取、来源进入和发布纠正走完数据路径，最后查 API 字段、上游路由与组件映射。人的浏览和维护判断分别见[Wiki 工作区](wiki-workspace.md)与[Wiki 维护机制](wiki-maintenance.md)。
 
@@ -8,9 +8,9 @@
 
 `apps/workbench/knowledge` 展示知识点、专题、来源、双链、关系图和待审；所有浏览器读写经过 evoLoop 的 `/api/v1`。API 负责身份、项目范围、能力、固定版本、命令基线与分源状态。PG 是 Task、仅含过程文档的 Document Table、Relation 及运行维护记录的权威；Git 仓库 `docs/` 独立维护产品、架构与规范，文件不进入 Document Table；外置 KnowledgeRepository 是 Wiki 正文、来源、内部依赖与历史的权威。PG 的 KnowledgeRef 只登记外部知识身份与固定修订，不能成为第二份可编辑 Wiki。公开文档站只读 Git 派生视图，飞书仅是协作投影入口。
 
-`KnowledgeRepository` 合同先于 OpenViking 实现。若最终不采用该候选，工作台、Query/Command 及 PG 关系不用改；要替换的是适配器和外置空间内的索引/版本实现。[Wiki 前端模型](wiki-workspace.md)规定页面类型、认识性质、有效状态分开。
+`KnowledgeRepository` 合同先于 OpenViking 实现。以后可能自研替换知识服务，目标是保持工作台、Query/Command 及 PG 引用合同，替换适配器并迁移外置正文/历史/关系、重建索引；并非更换 URL 就能完成。能否保持兼容必须由本页的迁移验收证明。[Wiki 前端模型](wiki-workspace.md)规定页面类型、认识性质、有效状态分开。
 
-下图只检查**共同 API 到 PG、Git 与外置知识适配器的接缝**：它把候选服务的替换边界画清，不再解释四部分责任或一轮工作。
+下图只检查**共同 API 到 PG、Git 与外置知识适配器的接缝**：它把知识服务的替换边界画清，不再解释四部分责任或一轮工作。
 
 ```mermaid
 %%{init: {"flowchart":{"wrappingWidth":190,"nodeSpacing":24,"rankSpacing":40}}}%%
@@ -20,7 +20,7 @@ flowchart TB
   CORE["领域与查询层<br/>基线 · 授权 · 来源 · 发布"]:::core
   PG["PostgreSQL<br/>Task · Document · 关系<br/>知识引用 · 日志 · outbox"]:::pg
   GIT["Git 固定 commit<br/>正式文档正文"]:::ext
-  OV["外置 KnowledgeRepository 候选<br/>OpenViking + 外置版本/索引"]:::ext
+  OV["外置 KnowledgeRepository<br/>首期 OpenViking + 外置版本/索引"]:::ext
   UI -->|"授权 Query / 命令"| API
   API --> CORE
   CORE -->|"同库事务"| PG
@@ -116,6 +116,8 @@ sequenceDiagram
 
 `observedAt` 和各源水位只说明分别核对的时间；PG、Git、Wiki 没有共同瞬间快照。索引滞后或上游不可达时返回可解释的 `stale/unknown` 与 `missing`，历史缓存不能被标成“当前有效”。原件与关系端点逐项复核 ACL；列表/搜索、图、来源卡、附件均不因有索引命中而越权。客户端缓存键至少含 actor、project、对象 ID、固定 revision、过滤/游标、授权版本和 Wiki 水位；切身份、权限收紧或发布/撤回后清除相关缓存。Markdown 禁不可信 HTML、危险 URL，附件经共同 API 授权读取。
 
+`projectionGeneration` 是拟议的不透明读取代次：后端绑定切换或不兼容的关系索引重建时更新，由 API 返回并进入缓存键与游标校验；它不替代知识 revision，也不暴露供应商地址。旧代次游标返回可解释的已失效状态，客户端清除相关缓存并从当前查询第一页重读，不把两代节点/边拼在一起。当前反链读取需标明索引水位，不能因焦点固定在旧 revision 就声称全部反链也是旧时点。
+
 ## 6. OpenViking v0.5.1 的原生面与适配面
 
 固定 [内容路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/content.py)、[检索路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/search.py)、[资源路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/resources.py)和 [compile 路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/compile.py)可核到下列 HTTP 面；是否满足合同仍需候选版集成实测。
@@ -127,6 +129,8 @@ sequenceDiagram
 | `POST /api/v1/resources` | 摄入经 SourceBridge 放行的材料；回执是摄入状态，不是知识已编纂或已采纳 |
 | `POST /api/v1/content/write`、`/batch-write` | 内容写入；v0.5.1 `batch-write` 的每项可带 `expected_sha256`，普通 `write` 不提供同样条件字段。不能据此声称整组发布事务或多写者安全 |
 | `POST /api/v1/compile` | 可选生成/编纂入口；普通内容写入不会自动完成知识综合、审阅、撤回传播或效果验收 |
+
+固定版的 [OVPack 文档](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/docs/en/guides/09-ovpack.md)明确将 `.relations.json` 排除在迁移范围外；[快照文档](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/docs/en/guides/15-snapshot.md)另说明快照历史不随 OVPack 导出。快照、内容备份和 evoLoop 的完整知识迁移是不同能力。因此即使上游备份成功，也必须单独验证知识内部关系、历史修订、权限和 Task 引用是否保全；不能把语义检索命中当作图谱关系。以上是固定版文档观察，尚未在本项目完成迁移实测。
 
 适配器必须在**开发仓库与 PG 正文表之外**的受控 Wiki 命名空间实现稳定 `knowledgeId`、不可变修订文件/manifest、候选/已发布指针、来源依赖、专题成员、双链和反链、失效标记及可重建只读索引。若后端没有原生事件水位，以受控发布日志 + manifest diff/周期核对生成查询水位；页面内容仍由外置空间持有。不能假定 OpenViking 提供原子 manifest 交换、全局游标或跨页事务。只有一个活动发布者，关闭其他 OpenViking/工具直写路径；条件写与读后核对未验前，多写者发布不在支持范围。
 
@@ -155,3 +159,19 @@ sequenceDiagram
 | 4. 纠正到使用 | 来源撤回触发内部及跨对象影响，Task 派发门槛阻止旧依据，后续 session 显示并用新修订 | 执行中纠正、旧 Run 保持旧基线、新修订未被实际采用 |
 
 自动检查关注 DTO/端口、权限、幂等、版本竞争、固定来源与分页；在**真实候选版本**跑发布/回读/故障注入和浏览器任务。人类验收关注能否解释“为何采用这一判断、哪版来源、谁审阅、旧任务受何影响”；搜索命中、通知成功或自动 compile 结果均不能替代这个判断。nashsu 固定版研究和 OpenViking v0.5.0 实测只是设计证据；v0.5.1 的历史修订、并发、权限和恢复仍是实施前待验条件。
+
+## 9. 以后替换知识后端，怎样保留前端与历史
+
+先使用 OpenViking 的规划成立，前提是从第一批真实知识开始就遵守[可替换合同](contracts.md#知识后端可替换合同)。这让后续自研有明确的输入、输出和验收范围；是否值得自研，由实际功能缺口、运行成本、补丁负担或迁移限制决定，不预先承诺重写整个知识引擎。
+
+evoLoop 拥有知识 ID、修订/来源/关系的语义合同；外置知识空间持有对应正文与历史。OpenViking URI、其快照 ID 和向量索引位置只属于适配绑定。权限、关系及版本清单与 Wiki 放在同一受控外置空间，不在开发 repo 或 PG 中补一套活 Wiki。自研后端可更换物理存储和索引技术，但必须继续解析原 ID 与旧修订。
+
+| 步骤 | 操作与通过条件 |
+| --- | --- |
+| 1. 准备与停写 | 为目标端先跑合同测试；暂停知识发布/摄入与使用该 Wiki 的新任务派发，核对知识写入的 pending/unknown 操作并阻止旁路写。记录 PG 操作和外置发布清单水位；未核清就不切换。在途 Run 保持旧依据，相关写回排队或明确暂停，不静默指向新端。 |
+| 2. 固定导出 | 输出版本化迁移清单、知识/来源/候选/附件/关系/失效历史及当前指针，校验数量、hash、引用闭合和权限映射。外部原件依赖及不可达项明确报告；保留独立备份和原绑定。 |
+| 3. 隔离导入与重建 | 保留 ID、revision 和原始字节校验，导入新命名空间；不覆盖旧端。重建检索及关系读取索引，对缺项拒绝“完整迁移”结论。迁移本身不改变知识有效性或 Review 决定。 |
+| 4. 对照验收 | 同一旧知识深链、改名/同名页、来源附件、撤回状态、待审候选、双链/图边及 TaskBasis 均能核回原修订；跨项目/权限测试不泄漏。再比较检索结果质量、分页、恢复及成本，不能仅比较页数。 |
+| 5. 切换与回退 | 仅切换一个活动后端绑定，递增对客户端不透明的数据代次、失效缓存并核对读取，再开放写入/派发。新端尚无新增写入时可回切旧端；一旦新端产生新修订，须再次停写并将增量经同一格式迁回/核清，不能直接回切丢掉新历史。不设长期双写。 |
+
+OpenViking 接入期先做导出→隔离重导入和读图/旧引用验收；未来自研端出现后，再用**同一**合同套件做双实现对照。当前没有自研后端或迁移程序，以上是验收设计，不是已证明可无损替换。图谱样片使用明确标注的固定测试数据只验证渲染和交互；图数据可信、历史可读及用户能据此做判断，需要真实来源和消费者另行验收。

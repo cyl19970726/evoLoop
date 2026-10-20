@@ -1164,7 +1164,7 @@
       "parent": "adapters",
       "lane": 2,
       "label": "Wiki HTTP 适配器",
-      "summary": "候选 OpenViking、外置修订与能力报告",
+      "summary": "OpenViking 接入、外置修订与能力报告",
       "kind": "module",
       "status": "proposed",
       "sources": [
@@ -1395,8 +1395,8 @@
       ],
       "details": [
         {
-          "label": "候选",
-          "value": "OpenViking；正式基座未采纳。外置 revision/manifest 层须实现。"
+          "label": "知识后端",
+          "value": "OpenViking 经可替换端口接入；外置 revision/manifest 层须实现，部署版本仍待验。"
         },
         {
           "label": "并发",

@@ -60,6 +60,7 @@ flowchart TB
 | `/documents/:documentId/incorporation` | 来源过程文档的整理面板：可选的多个固定来源/决定、目标 repo 路径/章节与 base commit、差异/PR、实际合入 commit 及构建状态 | 请求整理、送交仓库责任者、核对既有结果；不创建正式 Document 行，不直接改 Git 或把 Task 标完成 |
 | `/knowledge`、`/knowledge/topics/:knowledgeId` | 按类型、专题和来源分组的知识卡片，主题说明、近期变化和待审入口 | 筛选、搜索、打开专题与知识页 |
 | `/knowledge/:knowledgeId?revision=...` | 认识、适用条件、反例、来源、当前与任务使用版差异 | 提交纠正、请求维护；不直接接受其关联任务 |
+| `/knowledge/graph?focus=...` | 已授权的焦点邻域、关系类型/方向/来源、截断与分源缺项；阅读面板沿用固定知识修订 | 选择知识点或边、展开下一页、打开依据；图是知识入口内的导航 |
 | `/roles`、`/roles/:roleId` | 责任约定、承载会话、历史证据、试行与待回看 | 提出职责调整、记录试行评审 |
 | `/schedules/:scheduleId` | 定义修订、时区、下次计划、错过/重叠策略、触发实例与 Task | 修改或暂停后续触发；停止在途工作须另发命令 |
 | `/evaluations/:evaluationId` | 冻结协议/条件、输入与知识修订、case 产物、独立判据、成本与缺项 | 记录观察、提出复核或补证；不把模型评分直接改成已证明收益 |
@@ -160,9 +161,9 @@ sequenceDiagram
 
 React 官方说明从构建工具开始的 SPA 需补齐路由和数据获取，并提示框架能减少后续集成工作。本项目选择 SPA 的理由是架构已规划独立协调 API、工作台需认证且不承担公开文档 SEO；这是项目取舍，并非官方默认推荐所有应用这样构建。[React 建议](https://react.dev/learn/build-a-react-app-from-scratch) · [Vite](https://vite.dev/guide/) · [Router 模式](https://reactrouter.com/start/modes) · [Query 缓存失效](https://tanstack.com/query/latest/docs/framework/react/guides/query-invalidation)
 
-如果需要统一公网内容、服务端渲染或更复杂的全栈表单，重新比较 React Router framework/Next.js；如果团队已有成熟 Vue 工作台，则优先评估复用成本。目前没有证据需要同时维护两种前端。上述选型属于 PROP-009，不改变 PostgreSQL 已选、Wiki 候选仍需验证的状态。
+如果需要统一公网内容、服务端渲染或更复杂的全栈表单，重新比较 React Router framework/Next.js；如果团队已有成熟 Vue 工作台，则优先评估复用成本。目前没有证据需要同时维护两种前端。上述选型属于 PROP-009，不改变 PostgreSQL 与首个知识后端 OpenViking 已选、Wiki 固定版本仍需验证的状态。
 
-Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完整阅读、双链、图谱和 Review 结构；单独的[知识工作区架构](wiki-workspace.md)说明固定源码、组件迁移与服务数据模型。知识浏览是独立入口，不能缩成认知讨论旁的一条 Wiki 链接。
+Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完整阅读、双链、图谱和 Review 结构；单独的[知识工作区架构](wiki-workspace.md#焦点图的组件接缝与阅读联动)说明固定源码、组件接缝、阅读联动与服务数据模型。图渲染器只消费共同 API 的授权子图；OpenViking 或未来自研知识库由后端 `KnowledgeRepository` 适配，以保留前端稳定深链和 Task 固定依据为替换验收目标。知识浏览是独立入口，不能缩成认知讨论旁的一条 Wiki 链接。
 
 ### nashsu 的技术组合如何取舍
 
