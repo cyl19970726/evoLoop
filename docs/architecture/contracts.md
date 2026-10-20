@@ -1,14 +1,14 @@
 # evoLoop 领域合同
 
-> 状态：目标语义合同与受限本机实现并存。C5 将 Task 正文统一归入固定 DocumentRevision、当前任务收敛为四态；11 个工作区、迁移 012 的实际字段以 `packages/contracts` 和[本机运行](../development/local-run.md)为准，验收状态见[阶段路线](../roadmap.md)。PostgreSQL 保存主数据，工作台与 CLI 经同一 API 使用；飞书真实租户、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据权威见[项目数据](project-data.md)，用户行为见[产品定义](../product/definition.md)，实现规范见[开发规范](../development/standards.md)。
+> 状态：目标语义合同与受限本机实现并存。C5 将 Task 正文统一归入固定 DocumentRevision、当前任务收敛为四态；11 个工作区、迁移 012 的实际字段以 `packages/contracts` 和[本机运行](../development/local-run.md)为准，逐项已验范围与限制见[阶段路线](../roadmap.md#当前基线)。PostgreSQL 保存主数据，工作台与项目业务 skill＋CLI 经同一 API 使用；飞书真实租户、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据权威见[项目数据](project-data.md)，用户行为见[产品定义](../product/definition.md)，实现规范见[开发规范](../development/standards.md)。
 
 ## 对象如何配合
 
-一项工作先有观察或要求，再明确有界动作和验收。未决定的问题可保存在 issue/spec 或讨论；TaskStore 管理 Task 的责任、验收、固定主正文和四态进度。历史 TaskProposal/判断保留，不作为新任务的强制流程；创建记录也不扩大实际授权。`ScheduleStore` 可按约定时点提出或创建可追溯的工作，触发本身不越过任务接受规则。飞书可以展示和接收受控编辑，任务本体仍由 PostgreSQL 维护。
+一项工作先有观察或要求，再明确有界动作和验收。未决定的问题可保存在 issue/spec 或讨论；TaskStore 管理 Task 的责任、验收、固定主正文和四态进度。历史 TaskProposal/判断保留，不作为新任务的强制流程；创建记录也不扩大实际授权。`ScheduleStore` 可按约定时点提出或创建可追溯的工作，触发本身不授权开始 Task。飞书可以展示和接收受控编辑，任务本体仍由 PostgreSQL 维护。
 
 任务的详细要求与讨论可在过程 `Document` 中修订；仓库正式 `docs/` 由 Git 独立维护；Wiki 在仓库外维护可修订的认识及其来源。Task 与 Document 的普通链接只帮助导航，不能说明任务已经接受哪版内容。主正文从创建时就固定 DocumentRevision；开始执行时同事务形成 TaskRevision 与完整、封存的 BasisSet，固定目标、判据及实际使用的 DocumentRevision、GitSourceRef 或 Knowledge 修订；封存后不改成员，变更依据产生新任务修订与集合。派发只能使用已封存集合；后续来源更新只触发影响复核，不重写旧 Run 的依据。
 
-`Coordinator` 依据已接受任务和 `RoleRegistry` 选择责任者，再由 `SessionRuntime` 承接。`Delivery` 记录产物和检查，约定的验收者判断任务是否满足判据；`StageReview` 另外观察成果是否被目标消费者实际使用、效果与偏差，并决定继续、补证或提出新工作。发送通知、Run 结束、任务交付、正式文档合入、Wiki 发布及实际使用各有自己的证据，不能互相代替。
+`Coordinator` 依据已开始且获授权的任务和 `RoleRegistry` 选择责任者，再由 `SessionRuntime` 承接。`Delivery` 记录产物和检查，约定的验收者判断任务是否满足判据；`StageReview` 另外观察成果是否被目标消费者实际使用、效果与偏差，并决定继续、补证或提出新工作。发送通知、Run 结束、任务交付、正式文档合入、Wiki 发布及实际使用各有自己的证据，不能互相代替。
 
 后文先给这些对象的权威和状态边界，再细化来源、权限、版本、结果、端口与恢复。所有跨系统读取都须保留固定引用和当前可达性观察：原件与提取文本、投影视图分开；不可变载荷与可变权限/有效性分开。
 
@@ -58,7 +58,7 @@ Document 增加可空用途 kind 与 draft/published/archived；发布指针沿�
 
 `DocumentStore` 只管理可关联任务的过程文档及正文修订，包括需求、任务详述、技术讨论、方案和评审记录；文档完成或归档后仍保留固定历史。仓库 `docs/` 下的产品、架构、接口与开发规范不进入 DocumentStore，而由 Git 独立维护。
 
-`DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务接受或执行时，再由 TaskBasis 固定实际采用的 DocumentRevision。任务引用某需求不意味着其他关联任务自动接受它。
+`DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务开始或执行时，再由 TaskBasis 固定实际采用的其他 DocumentRevision。任务引用某需求不意味着其他关联任务自动采用它。
 
 Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
@@ -167,7 +167,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 下一阶段工作应能追到上一阶段的判断及其来源；相关知识修订若被推翻，未执行任务标待复核。读取端只取与当前任务相关的页和关键反例，再下钻原料，不把整套 Wiki 当作无条件提示词。是否改善要与直接读取原材料等可比基线对照，记录编译、维护、读取和纠错的总成本。
 
-回看结果应形成继续、补证、修订、暂缓、结束或请求具体取舍的选择，关联目标、依据修订、预期观察、责任和资源范围。已授权且满足接受条件的行动进入 TaskStore；没有新证据或有价值动作时允许等待/结束。阶段回看可由交付、使用反馈、来源变化或约定周期触发，触发成功不等于认知已完成，任务提交也不等于已执行。
+回看结果应形成继续、补证、修订、暂缓、结束或请求具体取舍的选择，关联目标、依据修订、预期观察、责任和资源范围。已授权且有明确正文、责任和验收的行动进入 TaskStore；没有新证据或有价值动作时允许等待/结束。阶段回看可由交付、使用反馈、来源变化或约定周期触发，触发成功不等于认知已完成，任务创建也不等于已执行。
 
 ## 6a. EvaluationRecord：评价证据与条件
 
@@ -175,7 +175,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 每个 `EvaluationCase` 关联固定 TaskRevision、实际 Run/消费 session、输入修订、首次产物及重试、追源/人工介入、确定性检查和独立评审。`ConsumerOutcome` 分开记录知识采用、交付合格、真人效果与成本；值可为已观察、未观察或待复核，缺失不折算为零或通过。消费者不能得到尚未开放的答案与评分反馈；权限检查覆盖产物和逐 case 详情。
 
-PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobStore 定位，活 Wiki 正文仍外置。页面返回逐 case 证据与局限，汇总须标分母、失败/重试、未知和条件差异。评价结果先形成 ReviewDecision 或维护/补证提议，经同一任务接受规则推进；不能因为自动评分较高就自动采纳知识或关闭阶段目标。评价设计见[产品评价约定](../product/wiki-evaluation.md)。
+PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobStore 定位，活 Wiki 正文仍外置。页面返回逐 case 证据与局限，汇总须标分母、失败/重试、未知和条件差异。评价结果先形成 ReviewDecision 或维护/补证提议，经授权和 Task 创建、开始规则推进；不能因为自动评分较高就自动采纳知识或关闭阶段目标。评价设计见[产品评价约定](../product/wiki-evaluation.md)。
 
 ## 7. ScheduleStore 与触发实例
 
