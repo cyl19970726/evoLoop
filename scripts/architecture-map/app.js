@@ -19,13 +19,13 @@ export function mountSystemApp(root, model, architecture) {
   root.className = 'system-app';
   const create = (tag, className, text) => { const n=document.createElement(tag);n.className=className;if(text)n.textContent=text;return n; };
   const header=create('header','system-header');const identity=create('div','system-identity');
-  identity.append(create('span','system-name','evoLoop'),create('span','system-status','目标设计 · 业务系统尚未实现'));
+  identity.append(create('span','system-name','evoLoop'),create('span','system-status','目标职责 · 本机切片已实现'));
   const title=create('h1','','系统结构');
   const controls=create('nav','system-views');controls.setAttribute('aria-label','架构阅读层次');
-  const structureButton=create('button','','系统结构'), moduleButton=create('button','','完整模块 · 12 个拟议包'), current=create('span','system-current-mechanism');
+  const structureButton=create('button','','系统结构'), moduleButton=create('button','','完整模块 · 12 个目标包'), current=create('span','system-current-mechanism');
   structureButton.type=moduleButton.type='button';controls.append(structureButton,moduleButton,current);
   const refs=create('details','system-sources');refs.append(create('summary','','图源与版本'));const list=create('div','system-source-list');
-  for(const [label,href] of [['结构图规范','evoloop-system-structure.architecture.json'],['模块与关系模型','evoloop-system.model.json'],['固定模块来源 · '+model.repository.revision.slice(0,12),`${model.repository.url}/tree/${model.repository.revision}`]]){const a=create('a','',label);a.href=href;a.target='_blank';a.rel='noopener noreferrer';list.append(a);}
+  for(const [label,href] of [['结构图规范','evoloop-system-structure.architecture.json'],['模块与关系模型','evoloop-system.model.json'],['模块默认来源 · '+model.repository.revision.slice(0,12),`${model.repository.url}/tree/${model.repository.revision}`]]){const a=create('a','',label);a.href=href;a.target='_blank';a.rel='noopener noreferrer';list.append(a);}
   refs.append(list);const bar=create('div','system-bar');bar.append(controls,refs);header.append(identity,title,bar);
   const structurePanel=create('main','system-structure-panel'),structureRoot=create('div','');structurePanel.append(structureRoot);
   const readingPanel=create('main','system-reading-panel'),context=create('div','system-mechanism-context'),readingRoot=create('div','');readingPanel.append(context,readingRoot);

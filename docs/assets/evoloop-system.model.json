@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "title": "evoLoop 全局架构地图",
-  "description": "目标架构 · 通过模块装配、协作、数据归属和场景定位阅读系统。业务包及生产接入尚未实现；折叠只改变呈现，完整模块与来源始终保留。",
+  "description": "目标职责与关系图；本机工作台、Agent 业务 skill/CLI 与协调 API 已有实现。模块不是完成度清单；当前能力按架构正文和阶段基线核对，折叠保留全部关系。",
   "repository": {
     "url": "https://github.com/cyl19970726/evoLoop",
     "revision": "286e749c4242fcf045cd1d439c8e81424dcc774b"
@@ -106,25 +106,30 @@
       "id": "entry",
       "parent": null,
       "lane": 0,
-      "label": "调用入口",
-      "summary": "工作台、CLI、Agent 工具共用受控 API",
+      "label": "人类与 Agent 入口",
+      "summary": "人类经工作台观察与反馈；Agent 依业务 skill 经 CLI 执行，共用受控 API",
       "kind": "group",
       "status": "proposed",
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 120,
-          "endLine": 123
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
+        },
+        {
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 8,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "details": [
         {
-          "label": "层级",
-          "value": "展示分组；其中各应用/工具才是拟议包。"
+          "label": "服务对象",
+          "value": "人类工作台与 Agent 操作入口分开；人可按需直接操作。"
         },
         {
-          "label": "边界",
-          "value": "无服务凭据，不直接写 PG，不另起协调者。"
+          "label": "共享边界",
+          "value": "API/core 统一身份、权限、固定修订、状态与操作回执；业务 skill 不增加权限。"
         }
       ]
     },
@@ -132,30 +137,31 @@
       "id": "workbench",
       "parent": "entry",
       "lane": 0,
-      "label": "项目工作台",
-      "summary": "组合任务、文档、知识与复核视图",
+      "label": "人类工作台",
+      "summary": "观察进展、阅读依据、追溯变化并反馈；按需人工操作",
       "kind": "module",
-      "status": "proposed",
+      "status": "existing",
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 120
+          "line": 126,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         },
         {
-          "path": "docs/architecture/frontend.md",
-          "line": 46,
-          "endLine": 85
+          "path": "docs/architecture/overview.md",
+          "line": 89,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "path": "apps/workbench",
       "details": [
         {
-          "label": "只读与写入",
-          "value": "读取按来源报告版本/缺项；写入通过共同 Command API。"
+          "label": "默认用途",
+          "value": "供人阅读和核对；大多数常规变更经现有 Agent 会话沟通后由 skill+CLI 执行。"
         },
         {
-          "label": "部署",
-          "value": "推荐浏览器 SPA，由同一协调进程同源提供；技术仍为提案。"
+          "label": "实现与边界",
+          "value": "已有本机 React/Vite 工作台；本图中的页面责任并不表示完整产品或真人使用已验收。"
         }
       ]
     },
@@ -326,33 +332,102 @@
       ]
     },
     {
-      "id": "cli",
+      "id": "agent-entry",
       "parent": "entry",
       "lane": 0,
-      "label": "本地 CLI",
-      "summary": "检查、提议和管理，经共同 API",
-      "kind": "module",
-      "status": "proposed",
+      "label": "Agent：业务 skill＋CLI",
+      "summary": "skill 约定工作过程，CLI 是机器操作客户端；可选 MCP 不成为默认依赖",
+      "kind": "group",
+      "status": "existing",
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 123
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
+        },
+        {
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 8,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
+        }
+      ]
+    },
+    {
+      "id": "business-skill",
+      "parent": "agent-entry",
+      "lane": 0,
+      "label": "evoloop-workflow 业务 skill",
+      "summary": "读取固定依据 → 按授权执行 CLI → 回读结果，留下可供人核对的证据",
+      "kind": "detail",
+      "status": "existing",
+      "sources": [
+        {
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 8,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
+        },
+        {
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 14,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
-      "path": "apps/cli"
+      "details": [
+        {
+          "label": "项目位置",
+          "value": ".agents/skills/evoloop-workflow/SKILL.md；这是工作约定，不是 npm 包或服务。"
+        },
+        {
+          "label": "权限",
+          "value": "skill 不授予额外权限，不接管业务状态机，也不要求 Agent 操作人类 GUI。"
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "parent": "agent-entry",
+      "lane": 0,
+      "label": "Agent 业务 CLI",
+      "summary": "发现合同、读取固定材料、提交受控命令与核对未知回执",
+      "kind": "module",
+      "status": "existing",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 129,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
+        },
+        {
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 10,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
+        }
+      ],
+      "path": "apps/cli",
+      "details": [
+        {
+          "label": "能力范围",
+          "value": "共同命令和具名请求按 CLI 帮助发现；不等同于全部 HTTP 路由或工作台操作。"
+        },
+        {
+          "label": "回执",
+          "value": "保留原操作 ID 和所见版本；无法确认的结果继续待核对，不盲目重发。"
+        }
+      ]
     },
     {
       "id": "agent-tools",
-      "parent": "entry",
+      "parent": "agent-entry",
       "lane": 0,
-      "label": "Agent / MCP 工具",
-      "summary": "查询、提议、交付、审阅与贡献",
+      "label": "可选 MCP 工具（未建）",
+      "summary": "后续按需增加的共同 API 客户端；当前 Agent 默认使用业务 skill+CLI",
       "kind": "module",
       "status": "proposed",
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 121
+          "line": 127,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "path": "packages/agent-tools",
@@ -1288,20 +1363,15 @@
       "status": "selected",
       "sources": [
         {
-          "path": "docs/architecture/storage.md",
-          "line": 13,
-          "endLine": 35
-        },
-        {
-          "path": "docs/architecture/storage.md",
-          "line": 97,
-          "endLine": 135
+          "path": "docs/architecture/packages.md",
+          "line": 123,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "details": [
         {
-          "label": "已确定",
-          "value": "PostgreSQL 引擎及主数据/运行记录归属；服务、表和具体版本尚未实现。"
+          "label": "本机实现",
+          "value": "PostgreSQL 18 主数据与运行记录、迁移至 011 已接通本机试用；生产部署、备份与长期恢复需另验。"
         },
         {
           "label": "不持有",
@@ -1490,19 +1560,14 @@
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 57,
-          "endLine": 74
-        },
-        {
-          "path": "docs/architecture/codex-integration.md",
-          "line": 108,
-          "endLine": 119
+          "line": 122,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "details": [
         {
-          "label": "证据",
-          "value": "有固定版本隔离实测；生产 SessionRuntime 和真实主数据尚未接通。"
+          "label": "本机证据",
+          "value": "自管 owned Turn 已与 PG Task/Run 关联，并有完成、重启回读与终态纠错的受限记录；生产与长期无人值守未验。"
         },
         {
           "label": "桌面边界",
@@ -1851,75 +1916,70 @@
     {
       "id": "e1",
       "to": "workbench",
-      "label": "经工作台等受控入口提交目标/提议",
+      "label": "观察进展、读取依据与反馈",
       "kind": "runtime",
       "sources": [
         {
           "path": "docs/architecture/overview.md",
-          "line": 19,
-          "endLine": 35
-        },
-        {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 143
+          "line": 89,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "owner"
     },
     {
       "id": "e2",
-      "to": "agent-tools",
-      "label": "可经工具提交/读取",
+      "to": "cli",
+      "label": "依业务 skill 经 CLI 读取／执行",
       "kind": "runtime",
       "sources": [
         {
-          "path": "docs/architecture/overview.md",
-          "line": 19,
-          "endLine": 35
+          "path": "docs/architecture/packages.md",
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         },
         {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 143
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 8,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "domain-session"
     },
     {
       "id": "e3",
-      "to": "agent-tools",
-      "label": "可经工具发起维护与下一步",
+      "to": "cli",
+      "label": "依业务 skill 经 CLI 读取／执行",
       "kind": "runtime",
       "sources": [
         {
-          "path": "docs/architecture/overview.md",
-          "line": 19,
-          "endLine": 35
+          "path": "docs/architecture/packages.md",
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         },
         {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 143
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 8,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "cognition-role"
     },
     {
       "id": "e4",
-      "to": "agent-tools",
-      "label": "可经工具提交职责试行",
+      "to": "cli",
+      "label": "依业务 skill 经 CLI 读取／执行",
       "kind": "runtime",
       "sources": [
         {
-          "path": "docs/architecture/overview.md",
-          "line": 19,
-          "endLine": 35
+          "path": "docs/architecture/packages.md",
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         },
         {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 143
+          "path": ".agents/skills/evoloop-workflow/SKILL.md",
+          "line": 8,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "division-role"
@@ -1932,13 +1992,8 @@
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 120,
-          "endLine": 123
-        },
-        {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 133
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "workbench"
@@ -1951,13 +2006,8 @@
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 120,
-          "endLine": 123
-        },
-        {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 133
+          "line": 7,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "cli"
@@ -1965,18 +2015,13 @@
     {
       "id": "e7",
       "to": "api",
-      "label": "共同 Query / Command API",
+      "label": "可选 MCP 经共同 API（未实现）",
       "kind": "runtime",
       "sources": [
         {
           "path": "docs/architecture/packages.md",
-          "line": 120,
-          "endLine": 123
-        },
-        {
-          "path": "docs/architecture/contracts.md",
-          "line": 123,
-          "endLine": 133
+          "line": 127,
+          "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
         }
       ],
       "from": "agent-tools"

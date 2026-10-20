@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateModel, projectGraph, routeProjectedEdges, ancestorPath, expandEdgeAncestors, parseViewState, serializeViewState } from './viewer.js';
+import { validateModel, sourceUrl, modelLink, projectGraph, routeProjectedEdges, ancestorPath, expandEdgeAncestors, parseViewState, serializeViewState } from './viewer.js';
+
+const newerRevision = '1234567890abcdef1234567890abcdef12345678';
 
 function fixture() {
   const node = (id, parent, lane, kind = 'module') => ({ id, parent, lane, label: id, summary: `${id} summary`, kind, status: 'proposed', sources: [{ path: 'docs/architecture.md', line: 1 }] });
@@ -79,6 +81,8 @@ test('无效层级、端点、来源、重复 ID 和场景节点均拒绝', () =
     model => { model.nodes[0].parent = 'request'; },
     model => { model.edges[0].to = 'missing'; },
     model => { model.nodes[1].sources[0].line = 0; },
+    model => { model.nodes[1].sources[0].revision = 'main'; },
+    model => { model.edges[0].sources[0].revision = '1234567'; },
     model => { model.nodes[1].id = 'entry'; },
     model => { model.journeys[0].focus = ['missing']; },
     model => { model.journeys[0].checks = ['']; },
@@ -89,6 +93,15 @@ test('无效层级、端点、来源、重复 ID 和场景节点均拒绝', () =
     const model = fixture(); mutate(model);
     assert.throws(() => validateModel(model));
   }
+});
+
+test('来源修订覆盖仅作用于该来源；缺省仍使用模型固定版本', () => {
+  const model = fixture();
+  const source = { path: 'docs/architecture/space map.md', line: 4, revision: newerRevision };
+  model.nodes[1].sources.push(source);
+  assert.equal(validateModel(model), model);
+  assert.equal(sourceUrl(model, source), `https://github.com/example/evoLoop/blob/${newerRevision}/docs/architecture/space%20map.md#L4`);
+  assert.equal(sourceUrl(model, model.nodes[1].sources[0]), 'https://github.com/example/evoLoop/blob/abc123/docs/architecture.md#L1');
 });
 
 test('同列与邻列关系走留白正交通道，端口分离且不穿其他卡片', () => {
@@ -144,4 +157,10 @@ test('相邻汇总数量在共享走廊内保持至少 22px 间距', () => {
   const a = routes[0].label, b = routes[1].label;
   assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= 22);
   assert.ok(routes.every(route => route.points.length === 4));
+});
+
+test('现有应用目录按节点来源版本打开树，文件位置仍打开blob', () => {
+  const model = fixture();
+  assert.equal(modelLink(model, 'apps/cli', newerRevision), `https://github.com/example/evoLoop/tree/${newerRevision}/apps/cli`);
+  assert.equal(modelLink(model, 'docs/assets/prototype.html'), 'https://github.com/example/evoLoop/blob/abc123/docs/assets/prototype.html');
 });
