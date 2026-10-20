@@ -1,6 +1,6 @@
 # evoLoop 领域合同
 
-> 状态：目标语义合同，2026-10-20；S1a 已实现过程 Markdown、proposed/ready 任务、固定依据与复核子集，具体字段以 `packages/contracts` 为准，其余合同待实现。已确定 PostgreSQL 保存 evoLoop 主数据，飞书作为 connector 和协作入口；具体结构、API 与同步行为仍待验证。整体位置见[架构总览](overview.md)，数据所有权见[项目数据架构](project-data.md)，面向用户的行为见[产品定义](../product/definition.md)，落地方式见[开发规范](../development/standards.md)。
+> 状态：目标语义合同，2026-10-21；当前已有任务执行、交付与使用观察、固定来源、外置知识读写及业务 skill＋CLI 等本机实现子集，具体字段以 `packages/contracts` 为准，逐项已验范围与限制以[当前基线](../roadmap.md#当前基线)为准。本页目标语义不等于全量实现保证。PostgreSQL 保存 evoLoop 主数据，飞书作为 connector 和可选协作入口，真实租户接入仍未验证。整体位置见[架构总览](overview.md)，数据所有权见[项目数据架构](project-data.md)，面向用户的行为见[产品定义](../product/definition.md)，落地方式见[开发规范](../development/standards.md)。
 
 ## 对象如何配合
 
