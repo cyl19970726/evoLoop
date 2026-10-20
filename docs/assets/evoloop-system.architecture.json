@@ -5,7 +5,7 @@
     "title": "evoLoop 四部分怎样协作 · 目标设计",
     "locale": "zh-CN",
     "quality_profile": "showcase",
-    "output": ".archify/architecture-system-reading-20261020-123958/system-reading.html",
+    "output": "docs/assets/evoloop-system-overview.html",
     "repository": {
       "url": "https://github.com/cyl19970726/evoLoop.git",
       "revision": "f403212697e2606d98084a2fc75df9f104e6e9e4"

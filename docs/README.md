@@ -4,7 +4,7 @@
 
 ## 第一次理解整个架构
 
-从[架构总览](architecture/overview.md)连续读完“问题 → 四部分 → 一轮工作 → 对象/边界 → 变化/失败 → 实现/状态”，先建立整体模型。总览中的[可探索关系图](assets/evoloop-system.html)帮助比较责任，正文场景解释它们如何协作。
+从[架构总览](architecture/overview.md)连续读完“问题 → 四部分 → 一轮工作 → 对象/边界 → 变化/失败 → 实现/状态”，先建立整体模型。总览中的[四部分关系图](assets/evoloop-system-overview.html)解释责任，[全局模块地图](assets/evoloop-system.html)按需展开包、内部职责与数据边界，正文场景解释它们如何协作。
 
 随后按需要深入：[项目数据](architecture/project-data.md)解释对象为何分开，[知识流](architecture/knowledge-flow.md)解释认识如何进入并改变任务，[包架构](architecture/packages.md)把逻辑责任落到拟议运行与源码。查字段、表或具体服务时再进入合同、存储、选型和专题页。不要把所有技术参考当作首读前置条件。
 

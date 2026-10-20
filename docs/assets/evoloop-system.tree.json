@@ -1,0 +1,1362 @@
+{
+  "schema_version": 1,
+  "diagram_type": "tree",
+  "meta": {
+    "title": "evoLoop 全模块归属 · 目标设计",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/assets/evoloop-system-modules.html",
+    "repository": {
+      "url": "https://github.com/cyl19970726/evoLoop.git",
+      "revision": "286e749c4242fcf045cd1d439c8e81424dcc774b"
+    }
+  },
+  "layout": {
+    "direction": "right",
+    "nodeW": 150,
+    "nodeMaxW": 200,
+    "gapX": 30,
+    "gapY": 26
+  },
+  "nodes": [
+    {
+      "id": "evoloop",
+      "label": "evoLoop 目标架构",
+      "sublabel": "展示分组 / 包 / 内部职责 / 外部权威",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 3,
+          "end_line": 18
+        }
+      ]
+    },
+    {
+      "id": "actors",
+      "label": "目标与责任",
+      "parent": "evoloop",
+      "sublabel": "归属已定 · 人和 session 作判断；软件记录并约束执行",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 135,
+          "end_line": 153
+        }
+      ]
+    },
+    {
+      "id": "owner",
+      "label": "人类负责人",
+      "parent": "actors",
+      "sublabel": "归属已定 · 目标、授权、关键取舍与真实使用",
+      "sources": [
+        {
+          "path": "docs/architecture/overview.md",
+          "line": 19,
+          "end_line": 32
+        }
+      ]
+    },
+    {
+      "id": "cognition-role",
+      "label": "专门认知 session",
+      "parent": "actors",
+      "sublabel": "归属已定 · 跨领域综合依据并选择下一步",
+      "sources": [
+        {
+          "path": "docs/architecture/overview.md",
+          "line": 21,
+          "end_line": 35
+        }
+      ]
+    },
+    {
+      "id": "domain-session",
+      "label": "领域 session",
+      "parent": "actors",
+      "sublabel": "归属已定 · 理解、实现、修复并交付证据",
+      "sources": [
+        {
+          "path": "docs/architecture/overview.md",
+          "line": 19,
+          "end_line": 35
+        }
+      ]
+    },
+    {
+      "id": "division-role",
+      "label": "分工管理责任",
+      "parent": "actors",
+      "sublabel": "归属已定 · 比较替代办法；职责试行、回看与撤回",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 135,
+          "end_line": 143
+        }
+      ]
+    },
+    {
+      "id": "entry",
+      "label": "调用入口",
+      "parent": "evoloop",
+      "sublabel": "拟议 · 工作台、CLI、Agent 工具共用受控 API",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 120,
+          "end_line": 123
+        }
+      ]
+    },
+    {
+      "id": "workbench",
+      "label": "项目工作台",
+      "parent": "entry",
+      "sublabel": "拟议 · 组合任务、文档、知识与复核视图",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 120
+        },
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 46,
+          "end_line": 85
+        }
+      ]
+    },
+    {
+      "id": "project-ui",
+      "label": "项目与提议",
+      "parent": "workbench",
+      "sublabel": "拟议 · 目标、待判断事项、讨论入口与 dogfood",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 52,
+          "end_line": 54
+        }
+      ]
+    },
+    {
+      "id": "task-ui",
+      "label": "任务与依据",
+      "parent": "workbench",
+      "sublabel": "拟议 · Task、固定依据、交付与验收",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 54,
+          "end_line": 56
+        }
+      ]
+    },
+    {
+      "id": "document-ui",
+      "label": "过程文档",
+      "parent": "workbench",
+      "sublabel": "拟议 · 表格、全文、修订与正式文档整理",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 55,
+          "end_line": 57
+        }
+      ]
+    },
+    {
+      "id": "knowledge-ui",
+      "label": "知识与来源",
+      "parent": "workbench",
+      "sublabel": "拟议 · 专题、正文、双链、图谱与候选审阅",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 58,
+          "end_line": 60
+        }
+      ]
+    },
+    {
+      "id": "role-ui",
+      "label": "职责与会话",
+      "parent": "workbench",
+      "sublabel": "拟议 · 责任约定、承载实例、试行与回看",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 60,
+          "end_line": 62
+        }
+      ]
+    },
+    {
+      "id": "schedule-ui",
+      "label": "日程与触发",
+      "parent": "workbench",
+      "sublabel": "拟议 · 修订、时区、实例与在途停止",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 61,
+          "end_line": 63
+        }
+      ]
+    },
+    {
+      "id": "evaluation-ui",
+      "label": "评价与案例",
+      "parent": "workbench",
+      "sublabel": "拟议 · 冻结条件、逐 case 证据、成本与缺项",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 62,
+          "end_line": 64
+        }
+      ]
+    },
+    {
+      "id": "operation-ui",
+      "label": "操作与恢复",
+      "parent": "workbench",
+      "sublabel": "拟议 · 业务提交、外部效果与下一次对账",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 63,
+          "end_line": 65
+        }
+      ]
+    },
+    {
+      "id": "markdown-reader",
+      "label": "Markdown 阅读器",
+      "parent": "document-ui",
+      "sublabel": "拟议 · 完整固定原文；禁止原始 HTML 执行",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 73,
+          "end_line": 85
+        }
+      ]
+    },
+    {
+      "id": "html-reader",
+      "label": "HTML 报告阅读器",
+      "parent": "document-ui",
+      "sublabel": "拟议 · 完整报告与资源包；隔离预览，原件不变",
+      "sources": [
+        {
+          "path": "docs/architecture/frontend.md",
+          "line": 73,
+          "end_line": 85
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "label": "本地 CLI",
+      "parent": "entry",
+      "sublabel": "拟议 · 检查、提议和管理，经共同 API",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 123
+        }
+      ]
+    },
+    {
+      "id": "agent-tools",
+      "label": "Agent / MCP 工具",
+      "parent": "entry",
+      "sublabel": "拟议 · 查询、提议、交付、审阅与贡献",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 121
+        }
+      ]
+    },
+    {
+      "id": "coordinator",
+      "label": "协调进程",
+      "parent": "evoloop",
+      "sublabel": "拟议 · 单活装配：API、核心、适配器与恢复循环",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 20,
+          "end_line": 22
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 68,
+          "end_line": 74
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "label": "共同 Query / Command API",
+      "parent": "coordinator",
+      "sublabel": "拟议 · 身份、输入、版本和操作入口",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 123,
+          "end_line": 133
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "daemon-due",
+      "label": "到期计算循环",
+      "parent": "coordinator",
+      "sublabel": "拟议 · 按日程定义提出可追溯任务",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 171,
+          "end_line": 187
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "outbox",
+      "label": "出站意图与恢复循环",
+      "parent": "coordinator",
+      "sublabel": "拟议 · 提交后执行外部意图，保留未知结果",
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 137,
+          "end_line": 163
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "reconcile",
+      "label": "周期对账",
+      "parent": "coordinator",
+      "sublabel": "拟议 · 先恢复未决运行/投影，再派发新工作",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 145,
+          "end_line": 153
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "composition",
+      "label": "连接与健康装配",
+      "parent": "coordinator",
+      "sublabel": "拟议 · 凭据、数据库连接、服务启动与静态资源",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "id": "core",
+      "label": "业务核心",
+      "parent": "evoloop",
+      "sublabel": "拟议 · 确定性用例、权限、基线与状态约束",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 9,
+          "end_line": 18
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 113
+        }
+      ]
+    },
+    {
+      "id": "cognition",
+      "label": "认知循环",
+      "parent": "core",
+      "sublabel": "拟议 · 装配目标、依据和反例；记录下一步选择",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 13
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 155,
+          "end_line": 161
+        }
+      ]
+    },
+    {
+      "id": "reviews",
+      "label": "阶段回看",
+      "parent": "core",
+      "sublabel": "拟议 · 交付、亲用、偏差与继续/补证/停止",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 13
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 155,
+          "end_line": 161
+        }
+      ]
+    },
+    {
+      "id": "roles",
+      "label": "逻辑职责",
+      "parent": "core",
+      "sublabel": "拟议 · 职责说明、试行、收益和撤回",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 14
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 135,
+          "end_line": 143
+        }
+      ]
+    },
+    {
+      "id": "sessions",
+      "label": "会话承载",
+      "parent": "core",
+      "sublabel": "拟议 · 实例与 Role/Task/Run 映射及交接",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 14
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 135,
+          "end_line": 153
+        }
+      ]
+    },
+    {
+      "id": "tasks",
+      "label": "任务与验收",
+      "parent": "core",
+      "sublabel": "拟议 · 提议、接受、固定 TaskRevision 与验收",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 15
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 39,
+          "end_line": 67
+        }
+      ]
+    },
+    {
+      "id": "documents",
+      "label": "过程文档",
+      "parent": "core",
+      "sublabel": "拟议 · 不可变修订、审阅采纳与整理记录",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 15
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 69,
+          "end_line": 93
+        }
+      ]
+    },
+    {
+      "id": "relations",
+      "label": "跨对象关系",
+      "parent": "core",
+      "sublabel": "拟议 · 导航、固定修订绑定与影响复核",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 15
+        },
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 71,
+          "end_line": 104
+        }
+      ]
+    },
+    {
+      "id": "connectors",
+      "label": "连接器命令",
+      "parent": "core",
+      "sublabel": "拟议 · 入站身份、字段权限与所见基线核验",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 15
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 189,
+          "end_line": 195
+        }
+      ]
+    },
+    {
+      "id": "coordination",
+      "label": "派发与恢复",
+      "parent": "core",
+      "sublabel": "拟议 · 承接、交接、unknown 与历史回读",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 15
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 145,
+          "end_line": 153
+        }
+      ]
+    },
+    {
+      "id": "scheduling",
+      "label": "日程规则",
+      "parent": "core",
+      "sublabel": "拟议 · 时区、稳定触发键、错过与重叠",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 15
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 171,
+          "end_line": 187
+        }
+      ]
+    },
+    {
+      "id": "knowledge",
+      "label": "知识维护",
+      "parent": "core",
+      "sublabel": "拟议 · 贡献、候选、审阅、发布与撤回影响",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 16
+        },
+        {
+          "path": "docs/architecture/wiki-integration.md",
+          "line": 40,
+          "end_line": 46
+        },
+        {
+          "path": "docs/architecture/knowledge-flow.md",
+          "line": 69,
+          "end_line": 100
+        }
+      ]
+    },
+    {
+      "id": "evaluation",
+      "label": "消费与效果评价",
+      "parent": "core",
+      "sublabel": "拟议 · 协议、条件、case、采用与总成本",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 16
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 163,
+          "end_line": 169
+        }
+      ]
+    },
+    {
+      "id": "queries",
+      "label": "查询与上下文",
+      "parent": "core",
+      "sublabel": "拟议 · 授权读取、固定依据、变化/反例及缺项",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 76
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 113,
+          "end_line": 125
+        }
+      ]
+    },
+    {
+      "id": "sourcebridge",
+      "label": "SourceBridge",
+      "parent": "knowledge",
+      "sublabel": "拟议 · 按固定来源、权限和处理版本送入知识空间",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 113,
+          "end_line": 121
+        },
+        {
+          "path": "docs/architecture/knowledge-flow.md",
+          "line": 92,
+          "end_line": 110
+        }
+      ]
+    },
+    {
+      "id": "publication",
+      "label": "候选与受控发布",
+      "parent": "knowledge",
+      "sublabel": "拟议 · 批准绑定候选 hash / 基线，写前再次核权",
+      "sources": [
+        {
+          "path": "docs/architecture/wiki-integration.md",
+          "line": 76,
+          "end_line": 82
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 95,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "contextquery",
+      "label": "ContextQuery",
+      "parent": "queries",
+      "sublabel": "拟议 · 导航、执行依据、当前变化与缺项分开返回",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 113,
+          "end_line": 121
+        }
+      ]
+    },
+    {
+      "id": "contracts",
+      "label": "共同合同与端口",
+      "parent": "evoloop",
+      "sublabel": "拟议 · 跨包身份、结果、DTO 与中立 I/O 端口",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 112
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 123,
+          "end_line": 139
+        }
+      ]
+    },
+    {
+      "id": "store-ports",
+      "label": "主数据与事务端口",
+      "parent": "contracts",
+      "sublabel": "拟议 · Task / Schedule / Document / Relation Store",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 39,
+          "end_line": 93
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 127,
+          "end_line": 133
+        }
+      ]
+    },
+    {
+      "id": "unitofwork",
+      "label": "UnitOfWork",
+      "parent": "contracts",
+      "sublabel": "拟议 · 同一 PG 连接原子提交对象、操作与 outbox",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 127,
+          "end_line": 133
+        }
+      ]
+    },
+    {
+      "id": "runtime-port",
+      "label": "SessionRuntime",
+      "parent": "contracts",
+      "sublabel": "拟议 · 承接、观察、停止与按能力声明恢复",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 135,
+          "end_line": 153
+        }
+      ]
+    },
+    {
+      "id": "knowledge-ports",
+      "label": "知识与来源端口",
+      "parent": "contracts",
+      "sublabel": "拟议 · EvidenceStore / KnowledgeRepository",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 95,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "source-ports",
+      "label": "独立原文与大载荷端口",
+      "parent": "contracts",
+      "sublabel": "拟议 · DocumentSource / BlobStore",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 103,
+          "end_line": 121
+        }
+      ]
+    },
+    {
+      "id": "connector-port",
+      "label": "Connector 与绑定合同",
+      "parent": "contracts",
+      "sublabel": "拟议 · 受控投影、入站观察与独立同步状态",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 189,
+          "end_line": 195
+        }
+      ]
+    },
+    {
+      "id": "query-command",
+      "label": "Query / Command 协议",
+      "parent": "contracts",
+      "sublabel": "拟议 · 身份、operationId、预期修订与变更意图",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 123,
+          "end_line": 133
+        }
+      ]
+    },
+    {
+      "id": "adapters",
+      "label": "平台边界包",
+      "parent": "evoloop",
+      "sublabel": "拟议 · 把中立端口映射为真实平台协议",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 114,
+          "end_line": 119
+        }
+      ]
+    },
+    {
+      "id": "pg-adapter",
+      "label": "PostgreSQL 适配器",
+      "parent": "adapters",
+      "sublabel": "拟议 · 同连接 Store、Journal / outbox 与 SQL 迁移",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 117
+        }
+      ]
+    },
+    {
+      "id": "feishu-adapter",
+      "label": "飞书 connector",
+      "parent": "adapters",
+      "sublabel": "拟议 · Bitable Task 投影、入站 command 与对账",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 114
+        }
+      ]
+    },
+    {
+      "id": "wiki-adapter",
+      "label": "Wiki HTTP 适配器",
+      "parent": "adapters",
+      "sublabel": "拟议 · 候选 OpenViking、外置修订与能力报告",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 115
+        }
+      ]
+    },
+    {
+      "id": "codex-adapter",
+      "label": "Codex App Server 适配器",
+      "parent": "adapters",
+      "sublabel": "拟议 · stdio、握手、Thread/Turn 与断线回读",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 116
+        }
+      ]
+    },
+    {
+      "id": "git-adapter",
+      "label": "Git 文档适配器",
+      "parent": "adapters",
+      "sublabel": "拟议 · 白名单路径、固定 commit 原文与 hash",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 118
+        }
+      ]
+    },
+    {
+      "id": "blob-adapter",
+      "label": "本机 Blob 适配器",
+      "parent": "adapters",
+      "sublabel": "拟议 · 受控目录、临时写/hash、发布与孤儿对账",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 119
+        }
+      ]
+    },
+    {
+      "id": "authority",
+      "label": "数据权威与外部边界",
+      "parent": "evoloop",
+      "sublabel": "归属已定 · PG、Wiki、Git、原件、投影和执行历史分别持有",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 7,
+          "end_line": 15
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 46,
+          "end_line": 74
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL 主数据",
+      "parent": "authority",
+      "sublabel": "归属已定 · Task、过程文档、关系与运行/同步记录",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 13,
+          "end_line": 35
+        },
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 97,
+          "end_line": 135
+        }
+      ]
+    },
+    {
+      "id": "pg-work",
+      "label": "工作与过程文档",
+      "parent": "postgres",
+      "sublabel": "拟议 · TaskRevision、DocumentRevision、Review 决定",
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 25,
+          "end_line": 33
+        }
+      ]
+    },
+    {
+      "id": "pg-basis",
+      "label": "关系与固定依据",
+      "parent": "postgres",
+      "sublabel": "拟议 · Relation、TaskBasis、GitSourceRef、KnowledgeRef",
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 71,
+          "end_line": 104
+        }
+      ]
+    },
+    {
+      "id": "pg-runtime",
+      "label": "运行与调度记录",
+      "parent": "postgres",
+      "sublabel": "拟议 · Role/Session/Run、Schedule/Occurrence、Journal",
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 101,
+          "end_line": 130
+        }
+      ]
+    },
+    {
+      "id": "pg-evaluation",
+      "label": "评价与影响记录",
+      "parent": "postgres",
+      "sublabel": "拟议 · case/效果、影响复核、贡献与处理回执",
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 129,
+          "end_line": 135
+        }
+      ]
+    },
+    {
+      "id": "wiki-service",
+      "label": "外置 Wiki 服务",
+      "parent": "authority",
+      "sublabel": "拟议 · 知识正文、来源、修订与知识内部依赖",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/wiki-integration.md",
+          "line": 7,
+          "end_line": 11
+        },
+        {
+          "path": "docs/architecture/wiki-integration.md",
+          "line": 115,
+          "end_line": 127
+        }
+      ]
+    },
+    {
+      "id": "git-repos",
+      "label": "受管 Git 仓库",
+      "parent": "authority",
+      "sublabel": "归属已定 · 产品/架构/规范正文及固定 commit",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/knowledge-flow.md",
+          "line": 11,
+          "end_line": 18
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 118
+        }
+      ]
+    },
+    {
+      "id": "blob-store",
+      "label": "仓库外受控原件",
+      "parent": "authority",
+      "sublabel": "拟议 · 大 Markdown / HTML 报告、附件与资源包",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 165,
+          "end_line": 185
+        }
+      ]
+    },
+    {
+      "id": "feishu",
+      "label": "飞书 Bitable",
+      "parent": "authority",
+      "sublabel": "归属已定 · 首期 Task 协作投影与受控编辑",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 24,
+          "end_line": 46
+        },
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 189,
+          "end_line": 195
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "label": "自管 Codex App Server",
+      "parent": "authority",
+      "sublabel": "拟议 · 实际 Thread / Turn 与执行历史",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 57,
+          "end_line": 74
+        },
+        {
+          "path": "docs/architecture/codex-integration.md",
+          "line": 108,
+          "end_line": 119
+        }
+      ]
+    },
+    {
+      "id": "support",
+      "label": "现有工具与条件性测试",
+      "parent": "evoloop",
+      "sublabel": "现有 · 公开 docs 工具、演示/隔离证据及可选夹具",
+      "collapsed": false,
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 3,
+          "end_line": 7
+        },
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 125
+        }
+      ]
+    },
+    {
+      "id": "docs-tool",
+      "label": "文档工具",
+      "parent": "support",
+      "sublabel": "现有 · Markdown 检查、本地站点与 Mermaid 渲染",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 125
+        }
+      ]
+    },
+    {
+      "id": "prototype",
+      "label": "工作台原型",
+      "parent": "support",
+      "sublabel": "现有 · 可点击模拟页面，无真实 API 接入",
+      "sources": [
+        {
+          "path": "docs/architecture/overview.md",
+          "line": 105,
+          "end_line": 109
+        }
+      ]
+    },
+    {
+      "id": "experiments",
+      "label": "Wiki / Codex 隔离证据",
+      "parent": "support",
+      "sublabel": "现有 · 固定版本/样本观察，不转移为生产保证",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 3,
+          "end_line": 7
+        },
+        {
+          "path": "docs/architecture/codex-integration.md",
+          "line": 108,
+          "end_line": 119
+        }
+      ]
+    },
+    {
+      "id": "testkit",
+      "label": "共享故障测试夹具",
+      "parent": "support",
+      "sublabel": "有条件 · 重复需求出现时再建立，非生产依赖",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 125
+        }
+      ]
+    },
+    {
+      "id": "task-store",
+      "label": "TaskStore",
+      "parent": "store-ports",
+      "sublabel": "拟议 · 任务当前头、修订、接受与交付",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 39,
+          "end_line": 67
+        }
+      ]
+    },
+    {
+      "id": "document-store",
+      "label": "DocumentStore",
+      "parent": "store-ports",
+      "sublabel": "拟议 · 过程文档修订、审阅采纳和整理记录",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 69,
+          "end_line": 93
+        }
+      ]
+    },
+    {
+      "id": "relation-store",
+      "label": "RelationStore",
+      "parent": "store-ports",
+      "sublabel": "拟议 · 跨对象导航与固定修订绑定",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 87,
+          "end_line": 93
+        }
+      ]
+    },
+    {
+      "id": "schedule-store",
+      "label": "ScheduleStore",
+      "parent": "store-ports",
+      "sublabel": "拟议 · 定义、稳定触发键与可追溯实例",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 171,
+          "end_line": 187
+        }
+      ]
+    },
+    {
+      "id": "role-registry",
+      "label": "RoleRegistry",
+      "parent": "store-ports",
+      "sublabel": "拟议 · 逻辑职责修订与实例绑定",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 135,
+          "end_line": 143
+        }
+      ]
+    },
+    {
+      "id": "operation-journal",
+      "label": "OperationJournal",
+      "parent": "store-ports",
+      "sublabel": "拟议 · 操作意图、收据、水位与未知结果",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 145,
+          "end_line": 153
+        }
+      ]
+    },
+    {
+      "id": "evidence-store",
+      "label": "EvidenceStore",
+      "parent": "knowledge-ports",
+      "sublabel": "拟议 · 原始来源与证据定位，区别于模型解释",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 95,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "knowledge-repository",
+      "label": "KnowledgeRepository",
+      "parent": "knowledge-ports",
+      "sublabel": "拟议 · 外置认识、来源、候选和固定修订读取",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 95,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "document-source",
+      "label": "DocumentSource",
+      "parent": "source-ports",
+      "sublabel": "拟议 · Git 白名单路径、固定 commit 原始字节",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 113,
+          "end_line": 121
+        }
+      ]
+    },
+    {
+      "id": "blob-port",
+      "label": "BlobStore",
+      "parent": "source-ports",
+      "sublabel": "拟议 · 受控大原件的准备、核验、发布与撤回",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 103,
+          "end_line": 111
+        }
+      ]
+    },
+    {
+      "id": "wiki-content",
+      "label": "知识正文与内部依赖",
+      "parent": "wiki-service",
+      "sublabel": "拟议 · 来源、知识修订、历史和知识内部支持/反例链",
+      "sources": [
+        {
+          "path": "docs/architecture/wiki-integration.md",
+          "line": 7,
+          "end_line": 11
+        }
+      ]
+    },
+    {
+      "id": "git-content",
+      "label": "正式文档原文",
+      "parent": "git-repos",
+      "sublabel": "拟议 · 各仓库 docs/ 原文；按固定 commit 与 hash 引用",
+      "sources": [
+        {
+          "path": "docs/architecture/knowledge-flow.md",
+          "line": 11,
+          "end_line": 18
+        }
+      ]
+    },
+    {
+      "id": "blob-content",
+      "label": "大过程文档原件载荷",
+      "parent": "blob-store",
+      "sublabel": "拟议 · 唯一 canonical payload 与必要资源清单",
+      "sources": [
+        {
+          "path": "docs/architecture/storage.md",
+          "line": 165,
+          "end_line": 179
+        }
+      ]
+    },
+    {
+      "id": "feishu-content",
+      "label": "Task 协作投影",
+      "parent": "feishu",
+      "sublabel": "拟议 · 远端可见版本与原生编辑观察，非主任务本体",
+      "sources": [
+        {
+          "path": "docs/architecture/packages.md",
+          "line": 24,
+          "end_line": 46
+        }
+      ]
+    },
+    {
+      "id": "codex-history",
+      "label": "Thread / Turn 执行历史",
+      "parent": "codex",
+      "sublabel": "拟议 · 宿主执行记录；项目另持 Task/Run/验收引用",
+      "sources": [
+        {
+          "path": "docs/architecture/contracts.md",
+          "line": 145,
+          "end_line": 153
+        }
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎样读这棵树",
+      "items": [
+        "边只表示展示归属，不表示调用、源码依赖或进程包含。",
+        "各节点可展开；跨模块协作和数据归属在全局地图中切换查看。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "实现状态",
+      "items": [
+        "12 个业务包仍是拟议边界，尚未实现或部署。",
+        "PG 主数据归属已定；Wiki 底座、具体栈和版本仍待采纳。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "权威不合并",
+      "items": [
+        "PG 主数据、外置 Wiki、Git 正式正文与大原件分别持有。",
+        "四部分是产品能力，不是四个固定岗位、包或进程。"
+      ]
+    }
+  ]
+}
