@@ -24,13 +24,13 @@ const maxDetailRows = 10_000;
 type Row = QueryResultRow;
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
 const rowProject = (r: Row): Project => ({ id: r.project_id, title: r.title, createdAt: iso(r.created_at) });
-const rowDocument = (r: Row): Document => ({ projectId: r.project_id, id: r.document_id, title: r.title, version: r.version, currentRevisionId: r.current_revision_id, adoptedRevisionId: r.adopted_revision_id });
+const rowDocument = (r: Row): Document => ({ projectId: r.project_id, id: r.document_id, title: r.title, version: r.version, currentRevisionId: r.current_revision_id, adoptedRevisionId: r.adopted_revision_id, kind: r.kind, status: r.status, primaryTaskId: r.primary_task_id ?? null });
 const rowDocumentRevision = (r: Row): DocumentRevision => ({ projectId: r.project_id, documentId: r.document_id, id: r.revision_id,
   body: r.body, format: r.format, mediaType: r.media_type, originalName: r.original_name ?? `${r.document_id}.md`,
   payloadRef: r.payload_ref, entrypoint: r.entrypoint, assetsManifest: r.assets_manifest ?? [],
   contentHash: r.content_hash, author: r.author, createdAt: iso(r.created_at), previousRevisionId: r.previous_revision_id, reason: r.reason });
-const rowTask = (r: Row): Task => ({ projectId: r.project_id, id: r.task_id, version: r.version, currentRevisionId: r.current_revision_id, title: r.title, goal: r.goal, acceptance: r.acceptance, owner: r.owner, state: r.state });
-const rowTaskRevision = (r: Row): TaskRevision => ({ projectId: r.project_id, taskId: r.task_id, id: r.revision_id, version: r.version, title: r.title, goal: r.goal, acceptance: r.acceptance, owner: r.owner, state: r.state, basisSetId: r.basis_set_id, actorId: r.actor_id, reason: r.reason, createdAt: iso(r.created_at) });
+const rowTask = (r: Row): Task => ({ projectId: r.project_id, id: r.task_id, version: r.version, currentRevisionId: r.current_revision_id, title: r.title, content: r.content, contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, acceptance: r.acceptance, owner: r.owner, state: r.state });
+const rowTaskRevision = (r: Row): TaskRevision => ({ projectId: r.project_id, taskId: r.task_id, id: r.revision_id, version: r.version, title: r.title, content: r.content, contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, acceptance: r.acceptance, owner: r.owner, state: r.state, basisSetId: r.basis_set_id, actorId: r.actor_id, reason: r.reason, createdAt: iso(r.created_at) });
 const rowLink = (r: Row): TaskDocumentLink => ({ projectId: r.project_id, id: r.link_id, taskId: r.task_id, documentId: r.document_id, actorId: r.actor_id, createdAt: iso(r.created_at) });
 const rowImpact = (r: Row): Impact => ({ projectId: r.project_id, id: r.impact_id, taskId: r.task_id, taskRevisionId: r.task_revision_id, documentId: r.document_id, fromRevisionId: r.from_revision_id, toRevisionId: r.to_revision_id, state: r.state, decisionId: r.decision_id, createdAt: iso(r.created_at) });
 const rowBasisDecision = (r: Row): BasisDecision => ({ projectId: r.project_id, id: r.decision_id, impactId: r.impact_id, taskId: r.task_id, previousTaskRevisionId: r.previous_task_revision_id, nextTaskRevisionId: r.next_task_revision_id, decision: r.decision, reason: r.reason, actorId: r.actor_id, createdAt: iso(r.created_at) });
@@ -124,7 +124,9 @@ class PgReader implements Reader {
     return r.rows[0] ? rowProject(r.rows[0]) : null;
   }
   async getDocument(id: string): Promise<Document | null> {
-    const r = await this.client.query("SELECT * FROM process_document WHERE project_id=$1 AND document_id=$2", [this.projectId, id]);
+    const r = await this.client.query(`SELECT d.*, t.task_id AS primary_task_id FROM process_document d
+      LEFT JOIN task t ON t.project_id=d.project_id AND t.content_document_id=d.document_id
+      WHERE d.project_id=$1 AND d.document_id=$2`, [this.projectId, id]);
     return r.rows[0] ? rowDocument(r.rows[0]) : null;
   }
   async getDocumentRevision(documentId: string, revisionId: string): Promise<DocumentRevision | null> {
@@ -133,19 +135,28 @@ class PgReader implements Reader {
   }
   async listDocuments(limit: number, cursor?: string): Promise<Page<Document>> {
     pageLimit(limit);
-    const r = await this.client.query("SELECT * FROM process_document WHERE project_id=$1 AND ($2::uuid IS NULL OR document_id>$2::uuid) ORDER BY document_id LIMIT $3", [this.projectId, cursor ?? null, limit + 1]);
+    const r = await this.client.query(`SELECT d.*, t.task_id AS primary_task_id FROM process_document d
+      LEFT JOIN task t ON t.project_id=d.project_id AND t.content_document_id=d.document_id
+      WHERE d.project_id=$1 AND ($2::uuid IS NULL OR d.document_id>$2::uuid)
+      ORDER BY d.document_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1]);
     return page(r.rows, limit, rowDocument, (x) => x.document_id);
   }
   async getTask(id: string): Promise<Task | null> {
-    const r = await this.client.query("SELECT * FROM task WHERE project_id=$1 AND task_id=$2", [this.projectId, id]);
+    const r = await this.client.query(`SELECT t.*,dr.body AS content FROM task t JOIN document_revision dr
+      ON dr.project_id=t.project_id AND dr.document_id=t.content_document_id AND dr.revision_id=t.content_revision_id
+      WHERE t.project_id=$1 AND t.task_id=$2`, [this.projectId, id]);
     return r.rows[0] ? rowTask(r.rows[0]) : null;
   }
   async getTaskRevision(taskId: string, revisionId: string): Promise<TaskRevision | null> {
-    const r = await this.client.query("SELECT * FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [this.projectId, taskId, revisionId]);
+    const r = await this.client.query(`SELECT tr.*,dr.body AS content FROM task_revision tr JOIN document_revision dr
+      ON dr.project_id=tr.project_id AND dr.document_id=tr.content_document_id AND dr.revision_id=tr.content_revision_id
+      WHERE tr.project_id=$1 AND tr.task_id=$2 AND tr.revision_id=$3`, [this.projectId, taskId, revisionId]);
     return r.rows[0] ? rowTaskRevision(r.rows[0]) : null;
   }
   async listTaskRevisions(taskId: string): Promise<TaskRevision[]> {
-    const r = await this.client.query("SELECT * FROM task_revision WHERE project_id=$1 AND task_id=$2 ORDER BY version LIMIT $3", [this.projectId, taskId, maxDetailRows + 1]);
+    const r = await this.client.query(`SELECT tr.*,dr.body AS content FROM task_revision tr JOIN document_revision dr
+      ON dr.project_id=tr.project_id AND dr.document_id=tr.content_document_id AND dr.revision_id=tr.content_revision_id
+      WHERE tr.project_id=$1 AND tr.task_id=$2 ORDER BY tr.version LIMIT $3`, [this.projectId, taskId, maxDetailRows + 1]);
     return bounded(r.rows.map(rowTaskRevision), "task revisions");
   }
   async getBasisSet(taskId: string, taskRevisionId: string, basisSetId: string): Promise<BasisSet | null> {
@@ -156,7 +167,9 @@ class PgReader implements Reader {
   }
   async listTasks(limit: number, cursor?: string): Promise<Page<Task>> {
     pageLimit(limit);
-    const r = await this.client.query("SELECT * FROM task WHERE project_id=$1 AND ($2::uuid IS NULL OR task_id>$2::uuid) ORDER BY task_id LIMIT $3", [this.projectId, cursor ?? null, limit + 1]);
+    const r = await this.client.query(`SELECT t.*,dr.body AS content FROM task t JOIN document_revision dr
+      ON dr.project_id=t.project_id AND dr.document_id=t.content_document_id AND dr.revision_id=t.content_revision_id
+      WHERE t.project_id=$1 AND ($2::uuid IS NULL OR t.task_id>$2::uuid) ORDER BY t.task_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1]);
     return page(r.rows, limit, rowTask, (x) => x.task_id);
   }
   async listLinks(taskId: string): Promise<TaskDocumentLink[]> {
@@ -180,8 +193,9 @@ class PgReader implements Reader {
     return r.rows[0] ? rowOperation(r.rows[0]) : null;
   }
   async findTasksUsingDocument(documentId: string): Promise<Task[]> {
-    const r = await this.client.query(`SELECT DISTINCT t.* FROM task t
+    const r = await this.client.query(`SELECT DISTINCT t.*,dr.body AS content FROM task t
       JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id AND tr.revision_id=t.current_revision_id
+      JOIN document_revision dr ON dr.project_id=t.project_id AND dr.document_id=t.content_document_id AND dr.revision_id=t.content_revision_id
       JOIN basis_set b ON b.project_id=t.project_id AND b.task_id=t.task_id AND b.task_revision_id=tr.revision_id AND b.basis_set_id=tr.basis_set_id AND b.sealed
       JOIN basis_member bm ON bm.project_id=b.project_id AND bm.task_id=b.task_id AND bm.task_revision_id=b.task_revision_id AND bm.basis_set_id=b.basis_set_id
       WHERE t.project_id=$1 AND bm.document_id=$2 ORDER BY t.task_id LIMIT $3`, [this.projectId, documentId, maxDetailRows + 1]);
@@ -252,7 +266,7 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async insertDocument(d: Document): Promise<void> {
     this.assertScope(d.projectId);
-    await this.client.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id) VALUES($1,$2,$3,$4,$5,$6)", [this.projectId, d.id, d.title, d.version, d.currentRevisionId, d.adoptedRevisionId]);
+    await this.client.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [this.projectId, d.id, d.title, d.version, d.currentRevisionId, d.adoptedRevisionId, d.kind, d.status]);
   }
   async insertDocumentRevision(r: DocumentRevision): Promise<void> {
     this.assertScope(r.projectId);
@@ -264,16 +278,16 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async updateDocument(d: Document, expectedVersion: number): Promise<void> {
     this.assertScope(d.projectId);
-    const r = await this.client.query("UPDATE process_document SET title=$3, version=$4, current_revision_id=$5, adopted_revision_id=$6 WHERE project_id=$1 AND document_id=$2 AND version=$7 RETURNING version", [this.projectId, d.id, d.title, d.version, d.currentRevisionId, d.adoptedRevisionId, expectedVersion]);
+    const r = await this.client.query("UPDATE process_document SET title=$3, version=$4, current_revision_id=$5, adopted_revision_id=$6,kind=$8,status=$9 WHERE project_id=$1 AND document_id=$2 AND version=$7 RETURNING version", [this.projectId, d.id, d.title, d.version, d.currentRevisionId, d.adoptedRevisionId, expectedVersion, d.kind, d.status]);
     if (!r.rowCount) throw await this.versionConflict("process_document", "document_id", d.id);
   }
   async insertTask(t: Task): Promise<void> {
     this.assertScope(t.projectId);
-    await this.client.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.goal, t.acceptance, t.owner, t.state]);
+    await this.client.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,kind,content_document_id,content_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.acceptance, t.owner, t.state, t.kind, t.contentDocumentId, t.contentRevisionId]);
   }
   async insertTaskRevision(r: TaskRevision): Promise<void> {
     this.assertScope(r.projectId);
-    await this.client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)", [this.projectId, r.taskId, r.id, r.version, r.title, r.goal, r.acceptance, r.owner, r.state, r.basisSetId, r.actorId, r.reason, r.createdAt]);
+    await this.client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", [this.projectId, r.taskId, r.id, r.version, r.title, r.acceptance, r.owner, r.state, r.kind, r.contentDocumentId, r.contentRevisionId, r.basisSetId, r.actorId, r.reason, r.createdAt]);
   }
   async insertSealedBasisSet(b: BasisSet): Promise<void> {
     this.assertScope(b.projectId);
@@ -285,7 +299,7 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async updateTask(t: Task, expectedVersion: number): Promise<void> {
     this.assertScope(t.projectId);
-    const r = await this.client.query("UPDATE task SET version=$3,current_revision_id=$4,title=$5,goal=$6,acceptance=$7,owner=$8,state=$9 WHERE project_id=$1 AND task_id=$2 AND version=$10 RETURNING version", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.goal, t.acceptance, t.owner, t.state, expectedVersion]);
+    const r = await this.client.query("UPDATE task SET version=$3,current_revision_id=$4,title=$5,acceptance=$6,owner=$7,state=$8,kind=$9,content_document_id=$10,content_revision_id=$11 WHERE project_id=$1 AND task_id=$2 AND version=$12 RETURNING version", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.acceptance, t.owner, t.state, t.kind, t.contentDocumentId, t.contentRevisionId, expectedVersion]);
     if (!r.rowCount) throw await this.versionConflict("task", "task_id", t.id);
   }
   async insertLink(l: TaskDocumentLink): Promise<void> {

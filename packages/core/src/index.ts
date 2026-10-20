@@ -7,6 +7,7 @@ import type {
 import { DomainError } from "@evoloop/contracts/ports";
 import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
+import { validateDispatchBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applySchedule } from "./scheduling/commands.js";
 import { applyDiscussion } from "./discussions.js";
@@ -58,6 +59,12 @@ function requireVersion(actual: number, expected: number): void {
 function requireBody(body: string): void {
   if (new TextEncoder().encode(body).byteLength > 65536) {
     throw new DomainError("BODY_TOO_LARGE", "Markdown body exceeds 65536 UTF-8 bytes");
+  }
+}
+
+async function requireNoInflightRun(tx: Transaction, taskId: string): Promise<void> {
+  if ((await tx.listRuntimeRuns(taskId)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state))) {
+    throw new DomainError("TASK_BUSY", "Resolve the current or uncertain run before changing this task");
   }
 }
 
@@ -120,15 +127,15 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
-    return command.type === "document.adopt" || command.type === "task.accept" || command.type === "task.reviewBasis" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "task.judge" || command.type === "task.close" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
+    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
     const base = { status: "applied" as const, operationId: command.operationId };
     const actorId = principal.actorId;
-    if (command.type === "task.propose" || command.type === "task.revise") await requireAssignableOwner(tx, command.owner);
-    if (command.type === "task.accept") await requireAssignableOwner(tx, required(await tx.getTask(command.taskId), "Task").owner);
+    if (command.type === "task.create" || command.type === "task.update") await requireAssignableOwner(tx, command.owner);
+    if (command.type === "task.start") await requireAssignableOwner(tx, required(await tx.getTask(command.taskId), "Task").owner);
     if (command.type === "runtime.session.reserve") await requireAssignableOwner(tx, command.roleId);
     if (command.type === "schedule.create" || command.type === "schedule.revise") await requireAssignableOwner(tx, command.template.owner);
     switch (command.type) {
@@ -140,11 +147,13 @@ export class WorkflowService {
       }
       case "document.create": {
         if (await tx.getDocument(command.documentId)) throw new DomainError("ALREADY_EXISTS", "Document already exists");
+        if (command.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task documents are created through task.create");
         requireBody(command.body);
         const revisionId = this.deps.ids.next();
         const document: Document = {
           projectId: command.projectId, id: command.documentId, title: command.title,
           version: 1, currentRevisionId: revisionId, adoptedRevisionId: null,
+          kind: command.kind ?? null, status: "draft",
         };
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
@@ -159,6 +168,8 @@ export class WorkflowService {
       case "document.revise": {
         const document = required(await tx.getDocument(command.documentId), "Document");
         requireVersion(document.version, command.expectedVersion);
+        if (document.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task content must be changed through task.update");
+        if (document.status === "archived") throw new DomainError("DOCUMENT_ARCHIVED", "Restore the document before revision");
         const previous = required(await tx.getDocumentRevision(document.id, document.currentRevisionId), "Document revision");
         if (previous.format !== "markdown") throw new DomainError("FORMAT_CHANGE_REQUIRES_PAYLOAD", "HTML revisions require the payload workflow");
         requireBody(command.body);
@@ -173,9 +184,12 @@ export class WorkflowService {
         await tx.updateDocument({ ...document, version: document.version + 1, currentRevisionId: revisionId }, document.version);
         return { result: { ...base, entityId: document.id, version: document.version + 1, revisionId }, effects: [{ kind: "document", entityId: document.id, version: document.version + 1 }] };
       }
-      case "document.adopt": {
+      case "document.adopt":
+      case "document.publish": {
         const document = required(await tx.getDocument(command.documentId), "Document");
         requireVersion(document.version, command.expectedVersion);
+        if (document.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task content is published through task.start");
+        if (document.status === "archived") throw new DomainError("DOCUMENT_ARCHIVED", "Restore the document before publishing");
         if (document.currentRevisionId !== command.revisionId || document.adoptedRevisionId === command.revisionId) {
           throw new DomainError("NOT_CANDIDATE", "Only the current unadopted candidate can be adopted");
         }
@@ -186,11 +200,11 @@ export class WorkflowService {
           revisionId: command.revisionId, actorId, reason: command.reason, createdAt: now,
         };
         await tx.insertDocumentDecision(decision);
-        await tx.updateDocument({ ...document, version: document.version + 1, adoptedRevisionId: command.revisionId }, document.version);
+        await tx.updateDocument({ ...document, status: "published", version: document.version + 1, adoptedRevisionId: command.revisionId }, document.version);
         const impactIds: string[] = [];
         const effects: Effect[] = [{ kind: "document", entityId: document.id, version: document.version + 1 }];
         for (const task of await tx.findTasksUsingDocument(document.id)) {
-          if (task.state !== "ready") continue;
+          if (task.state !== "in_progress") continue;
           const taskRevision = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "Task revision");
           if (!taskRevision.basisSetId) continue;
           const basis = required(await tx.getBasisSet(task.id, taskRevision.id, taskRevision.basisSetId), "Basis set");
@@ -211,25 +225,48 @@ export class WorkflowService {
         }
         return { result: { ...base, entityId: document.id, version: document.version + 1, revisionId: command.revisionId, decisionId, impactIds }, effects };
       }
-      case "task.propose": {
+      case "document.archive":
+      case "document.restore": {
+        const document = required(await tx.getDocument(command.documentId), "Document");
+        requireVersion(document.version, command.expectedVersion);
+        if (document.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task document lifecycle follows its Task");
+        const next = command.type === "document.archive" ? "archived" : document.adoptedRevisionId ? "published" : "draft";
+        if (document.status === next || command.type === "document.restore" && document.status !== "archived")
+          throw new DomainError("INVALID_STATE", "Document is not in the required state");
+        await tx.updateDocument({ ...document, status: next, version: document.version + 1 }, document.version);
+        return { result: { ...base, entityId: document.id, version: document.version + 1 },
+          effects: [{ kind: "document", entityId: document.id, version: document.version + 1 }] };
+      }
+      case "task.create": {
         if (await tx.getTask(command.taskId)) throw new DomainError("ALREADY_EXISTS", "Task already exists");
-        if (new Set(command.documentIds).size !== command.documentIds.length) throw new DomainError("DUPLICATE_DOCUMENT", "Linked documents must be unique");
+        requireBody(command.content);
+        const documentIds = command.documentIds ?? [];
+        if (new Set(documentIds).size !== documentIds.length) throw new DomainError("DUPLICATE_DOCUMENT", "Linked documents must be unique");
         if (command.stageId) {
           const stage = required(await tx.getStage(command.stageId), "Stage");
-          if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "Task proposals require an active stage");
+          if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "Stage task requires an active stage");
           if (!command.consumer || !command.evidence || !command.stopCondition) throw new DomainError("INCOMPLETE_PROPOSAL", "Stage task needs consumer, evidence and stop condition");
         }
-        for (const id of command.documentIds) required(await tx.getDocument(id), "Linked document");
+        for (const id of documentIds) required(await tx.getDocument(id), "Linked document");
         const revisionId = this.deps.ids.next();
-        const task: Task = {
-          projectId: command.projectId, id: command.taskId, version: 1, currentRevisionId: revisionId,
-          title: command.title, goal: command.goal, acceptance: command.acceptance, owner: command.owner, state: "proposed",
-        };
-        const revision: TaskRevision = {
-          projectId: command.projectId, taskId: task.id, id: revisionId, version: 1,
-          title: task.title, goal: task.goal, acceptance: task.acceptance, owner: task.owner,
-          state: "proposed", basisSetId: null, actorId, reason: "Initial proposal", createdAt: now,
-        };
+        const documentId = this.deps.ids.next();
+        const contentRevisionId = this.deps.ids.next();
+        const document: Document = { projectId: command.projectId, id: documentId, title: command.title,
+          kind: "task", status: "draft", version: 1, currentRevisionId: contentRevisionId, adoptedRevisionId: null };
+        const contentRevision: DocumentRevision = { projectId: command.projectId, documentId, id: contentRevisionId,
+          body: command.content, format: "markdown", mediaType: "text/markdown", originalName: `${documentId}.md`,
+          payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: this.deps.hasher.hash(command.content),
+          author: actorId, createdAt: now, previousRevisionId: null, reason: "Initial task content" };
+        const task: Task = { projectId: command.projectId, id: command.taskId, version: 1,
+          currentRevisionId: revisionId, title: command.title, content: command.content,
+          contentDocumentId: documentId, contentRevisionId, kind: command.kind ?? null,
+          acceptance: command.acceptance, owner: command.owner, state: "todo" };
+        const revision: TaskRevision = { projectId: command.projectId, taskId: task.id, id: revisionId,
+          version: 1, title: task.title, content: task.content, contentDocumentId: documentId,
+          contentRevisionId, kind: task.kind, acceptance: task.acceptance, owner: task.owner,
+          state: "todo", basisSetId: null, actorId, reason: "Initial task", createdAt: now };
+        await tx.insertDocument(document);
+        await tx.insertDocumentRevision(contentRevision);
         await tx.insertTask(task);
         await tx.insertTaskRevision(revision);
         if (command.stageId || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
@@ -237,60 +274,140 @@ export class WorkflowService {
             stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: command.useRequired ?? false,
             evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         }
-        for (const documentId of command.documentIds) {
-          const link: TaskDocumentLink = {
-            projectId: command.projectId, id: this.deps.ids.next(), taskId: task.id,
-            documentId, actorId, createdAt: now,
-          };
-          await tx.insertLink(link);
-        }
-        return { result: { ...base, entityId: task.id, version: 1, revisionId }, effects: [{ kind: "task", entityId: task.id, version: 1 }] };
+        for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
+          taskId: task.id, documentId: linkedId, actorId, createdAt: now });
+        return { result: { ...base, entityId: task.id, version: 1, revisionId }, effects: [
+          { kind: "task", entityId: task.id, version: 1 }, { kind: "document", entityId: documentId, version: 1 }] };
       }
-      case "task.accept": {
+      case "task.update": {
         const task = required(await tx.getTask(command.taskId), "Task");
         requireVersion(task.version, command.expectedVersion);
-        if (task.state !== "proposed") throw new DomainError("INVALID_STATE", "Only proposed tasks can be accepted");
-        const proposal = await tx.getTaskProposal(task.id, task.currentRevisionId);
-        const judgements = await tx.listTaskJudgements(task.id);
-        if (proposal?.stageId && (await tx.getStage(proposal.stageId))?.state !== "active") {
-          throw new DomainError("INVALID_STAGE", "The proposed task's stage is no longer active");
+        if (task.state === "done" || task.state === "cancelled") throw new DomainError("INVALID_STATE", "Reopen the Task before changing it");
+        await requireNoInflightRun(tx, task.id);
+        requireBody(command.content);
+        const documentIds = command.documentIds ?? (await tx.listLinks(task.id)).map(link => link.documentId);
+        if (new Set(documentIds).size !== documentIds.length || documentIds.includes(task.contentDocumentId))
+          throw new DomainError("DUPLICATE_DOCUMENT", "Linked documents must be unique and exclude the primary document");
+        const linked = (await tx.listLinks(task.id)).map(link => link.documentId);
+        if (linked.some(id => !documentIds.includes(id))) throw new DomainError("LINK_REMOVAL_UNSUPPORTED", "Existing document links cannot be removed by task.update");
+        for (const id of documentIds) required(await tx.getDocument(id), "Linked document");
+        const prior = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "Task revision");
+        const priorProposal = await tx.getTaskProposal(task.id);
+        const contentChanged = task.content !== command.content;
+        const kind = command.kind === undefined ? task.kind : command.kind;
+        if (task.state === "in_progress" && (contentChanged || task.acceptance !== command.acceptance ||
+          task.owner !== command.owner || task.kind !== kind || linked.length !== documentIds.length ||
+          command.consumer !== undefined && command.consumer !== priorProposal?.consumer ||
+          command.useRequired !== undefined && command.useRequired !== priorProposal?.useRequired ||
+          command.evidence !== undefined && command.evidence !== priorProposal?.evidence ||
+          command.stopCondition !== undefined && command.stopCondition !== priorProposal?.stopCondition))
+          throw new DomainError("REOPEN_REQUIRED", "Return the Task to todo before changing its execution scope");
+        const revisionId = this.deps.ids.next();
+        let contentRevisionId = task.contentRevisionId;
+        let contentDocumentVersion: number | null = null;
+        if (contentChanged) {
+          const doc = required(await tx.getDocument(task.contentDocumentId), "Primary task document");
+          if (doc.kind !== "task" || doc.currentRevisionId !== task.contentRevisionId)
+            throw new DomainError("CONTENT_BASELINE_CHANGED", "Primary document changed outside the Task revision");
+          contentRevisionId = this.deps.ids.next();
+          const nextContent: DocumentRevision = { projectId: task.projectId, documentId: doc.id, id: contentRevisionId,
+            body: command.content, format: "markdown", mediaType: "text/markdown", originalName: `${doc.id}.md`,
+            payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: this.deps.hasher.hash(command.content),
+            author: actorId, createdAt: now, previousRevisionId: doc.currentRevisionId, reason: command.reason };
+          await tx.insertDocumentRevision(nextContent);
+          contentDocumentVersion = doc.version + 1;
+          await tx.updateDocument({ ...doc, version: contentDocumentVersion, currentRevisionId: contentRevisionId,
+            status: doc.adoptedRevisionId ? "published" : "draft", title: command.title }, doc.version);
         }
-        if (proposal?.stageId || judgements.length) {
-          const latest = judgements.at(-1);
-          if (!latest || latest.taskRevisionId !== task.currentRevisionId || latest.decision !== "approve") {
-            throw new DomainError("PROPOSAL_NOT_APPROVED", "Current proposal revision needs an approval judgement");
-          }
+        const basisSetId = prior.basisSetId ? this.deps.ids.next() : null;
+        const revision: TaskRevision = { ...prior, id: revisionId, version: task.version + 1, title: command.title,
+          content: command.content, contentRevisionId, kind, acceptance: command.acceptance, owner: command.owner,
+          basisSetId, actorId, reason: command.reason, createdAt: now };
+        await tx.insertTaskRevision(revision);
+        if (basisSetId && prior.basisSetId) {
+          const basis = required(await tx.getBasisSet(task.id, prior.id, prior.basisSetId), "Basis set");
+          await tx.insertSealedBasisSet({ ...basis, id: basisSetId, taskRevisionId: revisionId,
+            members: basis.members.map(member => member.documentId === task.contentDocumentId
+              ? { documentId: member.documentId, revisionId: contentRevisionId } : { ...member }) });
         }
-        const linked = new Set((await tx.listLinks(task.id)).map((link) => link.documentId));
-        if (new Set(command.basis.map((item) => item.documentId)).size !== command.basis.length) {
-          throw new DomainError("DUPLICATE_DOCUMENT", "Basis documents must be unique");
+        await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
+          title: revision.title, content: revision.content, contentRevisionId, kind, acceptance: revision.acceptance,
+          owner: revision.owner }, task.version);
+        if (priorProposal || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
+          await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
+            stageId: priorProposal?.stageId ?? null, consumer: command.consumer ?? priorProposal?.consumer ?? "",
+            useRequired: command.useRequired ?? priorProposal?.useRequired ?? false,
+            evidence: command.evidence ?? priorProposal?.evidence ?? "",
+            stopCondition: command.stopCondition ?? priorProposal?.stopCondition ?? "", createdAt: now });
         }
-        for (const member of command.basis) {
-          if (!linked.has(member.documentId)) throw new DomainError("UNLINKED_DOCUMENT", "Basis document must be linked to the task");
-          const document = required(await tx.getDocument(member.documentId), "Basis document");
-          if (document.adoptedRevisionId !== member.revisionId) throw new DomainError("UNADOPTED_BASIS", "Basis must use the current adopted document revision");
-          required(await tx.getDocumentRevision(document.id, member.revisionId), "Basis revision");
+        for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,
+          id: this.deps.ids.next(), taskId: task.id, documentId: id, actorId, createdAt: now });
+        return { result: { ...base, entityId: task.id, version: revision.version, revisionId },
+          effects: [{ kind: "task", entityId: task.id, version: revision.version },
+            ...(contentDocumentVersion === null ? [] : [{ kind: "document", entityId: task.contentDocumentId, version: contentDocumentVersion }])] };
+      }
+      case "task.start": {
+        const task = required(await tx.getTask(command.taskId), "Task");
+        requireVersion(task.version, command.expectedVersion);
+        if (task.state !== "todo") throw new DomainError("INVALID_STATE", "Only a todo Task may start");
+        await requireNoInflightRun(tx, task.id);
+        const proposal = await tx.getTaskProposal(task.id);
+        if (proposal?.stageId && (await tx.getStage(proposal.stageId))?.state !== "active")
+          throw new DomainError("INVALID_STAGE", "Task stage is no longer active");
+        const main = required(await tx.getDocument(task.contentDocumentId), "Primary task document");
+        if (main.kind !== "task" || main.currentRevisionId !== task.contentRevisionId || main.status === "archived")
+          throw new DomainError("CONTENT_BASELINE_CHANGED", "Primary content does not match Task revision");
+        required(await tx.getDocumentRevision(main.id, task.contentRevisionId), "Primary content revision");
+        const linked = new Set((await tx.listLinks(task.id)).map(link => link.documentId));
+        const prior = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "Task revision");
+        const inherited = prior.basisSetId ? required(await tx.getBasisSet(task.id, prior.id, prior.basisSetId), "Basis set") : null;
+        const extras = command.basis ?? inherited?.members.filter(item => item.documentId !== main.id) ?? [];
+        if (extras.length > 19) throw new DomainError("BASIS_LIMIT", "Select at most 19 extra sources alongside the primary content");
+        if (new Set(extras.map(item => item.documentId)).size !== extras.length || extras.some(item => item.documentId === main.id))
+          throw new DomainError("DUPLICATE_DOCUMENT", "Basis must use distinct linked documents; primary is automatic");
+        for (const item of extras) {
+          if (!linked.has(item.documentId)) throw new DomainError("UNLINKED_DOCUMENT", "Basis document must be linked to the Task");
+          const doc = required(await tx.getDocument(item.documentId), "Basis document");
+          if (!doc.adoptedRevisionId)
+            throw new DomainError("UNPUBLISHED_BASIS", "Basis must pin a published document revision");
+          required(await tx.getDocumentRevision(doc.id, item.revisionId), "Basis revision");
+        }
+        await validateDispatchBasis(tx, task.id, { projectId: task.projectId, taskId: task.id,
+          taskRevisionId: prior.id, id: prior.basisSetId ?? main.id, members: extras, sealed: true });
+        if ((await tx.listImpacts(task.id)).some(item => item.state === "pending"))
+          throw new DomainError("PENDING_BASIS_REVIEW", "Resolve source changes before starting work");
+        let documentVersion = main.version;
+        if (main.adoptedRevisionId !== task.contentRevisionId || main.status !== "published") {
+          const decisionId = this.deps.ids.next();
+          await tx.insertDocumentDecision({ projectId: task.projectId, id: decisionId, documentId: main.id,
+            revisionId: task.contentRevisionId, actorId, reason: command.reason, createdAt: now });
+          documentVersion++;
+          await tx.updateDocument({ ...main, status: "published", adoptedRevisionId: task.contentRevisionId,
+            version: documentVersion }, main.version);
         }
         const revisionId = this.deps.ids.next();
-        const basisId = this.deps.ids.next();
-        const revision: TaskRevision = {
-          projectId: command.projectId, taskId: task.id, id: revisionId, version: task.version + 1,
-          title: task.title, goal: task.goal, acceptance: task.acceptance, owner: task.owner,
-          state: "ready", basisSetId: basisId, actorId, reason: command.reason, createdAt: now,
-        };
-        const basis: BasisSet = { projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId, id: basisId, members: command.basis, sealed: true };
+        const basisSetId = this.deps.ids.next();
+        const revision: TaskRevision = { ...prior, id: revisionId, version: task.version + 1, state: "in_progress",
+          basisSetId, actorId, reason: command.reason, createdAt: now };
+        const basis: BasisSet = { projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
+          id: basisSetId, sealed: true,
+          members: [{ documentId: main.id, revisionId: task.contentRevisionId }, ...extras] };
         await tx.insertTaskRevision(revision);
         await tx.insertSealedBasisSet(basis);
-        await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId, state: "ready" }, task.version);
-        return { result: { ...base, entityId: task.id, version: revision.version, revisionId }, effects: [{ kind: "task", entityId: task.id, version: revision.version }] };
+        await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
+          state: "in_progress" }, task.version);
+        return { result: { ...base, entityId: task.id, version: revision.version, revisionId }, effects: [
+          { kind: "task", entityId: task.id, version: revision.version },
+          { kind: "document", entityId: main.id, version: documentVersion }] };
       }
       case "task.reviewBasis": {
         const task = required(await tx.getTask(command.taskId), "Task");
         requireVersion(task.version, command.expectedVersion);
-        if (task.state !== "ready") throw new DomainError("INVALID_STATE", "Only ready, unstarted tasks can be reviewed");
+        if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "Only in-progress tasks can review changed basis");
+        await requireNoInflightRun(tx, task.id);
         const impact = required(await tx.getImpact(command.impactId), "Impact");
         if (impact.taskId !== task.id || impact.state !== "pending" || impact.taskRevisionId !== task.currentRevisionId) {
-          throw new DomainError("STALE_IMPACT", "Impact does not belong to the current ready task revision");
+          throw new DomainError("STALE_IMPACT", "Impact does not belong to the current task revision");
         }
         const document = required(await tx.getDocument(impact.documentId), "Impact document");
         if (document.adoptedRevisionId !== impact.toRevisionId) throw new DomainError("STALE_IMPACT", "Target document revision is no longer adopted");

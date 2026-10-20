@@ -11,7 +11,7 @@ const now = "2026-10-20T12:00:00.000Z";
 const create = (): Extract<ScheduleCommand, { type: "schedule.create" }> => ({
   type: "schedule.create", projectId, scheduleId: randomUUID(), revisionId: randomUUID(), operationId: randomUUID(),
   timezone: "UTC", rule: { kind: "daily", localTime: "09:00" }, misfire: { kind: "skip" }, overlap: "skip",
-  template: { title: "Daily", goal: "Review", acceptance: "Evidence", owner: "temporary-role" },
+  template: { title: "Daily", content: "Review", acceptance: "Evidence", owner: "temporary-role" },
   authorization: { scopeId: "scope:daily", roleId: "temporary-role", authorizedBy: principal.actorId,
     expiresAtUtc: "2026-10-19T12:00:00.000Z" },
   watermarkUtc: now, state: "active", reason: "initial review",

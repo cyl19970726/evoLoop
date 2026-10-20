@@ -6,7 +6,7 @@ import type { ScheduleRevision } from "../../contracts/src/scheduling.js";
 
 const revision = (rule: ScheduleRevision["rule"], timezone = "UTC", misfire: ScheduleRevision["misfire"] = { kind: "latest" }): ScheduleRevision => ({
   projectId: randomUUID(), scheduleId: randomUUID(), id: randomUUID(), version: 1, timezone, rule, misfire, overlap: "skip",
-  template: { title: "Check", goal: "Check evidence", acceptance: "Record finding", owner: "role" },
+  template: { title: "Check", content: "Check evidence", acceptance: "Record finding", owner: "role" },
   authorization: { scopeId: "scope", roleId: "role", authorizedBy: "human", expiresAtUtc: null },
   reason: "test", actorId: "human", createdAtUtc: "2026-01-01T00:00:00.000Z",
 });

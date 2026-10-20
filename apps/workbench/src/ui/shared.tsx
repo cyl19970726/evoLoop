@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { DocumentRevision } from "@evoloop/contracts";
 import { OriginalDocumentReader } from "../documents/OriginalDocumentReader";
+import { MarkdownBody } from "./MarkdownBody";
 export type Section = "overview" | "work" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string };
 
@@ -42,7 +43,7 @@ export function RevisionBody({ revision, label, token }: { revision: DocumentRev
   return <section className="revision-body">
     {label && <div className="eyebrow">{label}</div>}
     <div className="revision-meta"><span>修订 <ShortId value={revision.id} /></span><span>{date(revision.createdAt)}</span><span>作者 {revision.author}</span></div>
-    {revision.body !== null && revision.format === "markdown" ? <pre>{revision.body}</pre> : <OriginalDocumentReader token={token} projectId={revision.projectId} documentId={revision.documentId} revisionId={revision.id} />}
+    {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></> : <OriginalDocumentReader token={token} projectId={revision.projectId} documentId={revision.documentId} revisionId={revision.id} />}
     <p className="muted">原件 {revision.format} · <code title={revision.contentHash}>{revision.contentHash.slice(0, 22)}…</code></p>
   </section>;
 }

@@ -201,29 +201,45 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
   // otherwise permit twenty 16 MiB basis documents in one JSON result.
   let contextBytes = 0;
   let budgetExhausted = false;
+  const sources: Array<{ documentId: string; revisionId: string }> = [];
+  if (revision) {
+    try {
+      sources.push({ documentId: uuid(revision.contentDocumentId, "Task content document"),
+        revisionId: uuid(revision.contentRevisionId, "Task content revision") });
+      if (typeof revision.content !== "string") throw new MaterialError("Task content projection is missing");
+    } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: reason(error) }); }
+  }
   if (basis) {
     if (!Array.isArray(basis.members) || basis.members.length < 1 || basis.members.length > 20 ||
         new Set(basis.members.map(member => member.documentId)).size !== basis.members.length)
       failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: "Sealed basis members are invalid or duplicated" });
     else for (const member of basis.members) {
-      if (budgetExhausted) {
+      const existing = sources.find(source => source.documentId === member.documentId);
+      if (existing && existing.revisionId !== member.revisionId)
+        failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: "Task primary content and sealed basis disagree" });
+      else if (!existing) sources.push(member);
+    }
+  }
+  for (const member of sources) {
+    if (budgetExhausted) {
+      failures.push({ kind: "document", id: member.documentId, revisionId: member.revisionId,
+        reason: "Fixed original was not read because complete Task context exceeds 16 MiB; use original for this revision" });
+      continue;
+    }
+    try {
+      const original = await readOriginal(client, projectId, member.documentId, member.revisionId);
+      if (member.documentId === revision?.contentDocumentId && original.body !== revision.content)
+        throw new MaterialError("Task content projection differs from its fixed original");
+      if (contextBytes + original.totalBytes > MAX_BUNDLE) {
+        budgetExhausted = true;
         failures.push({ kind: "document", id: member.documentId, revisionId: member.revisionId,
-          reason: "Fixed original was not read because complete Task context exceeds 16 MiB; use original for this revision" });
+          reason: "Complete fixed original would exceed the 16 MiB Task context budget; use original for this revision" });
         continue;
       }
-      try {
-        const original = await readOriginal(client, projectId, member.documentId, member.revisionId);
-        if (contextBytes + original.totalBytes > MAX_BUNDLE) {
-          budgetExhausted = true;
-          failures.push({ kind: "document", id: member.documentId, revisionId: member.revisionId,
-            reason: "Complete fixed original would exceed the 16 MiB Task context budget; use original for this revision" });
-          continue;
-        }
-        contextBytes += original.totalBytes;
-        documents.push(original);
-      }
-      catch (error) { failures.push({ kind: "document", id: member.documentId, revisionId: member.revisionId, reason: reason(error) }); }
+      contextBytes += original.totalBytes;
+      documents.push(original);
     }
+    catch (error) { failures.push({ kind: "document", id: member.documentId, revisionId: member.revisionId, reason: reason(error) }); }
   }
   const externalReferences: ExternalOriginal[] = [];
   if (revision) {

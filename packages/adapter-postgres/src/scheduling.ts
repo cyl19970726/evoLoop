@@ -137,12 +137,22 @@ export class PgSchedulingStore implements ScheduleStore {
       }
       if (state === "created" && taskId) {
         const template = current.revision.template;
+        const content = template.content;
+        if (typeof content !== "string" || !content.trim()) throw new ScheduleStoreConflict("schedule Task template has no content");
         const revisionId = deterministicId(`schedule-task-revision:${key}`);
+        const documentId = deterministicId(`schedule-task-document:${key}`);
+        const documentRevisionId = deterministicId(`schedule-task-document-revision:${key}`);
         const actorId = `schedule:${current.revision.authorization.roleId}`;
-        await client.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state)
-          VALUES($1,$2,1,$3,$4,$5,$6,$7,'proposed')`, [definition.projectId, taskId, revisionId, template.title, template.goal, template.acceptance, template.owner]);
-        await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,basis_set_id,actor_id,reason,created_at)
-          VALUES($1,$2,$3,1,$4,$5,$6,$7,'proposed',NULL,$8,$9,$10)`, [definition.projectId, taskId, revisionId, template.title, template.goal, template.acceptance, template.owner, actorId, `schedule ${definition.id} at ${plannedAtUtc}`, observedAtUtc]);
+        await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status)
+          VALUES($1,$2,$3,1,$4,NULL,'task','draft')`, [definition.projectId, documentId, template.title, documentRevisionId]);
+        await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,previous_revision_id,reason,media_type,original_name,assets_manifest)
+          VALUES($1,$2,$3,$4,'markdown',$5,$6,$7,NULL,$8,'text/markdown',$9,'[]'::jsonb)`, [definition.projectId, documentId, documentRevisionId, content,
+          createHash("sha256").update(content).digest("hex"), actorId, observedAtUtc,
+          `schedule ${definition.id} at ${plannedAtUtc}`, `${taskId}.md`]);
+        await client.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,kind,content_document_id,content_revision_id)
+          VALUES($1,$2,1,$3,$4,$5,$6,'todo',NULL,$7,$8)`, [definition.projectId, taskId, revisionId, template.title, template.acceptance, template.owner, documentId, documentRevisionId]);
+        await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at)
+          VALUES($1,$2,$3,1,$4,$5,$6,'todo',NULL,$7,$8,NULL,$9,$10,$11)`, [definition.projectId, taskId, revisionId, template.title, template.acceptance, template.owner, documentId, documentRevisionId, actorId, `schedule ${definition.id} at ${plannedAtUtc}`, observedAtUtc]);
         await client.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,evidence,stop_condition,created_at)
           VALUES($1,$2,$3,NULL,$4,false,$5,'',$6)`, [definition.projectId, taskId, revisionId, template.owner, `schedule ${definition.id} revision ${definition.currentRevisionId}`, observedAtUtc]);
         const receipt = { status: "applied", operationId, entityId: taskId, version: 1 };
@@ -150,7 +160,7 @@ export class PgSchedulingStore implements ScheduleStore {
         await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
           VALUES($1,$2,$3,$4,'schedule.occurrence', $5::jsonb,$6)`, [definition.projectId, operationId, actorId, hash, JSON.stringify(receipt), observedAtUtc]);
         await client.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
-          VALUES($1,$2,$3,$4,'schedule.task.proposed',$5,1,$6)`, [definition.projectId, deterministicId(`schedule-outbox:${key}`), operationId, `schedule:${definition.id}:${plannedAtUtc}`, taskId, observedAtUtc]);
+          VALUES($1,$2,$3,$4,'schedule.task.todo',$5,1,$6)`, [definition.projectId, deterministicId(`schedule-outbox:${key}`), operationId, `schedule:${definition.id}:${plannedAtUtc}`, taskId, observedAtUtc]);
       }
       const row = await client.query("SELECT * FROM schedule_occurrence WHERE project_id=$1 AND schedule_id=$2 AND planned_at_utc=$3", [definition.projectId, definition.id, plannedAtUtc]);
       return rowOccurrence(row.rows[0]);

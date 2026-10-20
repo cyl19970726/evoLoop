@@ -52,13 +52,11 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   applied(await issue(reviewer, { type: "document.adopt", documentId: sourceId, expectedVersion: 1,
     revisionId: source.revisionId, reason: "Reviewed" }));
   const stageTaskId = randomUUID();
-  applied(await issue(reviewer, { type: "task.propose", taskId: stageTaskId, stageId,
-    title: "Stage-owned task", goal: "Check one path", acceptance: "Evidence logged", owner: reviewer.actorId,
+  applied(await issue(reviewer, { type: "task.create", taskId: stageTaskId, stageId,
+    title: "Stage-owned task", content: "# Check one path", acceptance: "Evidence logged", owner: reviewer.actorId,
     documentIds: [sourceId], consumer: "Project owner", evidence: "Initial observation", stopCondition: "After one trial" }));
-  applied(await issue(reviewer, { type: "task.judge", taskId: stageTaskId, expectedVersion: 1,
-    decision: "approve", reason: "Ready for bounded trial", evidence: "Current requirement" }));
-  const acceptedStageTask = applied(await issue(reviewer, { type: "task.accept", taskId: stageTaskId,
-    expectedVersion: 1, basis: [{ documentId: sourceId, revisionId: source.revisionId }], reason: "Accept trial" }));
+  const acceptedStageTask = applied(await issue(reviewer, { type: "task.start", taskId: stageTaskId,
+    expectedVersion: 1, basis: [{ documentId: sourceId, revisionId: source.revisionId }], reason: "Begin trial" }));
   const wrongDiscussionId = randomUUID(), wrongDocumentId = randomUUID();
   rejected(await issue(reviewer, { type: "discussion.prepare", discussionId: wrongDiscussionId,
     documentId: wrongDocumentId, kind: "direction", title: "Wrong stage", body: "",
@@ -69,7 +67,7 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   assert.equal((await service.getTask(reviewer, projectId, stageTaskId)).task.currentRevisionId, acceptedStageTask.revisionId);
   await assert.rejects(service.getDiscussion(reviewer, projectId, wrongDiscussionId), /not found/);
   await assert.rejects(service.getDocument(reviewer, projectId, wrongDocumentId), /not found/);
-  const task = applied(await issue(reviewer, { type: "task.propose", taskId, title: "Trial task", goal: "Try one path",
+  const task = applied(await issue(reviewer, { type: "task.create", taskId, title: "Trial task", content: "# Try one path",
     acceptance: "Result recorded", owner: reviewer.actorId, documentIds: [sourceId] }));
   const discussionId = randomUUID(), documentId = randomUUID();
   const prepare = { type: "discussion.prepare", discussionId, documentId, kind: "direction", title: "Next direction",

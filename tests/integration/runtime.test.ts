@@ -49,13 +49,11 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   const document = applied(await issue({ type: "document.create", documentId, title: "Requirement", body: "Original basis" }));
   applied(await issue({ type: "document.adopt", documentId, expectedVersion: 1, revisionId: document.revisionId, reason: "Initial basis" }));
   const taskId = randomUUID();
-  applied(await issue({ type: "task.propose", taskId, title: "Produce output", goal: "One artifact", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted requirement" }));
-  applied(await issue({ type: "task.judge", taskId, expectedVersion: 1, decision: "approve", reason: "Bounded", evidence: "Requirement adopted" }));
-  const ready = applied(await issue({ type: "task.accept", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Ready" }));
+  applied(await issue({ type: "task.create", taskId, title: "Produce output", content: "# One artifact\nProduce output from the fixed source.", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted requirement" }));
+  const ready = applied(await issue({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" }));
   const otherTaskId = randomUUID();
-  applied(await issue({ type: "task.propose", taskId: otherTaskId, title: "Second output", goal: "One artifact", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Second accepted requirement" }));
-  applied(await issue({ type: "task.judge", taskId: otherTaskId, expectedVersion: 1, decision: "approve", reason: "Bounded", evidence: "Requirement adopted" }));
-  applied(await issue({ type: "task.accept", taskId: otherTaskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Ready" }));
+  applied(await issue({ type: "task.create", taskId: otherTaskId, title: "Second output", content: "# One artifact\nProduce another output.", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Second accepted requirement" }));
+  applied(await issue({ type: "task.start", taskId: otherTaskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin second task" }));
 
   const sessionId = randomUUID();
   const sessionOperation = randomUUID();
@@ -81,9 +79,10 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.deepEqual(await issue(reserveRun, runOperation), runReceipt);
   const run = await workflow.getRuntimeRun(principal, projectId, runId);
   const frozen = await workflow.getTaskRevision(principal, projectId, taskId, run.taskRevisionId);
-  assert.equal(frozen.revision.state, "active");
+  assert.equal(frozen.revision.state, "in_progress");
   assert.equal(frozen.basis?.id, run.basisSetId);
-  assert.equal(frozen.basis?.members[0]?.revisionId, document.revisionId);
+  assert.equal(frozen.basis?.members.find(x => x.documentId === documentId)?.revisionId, document.revisionId);
+  assert.equal(frozen.revision.content, "# One artifact\nProduce output from the fixed source.");
   assert.notEqual(run.taskRevisionId, ready.revisionId);
   rejected(await issue({ ...reserveRun, runId: randomUUID() }), "VERSION_CONFLICT");
   rejected(await issue({ ...reserveRun, runId: randomUUID(), taskId: otherTaskId }), "SESSION_BUSY");
@@ -95,6 +94,12 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal((await runtime.bindTurn(projectId, runId, { id: "turn-1", status: "running" }, { kind: "historyMarker", operationId: runOperation })).state, "running");
   await assert.rejects(runtime.recordTurn(projectId, runId, "foreign-turn", "completed"), /does not match/);
   const inFlight = await workflow.getRuntimeRun(principal, projectId, runId);
+  const taskDuringRun = await workflow.getTask(principal, projectId, taskId);
+  const unsafeReopen = await issue({ type: "task.reopen", taskId, expectedVersion: taskDuringRun.task.version,
+    reason: "Cannot change the executing input" });
+  assert.equal(unsafeReopen.status, "rejected", "an in-flight Run must keep its fixed Task input");
+  assert.equal((await workflow.getTask(principal, projectId, taskId)).task.contentRevisionId,
+    taskDuringRun.task.contentRevisionId);
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Too early",
     { itemsDigest: "a".repeat(64), completedAtUtc: "2026-10-20T12:00:00.000Z" }, inFlight.version,
     principal, "Native turn has not finished"), /only a terminal bound run/);
@@ -158,7 +163,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
     { kind: "historyMarker", operationId: followup.operationId });
   assert.equal((await runtime.recordTurn(projectId, followupId, "turn-2", "completed", "Follow-up native Turn completed")).state,
     "completed");
-  assert.equal((await workflow.getTask(principal, projectId, taskId)).task.state, "active",
+  assert.equal((await workflow.getTask(principal, projectId, taskId)).task.state, "in_progress",
     "native completion never closes the accepted Task");
 
   const preflightRunId = randomUUID();
@@ -167,13 +172,12 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal(failed.state, "failed");
   assert.equal(failed.nativeTurnId, null);
   await assert.rejects(runtime.beginDispatch(projectId, preflightRunId), /already attempted/);
-  assert.equal((await workflow.getTask(principal, projectId, otherTaskId)).task.state, "active");
+  assert.equal((await workflow.getTask(principal, projectId, otherTaskId)).task.state, "in_progress");
 
   const readyTask = async (title: string) => {
     const id = randomUUID();
-    applied(await issue({ type: "task.propose", taskId: id, title, goal: "One artifact", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted basis" }));
-    applied(await issue({ type: "task.judge", taskId: id, expectedVersion: 1, decision: "approve", reason: "Bounded", evidence: "Requirement adopted" }));
-    applied(await issue({ type: "task.accept", taskId: id, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Ready" }));
+    applied(await issue({ type: "task.create", taskId: id, title, content: "# One artifact\nUse the accepted basis.", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted basis" }));
+    applied(await issue({ type: "task.start", taskId: id, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" }));
     return id;
   };
   const [thirdTaskId, fourthTaskId] = await Promise.all([readyTask("Third output"), readyTask("Fourth output")]);
@@ -187,30 +191,24 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.ok(reserved && reserved.status === "applied");
   const updatedDocument = applied(await issue({ type: "document.revise", documentId, expectedVersion: 2, body: "Revised basis", reason: "Change after reservation" }));
   applied(await issue({ type: "document.adopt", documentId, expectedVersion: 3, revisionId: updatedDocument.revisionId, reason: "New adopted basis" }));
-  await assert.rejects(runtime.beginDispatch(projectId, reserved.entityId), /adopted document changed/);
+  await assert.rejects(runtime.beginDispatch(projectId, reserved.entityId), /review pending basis impacts before dispatch/);
   assert.equal((await runtime.rejectDispatch(projectId, reserved.entityId, "Source changed after task freeze")).state, "failed");
 
   const manuallyStartedTaskId = randomUUID();
-  applied(await issue({ type: "task.propose", taskId: manuallyStartedTaskId, title: "Manual start", goal: "Try a Turn",
+  applied(await issue({ type: "task.create", taskId: manuallyStartedTaskId, title: "Manual start", content: "# Try a Turn",
     acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Current adopted basis" }));
-  applied(await issue({ type: "task.judge", taskId: manuallyStartedTaskId, expectedVersion: 1,
-    decision: "approve", reason: "Bounded", evidence: "Current basis checked" }));
-  const manualReady = applied(await issue({ type: "task.accept", taskId: manuallyStartedTaskId,
-    expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Ready" }));
   const manualStart = applied(await issue({ type: "task.start", taskId: manuallyStartedTaskId,
-    expectedVersion: manualReady.version, reason: "Human starts accepted Task" }));
+    expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Human starts Task" }));
   const manualRunId = randomUUID();
   applied(await issue({ ...reserveRun, runId: manualRunId, taskId: manuallyStartedTaskId,
     expectedVersion: manualStart.version }));
   assert.equal((await runtime.rejectDispatch(projectId, manualRunId, "No external Turn started")).state, "failed");
 
   const unresolvedTaskId = randomUUID();
-  applied(await issue({ type: "task.propose", taskId: unresolvedTaskId, title: "Uncertain dispatch", goal: "Try one Turn",
+  applied(await issue({ type: "task.create", taskId: unresolvedTaskId, title: "Uncertain dispatch", content: "# Try one Turn",
     acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Current adopted basis" }));
-  applied(await issue({ type: "task.judge", taskId: unresolvedTaskId, expectedVersion: 1,
-    decision: "approve", reason: "Bounded", evidence: "Current basis checked" }));
-  const unresolvedReady = applied(await issue({ type: "task.accept", taskId: unresolvedTaskId,
-    expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Ready" }));
+  const unresolvedReady = applied(await issue({ type: "task.start", taskId: unresolvedTaskId,
+    expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Begin uncertain dispatch" }));
   const unresolvedRunId = randomUUID();
   applied(await issue({ ...reserveRun, runId: unresolvedRunId, taskId: unresolvedTaskId,
     expectedVersion: unresolvedReady.version }));

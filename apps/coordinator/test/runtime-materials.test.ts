@@ -35,12 +35,18 @@ test("fixed HTML material contains the complete inert original and verified reso
 test("runtime input admits fixed HTML and rejects a complete context above 256 KiB", async () => {
   const run = { projectId, taskId: randomUUID(), taskRevisionId: randomUUID(), basisSetId: randomUUID(),
     operationId: randomUUID(), input: "work" } as RuntimeRunRecord;
-  const fixed = { revision: { id: run.taskRevisionId, title: "Task", goal: "Goal", acceptance: "Done" },
-    basis: { id: run.basisSetId, members: [{ documentId, revisionId }] } };
+  const contentDocumentId = randomUUID(), contentRevisionId = randomUUID(), content = "# Goal";
+  const primary: DocumentPayloadRevision = { projectId, documentId: contentDocumentId, id: contentRevisionId,
+    previousRevisionId: null, format: "markdown", mediaType: "text/markdown", originalName: "task.md",
+    body: content, payloadRef: null, contentHash: hash(content), entrypoint: null, assetsManifest: [],
+    author: principal.actorId, reason: "fixture", createdAt: new Date().toISOString() };
+  const fixed = { revision: { id: run.taskRevisionId, title: "Task", content, contentDocumentId, contentRevisionId, acceptance: "Done" },
+    basis: { id: run.basisSetId, members: [{ documentId: contentDocumentId, revisionId: contentRevisionId }, { documentId, revisionId }] } };
   const current = { impacts: [], decisions: [] };
   const workflow = { getTaskRevision: async () => fixed, getTask: async () => current,
     getDocument: async () => ({ document: { adoptedRevisionId: revisionId } }),
-    getDocumentPayloadRevision: async () => revision };
+    getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
+      requestedDocumentId === contentDocumentId ? primary : revision };
   const runner = new RuntimeRunner({
     runtimeFactory: () => ({}) as never, workflow: workflow as never, trusted: {} as never,
     principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
@@ -55,7 +61,8 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
   const hugeRevision = { ...revision, contentHash: hash(huge.body) };
   const largeRunner = new RuntimeRunner({
     runtimeFactory: () => ({}) as never,
-    workflow: { ...workflow, getDocumentPayloadRevision: async () => hugeRevision } as never,
+    workflow: { ...workflow, getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
+      requestedDocumentId === contentDocumentId ? primary : hugeRevision } as never,
     trusted: {} as never, principals: [principal], canWrite: () => true,
     allowedCwd: async () => true, hasGrant: () => true, readDocumentOriginal: async () => huge,
   });

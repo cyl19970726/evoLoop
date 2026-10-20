@@ -60,21 +60,27 @@ test("task history exposes persisted states and reviewed-stage correction append
     title: "Fixed source", body: "Original requirement" }));
   applied(await issue(reviewer, { type: "document.adopt", documentId, expectedVersion: 1,
     revisionId: document.revisionId, reason: "Accepted source" }));
-  applied(await issue(reviewer, { type: "task.propose", taskId, title: "Historical task", goal: "Read it",
+  applied(await issue(reviewer, { type: "task.create", taskId, title: "Historical task", content: "# Read it\nUse the fixed source.",
     acceptance: "One answer", owner: reviewer.actorId, documentIds: [documentId] }));
-  const ready = applied(await issue(reviewer, { type: "task.accept", taskId, expectedVersion: 1,
+  const updated = applied(await issue(reviewer, { type: "task.update", taskId, expectedVersion: 1,
+    title: "Historical task", content: "# Read it\nUse the fixed source and record the answer.",
+    acceptance: "One answer", owner: reviewer.actorId, documentIds: [documentId], reason: "Clarify the instruction" }));
+  applied(await issue(reviewer, { type: "task.start", taskId, expectedVersion: updated.version,
     basis: [{ documentId, revisionId: document.revisionId }], reason: "Bound to original source" }));
-  applied(await issue(reviewer, { type: "task.defer", taskId, expectedVersion: ready.version,
-    reason: "Owner intentionally paused after review" }));
   const taskBefore = await service.getTask(reviewer, projectId, taskId);
   const history = await service.listTaskRevisions(reviewer, projectId, taskId);
-  assert.deepEqual(history.map(item => item.revision.state), ["proposed", "ready", "deferred"]);
-  assert.equal(history[2]?.revision.reason, "Owner intentionally paused after review");
+  assert.deepEqual(history.map(item => item.revision.state), ["todo", "todo", "in_progress"]);
+  assert.equal(history[1]?.revision.reason, "Clarify the instruction");
   assert.equal(history[2]?.revision.actorId, reviewer.actorId);
   assert.ok(history.every(item => Number.isFinite(Date.parse(item.revision.createdAt))));
-  assert.deepEqual(history[1]?.basis?.members, [{ documentId, revisionId: document.revisionId }]);
-  assert.deepEqual(history[2]?.basis?.members, history[1]?.basis?.members);
-  assert.notEqual(history[1]?.basis?.id, history[2]?.basis?.id, "each revision keeps its own fixed baseline");
+  assert.equal(history[2]?.basis?.members.find(item => item.documentId === documentId)?.revisionId, document.revisionId);
+  assert.equal(history[2]?.basis?.members.find(item => item.documentId === history[2]?.revision.contentDocumentId)?.revisionId,
+    history[2]?.revision.contentRevisionId);
+  assert.equal(history[0]?.revision.content, "# Read it\nUse the fixed source.");
+  assert.equal(history[2]?.revision.content, "# Read it\nUse the fixed source and record the answer.");
+  assert.notEqual(history[0]?.revision.contentRevisionId, history[1]?.revision.contentRevisionId,
+    "the old Task revision keeps its original Document revision");
+  assert.equal(history[0]?.revision.contentDocumentId, history[2]?.revision.contentDocumentId);
   await assert.rejects(service.listTaskRevisions({ ...writer, projectIds: [randomUUID()] }, projectId, taskId), /Permission read/);
 
   const correction = { type: "stage.review.correct", stageId: firstStageId, expectedVersion: 3,

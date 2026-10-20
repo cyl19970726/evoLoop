@@ -1,14 +1,14 @@
 # evoLoop 领域合同
 
-> 状态：目标语义合同与受限本机实现并存。2026-10-20 的 S1a 首片先实现过程 Markdown、proposed/ready 任务、固定依据与复核；当前 11 个工作区、迁移至 011，并已有目标、阶段、交付、运行、日程、知识接缝及同一 API 的工作台/CLI 子集，实际字段以 `packages/contracts` 和[本机运行](../development/local-run.md)为准。PostgreSQL 保存 evoLoop 主数据，飞书是延后实连的 connector；其真实租户同步、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据所有权见[项目数据架构](project-data.md)，面向用户的行为见[产品定义](../product/definition.md)，落地方式见[开发规范](../development/standards.md)。
+> 状态：目标语义合同与受限本机实现并存。C5 将 Task 正文统一归入固定 DocumentRevision、当前任务收敛为四态；11 个工作区、迁移 012 的实际字段以 `packages/contracts` 和[本机运行](../development/local-run.md)为准，逐项已验范围与限制见[阶段路线](../roadmap.md#当前基线)。PostgreSQL 保存主数据，工作台与项目业务 skill＋CLI 经同一 API 使用；飞书真实租户、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据权威见[项目数据](project-data.md)，用户行为见[产品定义](../product/definition.md)，实现规范见[开发规范](../development/standards.md)。
 
 ## 对象如何配合
 
-一项工作先有观察或要求，再有是否接受的判断。`TaskProposal` 保存提议和原始判据，`ReviewDecision` 说明接受、补证、暂缓或不接受；`TaskStore` 管理任务的目标、责任和业务状态，但任务创建不代表已经接受执行。`ScheduleStore` 可按约定时点提出或创建可追溯的工作，触发本身不越过任务接受规则。飞书可以展示和接收受控编辑，任务本体仍由 PostgreSQL 维护。
+一项工作先有观察或要求，再明确有界动作和验收。未决定的问题可保存在 issue/spec 或讨论；TaskStore 管理 Task 的责任、验收、固定主正文和四态进度。历史 TaskProposal/判断保留，不作为新任务的强制流程；创建记录也不扩大实际授权。`ScheduleStore` 可按约定时点提出或创建可追溯的工作，触发本身不授权开始 Task。飞书可以展示和接收受控编辑，任务本体仍由 PostgreSQL 维护。
 
-任务的详细要求与讨论可在过程 `Document` 中修订；仓库正式 `docs/` 由 Git 独立维护；Wiki 在仓库外维护可修订的认识及其来源。Task 与 Document 的普通链接只帮助导航，不能说明任务已经接受哪版内容。接受时同事务形成 TaskRevision 与完整、封存的 BasisSet，固定目标、判据及实际使用的 DocumentRevision、GitSourceRef 或 Knowledge 修订；封存后不改成员，变更依据产生新任务修订与集合。派发只能使用已封存集合；后续来源更新只触发影响复核，不重写旧 Run 的依据。
+任务的详细要求与讨论可在过程 `Document` 中修订；仓库正式 `docs/` 由 Git 独立维护；Wiki 在仓库外维护可修订的认识及其来源。Task 与 Document 的普通链接只帮助导航，不能说明任务已经接受哪版内容。主正文从创建时就固定 DocumentRevision；开始执行时同事务形成 TaskRevision 与完整、封存的 BasisSet，固定目标、判据及实际使用的 DocumentRevision、GitSourceRef 或 Knowledge 修订；封存后不改成员，变更依据产生新任务修订与集合。派发只能使用已封存集合；后续来源更新只触发影响复核，不重写旧 Run 的依据。
 
-`Coordinator` 依据已接受任务和 `RoleRegistry` 选择责任者，再由 `SessionRuntime` 承接。`Delivery` 记录产物和检查，约定的验收者判断任务是否满足判据；`StageReview` 另外观察成果是否被目标消费者实际使用、效果与偏差，并决定继续、补证或提出新工作。发送通知、Run 结束、任务交付、正式文档合入、Wiki 发布及实际使用各有自己的证据，不能互相代替。
+`Coordinator` 依据已开始且获授权的任务和 `RoleRegistry` 选择责任者，再由 `SessionRuntime` 承接。`Delivery` 记录产物和检查，约定的验收者判断任务是否满足判据；`StageReview` 另外观察成果是否被目标消费者实际使用、效果与偏差，并决定继续、补证或提出新工作。发送通知、Run 结束、任务交付、正式文档合入、Wiki 发布及实际使用各有自己的证据，不能互相代替。
 
 后文先给这些对象的权威和状态边界，再细化来源、权限、版本、结果、端口与恢复。所有跨系统读取都须保留固定引用和当前可达性观察：原件与提取文本、投影视图分开；不可变载荷与可变权限/有效性分开。
 
@@ -28,7 +28,7 @@
 
 | 状态域 | 判断依据与边界 |
 | --- | --- |
-| Task 业务状态 | 按所接受目标和验收推进；采用[产品状态图](../product/agent-loop.md)的待判断、可做、进行中、待验收、交付完成、阻塞、暂缓、取消语义。存储枚举及飞书列映射在实现时定稿。 |
+| Task 业务状态 | 按所接受目标和验收推进；采用[产品状态图](../product/agent-loop.md)的 todo/in_progress/done/cancelled；等待、检查及受阻在原任务中说明原因和下一步，旧八态只作历史。 |
 | Document 采纳与 Review 决定 | 候选修订、决定和已采纳指针分别记录；草稿保存不等于采纳，审阅结案不等于正文已发布。 |
 | Run | 运行时实际承接、等待、停止和终态；Turn 结束不代替任务验收。 |
 | 操作结果 | 对应动作及效果范围的 applied/rejected/pending/unknown；不与 Run 终态或 Task 状态合用一列。 |
@@ -40,37 +40,25 @@
 
 `TaskStore` 的主数据在 PostgreSQL；飞书多维表格是可读写的协作投影和入口，不拥有任务本体。人可在飞书受支持字段编辑，入站变更须由 core 核对身份、权限、基线和状态转换后成为内部 command，不能直接覆盖主数据。每个受管项目维持独立任务命名空间，evoLoop 不接管业务项目的代码与 Git 正式文档。所有入口经同一合同，飞书同步滞后不使 PostgreSQL 的已提交任务失效。[数据权威](project-data.md)
 
-### 提议、判断与验收责任
+### 正文、执行与验收责任
 
-`TaskProposal` 区分来源（如 dogfood、用户要求、定时检查）、类型（缺陷、需求、调查等）和接受状态。最少保留受影响项目/系统、报告者、观察与来源、预期效果、复现条件或未知、判断责任者、消费者验收、所读任务/知识修订和关联提议。归并只合并相同目标，不覆盖新增证据或原请求者的判据。
+`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
 
-`ReviewDecision` 关联提议和读入基线、判断者、接受/补证/暂缓/不接受、理由、替代方案及再看条件。权限与资源内的常规修复可由现有责任者接受；新方向、争议或跨域事项路由给适当的独立判断者，必要时由负责人作目标取舍。缺少判断者时保留指派责任，不静默进入执行或无限无人接手。接受决定若因用户纠正或版本变化失效，重新判断后再派发。
+开始时校验当前版本、实际授权和固定原件，原子发布主正文、封存 BasisSet 并进入 in_progress；外部材料可显式加入，主正文会自动加入，无需独立创建/采纳其他 Document。`task.start` 保留明确的 review 权限核验；状态简化不把旧提议自动变成已获准运行。Runtime 只从已开始的 in_progress Task 派发。
 
-`Delivery` 关联任务、运行、成果修订、已做检查、未验证项和实际使用入口。提交者可同时附带新问题/需求与知识候选，但“写交付”不自动拥有最终验收权。核对和亲用由任务中约定的责任者承担，独立性依风险与判据决定，不要求所有完成项都由人类逐条确认。
+TaskRevision 从创建时就固定主正文 revision。执行中改变正文或验收须先核清在途运行，再显式 reopen→update→start；旧 Run、封存集合与操作回执保持原义。任务主文档不能通过通用 document.revise/publish 旁路修改。历史 TaskRevision 可以保留旧八态，当前 Task 仅四态；新写命令不继续保留旧八态流程。
 
-任务类型可包含缺陷、需求、调查、文档、知识维护和职责调整；创建任务不代表接受实施。业务状态沿用上表，不另用“待验证”同时指任务待验收和阶段效果未知；最终字段与飞书投影列映射须在真实表上定。
+`Delivery` 指向固定任务修订、产物、技术检查与证据，登记后仍是 in_progress。`task.close` 要求当前有效的最新技术通过交付、验收达标及必要证据；只有明确 useRequired 的任务才检查指定消费者实际使用，不默认增加验收状态、独立验证任务或真人审批。未通过继续处理；取消和重开保留旧结果，旧交付不能自动满足新一轮验收。
 
-任务“实现完成”与“效果已验证”是不同结论。重复任务归并时保留原 ID 和关联证据，不丢请求者的独特验收条件。
-
-Task 可多对多关联过程 Document，并在任务依据集合中固定所用 DocumentRevision；Git 正式文档是独立 GitSourceRef，可被任务依据固定引用；外置 Wiki 修订同样固定版本。后续更新触发影响复核，不静默改写已接受任务的依据。
-
-业务任务状态、运行操作结果、效果验证状态分别记录并关联。[产品状态图](../product/agent-loop.md)表达主要转换：任务自己的验收含实际使用时，不能缺少使用证据而关闭；纯实现子任务可先完成，关联阶段效果仍待验证。阻塞保留缺项与解阻责任，暂缓保留恢复条件，取消保留原因及已发生副作用；停止请求被接受不等于运行已停止，取消不能清除 `unknown` 对账义务。
-
-### 读写端口
-
-| 能力 | 最小语义 |
-| --- | --- |
-| `get/list` | 读稳定任务 ID、项目、类型、目标/判据、依据、优先级、责任 Role、状态、交付与修订标记；列表支持有边界的分页和过滤。 |
-| `create` | 用操作 ID 在 PostgreSQL 去重；写超时按操作 ID 回读本体和事务结果，未能证明时保持 `unknown`。同事务登记待投影 outbox。 |
-| `patch` | 只改指定字段，声明读入版本；PostgreSQL 事务中执行条件更新和状态校验，旧基线拒绝并返回当前版本供重审。飞书入站也走这一条，不以远端最后写入时间判赢。 |
-| `archive` | 归档展示但保留追溯；不据此完成、取消任务或停止在途运行，这些动作各按自己的判据和授权核对。 |
-| `changes/reconcile` | 主数据变更通过内部提交记录观察；外部 connector 事件只提示远端需回读，水位与周期对账补事件遗漏、乱序和分页期间变化。 |
+旧 TaskProposal/TaskJudgement 等记录可读取历史，不是新任务的必经工作流。未决定的问题可保存在 issue/spec 或讨论中，普通工作不必先制造额外材料。写作和业务含义见[任务与过程文档](../product/tasks-and-documents.md)。
 
 ## 2a. DocumentStore 与 RelationStore
 
+Document 增加可空用途 kind 与 draft/published/archived；发布指针沿用 adoptedRevisionId，允许已发布版与新草稿共存。task 类型主正文由 Task 命令原子维护，通用文档修改不得旁路；正文与附件的固定修订、完整性和当前授权仍需核对。
+
 `DocumentStore` 只管理可关联任务的过程文档及正文修订，包括需求、任务详述、技术讨论、方案和评审记录；文档完成或归档后仍保留固定历史。仓库 `docs/` 下的产品、架构、接口与开发规范不进入 DocumentStore，而由 Git 独立维护。
 
-`DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务接受或执行时，再由 TaskBasis 固定实际采用的 DocumentRevision。任务引用某需求不意味着其他关联任务自动接受它。
+`DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务开始或执行时，再由 TaskBasis 固定实际采用的其他 DocumentRevision。任务引用某需求不意味着其他关联任务自动采用它。
 
 Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
@@ -179,7 +167,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 下一阶段工作应能追到上一阶段的判断及其来源；相关知识修订若被推翻，未执行任务标待复核。读取端只取与当前任务相关的页和关键反例，再下钻原料，不把整套 Wiki 当作无条件提示词。是否改善要与直接读取原材料等可比基线对照，记录编译、维护、读取和纠错的总成本。
 
-回看结果应形成继续、补证、修订、暂缓、结束或请求具体取舍的选择，关联目标、依据修订、预期观察、责任和资源范围。已授权且满足接受条件的行动进入 TaskStore；没有新证据或有价值动作时允许等待/结束。阶段回看可由交付、使用反馈、来源变化或约定周期触发，触发成功不等于认知已完成，任务提交也不等于已执行。
+回看结果应形成继续、补证、修订、暂缓、结束或请求具体取舍的选择，关联目标、依据修订、预期观察、责任和资源范围。已授权且有明确正文、责任和验收的行动进入 TaskStore；没有新证据或有价值动作时允许等待/结束。阶段回看可由交付、使用反馈、来源变化或约定周期触发，触发成功不等于认知已完成，任务创建也不等于已执行。
 
 ## 6a. EvaluationRecord：评价证据与条件
 
@@ -187,7 +175,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 每个 `EvaluationCase` 关联固定 TaskRevision、实际 Run/消费 session、输入修订、首次产物及重试、追源/人工介入、确定性检查和独立评审。`ConsumerOutcome` 分开记录知识采用、交付合格、真人效果与成本；值可为已观察、未观察或待复核，缺失不折算为零或通过。消费者不能得到尚未开放的答案与评分反馈；权限检查覆盖产物和逐 case 详情。
 
-PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobStore 定位，活 Wiki 正文仍外置。页面返回逐 case 证据与局限，汇总须标分母、失败/重试、未知和条件差异。评价结果先形成 ReviewDecision 或维护/补证提议，经同一任务接受规则推进；不能因为自动评分较高就自动采纳知识或关闭阶段目标。评价设计见[产品评价约定](../product/wiki-evaluation.md)。
+PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobStore 定位，活 Wiki 正文仍外置。页面返回逐 case 证据与局限，汇总须标分母、失败/重试、未知和条件差异。评价结果先形成 ReviewDecision 或维护/补证提议，经授权和 Task 创建、开始规则推进；不能因为自动评分较高就自动采纳知识或关闭阶段目标。评价设计见[产品评价约定](../product/wiki-evaluation.md)。
 
 ## 7. ScheduleStore 与触发实例
 

@@ -76,8 +76,8 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "only a bound project-owned session can run");
   const task = required(await tx.getTask(command.taskId), "task");
   if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "task changed since dispatch was requested", task.version);
-  if (task.state !== "ready" && task.state !== "active") {
-    throw new DomainError("TASK_NOT_READY", "only accepted ready or active tasks may dispatch");
+  if (task.state !== "in_progress") {
+    throw new DomainError("TASK_NOT_READY", "only explicitly started in-progress tasks may dispatch");
   }
   if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id && ["requested", "dispatching", "running", "unknown"].includes(run.state))) {
     throw new DomainError("SESSION_BUSY", "an earlier run in this session is still active or unresolved");
@@ -97,7 +97,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   const revisionId = nextId();
   const basisSetId = nextId();
   const revision: TaskRevision = {
-    ...previous, id: revisionId, version: task.version + 1, state: "active",
+    ...previous, id: revisionId, version: task.version + 1, state: "in_progress",
     basisSetId, actorId: principal.actorId, reason: "Runtime dispatch reserved", createdAt: now,
   };
   const basis: BasisSet = {
@@ -106,7 +106,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   };
   await tx.insertTaskRevision(revision);
   await tx.insertSealedBasisSet(basis);
-  await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId, state: "active" }, task.version);
+  await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId, state: "in_progress" }, task.version);
   const run: RuntimeRunRecord = {
     projectId: command.projectId, id: command.runId, taskId: task.id,
     taskRevisionId: revisionId, basisSetId, sessionId: session.id,

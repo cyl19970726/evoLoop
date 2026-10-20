@@ -232,7 +232,14 @@ export class RuntimeRunner {
     const current = await this.deps.workflow.getTask(principal, run.projectId, run.taskId);
     if (!fixed.basis || fixed.basis.id !== run.basisSetId || current.impacts.some(i => i.state === "pending")) throw new Error("Fixed basis needs review");
     const materials: string[] = [];
+    const primary = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId,
+      fixed.revision.contentDocumentId, fixed.revision.contentRevisionId);
+    if (primary.projectId !== run.projectId || primary.documentId !== fixed.revision.contentDocumentId ||
+      primary.id !== fixed.revision.contentRevisionId || primary.format !== "markdown" || primary.body !== fixed.revision.content)
+      throw new Error("Fixed Task content differs from its pinned primary Document revision");
+    materials.push(await fixedDocumentMaterial(principal, primary, this.deps.readDocumentOriginal));
     for (const member of fixed.basis.members) {
+      if (member.documentId === fixed.revision.contentDocumentId && member.revisionId === fixed.revision.contentRevisionId) continue;
       const document = await this.deps.workflow.getDocument(principal, run.projectId, member.documentId);
       const revision = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId, member.documentId, member.revisionId);
       if (revision.projectId !== run.projectId || revision.documentId !== member.documentId || revision.id !== member.revisionId)
@@ -247,7 +254,7 @@ export class RuntimeRunner {
       const external = await this.deps.readExternalMaterials(principal, run.projectId, run.taskId, run.taskRevisionId);
       if (external) materials.push(external);
     }
-    const input = `${marker(run.operationId)}\nProject task: ${fixed.revision.title}\nGoal: ${fixed.revision.goal}\nAcceptance: ${fixed.revision.acceptance}\nTask revision: ${fixed.revision.id}\nBasis set: ${fixed.basis.id}\n\n${materials.join("\n\n---\n\n")}\n\nAuthorized task input:\n${run.input}\n\nReport actual files, checks and limits. Native turn completion is not task acceptance or consumer use.`;
+    const input = `${marker(run.operationId)}\nProject task: ${fixed.revision.title}\nContent: ${fixed.revision.content}\nAcceptance: ${fixed.revision.acceptance}\nTask revision: ${fixed.revision.id}\nBasis set: ${fixed.basis.id}\n\n${materials.join("\n\n---\n\n")}\n\nAuthorized task input:\n${run.input}\n\nReport actual files, checks and limits. Native turn completion is not task acceptance or consumer use.`;
     if (Buffer.byteLength(input, "utf8") > 256 * 1024) throw new Error("Complete required context exceeds the first-version input limit");
     return input;
   }

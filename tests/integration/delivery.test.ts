@@ -17,15 +17,17 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/\/evoloop_[a-z_]*test(?:\?|$)/.test(url))throw new Error("dedicated evoloop_*test database required");
 const time="2026-10-20T09:00:00.000Z";
 async function taskEvent(pool:pg.Pool,projectId:string,owner:string,version=1) {
-  const taskId=randomUUID(),revisionId=randomUUID(),operationId=randomUUID(),eventId=randomUUID();
-  const client=await pool.connect();
-  try {await client.query("BEGIN");
-    await client.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state) VALUES($1,$2,$3,$4,'Fixture task','Check evidence','Record result',$5,'proposed')",[projectId,taskId,version,revisionId,owner]);
-    await client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,actor_id,reason,created_at) VALUES($1,$2,$3,$4,'Fixture task','Check evidence','Record result',$5,'proposed',$5,'fixture',$6)",[projectId,taskId,revisionId,version,owner,time]);
-    await client.query("INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at) VALUES($1,$2,$3,'fixture','task.propose',$4::jsonb,$5)",[projectId,operationId,owner,JSON.stringify({status:"applied",operationId,entityId:taskId,version}),time]);
-    await client.query("INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at) VALUES($1,$2,$3,$4,'task',$5,$6,$7)",[projectId,eventId,operationId,`${projectId}:task:${taskId}`,taskId,version,time]);
-    await client.query("COMMIT");
-  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+  assert.equal(version,1);
+  const taskId=randomUUID(),operationId=randomUUID();
+  const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>time},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
+  const result=await workflow.execute({actorId:owner,projectIds:[projectId],permissions:["read","write","review"]},
+    {type:"task.create",projectId,operationId,taskId,title:"Fixture task",content:"# Check evidence",
+      acceptance:"Record result",owner} as never);
+  assert.equal(result.status,"applied",JSON.stringify(result));
+  const event=(await pool.query<{event_id:string}>("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='task'",[projectId,operationId])).rows[0];
+  assert.ok(event);
+  const eventId=event.event_id;
   return {taskId,eventId,operationId};
 }
 async function remoteFixture(){
@@ -105,10 +107,10 @@ test("expired dispatch is unknown and concurrent claims never duplicate an event
   assert.equal(await store.recoverInterrupted(projectId,"feishu","2026-10-20T09:00:02.000Z"),1);
   assert.equal((await store.get(projectId,item.eventId,"feishu"))?.state,"unknown");
   assert.equal(await store.claimNext(projectId,"feishu","c","2026-10-20T09:00:03.000Z",1000),null);
-  assert.equal(await store.finish(claim,{state:"confirmed",binding:{entityId:item.taskId,remoteRecordId:"rec-late",localVersion:1,remoteOperationId:item.operationId,remoteVersion:1,remoteModifiedTime:"1",confirmedTitle:"Fixture task",confirmedStatus:"proposed"}},"owner","2026-10-20T09:00:03.000Z","dispatch"),null,"expired fence cannot mark late response applied");
+  assert.equal(await store.finish(claim,{state:"confirmed",binding:{entityId:item.taskId,remoteRecordId:"rec-late",localVersion:1,remoteOperationId:item.operationId,remoteVersion:1,remoteModifiedTime:"1",confirmedTitle:"Fixture task",confirmedStatus:"todo"}},"owner","2026-10-20T09:00:03.000Z","dispatch"),null,"expired fence cannot mark late response applied");
 });
 
-test("real Task delivery, use and close events plus scheduled proposal all enter Task projection",async t=>{
+test("real Task lifecycle and scheduled todo events enter the Task projection without primary Document events",async t=>{
   await migrate(url);const pool=new pg.Pool({connectionString:url,max:4});t.after(()=>pool.end());
   const projectId=randomUUID(),taskId=randomUUID(),documentId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>time},ids:{next:randomUUID},
@@ -118,10 +120,8 @@ test("real Task delivery, use and close events plus scheduled proposal all enter
   await yes(issue("project.create",{title:"Task projection lifecycle"}));
   const doc=await yes(issue("document.create",{documentId,title:"Report requirement",body:"# Report\nConsumer uses report."}));
   await yes(issue("document.adopt",{documentId,expectedVersion:1,revisionId:doc.revisionId,reason:"Use requirement"}));
-  await yes(issue("task.propose",{taskId,title:"Report",goal:"Produce report",acceptance:"Consumer uses report",owner:"owner",documentIds:[documentId],consumer:"owner",useRequired:true,evidence:"Need report"}));
-  await yes(issue("task.judge",{taskId,expectedVersion:1,decision:"approve",reason:"Bounded",evidence:"Need is concrete"}));
-  const ready=await yes(issue("task.accept",{taskId,expectedVersion:1,basis:[{documentId,revisionId:doc.revisionId}],reason:"Accept"}));
-  const active=await yes(issue("task.start",{taskId,expectedVersion:ready.version,reason:"Begin"}));
+  await yes(issue("task.create",{taskId,title:"Report",content:"# Produce report",acceptance:"Consumer uses report",owner:"owner",documentIds:[documentId],consumer:"owner",useRequired:true,evidence:"Need report"}));
+  const active=await yes(issue("task.start",{taskId,expectedVersion:1,basis:[{documentId,revisionId:doc.revisionId}],reason:"Begin"}));
   const delivered=await yes(issue("delivery.record",{taskId,expectedVersion:active.version,artifactRef:"repo://report",artifactRevision:"fixed-commit",contentHash:"a".repeat(64),technicalResult:"passed",technicalEvidence:"Tested report",reason:"Deliver"}));
   await yes(issue("observation.record",{taskId,deliveryId:delivered.revisionId,observer:"owner",observerKind:"human",result:"used",evidence:"Owner completed report",reason:"Observed"}));
   await yes(issue("task.close",{taskId,expectedVersion:delivered.version,deliveryId:delivered.revisionId,acceptanceResult:"met",acceptanceEvidence:"Owner completed report",reason:"Close"}));
@@ -129,18 +129,21 @@ test("real Task delivery, use and close events plus scheduled proposal all enter
   const schedules=new SchedulingService(new PgSchedulingStore(pool));
   await schedules.create(principal,{projectId,id:scheduleId,version:1,currentRevisionId:revisionId,state:"active",watermarkUtc:time,
     revision:{projectId,scheduleId,id:revisionId,version:1,timezone:"UTC",rule:{kind:"once",atUtc:"2026-10-20T09:30:00.000Z"},
-      misfire:{kind:"latest"},overlap:"skip",template:{title:"Scheduled report",goal:"Inspect",acceptance:"Record",owner:"owner"},
+      misfire:{kind:"latest"},overlap:"skip",template:{title:"Scheduled report",content:"# Inspect",acceptance:"Record",owner:"owner"},
       authorization:{scopeId:"scope:report",roleId:"temporary-role",authorizedBy:"owner",expiresAtUtc:null},
       actorId:"owner",reason:"One report",createdAtUtc:time}});
   assert.equal((await schedules.tick(principal,projectId,"2026-10-20T10:00:00.000Z",["scope:report"])).length,1);
   const store=new PgOutboxDeliveryStore(pool);
   assert(await store.claimNext(projectId,"feishu","test-worker","2026-10-20T10:01:00.000Z",300000));
-  const rows=await pool.query(`SELECT e.kind,t.state FROM outbox_delivery d JOIN outbox_event e ON e.project_id=d.project_id AND e.event_id=d.event_id
+  const rows=await pool.query(`SELECT e.kind,e.version,t.state FROM outbox_delivery d JOIN outbox_event e ON e.project_id=d.project_id AND e.event_id=d.event_id
     JOIN task t ON t.project_id=e.project_id AND t.task_id=e.entity_id WHERE d.project_id=$1 AND d.consumer_id='feishu'`,[projectId]);
   const kinds=rows.rows.map(row=>row.kind);
-  for(const kind of ["task","task.judge","task.start","delivery.record","observation.record","task.close","schedule.task.proposed"])
+  for(const kind of ["task","delivery.record","observation.record","task.close","schedule.task.todo"])
     assert(kinds.includes(kind),`missing Task projection for ${kind}`);
+  assert(rows.rows.some(row=>row.kind==="task"&&row.version===active.version),
+    "task.start projects the newly in-progress Task version");
   assert.equal(kinds.length,(await pool.query(`SELECT count(*)::int AS n FROM outbox_event e JOIN task t ON t.project_id=e.project_id AND t.task_id=e.entity_id
-    WHERE e.project_id=$1 AND (e.kind='task' OR e.kind LIKE 'task.%' OR e.kind IN ('delivery.record','observation.record','schedule.task.proposed'))`,[projectId])).rows[0]?.n);
-  assert(!kinds.includes("project"),"other entity events must not be projected as Tasks");
+    WHERE e.project_id=$1 AND (e.kind='task' OR e.kind LIKE 'task.%' OR e.kind IN ('delivery.record','observation.record','schedule.task.proposed','schedule.task.todo'))`,[projectId])).rows[0]?.n);
+  assert(!kinds.includes("project")&&!kinds.includes("document"),
+    "project and task-owned primary Document events must not be projected as Tasks");
 });

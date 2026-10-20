@@ -73,12 +73,12 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   let document = await cli(["document", documentId]);
   const r1 = document.current.id;
   await command("document.adopt", { documentId, revisionId: r1, expectedVersion: document.document.version, reason: "Use fixture r1" });
-  await command("task.propose", { taskId, title: "Read fixed input", goal: "Verify exact r1", acceptance: "Original r1 remains readable after source change",
+  await command("task.create", { taskId, title: "Read fixed input", content: "# Verify exact r1\nRead the fixed source.", acceptance: "Original r1 remains readable after source change",
     owner: "cli-test-agent", documentIds: [documentId] });
-  await command("task.accept", { taskId, expectedVersion: (await task()).task.version, basis: [{ documentId, revisionId: r1 }], reason: "Bounded fixed-input fixture" });
+  await command("task.start", { taskId, expectedVersion: (await task()).task.version, basis: [{ documentId, revisionId: r1 }], reason: "Bounded fixed-input fixture" });
   const sealedRevision = (await task()).revision.id;
   let context = await cli(["context", taskId]);
-  assert.equal(context.status, "complete"); assert.equal(context.documents[0].body, source);
+  assert.equal(context.status, "complete"); assert.equal(context.documents.find((item: { revision: { documentId: string } }) => item.revision.documentId === documentId)?.body, source);
   document = await cli(["document", documentId]);
   await command("document.revise", { documentId, expectedVersion: document.document.version, body: "# New current input\nDo not silently replace r1.", reason: "Upstream changed" }, 3, lostOperationId);
   const sent = postCount;
@@ -95,7 +95,7 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   assert.match(stale.diagnostic, /VERSION_CONFLICT/);
   await command("task.reviewBasis", { taskId, expectedVersion: affected.task.version, impactId: impact.id, decision: "retain", reason: "Acceptance explicitly verifies r1 history" });
   context = await cli(["context", taskId, "--revision", sealedRevision]);
-  assert.equal(context.status, "complete"); assert.equal(context.documents[0].revision.id, r1);
+  assert.equal(context.status, "complete"); assert.equal(context.documents.find((item: { revision: { documentId: string } }) => item.revision.documentId === documentId)?.revision.id, r1);
   assert.equal((await cli(["original", documentId, "--revision", r1])).body, source);
   const request = { command: { mode: "create", projectId, operationId: randomUUID(), documentId: randomUUID(), revisionId: randomUUID(),
     title: "HTML original", format: "html", mediaType: "text/html", originalName: "index.html", author: "cli-test-agent", reason: "Archive bytes",
@@ -106,7 +106,6 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   const exportDir = join(directory, "exported");
   await cli(["original", request.command.documentId, "--revision", request.command.revisionId, "--out", exportDir]);
   assert.equal(sha(await readFile(join(exportDir, "index.html"))), request.command.source.contentHash);
-  await command("task.start", { taskId, expectedVersion: (await task()).task.version, reason: "Execute fixture" });
   await command("delivery.record", { taskId, expectedVersion: (await task()).task.version, artifactRef: `document:${documentId}@${r1}`,
     artifactRevision: r1, contentHash: sha(source), technicalResult: "passed", technicalEvidence: "Deterministic test verified exact fixed bytes", reason: "Synthetic delivery fixture" });
   const delivery = (await task()).deliveries[0]; assert.ok(delivery);
@@ -115,8 +114,9 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   await command("task.close", { taskId, expectedVersion: (await task()).task.version, deliveryId: delivery.id, acceptanceResult: "met",
     acceptanceEvidence: "Synthetic fixed-original test passed", reason: "Fixture complete" });
   const view = await fetch(`${apiUrl}/api/projects/${projectId}/tasks/${taskId}`, { headers: { Authorization: `Bearer ${readerToken}` } }).then(r => r.json());
-  assert.equal(view.task.state, "done"); assert.equal(view.basis.members[0].revisionId, r1);
+  assert.equal(view.task.state, "done"); assert.equal(view.basis.members.find((item: { documentId: string }) => item.documentId === documentId).revisionId, r1);
+  assert.equal(view.task.content, "# Verify exact r1\nRead the fixed source.");
   assert.equal(view.observations[0].observerKind, "agent");
-  assert.ok((await cli(["task", taskId, "--history"])).some((entry: { revision: { state: string } }) => entry.revision.state === "ready"));
-  await command("task.defer", { taskId, expectedVersion: view.task.version, reason: "Reader cannot mutate" }, 1, randomUUID(), readerToken);
+  assert.ok((await cli(["task", taskId, "--history"])).some((entry: { revision: { state: string } }) => entry.revision.state === "in_progress"));
+  await command("task.reopen", { taskId, expectedVersion: view.task.version, reason: "Reader cannot mutate" }, 1, randomUUID(), readerToken);
 });

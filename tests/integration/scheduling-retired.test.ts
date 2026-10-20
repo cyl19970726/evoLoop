@@ -12,7 +12,7 @@ const schema = `schedule_guard_${randomUUID().replaceAll("-", "").slice(0, 16)}`
 const projectId = randomUUID(), retiredRoleId = randomUUID();
 const at = "2026-10-20T10:00:00.000Z";
 
-test("retired authorizer or owner cannot produce scheduled proposed Tasks", async t => {
+test("retired authorizer or owner cannot produce scheduled todo Tasks", async t => {
   await migrate(url, schema);
   const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
   t.after(async () => {
@@ -41,7 +41,7 @@ test("retired authorizer or owner cannot produce scheduled proposed Tasks", asyn
       watermarkUtc: "2026-10-20T09:00:00.000Z",
       revision: { projectId, scheduleId, id: revisionId, version: 1, timezone: "UTC",
         rule: { kind: "once", atUtc: "2026-10-20T09:30:00.000Z" }, misfire: { kind: "latest" },
-        overlap: "skip", template: { title: "Review", goal: "Inspect", acceptance: "Record", owner },
+        overlap: "skip", template: { title: "Review", content: "# Inspect", acceptance: "Record", owner },
         authorization: { scopeId: "scope:review", roleId: authorizer, authorizedBy: "manager", expiresAtUtc },
         actorId: "manager", reason: "fixture", createdAtUtc: "2026-10-20T09:00:00.000Z" } };
   };

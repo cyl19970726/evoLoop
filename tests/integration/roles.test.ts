@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 import type { Principal } from "@evoloop/contracts";
@@ -29,12 +29,14 @@ test("PG role trial, immutable review, explicit task handoff and retirement gate
   const projectId = randomUUID(), taskId = randomUUID(), source = randomUUID(), target = randomUUID();
   const principal: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["write", "review"] };
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'role fixture',now())", [projectId]);
-  const initialRevisionId = randomUUID();
+  const initialRevisionId = randomUUID(), contentDocumentId = randomUUID(), contentRevisionId = randomUUID();
   const initialClient = await pool.connect();
   try {
     await initialClient.query("BEGIN");
-    await initialClient.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state) VALUES($1,$2,1,$3,'Release','Check readiness','Record result',$4,'proposed')", [projectId,taskId,initialRevisionId,source]);
-    await initialClient.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,actor_id,reason,created_at) VALUES($1,$2,$3,1,'Release','Check readiness','Record result',$4,'proposed','manager','trial fixture',now())", [projectId,taskId,initialRevisionId,source]);
+    await initialClient.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status) VALUES($1,$2,'Release',1,$3,'task','draft')", [projectId,contentDocumentId,contentRevisionId]);
+    await initialClient.query("INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,previous_revision_id,reason) VALUES($1,$2,$3,'# Check readiness','markdown',$4,'manager',now(),null,'trial fixture')", [projectId,contentDocumentId,contentRevisionId,createHash("sha256").update("# Check readiness").digest("hex")]);
+    await initialClient.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,kind,content_document_id,content_revision_id) VALUES($1,$2,1,$3,'Release','Record result',$4,'todo',null,$5,$6)", [projectId,taskId,initialRevisionId,source,contentDocumentId,contentRevisionId]);
+    await initialClient.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,actor_id,reason,created_at) VALUES($1,$2,$3,1,'Release','Record result',$4,'todo',null,$5,$6,'manager','trial fixture',now())", [projectId,taskId,initialRevisionId,source,contentDocumentId,contentRevisionId]);
     await initialClient.query("COMMIT");
   } catch (error) { await initialClient.query("ROLLBACK"); throw error; } finally { initialClient.release(); }
   const store = new PgRoleStore(pool);
@@ -63,7 +65,7 @@ test("PG role trial, immutable review, explicit task handoff and retirement gate
   const transferClient = await pool.connect();
   try {
     await transferClient.query("BEGIN");
-    await transferClient.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,actor_id,reason,created_at) VALUES($1,$2,$3,2,'Release','Check readiness','Record result',$4,'proposed','manager','reviewed owner transfer',now())", [projectId,taskId,taskRevisionId,target]);
+    await transferClient.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,actor_id,reason,created_at) VALUES($1,$2,$3,2,'Release','Record result',$4,'todo',null,$5,$6,'manager','reviewed owner transfer',now())", [projectId,taskId,taskRevisionId,target,contentDocumentId,contentRevisionId]);
     await transferClient.query("UPDATE task SET version=2,current_revision_id=$3,owner=$4 WHERE project_id=$1 AND task_id=$2", [projectId,taskId,taskRevisionId,target]);
     await transferClient.query("COMMIT");
   } catch (error) { await transferClient.query("ROLLBACK"); throw error; } finally { transferClient.release(); }

@@ -42,7 +42,7 @@ export class PgOutboxDeliveryStore implements DeliveryStore {
       SELECT e.project_id,e.event_id,$2,'pending',$3 FROM outbox_event e
       JOIN task t ON t.project_id=e.project_id AND t.task_id=e.entity_id
       WHERE e.project_id=$1 AND e.version<=t.version
-        AND (e.kind='task' OR e.kind LIKE 'task.%' OR e.kind IN ('delivery.record','observation.record','schedule.task.proposed'))
+        AND (e.kind='task' OR e.kind LIKE 'task.%' OR e.kind IN ('delivery.record','observation.record','schedule.task.proposed','schedule.task.todo'))
       ON CONFLICT DO NOTHING`, [projectId,consumerId,nowUtc]);
   }
   async claimNext(projectId: string, consumerId: string, leaseOwner: string, nowUtc: string, leaseMs: number): Promise<DeliveryClaim | null> {

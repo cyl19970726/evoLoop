@@ -35,14 +35,12 @@ async function loadTaskDetails(token: string, projectId: string): Promise<TaskDe
   return details;
 }
 function nextAction(stage: Stage, tasks: TaskDetail[]): string {
-  if (stage.state === "proposed") return "先判断并接受阶段，再提出所属任务。";
+  if (stage.state === "proposed") return "先判断并接受阶段，再建立所属任务。";
   if (stage.state === "reviewed") return "阅读最新阶段回看和后续选择；新证据可追加纠正。";
-  if (!tasks.length) return "明确交付与学习问题后，提出首项任务。";
-  if (tasks.some(detail => detail.task.state === "review")) return "核对本次交付、使用观察与任务验收。";
-  if (tasks.some(detail => detail.task.state === "active")) return "继续执行并登记可核对的交付。";
-  if (tasks.some(detail => detail.task.state === "ready")) return "核对固定依据，开始可做任务。";
-  if (tasks.some(detail => detail.task.state === "blocked" || detail.task.state === "deferred")) return "阅读阻塞或暂缓理由，决定补证或恢复。";
-  if (tasks.some(detail => detail.task.state === "proposed")) return "判断任务提议；拒绝或待补证不等于已接受。";
+  if (!tasks.length) return "明确交付与学习问题后，建立首项待办任务。";
+  if (tasks.some(detail => detail.task.state === "in_progress" && (detail.deliveries ?? []).length)) return "核对本次交付与使用观察，按验收条件决定能否关闭。";
+  if (tasks.some(detail => detail.task.state === "in_progress")) return "继续执行并登记可核对的交付。";
+  if (tasks.some(detail => detail.task.state === "todo")) return "核对任务正文与来源，明确开始或取消。";
   return "核对交付和使用结果，再作阶段回看。";
 }
 export function JourneyBoard({ context, refresh, propose = false }: { context: MutationContext; refresh: number; propose?: boolean }) {
@@ -90,12 +88,7 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
             const relatedTasks = taskDetails.filter(detail => detail.proposal?.stageId === stage.id);
             return <div className="journey-stage" key={stage.id}><div className="journey-stage-head"><strong>{stage.deliverable}</strong><span className="pill">{stage.state} · {relatedTasks.length} 项任务</span></div>
               <p>学习问题：{stage.learningQuestion}</p><p><strong>下一动作：</strong>{nextAction(stage, relatedTasks)}</p>
-              {relatedTasks.length ? <ul>{relatedTasks.map(detail => {
-                const judgement = (detail.judgements ?? []).filter(item => item.taskRevisionId === detail.revision.id)
-                  .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
-                return <li key={detail.task.id}><a href={`#/p/${context.projectId}/tasks/${detail.task.id}`}>{detail.task.title}</a>
-                  <span className="muted"> · {detail.task.state}{detail.task.state === "proposed" && ` · 判断：${judgement?.decision ?? "待判断"}`}</span></li>;
-              })}</ul> : <p className="empty">这个阶段尚无所属任务。</p>}
+              {relatedTasks.length ? <ul>{relatedTasks.map(detail => <li key={detail.task.id}><a href={`#/p/${context.projectId}/tasks/${detail.task.id}`}>{detail.task.title}</a><span className="muted"> · {detail.task.state}</span></li>)}</ul> : <p className="empty">这个阶段尚无所属任务。</p>}
             </div>;
           })}
         </div>;
@@ -121,16 +114,18 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
       ]} build={v => ({ type: "stage.propose", stageId: crypto.randomUUID(), ...v })} /></details>}
     </section>
     </div>
-    <details className="panel proposal-panel" open={propose}><summary>提出任务</summary><p>缺陷、反馈和新需求进入同一任务集合。提议经判断和接受后才能开始。</p>
-      <ActionForm context={{ ...context, draftScope: "new-task" }} initiallyOpen={propose} title="提出任务" fields={[
-        { name: "title", label: "任务名称" }, { name: "stageId", label: "所属阶段", kind: "select", options: stages.filter(s => s.state === "active").map(s => option(s.id, s.deliverable)) },
-        { name: "goal", label: "这项工作要改变什么", kind: "textarea" }, { name: "acceptance", label: "技术与消费者验收", kind: "textarea" },
-        { name: "owner", label: "责任者", value: context.principal.actorId }, { name: "consumer", label: "目标消费者" },
-        { name: "useRequired", label: "完成是否要求实际使用", kind: "select", value: "true", options: [option("true", "要求，技术检查后还需使用证据"), option("false", "仅技术子任务，阶段效果继续待核")] },
-        { name: "documentIds", label: "关联过程文档（可多选）", kind: "multi", options: documents.map(d => option(d.id, d.title)), optional: true },
-        { name: "evidence", label: "来源、复现或反馈证据", kind: "textarea" }, { name: "stopCondition", label: "停止条件", kind: "textarea" },
-      ]} build={v => ({ ...v, type: "task.propose", taskId: crypto.randomUUID(), useRequired: v.useRequired === "true", documentIds: JSON.parse(v.documentIds || "[]") })} onApplied={result => { window.location.hash = `/p/${context.projectId}/tasks/${result.entityId}`; }} />
-      {!stages.some(s => s.state === "active") && <Notice>先提出并接受一个阶段，才能按完整旅程提出任务。</Notice>}
+    <details className="panel proposal-panel" open={propose}><summary>建立任务</summary><p>直接写任务正文与独立验收；主文档随任务自动创建，不需要先保存过程文档。</p>
+      <ActionForm context={{ ...context, draftScope: "new-task" }} initiallyOpen={propose} title="创建待办任务" fields={[
+        { name: "title", label: "任务名称" }, { name: "stageId", label: "所属阶段（可选）", kind: "select", optional: true, options: stages.filter(s => s.state === "active").map(s => option(s.id, s.deliverable)) },
+        { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: [option("implementation", "实施"), option("research", "调研"), option("validation", "验证")] },
+        { name: "content", label: "任务正文（Markdown）", kind: "textarea" }, { name: "acceptance", label: "独立验收条件", kind: "textarea" },
+        { name: "owner", label: "责任者", value: context.principal.actorId }, { name: "consumer", label: "目标消费者（所属阶段任务必填）", optional: true },
+        { name: "useRequired", label: "关闭是否要求实际使用", kind: "select", value: "false", options: [option("true", "需要本次交付的使用证据"), option("false", "按验收条件与技术检查判断")] },
+        { name: "documentIds", label: "关联已发布文档（可选）", kind: "multi", options: documents.filter(d => d.status === "published").map(d => option(d.id, d.title)), optional: true },
+        { name: "evidence", label: "来源或反馈证据（所属阶段任务必填）", kind: "textarea", optional: true }, { name: "stopCondition", label: "停止条件（所属阶段任务必填）", kind: "textarea", optional: true },
+      ]} build={v => ({ type: "task.create", taskId: crypto.randomUUID(), title: v.title, content: v.content, acceptance: v.acceptance, owner: v.owner,
+        kind: v.kind || null, documentIds: JSON.parse(v.documentIds || "[]"), ...(v.stageId ? { stageId: v.stageId } : {}), ...(v.consumer ? { consumer: v.consumer } : {}),
+        useRequired: v.useRequired === "true", ...(v.evidence ? { evidence: v.evidence } : {}), ...(v.stopCondition ? { stopCondition: v.stopCondition } : {}) })} onApplied={result => { window.location.hash = `/p/${context.projectId}/tasks/${result.entityId}`; }} />
     </details>
   </div>;
 }

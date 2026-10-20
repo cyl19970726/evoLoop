@@ -17,13 +17,14 @@ const source = z.discriminatedUnion("storage", [
 ]);
 export const documentPayloadCommandSchema = z.strictObject({
   ...common, mode: z.enum(["create", "revise"]), title: z.string().trim().min(1).max(240).optional(),
-  expectedVersion: z.number().int().positive().optional(), source,
+  expectedVersion: z.number().int().positive().optional(), kind: z.enum(["task", "issue", "spec", "discussion", "report"]).nullable().optional(), source,
 }).superRefine((command, ctx) => {
   if (command.format === "markdown" && command.mediaType !== "text/markdown" || command.format === "html" && command.mediaType !== "text/html")
     ctx.addIssue({ code: "custom", message: "format and media type disagree", path: ["mediaType"] });
   if (command.mode === "create" && (!command.title || command.expectedVersion !== undefined) ||
-      command.mode === "revise" && command.expectedVersion === undefined)
+      command.mode === "revise" && (command.expectedVersion === undefined || command.kind !== undefined))
     ctx.addIssue({ code: "custom", message: "create requires title; revise requires expectedVersion", path: ["mode"] });
+  if (command.kind === "task") ctx.addIssue({ code: "custom", message: "Task primary documents are created through task.create", path: ["kind"] });
 });
 export type DocumentPayloadCommand = z.infer<typeof documentPayloadCommandSchema>;
 

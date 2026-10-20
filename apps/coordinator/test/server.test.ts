@@ -103,7 +103,7 @@ test("schedule status scopes grants to the caller and active commands require an
   const base = { type: "schedule.create", projectId, operationId: "00000000-0000-4000-8000-000000000002",
     scheduleId: "00000000-0000-4000-8000-000000000003", revisionId: "00000000-0000-4000-8000-000000000004",
     timezone: "UTC", rule: { kind: "daily", localTime: "09:00" }, misfire: { kind: "skip" }, overlap: "skip",
-    template: { title: "Daily", goal: "Review", acceptance: "Evidence", owner: "temporary-role" },
+    template: { title: "Daily", content: "# Review", acceptance: "Evidence", owner: "temporary-role" },
     authorization: { scopeId: "scope:daily", roleId: "temporary-role", authorizedBy: "local-owner", expiresAtUtc: null },
     watermarkUtc: new Date().toISOString(), state: "active", reason: "reviewed" };
   try {

@@ -46,7 +46,8 @@ function dailyInstant(format: Intl.DateTimeFormat, date: Date, hour: number, min
 export function validateScheduleRevision(revision: ScheduleRevision): void {
   formatter(revision.timezone);
   if (revision.version < 1 || !Number.isSafeInteger(revision.version)) throw new ScheduleRuleError("invalid schedule version");
-  if (!revision.authorization.scopeId || !revision.authorization.roleId || !revision.authorization.authorizedBy || !revision.template.title || !revision.template.goal || !revision.template.acceptance || !revision.template.owner) throw new ScheduleRuleError("schedule scope and task template required");
+  if (!revision.authorization.scopeId || !revision.authorization.roleId || !revision.authorization.authorizedBy || !revision.template.title || !revision.template.content || !revision.template.acceptance || !revision.template.owner) throw new ScheduleRuleError("schedule scope and task template required");
+  if (new TextEncoder().encode(revision.template.content).byteLength > 65536) throw new ScheduleRuleError("schedule task content exceeds 65536 UTF-8 bytes");
   if (revision.authorization.expiresAtUtc) instant(revision.authorization.expiresAtUtc);
   if (revision.rule.kind === "once") instant(revision.rule.atUtc);
   else if (revision.rule.kind === "interval") {

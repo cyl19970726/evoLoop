@@ -13,7 +13,7 @@ function sameMisfire(a: ScheduleRevision["misfire"], b: ScheduleRevision["misfir
   return a.kind === b.kind && (a.kind !== "bounded" || (b.kind === "bounded" && a.maxCatchUp === b.maxCatchUp));
 }
 const sameTemplate = (a: ScheduleRevision["template"], b: ScheduleRevision["template"]): boolean =>
-  a.title === b.title && a.goal === b.goal && a.acceptance === b.acceptance && a.owner === b.owner;
+  a.title === b.title && a.content === b.content && a.acceptance === b.acceptance && a.owner === b.owner;
 
 /** Called by the shared command journal inside the project transaction. */
 export async function applySchedule(tx: SchedulingTransaction, principal: Principal, command: ScheduleCommand, now: string) {

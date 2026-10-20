@@ -17,6 +17,8 @@
 .task-overview-grid .panel { margin: 0; }
 .task-focus { min-width: 0; border-color: #e1e5ef; box-shadow: 0 3px 13px #1f32600a; }
 .task-focus:first-child { grid-column: 1 / -1; }
+.task-main-content { grid-column: 1 / -1; }
+.task-main-content .markdown-body { max-width: 900px; }
 .task-focus h2 { font-size: 1.08rem; color: #202b42; }
 .task-focus p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-focus .panel-head { align-items: center; }

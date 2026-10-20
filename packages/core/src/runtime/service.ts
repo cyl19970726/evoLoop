@@ -88,7 +88,7 @@ export class RuntimeWorkflowService {
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
       if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "owned session is not ready");
       const task = required(await tx.getTask(current.taskId), "task");
-      if (task.state !== "active" || task.currentRevisionId !== current.taskRevisionId) {
+      if (task.state !== "in_progress" || task.currentRevisionId !== current.taskRevisionId) {
         throw new DomainError("TASK_CHANGED", "task changed after run reservation");
       }
       if ((await tx.listImpacts(task.id)).some(item => item.state === "pending")) {

@@ -37,7 +37,7 @@ test("current integration grant is required before remote scan and candidate per
   const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
   const store={recordIncoming:async()=>{candidates++;throw new Error("unexpected candidate");}} as unknown as DeliveryStore;
   const connector={listRemote:async()=>{remoteCalls++;allowed=false;return {records:[{recordId:"remote-1",entityId:taskId,
-    localVersion:1,operationId:"op",title:"Changed",status:"proposed",modifiedTime:"1"}],nextCursor:null};}} as never;
+    localVersion:1,operationId:"op",title:"Changed",status:"todo",modifiedTime:"1"}],nextCursor:null};}} as never;
   const runner=new CollaborationRunner({store,workflow:{} as WorkflowService,connector,consumerId:"feishu",principals:[principal],
     canWrite:()=>true,hasGrant:(project,actor)=>allowed&&project===projectId&&actor===principal.actorId,allowProjection:async()=>true});
   await assert.rejects(()=>runner.pollIncoming(principal,projectId),/grant lost/);
@@ -60,7 +60,7 @@ test("stop waits for an in-flight claim before returning",async()=>{
   assert.equal(completed,true);
 });
 
-test("unknown incoming operation and accepted Task cannot replay a remote revision", async () => {
+test("unknown incoming operation and in-progress Task cannot replay a remote revision", async () => {
   const projectId=randomUUID(),taskId=randomUUID(),incomingId=randomUUID(),operationId=randomUUID();
   const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
   const candidate:IncomingRecord={projectId,id:incomingId,operationId,state:"unknown",sourceEventId:"external-event",observedAtUtc:"2026-10-20T09:00:00.000Z",
@@ -70,7 +70,7 @@ test("unknown incoming operation and accepted Task cannot replay a remote revisi
   let commands=0,decisions=0;
   const store={getIncoming:async()=>candidate,getBinding:async()=>({entityId:taskId,remoteRecordId:"remote-1",localVersion:1}),
     decideIncoming:async()=>{decisions++;return true;}} as unknown as DeliveryStore;
-  const workflow={getOperation:async()=>null,getTask:async()=>({task:{id:taskId,title:"Original",state:"ready",version:1}}),
+  const workflow={getOperation:async()=>null,getTask:async()=>({task:{id:taskId,title:"Original",state:"in_progress",version:1}}),
     execute:async()=>{commands++;throw new Error("unexpected command");}} as unknown as WorkflowService;
   const deps={store,workflow,consumerId:"feishu",nowUtc:()=>"2026-10-20T09:00:00.000Z",verifyRemote:async()=>true};
   const unknown=await reviewIncomingChange(deps,principal,projectId,incomingId,"apply","Review external edit");

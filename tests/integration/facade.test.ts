@@ -60,8 +60,8 @@ test("common facade journals role and schedule decisions and reads external docu
 
   applied(await service.execute(reviewer, command("project.create", { title: "Facade integration" })));
   const taskId = randomUUID(), roleId = randomUUID(), scheduleId = randomUUID();
-  applied(await service.execute(writer, command("task.propose", {
-    taskId, title: "Trial review", goal: "Review a report", acceptance: "Record judgement", owner: "manager", documentIds: [],
+  applied(await service.execute(writer, command("task.create", {
+    taskId, title: "Trial review", content: "# Review a report", acceptance: "Record judgement", owner: "manager", documentIds: [],
   })));
 
   const propose = command("role.propose", { roleId, proposal: proposal(taskId) });
@@ -90,15 +90,15 @@ test("common facade journals role and schedule decisions and reads external docu
   assert.equal((await service.listRoleRevisions(reviewer, projectId, roleId)).length, 4);
   assert.equal((await service.listRoleReviews(reviewer, projectId, roleId)).length, 1);
   assert.equal((await service.listRoles(reviewer, projectId)).items.length, 1);
-  rejected(await service.execute(writer, command("task.propose", {
-    taskId: randomUUID(), title: "Invalid assignment", goal: "Use retired role", acceptance: "No",
+  rejected(await service.execute(writer, command("task.create", {
+    taskId: randomUUID(), title: "Invalid assignment", content: "# Use retired role", acceptance: "No",
     owner: roleId, documentIds: [],
   })), "ROLE_RETIRED");
 
   const scheduleFields = {
     scheduleId, revisionId: randomUUID(), timezone: "UTC", rule: { kind: "once", atUtc: "2026-10-21T09:00:00.000Z" },
     misfire: { kind: "skip" }, overlap: "skip",
-    template: { title: "Report", goal: "Check report", acceptance: "Record result", owner: "manager" },
+    template: { title: "Report", content: "# Check report", acceptance: "Record result", owner: "manager" },
     authorization: { scopeId: "project", roleId: "manager", authorizedBy: "manager", expiresAtUtc: null },
     reason: "one bounded reminder",
   };
@@ -150,10 +150,15 @@ test("common facade journals role and schedule decisions and reads external docu
 
   const client = await pool.connect();
   try {
-    const rows = await client.query(`SELECT command_type,result->>'status' AS status FROM operation_journal WHERE project_id=$1`, [projectId]);
-    const events = await client.query(`SELECT operation_id FROM outbox_event WHERE project_id=$1`, [projectId]);
+    const rows = await client.query(`SELECT operation_id,command_type,result->>'status' AS status FROM operation_journal WHERE project_id=$1`, [projectId]);
+    const events = await client.query(`SELECT operation_id,kind FROM outbox_event WHERE project_id=$1`, [projectId]);
     const successful = rows.rows.filter(row => row.status === "applied").length;
-    assert.equal(events.rowCount, successful, "each applied command emits one event; rejected commands emit none");
+    const taskCreates = rows.rows.filter(row => row.command_type === "task.create" && row.status === "applied").length;
+    assert.equal(events.rowCount, successful + taskCreates,
+      "task.create publishes both Task and primary Document effects; rejected commands emit none");
+    const createdTaskOperation = rows.rows.find(row => row.command_type === "task.create" && row.status === "applied")?.operation_id;
+    assert.deepEqual(events.rows.filter(row => row.operation_id === createdTaskOperation).map(row => row.kind).sort(),
+      ["document", "task"], "the primary Document and Task each have an outbox effect");
     assert.equal(rows.rows.filter(row => row.command_type === "role.propose").length, 1, "replay creates no second journal row");
   } finally { client.release(); }
 });

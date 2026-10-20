@@ -159,6 +159,8 @@ async function applyDocumentPayload(
   const current = await tx.getDocument(command.documentId);
   if (command.mode === "create" && current) throw new DomainError("ALREADY_EXISTS", "Document already exists");
   if (command.mode === "revise" && !current) throw new DomainError("NOT_FOUND", "Document was not found");
+  if (current?.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task content must be changed through task.update");
+  if (current?.status === "archived") throw new DomainError("DOCUMENT_ARCHIVED", "Restore the document before revision");
   if (current && current.version !== command.expectedVersion)
     throw new DomainError("VERSION_CONFLICT", "Document changed since it was read", current.version);
   const source = command.source;
@@ -173,7 +175,8 @@ async function applyDocumentPayload(
     author: command.author, reason: command.reason, createdAt: now,
   };
   if (!current) await tx.insertDocument({ projectId: command.projectId, id: command.documentId,
-    title: command.title!, version: 1, currentRevisionId: command.revisionId, adoptedRevisionId: null });
+    title: command.title!, version: 1, currentRevisionId: command.revisionId, adoptedRevisionId: null,
+    kind: command.kind ?? null, status: "draft" });
   await tx.insertDocumentPayloadRevision(revision);
   for (const blob of registrations) await tx.registerDocumentBlob(blob);
   if (current) await tx.updateDocument({ ...current, version: current.version + 1, currentRevisionId: command.revisionId }, current.version);

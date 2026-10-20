@@ -16,14 +16,19 @@ const common = { projectId: idSchema, operationId: idSchema };
 export const documentBasisSchema = z.strictObject({ documentId: idSchema, revisionId: idSchema });
 export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
+export const taskKindSchema = z.enum(["implementation", "research", "validation"]);
+export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report"]);
 // Only the implemented command surface is exported; a missing integration is not a no-op command.
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("project.create"), title }),
-  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536) }),
+  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional() }),
   z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text }),
   z.strictObject({ ...common, type: z.literal("document.adopt"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
-  z.strictObject({ ...common, type: z.literal("task.propose"), taskId: idSchema, title, goal: text, acceptance: text, owner: text, documentIds: z.array(idSchema).max(20), stageId: idSchema.optional(), consumer: text.optional(), useRequired: z.boolean().optional(), evidence: text.optional(), stopCondition: text.optional() }),
-  z.strictObject({ ...common, type: z.literal("task.accept"), taskId: idSchema, expectedVersion: version, basis: basisSchema, reason: text }),
+  z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
+  z.strictObject({ ...common, type: z.literal("document.archive"), documentId: idSchema, expectedVersion: version, reason: text }),
+  z.strictObject({ ...common, type: z.literal("document.restore"), documentId: idSchema, expectedVersion: version, reason: text }),
+  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: text.optional(), useRequired: z.boolean().optional(), evidence: text.optional(), stopCondition: text.optional() }),
+  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), consumer: text.optional(), useRequired: z.boolean().optional(), evidence: text.optional(), stopCondition: text.optional(), reason: text }),
   z.strictObject({ ...common, type: z.literal("task.reviewBasis"), taskId: idSchema, expectedVersion: version, impactId: idSchema, decision: z.enum(["adopt", "retain"]), reason: text, acceptance: text.optional() }),
   ...workflowCommands,
   ...runtimeCommands,
@@ -37,8 +42,11 @@ export interface Principal { actorId: string; projectIds: string[]; permissions:
 export interface Project { id: string; title: string; createdAt: string }
 export interface Document {
   projectId: string; id: string; title: string; version: number;
-  currentRevisionId: string; adoptedRevisionId: string | null;
+  currentRevisionId: string; adoptedRevisionId: string | null; kind: DocumentKind | null; status: DocumentStatus;
+  primaryTaskId?: string | null;
 }
+export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report";
+export type DocumentStatus = "draft" | "published" | "archived";
 export interface DocumentRevision {
   projectId: string; documentId: string; id: string; body: string | null; format: "markdown" | "html";
   mediaType: "text/markdown" | "text/html"; originalName: string; payloadRef: string | null;
@@ -49,14 +57,18 @@ export interface DocumentDecision {
   projectId: string; id: string; documentId: string; revisionId: string;
   actorId: string; reason: string; createdAt: string;
 }
-export type TaskState = "proposed" | "ready" | "active" | "review" | "done" | "blocked" | "deferred" | "cancelled";
+export type TaskState = "todo" | "in_progress" | "done" | "cancelled";
+export type TaskRevisionState = TaskState | "proposed" | "ready" | "active" | "review" | "blocked" | "deferred";
+export type TaskKind = "implementation" | "research" | "validation";
 export interface Task {
   projectId: string; id: string; version: number; currentRevisionId: string;
-  title: string; goal: string; acceptance: string; owner: string; state: TaskState;
+  title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null;
+  acceptance: string; owner: string; state: TaskState;
 }
 export interface TaskRevision {
   projectId: string; taskId: string; id: string; version: number;
-  title: string; goal: string; acceptance: string; owner: string; state: TaskState;
+  title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null;
+  acceptance: string; owner: string; state: TaskRevisionState;
   basisSetId: string | null; actorId: string; reason: string; createdAt: string;
 }
 export interface BasisSet {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
@@ -16,6 +16,7 @@ const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}`
 const uow = new PostgresUnitOfWork(pool);
 const now = "2026-10-20T00:00:00.000Z";
 const actor = "adapter-test";
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 before(async () => { await migrate(connectionString, schema); });
 after(async () => {
@@ -28,18 +29,22 @@ after(async () => {
 function project(id = randomUUID()): Project { return { id, title: "Adapter test", createdAt: now }; }
 function document(projectId: string, id = randomUUID(), revisionId = randomUUID()): { head: Document; revision: DocumentRevision } {
   return {
-    head: { projectId, id, title: "Requirement", version: 1, currentRevisionId: revisionId, adoptedRevisionId: null },
-    revision: { projectId, documentId: id, id: revisionId, body: "# Requirement", format: "markdown", mediaType: "text/markdown", originalName: `${id}.md`, payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: "h1", author: actor, createdAt: now, previousRevisionId: null, reason: "create" },
+    head: { projectId, id, title: "Requirement", version: 1, currentRevisionId: revisionId, adoptedRevisionId: null, kind: "spec", status: "draft" },
+    revision: { projectId, documentId: id, id: revisionId, body: "# Requirement", format: "markdown", mediaType: "text/markdown", originalName: `${id}.md`, payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: sha("# Requirement"), author: actor, createdAt: now, previousRevisionId: null, reason: "create" },
   };
 }
-function readyTask(projectId: string, documentId: string, documentRevisionId: string): { head: Task; revision: TaskRevision; basis: BasisSet } {
+function readyTask(projectId: string, documentId: string, documentRevisionId: string): { head: Task; revision: TaskRevision; basis: BasisSet; primary: ReturnType<typeof document> } {
   const id = randomUUID();
   const revisionId = randomUUID();
   const basisId = randomUUID();
+  const primary = document(projectId);
+  primary.head.kind = "task";
+  primary.head.status = "draft";
   return {
-    head: { projectId, id, version: 1, currentRevisionId: revisionId, title: "Task", goal: "Do work", acceptance: "Check result", owner: actor, state: "ready" },
-    revision: { projectId, taskId: id, id: revisionId, version: 1, title: "Task", goal: "Do work", acceptance: "Check result", owner: actor, state: "ready", basisSetId: basisId, actorId: actor, reason: "accepted", createdAt: now },
-    basis: { projectId, taskId: id, taskRevisionId: revisionId, id: basisId, sealed: true, members: [{ documentId, revisionId: documentRevisionId }] },
+    head: { projectId, id, version: 1, currentRevisionId: revisionId, title: "Task", content: primary.revision.body!, contentDocumentId: primary.head.id, contentRevisionId: primary.revision.id, kind: null, acceptance: "Check result", owner: actor, state: "in_progress" },
+    revision: { projectId, taskId: id, id: revisionId, version: 1, title: "Task", content: primary.revision.body!, contentDocumentId: primary.head.id, contentRevisionId: primary.revision.id, kind: null, acceptance: "Check result", owner: actor, state: "in_progress", basisSetId: basisId, actorId: actor, reason: "accepted", createdAt: now },
+    basis: { projectId, taskId: id, taskRevisionId: revisionId, id: basisId, sealed: true, members: [{ documentId, revisionId: documentRevisionId }, { documentId: primary.head.id, revisionId: primary.revision.id }] },
+    primary,
   };
 }
 
@@ -80,12 +85,14 @@ test("sealed basis cannot be changed and cross-project references fail", async (
   const { p, d } = await seedDocument();
   const task = readyTask(p.id, d.head.id, d.revision.id);
   await uow.transaction(p.id, async (tx) => {
+    await tx.insertDocument(task.primary.head);
+    await tx.insertDocumentRevision(task.primary.revision);
     await tx.insertTask(task.head);
     await tx.insertTaskRevision(task.revision);
     await tx.insertSealedBasisSet(task.basis);
   });
   const stored = await uow.read(p.id, (reader) => reader.getBasisSet(task.head.id, task.revision.id, task.basis.id));
-  assert.deepEqual(stored?.members, task.basis.members);
+  assert.deepEqual(stored?.members, [...task.basis.members].sort((a, b) => a.documentId.localeCompare(b.documentId)));
   await assert.rejects(pool.query("DELETE FROM basis_member WHERE project_id=$1 AND task_id=$2", [p.id, task.head.id]), /immutable/);
   await assert.rejects(pool.query("UPDATE basis_member SET document_revision_id=$1 WHERE project_id=$2 AND task_id=$3", [randomUUID(), p.id, task.head.id]), /immutable/);
   await assert.rejects(pool.query("INSERT INTO basis_member(project_id,task_id,task_revision_id,basis_set_id,document_id,document_revision_id) VALUES($1,$2,$3,$4,$5,$6)", [p.id, task.head.id, task.revision.id, task.basis.id, randomUUID(), randomUUID()]), /immutable/);
@@ -95,12 +102,15 @@ test("sealed basis cannot be changed and cross-project references fail", async (
   await assert.rejects(uow.transaction(other.id, (tx) => tx.insertLink({ projectId: other.id, id: randomUUID(), taskId: task.head.id, documentId: d.head.id, actorId: actor, createdAt: now })), /foreign key/);
   const using = await uow.read(p.id, (reader) => reader.findTasksUsingDocument(d.head.id));
   assert.deepEqual(using.map((item) => item.id), [task.head.id]);
+  assert.equal(using[0]?.content, task.primary.revision.body);
 });
 
 test("ready task cannot point to a missing or unsealed basis", async () => {
   const { p, d } = await seedDocument();
   const task = readyTask(p.id, d.head.id, d.revision.id);
   await assert.rejects(uow.transaction(p.id, async (tx) => {
+    await tx.insertDocument(task.primary.head);
+    await tx.insertDocumentRevision(task.primary.revision);
     await tx.insertTask(task.head);
     await tx.insertTaskRevision(task.revision);
   }), /foreign key|sealed basis/);
@@ -161,6 +171,7 @@ test("document pagination returns a stable cursor without dropping rows", async 
   assert.equal(second.items.length, 1);
   assert.equal(second.nextCursor, null);
   assert.equal(new Set([...first.items, ...second.items].map((d) => d.id)).size, 3);
+  assert.ok([...first.items, ...second.items].every((d) => d.primaryTaskId === null));
 });
 
 test("task pagination returns every task once", async () => {
@@ -168,13 +179,20 @@ test("task pagination returns every task once", async () => {
   const tasks = Array.from({ length: 3 }, () => {
     const id = randomUUID();
     const revisionId = randomUUID();
-    const head: Task = { projectId: p.id, id, version: 1, currentRevisionId: revisionId, title: "Proposed", goal: "Investigate", acceptance: "Answer", owner: actor, state: "proposed" };
-    const revision: TaskRevision = { projectId: p.id, taskId: id, id: revisionId, version: 1, title: head.title, goal: head.goal, acceptance: head.acceptance, owner: head.owner, state: "proposed", basisSetId: null, actorId: actor, reason: "proposed", createdAt: now };
-    return { head, revision };
+    const primary = document(p.id);
+    primary.head.kind = "task";
+    const head: Task = { projectId: p.id, id, version: 1, currentRevisionId: revisionId, title: "Todo", content: primary.revision.body!, contentDocumentId: primary.head.id, contentRevisionId: primary.revision.id, kind: null, acceptance: "Answer", owner: actor, state: "todo" };
+    const revision: TaskRevision = { projectId: p.id, taskId: id, id: revisionId, version: 1, title: head.title, content: head.content, contentDocumentId: head.contentDocumentId, contentRevisionId: head.contentRevisionId, kind: null, acceptance: head.acceptance, owner: head.owner, state: "todo", basisSetId: null, actorId: actor, reason: "created", createdAt: now };
+    return { head, revision, primary };
   });
   await uow.transaction(p.id, async (tx) => {
     await tx.insertProject(p);
-    for (const task of tasks) { await tx.insertTask(task.head); await tx.insertTaskRevision(task.revision); }
+    for (const task of tasks) {
+      await tx.insertDocument(task.primary.head);
+      await tx.insertDocumentRevision(task.primary.revision);
+      await tx.insertTask(task.head);
+      await tx.insertTaskRevision(task.revision);
+    }
   });
   const first = await uow.read(p.id, (reader) => reader.listTasks(2));
   const second = await uow.read(p.id, (reader) => reader.listTasks(2, first.nextCursor!));
@@ -182,4 +200,11 @@ test("task pagination returns every task once", async () => {
   assert.equal(second.items.length, 1);
   assert.equal(second.nextCursor, null);
   assert.equal(new Set([...first.items, ...second.items].map((task) => task.id)).size, 3);
+  assert.equal(first.items.every((task) => task.content === "# Requirement"), true);
+  const primary = tasks[0]!.primary.head.id;
+  assert.equal((await uow.read(p.id, (reader) => reader.getDocument(primary)))?.primaryTaskId, tasks[0]!.head.id);
+  assert.equal((await uow.read(p.id, (reader) => reader.listDocuments(100))).items.find((d) => d.id === primary)?.primaryTaskId, tasks[0]!.head.id);
+  assert.equal(await uow.read(randomUUID(), (reader) => reader.getDocument(primary)), null);
+  await assert.rejects(pool.query("UPDATE process_document SET version=version+1,status='published' WHERE project_id=$1 AND document_id=$2",
+    [p.id, tasks[0]!.primary.head.id]), /Task primary Document must advance with its Task/);
 });
