@@ -11,6 +11,8 @@
     "test": "node --test scripts/docs/*.test.js"
   },
   "dependencies": {
-    "markdown-it": "15.0.3"
+    "esbuild": "0.28.2",
+    "markdown-it": "15.0.3",
+    "mermaid": "12.2.0"
   }
 }

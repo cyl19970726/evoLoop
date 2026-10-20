@@ -2,18 +2,250 @@
   "title": "evoLoop",
   "description": "从实际工作形成认识，让认识推动项目与协作分工的演进。",
   "pages": [
-    { "path": "README.md", "title": "项目概览", "group": "开始" },
-    { "path": "docs/README.md", "title": "文档导航", "group": "开始" },
-    { "path": "docs/product/definition.md", "title": "产品定义", "group": "产品与阶段" },
-    { "path": "docs/roadmap.md", "title": "阶段路线", "group": "产品与阶段" },
-    { "path": "docs/decisions.md", "title": "决定与设计状态", "group": "产品与阶段" },
-    { "path": "docs/architecture/overview.md", "title": "架构总览", "group": "架构与协作" },
-    { "path": "docs/architecture/contracts.md", "title": "接口与协作合同", "group": "架构与协作" },
-    { "path": "docs/development/standards.md", "title": "开发规范", "group": "开发与维护" },
-    { "path": "docs/development/documentation.md", "title": "文档维护", "group": "开发与维护" },
-    { "path": "CONTRIBUTING.md", "title": "贡献指南", "group": "开发与维护" },
-    { "path": "AGENTS.md", "title": "Agent 工作入口", "group": "开发与维护" },
-    { "path": "docs/references/lineage.md", "title": "来源与演进", "group": "依据" },
-    { "path": "docs/references/validation-summary.md", "title": "知识底座验证", "group": "依据" }
+    {
+      "path": "README.md",
+      "title": "项目概览",
+      "group": "开始"
+    },
+    {
+      "path": "docs/README.md",
+      "title": "文档导航",
+      "group": "开始"
+    },
+    {
+      "path": "docs/product/definition.md",
+      "title": "产品定义",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/workbench.md",
+      "title": "项目工作台设计",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/agent-loop.md",
+      "title": "Agent loop：四部分协作",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/daily-loop.md",
+      "title": "Dogfood 与日常工作",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/wiki-evaluation.md",
+      "title": "Wiki 建设与有效性评价",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/roadmap.md",
+      "title": "阶段路线",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/decisions.md",
+      "title": "决定与设计状态",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/architecture/overview.md",
+      "title": "架构总览",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/technology-selection.md",
+      "title": "技术选型与 Wiki 改造",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/packages.md",
+      "title": "包架构与运行分层",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/project-data.md",
+      "title": "任务、文档、Wiki 与 Connector",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/frontend.md",
+      "title": "前端架构与交互边界",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/wiki-workspace.md",
+      "title": "Wiki 知识工作区前端",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/wiki-integration.md",
+      "title": "Wiki 前端与知识服务集成",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/wiki-maintenance.md",
+      "title": "Wiki 编纂与审阅机制",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/storage.md",
+      "title": "存储逻辑与固定依据",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/knowledge-flow.md",
+      "title": "Task、文档与 Wiki 的关联",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/contracts.md",
+      "title": "接口与协作合同",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/architecture/codex-integration.md",
+      "title": "Codex 运行时接入",
+      "group": "架构与协作"
+    },
+    {
+      "path": "docs/development/standards.md",
+      "title": "开发规范",
+      "group": "开发与维护"
+    },
+    {
+      "path": "docs/development/documentation.md",
+      "title": "文档维护",
+      "group": "开发与维护"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "title": "贡献指南",
+      "group": "开发与维护"
+    },
+    {
+      "path": "AGENTS.md",
+      "title": "Agent 工作入口",
+      "group": "开发与维护"
+    },
+    {
+      "path": "docs/references/lineage.md",
+      "title": "来源与演进",
+      "group": "依据"
+    },
+    {
+      "path": "docs/research/README.md",
+      "title": "研究与探索",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/codex-app-server-20261019.md",
+      "title": "Codex App Server 调查",
+      "group": "研究 · 运行时"
+    },
+    {
+      "path": "docs/research/wiki-base-selection-20261019.md",
+      "title": "Wiki 基座与代码复用",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/workbench-prototype-review.md",
+      "title": "工作台原型覆盖审阅",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/references/validation-summary.md",
+      "title": "知识底座验证",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/references/wiki-feature-comparison.md",
+      "title": "Wiki 功能与流程对比",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/references/wiki-effectiveness.md",
+      "title": "Wiki 机制与有效性验证",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/wiki-validation-protocol-20261019.md",
+      "title": "共同实验协议",
+      "group": "研究 · 实验方法"
+    },
+    {
+      "path": "docs/research/openviking/plan.md",
+      "title": "计划与执行补记",
+      "group": "研究 · OpenViking"
+    },
+    {
+      "path": "docs/research/openviking/results.md",
+      "title": "实测结果",
+      "group": "研究 · OpenViking"
+    },
+    {
+      "path": "docs/research/openviking/integration.md",
+      "title": "接入分析",
+      "group": "研究 · OpenViking"
+    },
+    {
+      "path": "docs/research/openviking/feature-workflows.md",
+      "title": "完整机制研究",
+      "group": "研究 · OpenViking"
+    },
+    {
+      "path": "docs/research/openviking/architecture.md",
+      "title": "架构、数据与接入图",
+      "group": "研究 · OpenViking"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/plan.md",
+      "title": "计划与执行补记",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/results.md",
+      "title": "实测结果",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/integration.md",
+      "title": "接入分析",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/feature-workflows.md",
+      "title": "完整机制研究",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/architecture.md",
+      "title": "架构、数据与接入图",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/nashsu-llm-wiki/frontend-reuse.md",
+      "title": "前端代码复用边界",
+      "group": "研究 · nashsu Wiki"
+    },
+    {
+      "path": "docs/research/llm-wiki-candidates-direct-20261019.md",
+      "title": "LLM Wiki 候选调查",
+      "group": "研究 · 候选探索"
+    },
+    {
+      "path": "docs/research/knowledge-backends-20261019.md",
+      "title": "知识后端调查",
+      "group": "研究 · 候选探索"
+    },
+    {
+      "path": "docs/research/tencent-wiki-20261019.md",
+      "title": "腾讯 Wiki 源码核查",
+      "group": "研究 · 候选探索"
+    },
+    {
+      "path": "docs/research/task-backends-20261018.md",
+      "title": "任务表后端调查",
+      "group": "研究 · 候选探索"
+    }
   ]
 }
