@@ -51,7 +51,7 @@ flowchart TB
 | 构建 | Vite，客户端 SPA | 拟议 coordinator 负责 API 和业务；公开内容另有静态站。无需为了内部工作台新增一个服务端渲染运行时，但需自行配置路由、缓存、错误页和部署 fallback |
 | 路由 | React Router 的库模式 | URL 表示项目、对象、修订与过滤条件，刷新和深链可以恢复阅读位置；不同时建第二套请求缓存 |
 | 服务数据 | TanStack Query | 按用户/项目/对象/修订组织查询；变更后失效相关缓存再回读。缓存是读取优化，不能裁定当前版本或批准状态 |
-| 表格与编辑 | 首片原生语义表格、表单和 Markdown 编辑/预览 | 先做分页、筛选、差异与采纳；不为首片引入协同富文本/CRDT。大数据量确有证据时再选表格虚拟化工具 |
+| 表格与文档阅读 | 原生语义 table、独立完整阅读区；Markdown 渲染与 HTML 报告预览分开 | 首片用现有样式和浏览器能力；正文按需读取，HTML 隔离渲染。不为列表引入协同富文本/CRDT，大数据量确有证据时再选虚拟化 |
 | 样式与组件 | 项目内 CSS tokens + 小型可访问组件 | 沿用文档配色但区分交互层级；先在 `apps/workbench` 内复用，不先造独立设计系统包 |
 
 React 官方说明从构建工具开始的 SPA 需补齐路由和数据获取，并提示框架能减少后续集成工作。本项目选择 SPA 的理由是架构已规划独立协调 API、工作台需认证且不承担公开文档 SEO；这是项目取舍，并非官方默认推荐所有应用这样构建。[React 建议](https://react.dev/learn/build-a-react-app-from-scratch) · [Vite](https://vite.dev/guide/) · [Router 模式](https://reactrouter.com/start/modes) · [Query 缓存失效](https://tanstack.com/query/latest/docs/framework/react/guides/query-invalidation)
@@ -84,7 +84,8 @@ Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完
 | `/app/p/:projectId` | 阶段目标、待判断事项、两个讨论入口、最近影响与数据新鲜度 | 创建讨论准备任务、记录反馈 |
 | `/inbox` | 提议类型/来源、接受状态、证据、判断责任者、需补内容 | 提交 dogfood/需求、归并依据、接受/补证/暂缓/拒绝；不直接派发 |
 | `/tasks/:taskId` | 当前 Task、执行基线、交付/验收、关系与投影状态 | 提议、接受、提交交付、复核基线；按权限开放 |
-| `/documents/:documentId?revision=...` | Task 关联的过程文档：当前已采纳版/历史/草稿、正文、关联 Task，以及已整理到仓库的路径/commit 出处链接 | 保存过程修订、审阅/采纳；从固定来源和决定提出整理到仓库的候选差异 |
+| `/documents` | 过程文档表格：ID、标题、格式、当前修订/状态、关联 Task、更新时间及分页；不批量加载正文 | 筛选/搜索、打开行；行内 Task 链接单独导航 |
+| `/documents/:documentId?revision=...` | 完整正文、格式/资源状态、所选修订/当前版、关联 Task，以及已整理到仓库的路径/commit 出处链接 | 预览/原文、切换修订、返回列表；保存新修订和审阅/采纳 |
 | `/documents/:documentId/incorporation` | 来源过程文档的整理面板：可选的多个固定来源/决定、目标 repo 路径/章节与 base commit、差异/PR、实际合入 commit 及构建状态 | 请求整理、送交仓库责任者、核对既有结果；不创建正式 Document 行，不直接改 Git 或把 Task 标完成 |
 | `/knowledge`、`/knowledge/topics/:knowledgeId` | 按类型、专题和来源分组的知识卡片，主题说明、近期变化和待审入口 | 筛选、搜索、打开专题与知识页 |
 | `/knowledge/:knowledgeId?revision=...` | 认识、适用条件、反例、来源、当前与任务使用版差异 | 提交纠正、请求维护；不直接接受其关联任务 |
@@ -100,6 +101,20 @@ Document Table 只列过程文档，可直接关联 Task Table；仓库正式文
 QueryService 返回 `observedAt`、对象及 revision、权限能力、分源状态和缺项。PG 部分在一致的只读事务内取得；Wiki/Git 是分别读取的固定版本，标明校验结果，不能声称跨系统原子快照。知识服务不可用时显示“依据暂不可核对”，任务本体仍可读；需要该依据的接受/派发由服务端规则阻止。后端只对已授权的对象装配标题、摘要、链接和关系，前端隐藏按钮不是授权。
 
 所有列表/详情围绕同一稳定对象查询，列表不能保留已被详情推翻的旧状态。Review 按候选 revision 读取差异；决定已记录、正文已回读发布、索引已更新、消费者实际采用是独立字段。日程暂停只失效日程/后续计划查询，不把在途 Run 改为停止。评价读取模型保留每个 case 与条件、不比较不可比后端分数；具体记录见[评价合同](contracts.md#6a-evaluationrecord评价证据与条件)。前端复用代码和三端接入落点见[Wiki 集成方案](wiki-integration.md)。
+
+### 过程文档表格与完整阅读
+
+`DocumentTable` 只请求列表元数据。使用 `<table>`、列标题与可聚焦的文档标题入口；鼠标点行也可打开，Task 链接不触发行打开。详情由 `DocumentReader` 按 project/document/revision 请求完整内容，渲染器按明确的 `format` 分流；不靠文件后缀决定可信程度。返回列表恢复筛选、分页、选中行及焦点；历史修订在标题处持续可见。正文拥有主阅读宽度，右侧关系栏不能替代全文。
+
+| 阅读器 | 输入与展示 | 实现边界 |
+| --- | --- | --- |
+| `MarkdownDocumentReader` | 固定原文与附件清单，显示完整标题/表格/代码等；原文模式显示相同修订的文本 | 沿用 Markdown 阅读技术；原始 HTML 禁用，链接和资源经权限及 URL 规则解析，渲染结果可重建 |
+| `HtmlReportReader` | 固定 HTML 原件或带入口的资源包、资源完整状态、预览策略；独立样式与完整报告滚动区 | 服务端制作可回溯的预览副本，原件不改；用 iframe sandbox 默认禁脚本，与工作台 DOM 隔离，不把报告写入父页面 `innerHTML` |
+| `DocumentSourceView` | 原始 Markdown 或 HTML 文本、修订/文件名；较大包另提供受权原件下载 | 原文按文本显示；下载不走工作台同源的可执行 HTML 响应 |
+
+HTML 静态预览可保留样式、表格、已保存图片及浏览器原生折叠；不会自动执行报告脚本。原件中的脚本、表单、内嵌页面、自动跳转或外部资源不直接继承工作台权限：预览副本清理这些入口、重写已登记资源路径，受 iframe sandbox 与限制加载来源的 CSP 共同约束。资源缺失或静态视图省略动态内容时显示具体缺项；不能把提取出的几段文本作为“完整 HTML 报告”。`srcdoc` 适用于小型自包含预览，大型包应由隔离的报告来源按授权提供。[iframe 的 sandbox / srcdoc 约定](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe#sandbox) · [CSP sandbox](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/sandbox)
+
+需要 JavaScript 的交互报告作为另一项能力验证：使用与工作台不同的来源、限定资源/网络访问且不携带工作台凭据；不以同源 `allow-scripts` 加 `allow-same-origin` 开放任意上传报告。API 返回当前修订可用的预览能力及限制；原型只演示无脚本 HTML，并未实现报告上传、完整资源包托管或交互运行服务。原件与 BlobStore 的所有权见[存储设计](storage.md)，Wiki 提取结果是派生来源，不替换报告。
 
 ## 4. 修改、刷新与失败如何呈现
 

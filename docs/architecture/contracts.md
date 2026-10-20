@@ -40,6 +40,12 @@
 
 `DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、权限与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务接受或执行时，再由 TaskBasis 固定实际采用的 DocumentRevision。任务引用某需求不意味着其他关联任务自动接受它。Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
+Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。
+
+HTML 原件保存为数据，不直接执行。默认阅读策略是静态预览：在隔离 sandbox/独立来源中禁用脚本和同源权限；不得用 `dangerouslySetInnerHTML` 或等价方式把不可信正文注入应用 DOM。交互式预览只有在独立隔离渲染环境中另行通过安全检查后才启用，且不与 evoLoop 应用共享来源或权限。HTML/CSS/图片等本地资源必须由随修订保存并校验的 assets manifest 追溯；自包含 HTML 可单独保存，但依赖资源缺失时不能声称报告完整。外链按外部引用显示，不自动复制未知网站内容、用户私人目录或未授权资源。
+
+原始修订与文本提取结果分开：从 HTML 提取的纯文本只供检索索引或 Wiki 来源，不替代原件，也不能执行报告 JS。提取记录输入源 hash、extractor 版本、状态及缺失资源/内容清单；源 hash 改变时旧提取失效，提取失败或不完整时如实返回缺项。
+
 `RelationStore` 保存有方向、有类型的跨对象关系，例如 Task 与 Document 之间只按稳定 ID 导航的 `links_to`，以及 `justified_by`、`specifies`、`implements`、`validates`、`contradicts`、`supersedes`、`incorporated_into`。关系端点可为 Task、Schedule、过程 Document/DocumentRevision、GitSourceRef、KnowledgeRef、EvidenceRef、Delivery 或 Review；导航关系只固定对象身份，作为依据或有来源主张时才附固定修订/来源绑定。关系至少记录项目、关系作者、依据来源、观察时间、状态、ACL 和撤回／取代链。关系只表达一项**有来源的主张**，标签本身不证明任务已实现、验收已通过、知识为真或权限可继承。创建、改向或撤回关系须校验两端身份与权限；来源撤回、文档改版和 Wiki 修订触发相关关系与任务的影响复核。PG 可为跨 Task／过程文档／GitSourceRef／Wiki 导航保存 KnowledgeRef，但 Wiki 正文、来源与内部知识依赖仍由外置 KnowledgeRepository 持有。
 
 `DocumentIncorporation` 关联多份过程 DocumentRevision/片段与多个 Git 正式文档目标位置；记录整理理由、Task/Delivery/Review 引用、目标 repo/path/章节、base commit、候选差异与 PR、核实的 merge commit，构建/部署结果另列。目标是 GitSourceRef/source metadata，不是 Document 行，目标表无须 FK 到 Document。候选期只表示拟纳入，核实合入后才记录 `incorporated_into` 的实际 GitSourceRef/提交；拒绝、无需更新或部分采纳保留理由和范围。来源过程文档与 Git 目标的 ID、正文和生命周期分别保留，不把纳入当 `supersedes`。原仓库写入由授权任务完成，`DocumentSource` 不因此获得写权限；本库记录不能与远端 PR/merge/build 组成单个事务，未知结果先查既有请求和提交，不能盲建重复变更。详见[工作文档整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
@@ -63,6 +69,8 @@
 页发布须声明读入基线与操作 ID。当前选型未能承诺可靠的页级条件写；在受限试点中采用单维护者串行发布、发布前回读与快照，旁路写入视为必须对账的风险。只有固定版本证明服务器确实拒绝旧基线写入，才可宣称多维护者安全发布。两候选的已观察结果见[验证摘要](../references/validation-summary.md)；当前未选正式后端。
 
 `BlobStore` 管理仓库外受控原件的准备、按 hash 核验、发布读取与撤回；PG 只登记 blob 引用。发布顺序和恢复边界见[存储设计](storage.md)，PG 事务不覆盖文件系统。知识查询还须提供带权限和固定 revision 的类型/专题分页、正文、来源、出链/反链和有界邻域，详见[Wiki 前端模型](wiki-workspace.md)；这些是适配器需支持或明确报告缺失的合同，不假定 OpenViking 已有对应实体/API。
+
+较大 Markdown/HTML 报告和资源 bundle 沿用同一 BlobStore；原始小型 Markdown 或小型自包含 HTML 可内联存 PG。blob 先 prepare、校验 hash 与完整 assets manifest，再由 PG 事务登记不可变 DocumentRevision 及唯一 canonical payloadRef；只有 PG 提交成功后修订才可读。未准备完成的 blob 不可见，资源不全的修订最多标记 incomplete，不能标为完整可读。`body` 与 `payloadRef` 必须互斥且恰有一个；payloadRef 指向该 revision 唯一的不可变载荷，不是另一份可编辑正文。读写都再次核权限、有效性与 hash；撤回或权限收紧时停止新读取，保留历史状态及缺项记录。
 
 发布批准绑定不可变候选修订/hash 与所读知识基线；outbox 实际执行或重新写入前再核批准、权限、来源有效性与独占资格。已发出但结果未知的操作先对账，批准后来撤销不代表先前写入未发生。审阅结案可以是拒绝、归并或无需修改；只有接受并确需改正文的项才要求另有发布回执，结案和发布保持分离。具体时序见[Wiki 集成](wiki-integration.md#6-命令发布和纠正)。
 

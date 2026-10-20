@@ -9,7 +9,7 @@
 | 层 | 首期具体建议 | 选择理由与避免的重复 |
 | --- | --- | --- |
 | 业务持久化 | PostgreSQL 18.x；`pg` 驱动、参数化 SQL、同连接 UnitOfWork | Task、Doc、关系、基线和 outbox 可同库事务；不另建 SQLite 过渡库或单独业务图数据库 |
-| 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；过程文档 Markdown 正文用 `text`；JSONB 仅放经过 schema 校验的扩展和平台载荷 | 外键、索引和状态检查可审阅；不把整个 Task/Doc 都藏成任意 JSON，也不把 Wiki 正文复制入 JSONB |
+| 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；小型过程文档正文可内联 PG，Markdown/HTML 均保存源字节；较大报告/资源 bundle 走 BlobStore | JSONB 只放经 schema 校验的资源 manifest 等元数据；不把 Wiki 正文复制入 JSONB，也不把外置载荷当第二份可改正文 |
 | 数据迁移 | 推荐 `node-pg-migrate` 执行版本化、可审阅的 SQL；单一部署步骤，固定稳定版本 | 用已有 runner 管迁移记录与互斥，避免另写迁移框架；不启用启动时自动改生产 schema。当前未安装，不能用文档工具的最新预发布版代替已锁定依赖 |
 | Git 正式文档 | 保留仓库正文和固定 commit；PG 可登记独立 GitSourceRef 来源元数据，由白名单适配器读取 | 工作台显示同一正式版本；不建立“从网页再抓一次”的第二份规范，也不创建 Document 行 |
 | Wiki 来源/正文/内部关联 | OpenViking 候选服务持外置内容与修订；若补发布格式，与 Wiki 同一知识空间 | nashsu 的页面和图谱体验可通过知识查询模型实现，无需同时保留它的另一套可编辑 vault |
@@ -33,14 +33,16 @@ PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨�
 | `project` | `project_id` PK、状态、可见范围；外部 slug 可变 | 项目归档不级联清空证据 |
 | `task` / `task_revision` | 头表 `(project_id, task_id)` PK，含当前版本和当前修订指针；快照表 `(project_id, task_id, task_revision_id)` PK，含目标、责任、验收判据、接受决定、时间及内容 hash | 头表按旧版本条件更新；每次接受或影响执行的变更插入不可变快照。当前头用于待办查询，旧 Run 只读其固定快照 |
 | `schedule` / `schedule_revision` / `occurrence` | 定义头键 `(project_id, schedule_id)`；不可变定义快照键 `(project_id, schedule_id, schedule_revision_id)`；触发键 `(project_id, schedule_id, planned_at_utc)` 唯一 | 快照固定时区、规则、启停及错过/重叠策略；Occurrence 复合 FK 指向实际计算所用 ScheduleRevision，并关联创建/复用的 Task。定义改版不改写旧触发 |
-| `document` / `document_revision` | Document 仅用于过程文档，头键 `(project_id, document_id)`、版本/类型/权限及已采纳修订指针；修订键 `(project_id, document_id, revision_id)`，含正文/格式、hash、作者、时间、所读基线、变更理由 | 文档正文仅由 evoLoop 管理；修订不可变，候选修订不自动替换已采纳指针。Task 与 Document 多对多关联，TaskBasis 固定使用的修订 |
+| `document` | Document 仅用于过程文档；头键 `(project_id, document_id)`、版本/类型/权限及已采纳修订指针 | 仓库 `docs/` 正式文档不建此行；Task 与 Document 通过稳定 ID 多对多导航 |
+| `document_revision` | `(project_id, document_id, revision_id)` PK；`format`、`media_type`、`original_name`、源 `content_hash`、`body` 或 `payload_ref`、`entrypoint`、`assets_manifest`、可读完整性状态、作者/时间/基线/变更理由 | FK 到过程 Document；不可变；`body` 与 `payload_ref` 必须 XOR；每个 payload_ref 唯一归属一个 revision。内联正文限小型 Markdown/自包含 HTML；较大报告和 bundle 以 canonical BlobStore 引用读取 |
 | `document_review_decision` | `(project_id, decision_id)` PK；document/revision、决定者、决定、依据、时间 | 复合 FK 到被审修订；批准/拒绝另追加决定，不原位改 revision；批准后才在同事务条件移动已采纳指针 |
+| `document_text_derivative` | 过程 DocumentRevision、`source_hash`、extractor/version、提取状态、派生纯文本、缺失资源/内容清单、生成时间 | 复合 FK 到源 revision；每个 extractor 版本单独留痕。仅供索引/Wiki；源 hash 改变时不得复用为新源正文 |
 | `git_source_ref` | `(project_id, git_source_ref_id)` PK；repo 身份、path、commit、原始字节 hash、验证/权限/可达状态 | 独立来源记录，不依附 Document 行；Git 文件移动或版本变化新增引用，旧引用保留 |
 | `document_incorporation` / `incorporation_source` / `incorporation_target` | 整理 ID、理由、责任与关联任务；来源 DocumentRevision/片段；目标 repo/path/章节、base commit、差异/PR、merge commit；构建/部署状态分列 | 多来源到多 Git 目标；来源 FK 指向固定过程 DocumentRevision 和 Task/Review，目标位置不 FK 到 Document。核实合入后可关联实际 GitSourceRef；不复制正式正文，不覆盖源文档 |
 | `knowledge_ref` / `knowledge_ref_revision` | `(project_id, knowledge_ref_id)` 及加 `revision_id` 的复合 PK；外部空间/ID/revision、可选 hash、观察时间、有效/待复核/撤回/不可达 | 只登记外部身份、固定版本及本地处置状态；正文和内部依赖不入库 |
 | `external_binding` | `(project_id, binding_id)` PK；connector、外部 scope/ID、双方最后确认版本、方向、同步状态 | `(connector, external_scope, external_id)` 唯一；内部对象用类型化 FK，不能把投影版本当主版本 |
 
-Document 可在同一事务里先建目录、再建首个过程文档修订、再记录审核决定并设已采纳指针；复合 FK 保证修订及指针属于该 Document。现行已采纳指针必须对应已批准的审核决定；此规则跨行，须由受控写入路径及必要的约束触发器保证，不能声称单行 CHECK 已验证。Document 表不设 Git 正文模式或 Git 修订子表。GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新的 GitSourceRef，旧 TaskBasis 仍保留旧 repo/path/commit；原仓库删除或权限丢失标不可达并复核。
+Document 可在同一事务里先建目录、再建首个过程文档修订、再记录审核决定并设已采纳指针；复合 FK 保证修订及指针属于该 Document。现行已采纳指针必须对应已批准的审核决定；此规则跨行，须由受控写入路径及必要的约束触发器保证，不能声称单行 CHECK 已验证。每个 revision 的 `format`/`media_type` 描述内容，`original_name` 保留上传名，`content_hash` 校验精确源载荷；`body` 与 `payload_ref` 以 CHECK 保证恰有一者非空。BlobStore payload_ref 是唯一 canonical 载荷位置，`entrypoint` 指向 bundle 内 HTML 入口，`assets_manifest` 逐项记录相对路径、媒体类型和字节 hash；资源未齐或核验不通过时标记 incomplete/unavailable，不得报告完整可读。Markdown 和小型自包含 HTML 可内联；较大报告/资源包走 BlobStore。GitSourceRef 仍是独立来源，不进入 Document 表。GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新的 GitSourceRef，旧 TaskBasis 仍保留旧 repo/path/commit；原仓库删除或权限丢失标不可达并复核。
 
 Schedule 头表只提供当前可编辑入口；每次规则、时区、错过或重叠策略改变都插入不可变 `schedule_revision`。到期计算读取某一修订，`occurrence` 保存 `schedule_revision_id` 并以 `(project_id, schedule_id, schedule_revision_id)` 复合 FK 约束，同时保存原计划 UTC 时点。触发去重仍按稳定 `(project_id, schedule_id, planned_at_utc)`，修订号是被观察基线，不作为同一时点重复创建任务的理由；若改版改变该时点是否应触发，先对账旧实例并记录重算决定。
 
@@ -146,7 +148,7 @@ sequenceDiagram
 
 ## 原件、权限、删除和恢复
 
-附件、原始会话、Evidence 原件、大型成果在仓库外受控 blob/原权威位置；PG 的 `blob_ref` 仅登记 project、稳定 ID、存储 URI、字节 hash、大小、媒体类型、权限范围、生命周期状态及固定修订引用。路径不能作为永久身份，读取前再授权并核 hash。拟议 SourceBridge 按白名单读取 PG 固定 revision、Git commit 或成果；`ingestion_receipt` 记录源 kind+ID+revision、片段定位、`contentHash`、`policyVersion`、`transformerVersion`、目标知识空间、外部 `sourceRef` 及提交/回读/撤回状态。**同一原来源固定 revision 与片段若重新读出不同 contentHash，先报来源漂移并暂停摄入，不将它当合法新事实。** 合法变化须有新的来源 revision 或明确不同片段；策略/转换器升版可在原 hash 不变时形成可追溯重处理。`source_fingerprint` 的独立唯一键防止带新 hash 的回执去重键掩盖漂移。它是**传递回执**，不存 Wiki 来源正文或内部依赖；语义见[知识流](knowledge-flow.md)。
+附件、原始会话、Evidence 原件、大型成果和较大过程报告/资源 bundle 在仓库外受控 blob/原权威位置；PG 的 `blob_ref` 仅登记 project、稳定 ID、存储 URI、字节 hash、大小、媒体类型、权限范围、生命周期状态及唯一所属 revision/payload。路径不能作为永久身份，读取前再授权并核 hash。过程报告载荷先 prepare 到临时位置、核验主文件和 manifest 中全部资源的字节 hash、再原子发布 immutable blob；随后在 PG 单一事务登记 BlobRef、DocumentRevision、canonical payloadRef 与当前指针。PG 事务失败时发布物尚未成为可读文档，由对账清理未引用 blob；缺资源只可记录 incomplete，不得登记成完整可读报告。PG 内联正文直接在 revision 事务提交，且与 payloadRef 互斥。拟议 SourceBridge 按白名单读取 PG 固定 revision、Git commit 或成果；`ingestion_receipt` 记录源 kind+ID+revision、片段定位、`contentHash`、`policyVersion`、`transformerVersion`、目标知识空间、外部 `sourceRef` 及提交/回读/撤回状态。**同一原来源固定 revision 与片段若重新读出不同 contentHash，先报来源漂移并暂停摄入，不将它当合法新事实。** 合法变化须有新的来源 revision 或明确不同片段；策略/转换器升版可在原 hash 不变时形成可追溯重处理。`source_fingerprint` 的独立唯一键防止带新 hash 的回执去重键掩盖漂移。它是**传递回执**，不存 Wiki 来源正文或内部依赖；语义见[知识流](knowledge-flow.md)。
 
 BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系统原子移入受控位置 → PG 登记可读引用；未登记的文件不通过 API 暴露，失败孤儿由对账按保留策略清理。PG 与文件没有共同事务，不能提前承诺“上传完成”；备份清单固定已登记 blob 的 ID/hash 与 PG 恢复点，恢复时核缺失和多余项。
 

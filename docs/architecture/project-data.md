@@ -51,11 +51,13 @@ Document 正文和修订由 PostgreSQL 管理。过程文档可先创建和讨�
 | --- | --- |
 | 身份与范围 | 稳定 documentId、projectId、文档类型、负责人、可见范围；仅用于任务关联的过程文档 |
 | 正文与修订 | evoLoop 管理过程文档正文和不可变修订；固定修订记录作者、时间、所读基线和变更理由 |
-| 过程文档修订 | revisionId、正文格式、Markdown/结构化正文、作者、时间、所读基线和变更理由；首次创建后不可覆写历史修订 |
+| 过程文档修订 | revisionId、可扩展的 `format`、`mediaType`、`originalName`、源内容 hash、`body` 或 `payloadRef`、`entrypoint`、`assetsManifest`、完整性状态及作者/时间/基线/变更理由；首次创建后不可覆写历史修订 |
 | 当前指针与采纳 | 草稿、待审、已采纳、已取代/归档分别表达；候选的新修订不自动替换现行已采纳修订，发布采用条件更新 |
 | 关联 | Task 与 Document 可多对多建立导航链接；任务接受或执行时在依据集合固定实际使用的 DocumentRevision。GitSourceRef、知识、证据和成果作为独立来源/对象引用 |
 
 过程文档可以在 evoLoop 中创建、修订、审核，再经 connector 供人在飞书阅读和受控编辑。Git 正式文档始终由原仓库维护；evoLoop 可登记独立 GitSourceRef，按权限读取固定 repo/path/commit 并校验 hash。工作完成后，采纳的结论可整理成正式文档的新增或修改，原过程文档保留任务当时的历史。两类来源保持独立身份和权威边界。
+
+Document 目录以表格列出文档元数据；选择某行后按权限加载完整固定修订。过程文档不限定为一种文件格式，首批计划阅读 Markdown 和 HTML 报告。Markdown 按正文显示；HTML 保留不可变原件，默认使用禁脚本的隔离静态预览。报告的本地 CSS、图片等资源须随 revision 的 assetsManifest 和 bundle 一起保存并核哈；自包含 HTML 可单独保存，需要资源却只取得 HTML 入口文件时标记内容不完整。
 
 Wiki 页保持知识对象身份，文档可引用它的修订。搜索或展示可组合这三类对象，但不能把需求已采纳、任务已完成、知识已验证合成一个“完成”字段。正文存在不代表同意实施，关系存在不代表接收者已采用。
 
