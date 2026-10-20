@@ -36,9 +36,13 @@
 
 ## 2a. DocumentStore 与 RelationStore
 
+文档用途分 `working/formal`：前者是任务或阶段关联的需求、详述、讨论与方案，后者是项目当前采用的产品/架构/规范；用途不等于 `native/reference` 正文存储模式，也不等于草稿/完成状态。工作文档完成后可以保留历史或归档，由其采纳结论更新正式文档。
+
 `DocumentStore` 登记项目原生文档与外部引用文档，二者的**正文所有权不可混同**。`native` 文档由 evoLoop 在 PostgreSQL 保存正文，`DocumentRevision` 不可变，含作者、创建时间、内容校验、格式、权限与所读基线；更新当前指针须在事务中按预期修订条件提交，旧基线冲突须显式返回。`reference` 文档只保存外部系统、稳定定位符、观察到的修订、权限与摘要或元数据，不把外部正文悄悄复制为本体。既有本仓库和受管项目的 Git 正式产品、架构、开发规范仍以各自 Git 正文及 commit 为权威；DocumentStore 只登记 `ref + commit`，发布 HTML 也是只读视图。原生 Document 是独立资产，不是 Task 的描述大字段；一个文档的接受或更新不自动接受全部关联任务。
 
 `RelationStore` 保存有方向、有类型的跨对象关系，例如 `justified_by`、`specifies`、`implements`、`validates`、`contradicts`、`supersedes`。关系端点可为 Task、Schedule、原生／引用 Document 修订、KnowledgeRef、EvidenceRef、Delivery 或 Review；至少记录项目、端点固定修订、关系作者、依据来源、观察时间、状态、ACL 和撤回／取代链。关系只表达一项**有来源的主张**，标签本身不证明任务已实现、验收已通过、知识为真或权限可继承。创建、改向或撤回关系须校验两端身份与权限；来源撤回、文档改版和 Wiki 修订触发相关关系与任务的影响复核。PG 可为跨 Task／Doc／Wiki 导航保存 `KnowledgeRef`，但 Wiki 正文、来源与内部知识依赖仍由外置 `KnowledgeRepository` 持有。
+
+`DocumentIncorporation` 关联多份固定来源修订/片段与多份目标正式文档；记录整理理由、Task/Delivery/Review 引用、目标 repo/path/章节、base commit、候选差异与 PR、核实的 merge commit，构建/部署结果另列。候选期只表示拟纳入，核实合入后才记录 `incorporated_into` 的实际目标修订；拒绝、无需更新或部分采纳保留理由和范围。来源与目标的 ID、正文和生命周期分别保留，不把这一关系当 `supersedes` 或文档模式切换。原仓库写入由授权任务完成，`DocumentSource` 不因此获得写权限；本库记录不能与远端 PR/merge/build 组成单个事务，未知结果先查既有请求和提交，不能盲建重复变更。详见[工作文档整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
 
 ### UnitOfWork：同库原子命令
 

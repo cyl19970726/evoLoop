@@ -104,6 +104,8 @@ Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位�
 
 前端组件与 Query/Command 读写分工见[前端架构](frontend.md)。`core/knowledge` 中的 SourceBridge 组合各来源端口；`core/queries` 装配有限上下文与页面读取模型，后端通过同一授权层供工作台和 Agent 使用。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
 
+工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记固定来源、目标基线、差异/PR 和核实的合入结果，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
+
 ## 切片与验证
 
 1. **主数据与首次投影：** 创建 `contracts`、`core/tasks`、`core/documents`、`core/relations`、PostgreSQL 适配器（SQL 迁移推荐 node-pg-migrate）、最小协调 API/CLI；使一条 Task、原生需求 Document 修订及关系按基线写入，并经 `UnitOfWork` 将对象、关系、操作记录与 outbox 原子提交；最后一步失败应全部回滚。再加飞书 connector 的 Bitable Task **出站投影**，核对 ExternalBinding、重复发送与回读。飞书 API 能力未验证时，先由核心 CLI 写主数据，不把入站回写当作首片前置条件。

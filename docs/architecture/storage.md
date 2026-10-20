@@ -33,11 +33,12 @@ PostgreSQL 保存 Task、Schedule、原生 Document/Revision、跨对象 Relatio
 | `project` | `project_id` PK、状态、可见范围；外部 slug 可变 | 项目归档不级联清空证据 |
 | `task` / `task_revision` | 头表 `(project_id, task_id)` PK，含当前版本和当前修订指针；快照表 `(project_id, task_id, task_revision_id)` PK，含目标、责任、验收判据、接受决定、时间及内容 hash | 头表按旧版本条件更新；每次接受或影响执行的变更插入不可变快照。当前头用于待办查询，旧 Run 只读其固定快照 |
 | `schedule` / `schedule_revision` / `occurrence` | 定义头键 `(project_id, schedule_id)`；不可变定义快照键 `(project_id, schedule_id, schedule_revision_id)`；触发键 `(project_id, schedule_id, planned_at_utc)` 唯一 | 快照固定时区、规则、启停及错过/重叠策略；Occurrence 复合 FK 指向实际计算所用 ScheduleRevision，并关联创建/复用的 Task。定义改版不改写旧触发 |
-| `document` | `(project_id, document_id)` PK；版本、类型、`mode`、可见范围、当前已采纳修订指针 | `mode ∈ {native, reference}`；两类当前指针互斥，草稿可尚无已采纳指针 |
+| `document` | `(project_id, document_id)` PK；版本、用途 `working/formal`、类型、`mode`、可见范围、当前已采纳修订指针 | 用途与 `mode ∈ {native, reference}` 分开；两类存储指针互斥，草稿可尚无已采纳指针 |
 | `document_revision` | `(project_id, document_id, revision_id)` PK；正文/格式、hash、作者、时间、所读基线、变更理由 | 复合 FK 到 Document；正文与元数据插入后不 UPDATE，候选修订不自动替换已采纳指针 |
 | `document_review_decision` | `(project_id, decision_id)` PK；document/revision、决定者、决定、依据、时间 | 复合 FK 到被审修订；批准/拒绝另追加决定，不原位改 revision；批准后才在同事务条件移动已采纳指针 |
 | `document_git_revision` | 同上复合 PK；repo 身份、固定 commit、commit 内路径、原始字节 hash、验证状态 | 复合 FK 到 Document；不存正式正文；路径移动新增版本并关联旧版 |
-| `document_mode_transition` | `(project_id, transition_id)` PK；旧/新模式、两端固定 revision、原因/决定者/时间 | 切换事务检查旧基线，只保留一种现行权威，旧模式历史仍可读 |
+| `document_mode_transition` | `(project_id, transition_id)` PK；旧/新模式、两端固定 revision、原因/决定者/时间 | 仅用于同一现行文档维护权迁移；检查旧基线并保留历史，不用于一般工作结论纳入正式文档 |
+| `document_incorporation` / `incorporation_source` / `incorporation_target` | 整理 ID、理由、责任与关联任务；来源固定修订/片段；目标 repo/path/章节、base commit、差异/PR、merge commit；构建/部署状态分列 | 多来源到多目标，项目内 FK 指向固定 DocumentRevision/GitRevision 及 Task/Review；拟议目标可未有合入修订。核实合入后才绑定实际 GitRevision；不复制正式正文，不覆盖源文档 |
 | `knowledge_ref` / `knowledge_ref_revision` | `(project_id, knowledge_ref_id)` 及加 `revision_id` 的复合 PK；外部空间/ID/revision、可选 hash、观察时间、有效/待复核/撤回/不可达 | 只登记外部身份、固定版本及本地处置状态；正文和内部依赖不入库 |
 | `external_binding` | `(project_id, binding_id)` PK；connector、外部 scope/ID、双方最后确认版本、方向、同步状态 | `(connector, external_scope, external_id)` 唯一；内部对象用类型化 FK，不能把投影版本当主版本 |
 
