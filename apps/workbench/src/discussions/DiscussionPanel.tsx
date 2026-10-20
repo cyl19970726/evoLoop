@@ -19,6 +19,9 @@ const statusLabel: Record<DiscussionRecord["status"], string> = {
   decided: "已登记讨论决定", linked: "已链接后续对象",
 };
 const kindLabel: Record<DiscussionRecord["kind"], string> = { allocation: "讨论当前分工", direction: "讨论下一阶段" };
+const eventLabel: Record<DiscussionEvent["kind"], string> = {
+  prepared: "准备交接包", handoff: "人工承接观察", decision: "讨论决定", action: "后续对象链接",
+};
 
 async function complete<T>(label: string, load: (cursor?: string) => Promise<Page<T>>): Promise<T[]> {
   const values: T[] = [], seen = new Set<string>();
@@ -94,7 +97,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     } catch (cause) { if (epoch === listEpoch.current) setError(errorText(cause)); }
     finally { if (epoch === listEpoch.current) setMoreBusy(false); }
   }
-  return <section className="panel discussion-panel"><div className="panel-head"><h2>负责人讨论与交接</h2><button type="button" onClick={context.onChanged}>回读讨论</button></div>
+  return <section className="panel discussion-panel"><div className="panel-head"><h2>负责人讨论与交接</h2><button type="button" title="回读会重建本面板表单并清除未保存的输入，请先复制草稿" onClick={context.onChanged}>回读讨论（先保留草稿）</button></div>
     <p>从固定的项目材料准备已有会话的讨论包。准备不表示桌面会话已收到；人工观察、决定、对象变更与实际使用分别登记。</p>
     {choicesError && <Notice error>无法完整读取选择对象：{choicesError}。暂不生成交接包。</Notice>}
     {choicesLoading && <p>正在读取可固定的目标与来源…</p>}
@@ -129,6 +132,7 @@ function PrepareDiscussion({ context, choices, onPrepared }: { context: Mutation
     <div className="actions"><button type="button" className={kind === "allocation" ? "primary" : ""} onClick={() => setKind("allocation")}>讨论当前分工</button>
       <button type="button" className={kind === "direction" ? "primary" : ""} onClick={() => setKind("direction")}>讨论下一阶段</button></div>
     <p className="muted">固定所见目标版本、可选阶段/任务及已采纳文档。系统生成完整来源头；正文只补充本次问题。</p>
+    <p className="muted">同时选择阶段和任务时，任务必须属于该阶段；仅作跨阶段比较时可不选阶段。业务拒绝会保留输入供修改。</p>
     <ActionForm context={context} title="生成固定交接包" fields={fields} build={values => {
       const goal = choices.goals.find(item => item.id === values.goalId);
       const stage = choices.stages.find(item => item.id === values.stageId);
@@ -166,6 +170,10 @@ function DiscussionDetail({ context, record, events, choices }: { context: Mutat
     { name: "evidence", label: "讨论证据与实际观察", kind: "textarea" }, reasonField,
   ];
   return <div className="discussion-detail"><h3>{kindLabel[record.kind]} · {statusLabel[record.status]}</h3>
+    {record.status === "decided" && <Notice>{latestDecision?.supersedesDecisionEventId
+      ? "决定已纠正。旧决定和历史行动链接仍保留；本次决定的后续对象、执行与亲用待重新核对。"
+      : "讨论决定已登记；后续对象、执行与亲用仍待核对。"}</Notice>}
+    {record.status === "linked" && <Notice>已关联本次决定的后续对象。执行与亲用情况请进入对象查看实际证据。</Notice>}
     <p><strong>问题：</strong>{record.question}</p><p><strong>备选：</strong>{record.options.join("；")}</p>
     <p><strong>授权边界：</strong>{record.authorizationBoundary}</p><p>拟交接已有会话：{record.targetSessionLabel}
       {record.targetSessionRef && safeArtifactHref(record.targetSessionRef, context.projectId) && <> · <a href={safeArtifactHref(record.targetSessionRef, context.projectId)!} target="_blank" rel="noopener noreferrer">打开安全引用</a></>}
@@ -197,8 +205,8 @@ function DiscussionDetail({ context, record, events, choices }: { context: Mutat
           decisionEventId: latestDecision.id, target: selected.target, reason: values.reason };
       }} />
     </details>}
-    <h3>不可变事件</h3>{events.length === 0 && <Notice error>事件历史为空；不能据摘要判断过程完整。</Notice>}
-    {events.map(event => <article className="decision" key={event.id}><strong>{event.kind} · v{event.version}{superseded.has(event.id) ? " · 已被纠正" : ""}</strong>
+    <h3>讨论记录</h3>{events.length === 0 && <Notice error>讨论记录为空；不能据摘要判断过程完整。</Notice>}
+    {events.map(event => <article className="decision" key={event.id}><strong>{eventLabel[event.kind]} · v{event.version}{superseded.has(event.id) ? " · 已被纠正" : ""}</strong>
       {event.choice && <p>取舍：{event.choice}</p>}{event.evidence && <p>证据：{event.evidence}</p>}{event.reason && <p>理由：{event.reason}</p>}
       {event.unresolved && <p>未解：{event.unresolved}</p>}{event.relookCondition && <p>重看条件：{event.relookCondition}</p>}
       {event.target && <DiscussionTargetLink target={event.target} choices={choices} projectId={context.projectId} />}

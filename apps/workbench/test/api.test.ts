@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, ApiError, isUnconfirmed, safeArtifactHref } from "../src/api.ts";
+import { api, ApiError, isStaleConflict, isUnconfirmed, safeArtifactHref } from "../src/api.ts";
 
 const command = {
   type: "task.reviewBasis" as const,
@@ -84,4 +84,14 @@ test("discussion reads stay within the authorized project and expose immutable e
     "/api/projects/project-1/discussions/discussion-1",
     "/api/projects/project-1/discussions/discussion-1/events",
   ]);
+});
+
+test("a confirmed business mismatch remains editable while changed versions require readback", () => {
+  assert.equal(isStaleConflict(new ApiError(409, "wrong stage", { code: "BASELINE_MISMATCH" })), false);
+  assert.equal(isStaleConflict(new ApiError(409, "invalid choice", { code: "INVALID_STATE" })), false);
+  assert.equal(isStaleConflict(new ApiError(409, "changed", { code: "VERSION_CONFLICT" })), true);
+  assert.equal(isStaleConflict(new ApiError(409, "changed", { code: "DOCUMENT_CHANGED" })), true);
+  assert.equal(isStaleConflict(new ApiError(409, "changed", { code: "DECISION_TARGET_CHANGED" })), true);
+  assert.equal(isStaleConflict("REVIEW_TARGET_CHANGED"), true);
+  assert.equal(isStaleConflict(new ApiError(409, "unknown", {})), false);
 });

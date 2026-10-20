@@ -108,6 +108,16 @@ export function isUnconfirmed(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 0 || error.status >= 500);
 }
 
+const staleConflictCodes = new Set([
+  "VERSION_CONFLICT", "BASELINE_CHANGED", "DOCUMENT_CHANGED", "DECISION_TARGET_CHANGED",
+  "REVIEW_TARGET_CHANGED", "TARGET_CHANGED",
+]);
+/** A 409 can be a correct business refusal; only changed observed versions or pointers require readback. */
+export function isStaleConflict(value: unknown): boolean {
+  const code = value instanceof ApiError && isRecord(value.detail) ? value.detail.code : value;
+  return typeof code === "string" && staleConflictCodes.has(code);
+}
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "暂时无法读取数据";
 }
