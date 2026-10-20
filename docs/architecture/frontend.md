@@ -8,7 +8,7 @@
 
 人从项目首页看到目标、进展、变化、待判断事项与两类讨论准备；可从 Task 打开所依需求、知识固定修订和交付证据，也可直接进入知识空间追溯来源。默认先让人看清工作依据、责任、决定、结果和例外，带着判断回到既有 Agent 会话；Agent 在授权内通过 CLI 提交并核对回执，人再从同一对象读回。页面按需直接提出纠正、保存文档修订或请求复核时，也只发共同命令，随后区分接受、外部处理与实际使用的结果。工作台读取和组合各权威数据，不在浏览器中再维护一套任务状态机。飞书继续是移动协作入口，Codex 继续承载真实会话，公开文档站继续发布 Git 正式文档。
 
-GUI 的主要消费者是人：阅读完整依据、形成判断、处理例外并核对实际使用反馈。重要判断可在既有 Agent 会话中表达，由 Agent 带上下文与授权执行；服务端权限仍是最终约束，工作台不伪造内嵌 Desktop 聊天。现有 CLI 是 Agent 的常规业务入口；项目业务 skill 与 MCP 的扩展目标调用同一 Query／Command API 和 core，遵守相同身份、授权、固定版本与回执恢复规则。直接页面操作保留为次要按需路径；不把浏览器点击作为 Agent 执行协议，也不要求人逐步确认权限内常规操作。浏览器 Agent 走读归于前端 QA，不归于真人反馈或消费者效果证据。开发界面所用 frontend-design 与 web-design-guidelines 是开发技能，不是上述业务 skill。
+GUI 的主要消费者是人：阅读完整依据、形成判断、处理例外并核对实际使用反馈。重要判断可在既有 Agent 会话中表达，由 Agent 带上下文与授权执行；服务端权限仍是最终约束，工作台不伪造内嵌 Desktop 聊天。现有项目业务 skill 指导 Agent 通过 CLI 开展常规工作；后续按需增加的 MCP 工具也调用同一 Query／Command API 和 core，遵守相同身份、授权、固定版本与回执恢复规则。直接页面操作保留为次要按需路径；不把浏览器点击作为 Agent 执行协议，也不要求人逐步确认权限内常规操作。浏览器 Agent 走读归于前端 QA，不归于真人反馈或消费者效果证据。开发界面所用 frontend-design 与 web-design-guidelines 是开发技能，不是上述业务 skill。
 
 下图专看**页面读取和命令分别经过哪一层**，用于检查浏览器权限与服务端装配；外部权威的整体关系见[总览](overview.md#4-为什么要有这些对象和权威边界)。
 
@@ -16,7 +16,7 @@ GUI 的主要消费者是人：阅读完整依据、形成判断、处理例外�
 flowchart TB
   subgraph entry["交互层"]
     UI["项目工作台<br/>观察 · 阅读 · 反馈"]:::ui
-    Other["既有 Agent 会话 → CLI<br/>飞书 / 后续业务工具"]:::ui
+    Other["Agent 会话 → 业务 skill＋CLI<br/>飞书 / 可选 MCP 工具"]:::ui
   end
   subgraph application["同一 evoLoop 协调服务"]
     API["身份与项目范围<br/>Query / Command API"]:::api
@@ -175,7 +175,7 @@ Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完
 
 ### nashsu 的技术组合如何取舍
 
-[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录 v0.6.12 的锁定版本。frontend-design 与 web-design-guidelines 仅指导开发实现和评审，项目本地 skill 不向 Agent 提供 evoLoop 业务命令。下面是 evoLoop 的实现建议，不能把上游锁文件当成本项目已经验证的依赖集。
+[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录 v0.6.12 的锁定版本。frontend-design 与 web-design-guidelines 仅指导开发实现和评审，这些前端开发 skill 不向 Agent 提供 evoLoop 业务命令。下面是 evoLoop 的实现建议，不能把上游锁文件当成本项目已经验证的依赖集。
 
 | 能力 | evoLoop 推荐使用方式 | 与 nashsu 的差异和采用条件 |
 | --- | --- | --- |

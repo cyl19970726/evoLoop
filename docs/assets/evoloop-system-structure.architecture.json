@@ -4,28 +4,28 @@
   "meta": {
     "title": "evoLoop 系统结构",
     "locale": "zh-CN",
-    "output": ".archify/architecture-structure-placement-20261020-140637/evoloop-system-structure.html",
+    "output": ".archify/architecture-agent-entry-20261021/evoloop-system-structure.html",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/cyl19970726/evoLoop.git",
-      "revision": "648ca669510f11cc737cd9109854ac72a5d5ccc4"
+      "revision": "0abf9789eb574dc0df59bf0b3693b23aa0c13aad"
     }
   },
   "components": [
-    {"id":"actors","type":"external","label":"目标与判断责任","sublabel":"人类 · 认知／领域 Session","pos":[40,80],"size":[170,72],"sources":[{"path":"docs/architecture/overview.md","line":19,"end_line":32}]},
-    {"id":"entry","type":"frontend","label":"调用入口","sublabel":"工作台 · CLI · Agent 工具","pos":[270,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":120,"end_line":123}]},
-    {"id":"api","type":"backend","label":"共同 API","sublabel":"身份、命令与查询入口","pos":[510,80],"size":[155,72],"sources":[{"path":"docs/architecture/packages.md","line":28,"end_line":36},{"path":"docs/architecture/packages.md","line":68}]},
-    {"id":"core","type":"backend","label":"core 业务用例","sublabel":"权限 · 状态 · 固定基线","pos":[730,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":9,"end_line":18},{"path":"docs/architecture/packages.md","line":113}]},
-    {"id":"ports","type":"backend","label":"中立合同与端口","sublabel":"进程内代码接口","pos":[960,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":80,"end_line":104},{"path":"docs/architecture/packages.md","line":112}]},
-    {"id":"adapters","type":"backend","label":"边界适配器／连接器","sublabel":"应用装配平台实现","pos":[590,290],"size":[225,76],"sources":[{"path":"docs/architecture/packages.md","line":84,"end_line":104},{"path":"docs/architecture/packages.md","line":114,"end_line":119}]},
-    {"id":"postgres","type":"database","label":"PostgreSQL","sublabel":"Task／Document 等主数据","pos":[60,535],"size":[170,72],"sources":[{"path":"docs/architecture/overview.md","line":62,"end_line":69},{"path":"docs/architecture/contracts.md","line":129,"end_line":133}]},
-    {"id":"wiki-service","type":"external","label":"外置 Wiki","sublabel":"认识正文 · 修订 · 来源","pos":[280,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":68,"end_line":72},{"path":"docs/architecture/overview.md","line":66}]},
-    {"id":"git-repos","type":"external","label":"项目 Git 仓库","sublabel":"正式规范正文与审阅","pos":[500,535],"size":[170,72],"sources":[{"path":"docs/architecture/overview.md","line":67,"end_line":75},{"path":"docs/architecture/packages.md","line":118}]},
-    {"id":"codex","type":"external","label":"Codex 运行时","sublabel":"Thread／Turn 与运行历史","pos":[720,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":50,"end_line":66},{"path":"docs/architecture/packages.md","line":116}]},
-    {"id":"feishu","type":"external","label":"飞书 Bitable","sublabel":"任务协作投影与编辑","pos":[960,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":24,"end_line":46},{"path":"docs/architecture/contracts.md","line":189,"end_line":195}]}
+    {"id":"actors","type":"external","label":"目标与判断责任","sublabel":"人类 · 认知／领域 Session","pos":[40,80],"size":[170,72],"sources":[{"path":"docs/architecture/overview.md","line":19}]},
+    {"id":"entry","type":"frontend","label":"人机入口","sublabel":"工作台／业务 skill＋CLI","pos":[270,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":7},{"path":".agents/skills/evoloop-workflow/SKILL.md","line":8}]},
+    {"id":"api","type":"backend","label":"共同 API","sublabel":"身份、命令与查询入口","pos":[510,80],"size":[155,72],"sources":[{"path":"docs/architecture/packages.md","line":128},{"path":"docs/architecture/packages.md","line":7}]},
+    {"id":"core","type":"backend","label":"core 业务用例","sublabel":"权限 · 状态 · 固定基线","pos":[730,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":119}]},
+    {"id":"ports","type":"backend","label":"中立合同与端口","sublabel":"进程内代码接口","pos":[960,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":118}]},
+    {"id":"adapters","type":"backend","label":"边界适配器／连接器","sublabel":"应用装配平台实现","pos":[590,290],"size":[225,76],"sources":[{"path":"docs/architecture/packages.md","line":7},{"path":"docs/architecture/packages.md","line":128}]},
+    {"id":"postgres","type":"database","label":"PostgreSQL","sublabel":"Task／Document 等主数据","pos":[60,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":123}]},
+    {"id":"wiki-service","type":"external","label":"外置 Wiki","sublabel":"认识正文 · 修订 · 来源","pos":[280,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":121}]},
+    {"id":"git-repos","type":"external","label":"项目 Git 仓库","sublabel":"正式规范正文与审阅","pos":[500,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":124}]},
+    {"id":"codex","type":"external","label":"Codex 运行时","sublabel":"Thread／Turn 与运行历史","pos":[720,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":122}]},
+    {"id":"feishu","type":"external","label":"飞书 Bitable","sublabel":"任务协作投影与编辑","pos":[960,535],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":120}]}
   ],
   "boundaries": [
-    {"kind":"region","label":"拟议单活协调进程（尚未实现）","wraps":["api","core","ports","adapters"],"pad":20}
+    {"kind":"region","label":"单活协调进程 · 本机受限实现","wraps":["api","core","ports","adapters"],"pad":20}
   ],
   "connections": [
     {"id":"responsibility-to-entry","from":"actors","to":"entry"},
@@ -43,7 +43,7 @@
     {"id":"inbound-command-to-api","from":"adapters","to":"api","variant":"dashed"}
   ],
   "cards": [
-    {"dot":"cyan","title":"三种不同的边界","items":["Role／Session 是判断责任，不是软件包或进程。","API、core、端口与适配器装配在拟议单活协调进程内。","虚线到端口表示代码依赖／实现；端口不是独立运行服务。","PostgreSQL 是主数据；Wiki、Git、Codex 各守自己的正文或运行历史。"]},
+    {"dot":"cyan","title":"三种不同的边界","items":["人类经工作台观察、沟通与反馈；Agent 依项目业务 skill 经 CLI 执行。","业务 skill 是工作约定，不是软件包或服务；可选 MCP 尚未建立。","API/core 统一校验权限、版本与状态，端口与适配器装配在同一进程；目标子模块不代表目录已齐全。","PostgreSQL 是主数据；Wiki、Git、Codex 各守自己的正文或运行历史。"]},
     {"dot":"emerald","title":"飞书受控回写","items":["出站仅投影任务；入站编辑由连接器回读并转成带身份与基线的命令。","共同 API 与 core 校验后，才可通过 PG 适配器改变主数据。"]}
   ]
 }

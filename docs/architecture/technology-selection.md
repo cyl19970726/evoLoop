@@ -4,7 +4,7 @@
 
 先读[包与进程边界](packages.md)，再看本页的取舍。需要决定的是谁来维护协调规则、知识服务和外部接缝；不会因为选一个库就自动获得业务保证。
 
-**已选：**PostgreSQL 为项目主数据与运行存储，飞书为 connector；OpenViking 是首个知识接入后端，前端参考 nashsu 图谱与阅读体验。过程 Document、Git 正式正文、外置 Wiki 各自持有权威。**S1a 已采用：**TS/Node 核心、React/Vite、PG 驱动与迁移。**待验证：**OpenViking 固定版本及补丁/许可、后续前端库与外部适配器。以下先比较理由与门槛，再列完整技术清单和部署约束。
+**已选：**PostgreSQL 为项目主数据与运行存储，飞书为 connector；OpenViking 是首个知识接入后端，前端参考 nashsu 图谱与阅读体验。过程 Document、Git 正式正文、外置 Wiki 各自持有权威。**本机已采用：**TS/Node 核心、React/Vite、PG 驱动与迁移、Agent CLI 与业务技能，OpenViking 0.5.1 已做受限写读和回读。**待验证：**真实飞书租户、OpenViking 语义索引/多写者/生产恢复、后续前端库与可选 MCP。以下先比较理由与门槛，再列完整技术清单和部署约束。
 
 ## 1. 为什么主语言选 TypeScript
 
@@ -16,7 +16,7 @@
 
 这不是语言能力排名。决定因素是我们要长期维护哪一层：evoLoop 核心主要维护跨角色、跨平台的合同与行动规则；解析、嵌入和索引交给独立知识服务。**选 TS 不是因为文档站碰巧使用 Node，也不是因为未来可能做网页。** 如果第一轮真实切片显示 Python 端复用的不是薄客户端而是大量必要业务能力，应拿迁移成本与接口一致性回看此选择。
 
-Codex 隔离研究已经使用 Python 跑通了受限闭环，[PR #2](https://github.com/cyl19970726/evoLoop/pull/2)保存脚本与实测报告。它证明协议与流程可行，尚未证明 TS 版本客户端。迁移时保留相同夹具、通知关联和失效判据，不能把 Python 测试通过算成 TS 适配器通过。
+Codex 隔离研究曾使用 Python 跑通受限闭环，[PR #2](https://github.com/cyl19970726/evoLoop/pull/2)保存脚本与实测报告；它当时没有证明 TS 客户端。后来的 TS 适配器已有本机 owned Turn、重启读回及终态纠错证据，范围见[本机运行](../development/local-run.md)；隔离 Python 结果仍不能替代 TS 或生产验收。
 
 ## 2. Wiki 到底选哪个，复用什么
 
@@ -31,10 +31,10 @@ Codex 隔离研究已经使用 Python 跑通了受限闭环，[PR #2](https://gi
 ### 候选版本与证据不能混用
 
 - **已实测基线：OpenViking 0.5.0，`20f9c113`。** 同基线双写可丢更新、来源删除不自动修订 Wiki、原生恢复仍有未测项。这些结论仅属于该版本。[实测结果](../research/openviking/results.md)
-- **下一集成候选：v0.5.1，`e855796c83f9eb575d9b0f3082926660730f6a63`。** 上游在 2026-10-19 发布，包含内容版本冲突检查、批量写和存储等变化；发布说明同时明确升级存在 API/存储兼容变化，正文写入后的后台入队失败不会回滚。该版尚未按我们的协议运行，不把发布说明当作验收通过。[固定版本发布说明][ov-release]
+- **当时的下一集成候选、现已受限本机运行：v0.5.1，`e855796c83f9eb575d9b0f3082926660730f6a63`。** 上游在 2026-10-19 发布，包含内容版本冲突检查、批量写和存储等变化；发布说明同时明确升级存在 API/存储兼容变化，正文写入后的后台入队失败不会回滚。本机已实测写读、重启回读与候选审阅发布，不把这些受限结果或发布说明当生产验收。[固定版本发布说明][ov-release] · [本机运行](../development/local-run.md)
 - **nashsu 对照：v0.6.12，`48fd970e`。** 本轮未新增模型实验，也不把新版 OpenViking 的说明拿来与旧版 nashsu 的实测分数直接排名。
 
-因此不建议立即从 0.5.0 打一个长期大 fork。先冻结 0.5.1 做范围很小的写入/恢复补验，能使用上游修复就减少自维护补丁。接入方向已确定；先对 OpenViking 做受限补验，不能因此登记为已验收的生产知识服务。部署版本的可接受能力须由下面的门槛确定。
+因此不建议从 0.5.0 打一个长期大 fork。0.5.1 的受限写入/回读补验已完成，能使用上游修复就减少自维护补丁；语义索引、并发与长期恢复仍须按下面门槛核，不能登记为已验收的生产知识服务。
 
 这次只读源码进一步确认：0.5.1 的 `batch_write` 每文件 operation 可带 `expected_sha256`，服务在目标路径锁内比较后才写入；普通 `WriteContentRequest` 没有同样字段，compile 的提交幂等键也不等于最终页发布具备条件写。`skip_conflicts` 可跳过冲突条目，不是整批原子提交。尤其是新版 `write(mode="create")` 已改为覆盖别名，**不能拿它当 create-only 的不可变版本写入保护**。[批量请求结构][ov-batch] · [锁内校验][ov-write] · [编译提交][ov-compile] 上述是源码观察，尚无本项目对该版本的并发/故障实测。服务要求 Python ≥3.10，具体部署解释器和依赖须在该固定版环境验证。[运行要求][ov-python]
 
@@ -82,13 +82,13 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 | 运行环境 | **Node.js 24 LTS** | 适合进程、事件和 HTTP 协调，采用受支持 LTS。S1a 已将应用与文档构建/CI 统一至 Node 24.x。 |
 | 仓库组织 | **npm workspaces + TypeScript 编译** | 沿用现有 npm 锁文件和工具习惯；先明确包边界，不引入额外 monorepo 调度平台。 |
 | 核心设计 | **模块化单体、显式状态转换、注入端口** | core 不导入平台 SDK；业务状态、运行结果、消费验收分别建模。第一版无需通用 Agent 编排框架。 |
-| 入口服务 | **Fastify 5，本机协调 API** | 统一 CLI/MCP 的身份、授权、输入和状态检查；初期只监听本机，服务启动/关闭和健康检查由 daemon 负责。 |
+| 入口服务 | **Fastify 5，本机协调 API** | 统一工作台、现有 CLI 与按需 MCP 的身份、授权、输入和状态检查；初期只监听本机，服务启动/关闭和健康检查由 daemon 负责。 |
 | 边界合同 | **Zod 4 → JSON Schema，版本化 JSON 消息** | 同一可表达 schema 生成 TS 类型和外部契约；业务状态守卫仍在 core，禁止另外手写一套漂移的协议。 |
 | 主数据与协作入口 | **PostgreSQL 主数据 + 飞书 Bitable 任务投影** | evoLoop 持 Task、Schedule、原生 Document/Revision、Relation 和同步记录；飞书 connector 提供可见与受控编辑。入站身份/基线、字段权限、分页、限流仍须实测；飞书云文档是另一套待验证 API。 |
 | 会话运行时 | **Codex App Server，stdio JSONL** | 已有隔离创建/续接/历史恢复证据；生成协议类型留在 Codex 适配器，桌面宿主桥接另外声明能力。 |
 | 主数据与运行持久化 | **PostgreSQL 已选定；推荐 18.x + node-postgres（pg）** | 从第一版统一数据库引擎，保存业务主数据、修订、映射、Journal/outbox 与水位；承担数据库服务、迁移、连接和备份成本。Wiki 正文和 Git 正式文档仍在各自权威位置。 |
 | 日程与状态推进 | **core 状态转换 + cron-parser 到期计算 + 周期对账** | 一次性 UTC 时点；重复日程带 IANA 时区，计划实例持久化。解析器只算时间，不提供持久投递或恰好一次。 |
-| Wiki 基座 | **独立 OpenViking 服务，HTTP 接入** | 复用内容、解析/检索、知识空间等基础能力；普通写页与 Wiki 综合编译的语义分开。下一集成候选版本为 v0.5.1，上线前须通过[正式采用与 fork 的门槛](#3-正式采用与-fork-的门槛)。 |
+| Wiki 基座 | **独立 OpenViking 服务，HTTP 接入** | 0.5.1 已受限本机写读与回读；普通写页与 Wiki 综合编译的语义分开。语义索引、多写者与生产恢复须通过[正式采用与 fork 的门槛](#3-正式采用与-fork-的门槛)。 |
 | 上游语言 | **沿用 OpenViking 的 Python/Rust 等实现** | 上游独立构建，不把 Python 嵌入 Node core；HTTP 是语言和升级边界。Python 协议研究工具继续作为实验资产。 |
 | Agent 工具 | **CLI 优先，按需要加官方 MCP TypeScript SDK** | 两者都调用协调 API；MCP 是工具传输，不是第二个协调者或另一套业务权限。 |
 | 项目工作台 | **React + TypeScript / Vite SPA；Router + Query 为后续候选** | 工作台通过同一 API 组合任务、文档、认识与分工，支持依据追溯和复核；首期本机同源部署。飞书、Codex、公开静态站保留各自入口；S1a 已实现读取/复核，使用小型 hash 路由与显式读取状态；复杂页面增长后再评估 Router/Query。 |
@@ -96,13 +96,13 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 
 Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 workspaces，Zod 提供 JSON Schema 转换。这里的项目选择是基于职责和代价的判断，并非这些官方文档证明了 evoLoop 的效果。[Node 生命周期][node] · [TS strict][ts] · [Fastify][fastify] · [npm workspaces][npm] · [Zod][zod]
 
-表中外部适配器、日程、MCP 与图谱库仍是后续候选。S1a 固定版本：TypeScript 7.0.2、Fastify 5.12.7、Zod 4.6.7、pg 8.23.1、node-pg-migrate 9.0.0、React 19.3.1、Vite 8.3.4；真实验证使用 PostgreSQL 18.6。版本由各包 manifest 和根锁文件控制。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
+表中飞书真实租户、可选 MCP 与完整图谱仍是后续工作；日程、Codex 运行时和 OpenViking 已有受限本机路径。S1a 固定版本：TypeScript 7.0.2、Fastify 5.12.7、Zod 4.6.7、pg 8.23.1、node-pg-migrate 9.0.0、React 19.3.1、Vite 8.3.4；真实验证使用 PostgreSQL 18.6。版本由各包 manifest 和根锁文件控制。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
 
 前端补充按[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；S1a 的读取与复核页面已接通本机 API，其余完整页面和部署未实现。
 
 ## 5. 数据与部署边界
 
-目标部署单位是**一个 evoLoop daemon、它管理的 Codex 子进程、PostgreSQL 数据库服务，以及独立的 OpenViking 服务**。当前 S1a 仅运行本机协调 API 与 PostgreSQL，静态工作台由 API 同源提供。每个业务 session 不是独立后端服务，每个 npm 包也不是进程。源码依赖和进程图见[包架构](packages.md)。
+目标部署单位是**一个 evoLoop daemon、它管理的 Codex 子进程、PostgreSQL 数据库服务，以及独立的 OpenViking 服务**。本机试用已运行协调 API、PostgreSQL、同源静态工作台，以及经明确配置启用的 Codex 与 OpenViking 受限接缝；这不是生产部署。每个业务 session 不是独立后端服务，每个 npm 包也不是进程。源码依赖和进程图见[包架构](packages.md)。
 
 | 数据 | 唯一可改写权威 | 其他系统保存什么 |
 | --- | --- | --- |
@@ -114,9 +114,9 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 **为什么直接使用 PostgreSQL 主数据。** 用户先选择 PostgreSQL 以避免 SQLite 过渡迁移，随后明确选择 evoLoop 保存主数据、飞书作为 connector 和协作入口。Task、Schedule、原生 Document/Revision、Relation 与运行记录因此共用一个可版本化、可事务提交的数据库。代价是要维护数据库服务、迁移、连接、备份、文档正文权限，以及与飞书投影的冲突和对账；不能把“已有飞书视图”当作原生文档审核或 PG 状态的证明。
 
-推荐采用当前受支持的 **18.x**，首片锁定当时的小版本和驱动；官方当前将 18 列为受支持版本。开发、CI 与正式部署使用同一引擎/主版本，不用 SQLite 替身证明数据库行为。[版本政策][pg-version] 本轮未创建数据库；本机服务或远端托管实例的具体位置在部署时确定。
+推荐采用当前受支持的 **18.x**，首片锁定当时的小版本和驱动；官方当前将 18 列为受支持版本。开发、CI 与正式部署使用同一引擎/主版本，不用 SQLite 替身证明数据库行为。[版本政策][pg-version] 本机已有 PostgreSQL 18 试用数据库，远端托管实例的位置在部署时确定。
 
-主数据与运行记录约定如下；S1a 只验证当前任务/过程文档事务、修订、操作日志与出站记录，运行时及生产恢复另验：
+主数据与运行记录约定如下；S1a 首片只验证当时的任务/过程文档事务、修订、操作日志与出站记录。后来本机运行时和隔离备份恢复另有受限证据，生产恢复仍待验：
 
 - `adapter-postgres` 持有 SQL、参数化查询、连接池和版本化迁移，`core` 只调用端口。首期用 `pg` 和显式 SQL，推荐 `node-pg-migrate` 作为版本化迁移 runner；具体字段、原件与检索取舍见[存储设计](storage.md)。不同时引入 ORM；新增 ORM 必须能解释其对迁移与合同维护的实际收益。
 - 用稳定的对象/operation/occurrence 键、版本列和数据库唯一约束避免重复登记；PostgreSQL 适配器通过中立 `UnitOfWork` 绑定同一连接，Task/Document/Relation 更新、操作去重和 outbox 在一个事务提交；core 不直接使用驱动 client。Task、文档审核、运行、同步和实际效果分开建状态，避免一个“完成”替代所有判断。外部请求不放进长事务里，未知结果仍需对账。一次事务须使用同一个借出的 client，完成/失败后归还，不能用独立 `pool.query` 拼接事务。[驱动事务][pg-transactions] · [连接池][pg-pool]
@@ -142,9 +142,9 @@ PostgreSQL 事务不能覆盖飞书、Codex 或 Wiki 的网络副作用。丢失
 
 ## 7. 确认后怎样进入实现
 
-**PostgreSQL 主数据与飞书 connector 方向已确定**，各数据的权威范围按上表执行。S1a 已采用 TS/Node 主应用、React/Vite 和 PostgreSQL 18；接下来验证 OpenViking 固定版、有限补丁策略和真实部署位置。Fastify/MCP 等库在自己的包内保持可替换，不能把具体库选择误当产品约束。
+**PostgreSQL 主数据与飞书 connector 方向已确定**，各数据的权威范围按上表执行。S1a 已采用 TS/Node 主应用、React/Vite 和 PostgreSQL 18；OpenViking 0.5.1 的受限本机路径已运行，接下来验证其未覆盖的能力、有限补丁策略和真实部署位置。MCP 按需再加，不能把具体库选择误当产品约束。
 
-随后按[包架构集中维护的 S1—S4 顺序](packages.md#切片与验证)做最小切片：先锁依赖/协议与配置，在 PG 建一条 Task、一份原生需求 Document 修订及 Relation，并事务提交投影 outbox；再接真实飞书测试表的 Bitable Task 出站投影、回读与对账。入站编辑待字段权限、身份与基线能力验证后开放受控范围；飞书云文档 connector 留作独立后续。再迁移 Codex 已通过夹具并加错误证据拒绝、丢回执恢复；Wiki 新版补验可独立进行，通过后接入一次用户纠正→旧知识修订→新 session 实际消费。研究代码、业务能力和效果证据分别记录。**S1a 已完成本机主数据/API/读取复核首片；上述外部投影、派发和知识消费仍待接入。** 详细证据及 10,000 条影响/关联任务上限见[实测报告](../research/design-review-20261020.md)。
+按[包架构集中维护的 S1—S4 顺序](packages.md#切片与验证)，PG 主数据/API 首片、Codex 受控派发、OpenViking 0.5.1 写读与后续 Agent 的有限知识消费已有本机证据；研究代码、业务能力和效果证据仍分别记录。真实飞书测试表的 Bitable 出站投影、回读、入站字段权限和租户能力待验证，飞书云文档 connector 留作独立后续。生产部署、长期知识收益与真人亲用也未由本机样本证明。S1a 当时的详细证据及 10,000 条影响/关联任务上限见[实测报告](../research/design-review-20261020.md)；后续范围见[本机运行](../development/local-run.md)。
 
 [node]: https://nodejs.org/en/about/previous-releases
 [ts]: https://www.typescriptlang.org/tsconfig/strict.html

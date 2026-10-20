@@ -1,6 +1,6 @@
 # Wiki 工作台：知识点、专题与关系浏览
 
-状态：2026-10-20 **前端设计提议，尚未实现**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；当前没有复制组件或代码。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](frontend.md)及[Wiki 集成方案](wiki-integration.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。按 DEC-027，当前先用 OpenViking 承载外置知识空间，后续可能换成自研知识库；浏览器只依赖 evoLoop 的读取模型，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。
+状态：**知识全文、来源、历史与候选审阅已有受限本机前端路径；专题和完整图谱仍是目标设计**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；没有因此声称直接复制了上游组件。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](frontend.md)及[Wiki 集成方案](wiki-integration.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。按 DEC-027，当前先用 OpenViking 0.5.1 承载受限外置知识空间，后续可能换成自研知识库；浏览器只依赖 evoLoop 的读取模型，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。真人使用与生产能力待验，见[本机运行](../development/local-run.md)。
 
 本页先回答读者如何进入专题、读完整知识页并追踪修订，再说明查询与权限如何保证这些阅读路径；固定上游组件仅是后面的实现参考。
 
@@ -36,7 +36,7 @@ URL 中的 `knowledgeId` 与 `revision` 均不可静默改成最新版。跨对�
 
 ## 2. evoLoop 前端、查询层和知识端
 
-下图用于检查**知识导航、阅读、焦点图和待审视图如何共用授权查询**，以及本地 UI 状态与可重建缓存的范围。它不重复总览的系统结构，也不把浏览器缓存当知识权威。
+下图用于检查**目标状态下知识导航、阅读、焦点图和待审视图如何共用授权查询**，以及本地 UI 状态与可重建缓存的范围。当前工作台仍用直接 API 请求，图中的 TanStack Query 是后续候选；它不重复总览的系统结构，也不把浏览器缓存当知识权威。
 
 ```mermaid
 flowchart LR

@@ -4,7 +4,7 @@
 
 本页把[总览](overview.md)的逻辑责任映射到拟议实现。先看核心模块承担什么、它们怎样装配到运行单位，再查源码依赖和完整包表。包是代码边界，进程是部署单位，Role/Session 是职责与承载关系，三者不逐一对应。
 
-TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界适配包已有代码；它们的运行证据各不相同。Git 固定来源、本机 Blob、Codex App Server 与外置 OpenViking 已有受限实跑，飞书仍只有 fake HTTP 与真实 PG 测试。默认由人通过工作台观察、与现有 Agent 会话沟通；Agent 带固定依据经业务 skill+CLI 完成大多数常规写入；人再在工作台核对结果。工作台与 CLI 共用 API/core，人工直接操作可按需存在，不是每次 Agent 写入的前置审批。skill 是过程约定，不是第 12 个 npm 包，也不是前端开发技能；CLI 已提供具名命令与未知结果恢复，具体用法和未验边界见[业务技能与 CLI](../development/agent-cli.md)。各包落地不等于跨系统首版或真人使用通过；其余技术范围见[技术选型](technology-selection.md)。
+TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界适配包已有代码；它们的运行证据各不相同。Git 固定来源、本机 Blob、Codex App Server 与外置 OpenViking 已有受限实跑，飞书仍只有 fake HTTP 与真实 PG 测试。默认由人通过工作台观察、与现有 Agent 会话沟通；Agent 带固定依据经业务 skill+CLI 完成大多数常规写入；人再在工作台核对结果。工作台与 CLI 共用 API/core，人工直接操作可按需存在，不是每次 Agent 写入的前置审批。skill 是过程约定，不是第 12 个 npm 包，也不是前端开发技能；CLI 已提供具名命令与未知结果恢复，具体用法和未验边界见[业务技能与 CLI](../development/agent-cli.md)。CLI 已覆盖共同命令 schema，但具名专项请求以帮助清单为准，当前未提供协作投影/入站处理的 CLI 入口。未知写入须保留原操作；只有可核验的服务端回执才能确认，部分请求仍需人工对账。各包落地不等于跨系统首版或真人使用通过；其余技术范围见[技术选型](technology-selection.md)。
 
 ## 四部分映射到一个 `core`
 
@@ -30,7 +30,8 @@ TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界�
 ```mermaid
 %%{init: {"flowchart":{"wrappingWidth":180,"nodeSpacing":24,"rankSpacing":34}}}%%
 flowchart TB
-  H["人观察与沟通／工作台<br/>Agent 常规执行／业务 skill＋CLI<br/>可选 MCP 工具"]:::entry --> A
+  H["人类工作台<br/>观察、阅读与反馈"]:::entry -->|查询／按需人工操作| A
+  E["Agent 业务 skill → CLI<br/>固定依据、执行与回读"]:::entry -->|受控命令／查询| A
   subgraph coordinator["拟议单活协调进程"]
     A["共同 API<br/>输入与身份核验"]:::core --> C["core 用例<br/>权限、状态与基线"]:::core
     C --> L["PG 适配器"]:::adapter
@@ -39,7 +40,7 @@ flowchart TB
   end
   L --> DB["PostgreSQL 主数据<br/>任务、过程文档、关系<br/>运行与同步记录"]:::authority
   F <-->|投影、回读与编辑观察| FS["飞书 Bitable<br/>首期任务协作投影"]:::projection
-  H -.->|人在飞书原生编辑| FS
+  H -.->|按需原生编辑| FS
   classDef entry fill:#FFF1D6,stroke:#A86412,color:#402700
   classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
   classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
@@ -47,7 +48,7 @@ flowchart TB
   classDef projection fill:#FFF5DF,stroke:#A86412,color:#493822
 ```
 
-黄＝人/工具入口与外部投影；紫＝协调进程内规则；蓝＝边界包；青＝本体持久化。虚线是人在飞书的编辑，仍需经 connector、API 和核心规则才能改变本体；PostgreSQL 适配器按同库事务保存对象、操作与投影意图。
+业务 skill 是项目内工作约定，不是图中的第三个服务；CLI 是其使用的客户端。可选 MCP 仍未实现，后续若接入也经共同 API。黄＝人/工具入口与外部投影；紫＝协调进程内规则；蓝＝边界包；青＝本体持久化。虚线是人在飞书的编辑，仍需经 connector、API 和核心规则才能改变本体；PostgreSQL 适配器按同库事务保存对象、操作与投影意图。
 
 ### 执行与外部正文
 

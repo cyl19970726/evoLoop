@@ -9,7 +9,15 @@ const LANE_LABELS = ['入口 · 人与现有工具', '协调 · 核心与合同'
 function validSource(source) {
   return source && typeof source.path === 'string' && source.path.trim() &&
     Number.isInteger(source.line) && source.line > 0 &&
+    (source.revision === undefined || (typeof source.revision === 'string' && /^[0-9a-fA-F]{40}$/.test(source.revision))) &&
     (source.endLine === undefined || (Number.isInteger(source.endLine) && source.endLine >= source.line));
+}
+
+export function sourceUrl(model, source) {
+  const base = model.repository.url.replace(/\/$/, '');
+  const revision = source.revision ?? model.repository.revision;
+  const path = source.path.split('/').map(encodeURIComponent).join('/');
+  return `${base}/blob/${encodeURIComponent(revision)}/${path}#L${source.line}`;
 }
 
 export function validateModel(model) {
@@ -227,14 +235,12 @@ function link(label, url, className) {
 }
 function sourceLink(model, source) {
   const range = source.endLine ? `L${source.line}–${source.endLine}` : `L${source.line}`;
-  const base = model.repository.url.replace(/\/$/, '');
-  const path = source.path.split('/').map(encodeURIComponent).join('/');
-  return link(`${source.path}:${range}`, `${base}/blob/${encodeURIComponent(model.repository.revision)}/${path}#L${source.line}`, 'source-link');
+  return link(`${source.path}:${range}`, sourceUrl(model, source), 'source-link');
 }
-function modelLink(model, path) {
+export function modelLink(model, path, revision = model.repository.revision) {
   const base = model.repository.url.replace(/\/$/, '');
-  const target = path.endsWith('/') ? 'tree' : 'blob';
-  return `${base}/${target}/${encodeURIComponent(model.repository.revision)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+  const target = path.endsWith('/') || /^(apps|packages)\/[^/]+$/.test(path) ? 'tree' : 'blob';
+  return `${base}/${target}/${encodeURIComponent(revision)}/${path.split('/').map(encodeURIComponent).join('/')}`;
 }
 export function parseViewState(model, hash = '') {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
@@ -284,7 +290,7 @@ export function mountArchitectureViewer(root, model) {
   heading.append(el('p', 'eyebrow', 'evoLoop · 全局目标架构'), el('h1', '', model.title));
   const badge = el('div', 'revision-badge');
   badge.title = model.repository.revision;
-  badge.append(el('span', '', '来源版本'), el('strong', '', model.repository.revision.slice(0, 12)));
+  badge.append(el('span', '', '默认来源版本'), el('strong', '', model.repository.revision.slice(0, 12)));
   titleRow.append(heading, badge);
   const refs = el('nav', 'map-references');
   refs.setAttribute('aria-label', '架构图来源');
@@ -555,7 +561,7 @@ export function mountArchitectureViewer(root, model) {
       const path = el('div', 'detail-field');
       const proposed = node.status === 'proposed' || node.status === 'conditional';
       path.append(el('h3', '', proposed ? '拟议路径' : '代码位置'),
-        proposed ? el('code', 'path-link', node.path) : link(node.path, modelLink(model, node.path), 'path-link'));
+        proposed ? el('code', 'path-link', node.path) : link(node.path, modelLink(model, node.path, node.sources[0]?.revision), 'path-link'));
       detail.append(path);
     }
     if (node.details?.length) {

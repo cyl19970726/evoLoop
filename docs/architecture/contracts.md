@@ -1,6 +1,6 @@
 # evoLoop 领域合同
 
-> 状态：2026-10-21，C5 将 Task/Document 收敛为唯一正文与四态，具体字段以 `packages/contracts` 为准；当前实现与验收范围见[阶段路线](../roadmap.md)。已确定 PostgreSQL 保存 evoLoop 主数据，飞书作为 connector 和协作入口；具体结构、API 与同步行为仍待验证。整体位置见[架构总览](overview.md)，数据所有权见[项目数据架构](project-data.md)，面向用户的行为见[产品定义](../product/definition.md)，落地方式见[开发规范](../development/standards.md)。
+> 状态：目标语义合同与受限本机实现并存。C5 将 Task 正文统一归入固定 DocumentRevision、当前任务收敛为四态；11 个工作区、迁移 012 的实际字段以 `packages/contracts` 和[本机运行](../development/local-run.md)为准，验收状态见[阶段路线](../roadmap.md)。PostgreSQL 保存主数据，工作台与 CLI 经同一 API 使用；飞书真实租户、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据权威见[项目数据](project-data.md)，用户行为见[产品定义](../product/definition.md)，实现规范见[开发规范](../development/standards.md)。
 
 ## 对象如何配合
 
@@ -139,7 +139,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 `UnitOfWork.run` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口。core 先核 operation ID/摘要，再在这个作用域内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
 
-操作 ID 与命令摘要一起去重，同一 ID 带不同命令必须拒绝；提交结果未知时按该 ID 查询同库事务结果。首片验证最后一步失败时全部回滚、提交成功但回包丢失后恢复不重复创建，以及旧基线更新被拒绝。该合同仍待实现，数据库选型本身不是测试通过证据。
+操作 ID 与命令摘要一起去重，同一 ID 带不同命令必须拒绝；提交结果未知时按该 ID 查询同库事务结果。首片已自动检查最后一步失败时全部回滚、提交成功但回包丢失后恢复不重复创建，以及旧基线更新被拒绝；CLI 当前也按原 ID 查询回执。这个本机子集不证明外部副作用恰好一次或生产恢复，数据库选型本身也不是测试通过证据。
 
 ## 4. RoleRegistry 与 SessionRuntime
 
