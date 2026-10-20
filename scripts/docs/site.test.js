@@ -102,6 +102,17 @@ test('copies only referenced assets from docs/assets and builds repeatably', asy
   await assert.rejects(check(root), /local asset must be under docs\/assets/);
 });
 
+test('preserves interactive asset hash parameters and encoded values', async t => {
+  const root = await fixture(t);
+  await fs.mkdir(path.join(root, 'docs/assets'), { recursive: true });
+  await fs.writeFile(path.join(root, 'docs/assets/map.html'), '<!doctype html><title>Map</title>');
+  await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n[revision](docs/assets/map.html#read=revision)\n\n[modules](docs/assets/map.html?style=minimal#view=modules&node=core&query=a%26b%3Dc)\n');
+  await build(root);
+  const html = await fs.readFile(path.join(root, 'site/index.html'), 'utf8');
+  assert.match(html, /href="docs\/assets\/map.html#read=revision"/);
+  assert.match(html, /href="docs\/assets\/map.html\?style=minimal#view=modules&amp;node=core&amp;query=a%26b%3Dc"/);
+});
+
 test('bundles Mermaid locally only for diagram pages and escapes source', async t => {
   const root = await fixture(t, [
     { path: 'README.md', title: 'Home', group: 'Start' },
