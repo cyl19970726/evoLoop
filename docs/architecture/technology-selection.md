@@ -54,7 +54,7 @@ Codex 隔离研究已经使用 Python 跑通了受限闭环，[PR #2](https://gi
 | evoLoop 原生需求等 Document、DocumentRevision、审核状态 | evoLoop PostgreSQL | 飞书云文档 connector 若将来接入，需单独定义投影和审核映射；首期不混同 Bitable API |
 | 跨 Task/Document/KnowledgeRef 等对象的 Relation、同步状态；派发/通知/触发恢复记录 | evoLoop PostgreSQL | 外部平台可持其自身 ID/回执；同库 outbox 与主数据变更可事务提交，外部副作用不能 |
 | 当前知识、来源、知识历史与内部依赖 | 外置 KnowledgeRepository／OpenViking 候选及受控材料存储 | PostgreSQL 只持知识引用和任务/文档的跨对象关系，不复制 Wiki 正文或内部依赖权威 |
-| 已有正式产品/架构/开发规范正文与配置约定 | 对应项目 Git 仓库 | PostgreSQL 的 Document 登记 ref+commit，正文和正式修订仍由 Git 维护 |
+| 已有正式产品/架构/开发规范正文与配置约定 | 对应项目 Git 仓库 `docs/` | 不进入 Document Table；需要关联时登记独立 Git 来源 ref+commit，正文和正式修订由 Git 维护 |
 
 **为什么直接使用 PostgreSQL 主数据。** 用户先选择 PostgreSQL 以避免 SQLite 过渡迁移，随后明确选择 evoLoop 保存主数据、飞书作为 connector 和协作入口。Task、Schedule、原生 Document/Revision、Relation 与运行记录因此共用一个可版本化、可事务提交的数据库。代价是要维护数据库服务、迁移、连接、备份、文档正文权限，以及与飞书投影的冲突和对账；不能把“已有飞书视图”当作原生文档审核或 PG 状态的证明。
 

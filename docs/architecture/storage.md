@@ -9,9 +9,9 @@
 | 层 | 首期具体建议 | 选择理由与避免的重复 |
 | --- | --- | --- |
 | 业务持久化 | PostgreSQL 18.x；`pg` 驱动、参数化 SQL、同连接 UnitOfWork | Task、Doc、关系、基线和 outbox 可同库事务；不另建 SQLite 过渡库或单独业务图数据库 |
-| 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；原生 Markdown 正文用 `text`；JSONB 仅放经过 schema 校验的扩展和平台载荷 | 外键、索引和状态检查可审阅；不把整个 Task/Doc 都藏成任意 JSON，也不把 Wiki 正文复制入 JSONB |
+| 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；过程文档 Markdown 正文用 `text`；JSONB 仅放经过 schema 校验的扩展和平台载荷 | 外键、索引和状态检查可审阅；不把整个 Task/Doc 都藏成任意 JSON，也不把 Wiki 正文复制入 JSONB |
 | 数据迁移 | 推荐 `node-pg-migrate` 执行版本化、可审阅的 SQL；单一部署步骤，固定稳定版本 | 用已有 runner 管迁移记录与互斥，避免另写迁移框架；不启用启动时自动改生产 schema。当前未安装，不能用文档工具的最新预发布版代替已锁定依赖 |
-| Git 正式文档 | 保留仓库正文和固定 commit，PG 登记引用；白名单读取适配器 | 工作台显示同一正式版本；不建立“从网页再抓一次”的第二份规范 |
+| Git 正式文档 | 保留仓库正文和固定 commit；PG 可登记独立 GitSourceRef 来源元数据，由白名单适配器读取 | 工作台显示同一正式版本；不建立“从网页再抓一次”的第二份规范，也不创建 Document 行 |
 | Wiki 来源/正文/内部关联 | OpenViking 候选服务持外置内容与修订；若补发布格式，与 Wiki 同一知识空间 | nashsu 的页面和图谱体验可通过知识查询模型实现，无需同时保留它的另一套可编辑 vault |
 | 附件与不可重建原件 | 首个本机切片使用仓库外受控目录，通过 BlobStore 端口访问；PG 保存 blob 元数据 | 大型原件不塞业务表，不装第二套文件管理产品；迁到常在线主机时再选择受控持久卷或对象存储，并演练搬迁和恢复 |
 | 检索与关系展示 | PG 先按 ID、标题和结构化过滤检索；Wiki 语义检索沿用知识后端；前端图谱是有权限的有界关系视图 | 首期不新增 Elasticsearch、Neo4j、Redis 或第二向量库；关系可视化不要求图数据库。中文全文效果和跨源排序单独验证 |
@@ -22,7 +22,7 @@
 
 ## 权威与共同键
 
-PostgreSQL 保存 Task、Schedule、原生 Document/Revision、跨对象 Relation、ExternalBinding/同步状态、OperationJournal/outbox、运行/触发关联、水位及必要的知识/Git 固定引用。已有正式产品、架构、开发规范的**正文仍在 Git**；Wiki 正文、来源、知识历史和内部依赖仍在外置 KnowledgeRepository。OpenViking 是候选实现，尚未正式采用。数据库只保存 Wiki 的可核对引用、跨对象关系和传递回执。
+PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨对象 Relation、ExternalBinding/同步状态、OperationJournal/outbox、运行/触发关联、水位及必要的知识/Git 固定引用。已有正式产品、架构、开发规范的**正文仍在 Git**；可用独立 GitSourceRef 元数据固定来源，不创建 Document 行。Wiki 正文、来源、知识历史和内部依赖仍在外置 KnowledgeRepository。OpenViking 是候选实现，尚未正式采用。数据库只保存 Wiki 的可核对引用、跨对象关系和传递回执。
 
 项目权限在服务端由已验证身份和项目成员/受委派操作范围判断；首片单用户也不信任模型自报 Role。复合外键防误关联，不等于访问授权；查询、命令及关系遍历都须检查当前权限。未来多用户或数据库 RLS 的隔离加固需独立验证，不能仅凭 project_id 字段宣称安全多租户。
 
@@ -33,16 +33,14 @@ PostgreSQL 保存 Task、Schedule、原生 Document/Revision、跨对象 Relatio
 | `project` | `project_id` PK、状态、可见范围；外部 slug 可变 | 项目归档不级联清空证据 |
 | `task` / `task_revision` | 头表 `(project_id, task_id)` PK，含当前版本和当前修订指针；快照表 `(project_id, task_id, task_revision_id)` PK，含目标、责任、验收判据、接受决定、时间及内容 hash | 头表按旧版本条件更新；每次接受或影响执行的变更插入不可变快照。当前头用于待办查询，旧 Run 只读其固定快照 |
 | `schedule` / `schedule_revision` / `occurrence` | 定义头键 `(project_id, schedule_id)`；不可变定义快照键 `(project_id, schedule_id, schedule_revision_id)`；触发键 `(project_id, schedule_id, planned_at_utc)` 唯一 | 快照固定时区、规则、启停及错过/重叠策略；Occurrence 复合 FK 指向实际计算所用 ScheduleRevision，并关联创建/复用的 Task。定义改版不改写旧触发 |
-| `document` | `(project_id, document_id)` PK；版本、用途 `working/formal`、类型、`mode`、可见范围、当前已采纳修订指针 | 用途与 `mode ∈ {native, reference}` 分开；两类存储指针互斥，草稿可尚无已采纳指针 |
-| `document_revision` | `(project_id, document_id, revision_id)` PK；正文/格式、hash、作者、时间、所读基线、变更理由 | 复合 FK 到 Document；正文与元数据插入后不 UPDATE，候选修订不自动替换已采纳指针 |
+| `document` / `document_revision` | Document 仅用于过程文档，头键 `(project_id, document_id)`、版本/类型/权限及已采纳修订指针；修订键 `(project_id, document_id, revision_id)`，含正文/格式、hash、作者、时间、所读基线、变更理由 | 文档正文仅由 evoLoop 管理；修订不可变，候选修订不自动替换已采纳指针。Task 与 Document 多对多关联，TaskBasis 固定使用的修订 |
 | `document_review_decision` | `(project_id, decision_id)` PK；document/revision、决定者、决定、依据、时间 | 复合 FK 到被审修订；批准/拒绝另追加决定，不原位改 revision；批准后才在同事务条件移动已采纳指针 |
-| `document_git_revision` | 同上复合 PK；repo 身份、固定 commit、commit 内路径、原始字节 hash、验证状态 | 复合 FK 到 Document；不存正式正文；路径移动新增版本并关联旧版 |
-| `document_mode_transition` | `(project_id, transition_id)` PK；旧/新模式、两端固定 revision、原因/决定者/时间 | 仅用于同一现行文档维护权迁移；检查旧基线并保留历史，不用于一般工作结论纳入正式文档 |
-| `document_incorporation` / `incorporation_source` / `incorporation_target` | 整理 ID、理由、责任与关联任务；来源固定修订/片段；目标 repo/path/章节、base commit、差异/PR、merge commit；构建/部署状态分列 | 多来源到多目标，项目内 FK 指向固定 DocumentRevision/GitRevision 及 Task/Review；拟议目标可未有合入修订。核实合入后才绑定实际 GitRevision；不复制正式正文，不覆盖源文档 |
+| `git_source_ref` | `(project_id, git_source_ref_id)` PK；repo 身份、path、commit、原始字节 hash、验证/权限/可达状态 | 独立来源记录，不依附 Document 行；Git 文件移动或版本变化新增引用，旧引用保留 |
+| `document_incorporation` / `incorporation_source` / `incorporation_target` | 整理 ID、理由、责任与关联任务；来源 DocumentRevision/片段；目标 repo/path/章节、base commit、差异/PR、merge commit；构建/部署状态分列 | 多来源到多 Git 目标；来源 FK 指向固定过程 DocumentRevision 和 Task/Review，目标位置不 FK 到 Document。核实合入后可关联实际 GitSourceRef；不复制正式正文，不覆盖源文档 |
 | `knowledge_ref` / `knowledge_ref_revision` | `(project_id, knowledge_ref_id)` 及加 `revision_id` 的复合 PK；外部空间/ID/revision、可选 hash、观察时间、有效/待复核/撤回/不可达 | 只登记外部身份、固定版本及本地处置状态；正文和内部依赖不入库 |
 | `external_binding` | `(project_id, binding_id)` PK；connector、外部 scope/ID、双方最后确认版本、方向、同步状态 | `(connector, external_scope, external_id)` 唯一；内部对象用类型化 FK，不能把投影版本当主版本 |
 
-Document 可在同一事务里先建无现行修订的目录、再建首修订、再记录审核决定并设已采纳指针；`(project_id, document_id, revision_id)` FK 保证指针指向本文件。模式互斥可用本行 CHECK；“修订所属文档模式正确”和“现行指针已有批准决定”是跨行规则，还要受控写入路径及必要的约束触发器，不能声称单行 CHECK 已验证。Git 引用激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新引用修订，旧任务仍保留旧 commit/path；原仓库删除或权限丢失标不可达并复核。
+Document 可在同一事务里先建目录、再建首个过程文档修订、再记录审核决定并设已采纳指针；复合 FK 保证修订及指针属于该 Document。现行已采纳指针必须对应已批准的审核决定；此规则跨行，须由受控写入路径及必要的约束触发器保证，不能声称单行 CHECK 已验证。Document 表不设 Git 正文模式或 Git 修订子表。GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新的 GitSourceRef，旧 TaskBasis 仍保留旧 repo/path/commit；原仓库删除或权限丢失标不可达并复核。
 
 Schedule 头表只提供当前可编辑入口；每次规则、时区、错过或重叠策略改变都插入不可变 `schedule_revision`。到期计算读取某一修订，`occurrence` 保存 `schedule_revision_id` 并以 `(project_id, schedule_id, schedule_revision_id)` 复合 FK 约束，同时保存原计划 UTC 时点。触发去重仍按稳定 `(project_id, schedule_id, planned_at_utc)`，修订号是被观察基线，不作为同一时点重复创建任务的理由；若改版改变该时点是否应触发，先对账旧实例并记录重算决定。
 
@@ -54,7 +52,9 @@ erDiagram
   BASIS_SET ||--o{ TASK_BASIS : members
   TASK_REVISION ||--o{ RUN : execution_snapshot
   BASIS_SET ||--o{ RUN : execution_basis
-  DOCUMENT ||--o{ DOCUMENT_REVISION : native_history
+  TASK ||--o{ RELATION : linked_work
+  DOCUMENT ||--o{ RELATION : linked_work
+  DOCUMENT ||--o{ DOCUMENT_REVISION : process_history
   DOCUMENT_REVISION ||--o{ DOCUMENT_REVIEW_DECISION : decisions
   classDef scope fill:#E2F4F2,stroke:#297A73,color:#154B47
   classDef action fill:#FFF1D6,stroke:#A86412,color:#402700
@@ -64,13 +64,13 @@ erDiagram
   class TASK_REVISION,BASIS_SET,TASK_BASIS,DOCUMENT,DOCUMENT_REVISION,DOCUMENT_REVIEW_DECISION fixed
 ```
 
-图例：青＝项目范围；黄＝当前行动/运行；蓝＝固定快照与审核记录。图只画执行快照域；`TASK_BASIS` 的具体修订目标与 Document reference 模式在下文说明。Schedule 是定义，Task 是实际工作，两者状态和 ID 不合并。Mermaid ER 的 `classDef`/`class` 语法见[官方文档](https://mermaid.js.org/syntax/entityRelationshipDiagram.html#classes)。
+图例：青＝项目范围；黄＝当前行动/运行；蓝＝固定快照与审核记录。图只画执行快照域；`TASK_BASIS` 可固定过程 DocumentRevision、独立 GitSourceRef 或 KnowledgeRefRevision；普通 Task↔Document 链接仅用于导航。Schedule 是定义，Task 是实际工作，两者状态和 ID 不合并。Mermaid ER 的 `classDef`/`class` 语法见[官方文档](https://mermaid.js.org/syntax/entityRelationshipDiagram.html#classes)。
 
 ## 关系与执行基线
 
-`relation(from_type, from_id, to_type, to_id)` 若没有 FK，会让已删除、跨项目或拼错的 ID 悄悄进入关系图。首版把**导航关系**与**固定修订绑定**分开。`relation` 的 source/target 各有 `task_id`、`document_id`、`knowledge_ref_id`、`delivery_id`、`review_id`、`evidence_ref_id` 等受支持的类型化 nullable 列，每端 `num_nonnulls(...)=1`，每列用 `(project_id, typed_id)` 复合 FK 指向具体实体。`relation_revision_binding` 以 `(project_id, relation_id)` 复合 FK 接导航关系，再以各端类型化 revision 列引用 TaskRevision、DocumentRevision、DocumentGitRevision、KnowledgeRefRevision，或固定的 Delivery/Review/EvidenceRef 版本；本行 `CHECK` 约束每端恰好一种 revision；对应 revision 的复合 FK 保证版本属于同一对象和项目；绑定与导航行的对象类型/ID 一致性由同事务写入及约束触发器核验，不能靠跨表 CHECK。固定修订关系没有可解析的版本就不得创建。新对象类型须经迁移、合同和查询变更；JSON 泛型 ID 不能充当外键。Relation 自身有 `(project_id, relation_id)` PK、类型、建立者、依据、创建/失效时间与版本。允许的类型组合由约束或受控类型表限制；关系存在不证明任务符合依据。
+`relation(from_type, from_id, to_type, to_id)` 若没有 FK，会让已删除、跨项目或拼错的 ID 悄悄进入关系图。首版把**导航关系**与**固定修订绑定**分开。`relation` 的 source/target 各有 `task_id`、`document_id`、`git_source_ref_id`、`knowledge_ref_id`、`delivery_id`、`review_id`、`evidence_ref_id` 等受支持的类型化 nullable 列，每端 `num_nonnulls(...)=1`，每列用 `(project_id, typed_id)` 复合 FK 指向具体实体。Task↔Document 普通多对多链接作为仅指稳定 documentId 的导航关系保存，不要求固定修订，也不隐含采用；需要作为任务依据时，再在 TaskBasis 固定 DocumentRevision。`relation_revision_binding` 以 `(project_id, relation_id)` 复合 FK 接导航关系，再以各端类型化 revision/source 列引用 TaskRevision、DocumentRevision、GitSourceRef、KnowledgeRefRevision，或固定的 Delivery/Review/EvidenceRef 版本；本行 `CHECK` 约束每端恰好一种目标；对应目标的复合 FK 保证版本/引用属于同一对象和项目；绑定与导航行的对象类型/ID 一致性由同事务写入及约束触发器核验，不能靠跨表 CHECK。固定修订关系没有可解析版本/来源就不得创建。新对象类型须经迁移、合同和查询变更；JSON 泛型 ID 不能充当外键。Relation 自身有 `(project_id, relation_id)` PK、类型、建立者、依据、创建/失效时间与版本。允许的类型组合由约束或受控类型表限制；关系存在不证明任务符合依据。
 
-固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到 native DocumentRevision、Git DocumentRevision 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 到 `basis_set`，因此旧 Run 的目标、判据和依据均可重放；仅 FK 到可变 Task 头不够。Task 头更新或接受新依据要产生新快照/集合并复核，旧 Run 不跟随当前指针变化。知识撤回、Git 修订不可达或文档被取代时，影响任务标待复核；**派发前还须实时向外部知识端核固定 revision 的有效性**，不能只依赖后台影响扫描已完成。无法确认时暂停派发。Wiki 内部“来源支持哪条主张”的依赖仍由外置知识系统维护。
+固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到过程 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 到 `basis_set`，因此旧 Run 的目标、判据和依据均可重放；仅 FK 到可变 Task 头不够。Task 头更新或接受新依据要产生新快照/集合并复核，旧 Run 不跟随当前指针变化。知识撤回、GitSourceRef 不可达或过程文档被取代时，影响任务标待复核；**派发前还须实时向来源端核固定引用的有效性**，不能只依赖后台影响扫描已完成。无法确认时暂停派发。Wiki 内部“来源支持哪条主张”的依赖仍由外置知识系统维护。
 
 `basis_set/task_basis` 是接受和派发依据的唯一写入入口。用于导航的相同“任务依据”关系由该集合派生；若物化关系，必须同事务生成并只读，禁止另从 Relation 编辑出第二份不同基线。其他解释性关系仍可独立提出，但不能据此隐式改变执行依据。
 
@@ -79,7 +79,7 @@ ExternalBinding 也使用类型化对象列、恰好一项非空 CHECK 和复合
 | 关系与运行表 | 最小键和字段 | 约束与边界 |
 | --- | --- | --- |
 | `relation` / `relation_revision_binding` | 导航键 `(project_id, relation_id)`；两端类型化对象列、关系类型；绑定键含 relation ID 与两端固定 revision | 导航和版本目标均以同 project 复合 FK 校验；Review/Delivery/EvidenceRef 须有具体表与固定版本，跨表一致性用受控事务/约束触发器；不级联抹历史 |
-| `basis_set` / `task_basis` | 集合键 `(project_id, task_id, task_revision_id, basis_set_id)`；成员含固定目标修订、判据校验、记录时间 | 集合 FK 到不可变 TaskRevision；成员 FK 到集合及唯一一种固定修订；同一集合内依据去重 |
+| `basis_set` / `task_basis` | 集合键 `(project_id, task_id, task_revision_id, basis_set_id)`；成员含固定 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision、判据校验、记录时间 | 集合 FK 到不可变 TaskRevision；成员 FK 到集合及唯一一种固定来源；同一集合内依据去重 |
 | `run` / `occurrence` | `(project_id, run_id)`、`(project_id, schedule_id, planned_at_utc)`；承载 Session、操作、观察状态、相关 Task | Run 复合 FK 到 TaskRevision+BasisSet；Occurrence 复合 FK 到固定 ScheduleRevision 及 Task；运行完成不能改写 Task 验收或实际效果 |
 | `delivery` / `review` / `evidence_ref` | 各自 `(project_id, id)` 与固定 revision 或不可变决定 ID；成果地址/内容 hash、亲用证据、判断者/时间 | 明确对象和版本，供 `validates` 等 Relation 的类型化端点 FK；正文或原件仍按授权定位 |
 | `task_effect_review` | `(project_id, review_id)`；task ID/版本、目标消费者、亲用证据、结论/时间 | 复合 FK 到固定 TaskRevision；结果未知可保留，不用空值伪装成功 |
@@ -109,8 +109,8 @@ erDiagram
 | 后续表组 | 记录什么 | 固定引用与权威边界 |
 | --- | --- | --- |
 | `role` / `role_revision` / `session_instance` / `session_binding` | 逻辑职责头及不可变职责说明；稳定 Session ID 与宿主 ID 映射；绑定起止时间、所承担的 RoleRevision、交接 Task/Run | `role_revision` 复合 FK 到 Role；binding 复合 FK 到 RoleRevision 和本项目 SessionInstance，关联 Run 时再用复合 FK；聊天换窗不新建 Role，职责正式配置若在 Git 仍只登记 ref+commit |
-| `stage_review` / `review_decision` | 阶段目标、读入 Task/Document/KnowledgeRef 固定版本、消费者实际使用观察、下一步选择、决定者、时间、被取代决定 | 每次决定是不可变记录，复合 FK 到本项目固定 TaskRevision/DocumentRevision；知识端只存固定外部 revision 引用；新判断追加而非改旧结论 |
-| `impact_review` | 来源撤回、文档改版或知识失效触发的影响对象/基线、责任者、待复核/已处理及决定 | 复合 FK 到本地 Task/Document/Relation 固定版本及可用的 KnowledgeRefRevision；外部知识内部依赖仍由 KnowledgeRepository 查询 |
+| `stage_review` / `review_decision` | 阶段目标、读入 Task/过程 Document/GitSourceRef/KnowledgeRef 固定版本、消费者实际使用观察、下一步选择、决定者、时间、被取代决定 | 每次决定是不可变记录，复合 FK 到本项目固定 TaskRevision/DocumentRevision/GitSourceRef；知识端只存固定外部 revision 引用；新判断追加而非改旧结论 |
+| `impact_review` | 来源撤回、过程文档改版、GitSourceRef 不可达或知识失效触发的影响对象/基线、责任者、待复核/已处理及决定 | 复合 FK 到本地 Task、过程 Document、GitSourceRef、Relation 的固定来源及可用的 KnowledgeRefRevision；外部知识内部依赖仍由 KnowledgeRepository 查询 |
 | `knowledge_contribution` | 贡献者、输入来源固定版本、提交操作、外部 candidate ID/revision、回读状态和审核结果引用 | 只存外置候选的身份与回执，绝不复制候选或 Wiki 正文；同一来源/操作可查重复与撤回影响 |
 | `evaluation` / `evaluation_case` / `consumer_outcome` | 评价的冻结协议/条件与输入引用；各 case 的 TaskRevision、Run、首次产物/重试、独立判断、成本和缺项 | 项目内复合 FK 指向固定 Task/Run/Review，协议与原件保留受控引用；条件修改产生新修订，结果追加。采用、产物合格、真人效果分列，未知不填零；大原件不复制进这些表 |
 
@@ -156,6 +156,6 @@ BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系�
 
 ## 切片与验收
 
-**第一切片**落 project、Task/不可变 TaskRevision、native Document/Revision、独立 DocumentReviewDecision、Git reference 登记、类型化 Task↔Document Relation 及 revision binding、固定 BasisSet、最小 Run、OperationJournal/outbox、飞书 Task 出站 Binding 和最小 CLI。用真实 PostgreSQL 验证复合 FK、模式互斥、旧版本拒绝、旧 Run 回读旧 TaskRevision/BasisSet、文档批准不修改正文、同操作两个对象产生两条 outbox、事务最后一步回滚、重复 operation ID、出站写成后丢回执；Git 引用验证固定 commit/path/hash。飞书入站编辑等字段、身份和基线能力验证后开放。
+**第一切片**落 project、Task/不可变 TaskRevision、过程 Document/Revision、Task↔Document 多对多链接、独立 DocumentReviewDecision、GitSourceRef 登记、固定 BasisSet、最小 Run、OperationJournal/outbox、飞书 Task 出站 Binding 和最小 CLI。用真实 PostgreSQL 验证复合 FK、旧版本拒绝、旧 Run 回读旧 TaskRevision/BasisSet、文档批准不修改正文、TaskBasis 固定过程文档修订/GitSourceRef/Wiki 修订、同操作两个对象产生两条 outbox、事务最后一步回滚、重复 operation ID、出站写成后丢回执；GitSourceRef 验证固定 commit/path/hash。飞书入站编辑等字段、身份和基线能力验证后开放。
 
-**后续切片**再引入 Schedule/ScheduleRevision/Occurrence、KnowledgeRef 与实时派发校验、blob/source fingerprint/ingestion receipt、分工与认知讨论的 Role/Session/Review/Contribution 记录、更多关系类型、Document 模式切换、飞书云文档 connector、细粒度检索/权限及跨系统恢复。不要为未接入的 Wiki 或 connector 预造可编辑副本。自动检查通过后仍由真实消费者核对依据能否找到、冲突能否处理、旧版本能否复现；这些效果尚无运行证据。
+**后续切片**再引入 Schedule/ScheduleRevision/Occurrence、KnowledgeRef 与实时派发校验、blob/source fingerprint/ingestion receipt、DocumentIncorporation、分工与认知讨论的 Role/Session/Review/Contribution 记录、更多关系类型、飞书云文档 connector、细粒度检索/权限及跨系统恢复。不要为未接入的 Wiki 或 connector 预造可编辑副本。自动检查通过后仍由真实消费者核对依据能否找到、冲突能否处理、旧版本能否复现；这些效果尚无运行证据。

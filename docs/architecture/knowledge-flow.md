@@ -9,18 +9,18 @@
 | 资产 | 正文与修订权威 | Wiki 可以拿到什么 | 更改从哪里发起 |
 | --- | --- | --- | --- |
 | Task / Delivery / Review | PostgreSQL 对象与版本，成果按受控地址定位 | 已判断的任务目标、交付、亲用评审等固定快照；保留任务状态的发生时间 | Task 命令；当前进度仍查 TaskStore |
-| 原生 Document | PostgreSQL 的不可变 DocumentRevision | 被选中的需求/方案修订与采纳状态；草稿须显式标记 | Document 命令创建修订，再审阅采纳 |
-| Git 正式文档 | 受管仓库中的文件和固定 commit | 白名单文件在该 commit 的只读来源及内容校验 | 原仓库修改/PR/审阅，登记合入后的指定修订 |
+| 过程 Document | PostgreSQL 的不可变 DocumentRevision；仅含任务关联的需求、详述、讨论等过程文档 | 被选中的过程修订与采纳状态；草稿须显式标记 | Document 命令创建修订，再审阅采纳 |
+| Git 正式文档 | 独立 Git 来源：受管仓库中的文件和固定 commit；可登记 GitSourceRef 元数据 | 白名单文件在该 commit 的只读来源及内容校验 | 原仓库修改/PR/审阅，登记合入后的 repo/path/commit/hash |
 | Wiki Knowledge | 开发仓库外的知识正文、来源、修订和内部依赖 | 它自身维护的判断、反例、适用条件和纠正历史 | 贡献 → 综合维护 → 审阅/发布 |
 
-PostgreSQL 的 Document table 是统一文档目录，允许 native/reference 两种正文归属；Relation table 连接对象和固定修订；KnowledgeRef 只登记外部知识身份与版本。Wiki 内的来源副本是只读材料，不是可回写的第二份需求或规范。公开 HTML 是 Git 文档的派生阅读视图，摄入优先读取 Git 正文及 commit，避免同时把 HTML 当另一份独立证据。
+PostgreSQL 的 Document table 只保存任务关联过程文档的正文与修订；Task↔Document 普通导航链接指向稳定 documentId，任务接受或执行时的依据集合再固定实际使用的 DocumentRevision。Git `docs/` 正式文档不创建 Document 行；Relation/TaskBasis 可将 GitSourceRef 作为独立固定来源引用，KnowledgeRef 只登记外部知识身份与版本。Wiki 内的来源副本是只读材料，不是可回写的第二份需求或规范。公开 HTML 是 Git 文档的派生阅读视图，摄入优先读取 Git 正文及 commit，避免同时把 HTML 当另一份独立证据。
 
 ## 2. 一条可回查的依据链
 
 ```mermaid
 flowchart LR
   subgraph origins["权威输入"]
-    G["Git 规范 G-03<br/>commit A / 文件路径"]:::document
+    G["Git 规范来源<br/>commit A / 文件路径"]:::git_source
     D["需求 DOC-021<br/>已采纳 r1"]:::document
     F["实际使用 E-09<br/>通知到了却无人回看"]:::evidence
   end
@@ -41,6 +41,7 @@ flowchart LR
   R -->|影响查找| T
   T --> V
   classDef document fill:#E5F0FF,stroke:#4270A8,color:#172F4B
+  classDef git_source fill:#DDEAF6,stroke:#4D6F91,color:#203A52
   classDef evidence fill:#E2F4F2,stroke:#297A73,color:#154B47
   classDef knowledge fill:#EFE7FA,stroke:#8056A8,color:#40275D
   classDef task fill:#FFF1D6,stroke:#A86412,color:#402700
@@ -48,7 +49,7 @@ flowchart LR
 
 蓝＝正式约定/需求；青＝可回查材料；紫＝认识；黄＝行动及其复核。此图的边是有作者与依据的关联，不自动证明因果或批准关系。TASK-104 原来按 r1 完成的验收保留；若新判据适用于后续工作，则形成新基线或补充任务。已完成任务不会被后台悄悄改写成“当时按 r2 完成”。
 
-关系定义和方向统一使用[领域合同](contracts.md)：Task `implements` DocumentRevision；Task/DocumentRevision `justified_by` KnowledgeRevision；Review `validates` Delivery；新修订 `supersedes` 旧修订。来源与知识内部的支持/反驳依赖由知识系统维护，PG 关系不再复制一份。可导航的最新对象关系与可复现的执行依据分开：派发/验收只使用固定版本。
+关系定义和方向统一使用[领域合同](contracts.md)：Task 可导航关联 Document，再由 TaskBasis 固定所采用的 DocumentRevision；TaskBasis 也可固定 GitSourceRef。Task/DocumentRevision `justified_by` KnowledgeRevision；Review `validates` Delivery；新修订 `supersedes` 旧修订。来源与知识内部的支持/反驳依赖由知识系统维护，PG 关系不再复制一份。可导航的对象关系与可复现的执行依据分开：派发/验收只使用任务已固定的来源版本。
 
 ## 3. 从材料变化到 Wiki 发布
 
@@ -75,7 +76,7 @@ flowchart TB
 
 ### 来源桥接的最小协议
 
-`SourceBridge` 是 evoLoop 内的用例组合，不新增第二套知识库。读取 PG 的固定业务修订、Git 适配器的固定文件，以及已授权的成果原件；把 `projectId + originObjectId + originRevision + fragment + contentHash + policyVersion` 和来源的采纳/撤回状态传给外置知识空间。传递去重键再包含目标知识空间和转换器版本，允许明确的重处理，不因标题改变重复登记。同一原始固定修订与片段重新读取却得到不同内容 hash 时，先报告来源漂移并复核；不能用新 hash 将它悄悄当成合法新事实。
+`SourceBridge` 是 evoLoop 内的用例组合，不新增第二套知识库。读取 PG 的固定业务/过程文档修订、GitSourceRef 指定的固定文件，以及已授权的成果原件；把来源类型与身份（过程文档为 `projectId + documentId + revisionId`；Git 为 repo/path/commit/hash）、片段、内容 hash、policyVersion 和来源状态传给外置知识空间。过程文档保留采纳/撤回状态，Git 来源保留可达/撤回状态。传递去重键再包含目标知识空间和转换器版本，允许明确的重处理，不因标题改变重复登记。同一原始固定修订与片段重新读取却得到不同内容 hash 时，先报告来源漂移并复核；不能用新 hash 将它悄悄当成合法新事实。
 
 外置来源修订保存内容、原始定位和权限约束；PG 只保存连接所需的投递映射、源引用和处理回执。原内容不可访问时显示不可核对；禁止改从搜索摘要生成“原文”。权限收紧时先禁止后续读取/发布，追踪已发送来源、索引、摘要及导出的处理，未验证清除范围时标明限制。
 
@@ -85,18 +86,18 @@ flowchart TB
 
 每个受管项目登记仓库稳定身份、允许的文档路径、跟踪分支和当前已登记 commit。首次显式登记；后续 webhook 可提示变更，周期比较 commit 补漏。以 Git blob 原文和内容 hash 读取指定修订，不采集未提交工作区、私有目录或自动跟随未知链接。
 
-同一文件的路径移动通过稳定 documentId 的映射变更处理；无法可靠判断重命名则提出待确认映射，不能仅按相似标题合并身份。检测 force push、文件删除、白名单移除与权限变化时保留旧引用和不可访问/已撤回状态，不把旧知识继续标成当前有效。若合法保留旧内容供审计，可在受控材料存储留固定快照；当前权限仍约束历史读取。
+Git 来源身份由 repo/path/commit/hash 固定；路径移动或内容更新时登记新的 GitSourceRef，旧来源引用继续可回查。无法确认新旧路径关系时不强行合并。检测 force push、文件删除、白名单移除与权限变化时保留旧引用和不可访问/已撤回状态，不把旧知识继续标成当前有效。若合法保留旧内容供审计，可在受控材料存储留固定快照；当前权限仍约束历史读取。
 
 Wiki 提出“架构规范应调整”时，先创建文档变更任务并关联理由、受影响路径和原 commit；由原仓库的正常流程修改。合入并登记新 commit 后，才作为新正式来源重新维护知识。生成一段 Wiki 文本不会直接改 Git 规范，未合入 PR 可以作为明确标注的候选来源。
 
-任务关联的需求、详述和技术讨论同样可经[内容整理](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)更新 Git 正式文档。来源工作修订和目标正式 commit 分别保留，用 `incorporated_into` 记录具体采纳范围；它不是原文整体搬迁或两边正文同步。知识查询应区分历史讨论、已采纳工作要求与现行正式约定。正式约定后续改变时，历史工作来源仍可回读，但不能覆盖新规范。
+任务关联的需求、详述和技术讨论同样可经[内容整理](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)更新 Git 正式文档。来源过程 DocumentRevision 和目标 repo/path/commit 分别保留，用 `incorporated_into` 关联 GitSourceRef 并由整理记录说明具体采纳范围；目标不成为 Document 行，也不做原文搬迁或两边正文同步。知识查询应区分历史讨论、已采纳工作要求与现行正式约定。正式约定后续改变时，历史工作来源仍可回读，但不能覆盖新规范。
 
 ## 4. 任务执行时怎样读取
 
 `ContextQuery` 为当前工作返回一份有大小上限、可逐层展开的上下文包：
 
 1. 目标、验收、责任和 Task 固定基线。
-2. 原生需求修订、Git 规范的 repo/path/commit、所引用 Knowledge 修订及可核对校验。
+2. TaskBasis 固定的过程 DocumentRevision、GitSourceRef（repo/path/commit/hash）、所引用 Knowledge 修订及可核对校验。
 3. 与这些旧基线有关的当前变化、重要反例、撤回/争议和待复核结论。
 4. 所需原始材料入口、相关交付及亲用反馈；权限过滤后的缺项与各源读取时间。
 
@@ -106,7 +107,7 @@ Wiki 提出“架构规范应调整”时，先创建文档变更任务并关联
 
 ## 5. 纠正与撤回怎样回来
 
-知识服务查内部来源—知识依赖，PG Relation 查 KnowledgeRef—Document/Task/Delivery 等跨对象关系；两段查询组合成有边界的影响集合。每条影响记录包含触发来源/修订、受影响对象及基线、原因、责任者、处理状态和复核决定。按“触发修订＋受影响基线”去重，重试不反复开同一事项；后续新的纠正是新的事件。
+知识服务查内部来源—知识依赖，PG Relation 查 KnowledgeRef—Document/GitSourceRef/Task/Delivery 等跨对象关系；两段查询组合成有边界的影响集合。每条影响记录包含触发来源/修订、受影响对象及基线、原因、责任者、处理状态和复核决定。按“触发修订＋受影响基线”去重，重试不反复开同一事项；后续新的纠正是新的事件。
 
 - **未执行任务：** 根据影响程度暂缓派发或要求换基线；接受新基线仍有决定记录。
 - **正在执行：** 把变化通知责任 session 并记录是否处理；是否停止由授权和风险判据决定，不因发送成功就当任务已经停下。
@@ -120,6 +121,6 @@ Wiki 提出“架构规范应调整”时，先创建文档变更任务并关联
 
 页面查询、来源 envelope、发布命令及 OpenViking 路由映射由[具体集成方案](wiki-integration.md)细化。它实现本页语义，不新增第二份来源或知识权威。
 
-首个真实切片使用一份原生需求、一份 Git 规范、一条 Task 和一个 Wiki 主题，完成：登记固定来源 → 认知维护 → 任务引用并执行 → 亲用发现问题 → 纠正 → 新需求/知识修订 → 影响复核 → 新 session 使用。记录哪个对象改变、谁批准、依据哪版、回执是否核对。
+首个真实切片使用一份过程需求、一份独立 Git 规范 GitSourceRef、一条 Task 和一个 Wiki 主题，完成：登记固定来源 → 认知维护 → 任务链接过程文档并固定过程修订/GitSourceRef 后执行 → 亲用发现问题 → 纠正 → 新过程文档/知识修订 → 影响复核 → 新 session 使用。记录哪个对象改变、谁批准、依据哪版、回执是否核对。
 
 故障场景至少包含：Git 路径移动与来源删除、已采纳文档出现新草稿、维护完成前重复触发、写 Wiki 成功后回执丢失、来源权限收紧、执行中出现更正、Wiki 不可用时读取旧任务。通过标准是能解释并恢复真实状态、没有悄悄换基线、没有把旧来源当当前决定；不是链接数量或 Wiki 页数增加。

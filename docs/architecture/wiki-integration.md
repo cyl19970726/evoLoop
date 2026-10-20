@@ -4,7 +4,7 @@
 
 ## 1. 一个入口，三个正文权威
 
-`apps/workbench/knowledge` 展示知识点、专题、来源、双链、关系图和待审；所有浏览器读写经过 evoLoop 的 `/api/v1`。API 负责身份、项目范围、能力、固定版本、命令基线与分源状态。PG 是 Task/Document/Relation/运行与维护记录的权威；Git 是既有正式产品及规范文档的正文权威；外置 KnowledgeRepository 是 Wiki 正文、来源、内部依赖与历史的权威。PG 的 KnowledgeRef 只登记外部知识身份与固定修订，不能成为第二份可编辑 Wiki。公开文档站只读 Git 派生视图，飞书仅是协作投影入口。
+`apps/workbench/knowledge` 展示知识点、专题、来源、双链、关系图和待审；所有浏览器读写经过 evoLoop 的 `/api/v1`。API 负责身份、项目范围、能力、固定版本、命令基线与分源状态。PG 是 Task、仅含过程文档的 Document Table、Relation 及运行维护记录的权威；Git 仓库 `docs/` 独立维护产品、架构与规范，文件不进入 Document Table；外置 KnowledgeRepository 是 Wiki 正文、来源、内部依赖与历史的权威。PG 的 KnowledgeRef 只登记外部知识身份与固定修订，不能成为第二份可编辑 Wiki。公开文档站只读 Git 派生视图，飞书仅是协作投影入口。
 
 `KnowledgeRepository` 合同先于 OpenViking 实现。若最终不采用该候选，工作台、Query/Command 及 PG 关系不用改；要替换的是适配器和外置空间内的索引/版本实现。[Wiki 前端模型](wiki-workspace.md)规定页面类型、认识性质、有效状态分开。
 

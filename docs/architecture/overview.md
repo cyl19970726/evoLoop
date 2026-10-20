@@ -68,10 +68,10 @@ flowchart TB
 
 | 数据 | 权威位置 | 其他地方保存什么 |
 | --- | --- | --- |
-| 项目目标、正式产品/架构/开发规范、已采纳的系统约定 | evoLoop 自身文档在本仓库；受管项目的正式文档和代码在各自仓库 | DocumentStore 登记外部文档引用与固定 Git commit；网页是只读构建视图。 |
+| 项目目标、正式产品/架构/开发规范、已采纳的系统约定 | evoLoop 自身文档在本仓库；受管项目的正式文档和代码在各自仓库 | 不进入 Document Table；通过独立 repo/path/commit 来源引用连接任务与知识，网页是只读构建视图。 |
 | 任务需求、优先级、责任、处理状态、交付与复核 | PostgreSQL `TaskStore` | 飞书 Bitable 保存受控协作投影与远端 ID；入站编辑经 core 校验后才改变本体。 |
 | 一次性/周期性日程定义、触发实例与启停 | PostgreSQL `ScheduleStore` | 飞书若提供日程视图，只是投影；每次实际工作关联独立任务。 |
-| evoLoop 原生文档及不可变修订 | PostgreSQL `DocumentStore` | 任务和关系引用固定修订；飞书 Docs 正文接入需另证。 |
+| 过程文档（需求、任务详述、技术讨论）及不可变修订 | PostgreSQL `DocumentStore` / Document Table | 直接 link Task Table，执行依据固定修订；仓库 docs 不属于这张表，飞书 Docs 正文接入需另证。 |
 | 跨 Task／Schedule／Document／Wiki 的有类型关系 | PostgreSQL `RelationStore` | 关系保留两端修订、作者、来源、ACL 与取代链；关系标签不代替证明。 |
 | 原始会话、用户纠正、产物和使用证据 | 原始档案或受控材料存储 | 稳定来源 ID、片段位置、内容校验、采集/事件时间、可见范围；摘要不替代原件。 |
 | 跨来源综合认知、假设、决定、反例、适用范围与修订 | 开发仓库之外的独立 Wiki/知识空间 | PostgreSQL 只存 KnowledgeRef 和跨对象关系；可发布导出是只读快照。 |

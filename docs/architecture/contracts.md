@@ -20,7 +20,7 @@
 | `archive` | 结束/归档任务但保留追溯，不把删除当作默认完成。 |
 | `changes/reconcile` | 主数据变更通过内部提交记录观察；外部 connector 事件只提示远端需回读，水位与周期对账补事件遗漏、乱序和分页期间变化。 |
 
-任务类型可包含缺陷、需求、调查、文档、知识维护和职责调整；创建任务不代表接受实施。状态至少能区分待判断、可做、进行中、待验证、完成、阻塞/暂缓；最终字段与飞书投影列映射须在真实表上定。任务“实现完成”与“效果已验证”是不同结论。重复任务归并时保留原 ID 和关联证据，不丢请求者的独特验收条件。任务引用作为判据的原生文档修订、Git commit 或外置 Wiki 修订时，应固定版本；后续更新触发影响复核，不静默改写已接受任务的依据。
+任务类型可包含缺陷、需求、调查、文档、知识维护和职责调整；创建任务不代表接受实施。状态至少能区分待判断、可做、进行中、待验证、完成、阻塞/暂缓；最终字段与飞书投影列映射须在真实表上定。任务“实现完成”与“效果已验证”是不同结论。重复任务归并时保留原 ID 和关联证据，不丢请求者的独特验收条件。Task 可多对多关联过程 Document，并在任务依据集合中固定所用 DocumentRevision；Git 正式文档是独立 GitSourceRef，可被任务依据固定引用；外置 Wiki 修订同样固定版本。后续更新触发影响复核，不静默改写已接受任务的依据。
 
 业务任务状态、运行操作结果、效果验证状态分别记录并关联。[产品状态图](../product/agent-loop.md)表达主要转换：任务自己的验收含实际使用时，不能缺少使用证据而关闭；纯实现子任务可先完成，关联阶段效果仍待验证。阻塞保留缺项与解阻责任，暂缓保留恢复条件，取消保留原因及已发生副作用；停止请求被接受不等于运行已停止，取消不能清除 `unknown` 对账义务。
 
@@ -36,13 +36,13 @@
 
 ## 2a. DocumentStore 与 RelationStore
 
-文档用途分 `working/formal`：前者是任务或阶段关联的需求、详述、讨论与方案，后者是项目当前采用的产品/架构/规范；用途不等于 `native/reference` 正文存储模式，也不等于草稿/完成状态。工作文档完成后可以保留历史或归档，由其采纳结论更新正式文档。
+`DocumentStore` 只管理可关联任务的过程文档及正文修订，包括需求、任务详述、技术讨论、方案和评审记录；文档完成或归档后仍保留固定历史。仓库 `docs/` 下的产品、架构、接口与开发规范不进入 DocumentStore，而由 Git 独立维护。
 
-`DocumentStore` 登记项目原生文档与外部引用文档，二者的**正文所有权不可混同**。`native` 文档由 evoLoop 在 PostgreSQL 保存正文，`DocumentRevision` 不可变，含作者、创建时间、内容校验、格式、权限与所读基线；更新当前指针须在事务中按预期修订条件提交，旧基线冲突须显式返回。`reference` 文档只保存外部系统、稳定定位符、观察到的修订、权限与摘要或元数据，不把外部正文悄悄复制为本体。既有本仓库和受管项目的 Git 正式产品、架构、开发规范仍以各自 Git 正文及 commit 为权威；DocumentStore 只登记 `ref + commit`，发布 HTML 也是只读视图。原生 Document 是独立资产，不是 Task 的描述大字段；一个文档的接受或更新不自动接受全部关联任务。
+`DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、权限与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务接受或执行时，再由 TaskBasis 固定实际采用的 DocumentRevision。任务引用某需求不意味着其他关联任务自动接受它。Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
-`RelationStore` 保存有方向、有类型的跨对象关系，例如 `justified_by`、`specifies`、`implements`、`validates`、`contradicts`、`supersedes`。关系端点可为 Task、Schedule、原生／引用 Document 修订、KnowledgeRef、EvidenceRef、Delivery 或 Review；至少记录项目、端点固定修订、关系作者、依据来源、观察时间、状态、ACL 和撤回／取代链。关系只表达一项**有来源的主张**，标签本身不证明任务已实现、验收已通过、知识为真或权限可继承。创建、改向或撤回关系须校验两端身份与权限；来源撤回、文档改版和 Wiki 修订触发相关关系与任务的影响复核。PG 可为跨 Task／Doc／Wiki 导航保存 `KnowledgeRef`，但 Wiki 正文、来源与内部知识依赖仍由外置 `KnowledgeRepository` 持有。
+`RelationStore` 保存有方向、有类型的跨对象关系，例如 Task 与 Document 之间只按稳定 ID 导航的 `links_to`，以及 `justified_by`、`specifies`、`implements`、`validates`、`contradicts`、`supersedes`、`incorporated_into`。关系端点可为 Task、Schedule、过程 Document/DocumentRevision、GitSourceRef、KnowledgeRef、EvidenceRef、Delivery 或 Review；导航关系只固定对象身份，作为依据或有来源主张时才附固定修订/来源绑定。关系至少记录项目、关系作者、依据来源、观察时间、状态、ACL 和撤回／取代链。关系只表达一项**有来源的主张**，标签本身不证明任务已实现、验收已通过、知识为真或权限可继承。创建、改向或撤回关系须校验两端身份与权限；来源撤回、文档改版和 Wiki 修订触发相关关系与任务的影响复核。PG 可为跨 Task／过程文档／GitSourceRef／Wiki 导航保存 KnowledgeRef，但 Wiki 正文、来源与内部知识依赖仍由外置 KnowledgeRepository 持有。
 
-`DocumentIncorporation` 关联多份固定来源修订/片段与多份目标正式文档；记录整理理由、Task/Delivery/Review 引用、目标 repo/path/章节、base commit、候选差异与 PR、核实的 merge commit，构建/部署结果另列。候选期只表示拟纳入，核实合入后才记录 `incorporated_into` 的实际目标修订；拒绝、无需更新或部分采纳保留理由和范围。来源与目标的 ID、正文和生命周期分别保留，不把这一关系当 `supersedes` 或文档模式切换。原仓库写入由授权任务完成，`DocumentSource` 不因此获得写权限；本库记录不能与远端 PR/merge/build 组成单个事务，未知结果先查既有请求和提交，不能盲建重复变更。详见[工作文档整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
+`DocumentIncorporation` 关联多份过程 DocumentRevision/片段与多个 Git 正式文档目标位置；记录整理理由、Task/Delivery/Review 引用、目标 repo/path/章节、base commit、候选差异与 PR、核实的 merge commit，构建/部署结果另列。目标是 GitSourceRef/source metadata，不是 Document 行，目标表无须 FK 到 Document。候选期只表示拟纳入，核实合入后才记录 `incorporated_into` 的实际 GitSourceRef/提交；拒绝、无需更新或部分采纳保留理由和范围。来源过程文档与 Git 目标的 ID、正文和生命周期分别保留，不把纳入当 `supersedes`。原仓库写入由授权任务完成，`DocumentSource` 不因此获得写权限；本库记录不能与远端 PR/merge/build 组成单个事务，未知结果先查既有请求和提交，不能盲建重复变更。详见[工作文档整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
 
 ### UnitOfWork：同库原子命令
 
@@ -68,11 +68,11 @@
 
 ## 3a. DocumentSource、SourceBridge 与 ContextQuery
 
-`DocumentSource` 是外部文档读取端口：按已登记仓库、白名单路径及固定 commit 读取原始字节，返回内容校验、权限/可达性与来源状态；观察指定分支变化只产生候选修订，不自动采纳。首个实现为 Git 文档适配器。仓库路径移动须显式维持 documentId 映射；无法确定身份则待复核。正式 HTML 视图不另作独立来源。Git 端口不代替原仓库的修改与审阅流程。
+`DocumentSource` 是 Git 来源读取端口：按仓库稳定身份、白名单路径及固定 commit 读取原始字节，返回独立 `GitSourceRef`、内容校验、权限/可达性与来源状态；观察指定分支变化只产生新的候选来源引用，不自动采纳。Git 路径移动保留旧 GitSourceRef 并登记新 repo/path/commit/hash；无需也不得强制映射到 Document ID。正式 HTML 视图不另作独立来源。Git 端口不代替原仓库的修改与审阅流程。
 
-`SourceBridge` 用例组合 Task/Document 固定修订、DocumentSource 和 EvidenceStore 读取，将选定材料交给外置知识空间。最少关联项目、原对象/修订、片段、内容 hash、来源采纳/撤回状态、权限策略版本、转换器版本和目标空间；据此去重并保留外部 sourceRef/处理回执。权限检查覆盖原件、摘要与目标可见范围。PG 保存传递映射，Wiki 保存来源内容及内部依赖；资料已送达、索引可用、知识已维护分别观察。来源变化触发影响复核，不能因入库成功就改 Task 或需求的接受状态。
+`SourceBridge` 用例组合 Task/过程 Document 固定修订、GitSourceRef、DocumentSource 和 EvidenceStore 读取，将选定材料交给外置知识空间。最少关联项目、来源类型、原对象/修订或 repo/path/commit/hash、片段、内容 hash、过程文档的采纳/撤回状态或 Git 来源的可达/撤回状态、权限策略版本、转换器版本和目标空间；据此去重并保留外部 sourceRef/处理回执。权限检查覆盖原件、摘要与目标可见范围。PG 保存传递映射，Wiki 保存来源内容及内部依赖；资料已送达、索引可用、知识已维护分别观察。来源变化触发影响复核，不能因入库成功就改 Task 或需求的接受状态。
 
-`ContextQuery` 为人或 session 装配有限上下文：Task 固定执行依据、需求修订、Git commit、Knowledge 修订、当前变化/反例、真实使用结果及缺项。返回每项权限、读取时间、修订与校验，区分当前对象导航和历史依据；不得补造无法读取的来源。跨系统没有共同快照事务，精确引用组合不等于全局同时一致。上下文送达只证明传递，使用/采用由后续产物证据判断。
+`ContextQuery` 为人或 session 装配有限上下文：Task 的过程文档导航链接、TaskBasis 固定的过程 DocumentRevision/GitSourceRef（repo/path/commit/hash）/Knowledge 修订、当前变化/反例、真实使用结果及缺项。返回每项权限、读取时间、修订与校验，区分普通导航和历史依据；不得把未固定的 Document 最新版冒充执行基线，也不得补造无法读取的来源。跨系统没有共同快照事务，精确引用组合不等于全局同时一致。上下文送达只证明传递，使用/采用由后续产物证据判断。
 
 Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更新当前任务不改旧 Run 的依据。派发前复核权限、业务接受状态和重要来源/知识有效性，已撤回或待复核依据不得因后台扫描尚未完成而继续无条件使用。无法核对外置修订时报告缺项；跨系统检查后仍可能变化，不能宣称跨系统线性一致。具体表与约束见[存储设计](storage.md)，传递、反向影响和例子见[知识关联](knowledge-flow.md)。
 

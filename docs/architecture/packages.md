@@ -2,7 +2,7 @@
 
 推荐包架构 v0.5 · **主数据与连接器方向已由用户选定，具体实现仍是提案；尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
 
-用户选定 **evoLoop 保存主数据，飞书作为 connector 与协作入口**。PostgreSQL 保存 Task、Schedule、evoLoop 原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态，以及运行 Journal/outbox；Git 中已有正式产品/架构/规范正文仍以 Git 为权威，数据库只登记文档引用和 commit；Wiki 正文、来源、知识历史与内部依赖仍由外置 KnowledgeRepository 持有。首期其余架构提议为 TypeScript `strict`、Node.js 24 LTS、npm workspaces、模块化 `core`、Fastify 本地 API、独立 OpenViking HTTP 服务和自管 Codex App Server stdio。PostgreSQL 拟通过 `pg`（node-postgres）接入，驱动与固定版本仍待首片验证。OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定。本机 Python 证明已在[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)跑通，是研究证据，不决定生产语言。
+用户选定 **evoLoop 保存主数据，飞书作为 connector 与协作入口**。PostgreSQL 保存 Task、Schedule、evoLoop 原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态，以及运行 Journal/outbox；Git 中已有正式产品/架构/规范正文仍以 Git 为权威，必要时以独立 Git 来源引用连接，不纳入 Document Table；Wiki 正文、来源、知识历史与内部依赖仍由外置 KnowledgeRepository 持有。首期其余架构提议为 TypeScript `strict`、Node.js 24 LTS、npm workspaces、模块化 `core`、Fastify 本地 API、独立 OpenViking HTTP 服务和自管 Codex App Server stdio。PostgreSQL 拟通过 `pg`（node-postgres）接入，驱动与固定版本仍待首片验证。OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定。本机 Python 证明已在[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)跑通，是研究证据，不决定生产语言。
 
 ## 源码依赖
 
@@ -92,7 +92,7 @@ flowchart LR
   classDef external fill:#E7F2E9,stroke:#3C7654,color:#183C28
 ```
 
-图例：黄＝人/入口与飞书协作投影；紫＝evoLoop 进程与规则；蓝＝适配器/连接器；青＝各自范围内的主数据（PostgreSQL）或知识权威（外置 Wiki）；绿＝外部执行运行时。Git 正式文档仍由 Git 持正文，PG 只存其 ref+commit；evoLoop 原生需求文档可在 PG 的版本表持正文。源码 npm 包、进程、业务 Session/Role、上游仓库是不同边界。
+图例：黄＝人/入口与飞书协作投影；紫＝evoLoop 进程与规则；蓝＝适配器/连接器；青＝各自范围内的主数据（PostgreSQL）或知识权威（外置 Wiki）；绿＝外部执行运行时。Git 正式文档仍由 Git 持正文，PG 可记录独立来源 ref+commit，但不把仓库文件放进 Document Table；该表只管理与 Task 直接关联的过程文档及修订。源码 npm 包、进程、业务 Session/Role、上游仓库是不同边界。
 
 **统一写路径。** 工作台、Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与身份 → `core` 读取 PG 当前版本并检查授权、接受/文档审核状态与冲突 → PG 同一事务提交 Task/Document/Relation 变更及出站 outbox → connector 投影到飞书并回读同步结果。飞书原生编辑是受控入口：事件提示回读，connector 将变化映射为带可核验行为者与基线的 command，仍经 `core` 审核后写 PG；身份或基线不足、字段冲突时停下并显式复核，不采用最后写入覆盖。Task、文档审核、运行、同步、实际效果状态分别维护；投影成功不等于交付或效果完成。
 
@@ -104,7 +104,7 @@ Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位�
 
 前端组件与 Query/Command 读写分工见[前端架构](frontend.md)。`core/knowledge` 中的 SourceBridge 组合各来源端口；`core/queries` 装配有限上下文与页面读取模型，后端通过同一授权层供工作台和 Agent 使用。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
 
-工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记固定来源、目标基线、差异/PR 和核实的合入结果，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
+工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记过程文档来源、仓库目标基线、差异/PR 和核实的合入结果；目标是独立 Git 来源而非 Document 行，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
 
 ## 切片与验证
 
