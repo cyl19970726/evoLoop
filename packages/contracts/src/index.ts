@@ -1,0 +1,83 @@
+import { z } from "zod";
+
+export const idSchema = z.uuid();
+const text = z.string().trim().min(1).max(4000);
+const title = z.string().trim().min(1).max(240);
+const version = z.number().int().positive();
+const common = { projectId: idSchema, operationId: idSchema };
+export const documentBasisSchema = z.strictObject({ documentId: idSchema, revisionId: idSchema });
+export type DocumentBasis = z.infer<typeof documentBasisSchema>;
+const basisSchema = z.array(documentBasisSchema).min(1).max(20);
+// Only the implemented command surface is exported; a missing integration is not a no-op command.
+export const commandSchema = z.discriminatedUnion("type", [
+  z.strictObject({ ...common, type: z.literal("project.create"), title }),
+  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536) }),
+  z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text }),
+  z.strictObject({ ...common, type: z.literal("document.adopt"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
+  z.strictObject({ ...common, type: z.literal("task.propose"), taskId: idSchema, title, goal: text, acceptance: text, owner: text, documentIds: z.array(idSchema).max(20) }),
+  z.strictObject({ ...common, type: z.literal("task.accept"), taskId: idSchema, expectedVersion: version, basis: basisSchema, reason: text }),
+  z.strictObject({ ...common, type: z.literal("task.reviewBasis"), taskId: idSchema, expectedVersion: version, impactId: idSchema, decision: z.enum(["adopt", "retain"]), reason: text, acceptance: text.optional() }),
+]);
+export type Command = z.infer<typeof commandSchema>;
+export type Permission = "read" | "write" | "review";
+export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[] }
+export interface Project { id: string; title: string; createdAt: string }
+export interface Document {
+  projectId: string; id: string; title: string; version: number;
+  currentRevisionId: string; adoptedRevisionId: string | null;
+}
+export interface DocumentRevision {
+  projectId: string; documentId: string; id: string; body: string; format: "markdown";
+  contentHash: string; author: string; createdAt: string; previousRevisionId: string | null; reason: string;
+}
+export interface DocumentDecision {
+  projectId: string; id: string; documentId: string; revisionId: string;
+  actorId: string; reason: string; createdAt: string;
+}
+export type TaskState = "proposed" | "ready" | "active" | "review" | "done" | "blocked" | "deferred" | "cancelled";
+export interface Task {
+  projectId: string; id: string; version: number; currentRevisionId: string;
+  title: string; goal: string; acceptance: string; owner: string; state: TaskState;
+}
+export interface TaskRevision {
+  projectId: string; taskId: string; id: string; version: number;
+  title: string; goal: string; acceptance: string; owner: string; state: TaskState;
+  basisSetId: string | null; actorId: string; reason: string; createdAt: string;
+}
+export interface BasisSet {
+  projectId: string; taskId: string; taskRevisionId: string; id: string;
+  members: DocumentBasis[]; sealed: true;
+}
+export interface TaskDocumentLink {
+  projectId: string; id: string; taskId: string; documentId: string; actorId: string; createdAt: string;
+}
+export interface Impact {
+  projectId: string; id: string; taskId: string; taskRevisionId: string;
+  documentId: string; fromRevisionId: string; toRevisionId: string;
+  state: "pending" | "resolved" | "superseded"; decisionId: string | null; createdAt: string;
+}
+export interface BasisDecision {
+  projectId: string; id: string; impactId: string; taskId: string;
+  previousTaskRevisionId: string; nextTaskRevisionId: string;
+  decision: "adopt" | "retain"; reason: string; actorId: string; createdAt: string;
+}
+export interface AppliedResult {
+  status: "applied"; operationId: string; entityId: string; version?: number;
+  revisionId?: string; decisionId?: string; impactIds?: string[];
+}
+export interface RejectedResult {
+  status: "rejected"; operationId: string; code: string; message: string; currentVersion?: number;
+}
+export type CommandResult = AppliedResult | RejectedResult;
+export interface Operation {
+  projectId: string; id: string; actorId: string; commandHash: string;
+  commandType: Command["type"]; result: CommandResult; createdAt: string;
+}
+export interface OutboxEvent {
+  projectId: string; id: string; operationId: string; effectKey: string;
+  kind: string; entityId: string; version: number; createdAt: string;
+}
+export interface Page<T> { items: T[]; nextCursor: string | null }
+export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[] }
+export interface DocumentDetail { document: Document; current: DocumentRevision; adopted: DocumentRevision | null }
+export const capabilities = { processMarkdown: true, basisReview: true, git: false, html: false, feishu: false, wiki: false, runtime: false } as const;

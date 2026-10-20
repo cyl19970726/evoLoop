@@ -1,0 +1,14 @@
+{
+  "name": "@evoloop/adapter-postgres",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "dependencies": {
+    "@evoloop/contracts": "0.1.0",
+    "pg": "8.23.1",
+    "node-pg-migrate": "9.0.0"
+  },
+  "devDependencies": { "@types/pg": "8.15.6" },
+  "scripts": { "build": "tsc -b", "test": "node --import tsx --test test/*.test.ts" }
+}

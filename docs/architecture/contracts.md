@@ -1,12 +1,12 @@
 # evoLoop 领域合同
 
-> 状态：拟议最小语义合同，2026-10-20；接口尚未实现。已确定 PostgreSQL 保存 evoLoop 主数据，飞书作为 connector 和协作入口；具体结构、API 与同步行为仍待验证。整体位置见[架构总览](overview.md)，数据所有权见[项目数据架构](project-data.md)，面向用户的行为见[产品定义](../product/definition.md)，落地方式见[开发规范](../development/standards.md)。
+> 状态：目标语义合同，2026-10-20；S1a 已实现过程 Markdown、proposed/ready 任务、固定依据与复核子集，具体字段以 `packages/contracts` 为准，其余合同待实现。已确定 PostgreSQL 保存 evoLoop 主数据，飞书作为 connector 和协作入口；具体结构、API 与同步行为仍待验证。整体位置见[架构总览](overview.md)，数据所有权见[项目数据架构](project-data.md)，面向用户的行为见[产品定义](../product/definition.md)，落地方式见[开发规范](../development/standards.md)。
 
 ## 对象如何配合
 
 一项工作先有观察或要求，再有是否接受的判断。`TaskProposal` 保存提议和原始判据，`ReviewDecision` 说明接受、补证、暂缓或不接受；`TaskStore` 管理任务的目标、责任和业务状态，但任务创建不代表已经接受执行。`ScheduleStore` 可按约定时点提出或创建可追溯的工作，触发本身不越过任务接受规则。飞书可以展示和接收受控编辑，任务本体仍由 PostgreSQL 维护。
 
-任务的详细要求与讨论可在过程 `Document` 中修订；仓库正式 `docs/` 由 Git 独立维护；Wiki 在仓库外维护可修订的认识及其来源。Task 与 Document 的普通链接只帮助导航，不能说明任务已经接受哪版内容。接受和派发时，`TaskRevision` 与 `TaskBasis` 固定目标、判据及实际使用的 DocumentRevision、GitSourceRef 或 Knowledge 修订；后续来源更新只触发影响复核，不重写旧 Run 的依据。
+任务的详细要求与讨论可在过程 `Document` 中修订；仓库正式 `docs/` 由 Git 独立维护；Wiki 在仓库外维护可修订的认识及其来源。Task 与 Document 的普通链接只帮助导航，不能说明任务已经接受哪版内容。接受时同事务形成 TaskRevision 与完整、封存的 BasisSet，固定目标、判据及实际使用的 DocumentRevision、GitSourceRef 或 Knowledge 修订；封存后不改成员，变更依据产生新任务修订与集合。派发只能使用已封存集合；后续来源更新只触发影响复核，不重写旧 Run 的依据。
 
 `Coordinator` 依据已接受任务和 `RoleRegistry` 选择责任者，再由 `SessionRuntime` 承接。`Delivery` 记录产物和检查，约定的验收者判断任务是否满足判据；`StageReview` 另外观察成果是否被目标消费者实际使用、效果与偏差，并决定继续、补证或提出新工作。发送通知、Run 结束、任务交付、正式文档合入、Wiki 发布及实际使用各有自己的证据，不能互相代替。
 
@@ -84,7 +84,7 @@ HTML 原件保存为数据，不直接执行。默认阅读策略是静态预览
 
 原始修订与文本提取结果分开：从 HTML 提取的纯文本只供检索索引或 Wiki 来源，不替代原件，也不能执行报告 JS。提取记录输入源 hash、extractor 版本、状态及缺失资源/内容清单；源 hash 改变时旧提取失效，提取失败或不完整时如实返回缺项。
 
-`RelationStore` 保存有方向、有类型的跨对象关系，例如 Task 与 Document 之间只按稳定 ID 导航的 `links_to`，以及 `justified_by`、`specifies`、`implements`、`validates`、`contradicts`、`supersedes`、`incorporated_into`。关系端点可为 Task、Schedule、过程 Document/DocumentRevision、GitSourceRef、KnowledgeRef、EvidenceRef、Delivery 或 Review；导航关系只固定对象身份，作为依据或有来源主张时才附固定修订/来源绑定。关系至少记录项目、关系作者、依据来源、观察时间、状态、ACL 和撤回／取代链。关系只表达一项**有来源的主张**，标签本身不证明任务已实现、验收已通过、知识为真或权限可继承。创建、改向或撤回关系须校验两端身份与权限；来源撤回、文档改版和 Wiki 修订触发相关关系与任务的影响复核。PG 可为跨 Task／过程文档／GitSourceRef／Wiki 导航保存 KnowledgeRef，但 Wiki 正文、来源与内部知识依赖仍由外置 KnowledgeRepository 持有。
+`RelationStore` 保存有方向、有类型的跨对象关系，例如 Task 与 Document 之间只按稳定 ID 导航的 `links_to`，以及 `justified_by`、`specifies`、`implements`、`validates`、`contradicts`、`supersedes`、`incorporated_into`。关系端点可为 Task、Schedule、过程 Document/DocumentRevision、GitSourceRef、KnowledgeRef、EvidenceRef、Delivery 或 Review；导航关系只固定对象身份，作为依据或有来源主张时才附固定修订/来源绑定。关系至少记录项目、关系作者、依据来源、观察时间、状态、ACL 和撤回／取代链。关系只表达一项**有来源的主张**，标签本身不证明任务已实现、验收已通过、知识为真或权限可继承。创建或撤回关系须校验两端身份与权限；端点、方向或类型需改变时，失效旧关系并以新 relation ID 创建新关系，不原位改掉旧版本绑定的含义。来源撤回、文档改版和 Wiki 修订触发相关关系与任务的影响复核。PG 可为跨 Task／过程文档／GitSourceRef／Wiki 导航保存 KnowledgeRef，但 Wiki 正文、来源与内部知识依赖仍由外置 KnowledgeRepository 持有。
 
 `DocumentIncorporation` 关联多份过程 DocumentRevision/片段与多个 Git 正式文档目标位置；记录整理理由、Task/Delivery/Review 引用、目标 repo/path/章节、base commit、候选差异与 PR、核实的 merge commit，构建/部署结果另列。目标是 GitSourceRef/source metadata，不是 Document 行，目标表无须 FK 到 Document。
 
@@ -143,13 +143,13 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 ## 3b. 工作台 Query / Command 合同
 
-工作台、CLI、Agent 工具和 connector 共用领域命令。QueryService 只装配已授权的对象和关系，返回固定修订、当前版本、分源状态与缺项，不把搜索摘要当权威正文。Command 包含 operationId、行为者、项目、预期版本和变更意图；权限、状态和基线由服务端 core 在提交时核验。同一 operationId 的命令摘要不一致则拒绝。
+工作台、CLI、Agent 工具和 connector 共用领域命令。QueryService 只装配已授权的对象和关系，返回固定修订、当前版本、分源状态与缺项，不把搜索摘要当权威正文。Command 包含 operationId、行为者、项目、预期版本和变更意图；权限、状态和基线由服务端 core 在提交时核验。Journal 保存这些字段的规范化命令摘要；同一 operationId 的摘要不一致则拒绝，一致时重新核当前授权后回读原结果，不以当前较新对象版本重新执行旧命令。
 
 浏览器保存新草稿不自动采纳它；已采纳的版本指针由显式决定和条件更新改变。发生冲突保留输入并返回可复核的当前版本；结果未知按 operationId 查询，而不是换 ID 重发。UI 分别呈现业务、运行、同步、知识和效果状态。刷新提示只要求回读，不能直接推进状态。前端结构与范围见[前端架构](frontend.md)。
 
 ### UnitOfWork：同库原子命令
 
-`UnitOfWork.run` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口。core 在这个作用域内重验对象版本、当前权限和采纳状态，再一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
+`UnitOfWork.run` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口。core 先核 operation ID/摘要，再在这个作用域内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
 
 操作 ID 与命令摘要一起去重，同一 ID 带不同命令必须拒绝；提交结果未知时按该 ID 查询同库事务结果。首片验证最后一步失败时全部回滚、提交成功但回包丢失后恢复不重复创建，以及旧基线更新被拒绝。该合同仍待实现，数据库选型本身不是测试通过证据。
 
@@ -211,7 +211,7 @@ PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobS
 
 `Connector` 把内部对象投影到外部协作系统，并把外部允许的编辑转为内部 command；它不改变本体的权威。`ExternalBinding` 至少保存内部对象 ID／修订、外部平台和远端 ID、字段与身份映射、同步方向、最近已确认的双方基线、操作 ID、同步状态、冲突与解除状态。一次外部删除、失联或重建不删除 PostgreSQL 本体；按配置修复投影、暂停或解除绑定，保留历史与人工可核依据。
 
-飞书第一切片仅承诺 Bitable 的**任务投影**。出站：主数据变更与 outbox 意图可在同一 PostgreSQL 事务提交；worker 写远端后回读确认并推进同步状态。PG 提交不等于飞书已更新，外部请求超时仍可能已经生效，按绑定与操作证据对账，不能盲重试。入站：事件只作提示，回读真实远端记录，将受支持字段的变更连同外部身份、远端基线送入 core；core 校验权限、当前内部修订和合法状态转换，冲突保留待决，不使用“最近写入者赢”。来源标记、操作 ID 与双方基线用于防回环；分页、乱序和漏事件由水位与周期对账补齐。飞书 Docs 正文若要接入，是另一种文档 connector 和 API 验证，不可从 Bitable 任务投影推断已有正文双向同步。
+飞书第一切片仅承诺 Bitable 的**任务投影**。出站：主数据变更与 outbox 意图可在同一 PostgreSQL 事务提交；worker 发出前重验当前对象授权、目标可见范围及绑定状态，失效意图停发并留痕；写远端后回读确认并推进同步状态。首次创建投影前要验证可在远端保存并查询稳定内部对象/操作标记；创建成功却丢回包且尚无 ExternalBinding 时，须用该标记定位已有记录，不能因 binding 为空就重建。若远端无法可靠定位，保留 `unknown` 并暂停自动重试。PG 提交不等于飞书已更新，外部请求超时仍可能已经生效，按绑定与操作证据对账。入站：事件只作提示，回读真实远端记录，将受支持字段的变更连同外部身份、远端基线送入 core；core 校验权限、当前内部修订和合法状态转换，冲突保留待决，不使用“最近写入者赢”。来源标记、操作 ID 与双方基线用于防回环；分页、乱序和漏事件由水位与周期对账补齐。飞书 Docs 正文若要接入，是另一种文档 connector 和 API 验证，不可从 Bitable 任务投影推断已有正文双向同步。
 
 `Sync` 状态与 Task、Run、Review 状态独立；投影失败不回滚已提交的任务本体，也不默认阻断已授权运行。外部协作本身属于验收判据时，任务需明确要求相应远端可见性与回读证据。同步冲突、解除绑定、远端撤回和权限变化都写 Journal 供对账；不得把飞书当第二个可直接修改的任务权威。
 
@@ -219,4 +219,4 @@ PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobS
 
 第一条端到端试点至少贯穿：来源入库 → 两个 session 的相反解释 → Wiki 维护修订 → PostgreSQL 任务引用固定修订并执行 → 飞书投影与入站协作对账 → 交付后的实际亲用 → 依据效果形成下一任务/职责试行。随后演练文档旧基线写、同基线 Wiki 写、任务出站成功但丢响应、飞书入站冲突与投影删除、来源撤回、协调者重启、知识恢复及新 session 独立消费。每项报告要分开记录“原生能力、官方 Skill/模型行为、项目适配、人工操作、尚未观察”。
 
-当前没有证据可承诺飞书事件完整投递、跨平台恰好一次执行、外部投影立即一致、OpenViking 0.5.0 安全多写者发布、源撤回自动修正全部页、可靠通知送达或 Wiki 比直接材料更高效。PostgreSQL 内部事务与条件更新还没有实现验证；不能把拟议合同描述为已运行保证。任何实现只能在验证后的边界内向上暴露能力；升级后重新跑相应案例。更细的测试和代码约定见[开发规范](../development/standards.md)。
+当前没有证据可承诺飞书事件完整投递、跨平台恰好一次执行、外部投影立即一致、OpenViking 0.5.0 安全多写者发布、源撤回自动修正全部页、可靠通知送达或 Wiki 比直接材料更高效。S1a 已验证 PG 内部事务、同基线竞争与固定依据；范围见[实测报告](../research/design-review-20261020.md)，不能将其外推到未接入的合同。任何实现只能在验证后的边界内向上暴露能力；升级后重新跑相应案例。更细的测试和代码约定见[开发规范](../development/standards.md)。

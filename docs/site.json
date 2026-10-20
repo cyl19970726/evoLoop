@@ -296,6 +296,16 @@
       "path": "docs/research/task-backends-20261018.md",
       "title": "任务表后端调查",
       "group": "研究 · 候选探索"
+    },
+    {
+      "path": "docs/development/local-run.md",
+      "title": "运行本机首片",
+      "group": "开发与维护"
+    },
+    {
+      "path": "docs/research/design-review-20261020.md",
+      "title": "多角度设计审阅与首片实测",
+      "group": "研究 · 综合判断"
     }
   ]
 }

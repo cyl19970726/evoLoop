@@ -1,19 +1,37 @@
 {
-  "name": "evoloop-docs",
+  "name": "evoloop",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24 <25"
   },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "docs:check": "node scripts/docs/cli.js check",
     "docs:build": "node scripts/docs/cli.js build",
-    "test": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
+    "test": "npm run test:docs && npm run test:unit",
+    "test:docs": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
+    "test:unit": "npm run build:packages && node --import tsx --test packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 packages/adapter-postgres/test/*.test.ts tests/integration/*.test.ts",
+    "build:packages": "tsc -b packages/contracts packages/core packages/adapter-postgres apps/coordinator apps/cli",
+    "build": "npm run build:packages && npm run build --workspace @evoloop/workbench",
+    "typecheck": "npm run build:packages && npm run typecheck --workspace @evoloop/workbench",
+    "start": "node apps/coordinator/dist/main.js",
+    "cli": "node apps/cli/dist/main.js",
+    "db:migrate": "node apps/coordinator/dist/migrate.js",
     "architecture:build": "node scripts/architecture-map/build.mjs"
   },
   "dependencies": {
     "esbuild": "0.28.2",
     "markdown-it": "15.0.3",
     "mermaid": "12.2.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "tsx": "4.23.15",
+    "@types/node": "^24.0.0"
   }
 }

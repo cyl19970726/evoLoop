@@ -4,6 +4,10 @@
 
 研究报告是有日期、范围和依据的记录。当前正式约定仍由[产品定义](../product/definition.md)、[架构](../architecture/overview.md)、[开发规范](../development/standards.md)与[决定记录](../decisions.md)维护；持续认知 Wiki 和原始会话仍在开发仓库外。
 
+## 设计与实际实现
+
+[多角度设计审阅与首片实测](design-review-20261020.md)记录产品、数据恢复、前端知识和独立代码审查的问题，及 S1a 真实 PostgreSQL/API/浏览器范围。
+
 ## 产品文档与使用
 
 | 研究 | 回答的问题 | 证据与状态 |
