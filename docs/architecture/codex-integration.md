@@ -2,15 +2,13 @@
 
 > 状态：2026-10-20 **生产接入设计，尚未实现**。本页把[SessionRuntime 领域合同](contracts.md)映射到 Codex App Server 候选。协议证据、固定版本和未运行项目见[调查报告](../research/codex-app-server-20261019.md)；目标与责任仍以[产品定义](../product/definition.md)和[架构总览](overview.md)为准。
 
-后续[独立草稿 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)已有自管线程创建、续接、已知 Turn ID 恢复与认知接收的隔离实测；实验代码未合并当前分支，也未连接真实 Task/Document 主数据、飞书 connector 或生产 Wiki。本文流程属于待实现合同。
-
 ## 位置与权威
 
 Codex App Server 是对话执行边界，不是 evoLoop 任务数据库、知识 Wiki 或调度器。第一切片由 evoLoop 启动并管理一个本地 stdio 子进程，按 `initialize`／`initialized` 握手，与其自己创建的 Thread 通信。每个 Thread 包含多个 Turn；Item 和事件说明过程与运行结果。适配器保存外部 ID 与本地对账检查点，不能用 Codex 的“Turn 已完成”替代 PostgreSQL 任务验收。文档说明的 `thread.sessionId` 是 Codex 会话树根；项目的 `RoleId` 和承载 `SessionId` 另立稳定 ID。
 
 人类日常讨论可以继续在 Codex Desktop 中的分工／认知聊天发生。初期给这些聊天提供项目内的窄 CLI／MCP 工具，让人和 Agent 明确读取任务与知识、提交有来源的观察／决定／任务提议；CLI／MCP 变更操作先进入统一协调服务，由 core 核对身份、授权、状态和基线，再调用 TaskStore／KnowledgeRepository；工具不得自行实例化适配器直写。飞书原生人工编辑是 connector 的显式入口，受支持字段经回读、身份／基线／状态校验后成为 core command；出站由 outbox 投影并回读确认。自动承接任务的 worker 则使用 evoLoop 管理的 App Server Thread。两种宿主以任务 ID、知识修订和交接说明显式衔接；同一 Role 可在不同宿主有先后承载实例，却不能靠映射复制桌面聊天历史或推断其运行状态。这样无需先造第二个聊天前端，也不会让 Desktop 成为第二个任务或知识权威。桌面聊天的自动唤醒、sidebar 注册、状态监听与统一控制留给独立的宿主适配验证。
 
-自动认知回看和分工检查必须绑定已登记、可派发的 App Server 承载实例。若某 Role 只有 Desktop 实例且没有可用自动入口，接续任务保留“待承接”，可在人类下次打开该会话时领取，不能宣称已自动完成闭环。为同一 Role 增设自动工作实例时，工作说明区分“后台证据准备/已授权回看”和“人类日常讨论/目标取舍”，每个任务有一个当前责任实例；重大结论更新仍走同一知识维护与任务接受入口。日常讨论产生的新决定有明确修订，受影响的自动任务重新核对，不能两端各自覆盖当前方向。
+首期拟将自动认知回看和分工检查绑定已登记、可派发的自管 App Server 承载实例；桌面宿主桥接作为另一路能力单独登记和验证，不能默认提供给独立 coordinator。若某 Role 只有 Desktop 实例且没有可用自动入口，接续任务保留“待承接”，可在人类下次打开该会话时领取，不能宣称已自动完成闭环。为同一 Role 增设自动工作实例时，工作说明区分“后台证据准备/已授权回看”和“人类日常讨论/目标取舍”，每个任务有一个当前责任实例；重大结论更新仍走同一知识维护与任务接受入口。日常讨论产生的新决定有明确修订，受影响的自动任务重新核对，不能两端各自覆盖当前方向。
 
 ```mermaid
 %%{init: {"sequence":{"mirrorActors":false,"messageMargin":30}}}%%
@@ -77,20 +75,6 @@ sequenceDiagram
 
 图例：人类＝目标与使用；飞书＝协作投影；PostgreSQL＝任务／文档／关系主数据；协调层＝派发与定时恢复；Codex＝运行事件；Wiki＝有来源的认识。图中 `turn/completed` 到 PostgreSQL“交付待核”之间保留任务约定的责任者核验，不自动判任务完成。图表达**拟议流**，没有端到端运行记录。
 
-## 端口合同（拟议）
-
-| evoLoop 能力（跨运行时） | Codex 适配器内部方法与观察 | 项目侧必须保存／判断 |
-| --- | --- | --- |
-| `create(spec)` | `thread/start`；接 `thread/started`，保存返回 `thread.id`、`thread.sessionId`、`instructionSources` | `RoleId`、项目、任务、实例目标、输入修订、权限、交接／退出条件；仅实际回执后标“已建”。原生 ID 放在适配器的 `nativeIds`。 |
-| `resume(sessionId)` | 从映射取 `threadId`，`thread/resume(excludeTurns: true)` | 不因续窗或恢复生成新 Role；检查宿主、权限和已知在途 Turn。 |
-| `inspect(sessionId)` | `thread/read`、分页 `thread/turns/list` 与 `thread/items/list` | 授权读范围、历史锚点、去重 ID；若后端不支持分页或历史不可达，返回 `unsupported`／`unknown`。 |
-| `run(sessionId, taskId, brief, operationId)` | `turn/start` 返回初始 `turn.id`；通知 `item/*`、`turn/completed` | 派发意图与唯一操作 ID、任务和知识基线、请求 ID／时间、返回的 Turn ID、实际终态；重复请求无强幂等保证。 |
-| 运行中修正（Codex 扩展） | `turn/steer(expectedTurnId)` | 仅针对已确认仍进行的 Turn；新任务走 `turn/start`。该能力是宿主可选扩展，不强制所有运行时实现。 |
-| `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
-| `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
-
-本机 `codex-cli 0.154.0` 的 v2 schema 显示：`TurnStartParams` 必需 `threadId` 和 `input`，`TurnSteerParams` 必需 `threadId`、`expectedTurnId`、`input`，`TurnInterruptParams` 必需 `threadId` 与 `turnId`。`thread/start` 的 `cwd`、`model`、`sandbox`、`approvalPolicy` 可选；选择时遵守项目授权与运行环境，而不是用固定高权限配置求方便。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是实现时的外部合同；每次 CLI 升级重生 schema 并检查实验字段门控。
-
 ## 任务、职责与定时触发
 
 一条 PostgreSQL Task 可经历多个 Codex Turn、换 Thread 接续，甚至由多个业务 session 分工；一条 Thread 也可处理多个相关 Turn。关系通过 `taskId`、`roleId`、项目 `sessionId`、原生 `threadId`／`turnId`、操作 ID 和有效时间段串联，不能把任一外部 ID 当另一层的主键。新持续 Role 需要缺口证据、试行与回看；`thread/start` 和 `thread/fork` 只创建运行实例／历史分支。
@@ -105,7 +89,34 @@ sequenceDiagram
 
 断线或超时后按 `operationId` 回读 PostgreSQL Journal、Task 与 outbox → 对已知 `threadId` 用 `thread/read`／分页历史定位 Turn／Item → 将证据落到操作状态。能证实效果已发生则续跟踪；能证实未发生才考虑重发；没有足够 ID 或证据则保持 `unknown`，不盲重试。App Server 的请求 ID 仅用于连接上的请求／响应匹配；本机 schema 中可选的 `clientUserMessageId` 未经验证为跨重试的去重机制。重启先处理未知派发和待验收成果，再领取新任务。通知无已验证全局重放游标；持久历史分页与 PostgreSQL 本体对账是恢复依据；飞书绑定按需另行对账。
 
-第一版只管理该适配器自己创建、登记的 Thread。隔离 PR #2 已观察到独立 App Server 可读桌面线程元数据、桌面可读新建线程历史；UI 同步、自动控制、跨进程审批及多写行为仍**未验证**。`thread/list` 提供发现能力，但不授权扫描或接管用户全部历史。部署形态从本地 stdio 改为远程、需要修改账号认证或使用实验 API 时，先做版本固定、权限与协议验证，再扩大承诺。
+第一版只管理该适配器自己创建、登记的 Thread。本页固定实验已观察到独立 App Server 可读桌面线程元数据、桌面可读新建线程历史及一次宿主通知的真实消费；UI 同步、自动控制、跨进程审批及多写行为仍**未验证**。`thread/list` 提供发现能力，但不授权扫描或接管用户全部历史。部署形态从本地 stdio 改为远程、需要修改账号认证或使用实验 API 时，先做版本固定、权限与协议验证，再扩大承诺。
+
+## 端口合同（拟议）
+
+| evoLoop 能力（跨运行时） | Codex 适配器内部方法与观察 | 项目侧必须保存／判断 |
+| --- | --- | --- |
+| `create(spec)` | `thread/start`；接 `thread/started`，保存返回 `thread.id`、`thread.sessionId`、`instructionSources` | `RoleId`、项目、任务、实例目标、输入修订、权限、交接／退出条件；仅实际回执后标“已建”。原生 ID 放在适配器的 `nativeIds`。 |
+| `resume(sessionId)` | 从映射取 `threadId`，`thread/resume(excludeTurns: true)` | 不因续窗或恢复生成新 Role；检查宿主、权限和已知在途 Turn。 |
+| `inspect(sessionId)` | `thread/read`、分页 `thread/turns/list` 与 `thread/items/list` | 授权读范围、历史锚点、去重 ID；若后端不支持分页或历史不可达，返回 `unsupported`／`unknown`。 |
+| `run(sessionId, taskId, brief, operationId)` | `turn/start` 返回初始 `turn.id`；通知 `item/*`、`turn/completed` | 派发意图与唯一操作 ID、任务和知识基线、请求 ID／时间、返回的 Turn ID、实际终态；重复请求无强幂等保证。 |
+| 运行中修正（Codex 扩展） | `turn/steer(expectedTurnId)` | 仅针对已确认仍进行的 Turn；新任务走 `turn/start`。该能力是宿主可选扩展，不强制所有运行时实现。 |
+| `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
+| `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
+
+本机 `codex-cli 0.154.0` 的 v2 schema 显示：`TurnStartParams` 必需 `threadId` 和 `input`，`TurnSteerParams` 必需 `threadId`、`expectedTurnId`、`input`，`TurnInterruptParams` 必需 `threadId` 与 `turnId`。`thread/start` 的 `cwd`、`model`、`sandbox`、`approvalPolicy` 可选；选择时遵守项目授权与运行环境，而不是用固定高权限配置求方便。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是实现时的外部合同；每次 CLI 升级重生 schema 并检查实验字段门控。
+
+## 隔离实测与生产能力分开
+
+2026-10-20 核对的[独立草稿 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)仍未合并；证据固定到 [`9c095fce` 的实测报告](https://github.com/cyl19970726/evoLoop/blob/9c095fce1eee68b3fbd87bfdbd053a0ca58dc195/docs/research/codex-app-server-proof-20261019.md)。它补充了首次调查仅握手的范围，本轮没有重跑这些实验。实验代码未合并当前 main 基线 `9fdaeb80`，也未连接真实 Task/Document 主数据、飞书 connector 或生产 Wiki。
+
+| 实际观察（CLI 0.154.0／本机隔离夹具） | 可据此采用的设计依据 | 仍未证明 |
+| --- | --- | --- |
+| 自管线程创建、两轮执行、重启后分页历史与第三轮续做；独立认知线程核算产物 | 按明确 Thread/Turn ID 保存映射并对账；交付后以可检查产物核消费 | 真实业务主数据、生产 SessionRuntime、长期无人值守和认知收益 |
+| 忽略已收到完成事件后，以已知 Turn ID 修复本地状态；收据确认前重连后抑制重复派发 | 本地检查点可能落后于历史；回读与收据是恢复依据 | 网络断线漏事件、没有 Turn ID 的派发回执丢失、在途进程崩溃、跨驱动去重 |
+| 独立协议读授权桌面线程元数据，桌面宿主读自建线程历史 | 两端有受限持久历史可见性；须明确 ID 和权限范围 | Desktop 实时状态、sidebar/UI 同步、接管既有聊天、双写和跨进程审批 |
+| 一次桌面宿主通知后，接收会话实际读取、重算并给出限定收据 | 可在经授权且宿主提供工具时验证桌面消费 | 独立 daemon 自带同一消息入口、持续监听/唤醒或可靠投递保证 |
+
+生产流程和上方流程图仍是待实现合同；研究中的本地 outbox 与夹具不等于 PostgreSQL 生产持久化。
 
 ## 进入实现的切片与验收
 

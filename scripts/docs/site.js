@@ -9,6 +9,12 @@ const marker = '.evoloop-docs-build';
 const privateLocation = /(?:\/Users\/|file:\/\/|codex:\/\/)/i;
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false });
 const defaultFence = markdown.renderer.rules.fence;
+const defaultHeadingOpen = markdown.renderer.rules.heading_open;
+markdown.renderer.rules.heading_open = (tokens, index, options, env, self) => {
+  const aliases = (tokens[index].meta?.headingAliases || []).map(id =>
+    `<span id="${escapeHtml(id)}" aria-hidden="true"></span>`).join('');
+  return aliases + (defaultHeadingOpen ? defaultHeadingOpen(tokens, index, options, env, self) : self.renderToken(tokens, index, options));
+};
 markdown.renderer.rules.fence = (tokens, index, options, env, self) => {
   const token = tokens[index];
   if (!/^mermaid(?:\s|$)/i.test(token.info.trim())) return defaultFence(tokens, index, options, env, self);
@@ -48,7 +54,7 @@ function slug(text) {
     .replace(/[^\p{L}\p{N}\p{M}_\-\s]/gu, '')
     .replace(/\s/g, '-');
 }
-function headings(tokens) {
+function headings(tokens, aliases = {}) {
   const ids = new Map();
   const anchors = new Set();
   const outline = [];
@@ -68,6 +74,16 @@ function headings(tokens) {
       outline.push({ id, title, level: tokens[i].tag });
     }
   }
+  if (!aliases || typeof aliases !== 'object' || Array.isArray(aliases)) fail('headingAliases must be an object');
+  for (const [alias, target] of Object.entries(aliases)) {
+    if (!alias || alias !== slug(alias) || typeof target !== 'string' || !anchors.has(target)) {
+      fail(`headingAliases: invalid alias or missing target: ${alias}`);
+    }
+    if (anchors.has(alias)) fail(`headingAliases: alias conflicts with a heading: ${alias}`);
+    const heading = tokens.find(token => token.type === 'heading_open' && token.attrGet('id') === target);
+    heading.meta = { ...heading.meta, headingAliases: [...(heading.meta?.headingAliases || []), alias] };
+  }
+  for (const alias of Object.keys(aliases)) anchors.add(alias);
   return { anchors, outline };
 }
 function localUrl(raw, source) {
@@ -130,7 +146,7 @@ export async function check(root) {
     const content = await fs.readFile(filename, 'utf8');
     if (privateLocation.test(content)) fail(`${source}: contains a private local address`);
     const tokens = markdown.parse(content, {});
-    pages.push({ ...entry, source, output, tokens, ...headings(tokens), hasMermaid: tokens.some(token => token.type === 'fence' && /^mermaid(?:\s|$)/i.test(token.info.trim())) });
+    pages.push({ ...entry, source, output, tokens, ...headings(tokens, entry.headingAliases), hasMermaid: tokens.some(token => token.type === 'fence' && /^mermaid(?:\s|$)/i.test(token.info.trim())) });
   }
   const byPath = new Map(pages.map(page => [page.source, page]));
   const assets = new Set();

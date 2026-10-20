@@ -2,9 +2,11 @@
 
 状态：2026-10-20 **设计提议，尚未实现**。用户要求补齐前端产品与架构，因此修订此前“先只用飞书、Codex 和静态站”的入口建议。页面和使用验收见[工作台产品设计](../product/workbench.md)，存储设计见[存储层](storage.md)，资料如何进入 Wiki 见[知识关联流程](knowledge-flow.md)。本文不表示已选定前端依赖或已上线业务界面。
 
+本页先说明人如何从项目入口读到固定依据、通过同一 API 提交和核对变化；再给部署、技术和组件的实现选择。
+
 ## 1. 工作台的职责与部署位置
 
-工作台让人看清当前目标、下一步选择、工作依据、分工和需要处理的例外，并经共同命令接口推进工作。它读取和组合各权威数据，不在浏览器中再维护一套任务状态机。飞书继续是移动协作入口，Codex 继续承载真实会话，公开文档站继续发布 Git 正式文档。
+人从项目首页看到目标、待判断事项与两类讨论准备；可从 Task 打开所依需求、知识固定修订和交付证据，也可直接进入知识空间追溯来源。提出纠正、保存文档修订或请求复核时，工作台只发共同命令，随后显示接受、外部处理与实际使用各自的结果。工作台让人看清当前目标、下一步选择、工作依据、分工和需要处理的例外，并经共同命令接口推进工作。它读取和组合各权威数据，不在浏览器中再维护一套任务状态机。飞书继续是移动协作入口，Codex 继续承载真实会话，公开文档站继续发布 Git 正式文档。
 
 ```mermaid
 flowchart TB
@@ -41,41 +43,7 @@ flowchart TB
 
 黄＝入口；蓝＝协议与读取；紫＝业务决定的约束；青＝数据和运行边界。图中箭头是调用关系，Wiki 写入仍走受控维护/发布流程；不是浏览器直接修改上游。
 
-首期本机单活 coordinator 同源提供 `/app/` 静态构建与 `/api/v1/`，本地开发可用 Vite 代理到同一 API。公开文档域名和工作台认证空间分开：用户同意可发布文档公开，不意味着任务、会话和 Wiki 公开。手机访问真实工作台需要后续常在线主机、HTTPS 和登录部署；在此之前手机日常入口仍可用飞书。响应式原型通过不等于手机已经能够连接本机服务。
-
-## 2. 推荐前端技术与取舍
-
-| 责任 | 推荐 | 对本项目的理由及代价 |
-| --- | --- | --- |
-| 页面和组件 | React + TypeScript | 版本比较、关联详情和表格能组合成明确组件；与拟议 TS 合同衔接。版本与依赖在实现时锁定，本轮不安装 |
-| 构建 | Vite，客户端 SPA | 拟议 coordinator 负责 API 和业务；公开内容另有静态站。无需为了内部工作台新增一个服务端渲染运行时，但需自行配置路由、缓存、错误页和部署 fallback |
-| 路由 | React Router 的库模式 | URL 表示项目、对象、修订与过滤条件，刷新和深链可以恢复阅读位置；不同时建第二套请求缓存 |
-| 服务数据 | TanStack Query | 按用户/项目/对象/修订组织查询；变更后失效相关缓存再回读。缓存是读取优化，不能裁定当前版本或批准状态 |
-| 表格与文档阅读 | 原生语义 table、独立完整阅读区；Markdown 渲染与 HTML 报告预览分开 | 首片用现有样式和浏览器能力；正文按需读取，HTML 隔离渲染。不为列表引入协同富文本/CRDT，大数据量确有证据时再选虚拟化 |
-| 样式与组件 | 项目内 CSS tokens + 小型可访问组件 | 沿用文档配色但区分交互层级；先在 `apps/workbench` 内复用，不先造独立设计系统包 |
-
-React 官方说明从构建工具开始的 SPA 需补齐路由和数据获取，并提示框架能减少后续集成工作。本项目选择 SPA 的理由是架构已规划独立协调 API、工作台需认证且不承担公开文档 SEO；这是项目取舍，并非官方默认推荐所有应用这样构建。[React 建议](https://react.dev/learn/build-a-react-app-from-scratch) · [Vite](https://vite.dev/guide/) · [Router 模式](https://reactrouter.com/start/modes) · [Query 缓存失效](https://tanstack.com/query/latest/docs/framework/react/guides/query-invalidation)
-
-如果需要统一公网内容、服务端渲染或更复杂的全栈表单，重新比较 React Router framework/Next.js；如果团队已有成熟 Vue 工作台，则优先评估复用成本。目前没有证据需要同时维护两种前端。上述选型属于 PROP-009，不改变 PostgreSQL 已选、Wiki 候选仍需验证的状态。
-
-Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完整阅读、双链、图谱和 Review 结构；单独的[知识工作区架构](wiki-workspace.md)说明固定源码、组件迁移与服务数据模型。知识浏览是独立入口，不能缩成认知讨论旁的一条 Wiki 链接。
-
-### nashsu 的技术组合如何取舍
-
-[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录 v0.6.12 的锁定版本。下面是 evoLoop 的实现建议，不能把上游锁文件当成本项目已经验证的依赖集。
-
-| 能力 | evoLoop 推荐使用方式 | 与 nashsu 的差异和采用条件 |
-| --- | --- | --- |
-| React / TypeScript / Vite | 沿用相同技术方向，首个实现切片再锁兼容版本 | 移除 Tauri 专用开发/HMR/文件入口，构建普通同源 Web 工作台 |
-| Markdown 阅读 | 优先评估 `react-markdown` + `remark-gfm`；公式按需要加 `remark-math` / `rehype-katex`；图块按需加载 Mermaid | 拆取只读展示布局，重写链接/图片解析为授权 API 和稳定 ID；原文 HTML 不启用，插件输出与危险 URL 另验 |
-| 图关系展示 | 在真实子图规模需要时采用 Graphology + Sigma + ForceAtlas2 worker | 保留焦点、高亮和布局交互；输入由 API 限量提供，浏览器不扫描全库；小型首片可用文字关系/简单 SVG，图算法不证明关系成立 |
-| 状态 | TanStack Query 管服务数据，URL/组件 state 管导航与临时交互 | 不移植 `useWikiStore`；只有跨组件临时交互确有负担才增 Zustand，它不再持凭据、文件树和模型队列 |
-| UI 基元与样式 | 先保持项目 CSS tokens；需要复杂交互基元时单独评估 Base UI | 上游 Button/Panel 依赖 Tailwind/CVA/token，不整包拖入；要复制组件时连同样式依赖计算成本，不声称原样可用 |
-| 知识编辑 | 首片 Markdown 候选表单、预览与版本差异 | Milkdown 可在富文本确有需求时引入；编辑只创建候选，不自动保存到现行知识页 |
-
-`react-markdown` 提供自定义组件与 URL 转换，但自定义插件仍可破坏默认安全边界。采用时保持授权图片入口和受控链接解析；Mermaid 单独封装严格配置、错误状态和懒渲染，避免把上游 SVG 注入逻辑直接当作已安全。具体复用须按[移植验证约定](../development/standards.md#上游前端复用与工作台验证)执行。[Markdown 官方安全说明](https://github.com/remarkjs/react-markdown#security) · [Mermaid 配置](https://mermaid.js.org/config/usage.html)
-
-## 3. 组件、路由与查询模型
+## 2. 组件、路由与查询模型
 
 `apps/workbench` 按页面领域组织：`project`、`inbox`、`tasks`、`documents`、`knowledge`、`roles`、`schedules`、`evaluations`、`operations`。共用组件包括对象引用、修订标签、差异阅读、依据列表、关系路径、状态标签和命令结果。仅浏览器可用的公开 schema 从 `contracts` 单独出口导入；浏览器不得引入 core、数据库驱动、平台 SDK、凭据或上游客户端。
 
@@ -116,7 +84,7 @@ HTML 静态预览可保留样式、表格、已保存图片及浏览器原生折
 
 需要 JavaScript 的交互报告作为另一项能力验证：使用与工作台不同的来源、限定资源/网络访问且不携带工作台凭据；不以同源 `allow-scripts` 加 `allow-same-origin` 开放任意上传报告。API 返回当前修订可用的预览能力及限制；原型只演示无脚本 HTML，并未实现报告上传、完整资源包托管或交互运行服务。原件与 BlobStore 的所有权见[存储设计](storage.md)，Wiki 提取结果是派生来源，不替换报告。
 
-## 4. 修改、刷新与失败如何呈现
+## 3. 修改、刷新与失败如何呈现
 
 ```mermaid
 sequenceDiagram
@@ -149,13 +117,47 @@ sequenceDiagram
 
 服务端数据不默认长期存入 localStorage/离线缓存。未提交草稿首片保留在当前页面内，离开前提示；登出或切身份清除查询缓存。新文档修订出现时不要替换正在编辑的草稿，显示基线过期与比较入口。
 
-## 5. 会话与权限边界
+## 4. 会话与权限边界
 
 “与认知 session 讨论”先准备带固定版本的上下文包，记录目标和要讨论的问题，再打开已有绑定会话或在运行时能力允许、授权覆盖的情况下创建/继续。已有 Desktop 会话只提供已验证的跳转/工具衔接；没有宿主能力时展示可复制的上下文引用和人工打开入口。前端不假装嵌入 Codex Desktop，也不通过剪贴板自动发送未获授权消息。
 
 由会话提交的讨论结果仍是候选；采纳后经共同命令写入 Task/Document/Role 约定。会话正在运行、消息已投递、交付可核对、用户效果已验证分别展示，不能用流式回答结束代表任务完成。
 
 首片 API 限本机，浏览器通过一次性启动凭据换取 HttpOnly 会话 cookie；启动凭据不留在长期 URL，写请求验证会话、Origin/CSRF 与项目权限。公网工作台须另行落实 HTTPS、登录和身份映射后开放，不把 localhost 假设扩展成远程部署保证。Git/Wiki/飞书凭据只留服务端。Markdown 预览禁用不可信原始 HTML/脚本和危险 URL；附件下载经授权定位并限定允许的内容类型。这些是待实现的边界。
+
+## 5. 推荐前端技术与取舍
+
+首期本机单活 coordinator 同源提供 `/app/` 静态构建与 `/api/v1/`，本地开发可用 Vite 代理到同一 API。公开文档域名和工作台认证空间分开：用户同意可发布文档公开，不意味着任务、会话和 Wiki 公开。手机访问真实工作台需要后续常在线主机、HTTPS 和登录部署；在此之前手机日常入口仍可用飞书。响应式原型通过不等于手机已经能够连接本机服务。
+
+| 责任 | 推荐 | 对本项目的理由及代价 |
+| --- | --- | --- |
+| 页面和组件 | React + TypeScript | 版本比较、关联详情和表格能组合成明确组件；与拟议 TS 合同衔接。版本与依赖在实现时锁定，本轮不安装 |
+| 构建 | Vite，客户端 SPA | 拟议 coordinator 负责 API 和业务；公开内容另有静态站。无需为了内部工作台新增一个服务端渲染运行时，但需自行配置路由、缓存、错误页和部署 fallback |
+| 路由 | React Router 的库模式 | URL 表示项目、对象、修订与过滤条件，刷新和深链可以恢复阅读位置；不同时建第二套请求缓存 |
+| 服务数据 | TanStack Query | 按用户/项目/对象/修订组织查询；变更后失效相关缓存再回读。缓存是读取优化，不能裁定当前版本或批准状态 |
+| 表格与文档阅读 | 原生语义 table、独立完整阅读区；Markdown 渲染与 HTML 报告预览分开 | 首片用现有样式和浏览器能力；正文按需读取，HTML 隔离渲染。不为列表引入协同富文本/CRDT，大数据量确有证据时再选虚拟化 |
+| 样式与组件 | 项目内 CSS tokens + 小型可访问组件 | 沿用文档配色但区分交互层级；先在 `apps/workbench` 内复用，不先造独立设计系统包 |
+
+React 官方说明从构建工具开始的 SPA 需补齐路由和数据获取，并提示框架能减少后续集成工作。本项目选择 SPA 的理由是架构已规划独立协调 API、工作台需认证且不承担公开文档 SEO；这是项目取舍，并非官方默认推荐所有应用这样构建。[React 建议](https://react.dev/learn/build-a-react-app-from-scratch) · [Vite](https://vite.dev/guide/) · [Router 模式](https://reactrouter.com/start/modes) · [Query 缓存失效](https://tanstack.com/query/latest/docs/framework/react/guides/query-invalidation)
+
+如果需要统一公网内容、服务端渲染或更复杂的全栈表单，重新比较 React Router framework/Next.js；如果团队已有成熟 Vue 工作台，则优先评估复用成本。目前没有证据需要同时维护两种前端。上述选型属于 PROP-009，不改变 PostgreSQL 已选、Wiki 候选仍需验证的状态。
+
+Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完整阅读、双链、图谱和 Review 结构；单独的[知识工作区架构](wiki-workspace.md)说明固定源码、组件迁移与服务数据模型。知识浏览是独立入口，不能缩成认知讨论旁的一条 Wiki 链接。
+
+### nashsu 的技术组合如何取舍
+
+[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录 v0.6.12 的锁定版本。下面是 evoLoop 的实现建议，不能把上游锁文件当成本项目已经验证的依赖集。
+
+| 能力 | evoLoop 推荐使用方式 | 与 nashsu 的差异和采用条件 |
+| --- | --- | --- |
+| React / TypeScript / Vite | 沿用相同技术方向，首个实现切片再锁兼容版本 | 移除 Tauri 专用开发/HMR/文件入口，构建普通同源 Web 工作台 |
+| Markdown 阅读 | 优先评估 `react-markdown` + `remark-gfm`；公式按需要加 `remark-math` / `rehype-katex`；图块按需加载 Mermaid | 拆取只读展示布局，重写链接/图片解析为授权 API 和稳定 ID；原文 HTML 不启用，插件输出与危险 URL 另验 |
+| 图关系展示 | 在真实子图规模需要时采用 Graphology + Sigma + ForceAtlas2 worker | 保留焦点、高亮和布局交互；输入由 API 限量提供，浏览器不扫描全库；小型首片可用文字关系/简单 SVG，图算法不证明关系成立 |
+| 状态 | TanStack Query 管服务数据，URL/组件 state 管导航与临时交互 | 不移植 `useWikiStore`；只有跨组件临时交互确有负担才增 Zustand，它不再持凭据、文件树和模型队列 |
+| UI 基元与样式 | 先保持项目 CSS tokens；需要复杂交互基元时单独评估 Base UI | 上游 Button/Panel 依赖 Tailwind/CVA/token，不整包拖入；要复制组件时连同样式依赖计算成本，不声称原样可用 |
+| 知识编辑 | 首片 Markdown 候选表单、预览与版本差异 | Milkdown 可在富文本确有需求时引入；编辑只创建候选，不自动保存到现行知识页 |
+
+`react-markdown` 提供自定义组件与 URL 转换，但自定义插件仍可破坏默认安全边界。采用时保持授权图片入口和受控链接解析；Mermaid 单独封装严格配置、错误状态和懒渲染，避免把上游 SVG 注入逻辑直接当作已安全。具体复用须按[移植验证约定](../development/standards.md#上游前端复用与工作台验证)执行。[Markdown 官方安全说明](https://github.com/remarkjs/react-markdown#security) · [Mermaid 配置](https://mermaid.js.org/config/usage.html)
 
 ## 6. 实现切片与验收
 
