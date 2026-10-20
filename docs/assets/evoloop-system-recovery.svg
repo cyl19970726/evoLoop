@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 455" width="1060" height="455" role="img" aria-labelledby="plain-title plain-description">
+<title id="plain-title">派发结果未知</title><desc id="plain-description">超时不等于未启动；先查同一操作的真实结果，再决定是否继续。</desc>
+<style>text{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.plain-paper{fill:var(--plain-paper,#fff)}.plain-node rect{fill:var(--plain-paper,#fff);stroke:var(--plain-border,#cbd3da);stroke-width:1}.plain-node-label{font-size:17px;fill:var(--plain-ink,#29333b);font-weight:550}.plain-node-line{font-size:14px;fill:var(--plain-muted,#65717b)}.plain-kicker,.plain-group-label{font-size:11px;fill:var(--plain-muted,#65717b)}.plain-group{fill:none;stroke:var(--plain-border,#cbd3da);stroke-dasharray:5 5}.plain-edge{fill:none;stroke:var(--plain-muted,#7c8994);stroke-width:1.15}.plain-feedback{stroke:var(--plain-accent,#63849c)}.plain-reference{stroke-dasharray:4 4}.plain-edge-label{font-size:12px;fill:var(--plain-muted,#65717b);paint-order:stroke;stroke:var(--plain-paper,#fff);stroke-width:4}.plain-label-feedback{fill:var(--plain-accent,#63849c)}.plain-selected rect,.plain-node[role=button]:hover rect,.plain-node:focus-visible rect{stroke:var(--plain-accent,#63849c);stroke-width:2}.plain-node[role=button]{cursor:pointer}.plain-node:focus-visible{outline:none}</style>
+<defs><marker id="plain-main-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker><marker id="plain-feedback-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#63849c"/></marker><marker id="plain-reference-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker></defs>
+<rect class="plain-paper" width="100%" height="100%"/>
+<text class="plain-node-label" x="24" y="25">派发结果未知</text>
+<path class="plain-edge plain-main" d="M300,135 L400,135" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="350" y="120" text-anchor="middle">派发</text>
+<path class="plain-edge plain-main" d="M660,135 L760,135" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="710" y="120" text-anchor="middle">先对账</text>
+<path class="plain-edge plain-feedback" d="M830,195 L830,250 L190,250 L190,310" marker-end="url(#plain-feedback-arrow)"/>
+<path class="plain-edge plain-feedback" d="M890,195 L890,270 L530,270 L530,310" marker-end="url(#plain-feedback-arrow)"/>
+<path class="plain-edge plain-feedback" d="M950,195 L950,310" marker-end="url(#plain-feedback-arrow)"/>
+<g class="plain-node"><title>原操作 ID：保留派发意图与已知 Run；超时不等于未启动</title><rect x="40" y="75" width="260" height="120" rx="4"/>
+<text class="plain-node-label" x="52" y="100">原操作 ID</text>
+<text class="plain-node-line" x="52" y="121">保留派发意图与已知 Run</text>
+<text class="plain-node-line" x="52" y="137">超时不等于未启动</text>
+</g>
+<g class="plain-node"><title>Run 回执未知：可能已启动而回执丢失；Task 终态不代表 Run</title><rect x="400" y="75" width="260" height="120" rx="4"/>
+<text class="plain-node-label" x="412" y="100">Run 回执未知</text>
+<text class="plain-node-line" x="412" y="121">可能已启动而回执丢失</text>
+<text class="plain-node-line" x="412" y="137">Task 终态不代表 Run</text>
+</g>
+<g class="plain-node"><title>按同一操作回读：PG Journal / outbox；运行时 Session / 动作</title><rect x="760" y="75" width="260" height="120" rx="4"/>
+<text class="plain-node-label" x="772" y="100">按同一操作回读</text>
+<text class="plain-node-line" x="772" y="121">PG Journal / outbox</text>
+<text class="plain-node-line" x="772" y="137">运行时 Session / 动作</text>
+</g>
+<g class="plain-node"><title>证实已启动：跟踪原 Run</title><rect x="40" y="310" width="300" height="105" rx="4"/>
+<text class="plain-node-label" x="52" y="335">证实已启动</text>
+<text class="plain-node-line" x="52" y="356">跟踪原 Run</text>
+</g>
+<g class="plain-node"><title>证实未启动：才可受控重发</title><rect x="380" y="310" width="300" height="105" rx="4"/>
+<text class="plain-node-label" x="392" y="335">证实未启动</text>
+<text class="plain-node-line" x="392" y="356">才可受控重发</text>
+</g>
+<g class="plain-node"><title>仍 unknown：禁止重复执行；交责任者处理</title><rect x="720" y="310" width="300" height="105" rx="4"/>
+<text class="plain-node-label" x="732" y="335">仍 unknown</text>
+<text class="plain-node-line" x="732" y="356">禁止重复执行</text>
+<text class="plain-node-line" x="732" y="372">交责任者处理</text>
+</g>
+</svg>

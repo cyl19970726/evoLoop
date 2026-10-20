@@ -288,7 +288,7 @@ export function mountArchitectureViewer(root, model) {
   titleRow.append(heading, badge);
   const refs = el('nav', 'map-references');
   refs.setAttribute('aria-label', '架构图来源');
-  refs.append(link('原生全局树 ↗', model.nativeTreeUrl), link('原生总览图 ↗', model.nativeOverviewUrl), link('仓库源版本 ↗', `${model.repository.url.replace(/\/$/, '')}/tree/${encodeURIComponent(model.repository.revision)}`));
+  refs.append(link('完整模块索引 ↗', model.nativeTreeUrl), link('系统结构 ↗', model.nativeOverviewUrl), link('仓库源版本 ↗', `${model.repository.url.replace(/\/$/, '')}/tree/${encodeURIComponent(model.repository.revision)}`));
   header.append(titleRow, refs, el('p', 'boundary-hint', '包=代码边界；协调进程=运行装配；Role=职责、Session=承载、Run=一次运行。'));
 
   const toolbar = el('div', 'map-toolbar');
@@ -344,7 +344,7 @@ export function mountArchitectureViewer(root, model) {
   window.addEventListener('resize', queueEdges);
   window.addEventListener('hashchange', () => {
     // The system reading page shares this asset, but has its own deep links.
-    if (new URLSearchParams(location.hash.slice(1)).has('read') || !location.hash) return;
+    if (new URLSearchParams(location.hash.slice(1)).has('read') || new URLSearchParams(location.hash.slice(1)).get('view') === 'structure' || !location.hash) return;
     const next = readState(model);
     Object.assign(state, next);
     selectedEdge = null;

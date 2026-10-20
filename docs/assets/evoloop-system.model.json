@@ -6,8 +6,8 @@
     "url": "https://github.com/cyl19970726/evoLoop",
     "revision": "286e749c4242fcf045cd1d439c8e81424dcc774b"
   },
-  "nativeTreeUrl": "evoloop-system-modules.html",
-  "nativeOverviewUrl": "evoloop-system-overview.html",
+  "nativeTreeUrl": "evoloop-system.html#view=modules",
+  "nativeOverviewUrl": "evoloop-system.html#view=structure",
   "defaultExpanded": [
     "authority"
   ],

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 470" width="1060" height="470" role="img" aria-labelledby="plain-title plain-description">
+<title id="plain-title">需求或认识改版</title><desc id="plain-description">新修订改变未来的可用依据，但不改写旧 Run 当时采用的版本。</desc>
+<style>text{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.plain-paper{fill:var(--plain-paper,#fff)}.plain-node rect{fill:var(--plain-paper,#fff);stroke:var(--plain-border,#cbd3da);stroke-width:1}.plain-node-label{font-size:17px;fill:var(--plain-ink,#29333b);font-weight:550}.plain-node-line{font-size:14px;fill:var(--plain-muted,#65717b)}.plain-kicker,.plain-group-label{font-size:11px;fill:var(--plain-muted,#65717b)}.plain-group{fill:none;stroke:var(--plain-border,#cbd3da);stroke-dasharray:5 5}.plain-edge{fill:none;stroke:var(--plain-muted,#7c8994);stroke-width:1.15}.plain-feedback{stroke:var(--plain-accent,#63849c)}.plain-reference{stroke-dasharray:4 4}.plain-edge-label{font-size:12px;fill:var(--plain-muted,#65717b);paint-order:stroke;stroke:var(--plain-paper,#fff);stroke-width:4}.plain-label-feedback{fill:var(--plain-accent,#63849c)}.plain-selected rect,.plain-node[role=button]:hover rect,.plain-node:focus-visible rect{stroke:var(--plain-accent,#63849c);stroke-width:2}.plain-node[role=button]{cursor:pointer}.plain-node:focus-visible{outline:none}</style>
+<defs><marker id="plain-main-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker><marker id="plain-feedback-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#63849c"/></marker><marker id="plain-reference-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker></defs>
+<rect class="plain-paper" width="100%" height="100%"/>
+<text class="plain-node-label" x="24" y="25">需求或认识改版</text>
+<path class="plain-edge plain-main" d="M240,137 L295,137" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="267" y="122" text-anchor="middle">新修订</text>
+<path class="plain-edge plain-main" d="M495,137 L550,137" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="522" y="122" text-anchor="middle">影响</text>
+<path class="plain-edge plain-main" d="M750,137 L805,137" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="777" y="122" text-anchor="middle">待复核</text>
+<path class="plain-edge plain-reference" d="M140,192 L140,318" marker-end="url(#plain-reference-arrow)"/>
+<text class="plain-edge-label plain-label-reference" x="159" y="261" text-anchor="middle">原依据不回写</text>
+<path class="plain-edge plain-feedback" d="M858,192 L858,264 L395,264 L395,318" marker-end="url(#plain-feedback-arrow)"/>
+<path class="plain-edge plain-feedback" d="M912,192 L912,282 L650,282 L650,318" marker-end="url(#plain-feedback-arrow)"/>
+<path class="plain-edge plain-feedback" d="M966,192 L966,318" marker-end="url(#plain-feedback-arrow)"/>
+<g class="plain-node"><title>原基线 r2：原修订继续可查；旧 Run 固定引用它</title><rect x="40" y="82" width="200" height="110" rx="4"/>
+<text class="plain-node-label" x="52" y="107">原基线 r2</text>
+<text class="plain-node-line" x="52" y="128">原修订继续可查</text>
+<text class="plain-node-line" x="52" y="144">旧 Run 固定引用它</text>
+</g>
+<g class="plain-node"><title>新增修订 r3：过程 Document / Wiki；各在所属权威处修订</title><rect x="295" y="82" width="200" height="110" rx="4"/>
+<text class="plain-node-label" x="307" y="107">新增修订 r3</text>
+<text class="plain-node-line" x="307" y="128">过程 Document / Wiki</text>
+<text class="plain-node-line" x="307" y="144">各在所属权威处修订</text>
+</g>
+<g class="plain-node"><title>扫描影响：引用旧版的 Task；列为待复核</title><rect x="550" y="82" width="200" height="110" rx="4"/>
+<text class="plain-node-label" x="562" y="107">扫描影响</text>
+<text class="plain-node-line" x="562" y="128">引用旧版的 Task</text>
+<text class="plain-node-line" x="562" y="144">列为待复核</text>
+</g>
+<g class="plain-node"><title>责任者复核：未执行 Task 逐项决定；待复核时暂停新派发</title><rect x="805" y="82" width="215" height="110" rx="4"/>
+<text class="plain-node-label" x="817" y="107">责任者复核</text>
+<text class="plain-node-line" x="817" y="128">未执行 Task 逐项决定</text>
+<text class="plain-node-line" x="817" y="144">待复核时暂停新派发</text>
+</g>
+<g class="plain-node"><title>旧 Run：仍按 r2 与原验收解释</title><rect x="40" y="318" width="200" height="100" rx="4"/>
+<text class="plain-node-label" x="52" y="343">旧 Run</text>
+<text class="plain-node-line" x="52" y="364">仍按 r2 与原验收解释</text>
+</g>
+<g class="plain-node"><title>换基线：未来执行采用 r3</title><rect x="295" y="318" width="200" height="100" rx="4"/>
+<text class="plain-node-label" x="307" y="343">换基线</text>
+<text class="plain-node-line" x="307" y="364">未来执行采用 r3</text>
+</g>
+<g class="plain-node"><title>保留旧版：说明继续采用 r2 的理由</title><rect x="550" y="318" width="200" height="100" rx="4"/>
+<text class="plain-node-label" x="562" y="343">保留旧版</text>
+<text class="plain-node-line" x="562" y="364">说明继续采用 r2 的理由</text>
+</g>
+<g class="plain-node"><title>补救 Task：需要时另建任务处理</title><rect x="805" y="318" width="215" height="100" rx="4"/>
+<text class="plain-node-label" x="817" y="343">补救 Task</text>
+<text class="plain-node-line" x="817" y="364">需要时另建任务处理</text>
+</g>
+</svg>

@@ -10,6 +10,8 @@
 
 `KnowledgeRepository` 合同先于 OpenViking 实现。若最终不采用该候选，工作台、Query/Command 及 PG 关系不用改；要替换的是适配器和外置空间内的索引/版本实现。[Wiki 前端模型](wiki-workspace.md)规定页面类型、认识性质、有效状态分开。
 
+下图只检查**共同 API 到 PG、Git 与外置知识适配器的接缝**：它把候选服务的替换边界画清，不再解释四部分责任或一轮工作。
+
 ```mermaid
 %%{init: {"flowchart":{"wrappingWidth":190,"nodeSpacing":24,"rankSpacing":40}}}%%
 flowchart TB
@@ -48,6 +50,8 @@ flowchart TB
 ## 4. 命令、发布和纠正
 
 工作台、CLI、Agent 工具统一走共同 Command API。下述流程只描述服务与外置知识端的写入接缝；谁提出、如何审阅及何时复核由[维护机制](wiki-maintenance.md)规定。比如纠正命令：`POST /api/v1/projects/{p}/knowledge/{id}/candidates`，body `{operationId, expectedRevision:"kr_19", proposedPatch, sourceKeys:["doc:d_4@dr_8#scope"], reason, actorSessionId}`。服务端检查身份、项目、来源权限、固定基线和候选格式；候选正文存外置空间，PG 记候选引用/维护任务/操作结果。`POST /reviews/{reviewId}/decisions` 记录 `{operationId, expectedReviewVersion, decision, rationale}`；`POST /candidates/{candidateId}/publish` 仅在采纳决定有效时执行。冲突返回当前 revision、差异定位和 `operationId`；客户端保留输入，不盲重试新 ID。端点、字段与错误码需在 `contracts` 中定稿。
+
+下图放大**一次已获审阅的发布命令**：PG 记录意图与外部写入分开，回包丢失时按原操作和内容回读。它回答适配器怎么恢复，发布资格与后续采用仍由维护合同判断。
 
 ```mermaid
 sequenceDiagram

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 455" width="1060" height="455" role="img" aria-labelledby="plain-title plain-description">
+<title id="plain-title">数据由谁持有</title><desc id="plain-description">正文、主数据与协作投影各有所有者；跨边界只有带版本的引用或受控命令。</desc>
+<style>text{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.plain-paper{fill:var(--plain-paper,#fff)}.plain-node rect{fill:var(--plain-paper,#fff);stroke:var(--plain-border,#cbd3da);stroke-width:1}.plain-node-label{font-size:17px;fill:var(--plain-ink,#29333b);font-weight:550}.plain-node-line{font-size:14px;fill:var(--plain-muted,#65717b)}.plain-kicker,.plain-group-label{font-size:11px;fill:var(--plain-muted,#65717b)}.plain-group{fill:none;stroke:var(--plain-border,#cbd3da);stroke-dasharray:5 5}.plain-edge{fill:none;stroke:var(--plain-muted,#7c8994);stroke-width:1.15}.plain-feedback{stroke:var(--plain-accent,#63849c)}.plain-reference{stroke-dasharray:4 4}.plain-edge-label{font-size:12px;fill:var(--plain-muted,#65717b);paint-order:stroke;stroke:var(--plain-paper,#fff);stroke-width:4}.plain-label-feedback{fill:var(--plain-accent,#63849c)}.plain-selected rect,.plain-node[role=button]:hover rect,.plain-node:focus-visible rect{stroke:var(--plain-accent,#63849c);stroke-width:2}.plain-node[role=button]{cursor:pointer}.plain-node:focus-visible{outline:none}</style>
+<defs><marker id="plain-main-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker><marker id="plain-feedback-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#63849c"/></marker><marker id="plain-reference-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker></defs>
+<rect class="plain-paper" width="100%" height="100%"/>
+<text class="plain-node-label" x="24" y="25">数据由谁持有</text>
+<path class="plain-edge plain-reference" d="M310,137 L395,137" marker-end="url(#plain-reference-arrow)"/>
+<text class="plain-edge-label plain-label-reference" x="352" y="122" text-anchor="middle">版本引用</text>
+<path class="plain-edge plain-reference" d="M750,137 L665,137" marker-end="url(#plain-reference-arrow)"/>
+<text class="plain-edge-label plain-label-reference" x="707" y="122" text-anchor="middle">commit 引用</text>
+<path class="plain-edge plain-reference" d="M615,200 L615,255 L885,255 L885,310" marker-end="url(#plain-reference-arrow)"/>
+<text class="plain-edge-label plain-label-reference" x="742" y="240" text-anchor="middle">Task 投影</text>
+<path class="plain-edge plain-main" d="M750,362 L665,362" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="707" y="347" text-anchor="middle">入站命令</text>
+<path class="plain-edge plain-main" d="M445,310 L445,200" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="465" y="260" text-anchor="middle">核验后写入</text>
+<g class="plain-node"><title>外置 Wiki：知识正文与修订；来源、反例、内部依赖</title><rect x="40" y="75" width="270" height="125" rx="4"/>
+<text class="plain-node-label" x="52" y="100">外置 Wiki</text>
+<text class="plain-node-line" x="52" y="121">知识正文与修订</text>
+<text class="plain-node-line" x="52" y="137">来源、反例、内部依赖</text>
+</g>
+<g class="plain-node"><title>PostgreSQL / evoLoop：Task、过程 Document 修订；Schedule、关系与运行记录</title><rect x="395" y="75" width="270" height="125" rx="4"/>
+<text class="plain-node-label" x="407" y="100">PostgreSQL / evoLoop</text>
+<text class="plain-node-line" x="407" y="121">Task、过程 Document 修订</text>
+<text class="plain-node-line" x="407" y="137">Schedule、关系与运行记录</text>
+</g>
+<g class="plain-node"><title>受管 Git：产品 / 架构 / 开发 docs/；按原仓库审阅修订</title><rect x="750" y="75" width="270" height="125" rx="4"/>
+<text class="plain-node-label" x="762" y="100">受管 Git</text>
+<text class="plain-node-line" x="762" y="121">产品 / 架构 / 开发 docs/</text>
+<text class="plain-node-line" x="762" y="137">按原仓库审阅修订</text>
+</g>
+<g class="plain-node"><title>connector / core：核验身份与所见版本；受控写入 PG</title><rect x="395" y="310" width="270" height="105" rx="4"/>
+<text class="plain-node-label" x="407" y="335">connector / core</text>
+<text class="plain-node-line" x="407" y="356">核验身份与所见版本</text>
+<text class="plain-node-line" x="407" y="372">受控写入 PG</text>
+</g>
+<g class="plain-node"><title>飞书协作投影：读取 PG Task 视图；入站编辑成为受控命令</title><rect x="750" y="310" width="270" height="105" rx="4"/>
+<text class="plain-node-label" x="762" y="335">飞书协作投影</text>
+<text class="plain-node-line" x="762" y="356">读取 PG Task 视图</text>
+<text class="plain-node-line" x="762" y="372">入站编辑成为受控命令</text>
+</g>
+</svg>

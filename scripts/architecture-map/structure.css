@@ -1,0 +1,27 @@
+.structure-view { max-width:1280px;margin:auto;padding:20px 40px;color:#29333b; }
+.structure-intro,.structure-controls,.structure-context { font-size:12px;color:#6b7882; }
+.structure-canvas { overflow-x:auto; }
+.structure-canvas svg { display:block;width:100%;min-width:960px;height:auto; }
+.structure-controls { display:flex;gap:15px;flex-wrap:wrap;align-items:center;margin:10px 0 22px; }
+.structure-view button { background:none;border:0;padding:3px 0;color:#557b96;font:inherit;cursor:pointer;text-align:left; }
+.structure-view button:focus-visible { outline:2px solid #7195b1;outline-offset:4px; }
+.structure-controls span { margin-left:auto; }
+.structure-detail { border-top:1px solid #dce1e5;padding:18px 0;margin-bottom:25px; }
+.structure-detail-bar { display:flex;justify-content:space-between;align-items:center;gap:20px; }
+.structure-detail h2 { font-size:20px;font-weight:550;margin:0 0 8px; }
+.structure-detail p,.structure-branch p { color:#65717b;font-size:13px;margin:5px 0 10px; }
+.structure-detail code { color:#8a939c;font-size:11px;overflow-wrap:anywhere; }
+.structure-levels { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:25px;margin:22px 0;align-items:start; }
+.structure-branch { border-top:1px solid #dce1e5;padding-top:12px;min-width:0; }
+.structure-branch .structure-branch { margin:12px 0 0 12px;padding-left:10px;border-left:1px solid #e6e9ec;border-top:0; }
+.structure-child-row { display:grid;gap:5px;font-size:14px; }
+.structure-child-row strong { font-weight:550; }
+.structure-node-facts { margin-top:8px;font-size:11px;color:#72808a; }
+.structure-node-facts summary { cursor:pointer; }
+.structure-sources { display:grid;gap:5px;font-size:11px;margin:15px 0 5px; }
+.structure-sources a,.structure-context a { color:#658299;overflow-wrap:anywhere; }
+.structure-context { border-top:1px solid #dce1e5;padding-top:15px;display:flex;justify-content:space-between;gap:15px; }
+@media(max-width:800px){.structure-view{padding:20px}.structure-levels{grid-template-columns:1fr}.structure-context{flex-direction:column}.structure-controls span{margin-left:0}.structure-canvas:before{content:'左右滑动查看完整结构';display:block;font-size:11px;color:#8a939c;margin-bottom:12px}}
+@media(prefers-color-scheme:dark){.structure-view{color:#dde1e5;--plain-paper:#15181c;--plain-ink:#dde1e5;--plain-muted:#a2abb4;--plain-border:#39434c;--plain-accent:#8caac1}.structure-detail,.structure-branch,.structure-context{border-color:#39434c}.structure-intro,.structure-controls,.structure-context,.structure-detail p,.structure-branch p{color:#a2abb4}}
+
+.structure-composition{display:flex;gap:22px;flex-wrap:wrap;font-size:12px;margin:18px 0}

@@ -20,7 +20,7 @@ test('published map covers every proposed package and cites reachable document s
     assert.ok(item.sources.length, `${item.id} needs evidence`);
     for (const source of item.sources) {
       assert.match(source.path, /^docs\/architecture\/[a-z-]+\.md$/);
-      if (!cache.has(source.path)) cache.set(source.path, (await fs.readFile(new URL('../../' + source.path, import.meta.url), 'utf8')).split('\n'));
+      if (!cache.has(source.path)) cache.set(source.path, execFileSync('git', ['show', `${model.repository.revision}:${source.path}`], { cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8' }).split('\n'));
       assert.ok(source.line <= (source.endLine || source.line));
       assert.ok((source.endLine || source.line) <= cache.get(source.path).length, `${item.id}: source span exceeds file`);
     }
@@ -46,6 +46,6 @@ test('root fold combinations preserve every declared relation without inventing 
 });
 
 
-test('committed reading page and native tree source match the model and reader implementation', () => {
+test('committed reading page and inline diagrams match their source models and reader implementation', () => {
   execFileSync(process.execPath, [fileURLToPath(new URL('./build.mjs', import.meta.url)), '--check'], { stdio: 'pipe' });
 });
