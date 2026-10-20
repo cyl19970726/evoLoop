@@ -17,6 +17,7 @@ if (!/^evoloop(?:_[a-z0-9]+)*_test$/.test(baseName) || !["postgres:", "postgresq
 
 const requiredDatabase = new Map([
   ["document-payloads.test.ts", "evoloop_document_test"],
+  ["document-routes.test.ts", "evoloop_document_test"],
   ["facade.test.ts", "evoloop_facade_test"],
   ["scheduling-retired.test.ts", "evoloop_facade_test"],
   ["references.test.ts", "evoloop_references_test"],

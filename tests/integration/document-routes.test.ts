@@ -9,15 +9,15 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
-import { registerDocumentRoutes } from "../src/documents/routes.js";
+import { registerDocumentRoutes } from "../../apps/coordinator/src/documents/routes.js";
 import type { Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 
 const url = process.env.TEST_DATABASE_URL;
-if (url && !/\/evoloop_document_test(?:\?|$)/.test(url)) throw new Error("Use dedicated evoloop_document_test database");
+if (!url || !/\/evoloop_document_test(?:\?|$)/.test(url)) throw new Error("Use dedicated evoloop_document_test database");
 const hash = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
 
-test("authenticated document route uploads fixed bytes and reports damaged originals", { skip: !url }, async (t) => {
+test("authenticated document route uploads fixed bytes and reports damaged originals", async (t) => {
   await migrate(url!);
   const pool = new pg.Pool({ connectionString: url });
   const uow = new PostgresUnitOfWork(pool);
