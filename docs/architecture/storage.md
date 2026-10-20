@@ -12,7 +12,7 @@ PostgreSQL 中的当前对象用于工作入口：Task 说明当前目标和状�
 
 ## 权威与共同键
 
-PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨对象 Relation、ExternalBinding/同步状态、OperationJournal/outbox、运行/触发关联、水位及必要的知识/Git 固定引用。已有正式产品、架构、开发规范的**正文仍在 Git**；可用独立 GitSourceRef 元数据固定来源，不创建 Document 行。Wiki 正文、来源、知识历史和内部依赖仍在外置 KnowledgeRepository。OpenViking 是候选实现，尚未正式采用。数据库只保存 Wiki 的可核对引用、跨对象关系和传递回执。
+PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨对象 Relation、ExternalBinding/同步状态、OperationJournal/outbox、运行/触发关联、水位及必要的知识/Git 固定引用。已有正式产品、架构、开发规范的**正文仍在 Git**；可用独立 GitSourceRef 元数据固定来源，不创建 Document 行。Wiki 正文、来源、知识历史和内部依赖仍在外置 KnowledgeRepository。OpenViking 已选作首个接入实现，固定版生产能力尚未验收；可替换范围见[知识合同](contracts.md#知识后端可替换合同)。数据库只保存 Wiki 的可核对引用、跨对象关系和传递回执。
 
 项目权限在服务端由已验证身份和项目成员/受委派操作范围判断；首片单用户也不信任模型自报 Role。复合外键防误关联，不等于访问授权；查询、命令及关系遍历都须检查当前权限。未来多用户或数据库 RLS 的隔离加固需独立验证，不能仅凭 project_id 字段宣称安全多租户。
 
@@ -200,7 +200,7 @@ BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系�
 | 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；小型过程文档正文可内联 PG，Markdown/HTML 均保存源字节；较大报告/资源 bundle 走 BlobStore | JSONB 只放经 schema 校验的资源 manifest 等元数据；不把 Wiki 正文复制入 JSONB，也不把外置载荷当第二份可改正文 |
 | 数据迁移 | 推荐 `node-pg-migrate` 执行版本化、可审阅的 SQL；单一部署步骤，固定稳定版本 | 用已有 runner 管迁移记录与互斥，避免另写迁移框架；不启用启动时自动改生产 schema。当前未安装，不能用文档工具的最新预发布版代替已锁定依赖 |
 | Git 正式文档 | 保留仓库正文和固定 commit；PG 可登记独立 GitSourceRef 来源元数据，由白名单适配器读取 | 工作台显示同一正式版本；不建立“从网页再抓一次”的第二份规范，也不创建 Document 行 |
-| Wiki 来源/正文/内部关联 | OpenViking 候选服务持外置内容与修订；若补发布格式，与 Wiki 同一知识空间 | nashsu 的页面和图谱体验可通过知识查询模型实现，无需同时保留它的另一套可编辑 vault |
+| Wiki 来源/正文/内部关联 | 首期 OpenViking 服务持外置内容与修订（版本待验）；若补发布格式，与 Wiki 同一知识空间 | nashsu 的页面和图谱体验可通过知识查询模型实现，无需同时保留它的另一套可编辑 vault |
 | 附件与不可重建原件 | 首个本机切片使用仓库外受控目录，通过 BlobStore 端口访问；PG 保存 blob 元数据 | 大型原件不塞业务表，不装第二套文件管理产品；迁到常在线主机时再选择受控持久卷或对象存储，并演练搬迁和恢复 |
 | 检索与关系展示 | PG 先按 ID、标题和结构化过滤检索；Wiki 语义检索沿用知识后端；前端图谱是有权限的有界关系视图 | 首期不新增 Elasticsearch、Neo4j、Redis 或第二向量库；关系可视化不要求图数据库。中文全文效果和跨源排序单独验证 |
 
