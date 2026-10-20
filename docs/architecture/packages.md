@@ -4,7 +4,7 @@
 
 本页把[总览](overview.md)的逻辑责任映射到拟议实现。先看核心模块承担什么、它们怎样装配到运行单位，再查源码依赖和完整包表。包是代码边界，进程是部署单位，Role/Session 是职责与承载关系，三者不逐一对应。
 
-TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界适配包已有代码；它们的运行证据各不相同。Git 固定来源、本机 Blob、Codex App Server 与外置 OpenViking 已有受限实跑，飞书仍只有 fake HTTP 与真实 PG 测试。默认由人通过工作台观察、与现有 Agent 会话沟通；Agent 带固定依据经业务 skill+CLI 完成大多数常规写入；人再在工作台核对结果。工作台与 CLI 共用 API/core，人工直接操作可按需存在，不是每次 Agent 写入的前置审批。skill 是过程约定，不是第 12 个 npm 包，也不是前端开发技能；CLI 的具名命令与恢复能力正在本分支实现，具体用法和未验边界见[业务技能与 CLI](../development/agent-cli.md)。各包落地不等于跨系统首版或真人使用通过；其余技术范围见[技术选型](technology-selection.md)。
+TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界适配包已有代码；它们的运行证据各不相同。Git 固定来源、本机 Blob、Codex App Server 与外置 OpenViking 已有受限实跑，飞书仍只有 fake HTTP 与真实 PG 测试。默认由人通过工作台观察、与现有 Agent 会话沟通；Agent 带固定依据经业务 skill+CLI 完成大多数常规写入；人再在工作台核对结果。工作台与 CLI 共用 API/core，人工直接操作可按需存在，不是每次 Agent 写入的前置审批。skill 是过程约定，不是第 12 个 npm 包，也不是前端开发技能；CLI 已提供具名命令与未知结果恢复，具体用法和未验边界见[业务技能与 CLI](../development/agent-cli.md)。各包落地不等于跨系统首版或真人使用通过；其余技术范围见[技术选型](technology-selection.md)。
 
 ## 四部分映射到一个 `core`
 
@@ -126,7 +126,7 @@ flowchart TB
 | `apps/workbench` | 已有任务/过程文档/知识/职责/运行/日程/协作与复核页面，按权限调用共同 API；更完整的导航和独立消费仍待验 | 浏览器安全的 `contracts` 出口、React、Vite；Router/Query 仍为目标 | 导入 core/平台 SDK、持有服务凭据、直接写库、嵌入或假定控制 Desktop 会话 |
 | `packages/agent-tools`（未建） | 可选目标：若确需 MCP，提供窄工具调用协调 API；不为与工作台平行而强制建包 | `contracts`、API 客户端、MCP SDK | 常驻自动协调进程、直接写适配器、假定独立 daemon 能调用当前桌面宿主工具或自动唤醒/监听 Desktop |
 | `apps/coordinator` | 单活进程；同源工作台静态资源、Fastify Query/Command API、身份/凭据与数据库连接装配、入站 command、到期计算循环、outbox 与周期对账、健康状态 | `core`、`contracts`、所需边界包 | 绕过 `core` 的快速写入路径，或把飞书投影当主数据 |
-| `apps/cli` | Agent 的机器操作入口：按权限读固定依据、查询命令 schema、提交已支持请求与恢复未知回执，经同一 API 调用用例；新语义在本分支实现中，以[实际帮助](../development/agent-cli.md)核可用范围 | `contracts`、API 客户端 | 再启动一个写入协调者、独立实现业务状态机，或让技能绕过服务端授权和版本规则 |
+| `apps/cli` | Agent 的机器操作入口：按权限读固定依据、查询命令 schema、提交已支持请求与恢复未知回执，经同一 API 调用用例；已实现具名读写与恢复，以[实际帮助](../development/agent-cli.md)核可用范围 | `contracts`、API 客户端 | 再启动一个写入协调者、独立实现业务状态机，或让技能绕过服务端授权和版本规则 |
 
 `packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
 
