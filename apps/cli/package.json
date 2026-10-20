@@ -1,0 +1,4 @@
+{
+  "name": "@evoloop/cli", "version": "0.1.0", "private": true, "type": "module",
+  "dependencies": { "@evoloop/contracts": "0.1.0" }
+}

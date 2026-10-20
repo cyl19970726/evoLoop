@@ -1,10 +1,10 @@
 # 技术选型：核心栈、Wiki 基座与改造边界
 
-状态：**推荐基线 v0.6；用户已选择 PostgreSQL 主数据、飞书 connector，以及先用 OpenViking、保留以后自研知识后端的路径（DEC-027）。具体版本与其余主要技术待验证或确认。** 本文记录已选数据边界与实现建议；不是已安装依赖清单，也不表示服务已经上线。代码责任见[包架构](packages.md)，产品目标仍以[产品定义](../product/definition.md)为准。
+状态：**S1a 工程基线已采用（DEC-028）；完整目标架构仍分阶段实施。** 用户已选 PostgreSQL 主数据、飞书 connector，以及先用 OpenViking、以后可自研替换（DEC-027）。下文区分首片已安装实现与后续候选；本机可运行不表示已部署生产服务。代码责任见[包架构](packages.md)，产品目标仍以[产品定义](../product/definition.md)为准。
 
 先读[包与进程边界](packages.md)，再看本页的取舍。需要决定的是谁来维护协调规则、知识服务和外部接缝；不会因为选一个库就自动获得业务保证。
 
-**已选：**PostgreSQL 为项目主数据与运行存储，飞书为 connector；OpenViking 是首个知识接入后端，前端参考 nashsu 图谱与阅读体验。过程 Document、Git 正式正文、外置 Wiki 各自持有权威。**待采纳或验证：**TS/Node 核心、前端依赖、OpenViking 固定版本及补丁/许可安排。以下先比较理由与门槛，再列完整技术清单和部署约束。
+**已选：**PostgreSQL 为项目主数据与运行存储，飞书为 connector；OpenViking 是首个知识接入后端，前端参考 nashsu 图谱与阅读体验。过程 Document、Git 正式正文、外置 Wiki 各自持有权威。**S1a 已采用：**TS/Node 核心、React/Vite、PG 驱动与迁移。**待验证：**OpenViking 固定版本及补丁/许可、后续前端库与外部适配器。以下先比较理由与门槛，再列完整技术清单和部署约束。
 
 ## 1. 为什么主语言选 TypeScript
 
@@ -72,14 +72,14 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 
 ## 4. 推荐决定
 
-**已选数据方向：evoLoop 的 PostgreSQL 持有 Task、Schedule、原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态与运行 Journal/outbox；飞书是受控协作投影和编辑入口。** 推荐以 TypeScript + Node.js 24 LTS 的模块化单体实现协调服务，首个知识后端 OpenViking 通过 HTTP 适配，由 evoLoop 的认知 session 负责项目知识维护；默认由 Codex App Server 承载自动执行和认知会话。核心语言、部署和运行时方案仍待采纳；知识后端方向已选，具体版本仍待验。
+**已选数据方向：evoLoop 的 PostgreSQL 持有 Task、Schedule、原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态与运行 Journal/outbox；飞书是受控协作投影和编辑入口。** 推荐以 TypeScript + Node.js 24 LTS 的模块化单体实现协调服务，首个知识后端 OpenViking 通过 HTTP 适配，由 evoLoop 的认知 session 负责项目知识维护；默认由 Codex App Server 承载自动执行和认知会话。TS/Node 已在 S1a 落地；部署与 Codex 自动执行尚未接入，知识后端方向已选，具体版本仍待验。
 
 这套选择对应当前负担：很多工作发生在跨 session 的判断、文档版本、对象关联、状态变化、平台 I/O 和失败恢复上。统一主数据让任务、原生需求文档及关系保留稳定 ID、审核和版本，并可在同库提交变更及出站 outbox；没有证据说明需要多节点调度或另一个聊天产品。
 
 | 领域 | 推荐技术与范围 | 为什么这样选／代价 |
 | --- | --- | --- |
 | 主应用语言 | **TypeScript strict、ES modules** | 多包共享任务/运行/知识引用的类型与状态分支；运行时仍校验外部输入。代价是需要编译及类型维护，不能用类型替代业务验证。 |
-| 运行环境 | **Node.js 24 LTS** | 适合进程、事件和 HTTP 协调，采用受支持 LTS。现有文档工具使用 Node 22，不在本轮升级它；首个实现提交统一构建/运行矩阵。 |
+| 运行环境 | **Node.js 24 LTS** | 适合进程、事件和 HTTP 协调，采用受支持 LTS。S1a 已将应用与文档构建/CI 统一至 Node 24.x。 |
 | 仓库组织 | **npm workspaces + TypeScript 编译** | 沿用现有 npm 锁文件和工具习惯；先明确包边界，不引入额外 monorepo 调度平台。 |
 | 核心设计 | **模块化单体、显式状态转换、注入端口** | core 不导入平台 SDK；业务状态、运行结果、消费验收分别建模。第一版无需通用 Agent 编排框架。 |
 | 入口服务 | **Fastify 5，本机协调 API** | 统一 CLI/MCP 的身份、授权、输入和状态检查；初期只监听本机，服务启动/关闭和健康检查由 daemon 负责。 |
@@ -91,18 +91,18 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 | Wiki 基座 | **独立 OpenViking 服务，HTTP 接入** | 复用内容、解析/检索、知识空间等基础能力；普通写页与 Wiki 综合编译的语义分开。下一集成候选版本为 v0.5.1，上线前须通过[正式采用与 fork 的门槛](#3-正式采用与-fork-的门槛)。 |
 | 上游语言 | **沿用 OpenViking 的 Python/Rust 等实现** | 上游独立构建，不把 Python 嵌入 Node core；HTTP 是语言和升级边界。Python 协议研究工具继续作为实验资产。 |
 | Agent 工具 | **CLI 优先，按需要加官方 MCP TypeScript SDK** | 两者都调用协调 API；MCP 是工具传输，不是第二个协调者或另一套业务权限。 |
-| 项目工作台 | **推荐 React + TypeScript / Vite SPA，React Router + TanStack Query** | 工作台通过同一 API 组合任务、文档、认识与分工，支持依据追溯和复核；首期本机同源部署。飞书、Codex、公开静态站保留各自入口；具体取舍见[前端架构](frontend.md)，尚未安装实现。 |
+| 项目工作台 | **React + TypeScript / Vite SPA；Router + Query 为后续候选** | 工作台通过同一 API 组合任务、文档、认识与分工，支持依据追溯和复核；首期本机同源部署。飞书、Codex、公开静态站保留各自入口；S1a 已实现读取/复核，使用小型 hash 路由与显式读取状态；复杂页面增长后再评估 Router/Query。 |
 | 检查与观测 | **node:test、合同用例、真实切片、结构化 JSON 日志** | 沿用当前检查工具；按 task/run/operation/knowledge revision 关联，日志脱敏并记录模型和维护成本。 |
 
 Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 workspaces，Zod 提供 JSON Schema 转换。这里的项目选择是基于职责和代价的判断，并非这些官方文档证明了 evoLoop 的效果。[Node 生命周期][node] · [TS strict][ts] · [Fastify][fastify] · [npm workspaces][npm] · [Zod][zod]
 
-表中 PostgreSQL 主数据、飞书 connector 的权威边界和首个知识后端 OpenViking 已确定；具体版本/驱动和其他主要技术仍是推荐方案。依赖的精确补丁版、锁文件、Node/数据库驱动兼容性须在首个代码切片中共同验证；本轮没有安装它们。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
+表中外部适配器、日程、MCP 与图谱库仍是后续候选。S1a 固定版本：TypeScript 7.0.2、Fastify 5.12.7、Zod 4.6.7、pg 8.23.1、node-pg-migrate 9.0.0、React 19.3.1、Vite 8.3.4；真实验证使用 PostgreSQL 18.6。版本由各包 manifest 和根锁文件控制。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
 
-前端补充按[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；页面、依赖和部署均尚未实现。
+前端补充按[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；S1a 的读取与复核页面已接通本机 API，其余完整页面和部署未实现。
 
 ## 5. 数据与部署边界
 
-第一版部署单位是**一个 evoLoop daemon、它管理的 Codex 子进程、PostgreSQL 数据库服务，以及独立的 OpenViking 服务**。每个业务 session 不是独立后端服务，每个 npm 包也不是进程。源码依赖和进程图见[包架构](packages.md)。
+目标部署单位是**一个 evoLoop daemon、它管理的 Codex 子进程、PostgreSQL 数据库服务，以及独立的 OpenViking 服务**。当前 S1a 仅运行本机协调 API 与 PostgreSQL，静态工作台由 API 同源提供。每个业务 session 不是独立后端服务，每个 npm 包也不是进程。源码依赖和进程图见[包架构](packages.md)。
 
 | 数据 | 唯一可改写权威 | 其他系统保存什么 |
 | --- | --- | --- |
@@ -116,7 +116,7 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 推荐采用当前受支持的 **18.x**，首片锁定当时的小版本和驱动；官方当前将 18 列为受支持版本。开发、CI 与正式部署使用同一引擎/主版本，不用 SQLite 替身证明数据库行为。[版本政策][pg-version] 本轮未创建数据库；本机服务或远端托管实例的具体位置在部署时确定。
 
-主数据和运行记录的拟议实现约定如下，尚未成为实测保证：
+主数据与运行记录约定如下；S1a 只验证当前任务/过程文档事务、修订、操作日志与出站记录，运行时及生产恢复另验：
 
 - `adapter-postgres` 持有 SQL、参数化查询、连接池和版本化迁移，`core` 只调用端口。首期用 `pg` 和显式 SQL，推荐 `node-pg-migrate` 作为版本化迁移 runner；具体字段、原件与检索取舍见[存储设计](storage.md)。不同时引入 ORM；新增 ORM 必须能解释其对迁移与合同维护的实际收益。
 - 用稳定的对象/operation/occurrence 键、版本列和数据库唯一约束避免重复登记；PostgreSQL 适配器通过中立 `UnitOfWork` 绑定同一连接，Task/Document/Relation 更新、操作去重和 outbox 在一个事务提交；core 不直接使用驱动 client。Task、文档审核、运行、同步和实际效果分开建状态，避免一个“完成”替代所有判断。外部请求不放进长事务里，未知结果仍需对账。一次事务须使用同一个借出的 client，完成/失败后归还，不能用独立 `pool.query` 拼接事务。[驱动事务][pg-transactions] · [连接池][pg-pool]
@@ -142,9 +142,9 @@ PostgreSQL 事务不能覆盖飞书、Codex 或 Wiki 的网络副作用。丢失
 
 ## 7. 确认后怎样进入实现
 
-**PostgreSQL 主数据与飞书 connector 方向已确定**，各数据的权威范围按上表执行。接下来需要确认 **TS/Node 主应用与具体前端依赖**，验证 OpenViking 固定版并确定有限补丁策略，并锁定 PostgreSQL 版本和部署位置。Fastify/MCP 等库在自己的包内保持可替换，不能把具体库选择误当产品约束。
+**PostgreSQL 主数据与飞书 connector 方向已确定**，各数据的权威范围按上表执行。S1a 已采用 TS/Node 主应用、React/Vite 和 PostgreSQL 18；接下来验证 OpenViking 固定版、有限补丁策略和真实部署位置。Fastify/MCP 等库在自己的包内保持可替换，不能把具体库选择误当产品约束。
 
-随后按[包架构集中维护的 S1—S4 顺序](packages.md#切片与验证)做最小切片：先锁依赖/协议与配置，在 PG 建一条 Task、一份原生需求 Document 修订及 Relation，并事务提交投影 outbox；再接真实飞书测试表的 Bitable Task 出站投影、回读与对账。入站编辑待字段权限、身份与基线能力验证后开放受控范围；飞书云文档 connector 留作独立后续。再迁移 Codex 已通过夹具并加错误证据拒绝、丢回执恢复；Wiki 新版补验可独立进行，通过后接入一次用户纠正→旧知识修订→新 session 实际消费。研究代码、业务能力和效果证据分别记录。**本轮只形成选型与包设计，没有启动这些实现或扩展测试。**
+随后按[包架构集中维护的 S1—S4 顺序](packages.md#切片与验证)做最小切片：先锁依赖/协议与配置，在 PG 建一条 Task、一份原生需求 Document 修订及 Relation，并事务提交投影 outbox；再接真实飞书测试表的 Bitable Task 出站投影、回读与对账。入站编辑待字段权限、身份与基线能力验证后开放受控范围；飞书云文档 connector 留作独立后续。再迁移 Codex 已通过夹具并加错误证据拒绝、丢回执恢复；Wiki 新版补验可独立进行，通过后接入一次用户纠正→旧知识修订→新 session 实际消费。研究代码、业务能力和效果证据分别记录。**S1a 已完成本机主数据/API/读取复核首片；上述外部投影、派发和知识消费仍待接入。** 详细证据及 10,000 条影响/关联任务上限见[实测报告](../research/design-review-20261020.md)。
 
 [node]: https://nodejs.org/en/about/previous-releases
 [ts]: https://www.typescriptlang.org/tsconfig/strict.html

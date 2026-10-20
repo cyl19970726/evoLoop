@@ -95,7 +95,7 @@ sequenceDiagram
 | `GET /api/v1/projects/{p}/knowledge/{id}?revision={rev}` | 固定 `body`、`contentHash`、`sources[{sourceKey,originRevision,fragment,state}]`、`currentRevision`、`capabilities` |
 | `GET /api/v1/projects/{p}/knowledge/{id}/members?revision={rev}&cursor=...` | 专题成员 ID、固定修订、成员理由与游标 |
 | `GET /api/v1/projects/{p}/knowledge/{id}/links?revision={rev}&direction=both&cursor=...` | 出链/反链、端点修订、关系类型、来源与断链原因 |
-| `GET /api/v1/projects/{p}/knowledge/graph?focus={id}&depth=1&limit=80` | 有界节点/边、截断标志、下一次展开游标；服务端强制上限 |
+| `GET /api/v1/projects/{p}/knowledge/graph?focus={id}&focusRevision={rev}&depth=1&limit=80` | `focusRevision` 可省略以读当前版；指定时焦点页及其出链固定到该版，反链按当前授权索引另标水位。有界节点/边返回各自所据修订、截断标志和下一次展开游标；服务端强制上限 |
 | `GET /api/v1/projects/{p}/tasks/{id}/context` | `ContextQuery`：TaskRevision/BasisSet、原生 DocumentRevision、Git commit、知识固定修订及缺项 |
 | `GET /api/v1/projects/{p}/knowledge/reviews?state=pending&cursor=...` | PG 中的维护决定/影响复核状态与外置候选引用 |
 
@@ -116,7 +116,7 @@ sequenceDiagram
 
 `observedAt` 和各源水位只说明分别核对的时间；PG、Git、Wiki 没有共同瞬间快照。索引滞后或上游不可达时返回可解释的 `stale/unknown` 与 `missing`，历史缓存不能被标成“当前有效”。原件与关系端点逐项复核 ACL；列表/搜索、图、来源卡、附件均不因有索引命中而越权。客户端缓存键至少含 actor、project、对象 ID、固定 revision、过滤/游标、授权版本和 Wiki 水位；切身份、权限收紧或发布/撤回后清除相关缓存。Markdown 禁不可信 HTML、危险 URL，附件经共同 API 授权读取。
 
-`projectionGeneration` 是拟议的不透明读取代次：后端绑定切换或不兼容的关系索引重建时更新，由 API 返回并进入缓存键与游标校验；它不替代知识 revision，也不暴露供应商地址。旧代次游标返回可解释的已失效状态，客户端清除相关缓存并从当前查询第一页重读，不把两代节点/边拼在一起。当前反链读取需标明索引水位，不能因焦点固定在旧 revision 就声称全部反链也是旧时点。
+`projectionGeneration` 是拟议的不透明读取代次：后端绑定切换或不兼容的关系索引重建时更新，由 API 返回并进入缓存键与游标校验；它不替代知识 revision，也不暴露供应商地址。旧代次游标返回可解释的已失效状态，客户端清除相关缓存并从当前查询第一页重读，不把两代节点/边拼在一起。图查询与游标须包含 `focusRevision`；未指定时返回实际焦点修订。历史焦点的出链按该修订读取，当前反链另标索引水位、不得画成同一历史时点；若后端不能提供固定版出链，则返回明确缺项，不用最新版边补造。
 
 ## 6. OpenViking v0.5.1 的原生面与适配面
 
@@ -153,7 +153,7 @@ sequenceDiagram
 
 | 切片 | 可验收的交付 | 必测失效 |
 | --- | --- | --- |
-| 1. 固定来源和读取 | 一个 TaskRevision、一份 PG 原生需求、一份 Git commit 被 SourceBridge 白名单读取；知识不可用时 API 明示缺项 | 路径移动、固定修订 hash 漂移、越权/删除、分页与身份隔离 |
+| 1. 固定来源和读取（S1 后续，非 S1a） | 只读 Git 适配器接入后，一个 TaskRevision、一份 PG 原生需求、一份 Git commit 被 SourceBridge 白名单读取；知识不可用时 API 明示缺项 | 路径移动、固定修订 hash 漂移、越权/删除、分页与身份隔离 |
 | 2. Wiki 阅读 | v0.5.1 候选接通后，专题→知识点→来源→出/反链→局部图，旧 revision 深链可回读 | 同名不同 ID、断链、索引滞后、图节点/深度上限、断线后缓存可见性 |
 | 3. 贡献与发布 | 候选比较、审阅决定、单发布者固定基线发布、回读结果与索引水位 | 两人同基线、回包丢失、外部成功而 PG 未更新、旁路写侦测 |
 | 4. 纠正到使用 | 来源撤回触发内部及跨对象影响，Task 派发门槛阻止旧依据，后续 session 显示并用新修订 | 执行中纠正、旧 Run 保持旧基线、新修订未被实际采用 |

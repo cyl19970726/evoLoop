@@ -1,6 +1,6 @@
 # 存储逻辑：主数据、固定依据与外部引用
 
-状态：2026-10-20 **可实现的设计提案，尚未建表、迁移或验证。** 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
+状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
 ## 对象与固定依据模型
 
@@ -23,7 +23,7 @@ PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨�
 | 表或表组 | 主键、核心字段和唯一约束 | 外键与职责 |
 | --- | --- | --- |
 | `project` | `project_id` PK、状态、可见范围；外部 slug 可变 | 项目归档不级联清空证据 |
-| `task` / `task_revision` | 头表 `(project_id, task_id)` PK，含当前版本和当前修订指针；快照表 `(project_id, task_id, task_revision_id)` PK，含目标、责任、验收判据、接受决定、时间及内容 hash | 头表按旧版本条件更新；每次接受或影响执行的变更插入不可变快照。当前头用于待办查询，旧 Run 只读其固定快照 |
+| `task` / `task_revision` | 头表 `(project_id, task_id)` PK，含当前版本和当前修订/依据集合指针；快照表 `(project_id, task_id, task_revision_id)` PK，含目标、责任、验收判据、接受决定、时间及内容 hash | 头表按旧版本条件更新；每次接受或影响执行的变更插入不可变快照。当前指针须成对指向同一 TaskRevision 的已封存 BasisSet；旧 Run 只读其固定快照 |
 | `schedule` / `schedule_revision` / `occurrence` | 定义头键 `(project_id, schedule_id)`；不可变定义快照键 `(project_id, schedule_id, schedule_revision_id)`；触发键 `(project_id, schedule_id, planned_at_utc)` 唯一 | 快照固定时区、规则、启停及错过/重叠策略；Occurrence 复合 FK 指向实际计算所用 ScheduleRevision，并关联创建/复用的 Task。定义改版不改写旧触发 |
 | `document` | Document 仅用于过程文档；头键 `(project_id, document_id)`、版本/类型/权限及已采纳修订指针 | 仓库 `docs/` 正式文档不建此行；Task 与 Document 通过稳定 ID 多对多导航 |
 | `document_revision` | `(project_id, document_id, revision_id)` PK；`format`、`media_type`、`original_name`、源 `content_hash`、`body` 或 `payload_ref`、`entrypoint`、`assets_manifest`、保存时资源完整性、作者/时间/基线/变更理由 | FK 到过程 Document；不可变；`body` 与 `payload_ref` 必须 XOR；每个 payload_ref 唯一归属一个 revision。内联正文限小型 Markdown/自包含 HTML；较大报告和 bundle 以 canonical BlobStore 引用读取 |
@@ -78,13 +78,13 @@ erDiagram
 
 `relation` 的 source/target 各有 `task_id`、`document_id`、`git_source_ref_id`、`knowledge_ref_id`、`delivery_id`、`review_id`、`evidence_ref_id` 等受支持的类型化 nullable 列，每端 `num_nonnulls(...)=1`，每列用 `(project_id, typed_id)` 复合 FK 指向具体实体。Task↔Document 普通多对多链接作为仅指稳定 documentId 的导航关系保存，不要求固定修订，也不隐含采用；需要作为任务依据时，再在 TaskBasis 固定 DocumentRevision。
 
-`relation_revision_binding` 以 `(project_id, relation_id)` 复合 FK 接导航关系，再以各端类型化 revision/source 列引用 TaskRevision、DocumentRevision、GitSourceRef、KnowledgeRefRevision，或固定的 Delivery/Review/EvidenceRef 版本；本行 `CHECK` 约束每端恰好一种目标；对应目标的复合 FK 保证版本/引用属于同一对象和项目；绑定与导航行的对象类型/ID 一致性由同事务写入及约束触发器核验，不能靠跨表 CHECK。
+`relation_revision_binding` 以 `(project_id, relation_id)` 复合 FK 接导航关系，再以各端类型化 revision/source 列引用 TaskRevision、DocumentRevision、GitSourceRef、KnowledgeRefRevision，或固定的 Delivery/Review/EvidenceRef 版本；本行 `CHECK` 约束每端恰好一种目标；对应目标的复合 FK 保证版本/引用属于同一对象和项目；绑定与导航行的对象类型/ID 一致性由同事务写入及约束触发器核验，不能靠跨表 CHECK。关系两端身份、方向和类型建立后不可原位改变；改向或改类型要失效旧关系并创建新 relation ID，保留旧绑定的原义。
 
 固定修订关系没有可解析版本/来源就不得创建。新对象类型须经迁移、合同和查询变更；JSON 泛型 ID 不能充当外键。Relation 自身有 `(project_id, relation_id)` PK、类型、建立者、依据、创建/失效时间与版本。允许的类型组合由约束或受控类型表限制；关系存在不证明任务符合依据。
 
 ### 执行依据集合与旧运行
 
-固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到过程 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。
+固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到过程 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。接受时在同一事务写齐成员、封存集合并条件推进 Task 当前修订/集合指针；Run 只能引用已封存集合。封存后成员不得增删改，改依据要创建新的 TaskRevision 与 BasisSet；仅 FK 和成员去重不足以保护旧 Run 的依据。
 
 Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 到 `basis_set`，因此旧 Run 的目标、判据和依据均可重放；仅 FK 到可变 Task 头不够。Task 头更新或接受新依据要产生新快照/集合并复核，旧 Run 不跟随当前指针变化。
 
@@ -94,12 +94,12 @@ Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 
 
 ### 外部绑定的约束
 
-ExternalBinding 也使用类型化对象列、恰好一项非空 CHECK 和复合 FK。首期只开放 Task→飞书 Bitable 记录；Document→飞书云文档须按另一套 API 单独验证。唯一约束覆盖 connector、外部租户/空间、外部 ID；另约束同一内部对象在同一目标视图至多一个有效绑定。远端删除记绑定异常，不默认删除内部对象。入站变化缺行为者、读入基线或字段归属时留待处理差异，不按最后写入时间覆盖。
+ExternalBinding 也使用类型化对象列、恰好一项非空 CHECK 和复合 FK。首期只开放 Task→飞书 Bitable 记录；Document→飞书云文档须按另一套 API 单独验证。唯一约束覆盖 connector、外部租户/空间、外部 ID；另约束同一内部对象在同一目标视图至多一个有效绑定。首次创建投影前须验证远端可保存并按稳定内部对象/操作标记查询；回包丢失而尚无 binding 时用该标记对账，不能仅凭空 binding 判定未创建。无法可靠定位就保留 unknown，暂停自动重建。远端删除记绑定异常，不默认删除内部对象。入站变化缺行为者、读入基线或字段归属时留待处理差异，不按最后写入时间覆盖。
 
 | 关系与运行表 | 最小键和字段 | 约束与边界 |
 | --- | --- | --- |
 | `relation` / `relation_revision_binding` | 导航键 `(project_id, relation_id)`；两端类型化对象列、关系类型；绑定键含 relation ID 与两端固定 revision | 导航和版本目标均以同 project 复合 FK 校验；Review/Delivery/EvidenceRef 须有具体表与固定版本，跨表一致性用受控事务/约束触发器；不级联抹历史 |
-| `basis_set` / `task_basis` | 集合键 `(project_id, task_id, task_revision_id, basis_set_id)`；成员含固定 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision、判据校验、记录时间 | 集合 FK 到不可变 TaskRevision；成员 FK 到集合及唯一一种固定来源；同一集合内依据去重 |
+| `basis_set` / `task_basis` | 集合键 `(project_id, task_id, task_revision_id, basis_set_id)`；成员含固定 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision、判据校验、记录时间 | 集合 FK 到不可变 TaskRevision；成员 FK 到集合及唯一一种固定来源；同一集合内依据去重；封存后拒绝成员变更，Task 当前指针与 Run 只引用封存集合 |
 | `run` / `occurrence` | `(project_id, run_id)`、`(project_id, schedule_id, planned_at_utc)`；承载 Session、操作、观察状态、相关 Task | Run 复合 FK 到 TaskRevision+BasisSet；Occurrence 复合 FK 到固定 ScheduleRevision 及 Task；运行完成不能改写 Task 验收或实际效果 |
 | `delivery` / `review` / `evidence_ref` | 各自 `(project_id, id)` 与固定 revision 或不可变决定 ID；成果地址/内容 hash、亲用证据、判断者/时间 | 明确对象和版本，供 `validates` 等 Relation 的类型化端点 FK；正文或原件仍按授权定位 |
 | `task_effect_review` | `(project_id, review_id)`；task ID/版本、目标消费者、亲用证据、结论/时间 | 复合 FK 到固定 TaskRevision；结果未知可保留，不用空值伪装成功 |
@@ -140,9 +140,9 @@ erDiagram
 
 ## 事务、幂等和读取
 
-`operation_journal` 用 `(project_id, operation_id)` 唯一记录请求身份、目标、读入基线、预期副作用及 `pending/applied/rejected/unknown`；重发同一操作 ID 只返回旧结果或待对账状态。`outbox` 用 `(project_id, event_id)` PK，`(project_id, operation_id, effect_key, target_connector, event_kind)` 去重。`effect_key` 是命令内稳定的对象/项目项键：一次操作变更多个 Task、关系或投影时各项不同，同一项重试时不变。载荷只保存目标对象 ID/版本、最少投影内容、可见范围、尝试与回读回执，不把 outbox 当长期第二正文。唯一键字段均应非空；不能假设普通 UNIQUE 将多个 NULL 视为冲突。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
+`operation_journal` 用 `(project_id, operation_id)` 唯一记录请求身份、目标、读入基线、规范化命令摘要、预期副作用及 `pending/applied/rejected/unknown`。同一 ID 与摘要一致时，经当前授权核验后返回原结果或待对账状态；摘要不同则拒绝，不能把旧结果当作新命令成功。`outbox` 用 `(project_id, event_id)` PK，`(project_id, operation_id, effect_key, target_connector, event_kind)` 去重。`effect_key` 是命令内稳定的对象/项目项键：一次操作变更多个 Task、关系或投影时各项不同，同一项重试时不变。载荷只保存目标对象 ID/版本、最少投影内容、可见范围、尝试与回读回执，不把 outbox 当长期第二正文。唯一键字段均应非空；不能假设普通 UNIQUE 将多个 NULL 视为冲突。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
 
-一次主数据变更在 `UnitOfWork` 里用同一数据库事务/连接：校验身份/项目/读入版本 → 条件更新 Task/Document/Relation → 插入 Journal/outbox → 提交。旧版本冲突则不产生投影。提交后才向飞书、Codex 或 Wiki 发网络请求。PG 能原子提交本库对象和 outbox，不能跨服务保证恰好一次；外部回执丢失时记 `unknown` 并按 operation/binding/远端回读对账。首期只有一个活动协调者，失去独占资格停止新写入与 outbox 重试。
+一次主数据变更在 `UnitOfWork` 里用同一数据库事务/连接：校验身份/项目及命令结构 → 查询或占用 operation ID 并核摘要 → 重验当前授权/读入版本 → 条件更新 Task/Document/Relation → 写 Journal/outbox → 提交。旧版本或领域规则冲突不产生投影。若要持久记录合法命令的领域拒绝，可在同一外层事务用 savepoint 包住业务写入，回滚该 savepoint 后只提交 `rejected` 与摘要，不留下对象变更或 outbox；身份或结构校验失败可直接拒绝而不建 Journal。PG 提交结果不明时不得伪造 `rejected`，先按 operation ID 回读。提交后才向飞书、Codex 或 Wiki 发网络请求。PG 能原子提交本库对象和 outbox，不能跨服务保证恰好一次；外部回执丢失时记 `unknown` 并按 operation/binding/远端回读对账。首期只有一个活动协调者，失去独占资格停止新写入与 outbox 重试。
 
 下面的时序图放大**本库事务与外部副作用之间的断点**。它解释操作记录为何需要 `pending/unknown` 和回读，通用恢复选择见[总览](overview.md#派发结果未知先对账再决定)。
 
@@ -154,8 +154,8 @@ sequenceDiagram
   participant X as connector／外部运行时
   E->>C: 操作 ID＋身份＋对象版本
   C->>P: 同事务检查基线并写主数据、Journal、outbox
-  alt 冲突或权限不足
-    P-->>C: 回滚／拒绝
+  alt 旧基线或领域规则冲突
+    P-->>C: 业务写入回滚；可提交合法命令的拒绝记录
     C-->>E: 当前基线与原因
   else 提交成功
     P-->>C: 新版本＋待投影事件
@@ -186,7 +186,7 @@ BlobStore 的**本机适配器**发布顺序为临时写入 → 核字节 hash �
 
 ### 权限、删除与跨系统恢复
 
-业务删除默认归档/标失效，保留已执行任务和旧修订引用；真正删除遵守另定保留政策，先查关系、投影、索引、blob、备份及外部副本。权限收紧先阻断新读取/投影，再按 connector 能力撤销既有可见副本；不能承诺收回已下载内容。索引、outbox、日志、备份和导出不得扩大源对象权限；备份加密、恢复权限及保留周期需在部署前确定。
+业务删除默认归档/标失效，保留已执行任务和旧修订引用；真正删除遵守另定保留政策，先查关系、投影、索引、blob、备份及外部副本。权限收紧先阻断新读取/投影；outbox worker 发出前须重验当前源对象授权、目标可见范围与绑定状态，过期意图暂停并记录原因，再按 connector 能力撤销既有可见副本。不能承诺收回已下载内容。索引、outbox、日志、备份和导出不得扩大源对象权限；备份加密、恢复权限及保留周期需在部署前确定。
 
 恢复分别检验 PG 主数据+outbox、受控 blob、Git 固定 commit、外置 Wiki 固定 revision 和飞书投影。PG 恢复点若早于已发生的外部副作用，不能只恢复数据库就重新派发；先冻结写入，按 operation/binding 与外部实际状态对账。Git 或 Wiki 修订不可达时标依据缺失并安排复核，不能从旧摘要补造正文。跨系统一致恢复是验收用例，不由单一 PG 备份保证。
 
@@ -233,6 +233,6 @@ evoLoop 的 BlobStore 与 OpenViking 内容层可以复用同一家存储服务�
 
 存储随[包架构 S1—S4](packages.md#切片与验证)接入，下面只列各片的持久化检查，不另定义一套实施顺序。
 
-**S1 主数据与出站投影**落 project、Task/不可变 TaskRevision、过程 Document/Revision、Task↔Document 多对多链接、独立 DocumentReviewDecision、GitSourceRef 登记、固定 BasisSet、OperationJournal/outbox、飞书 Task 出站 Binding 和最小 CLI。用真实 PostgreSQL 验证复合 FK、旧版本拒绝、旧 TaskRevision/BasisSet 回读、文档批准不修改正文、TaskBasis 固定过程文档修订/GitSourceRef、同操作两个对象产生两条 outbox、事务最后一步回滚、重复 operation ID、出站写成后丢回执；GitSourceRef 验证固定 commit/path/hash。未接 Wiki 时不要求不存在的 KnowledgeRefRevision，也不能把缺项当作验证通过。飞书入站编辑等字段、身份和基线能力验证后开放。
+**S1 主数据与出站投影**落 project、Task/不可变 TaskRevision、过程 Document/Revision、Task↔Document 多对多链接、独立 DocumentReviewDecision、GitSourceRef 登记、固定 BasisSet、OperationJournal/outbox、飞书 Task 出站 Binding 和最小 CLI。当前可先交付受限 **S1a**：PG 18 上的内联 Markdown 过程文档及已批准修订、ready Task、封存 BasisSet、导航 Relation、ImpactReview 与 Journal/outbox；不接飞书、Git、Wiki 或 Blob，也不把这一子片称作完整 S1。用真实 PostgreSQL 验证复合 FK、跨项目/权限拒绝、旧版本拒绝、已封存成员不可改、旧 TaskRevision/BasisSet 回读、并发批准与接受、文档批准不修改正文、同操作两个对象产生两条 outbox、事务最后一步回滚、同 ID 同/异摘要、合法领域拒绝不留对象或 outbox，以及提交结果未知按 ID 回读。完成 S1 时再验证 TaskBasis 固定 GitSourceRef、飞书首次创建成功却丢回执后用稳定标记定位、重复发送与远端回读、权限收紧使排队投影停发；GitSourceRef 验证固定 commit/path/hash。未接 Wiki 时不要求不存在的 KnowledgeRefRevision，也不能把缺项当作验证通过。飞书入站编辑等字段、身份和基线能力验证后开放。
 
-**后续持久化**：S2 加真实 Run/Session 映射，验证旧 Run 仍读旧 TaskRevision/BasisSet 及未知派发恢复；S3 加 Schedule/ScheduleRevision/Occurrence；S4 加 KnowledgeRef、知识依据绑定、source fingerprint/ingestion receipt、影响复核与评价。blob 在首次较大 Markdown/HTML 报告或资源包切片接入，同时验证发布中断、资源缺失、核 hash 和恢复；它不是收真实原件后的补救项。DocumentIncorporation、职责试行记录、更多关系类型和云文档 connector 随相应用例接入；权限与跨系统恢复逐片验证。不要为未接入的 Wiki 或 connector 预造可编辑副本。自动检查通过后仍由真实消费者核对依据能否找到、冲突能否处理、旧版本能否复现；这些效果尚无运行证据。
+**后续持久化**：S2 加真实 Run/Session 映射，验证旧 Run 仍读旧 TaskRevision/BasisSet 及未知派发恢复；S3 加 Schedule/ScheduleRevision/Occurrence；S4 加 KnowledgeRef、知识依据绑定、source fingerprint/ingestion receipt、知识变更的反向影响复核与评价。blob 在首次较大 Markdown/HTML 报告或资源包切片接入，同时验证发布中断、资源缺失、核 hash 和恢复；它不是收真实原件后的补救项。DocumentIncorporation、职责试行记录、更多关系类型和云文档 connector 随相应用例接入；权限与跨系统恢复逐片验证。不要为未接入的 Wiki 或 connector 预造可编辑副本。自动检查通过后仍由真实消费者核对依据能否找到、冲突能否处理、旧版本能否复现；这些效果尚无运行证据。

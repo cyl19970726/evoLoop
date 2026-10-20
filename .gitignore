@@ -8,6 +8,9 @@
 /site/
 /.site-build-*/
 /node_modules/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
 /.local/
 /.data/
 /wiki/
