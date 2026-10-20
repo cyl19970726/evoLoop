@@ -10,7 +10,7 @@ const scheduleFields = {
   projectId: z.uuid(), operationId: z.uuid(), scheduleId: z.uuid(), revisionId: z.uuid(), timezone: z.string().min(1).max(80),
   rule: scheduleRuleSchema,
   misfire: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("skip") }), z.strictObject({ kind: z.literal("latest") }), z.strictObject({ kind: z.literal("bounded"), maxCatchUp: z.number().int().min(1).max(100) })]),
-  overlap: z.enum(["skip", "queue"]), template: z.strictObject({ title: scheduleText, goal: scheduleText, acceptance: scheduleText, owner: scheduleText }),
+  overlap: z.enum(["skip", "queue"]), template: z.strictObject({ title: scheduleText, content: z.string().min(1).max(65536), acceptance: scheduleText, owner: scheduleText }),
   authorization: z.strictObject({ scopeId: scheduleText, roleId: scheduleText, authorizedBy: scheduleText, expiresAtUtc: z.iso.datetime().nullable() }),
   reason: scheduleText,
 };
@@ -27,7 +27,7 @@ export type ScheduleRule =
 
 export type MisfirePolicy = { kind: "skip" } | { kind: "latest" } | { kind: "bounded"; maxCatchUp: number };
 export type OverlapPolicy = "skip" | "queue";
-export interface ScheduledTaskTemplate { title: string; goal: string; acceptance: string; owner: string }
+export interface ScheduledTaskTemplate { title: string; content: string; acceptance: string; owner: string }
 export interface ScheduleAuthorization {
   scopeId: string;
   roleId: string;

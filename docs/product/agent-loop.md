@@ -101,46 +101,27 @@ flowchart TB
 
 ## ③ Task 与状态机：让选择可靠地变成工作
 
-J2 的阶段候选不等于一项执行任务；从中提出的具体工作进入统一任务集合的“待判断”，满足接受条件、确定责任和授权范围后才转为“可做”并在 J3 执行。需要补证时可先接受一项有限调查，不能把“已有任务记录”误作“已接受或已派发”。evoLoop 是任务与日程的事实源，以 PostgreSQL 保存身份、状态和修订；飞书多维表格是任务投影与受控协作入口。统一任务机制承接需求、缺陷、调查、实现、知识维护和职责试行；认知 session 与领域 session 都可提出任务。原生需求文档独立保存目标、范围与验收的版本，任务引用接受时的需求基线。重复提议归并时保留各自依据与验收。
+Task 是有正文、负责人和完成标准的具体工作。尚未决定是否处理的问题可保存在 issue/spec 或既有会话；授权内工作直接创建待处理 Task，系统一次保存其主正文 Document。开始执行时固定所用正文及必要材料，普通小任务不要求先单独建并采纳一份规格文档。
+
+Task 只使用待处理、进行中、已完成、已取消四态。实施、调研和验证等轻量类型共用同一状态机；检查、验收、等待和受阻属于进行中的具体活动，说明原因与下一步。默认在原任务内验证，只有有独立负责人和交付的验证工作才拆普通 Task。完成须达到约定标准，真人使用只在明确要求时作为条件。正文、验收、改版与历史的完整规则见[任务与过程文档](tasks-and-documents.md)。
 
 ```mermaid
-%%{init: {"state":{"useMaxWidth":false}}}%%
 stateDiagram-v2
-  direction TB
-  state "待判断" as Proposed
-  state "可做" as Ready
-  state "进行中" as Active
-  state "待验收" as Review
-  state "交付完成" as Done
-  state "阻塞" as Blocked
-  state "暂缓" as Paused
-  state "取消" as Cancelled
-  [*] --> Proposed: 需求或下一步
-  Proposed --> Ready: 接受条件满足
-  Proposed --> Cancelled: 不接受／归并
-  Ready --> Active: 已核实承接
-  Active --> Review: 成果待验
-  Review --> Done: 验收通过
-  Review --> Active: 返工
-  Active --> Blocked: 依赖缺失
-  Blocked --> Ready: 缺项已补并核对
-  Ready --> Paused: 暂不推进
-  Active --> Paused: 留现场并核对停止
-  Paused --> Ready: 条件满足，重读后恢复
-  Active --> Cancelled: 撤回目标，核对在途
-  classDef pending fill:#FFF1D6,stroke:#A86412,color:#402700
-  classDef running fill:#E7F2E9,stroke:#3C7654,color:#183C28
-  classDef check fill:#E5F0FF,stroke:#4270A8,color:#172F4B
-  classDef ending fill:#E2F4F2,stroke:#297A73,color:#154B47
-  classDef problem fill:#FCE5E5,stroke:#B44949,color:#612626
-  class Proposed,Ready pending
-  class Active running
-  class Review check
-  class Done ending
-  class Blocked,Paused,Cancelled problem
+  state "待处理" as Todo
+  state "进行中" as Doing
+  state "已完成" as Done
+  state "已取消" as Cancelled
+  [*] --> Todo
+  Todo --> Doing: 明确承接与固定依据
+  Doing --> Done: 验收标准满足
+  Todo --> Cancelled: 不再继续
+  Doing --> Cancelled: 核对在途并取消
+  Done --> Todo: 有理由地重开
+  Cancelled --> Todo: 有理由地重开
+  Doing --> Todo: 核对在途后重排范围
 ```
 
-图例：黄＝待判断/待执行；绿＝执行；蓝＝验收；青＝完成；红＝阻塞、暂缓或取消。这是 evoLoop 任务业务状态的主要转换，飞书列与具体按钮需在真实协作入口上确认。任何尚未结束任务都可按目标决定暂缓或取消；图省略其余同类边，变更仍须记录原因、保留责任并核对在途动作。
+旧版本八态仅保留在历史读取，不继续作为新任务流程。状态简单不扩大权限，也不将原生运行完成当成业务验收。
 
 **三类状态分别记录，互相核对：**
 

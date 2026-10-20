@@ -39,13 +39,14 @@ export async function reviewIncomingChange(deps: { store: DeliveryStore; workflo
   if (!await deps.verifyRemote(candidate)) return finish("conflict", "remote record no longer matches the observed candidate; reread required");
   const detail = await deps.workflow.getTask(principal,projectId,candidate.entityId);
   const task = detail.task;
-  if (task.state !== "proposed" || task.version !== candidate.observedLocalVersion) return finish("conflict", "accepted or changed Task requires normal Task workflow review");
+  if (task.state !== "todo" || task.version !== candidate.observedLocalVersion) return finish("conflict", "started or changed Task requires normal Task workflow review");
   if (candidate.patch.status !== undefined) return finish("conflict", "remote status cannot directly change Task state");
   const title = candidate.patch.title;
   if (!title || title === task.title) return finish("conflict", "no supported title change to apply");
   const command = {
-    type:"task.revise" as const, projectId,operationId:candidate.operationId,taskId:task.id,expectedVersion:task.version,
-    title,goal:task.goal,acceptance:task.acceptance,owner:task.owner,documentIds:detail.links.map(link=>link.documentId),
+    type:"task.update" as const, projectId,operationId:candidate.operationId,taskId:task.id,expectedVersion:task.version,
+    title,content:task.content,acceptance:task.acceptance,owner:task.owner,kind:task.kind,
+    documentIds:detail.links.filter(link=>link.documentId!==task.contentDocumentId).map(link=>link.documentId),
     evidence:`Remote candidate ${candidate.sourceEventId}; verified external actor ${candidate.actor.projectActorId}; ${reason}`,
     consumer:detail.proposal?.consumer ?? task.owner,useRequired:detail.proposal?.useRequired ?? false,
     stopCondition:detail.proposal?.stopCondition ?? "Review remote proposal",reason,

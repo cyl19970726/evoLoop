@@ -63,7 +63,7 @@ export function RuntimePanel({ context, refresh, task }: { context: MutationCont
       return { type: "runtime.session.reserve", sessionId: crypto.randomUUID(), roleId: grant.roleId, authorizationScope: grant.authorizationScope,
         cwd: grant.cwd, sandbox: grant.sandbox, approvalPolicy: "on-request", ...(v.model ? { model: v.model } : {}) };
     }} /></details>}
-    {task && status?.available && ["ready", "active"].includes(task.state) && <ActionForm key={`${task.id}:${task.version}`} context={context} title="派发本次任务运行" fields={[
+    {task && status?.available && task.state === "in_progress" && <ActionForm key={`${task.id}:${task.version}`} context={context} title="派发本次任务运行" fields={[
       { name: "sessionId", label: "承接会话", kind: "select", options: sessions.filter(s => s.state === "ready" && s.roleId === task.owner).map(s => option(s.id, `${s.roleId} · ${s.authorizationScope} · ${s.id.slice(0,8)}`)) },
       { name: "input", label: "本次有界工作与停止条件", kind: "textarea", hint: "系统会附带任务的固定依据；原生运行结束后还需交付与使用验收。" },
     ]} build={v => ({ type: "runtime.run.reserve", runId: crypto.randomUUID(), taskId: task.id, expectedVersion: task.version, ...v })} />}

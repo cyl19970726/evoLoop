@@ -38,8 +38,8 @@ test("real PostgreSQL/API: adopted requirement → two independent basis reviews
   const taskIds = [randomUUID(), randomUUID()];
   const accepted = [];
   for (const [index, taskId] of taskIds.entries()) {
-    applied((await send({ type: "task.propose", taskId, title: `任务 ${index + 1}`, goal: "读取完整需求", acceptance: "能找到全部原文", owner: "integration-owner", documentIds: [documentId] })).body);
-    accepted.push(applied((await send({ type: "task.accept", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: r1.revisionId }], reason: "授权范围内接受" })).body));
+    applied((await send({ type: "task.create", taskId, title: `任务 ${index + 1}`, content: "# 读取完整需求\n验证固定原文。", acceptance: "能找到全部原文", owner: "integration-owner", documentIds: [documentId] })).body);
+    accepted.push(applied((await send({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: r1.revisionId }], reason: "授权范围内开始" })).body));
   }
   const r2 = applied((await send({ type: "document.revise", documentId, expectedVersion: 2, body: "# r2\n必须保留完整原件，并显示旧版依据。", reason: "增加历史依据阅读" })).body);
   assert.equal((await service.listImpacts(principal, projectId)).length, 0, "draft must not change accepted task bases");
@@ -60,11 +60,15 @@ test("real PostgreSQL/API: adopted requirement → two independent basis reviews
   applied((await send({ type: "task.reviewBasis", taskId: taskIds[1], expectedVersion: 2, impactId: second.id, decision: "retain", reason: "此任务仅回归原件保存，原版判据仍适用" })).body);
   const afterA = await service.getTask(principal, projectId, taskIds[0]!);
   const afterB = await service.getTask(principal, projectId, taskIds[1]!);
-  assert.equal(afterA.basis?.members[0]?.revisionId, r2.revisionId);
-  assert.equal(afterB.basis?.members[0]?.revisionId, r1.revisionId);
+  assert.equal(afterA.basis?.members.find(x => x.documentId === documentId)?.revisionId, r2.revisionId);
+  assert.equal(afterB.basis?.members.find(x => x.documentId === documentId)?.revisionId, r1.revisionId);
+  assert.equal(afterA.task.content, "# 读取完整需求\n验证固定原文。");
+  assert.equal(afterA.revision.contentDocumentId, afterA.task.contentDocumentId);
+  assert.equal(afterA.revision.contentRevisionId, afterA.task.contentRevisionId);
+  assert.equal(afterA.basis?.members.find(x => x.documentId === afterA.task.contentDocumentId)?.revisionId, afterA.task.contentRevisionId);
   assert.equal(afterA.decisions.length, 1);
   assert.equal(afterB.decisions[0]?.decision, "retain");
-  assert.equal(afterA.task.state, "ready", "review is not completion or dispatch");
+  assert.equal(afterA.task.state, "in_progress", "source review does not close or restart work");
   const old = await service.getTaskRevision(principal, projectId, taskIds[0]!, before.revision.id);
   assert.deepEqual(old.basis, before.basis);
   assert.equal(old.revision.acceptance, "能找到全部原文");

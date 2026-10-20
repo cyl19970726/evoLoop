@@ -12,13 +12,17 @@ evoLoop 因而维护稳定的对象身份与关系，让一次查询能得到相
 
 | 对象 | 持续回答的问题 | 主数据与正文位置 |
 | --- | --- | --- |
-| Task | 谁在什么依据下做什么，如何验收，当前到哪一步？ | evoLoop PostgreSQL；飞书记录是协作视图，编辑通过核心规则接收 |
-| Document / DocumentRevision | 任务关联的需求、详述、技术讨论与决定是什么？ | PostgreSQL 管理过程文档修订及内联正文或唯一受控载荷引用；Git 正式文档独立按 repo/path/commit/hash 引用 |
+| Task | 谁在什么依据下做什么，如何验收，四态进度到哪一步？ | evoLoop PostgreSQL；飞书记录是协作视图，编辑通过核心规则接收 |
+| Document / DocumentRevision | 任务主正文及 issue/spec/discussion/report 的完整内容是什么？ | PostgreSQL 管理过程文档修订及内联正文或唯一受控载荷引用；Git 正式文档独立按 repo/path/commit/hash 引用 |
 | Discussion / DiscussionEvent | 负责人带什么固定依据讨论分工或方向，承接、决定及后续对象怎样追证？ | PostgreSQL 保存状态、固定引用与追加事件；交接和人工登记正文只存过程 DocumentRevision，不另存一份聊天正文 |
 | Knowledge | 为什么这样判断，哪些证据支持或挑战，适用条件是什么？ | 外置 Wiki / KnowledgeRepository；evoLoop 保存稳定引用和相关对象关系 |
 | Evidence / Delivery | 观察到什么、交付了什么，在哪里核对？ | 受控原件或成果位置；evoLoop 登记定位、修订及关联 |
 | Relation | 哪个任务依据哪份文档和认识，什么结果触发了修订？ | evoLoop PostgreSQL 保存跨对象关系；Wiki 内部来源—主张依赖仍由知识系统维护 |
 | ExternalBinding | 哪个外部记录对应哪个内部对象，现在同步到哪个版本？ | evoLoop PostgreSQL；平台 ID 不代替内部业务 ID |
+
+Task 主正文的唯一权威是 DocumentRevision。Task 与每个 TaskRevision 保存 `contentDocumentId/contentRevisionId`，`content` 是按固定修订读取的投影，数据库不再另存可编辑 goal 正文。验收 acceptance 仍由 Task 及其修订保存；项目 Goal 不更名。`task.create` 在一个事务创建 todo Task、task 类型主文档和固定正文，`task.start` 原子发布主正文、封存本轮依据并进入 in_progress，不需要单独的规格文档前置。工作状态只用 todo/in_progress/done/cancelled。
+
+用途类型与 format 分开；未分类可为空，Document 生命周期使用 draft/published/archived。已发布 r3 与新草稿 r4 可以共存，归档不删历史或越过权限。初期验收留原任务内，正文写作与使用语义见[任务与过程文档](../product/tasks-and-documents.md)。
 
 ## 2. 三类对象怎样形成闭环
 
@@ -44,7 +48,7 @@ Wiki 维护可以把需求修订、阶段评审和交付证据作为来源，通
 
 `Document` 是过程文档目录，`DocumentRevision` 记录其不可变修订。它只管理需求、任务详述、技术讨论、方案比较和评审结论等过程文档，可直接关联 Task；文档可以已经采纳、完成或归档。仓库 `docs/` 下的产品、架构、接口与开发规范不属于 Document 表，是由 Git 维护的独立文档源。
 
-Document 修订及载荷归属由 PostgreSQL 管理；正文可内联或按固定修订唯一引用受控 BlobStore 原件，详见[存储设计](storage.md)。过程文档可先创建和讨论，再关联任务，不要求创建时已有 Task。一个 Task 可直接关联多份过程文档，同一份需求也可关联多个 Task；普通 Task↔Document 导航链接只需指向稳定 documentId。任务接受或执行时，才在依据集合中固定实际采用的 DocumentRevision。Task 中保留简短目标与验收入口，详细说明和讨论作为独立修订引用。Git 正式文档不创建 Document 行；必要的 GitSourceRef/source metadata 记录 repo、path、commit 和内容 hash，供固定引用、校验和追溯。
+Document 修订及载荷归属由 PostgreSQL 管理；正文可内联或按固定修订唯一引用受控 BlobStore 原件，详见[存储设计](storage.md)。过程文档可先创建和讨论，再关联任务，不要求创建时已有 Task。一个 Task 可直接关联多份过程文档，同一份需求也可关联多个 Task；普通 Task↔Document 导航链接只需指向稳定 documentId。主正文从创建时即固定 DocumentRevision；开始执行时将主正文与实际采用的其他材料封存到依据集合。Task 保留标题、负责人、独立验收及固定主正文引用；完整说明在主 Document 中直接展开，其他讨论或规格按需独立引用。Git 正式文档不创建 Document 行；必要的 GitSourceRef/source metadata 记录 repo、path、commit 和内容 hash，供固定引用、校验和追溯。
 
 | 项目 | 拟议语义 |
 | --- | --- |

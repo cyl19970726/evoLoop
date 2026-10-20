@@ -50,7 +50,7 @@ function preparedBody(command: Extract<DiscussionCommand, { type: "discussion.pr
     ...(fixed.task ? ["", "## 固定任务", `任务：${quoted(fixed.task.title)}`,
       `固定修订：${fixed.task.id} · ${command.task!.revisionId}`,
       ...(fixed.stage && fixed.taskStageId === null ? ["关系：独立任务，仅作比较依据，不属于所选阶段"] : []),
-      `目标：${quoted(fixed.task.goal)}`, `验收：${quoted(fixed.task.acceptance)}`,
+      `正文：${quoted(fixed.task.content)}`, `验收：${quoted(fixed.task.acceptance)}`,
       `负责人：${quoted(fixed.task.owner)}`, `当时状态：${fixed.task.state}`,
       `固定链接：#/p/${command.projectId}/tasks/${fixed.task.id}?revision=${command.task!.revisionId}`] : []),
     ...fixed.documents.flatMap(({ document, revision }) => ["", "## 已采用文档",
@@ -148,7 +148,8 @@ export async function applyDiscussion(ctx: Context): Promise<{ result: AppliedRe
     const body = preparedBody(command, { goal, stage: fixedStage, task: fixedTask, taskStageId, documents: fixedDocuments });
     const revisionId = ctx.nextId();
     const document = { projectId: command.projectId, id: command.documentId, title: command.title,
-      version: 1, currentRevisionId: revisionId, adoptedRevisionId: null };
+      version: 1, currentRevisionId: revisionId, adoptedRevisionId: null,
+      kind: "discussion" as const, status: "draft" as const };
     await tx.insertDocument(document);
     await tx.insertDocumentRevision(documentRevision(ctx, document.id, revisionId, null, body, "Discussion handoff prepared"));
     const record: DiscussionRecord = { projectId: command.projectId, id: command.discussionId, version: 1,

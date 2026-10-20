@@ -55,12 +55,10 @@ test("runtime handoff receipts are ordered, actor-attributed observations", asyn
   applied(await issue(owner, { type: "document.adopt", documentId, expectedVersion: 1,
     revisionId: document.revisionId, reason: "Initial basis" }));
   const taskId = randomUUID();
-  applied(await issue(owner, { type: "task.propose", taskId, title: "Produce output", goal: "One result",
+  applied(await issue(owner, { type: "task.create", taskId, title: "Produce output", content: "# One result",
     acceptance: "Inspect the result", owner: owner.actorId, documentIds: [documentId], evidence: "Accepted requirement" }));
-  applied(await issue(owner, { type: "task.judge", taskId, expectedVersion: 1, decision: "approve",
-    reason: "Bounded", evidence: "Adopted requirement" }));
-  const taskReady = applied(await issue(owner, { type: "task.accept", taskId, expectedVersion: 1,
-    basis: [{ documentId, revisionId: document.revisionId }], reason: "Ready" }));
+  const taskReady = applied(await issue(owner, { type: "task.start", taskId, expectedVersion: 1,
+    basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" }));
 
   const sessionId = randomUUID();
   const cwd = "/tmp/evoloop-runtime-handoff";
@@ -133,7 +131,7 @@ test("runtime handoff receipts are ordered, actor-attributed observations", asyn
   assert.ok(handoffEvents.every(event => event.nativeTurnId === "handoff-turn"));
 
   const task = await workflow.getTask(owner, projectId, taskId);
-  assert.equal(task.task.state, "active", "handoff receipts do not close the Task");
+  assert.equal(task.task.state, "in_progress", "handoff receipts do not close the Task");
   assert.deepEqual(task.observations, [], "handoff receipts are not consumer observations");
   assert.equal((await workflow.getRuntimeRun(owner, projectId, runId)).state, "completed");
 });

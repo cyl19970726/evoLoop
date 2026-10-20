@@ -65,6 +65,12 @@ class MemoryUow implements UnitOfWork {
   async transaction<T>(_projectId: string, action: (tx: Transaction) => Promise<T>): Promise<T> {
     let state = structuredClone(this.state);
     const reader = (): Reader => ({
+      getRuntimeSession: async () => null,
+      listRuntimeSessions: async () => [],
+      getRuntimeRun: async () => null,
+      listRuntimeRuns: async () => [],
+      listRuntimeEvents: async () => [],
+      listRuntimeSessionEvents: async () => [],
       getDiscussion: async id => state.discussions[id] ?? null,
       listDiscussions: async (limit, cursor) => {
         const values = Object.values(state.discussions).sort((a, b) => a.id.localeCompare(b.id));
@@ -257,15 +263,174 @@ async function seedTwoTasks(f: ReturnType<typeof fixture>, documentIds = [docume
     await service.execute(principal, { type: "document.adopt", projectId, operationId: operation(), documentId: id, expectedVersion: 1, revisionId: document.current.id, reason: "Accepted" });
   }
   for (const id of [taskA, taskB]) {
-    await service.execute(principal, { type: "task.propose", projectId, operationId: operation(), taskId: id,
-      title: "Task", goal: "Do work", acceptance: "r1 acceptance", owner: "owner", documentIds });
+    await service.execute(principal, { type: "task.create", projectId, operationId: operation(), taskId: id,
+      title: "Task", content: "Do work", acceptance: "r1 acceptance", owner: "owner", documentIds });
     const basis = await Promise.all(documentIds.map(async (docId) => ({
       documentId: docId, revisionId: (await service.getDocument(principal, projectId, docId)).adopted!.id,
     })));
-    await service.execute(principal, { type: "task.accept", projectId, operationId: operation(), taskId: id,
-      expectedVersion: 1, basis, reason: "Ready" });
+    await service.execute(principal, { type: "task.start", projectId, operationId: operation(), taskId: id,
+      expectedVersion: 1, basis, reason: "Start" });
   }
 }
+
+test("Task creation owns a primary Document and pins each changed body to an immutable revision", async () => {
+  const f = fixture();
+  await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
+  const created = await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(),
+    taskId: taskA, title: "Implement", content: "First plan", acceptance: "Checks pass", owner: "owner", kind: "implementation" });
+  assert.equal(created.status, "applied");
+  const initial = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(initial.task.state, "todo");
+  assert.equal(initial.task.content, "First plan");
+  assert.equal(initial.task.kind, "implementation");
+  const document = await f.service.getDocument(principal, projectId, initial.task.contentDocumentId);
+  assert.equal(document.document.kind, "task");
+  assert.equal(document.document.status, "draft");
+  assert.equal(document.current.id, initial.revision.contentRevisionId);
+  const blocked = await f.service.execute(principal, { type: "document.revise", projectId, operationId: f.operation(),
+    documentId: document.document.id, expectedVersion: 1, body: "Bypass", reason: "Attempt" });
+  assert.equal(blocked.status === "rejected" ? blocked.code : null, "TASK_CONTENT_OWNED");
+  const changed = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 1, title: "Implement", content: "Second plan", acceptance: "Checks pass",
+    owner: "owner", reason: "Scope clarified" });
+  assert.equal(changed.status, "applied");
+  const next = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(next.task.content, "Second plan");
+  assert.notEqual(next.revision.contentRevisionId, initial.revision.contentRevisionId);
+  const updatedPrimary = await f.service.getDocument(principal, projectId, next.task.contentDocumentId);
+  const primaryEvent = f.uow.state.outbox.find(event => event.operationId === changed.operationId &&
+    event.kind === "document" && event.entityId === next.task.contentDocumentId);
+  assert.equal(updatedPrimary.document.version, 2);
+  assert.equal(primaryEvent?.version, updatedPrimary.document.version);
+  assert.equal((await f.service.getTaskRevision(principal, projectId, taskA, initial.revision.id)).revision.content, "First plan");
+  assert.equal((await f.service.getDocumentRevision(principal, projectId, document.document.id,
+    initial.revision.contentRevisionId)).body, "First plan");
+  const started = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 2, reason: "Approved execution" });
+  assert.equal(started.status, "applied");
+  const active = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(active.task.state, "in_progress");
+  assert.deepEqual(active.basis?.members, [{ documentId: active.task.contentDocumentId, revisionId: active.task.contentRevisionId }]);
+  assert.equal((await f.service.getDocument(principal, projectId, active.task.contentDocumentId)).document.status, "published");
+  const unauthorized: Principal = { ...principal, permissions: ["read", "write"] };
+  await assert.rejects(f.service.execute(unauthorized, { type: "task.start", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 3, reason: "No review authority" }), error =>
+    error instanceof DomainError && error.code === "FORBIDDEN");
+  const premature = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 3, title: "Implement", content: "Third plan", acceptance: "Checks pass",
+    owner: "owner", reason: "New work" });
+  assert.equal(premature.status === "rejected" ? premature.code : null, "REOPEN_REQUIRED");
+});
+
+test("reopen invalidates an earlier delivery before the same Task can close again", async () => {
+  const f = fixture();
+  await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
+  await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(),
+    taskId: taskA, title: "Validate", content: "Check current behavior", acceptance: "Fixture passes", owner: "owner" });
+  await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: taskA,
+    expectedVersion: 1, reason: "Start" });
+  const delivery = await f.service.execute(principal, { type: "delivery.record", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 2, artifactRef: "repo/check", artifactRevision: "abc123",
+    contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "Fixture passed", reason: "Ready for acceptance" });
+  assert.equal(delivery.status, "applied");
+  const firstClose = await f.service.execute(principal, { type: "task.close", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 3, deliveryId: delivery.status === "applied" ? delivery.revisionId! : "",
+    acceptanceResult: "met", acceptanceEvidence: "Criterion checked", reason: "Accepted" });
+  assert.equal(firstClose.status, "applied");
+  const reopened = await f.service.execute(principal, { type: "task.reopen", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 4, reason: "New requirement" });
+  assert.equal(reopened.status, "applied");
+  const before = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(before.task.state, "todo");
+  assert.ok(before.basis, "reopen keeps fixed sources for the next explicit start");
+  await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: taskA,
+    expectedVersion: 5, reason: "Restart" });
+  const oldDeliveryId = f.uow.state.deliveries[0]!.id;
+  const stale = await f.service.execute(principal, { type: "task.close", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 6, deliveryId: oldDeliveryId,
+    acceptanceResult: "met", acceptanceEvidence: "Old evidence", reason: "Attempt" });
+  assert.equal(stale.status === "rejected" ? stale.code : null, "STALE_DELIVERY");
+});
+
+test("starting a migrated todo Task without basis input retains its fixed legacy sources", async () => {
+  const f = fixture();
+  await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
+  await f.service.execute(principal, { type: "document.create", projectId, operationId: f.operation(),
+    documentId, title: "Requirement", body: "fixed r1" });
+  const source = await f.service.getDocument(principal, projectId, documentId);
+  await f.service.execute(principal, { type: "document.publish", projectId, operationId: f.operation(),
+    documentId, expectedVersion: 1, revisionId: source.current.id, reason: "Publish source" });
+  await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(),
+    taskId: taskA, title: "Legacy task", content: "Fixed task text", acceptance: "Pass", owner: "owner", documentIds: [documentId] });
+  const current = await f.service.getTask(principal, projectId, taskA);
+  const legacyBasisId = "00000000-0000-4000-8000-000000000099";
+  f.uow.state.taskRevisions[current.revision.id] = { ...current.revision, state: "ready", basisSetId: legacyBasisId };
+  f.uow.state.bases[legacyBasisId] = { projectId, taskId: taskA, taskRevisionId: current.revision.id,
+    id: legacyBasisId, members: [{ documentId, revisionId: source.current.id }], sealed: true };
+  const started = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 1, reason: "Explicit new start" });
+  assert.equal(started.status, "applied");
+  const active = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(active.basis?.members.length, 2);
+  assert.deepEqual(active.basis?.members.find(item => item.documentId === documentId),
+    { documentId, revisionId: source.current.id });
+  assert.deepEqual(active.basis?.members.find(item => item.documentId === active.task.contentDocumentId),
+    { documentId: active.task.contentDocumentId, revisionId: active.task.contentRevisionId });
+});
+
+test("reopen and body update keep the prior published primary while inheriting external sources", async () => {
+  const f = fixture();
+  await seedTwoTasks(f);
+  const initial = await f.service.getTask(principal, projectId, taskA);
+  const primaryId = initial.task.contentDocumentId;
+  const published = await f.service.getDocument(principal, projectId, primaryId);
+  assert.equal(published.document.status, "published");
+  const reopened = await f.service.execute(principal, { type: "task.reopen", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 2, reason: "Replan" });
+  assert.equal(reopened.status, "applied");
+  const todo = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(todo.basis?.members.find(item => item.documentId === documentId)?.revisionId,
+    initial.basis?.members.find(item => item.documentId === documentId)?.revisionId);
+  const updated = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 3, title: "Task", content: "Revised body", acceptance: "r1 acceptance",
+    owner: "owner", reason: "Replan body" });
+  assert.equal(updated.status, "applied");
+  const candidate = await f.service.getDocument(principal, projectId, primaryId);
+  assert.equal(candidate.document.status, "published", "a new candidate does not unpublish the earlier revision");
+  assert.equal(candidate.adopted?.id, published.adopted?.id);
+  assert.notEqual(candidate.current.id, candidate.adopted?.id);
+  const restarted = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 4, reason: "Review revised body" });
+  assert.equal(restarted.status, "applied");
+  const active = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(active.basis?.members.find(item => item.documentId === documentId)?.revisionId,
+    initial.basis?.members.find(item => item.documentId === documentId)?.revisionId);
+  assert.equal(active.basis?.members.find(item => item.documentId === primaryId)?.revisionId, active.task.contentRevisionId);
+  assert.equal((await f.service.getDocument(principal, projectId, primaryId)).adopted?.id, active.task.contentRevisionId);
+});
+
+test("omitted basis rejects changed inherited sources; explicit empty basis deliberately removes them", async () => {
+  const f = fixture();
+  await seedTwoTasks(f);
+  const before = await f.service.getDocument(principal, projectId, documentId);
+  await f.service.execute(principal, { type: "document.revise", projectId, operationId: f.operation(),
+    documentId, expectedVersion: before.document.version, body: "r2", reason: "Source changed" });
+  const candidate = await f.service.getDocument(principal, projectId, documentId);
+  await f.service.execute(principal, { type: "document.publish", projectId, operationId: f.operation(),
+    documentId, expectedVersion: candidate.document.version, revisionId: candidate.current.id, reason: "Publish change" });
+  await f.service.execute(principal, { type: "task.reopen", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 2, reason: "Replan after source change" });
+  const inherited = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 3, reason: "Try old source" });
+  assert.equal(inherited.status === "rejected" ? inherited.code : null, "BASIS_CHANGED");
+  assert.equal((await f.service.getTask(principal, projectId, taskA)).task.state, "todo");
+  const explicit = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: 3, basis: [], reason: "Explicitly omit changed source" });
+  assert.equal(explicit.status, "applied");
+  const active = await f.service.getTask(principal, projectId, taskA);
+  assert.deepEqual(active.basis?.members, [{ documentId: active.task.contentDocumentId,
+    revisionId: active.task.contentRevisionId }]);
+});
 
 test("adoption creates pending impacts; decisions keep sealed old basis and rebuild other pending impacts", async () => {
   const f = fixture();
@@ -337,13 +502,13 @@ test("candidate revision, duplicate operation and UTF-8 byte cap are enforced wi
     documentId, expectedVersion: before.document.version, body: "r2", reason: "New request" });
   assert.equal(candidate.status, "applied");
   const proposal = "00000000-0000-4000-8000-000000000006";
-  await f.service.execute(principal, { type: "task.propose", projectId, operationId: f.operation(), taskId: proposal,
-    title: "New task", goal: "Do work", acceptance: "Check", owner: "owner", documentIds: [documentId] });
+  await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(), taskId: proposal,
+    title: "New task", content: "Do work", acceptance: "Check", owner: "owner", documentIds: [documentId] });
   const outboxBefore = f.uow.state.outbox.length;
-  const invalid = await f.service.execute(principal, { type: "task.accept", projectId, operationId: f.operation(), taskId: proposal,
+  const invalid = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: proposal,
     expectedVersion: 1, basis: [{ documentId, revisionId: candidate.status === "applied" ? candidate.revisionId! : "" }], reason: "Try" });
-  assert.equal(invalid.status === "rejected" ? invalid.code : "applied", "UNADOPTED_BASIS");
-  assert.equal((await f.service.getTask(principal, projectId, proposal)).task.state, "proposed");
+  assert.equal(invalid.status === "rejected" ? invalid.code : "applied", "BASIS_CHANGED");
+  assert.equal((await f.service.getTask(principal, projectId, proposal)).task.state, "todo");
   assert.equal(f.uow.state.outbox.length, outboxBefore);
   const overBytes = "好".repeat(23000);
   const oversize = await f.service.execute(principal, { type: "document.revise", projectId, operationId: f.operation(), documentId,
@@ -355,7 +520,7 @@ test("candidate revision, duplicate operation and UTF-8 byte cap are enforced wi
     revisionId: candidate.status === "applied" ? candidate.revisionId! : "", reason: "Adopt" };
   const first = await f.service.execute(principal, cmd);
   assert.deepEqual(await f.service.execute(principal, { ...cmd }), first);
-  assert.equal(f.uow.state.documentDecisions.length, 2);
+  assert.equal(f.uow.state.documentDecisions.length, 4);
   await assert.rejects(f.service.execute(principal, { ...cmd, reason: "Different" }),
     (error: unknown) => error instanceof DomainError && error.code === "OPERATION_REUSED");
   assert.ok(f.uow.state.outbox.every((item) => !JSON.stringify(item).includes("r2")));

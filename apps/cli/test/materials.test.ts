@@ -81,8 +81,8 @@ test("direct original integrity failure has a material error code, while filesys
 
 test("context pins Task revision, full basis original, Git and Wiki; stale Wiki yields partial", async () => {
   const root = `/api/projects/${projectId}`;
-  const task = { projectId, id: taskId, version: 1, currentRevisionId: taskRevisionId, title: "Task", goal: "Goal", acceptance: "Accept", owner: "Agent", state: "ready" };
-  const selected = { projectId, taskId, id: taskRevisionId, version: 1, title: "Task", goal: "Goal", acceptance: "Accept", owner: "Agent", state: "ready", basisSetId: id(8), actorId: "owner", reason: "initial", createdAt: "2026-01-01T00:00:00Z" };
+  const task = { projectId, id: taskId, version: 1, currentRevisionId: taskRevisionId, title: "Task", content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId, kind: null, acceptance: "Accept", owner: "Agent", state: "in_progress" };
+  const selected = { projectId, taskId, id: taskRevisionId, version: 1, title: "Task", content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId, kind: null, acceptance: "Accept", owner: "Agent", state: "in_progress", basisSetId: id(8), actorId: "owner", reason: "initial", createdAt: "2026-01-01T00:00:00Z" };
   const basis = { projectId, taskId, taskRevisionId, id: id(8), sealed: true, members: [{ documentId, revisionId: documentRevisionId }] };
   const gitBody = "Git fixed source\n";
   const wikiBody = "Wiki fixed source\n";
@@ -113,9 +113,9 @@ test("context pins Task revision, full basis original, Git and Wiki; stale Wiki 
 
 test("a missing fixed basis original never becomes a complete context", async () => {
   const root = `/api/projects/${projectId}`;
-  const task = { projectId, id: taskId, version: 2, currentRevisionId: id(20), title: "Task", goal: "Goal", acceptance: "Accept", owner: "Agent", state: "ready" };
-  const current = { projectId, taskId, id: id(20), version: 2, basisSetId: null };
-  const old = { projectId, taskId, id: taskRevisionId, version: 1, basisSetId: id(8) };
+  const task = { projectId, id: taskId, version: 2, currentRevisionId: id(20), title: "Task", content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId, kind: null, acceptance: "Accept", owner: "Agent", state: "in_progress" };
+  const current = { projectId, taskId, id: id(20), version: 2, basisSetId: null, content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId };
+  const old = { projectId, taskId, id: taskRevisionId, version: 1, basisSetId: id(8), content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId };
   const basis = { projectId, taskId, taskRevisionId, id: id(8), sealed: true, members: [{ documentId, revisionId: documentRevisionId }] };
   const api = client({
     [`${root}/tasks/${taskId}`]: { task, revision: current, basis: null },
@@ -137,7 +137,7 @@ test("combined basis originals over 16 MiB stay partial with every omitted fixed
   const largeBody = "x".repeat(8 * 1024 * 1024 + 1);
   const members = [31, 32, 33].map((n, index) => ({ documentId: id(n), revisionId: id(n + 10), index }));
   const task = { projectId, id: taskId, version: 1, currentRevisionId: taskRevisionId };
-  const selected = { projectId, taskId, id: taskRevisionId, version: 1, basisSetId: id(8) };
+  const selected = { projectId, taskId, id: taskRevisionId, version: 1, basisSetId: id(8), content: largeBody, contentDocumentId: members[0]!.documentId, contentRevisionId: members[0]!.revisionId };
   const basis = { projectId, taskId, taskRevisionId, id: id(8), sealed: true,
     members: members.map(({ documentId, revisionId }) => ({ documentId, revisionId })) };
   const responses: Record<string, unknown> = {
@@ -158,4 +158,25 @@ test("combined basis originals over 16 MiB stay partial with every omitted fixed
   assert.match(result.failures[0]!.reason, /16 MiB/);
   assert.match(result.failures[1]!.reason, /not read/);
   assert.equal(api.seen.includes(`${root}/documents/${members[2]!.documentId}/revisions/${members[2]!.revisionId}/original`), false);
+});
+
+
+test("todo context reads the fixed primary without precreated reference docs and detects projection drift", async () => {
+  const root = `/api/projects/${projectId}`;
+  const selected = { projectId, taskId, id: taskRevisionId, version: 1, basisSetId: null,
+    content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId };
+  const task = { projectId, id: taskId, currentRevisionId: taskRevisionId, state: "todo", ...selected };
+  const responses: Record<string, unknown> = {
+    [`${root}/tasks/${taskId}`]: { task: { ...task, id: taskId }, revision: selected, basis: null },
+    [`${root}/tasks/${taskId}/revisions`]: [{ revision: selected, basis: null }],
+    [`${root}/references/tasks/${taskId}/revisions/${taskRevisionId}`]: [], [originalPath]: originalResponse(),
+  };
+  const result = await readTaskContext(client(responses), projectId, taskId);
+  assert.equal(result.status, "complete");
+  assert.equal(result.documents.length, 1);
+  assert.equal(result.documents[0]!.revision.id, documentRevisionId);
+  responses[`${root}/tasks/${taskId}`] = { task: { ...task, id: taskId }, revision: { ...selected, content: "different projection" }, basis: null };
+  const partial = await readTaskContext(client(responses), projectId, taskId);
+  assert.equal(partial.status, "partial");
+  assert.match(partial.failures[0]!.reason, /projection differs/);
 });

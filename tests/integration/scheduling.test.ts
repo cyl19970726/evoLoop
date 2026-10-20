@@ -12,7 +12,7 @@ import type { ScheduleDefinition } from "../../packages/contracts/src/scheduling
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(url)) throw new Error("TEST_DATABASE_URL must name a dedicated evoloop_*test database");
 
-test("real PG schedule reservation creates one proposed task and survives replay", async t => {
+test("real PG schedule reservation creates one todo Task and survives replay", async t => {
   await migrate(url);
   const pool = new pg.Pool({ connectionString: url, max: 4 });
   t.after(() => pool.end());
@@ -24,7 +24,7 @@ test("real PG schedule reservation creates one proposed task and survives replay
     projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: "2026-10-20T09:00:00.000Z",
     revision: { projectId, scheduleId, id: revisionId, version: 1, timezone: "Asia/Taipei",
       rule: { kind: "interval", anchorUtc: "2026-10-20T09:00:00.000Z", everyMinutes: 60 }, misfire: { kind: "bounded", maxCatchUp: 3 }, overlap: "queue",
-      template: { title: "Inspect a result", goal: "Check new evidence", acceptance: "Record evidence", owner: "schedule-owner" },
+      template: { title: "Inspect a result", content: "# Check new evidence", acceptance: "Record evidence", owner: "schedule-owner" },
       authorization: { scopeId: "scope:test", roleId: "role:test", authorizedBy: principal.actorId, expiresAtUtc: null },
       reason: "fixture schedule", actorId: principal.actorId, createdAtUtc: "2026-10-20T09:00:00.000Z" },
   };
@@ -36,7 +36,7 @@ test("real PG schedule reservation creates one proposed task and survives replay
   assert.equal(first.length, 3);
   assert.deepEqual(first.map(item => item.state), ["created", "queued", "queued"]);
   const created = first[0]!; assert(created.taskId);
-  assert.equal((await pool.query("SELECT state FROM task WHERE project_id=$1 AND task_id=$2", [projectId, created.taskId])).rows[0]?.state, "proposed");
+  assert.equal((await pool.query("SELECT state FROM task WHERE project_id=$1 AND task_id=$2", [projectId, created.taskId])).rows[0]?.state, "todo");
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, created.operationId])).rows[0]?.n, 1);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM outbox_event WHERE project_id=$1 AND operation_id=$2", [projectId, created.operationId])).rows[0]?.n, 1);
   assert.deepEqual(await service.tick(principal, projectId, now, ["scope:test"]), []);
@@ -66,7 +66,7 @@ test("concurrent ticks reserve the same UTC occurrence once", async t => {
   const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["write", "review"] };
   const definition: ScheduleDefinition = { projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: "2026-10-20T09:00:00.000Z", revision: {
     projectId, scheduleId, id: revisionId, version: 1, timezone: "UTC", rule: { kind: "once", atUtc: "2026-10-20T10:00:00.000Z" }, misfire: { kind: "latest" }, overlap: "skip",
-    template: { title: "One task", goal: "Do one check", acceptance: "Evidence exists", owner: "owner" }, authorization: { scopeId: "scope", roleId: "role", authorizedBy: "owner", expiresAtUtc: null },
+    template: { title: "One task", content: "# Do one check", acceptance: "Evidence exists", owner: "owner" }, authorization: { scopeId: "scope", roleId: "role", authorizedBy: "owner", expiresAtUtc: null },
     reason: "concurrency", actorId: "owner", createdAtUtc: "2026-10-20T09:00:00.000Z" } };
   const service = new SchedulingService(new PgSchedulingStore(pool));
   await service.create(principal, definition);

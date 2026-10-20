@@ -3,6 +3,7 @@ import type { MisfirePolicy, Occurrence, ScheduleDefinition, ScheduleRevision, S
 import { errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { schedulingClient, type SchedulingGrant, type SchedulingStatus } from "./client";
+import { MarkdownBody } from "../ui/MarkdownBody";
 
 const stamp = (value: string) => new Date(value).toLocaleString();
 const stateLabel = { active: "运行中", paused: "已暂停", stopped: "已停止" } as const;
@@ -28,7 +29,7 @@ function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition): Fie
     { name: "maxCatchUp", label: "有限补做的最多次数", optional: true, value: revision?.misfire.kind === "bounded" ? String(revision.misfire.maxCatchUp) : "" },
     { name: "overlap", label: "上次任务未结束时", kind: "select", value: revision?.overlap ?? "skip", options: [option("skip", "跳过新时刻"), option("queue", "排队待核对")] },
     { name: "title", label: "新提议任务的名称", value: revision?.template.title ?? "" },
-    { name: "goal", label: "新提议任务的目标", kind: "textarea", value: revision?.template.goal ?? "" },
+    { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "" },
     { name: "acceptance", label: "新提议任务的接受条件", kind: "textarea", value: revision?.template.acceptance ?? "" },
     { name: "owner", label: "任务责任者", value: revision?.template.owner ?? "" },
     { name: "grant", label: "已配置的日程授权", kind: "select", value: oldGrant ? grantKey(oldGrant) : choices[0]?.value ?? "", options: choices,
@@ -48,7 +49,7 @@ function fromValues(values: Record<string, string>, context: MutationContext, gr
   const misfire: MisfirePolicy = values.misfireKind === "bounded" ? { kind: "bounded", maxCatchUp: Number(values.maxCatchUp) }
     : values.misfireKind === "skip" ? { kind: "skip" } : { kind: "latest" };
   return { state: values.state, timezone: values.timezone, rule, misfire, overlap: values.overlap,
-    template: { title: values.title, goal: values.goal, acceptance: values.acceptance, owner: values.owner },
+    template: { title: values.title, content: values.content, acceptance: values.acceptance, owner: values.owner },
     authorization: { scopeId: grant?.scopeId ?? old!.scopeId, roleId: grant?.roleId ?? old!.roleId, authorizedBy: context.principal.actorId,
       expiresAtUtc: values.expiresAtUtc ? new Date(values.expiresAtUtc).toISOString() : null }, reason: values.reason };
 }
@@ -74,7 +75,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   }, [context.token, context.projectId, refresh]);
   return <div className="journey-board">
     <section className="panel"><div className="panel-head"><h2>日程</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
-      <p>日程只按授权范围提出任务；提议任务仍需按普通任务流程判断、接受和执行。</p>
+      <p>日程只按授权范围创建待办任务；任务仍需由负责人或 Agent 核对正文、开始与执行。</p>
       {loading && <p>正在读取日程…</p>}{error && <Notice error>日程暂不可读：{error}</Notice>}
       {status && <Notice error={["disabled","unavailable","no-authority","error","stopped"].includes(status.state)}>
         协调器状态：{({ idle:"待检查",running:"检查中",disabled:"未启用",unavailable:"不可用", "no-authority":"没有可运行授权",error:"检查失败",stopped:"已停止" } as Record<SchedulingStatus["state"],string>)[status.state]}
@@ -111,7 +112,7 @@ function ScheduleCard({ definition, context, refresh, grants }: { definition: Sc
     <dl><div><dt>规则</dt><dd>{ruleText(revision.rule)} · {revision.timezone}</dd></div>
       <div><dt>错过</dt><dd>{revision.misfire.kind === "bounded" ? `最多补做 ${revision.misfire.maxCatchUp} 次` : revision.misfire.kind === "latest" ? "只取最近一次" : "跳过"}</dd></div>
       <div><dt>重叠</dt><dd>{revision.overlap === "queue" ? "排队" : "跳过"}</dd></div>
-      <div><dt>拟提任务</dt><dd>{revision.template.goal}；验收：{revision.template.acceptance}；责任者：{revision.template.owner}</dd></div>
+      <div><dt>新任务正文</dt><dd><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}</p></dd></div>
       <div><dt>授权</dt><dd>{revision.authorization.scopeId} · 职责 {revision.authorization.roleId} · 授权人 {revision.authorization.authorizedBy} · 到期 {revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"}</dd></div>
       <div><dt>已检查至</dt><dd>{stamp(definition.watermarkUtc)}</dd></div></dl>
     {definition.state !== "stopped" && <details className="workflow-detail"><summary>修订规则、暂停或恢复</summary>
@@ -120,7 +121,7 @@ function ScheduleCard({ definition, context, refresh, grants }: { definition: Sc
     </details>}
     <div className="actions"><button type="button" onClick={readHistory} disabled={busy}>{busy ? "读取中…" : "阅读修订与发生记录"}</button></div>{error && <Notice error>{error}</Notice>}
     {history && <><h3>日程修订</h3>{history.revisions.length === 0 && <p className="empty">尚无修订记录。</p>}{history.revisions.map(item => <article className="history" key={item.id}><strong>v{item.version} · {ruleText(item.rule)}</strong><p>{item.reason}</p><small>{item.actorId} · {stamp(item.createdAtUtc)}</small></article>)}
-      <h3>发生记录</h3>{history.occurrences.length === 0 && <p className="empty">尚无已检查的发生时刻；定义日程不等于执行任务。</p>}{history.occurrences.map(item => <article className="decision" key={`${item.revisionId}:${item.plannedAtUtc}`}><strong>{stamp(item.plannedAtUtc)} · {item.state === "created" ? "已提出任务" : item.state === "queued" ? "等待排队" : "已跳过"}</strong><p>{item.reason}</p>{item.taskId && <p>拟议任务：<a href={`#/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(item.taskId)}`}>阅读此任务</a> · <code>{item.taskId}</code></p>}<small>操作 {item.operationId}</small></article>)}
+      <h3>发生记录</h3>{history.occurrences.length === 0 && <p className="empty">尚无已检查的发生时刻；定义日程不等于执行任务。</p>}{history.occurrences.map(item => <article className="decision" key={`${item.revisionId}:${item.plannedAtUtc}`}><strong>{stamp(item.plannedAtUtc)} · {item.state === "created" ? "已创建待办任务" : item.state === "queued" ? "等待排队" : "已跳过"}</strong><p>{item.reason}</p>{item.taskId && <p>任务：<a href={`#/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(item.taskId)}`}>阅读此任务</a> · <code>{item.taskId}</code></p>}<small>操作 {item.operationId}</small></article>)}
     </>}
   </details>;
 }

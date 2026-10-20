@@ -2,6 +2,8 @@
 
 状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
+C5 的 Task 正文不再双存：头表和 TaskRevision 都固定引用主 DocumentRevision，读取联结产生 content。迁移保留旧 TaskRevision ID/状态/验收及 Run/Basis/operation；将原 goal 原字节存为对应的主正文修订，当前状态才映射为四态。不得向既有 sealed BasisSet 补写成员或改旧操作摘要。Document 追加用途 kind（可空）与 draft/published/archived；Schedule 历史 task_template JSON 保留原样，只读兼容旧 goal，新模板写 content。具体 DDL 以新增迁移 012 及非空迁移测试为准。
+
 ## 对象与固定依据模型
 
 PostgreSQL 中的当前对象用于工作入口：Task 说明当前目标和状态，过程 Document 提供要求与讨论，Schedule 说明何时触发，Relation 帮人导航。飞书任务记录是协作投影，Git 正式 `docs/` 是独立来源，Wiki 正文及其内部知识依赖留在外置知识系统；它们不会因为被 PG 登记而变成 Document 行或第二份可编辑正文。

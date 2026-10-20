@@ -14,7 +14,7 @@ const definition: ScheduleDefinition = {
   watermarkUtc: "2026-10-20T09:00:00.000Z",
   revision: { projectId, scheduleId, id: revisionId, version: 1, timezone: "UTC",
     rule: { kind: "once", atUtc: "2026-10-20T09:30:00.000Z" }, misfire: { kind: "latest" },
-    overlap: "skip", template: { title: "Inspect", goal: "Check", acceptance: "Record", owner: "temporary-role" },
+    overlap: "skip", template: { title: "Inspect", content: "# Check", acceptance: "Record", owner: "temporary-role" },
     authorization: { scopeId: grant.scopeId, roleId: grant.roleId, authorizedBy: grant.actorId, expiresAtUtc: null },
     actorId: grant.actorId, reason: "explicit scope", createdAtUtc: "2026-10-20T09:00:00.000Z" },
 };

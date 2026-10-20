@@ -30,6 +30,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
   git(root, "add", "formal.md"); git(root, "commit", "-qm", "fixed");
   const commit = git(root, "rev-parse", "HEAD");
   const projectId = randomUUID(), refId = randomUUID(), taskId = randomUUID(), oldRev = randomUUID(), newRev = randomUUID();
+  const contentDocumentId = randomUUID(), contentRevisionId = randomUUID();
   const documentId = randomUUID(), documentRevisionId = randomUUID(), formalDecisionId = randomUUID();
   const ref = { projectId, repositoryId: "formal", path: "formal.md", commit, contentHash: hash("# Fixed formal source\n") };
   const source = new GitDocumentSource([{ projectId, repositoryId: "formal", root, allowedPaths: ["formal.md"] }], async () => true);
@@ -49,16 +50,21 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
     await client.query(`INSERT INTO git_source_ref(project_id,git_source_ref_id,repository_id,source_path,commit_hash,
       content_hash,state,observed_at) VALUES($1,$2,'formal','formal.md',$3,$4,'reachable',now())`,
       [projectId,refId,commit,ref.contentHash]);
-    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id)
-      VALUES($1,$2,'Process note',1,$3,$3)`, [projectId,documentId,documentRevisionId]);
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status)
+      VALUES($1,$2,'Process note',1,$3,$3,'spec','published')`, [projectId,documentId,documentRevisionId]);
     await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,
       created_at,previous_revision_id,reason) VALUES($1,$2,$3,'# Process','markdown',$4,'reviewer',now(),null,'fixture')`,
       [projectId,documentId,documentRevisionId,hash("# Process")]);
-    await client.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state)
-      VALUES($1,$2,1,$3,'Task','Goal','Done','reviewer','proposed')`, [projectId,taskId,oldRev]);
-    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,
-      state,basis_set_id,actor_id,reason,created_at)
-      VALUES($1,$2,$3,1,'Task','Goal','Done','reviewer','proposed',null,'reviewer','first',now())`, [projectId,taskId,oldRev]);
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
+      VALUES($1,$2,'Task',1,$3,'task','draft')`, [projectId,contentDocumentId,contentRevisionId]);
+    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,
+      created_at,previous_revision_id,reason) VALUES($1,$2,$3,'# Goal','markdown',$4,'reviewer',now(),null,'fixture')`,
+      [projectId,contentDocumentId,contentRevisionId,hash("# Goal")]);
+    await client.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,kind,content_document_id,content_revision_id)
+      VALUES($1,$2,1,$3,'Task','Done','reviewer','todo',null,$4,$5)`, [projectId,taskId,oldRev,contentDocumentId,contentRevisionId]);
+    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,
+      state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at)
+      VALUES($1,$2,$3,1,'Task','Done','reviewer','todo',null,$4,$5,null,'reviewer','first',now())`, [projectId,taskId,oldRev,contentDocumentId,contentRevisionId]);
     const store = new PgReferenceStore(client, projectId);
     await store.insertFormalSourceDecision({ projectId,id:formalDecisionId,gitReferenceId:refId,
       documentId,documentRevisionId,decision:"incorporated",actorId:"reviewer",reason:"reviewed source",createdAt:new Date().toISOString() });
@@ -71,9 +77,9 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
       actorId: "reviewer", createdAt: new Date().toISOString() });
     assert.equal(await store.advanceTaskExternalHead({ projectId,taskId,slotId,version:1,decisionId },0),true);
     assert.equal(await store.advanceTaskExternalHead({ projectId,taskId,slotId,version:1,decisionId },0),false);
-    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,
-      state,basis_set_id,actor_id,reason,created_at)
-      VALUES($1,$2,$3,2,'Task','Goal','Done','reviewer','proposed',null,'reviewer','adopt source',now())`, [projectId,taskId,newRev]);
+    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,
+      state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at)
+      VALUES($1,$2,$3,2,'Task','Done','reviewer','todo',null,$4,$5,null,'reviewer','adopt source',now())`, [projectId,taskId,newRev,contentDocumentId,contentRevisionId]);
     await client.query("UPDATE task SET version=2,current_revision_id=$3 WHERE project_id=$1 AND task_id=$2", [projectId,taskId,newRev]);
     const snapshots = await store.listTaskExternalSnapshot(taskId,newRev);
     assert.equal(snapshots.length,1);
@@ -111,10 +117,10 @@ test("registered Git source becomes an explicit Task revision with replay and ac
   const originalRevisionId = createdDocument.status === "applied" ? createdDocument.revisionId! : "";
   await workflow.execute(principal as never, { type:"document.adopt",projectId,operationId:randomUUID(),
     documentId,expectedVersion:1,revisionId:originalRevisionId,reason:"accepted source" });
-  await workflow.execute(principal as never, { type:"task.propose",projectId,operationId:randomUUID(),taskId,
-    title:"Task",goal:"Use formal constraint",acceptance:"Done",owner:"reviewer",documentIds:[documentId] });
-  await workflow.execute(principal as never, { type:"task.accept",projectId,operationId:randomUUID(),taskId,
-    expectedVersion:1,basis:[{documentId,revisionId:originalRevisionId}],reason:"approved basis" });
+  await workflow.execute(principal as never, { type:"task.create",projectId,operationId:randomUUID(),taskId,
+    title:"Task",content:"# Use formal constraint",acceptance:"Done",owner:"reviewer",documentIds:[documentId] });
+  await workflow.execute(principal as never, { type:"task.start",projectId,operationId:randomUUID(),taskId,
+    expectedVersion:1,basis:[{documentId,revisionId:originalRevisionId}],reason:"Begin work" });
   const registered = await registerFixedGitReference(deps as never,principal as never,{ projectId,operationId:randomUUID(),actorId:"reviewer",
     referenceId,repositoryId:"formal",path:"formal.md",commit,contentHash:hash(body) });
   assert.equal(registered.status,"applied");
@@ -156,20 +162,18 @@ test("registered Git source becomes an explicit Task revision with replay and ac
   if (closed.status === "rejected") assert.equal(closed.code,"INVALID_STATE");
   assert.equal((await workflow.getTask(principal as never,projectId,taskId)).task.version,closedTask.task.version);
   const doneTaskId = randomUUID();
-  await workflow.execute(principal as never, { type:"task.propose",projectId,operationId:randomUUID(),taskId:doneTaskId,
-    title:"Completed task",goal:"Use accepted source",acceptance:"Done",owner:"reviewer",documentIds:[documentId] });
-  await workflow.execute(principal as never, { type:"task.accept",projectId,operationId:randomUUID(),taskId:doneTaskId,
-    expectedVersion:1,basis:[{documentId,revisionId:revisedId}],reason:"accepted" });
+  await workflow.execute(principal as never, { type:"task.create",projectId,operationId:randomUUID(),taskId:doneTaskId,
+    title:"Completed task",content:"# Use accepted source",acceptance:"Done",owner:"reviewer",documentIds:[documentId] });
   await workflow.execute(principal as never, { type:"task.start",projectId,operationId:randomUUID(),taskId:doneTaskId,
-    expectedVersion:2,reason:"started" });
+    expectedVersion:1,basis:[{documentId,revisionId:revisedId}],reason:"started" });
   const delivered = await workflow.execute(principal as never, { type:"delivery.record",projectId,
-    operationId:randomUUID(),taskId:doneTaskId,expectedVersion:3,artifactRef:"artifact",
+    operationId:randomUUID(),taskId:doneTaskId,expectedVersion:2,artifactRef:"artifact",
     artifactRevision:"fixed",contentHash:hash("artifact"),technicalResult:"passed",
     technicalEvidence:"fixture checks passed",reason:"delivered" });
   assert.equal(delivered.status,"applied");
   const deliveryId = delivered.status === "applied" ? delivered.revisionId! : "";
   const completion = await workflow.execute(principal as never, { type:"task.close",projectId,
-    operationId:randomUUID(),taskId:doneTaskId,expectedVersion:4,deliveryId,
+    operationId:randomUUID(),taskId:doneTaskId,expectedVersion:3,deliveryId,
     acceptanceResult:"met",acceptanceEvidence:"fixture acceptance",reason:"closed" });
   assert.equal(completion.status,"applied");
   const doneTask = await workflow.getTask(principal as never,projectId,doneTaskId);

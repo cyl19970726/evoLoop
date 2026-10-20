@@ -9,8 +9,16 @@ async function run(args: string[], env: Record<string, string | undefined> = {})
 }
 test("an unauthenticated fresh Agent can discover help, IDs, exact command schemas and named routes", async () => {
   const help = await run(["help"]); assert.equal(help.code, 0); assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("context ")));
-  const schema = await run(["command", "schema", "task.accept"]); assert.equal(schema.code, 0);
-  assert.ok(JSON.parse(schema.stdout).required.includes("expectedVersion"));
+  const schema = await run(["command", "schema", "task.create"]); assert.equal(schema.code, 0);
+  const create = JSON.parse(schema.stdout);
+  assert.ok(create.required.includes("content"));
+  assert.ok(create.required.includes("acceptance"));
+  assert.equal(create.properties.goal, undefined);
+  const update = await run(["command", "schema", "task.update"]);
+  assert.ok(JSON.parse(update.stdout).required.includes("expectedVersion"));
+  const commands = JSON.parse((await run(["command", "types"])).stdout).types;
+  assert.ok(commands.includes("task.start"));
+  assert.ok(!commands.includes("task.accept"));
   const types = await run(["request", "types"]); assert.equal(types.code, 0);
   assert.ok(JSON.parse(types.stdout).requests.some((value: { name: string }) => value.name === "knowledge.publish"));
   const requestSchema = await run(["request", "schema", "knowledge.propose"]); assert.equal(requestSchema.code, 0);

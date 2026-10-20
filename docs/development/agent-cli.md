@@ -12,7 +12,7 @@ npm run --silent cli -- session
 npm run --silent cli -- list tasks --project "$PROJECT_ID" --limit 20
 npm run --silent cli -- task "$TASK_ID" --project "$PROJECT_ID"
 npm run --silent cli -- context "$TASK_ID" --project "$PROJECT_ID"
-npm run --silent cli -- command schema task.accept
+npm run --silent cli -- command schema task.create
 ```
 
 `task UUID --history` 展示已保存的真实修订及当时状态；`document UUID --revision UUID`、`original DOCUMENT_UUID --revision UUID [--out NEW_DIRECTORY]` 指向固定原件。`context` 应带回 Task 的封存依据及可读来源，并明确 `complete` 或逐项 `partial`；总读取预算为 16 MiB，超限时列出未读固定 ID，可按其修订逐项调用 `original`。来源失败时不可把最近版本猜作任务依据。HTML 与资源包导出只进入调用者指定的私有**新目录**，其父目录须已存在；可放在仓库外，或明确被 Git 忽略的本机目录，不公开原件。对于知识页、候选、运行、负责人讨论、日程等，按 `list`/`read` 的实际帮助读取；固定来源、未采纳候选和已发布认识不得混同。普通 `get /api/...` 保留为同源只读兼容入口。
@@ -23,13 +23,17 @@ npm run --silent cli -- command schema task.accept
 
 ```sh
 npm run --silent cli -- command types
-npm run --silent cli -- command schema task.propose
+npm run --silent cli -- command schema task.create
 npm run --silent cli -- request schema knowledge.propose
 npm run --silent cli -- command run "$PRIVATE_REQUEST_FILE"
 npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 ```
 
-工作起点可以是目标、阶段、Task、过程 Document 或知识证据；不要求为了日常修复先创建 Wiki、Role 或讨论。先查 Task 当前状态：`task.judge` 面向尚待判断的 proposal；已有 `ready` 或 `active` 的 Task 不要重复 judge/accept；交付前须先 start 进入执行。提议、判断、接受、执行、交付和关闭按实际状态与权限前进，不把每项工作硬套完整顺序。需求修订后，旧 Task 固定依据不被静默替换；按影响复核明确采用、保留或补证。交付须指向不可变产物和技术检查结果；原生 Run 完成不等于交付通过。消费者观察要说明实际观察者与使用结果，通知/人工转述不当成已用；关闭、阶段回看及下一步另行记录。负责人讨论可准备交接包并登记人工承接与决定，但目标会话标签不证明 Desktop 送达。
+工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。`task.start` 校验版本与实际授权，发布主正文并封存本轮依据，进入 in_progress；没有额外规格文档也能工作。省略 `basis` 会继承并校验原有固定来源；显式 `basis: []` 才表示移除其他来源、仅保留主正文。来源已经改版时须记录适用的保留决定，或明确选择所需固定修订，不能自动换成最新版。新写入口不再使用 task.propose/judge/accept/block/defer/resume/revise；以实际 schema 为准。
+
+任务类型可选实施、调研、验证，四态为 todo/in_progress/done/cancelled。交付与约定检查默认留在进行中的原任务内，标准通过后才 close；只有明确要求的消费者或真人使用才等待对应证据。受阻或暂缓说明原因、责任与下一步，不另开状态或默认验收子 Task。需要改变执行中的正文或验收时先核清在途，再 reopen→update→start；旧交付不可自动算新一轮通过。Task 主正文不能从通用 Document 编辑入口旁路改变。Document 用途、格式、发布/归档及正文写作见[任务与过程文档](../product/tasks-and-documents.md)。
+
+专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../roadmap.md#c5-taskdocument-模型简化)。
 
 ## 未知结果与本地回执
 

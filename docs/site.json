@@ -18,6 +18,11 @@
       "group": "产品与阶段"
     },
     {
+      "path": "docs/product/tasks-and-documents.md",
+      "title": "任务与过程文档",
+      "group": "产品与阶段"
+    },
+    {
       "path": "docs/product/agent-loop.md",
       "title": "Agent loop：四部分协作",
       "group": "产品与阶段"

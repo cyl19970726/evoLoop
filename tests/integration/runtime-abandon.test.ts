@@ -55,9 +55,8 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
 
   const readyTask = async (title: string) => {
     const taskId = randomUUID();
-    await own({ type: "task.propose", taskId, title, goal: "Produce one result", acceptance: "Inspect the result", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted requirement" });
-    await own({ type: "task.judge", taskId, expectedVersion: 1, decision: "approve", reason: "Bounded", evidence: "Adopted requirement" });
-    const ready = await own({ type: "task.accept", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Ready" });
+    await own({ type: "task.create", taskId, title, content: "# Produce one result", acceptance: "Inspect the result", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted requirement" });
+    const ready = await own({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" });
     return { taskId, version: ready.version! };
   };
 

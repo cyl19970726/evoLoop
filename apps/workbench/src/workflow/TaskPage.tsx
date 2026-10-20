@@ -6,6 +6,8 @@ import type { MutationContext } from "./ActionForm";
 import { RuntimePanel } from "../runtime/RuntimePanel";
 import { ReferencePanel } from "../references/ReferencePanel";
 import { TaskWorkflow } from "./TaskWorkflow";
+import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
+import { MarkdownBody } from "../ui/MarkdownBody";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -14,10 +16,6 @@ const taskTabs: { id: TaskTab; label: string }[] = [
   { id: "delivery", label: "交付与使用" }, { id: "runtime", label: "运行与关联" },
   { id: "history", label: "历史" }, { id: "actions", label: "任务操作" },
 ];
-const taskStates: Record<TaskDetail["task"]["state"], string> = {
-  proposed: "待判断", ready: "可做", active: "进行中", review: "待验收", done: "已完成",
-  blocked: "阻塞", deferred: "暂缓", cancelled: "已取消",
-};
 const useResults = { used: "已使用", failed: "使用失败", notUsed: "尚未使用" } as const;
 function Basis({ basis, projectId, documents }: { basis: BasisSet | null; projectId: string; documents?: Record<string, DocumentDetail> }) {
   if (!basis) return <p className="empty">这个任务修订没有固定依据集合。</p>;
@@ -25,7 +23,7 @@ function Basis({ basis, projectId, documents }: { basis: BasisSet | null; projec
     const document = documents?.[member.documentId];
     return <li key={`${member.documentId}:${member.revisionId}`}>
       <a href={href(projectId, "document", member.documentId, member.revisionId)}>{document?.document.title || <>过程文档 <ShortId value={member.documentId} /></>} · 固定修订 <ShortId value={member.revisionId} /> ↗</a>
-      {document && <span className="task-basis-status">{document.document.adoptedRevisionId === member.revisionId ? "文档现采纳此版" : document.document.adoptedRevisionId ? <>文档现采纳 <ShortId value={document.document.adoptedRevisionId} />；本任务仍固定此版</> : "文档当前无采纳修订；本任务仍固定此版"}</span>}
+      {document && <span className="task-basis-status">{document.document.adoptedRevisionId === member.revisionId ? "文档现发布此版" : document.document.adoptedRevisionId ? <>文档现发布 <ShortId value={document.document.adoptedRevisionId} />；本任务仍固定此版</> : "文档当前无发布修订；本任务仍固定此版"}</span>}
     </li>;
   })}</ul>;
 }
@@ -181,8 +179,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     {selectedRevision && <Alert>正在查看固定历史任务修订 <ShortId value={selectedRevision} />。下方页首是当前任务摘要；历史面板单独列出当时状态与依据。<a href={href(projectId, "task", id)}>返回当前任务</a></Alert>}
     <header className="task-page-header">
       <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
-      <div className="task-header"><span className="pill">接受：{detail.task.state === "proposed" ? "未接受" : "已接受"}</span><span className="pill">执行：{taskStates[detail.task.state]}</span><span>责任者：{detail.task.owner}</span><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
-      <p className="task-intro">{detail.task.goal}</p>
+      <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<span>责任者：{detail.task.owner}</span><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
     </header>
     {error && <Alert kind="error">{error}</Alert>}
     <div className="task-tabs" role="tablist" aria-label="任务详情">{taskTabs.map(item => <button key={item.id} type="button" role="tab" id={tabId(item.id)} aria-controls={panelId(item.id)} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => { if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return; event.preventDefault(); const index = taskTabs.findIndex(candidate => candidate.id === item.id); const next = taskTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + taskTabs.length) % taskTabs.length]; setTab(next.id); document.getElementById(tabId(next.id))?.focus(); }}>
@@ -190,6 +187,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </button>)}</div>
     <section role="tabpanel" id={panelId("overview")} aria-labelledby={tabId("overview")} hidden={tab !== "overview"}>
       <div className="task-overview-grid">
+        <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} /><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
         <section className="panel task-focus"><h2>验收条件</h2><p>{detail.task.acceptance}</p><p className="task-fineprint">任务状态、技术检查和实际使用分别记录；关闭决定见交付记录。</p></section>
         <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => setTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
         <section className="panel task-focus task-delivery-summary"><div className="panel-head"><h2>最新交付与使用</h2><button type="button" className="quiet" onClick={() => setTab("delivery")}>查看完整记录 →</button></div>
@@ -199,7 +197,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       </div>
     </section>
     <section role="tabpanel" id={panelId("basis")} aria-labelledby={tabId("basis")} hidden={tab !== "basis"}>
-      <section className="panel"><div className="panel-head"><h2>任务当前固定依据</h2><span>任务修订 <ShortId value={detail.revision.id} /></span></div><p className="task-fineprint">点击文档打开任务所用的固定修订。文档后来采纳新版，不会自动改写此任务的依据。</p><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}</Alert>}</section>
+      <section className="panel"><div className="panel-head"><h2>任务当前固定依据</h2><span>任务修订 <ShortId value={detail.revision.id} /></span></div><p><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>主正文固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></p><p className="task-fineprint">点击文档打开任务所用的固定修订。文档后来发布新版，不会自动改写此任务的依据。</p><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现发布版本暂不可读：{basisError}</Alert>}</section>
       <section className="panel"><div className="panel-head"><h2>待复核的依据变化</h2><span>{pending.length} 项</span></div>
         {!pending.length && <p className="empty">当前没有待复核影响。</p>}
         {pending.length > 0 && <div className="impact-tabs">{pending.map(i => <button type="button" key={i.id} className={i.id === selectedImpactId ? "active" : ""} onClick={() => setSelectedImpactId(i.id)}>文档 <ShortId value={i.documentId} /> · 新版 <ShortId value={i.toRevisionId} /></button>)}</div>}
@@ -217,14 +215,14 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     {selectedRevision && <section className="panel"><h2>固定历史任务修订</h2>
       {!historical && !error && <p>正在读取指定修订与当时的完整依据…</p>}
       {!historical && error && <Alert kind="error">固定修订不可读取；不能把当前任务当成当时依据。</Alert>}
-      {historical?.taskId === id && <><p><strong>v{historical.revision.version} · {historical.revision.state}</strong> · {date(historical.revision.createdAt)} · {historical.revision.actorId}</p><p><strong>当次理由：</strong>{historical.revision.reason}</p><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></>}
+      {historical?.taskId === id && <><p><strong>v{historical.revision.version} · {taskStateLabel[historical.revision.state]}</strong> · {date(historical.revision.createdAt)} · {historical.revision.actorId}</p><p><strong>当次理由：</strong>{historical.revision.reason}</p><p><a href={href(projectId, "document", historical.revision.contentDocumentId, historical.revision.contentRevisionId)}>当次正文原件 <ShortId value={historical.revision.contentRevisionId} /> ↗</a></p><MarkdownBody source={historical.revision.content} identity={`history-${historical.revision.id}`} /><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></>}
       <p><a href={href(projectId, "task", id)}>返回当前任务 →</a></p>
     </section>}
     <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} mode="history" />
     <section className="panel"><h2>已作决定</h2>
       {!detail.decisions.length && <p className="empty">尚无复核决定。</p>}
       {detail.decisions.map(d => <div className="decision" key={d.id}><strong>{d.decision === "adopt" ? "采用新修订" : "保留原依据"}</strong><span>{date(d.createdAt)} · {d.actorId}</span><p>{d.reason}</p><button className="quiet" onClick={() => showHistory(d.previousTaskRevisionId)}>查看决定前的任务依据</button></div>)}
-      {!selectedRevision && historical?.taskId === id && <div className="history"><h3>固定任务修订 v{historical.revision.version} · {historical.revision.state}</h3><p><strong>当次理由：</strong>{historical.revision.reason}</p><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></div>}
+      {!selectedRevision && historical?.taskId === id && <div className="history"><h3>固定任务修订 v{historical.revision.version} · {taskStateLabel[historical.revision.state]}</h3><p><strong>当次理由：</strong>{historical.revision.reason}</p><p><a href={href(projectId, "document", historical.revision.contentDocumentId, historical.revision.contentRevisionId)}>当次正文原件 ↗</a></p><MarkdownBody source={historical.revision.content} identity={`decision-${historical.revision.id}`} /><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></div>}
     </section>
     </section>
     <section role="tabpanel" id={panelId("actions")} aria-labelledby={tabId("actions")} hidden={tab !== "actions"}>

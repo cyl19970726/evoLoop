@@ -40,6 +40,8 @@
 
 | DEC-030 | 人从工作台观察并与 Agent 沟通，Agent 通过项目业务 skill＋CLI 执行大多数常规修改 | 补充 DEC-014/029 的默认使用路径：工作台观察→现有会话沟通→Agent 受控执行→共同查询回看。两端共享 API/core 的授权、固定修订、状态和恢复；人工直接操作按需保留，不要求 Agent 点击 GUI 或人批准每个常规动作。前端 F 系列与 Agent 入口 C 系列并行验收，总览后置、飞书实连延后；未接 MCP 不冒称已建工具包。 |
 
+| DEC-031 | Task 正文统一由 Document 保存，任务使用四态并在原任务内验收 | content 承载完整说明，acceptance 留 Task；一次创建 Task 与主正文，固定修订防止改写执行依据。Task 类型轻量可选、Doc 用途与格式分开；Task 仅 todo/in_progress/done/cancelled，默认不增待验收状态或验收子 Task。skill 指导清楚正文、必要图与有理由的固定链接；后续增强按实际使用证据决定。迁移和验收以路线 C5 为准。 |
+
 ## 当前设计提议
 
 | 编号 | 提议 | 验证后再决定的部分 |
@@ -83,3 +85,5 @@ DEC-028 来自用户要求“全面 review 所有设计，没有问题就开始�
 DEC-029 记录用户对真实前端重组及入口分工的明确要求：图形界面服务人的阅读、判断、反馈；现有 CLI 和后续业务 skill／MCP 服务 Agent 的常规工作，共用 API/core 的权威与恢复语义。界面组合按 [F1—F4](roadmap.md#前端重组-f1f4实施里程碑待验收) 推进；frontend-design 与 web-design-guidelines 只用于开发和评审，不是 evoLoop 业务 skill。组件来源、许可及项目范围记在 `apps/workbench/THIRD_PARTY.md`；该记录不证明新布局已通过普通入口或真人验收。
 
 DEC-030 来自用户明确的人机入口分工：前端主要给人看发生了什么，大多数修改先与 Agent 沟通，再由 Agent 经业务 skill＋CLI 完成。已同步[产品定义](product/definition.md#用户与实际入口)、[架构总览](architecture/overview.md)和[包职责](architecture/packages.md)，入口实施按 [C1—C4](roadmap.md#agent-业务入口-c1c4实施里程碑) 与前端工作线分开管理；共同服务约束不能由技能或客户端绕过。实际 Agent 使用、工程合入和真人反馈分别留证。
+
+DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期尽可能简单：验收标准清楚写出，默认在原任务内验证，再根据真实使用增强。同步[产品定义](product/tasks-and-documents.md)、固定主正文合同及[路线 C5](roadmap.md#c5-taskdocument-模型简化)，保留旧数据、授权和结果未知恢复；它不授权直接迁移正在使用的本机服务或部署生产。

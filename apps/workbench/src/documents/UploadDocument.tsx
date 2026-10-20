@@ -24,6 +24,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
   context: MutationContext; mode?: "create" | "revise"; documentId?: string; expectedVersion?: number;
 }) {
   const [title, setTitle] = useState("");
+  const [kind, setKind] = useState<"" | "issue" | "spec" | "discussion" | "report">("");
   const [reason, setReason] = useState("");
   const [format, setFormat] = useState<"markdown" | "html">("markdown");
   const [main, setMain] = useState<File | null>(null);
@@ -61,7 +62,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
       const uploads = buffers.map((buffer, index) => ({ blobId: ids[index]!, base64: base64(buffer) }));
       const command: DocumentPayloadCommand = {
         projectId: context.projectId, operationId, documentId: docId, revisionId, mode,
-        ...(mode === "create" ? { title: title.trim() } : { expectedVersion }),
+        ...(mode === "create" ? { title: title.trim(), kind: kind || null } : { expectedVersion }),
         format, mediaType: format === "html" ? "text/html" : "text/markdown",
         originalName: main.name, author: context.principal.actorId, reason: reason.trim(),
         source: { storage: "blob", payloadRef: ids[0]!, contentHash: hashes[0]!, size: main.size,
@@ -78,7 +79,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
       if (result.status === "rejected") {
         setMessage(result.message); setStale(result.code === "VERSION_CONFLICT");
       } else {
-        setTitle(""); setReason(""); setMain(null); setAssets([]); setFormat("markdown"); form.reset();
+        setTitle(""); setKind(""); setReason(""); setMain(null); setAssets([]); setFormat("markdown"); form.reset();
         setMessage("原件和固定修订已保存。"); context.onChanged();
       }
     } catch (cause) {
@@ -92,9 +93,12 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
       }
     } finally { setBusy(false); }
   }
-  return <form data-dirty={main || assets.length || title || reason ? "true" : undefined} className="workflow-form panel" onSubmit={submit}>
+  return <form data-dirty={main || assets.length || title || kind || reason ? "true" : undefined} className="workflow-form panel" onSubmit={submit}>
     <h3>{mode === "create" ? "导入过程文档" : "上传新修订"}</h3>
     {mode === "create" && <label>标题<input required value={title} onChange={event => setTitle(event.target.value)} /></label>}
+    {mode === "create" && <label>类型（可选）<select value={kind} onChange={event => setKind(event.target.value as typeof kind)}>
+      <option value="">未分类</option><option value="issue">问题</option><option value="spec">规范</option><option value="discussion">讨论</option><option value="report">报告</option>
+    </select></label>}
     <label>格式<select value={format} onChange={event => { setFormat(event.target.value as "markdown" | "html"); setAssets([]); }}>
       <option value="markdown">Markdown</option><option value="html">HTML</option></select></label>
     <label>原件<input type="file" required accept={format === "html" ? ".html,.htm,text/html" : ".md,.markdown,text/markdown,text/plain"}
