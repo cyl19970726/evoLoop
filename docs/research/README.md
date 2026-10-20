@@ -37,7 +37,7 @@
 
 ## 运行时与协作接入
 
-[Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。该原调查实际只运行版本、schema 与初始化握手，未验证真实任务、模型执行、桌面聊天互通或定时恢复。后续独立 [PR #2 的固定提交](https://github.com/cyl19970726/evoLoop/pull/2/commits/9c095fce1eee68b3fbd87bfdbd053a0ca58dc195)验证了自管线程的隔离夹具闭环和桌面宿主通知消费；它不证明真实项目任务接通、现有桌面聊天互控或生产恢复。当前阶段另见[路线](../roadmap.md#当前基线)，实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
+[Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。该原调查实际只运行版本、schema 与初始化握手，未验证真实任务、模型执行、桌面聊天互通或定时恢复。后续[执行、恢复与认知接收实测](codex-app-server-proof-20261019.md)（原 PR #2 固定实验 `9c095fce`）验证了自管线程的隔离夹具闭环和桌面宿主通知消费；它不证明真实项目任务接通、现有桌面聊天互控或生产恢复。当前阶段另见[路线](../roadmap.md#当前基线)，实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
 
 ## 早期候选与其他探索
 

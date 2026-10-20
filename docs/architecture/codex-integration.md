@@ -1,6 +1,6 @@
 # Codex App Server 接入边界与最小切片
 
-> 状态：2026-10-20 **生产接入设计，尚未实现**。本页把[SessionRuntime 领域合同](contracts.md)映射到 Codex App Server 候选。协议证据、固定版本和未运行项目见[调查报告](../research/codex-app-server-20261019.md)；目标与责任仍以[产品定义](../product/definition.md)和[架构总览](overview.md)为准。
+> 状态：2026-10-20 **生产接入设计，尚未实现**。本页把[SessionRuntime 领域合同](contracts.md)映射到 Codex App Server 候选。协议证据、固定版本和未运行项目见[调查报告](../research/codex-app-server-20261019.md)和[隔离闭环实测](../research/codex-app-server-proof-20261019.md)；目标与责任仍以[产品定义](../product/definition.md)和[架构总览](overview.md)为准。
 
 ## 位置与权威
 
@@ -109,7 +109,7 @@ sequenceDiagram
 
 ## 隔离实测与生产能力分开
 
-2026-10-20 核对的[独立草稿 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)仍未合并；证据固定到 [`9c095fce` 的实测报告](https://github.com/cyl19970726/evoLoop/blob/9c095fce1eee68b3fbd87bfdbd053a0ca58dc195/docs/research/codex-app-server-proof-20261019.md)。它补充了首次调查仅握手的范围，本轮没有重跑这些实验。实验代码未合并当前 main 基线 `9fdaeb80`，也未连接真实 Task/Document 主数据、飞书 connector 或生产 Wiki。
+[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2) 的隔离成果经本轮冲突协调后随本提交纳入；证据仍固定到原实验 `9c095fce`，见[实测报告](../research/codex-app-server-proof-20261019.md)。它补充了首次调查仅握手的范围，本轮仅重跑离线协议检查，没有重跑模型实验。实验未连接真实 Task/Document 主数据、飞书 connector 或生产 Wiki。
 
 | 实际观察（CLI 0.154.0／本机隔离夹具） | 可据此采用的设计依据 | 仍未证明 |
 | --- | --- | --- |
@@ -122,7 +122,7 @@ sequenceDiagram
 
 ## 进入实现的切片与验收
 
-1. **协议薄适配。** 固定 CLI／schema；单连接握手、请求 ID 匹配、通知和服务器请求处理；只在隔离测试项目创建 Thread 与一个只读 Turn。验证进程退出、超时、审批等待和重启回读。当前分支保留初始化调查；独立 PR #2 已有受限真实 Turn 与恢复证据，拟议 TS 适配器仍须按同一判据验证。
+1. **协议薄适配。** 固定 CLI／schema；单连接握手、请求 ID 匹配、通知和服务器请求处理；只在隔离测试项目创建 Thread 与一个只读 Turn。验证进程退出、超时、审批等待和重启回读。当前分支保留初始化调查及 PR #2 的受限真实 Turn 与恢复证据，拟议 TS 适配器仍须按同一判据验证。
 2. **一条主数据任务。** 从 PostgreSQL 测试 Task 读取并向真实飞书测试表投影，再验证受支持的入站编辑，关联 Role／Session／Thread／Turn，执行可观察产物；用实际检查和人类亲用分别记录交付与效果。Feishu connector 当前未部署，此项尚未运行。
 3. **多 session 与 dogfood。** 一条需求和一条真实使用缺陷分别经历提出、分工、交接、修复、结果核对及知识候选修订；测同职责续开与新职责试行的差别。外置生产 Wiki 尚未选择，知识链需先用受控实验接口。
 4. **调度与失败恢复。** 测重复触发、派发成功但响应丢失、断线漏通知、停止请求、审批无人接手、协调者重启；每项保存任务与运行观察，不能以模拟事件代替真实宿主行为。
