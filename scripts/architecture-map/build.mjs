@@ -42,8 +42,8 @@ const tree = {
   ],
 };
 await publish('evoloop-system.tree.json', JSON.stringify(tree, null, 2) + '\n');
-const result = await build({ entryPoints: [path.join(root, 'scripts/architecture-map/viewer.js')], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2022' });
-const css = await fs.readFile(path.join(root, 'scripts/architecture-map/viewer.css'), 'utf8');
+const result = await build({ entryPoints: [path.join(root, 'scripts/architecture-map/app.js')], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2022' });
+const css = (await Promise.all(['viewer.css', 'app.css', 'reading.css'].map(file => fs.readFile(path.join(root, 'scripts/architecture-map', file), 'utf8')))).join('\n');
 const script = result.outputFiles[0].text.replaceAll('</script', '<\\/script');
 const json = JSON.stringify(model).replaceAll('<', '\\u003c');
 const html = `<!doctype html>

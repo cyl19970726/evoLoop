@@ -121,6 +121,172 @@ button:focus-visible, a:focus-visible, input:focus-visible, .map-node:focus-visi
   .edge-count { fill: #d6e9d9; stroke: #16201d; }
   .map-edge { stroke: #a4bca8; }
 }
+
+.system-app { min-height: 100vh; background: #fff; color: #252b31; }
+.system-header { max-width: 1280px; margin: auto; padding: 30px 40px 0; }
+.system-identity { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #818991; font-size: 11px; }
+.system-name { color: #66717b; font-weight: 500; }
+.system-status { color: #9299a0; }
+.system-header h1 { margin: 8px 0 25px; font-size: 27px; font-weight: 550; letter-spacing: -.04em; line-height: 1.2; }
+.system-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e6e9ec; }
+.system-views { display: flex; gap: 25px; }
+.system-views button { padding: 0 0 12px; border: 0; border-bottom: 1px solid transparent; background: none; color: #858d95; font-size: 12px; font-weight: 400; }
+.system-views button[aria-pressed="true"] { color: #252b31; border-bottom-color: #252b31; }
+.system-sources { position: relative; align-self: start; color: #858d95; font-size: 11px; }
+.system-sources summary { cursor: pointer; padding-bottom: 10px; }
+.system-source-list { position: absolute; right: 0; width: 245px; padding: 18px; border: 1px solid #dce1e5; border-radius: 5px; background: #fff; z-index: 20; display: grid; gap: 13px; }
+.system-source-list a { color: #658299; }
+.system-module-panel .map-header { display: none; }
+.system-module-panel .architecture-viewer { min-height: 0; background: #fff; }
+.system-module-panel .map-toolbar, .system-module-panel .journey-bar { padding-left: 40px; padding-right: 40px; box-shadow: none; }
+.system-module-panel .map-canvas, .system-module-panel .map-detail { max-height: calc(100vh - 260px); }
+.system-module-panel .map-node { box-shadow: none; border-left-width: 1px; border-radius: 4px; }
+.system-module-panel .map-lane h2 { border: 0; background: none; }
+.system-module-panel .map-edge { stroke-width: 1.2; }
+.system-app [hidden] { display: none !important; }
+@media (max-width: 800px) {
+  .system-header { padding: 22px 20px 0; }
+  .system-identity { flex-wrap: wrap; gap: 5px; }
+  .system-views { gap: 18px; }
+  .system-views button { font-size: 11px; }
+}
+@media (prefers-color-scheme: dark) {
+  .system-app, .system-module-panel .architecture-viewer { background: #15181c; color: #dde1e5; }
+  .system-name, .system-sources, .system-views button { color: #9ba5af; }
+  .system-status { color: #89939d; }
+  .system-bar { border-color: #363d45; }
+  .system-views button[aria-pressed="true"] { color: #dde1e5; border-bottom-color: #a3adb7; }
+  .system-source-list { background: #191d22; border-color: #363d45; }
+  .system-source-list a { color: #95b3ca; }
+}
+
+.sys-reading {
+  --sys-paper: #fff;
+  --sys-ink: #252b31;
+  --sys-muted: #737b83;
+  --sys-line: #dce1e5;
+  --sys-blue: #78838d;
+  --sys-copper: #63839b;
+  --sys-panel: #fff;
+  max-width: 1280px;
+  margin: auto;
+  padding: 20px 40px 28px;
+  color: var(--sys-ink);
+  background: var(--sys-paper);
+  font: 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-width: 0;
+}
+.sys-reading * { box-sizing: border-box; }
+.sys-reading h2, .sys-reading h3, .sys-reading p { margin: 0; }
+.sys-reading button { font: inherit; cursor: pointer; }
+.sys-reading button:focus-visible, .sys-reading a:focus-visible, .sys-reading summary:focus-visible { outline: 2px solid #7195b1; outline-offset: 4px; }
+.sys-reading .sys-mechanisms { display: flex; gap: 25px; flex-wrap: wrap; margin: 0 0 18px; }
+.sys-reading .sys-mechanisms button { padding: 0 0 7px; background: none; border: 0; border-bottom: 1px solid transparent; border-radius: 0; color: var(--sys-muted); font-size: 12px; font-weight: 400; }
+.sys-reading .sys-mechanisms button:hover { color: var(--sys-ink); }
+.sys-reading .sys-mechanisms button.sys-active { border-bottom-color: var(--sys-ink); color: var(--sys-ink); }
+.sys-reading .sys-stage-title { display: flex; align-items: baseline; gap: 15px; margin-bottom: 6px; }
+.sys-reading .sys-stage-index { display: none; }
+.sys-reading .sys-stage-title h2 { font-size: 13px; font-weight: 550; }
+.sys-reading .sys-stage-title p { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-stage-scroll { width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+.sys-reading .sys-stage { width: 1200px; height: 570px; position: relative; isolation: isolate; background: var(--sys-paper); }
+.sys-reading .sys-human-band { position: absolute; left: 50px; right: 50px; top: 24px; color: var(--sys-muted); font-size: 12px; font-weight: 400; }
+.sys-reading .sys-paths { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.sys-reading .sys-path { fill: none; stroke: var(--sys-blue); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+.sys-reading .sys-path-feedback { stroke: var(--sys-copper); }
+.sys-reading .sys-path-history { stroke: #9ba4ab; stroke-dasharray: 4 5; }
+.sys-reading #sys-arrow path, .sys-reading #sys-focus-arrow path { fill: var(--sys-blue); }
+.sys-reading #sys-arrow-feedback path, .sys-reading #sys-focus-feedback path { fill: var(--sys-copper); }
+.sys-reading .sys-edge-label { fill: var(--sys-muted); font: 400 12px ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: var(--sys-paper); stroke-width: 4px; }
+.sys-reading .sys-edge-label-feedback { fill: var(--sys-copper); }
+.sys-reading .sys-region { position: absolute; z-index: 1; min-width: 0; padding: 15px 18px; background: var(--sys-panel); border: 1px solid var(--sys-line); border-radius: 5px; color: var(--sys-ink); }
+.sys-reading .sys-region-kicker { display: block; color: var(--sys-muted); font-size: 10px; font-weight: 400; letter-spacing: .02em; }
+.sys-reading .sys-region h3 { margin: 6px 0 7px; font-size: 19px; font-weight: 550; line-height: 1.25; letter-spacing: -.02em; }
+.sys-reading .sys-region p { color: var(--sys-muted); font-size: 12px; line-height: 1.6; }
+.sys-reading .sys-region-decision { left: 50px; top: 100px; width: 280px; height: 160px; }
+.sys-reading .sys-region-task { left: 440px; top: 100px; width: 300px; height: 160px; border-color: #aabac5; }
+.sys-reading .sys-region-run { left: 850px; top: 100px; width: 300px; height: 160px; }
+.sys-reading .sys-region-use { left: 850px; top: 385px; width: 300px; height: 160px; }
+.sys-reading .sys-region-review { left: 440px; top: 385px; width: 300px; height: 160px; }
+.sys-reading .sys-region-wiki { left: 50px; top: 385px; width: 280px; height: 160px; border-style: dashed; }
+.sys-reading .sys-evidence { margin-top: 7px; padding: 0; color: var(--sys-muted); font-size: 10px; font-weight: 400; line-height: 1.4; }
+.sys-reading .sys-region-toggle { position: absolute; left: 18px; bottom: 10px; padding: 0; border: 0; background: none; color: var(--sys-muted); font-size: 11px; font-weight: 400; }
+.sys-reading .sys-region-toggle:hover { color: var(--sys-ink); }
+.sys-reading .sys-region[aria-expanded="true"] { z-index: 8; border-color: #90a5b4; }
+.sys-reading .sys-region-drawer { display: none; position: absolute; z-index: 10; left: -1px; top: calc(100% + 7px); width: 315px; max-height: 270px; overflow: auto; padding: 16px; border: 1px solid var(--sys-line); border-radius: 5px; background: var(--sys-panel); color: var(--sys-ink); }
+.sys-reading .sys-region-run .sys-region-drawer, .sys-reading .sys-region-use .sys-region-drawer { left: auto; right: -1px; }
+.sys-reading .sys-region-wiki .sys-region-drawer, .sys-reading .sys-region-review .sys-region-drawer, .sys-reading .sys-region-use .sys-region-drawer { top: auto; bottom: calc(100% + 7px); }
+.sys-reading .sys-region[aria-expanded="true"] .sys-region-drawer { display: grid; gap: 9px; }
+.sys-reading .sys-region-drawer strong { font-size: 12px; font-weight: 550; }
+.sys-reading .sys-region-drawer p { font-size: 12px; }
+.sys-reading .sys-module-link { padding: 2px 0; border: 0; border-radius: 0; background: none; color: #658299; font-size: 11px; font-weight: 400; text-align: left; }
+.sys-reading .sys-module-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.sys-reading .sys-legend { display: flex; gap: 20px; flex-wrap: wrap; margin: 4px 0 25px; color: var(--sys-muted); font-size: 10px; }
+.sys-reading .sys-legend-action { color: var(--sys-blue); }
+.sys-reading .sys-legend-feedback { color: var(--sys-copper); }
+.sys-reading .sys-explanation { border-top: 1px solid var(--sys-line); padding: 15px 0; color: var(--sys-muted); }
+.sys-reading .sys-explanation > summary { width: max-content; cursor: pointer; font-size: 12px; }
+.sys-reading .sys-explanation-lead { margin: 16px 0 !important; font-size: 13px; }
+.sys-reading .sys-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; list-style: none; margin: 20px 0; padding: 0; }
+.sys-reading .sys-step { min-width: 0; padding: 12px 0; border-top: 1px solid var(--sys-line); }
+.sys-reading .sys-step-index { color: #9aa3aa; font-size: 10px; }
+.sys-reading .sys-step h3 { margin: 4px 0 8px; color: var(--sys-ink); font-size: 14px; font-weight: 550; }
+.sys-reading .sys-step p, .sys-reading .sys-step-gate { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-step-gate { margin-top: 10px; }
+.sys-reading .sys-step-modules { display: grid; gap: 3px; margin-top: 12px; }
+.sys-reading .sys-explanation-sources { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 15px; margin: 15px 0; font-size: 11px; }
+.sys-reading .sys-explanation-sources strong { font-weight: 500; }
+.sys-reading .sys-source { color: #658299; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.sys-reading .sys-footer { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding-top: 12px; border-top: 1px solid var(--sys-line); color: var(--sys-muted); font-size: 11px; }
+.sys-reading .sys-all-modules { padding: 0; border: 0; background: none; color: #658299; font-size: 11px; }
+.sys-reading .sys-focus-card { position: absolute; z-index: 1; padding: 16px 17px 11px; border: 1px solid var(--sys-line); border-radius: 5px; background: var(--sys-panel); color: var(--sys-ink); }
+.sys-reading .sys-focus-card h3 { margin: 7px 0 9px; font-size: 17px; font-weight: 550; line-height: 1.3; }
+.sys-reading .sys-focus-card p { color: var(--sys-muted); font-size: 12px; line-height: 1.6; }
+.sys-reading .sys-focus-gate { margin-top: 9px; color: var(--sys-muted); font-size: 11px; }
+.sys-reading .sys-focus-modules { margin-top: 10px; color: #658299; font-size: 11px; }
+.sys-reading .sys-focus-modules > summary { cursor: pointer; width: max-content; font-weight: 400; }
+.sys-reading .sys-focus-modules[open] { position: relative; z-index: 5; }
+.sys-reading .sys-focus-modules[open] .sys-authority-links { position: absolute; left: -4px; top: 23px; width: min(310px, 90vw); max-height: 170px; overflow: auto; padding: 12px; border: 1px solid var(--sys-line); background: var(--sys-panel); }
+.sys-reading .sys-stage-revision .sys-focus-a, .sys-reading .sys-stage-recovery .sys-focus-a { left: 55px; top: 87px; width: 300px; height: 173px; }
+.sys-reading .sys-stage-revision .sys-focus-b, .sys-reading .sys-stage-recovery .sys-focus-b { left: 435px; top: 87px; width: 305px; height: 173px; }
+.sys-reading .sys-stage-revision .sys-focus-c, .sys-reading .sys-stage-recovery .sys-focus-c { left: 820px; top: 87px; width: 330px; height: 180px; border-color: #aabac5; }
+.sys-reading .sys-stage-revision .sys-focus-history { left: 55px; top: 340px; width: 315px; height: 160px; border-style: dashed; }
+.sys-reading .sys-focus-choices { position: absolute; left: 450px; top: 325px; width: 670px; min-height: 180px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 18px; border: 1px solid var(--sys-line); border-radius: 5px; }
+.sys-reading .sys-focus-choices strong { grid-column: 1 / -1; color: var(--sys-ink); font-size: 12px; font-weight: 500; }
+.sys-reading .sys-focus-choices span { display: flex; align-items: center; justify-content: center; min-height: 60px; padding: 8px; border-top: 1px solid var(--sys-line); color: var(--sys-muted); font-size: 12px; text-align: center; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome { top: 344px; height: 172px; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome-a { left: 55px; width: 310px; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome-b { left: 430px; width: 310px; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome-c { left: 800px; width: 350px; border-color: #aabac5; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome h3 { font-size: 17px; }
+.sys-reading .sys-authority-stage { padding: 24px 10px; background: var(--sys-paper); }
+.sys-reading .sys-authority-intro { margin-bottom: 40px; color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-authority-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
+.sys-reading .sys-authority-card { min-width: 0; padding: 18px 0; border-top: 1px solid var(--sys-line); }
+.sys-reading .sys-authority-card h3 { margin: 8px 0 12px; font-size: 19px; font-weight: 550; }
+.sys-reading .sys-authority-card p { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-authority-gate { margin: 18px 0; color: var(--sys-muted); font-size: 11px; }
+.sys-reading .sys-authority-links { display: grid; gap: 6px; margin-top: 10px; }
+.sys-reading .sys-feishu-projection { margin: 40px 0 20px; padding: 18px 0; border-top: 1px dashed var(--sys-line); }
+.sys-reading .sys-feishu-projection h3 { margin: 8px 0; font-size: 17px; font-weight: 550; }
+.sys-reading .sys-feishu-projection p { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-feishu-projection .sys-authority-links { grid-template-columns: repeat(4, max-content); gap: 20px; }
+.sys-reading .sys-authority-legend { color: var(--sys-muted); font-size: 11px; }
+@media (max-width: 800px) {
+  .sys-reading { padding: 20px; }
+  .sys-reading .sys-mechanisms { gap: 12px 20px; }
+  .sys-reading .sys-stage-title { display: block; }
+  .sys-reading .sys-stage-title p { margin-top: 6px; }
+  .sys-reading .sys-steps { grid-template-columns: 1fr; }
+  .sys-reading .sys-authority-grid { grid-template-columns: 1fr; gap: 20px; }
+  .sys-reading .sys-feishu-projection .sys-authority-links { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .sys-reading .sys-footer { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-color-scheme: dark) {
+  .sys-reading { --sys-paper: #15181c; --sys-panel: #191d22; --sys-ink: #dde1e5; --sys-muted: #a2abb4; --sys-line: #363d45; --sys-blue: #9aa6b0; --sys-copper: #8caac1; }
+  .sys-reading .sys-region-task, .sys-reading .sys-stage-revision .sys-focus-c, .sys-reading .sys-stage-recovery .sys-focus-c, .sys-reading .sys-stage-recovery .sys-focus-outcome-c { border-color: #627886; }
+  .sys-reading .sys-module-link, .sys-reading .sys-all-modules, .sys-reading .sys-source, .sys-reading .sys-focus-modules { color: #95b3ca; }
+}
 </style></head>
 <body><div id="architecture-app"></div><noscript>此地图需启用 JavaScript；完整模块、关系和固定来源也保存在同目录的 evoloop-system.model.json。</noscript>
 <script type="application/json" id="architecture-model">{"schemaVersion":1,"title":"evoLoop 全局架构地图","description":"目标架构 · 通过模块装配、协作、数据归属和场景定位阅读系统。业务包及生产接入尚未实现；折叠只改变呈现，完整模块与来源始终保留。","repository":{"url":"https://github.com/cyl19970726/evoLoop","revision":"286e749c4242fcf045cd1d439c8e81424dcc774b"},"nativeTreeUrl":"evoloop-system-modules.html","nativeOverviewUrl":"evoloop-system-overview.html","defaultExpanded":["authority"],"nodes":[{"id":"actors","parent":null,"lane":0,"label":"目标与责任","summary":"人和 session 作判断；软件记录并约束执行","kind":"group","status":"selected","sources":[{"path":"docs/architecture/contracts.md","line":135,"endLine":153}],"details":[{"label":"层级","value":"责任视角，非源码包或进程"},{"label":"关系","value":"Role 是持续职责，Session 是承载实例，Run 是一次运行。"}]},{"id":"owner","parent":"actors","lane":0,"label":"人类负责人","summary":"目标、授权、关键取舍与真实使用","kind":"actor","status":"selected","sources":[{"path":"docs/architecture/overview.md","line":19,"endLine":32}]},{"id":"cognition-role","parent":"actors","lane":0,"label":"专门认知 session","summary":"跨领域综合依据并选择下一步","kind":"actor","status":"selected","sources":[{"path":"docs/architecture/overview.md","line":21,"endLine":35}]},{"id":"domain-session","parent":"actors","lane":0,"label":"领域 session","summary":"理解、实现、修复并交付证据","kind":"actor","status":"selected","sources":[{"path":"docs/architecture/overview.md","line":19,"endLine":35}]},{"id":"division-role","parent":"actors","lane":0,"label":"分工管理责任","summary":"比较替代办法；职责试行、回看与撤回","kind":"actor","status":"selected","sources":[{"path":"docs/architecture/contracts.md","line":135,"endLine":143}]},{"id":"entry","parent":null,"lane":0,"label":"调用入口","summary":"工作台、CLI、Agent 工具共用受控 API","kind":"group","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":120,"endLine":123}],"details":[{"label":"层级","value":"展示分组；其中各应用/工具才是拟议包。"},{"label":"边界","value":"无服务凭据，不直接写 PG，不另起协调者。"}]},{"id":"workbench","parent":"entry","lane":0,"label":"项目工作台","summary":"组合任务、文档、知识与复核视图","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":120},{"path":"docs/architecture/frontend.md","line":46,"endLine":85}],"path":"apps/workbench","details":[{"label":"只读与写入","value":"读取按来源报告版本/缺项；写入通过共同 Command API。"},{"label":"部署","value":"推荐浏览器 SPA，由同一协调进程同源提供；技术仍为提案。"}]},{"id":"project-ui","parent":"workbench","lane":0,"label":"项目与提议","summary":"目标、待判断事项、讨论入口与 dogfood","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":52,"endLine":54}]},{"id":"task-ui","parent":"workbench","lane":0,"label":"任务与依据","summary":"Task、固定依据、交付与验收","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":54,"endLine":56}]},{"id":"document-ui","parent":"workbench","lane":0,"label":"过程文档","summary":"表格、全文、修订与正式文档整理","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":55,"endLine":57}]},{"id":"knowledge-ui","parent":"workbench","lane":0,"label":"知识与来源","summary":"专题、正文、双链、图谱与候选审阅","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":58,"endLine":60}]},{"id":"role-ui","parent":"workbench","lane":0,"label":"职责与会话","summary":"责任约定、承载实例、试行与回看","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":60,"endLine":62}]},{"id":"schedule-ui","parent":"workbench","lane":0,"label":"日程与触发","summary":"修订、时区、实例与在途停止","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":61,"endLine":63}]},{"id":"evaluation-ui","parent":"workbench","lane":0,"label":"评价与案例","summary":"冻结条件、逐 case 证据、成本与缺项","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":62,"endLine":64}]},{"id":"operation-ui","parent":"workbench","lane":0,"label":"操作与恢复","summary":"业务提交、外部效果与下一次对账","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":63,"endLine":65}]},{"id":"markdown-reader","parent":"document-ui","lane":0,"label":"Markdown 阅读器","summary":"完整固定原文；禁止原始 HTML 执行","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":73,"endLine":85}]},{"id":"html-reader","parent":"document-ui","lane":0,"label":"HTML 报告阅读器","summary":"完整报告与资源包；隔离预览，原件不变","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/frontend.md","line":73,"endLine":85}],"details":[{"label":"安全边界","value":"服务端制作可追溯预览副本；iframe sandbox 默认禁脚本，不向父 DOM 注入报告。"}]},{"id":"cli","parent":"entry","lane":0,"label":"本地 CLI","summary":"检查、提议和管理，经共同 API","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":123}],"path":"apps/cli"},{"id":"agent-tools","parent":"entry","lane":0,"label":"Agent / MCP 工具","summary":"查询、提议、交付、审阅与贡献","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":121}],"path":"packages/agent-tools","details":[{"label":"宿主能力","value":"桌面宿主桥接须单独声明；独立 daemon 不自动拥有消息/唤醒入口。"}]},{"id":"coordinator","parent":null,"lane":1,"label":"协调进程","summary":"单活装配：API、核心、适配器与恢复循环","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":20,"endLine":22},{"path":"docs/architecture/packages.md","line":68,"endLine":74},{"path":"docs/architecture/packages.md","line":122}],"path":"apps/coordinator","details":[{"label":"层级","value":"部署/装配单位；core、contracts 和适配包在其中组合，不是各起一个服务。"},{"label":"单活","value":"独占与失去资格后的停写仍需 PG 实测；不保证跨系统恰好一次。"}]},{"id":"api","parent":"coordinator","lane":1,"label":"共同 Query / Command API","summary":"身份、输入、版本和操作入口","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":133},{"path":"docs/architecture/packages.md","line":122}]},{"id":"daemon-due","parent":"coordinator","lane":1,"label":"到期计算循环","summary":"按日程定义提出可追溯任务","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":171,"endLine":187},{"path":"docs/architecture/packages.md","line":122}]},{"id":"outbox","parent":"coordinator","lane":1,"label":"出站意图与恢复循环","summary":"提交后执行外部意图，保留未知结果","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":137,"endLine":163},{"path":"docs/architecture/packages.md","line":122}]},{"id":"reconcile","parent":"coordinator","lane":1,"label":"周期对账","summary":"先恢复未决运行/投影，再派发新工作","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153},{"path":"docs/architecture/packages.md","line":122}]},{"id":"composition","parent":"coordinator","lane":1,"label":"连接与健康装配","summary":"凭据、数据库连接、服务启动与静态资源","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":122}]},{"id":"core","parent":null,"lane":1,"label":"业务核心","summary":"确定性用例、权限、基线与状态约束","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":9,"endLine":18},{"path":"docs/architecture/packages.md","line":113}],"path":"packages/core","details":[{"label":"依赖边界","value":"仅依赖 contracts、时钟及纯计算；不直接调用 HTTP、PG 或平台 SDK。"},{"label":"判断","value":"认知/分工由责任 session 或人承担；core 使决定、输入和效果可追溯。"}]},{"id":"cognition","parent":"core","lane":1,"label":"认知循环","summary":"装配目标、依据和反例；记录下一步选择","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":13},{"path":"docs/architecture/contracts.md","line":155,"endLine":161}],"path":"packages/core/cognition/","details":[{"label":"产品部分","value":"① 认知循环"}]},{"id":"reviews","parent":"core","lane":1,"label":"阶段回看","summary":"交付、亲用、偏差与继续/补证/停止","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":13},{"path":"docs/architecture/contracts.md","line":155,"endLine":161}],"path":"packages/core/reviews/","details":[{"label":"产品部分","value":"① 认知循环"}]},{"id":"roles","parent":"core","lane":1,"label":"逻辑职责","summary":"职责说明、试行、收益和撤回","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":14},{"path":"docs/architecture/contracts.md","line":135,"endLine":143}],"path":"packages/core/roles/","details":[{"label":"产品部分","value":"② 动态多 session"}]},{"id":"sessions","parent":"core","lane":1,"label":"会话承载","summary":"实例与 Role/Task/Run 映射及交接","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":14},{"path":"docs/architecture/contracts.md","line":135,"endLine":153}],"path":"packages/core/sessions/","details":[{"label":"产品部分","value":"② 动态多 session"}]},{"id":"tasks","parent":"core","lane":1,"label":"任务与验收","summary":"提议、接受、固定 TaskRevision 与验收","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":15},{"path":"docs/architecture/contracts.md","line":39,"endLine":67}],"path":"packages/core/tasks/","details":[{"label":"产品部分","value":"③ Task 与状态机"}]},{"id":"documents","parent":"core","lane":1,"label":"过程文档","summary":"不可变修订、审阅采纳与整理记录","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":15},{"path":"docs/architecture/contracts.md","line":69,"endLine":93}],"path":"packages/core/documents/","details":[{"label":"产品部分","value":"③ Task 与状态机"}]},{"id":"relations","parent":"core","lane":1,"label":"跨对象关系","summary":"导航、固定修订绑定与影响复核","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":15},{"path":"docs/architecture/storage.md","line":71,"endLine":104}],"path":"packages/core/relations/","details":[{"label":"产品部分","value":"③ Task 与状态机"}]},{"id":"connectors","parent":"core","lane":1,"label":"连接器命令","summary":"入站身份、字段权限与所见基线核验","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":15},{"path":"docs/architecture/contracts.md","line":189,"endLine":195}],"path":"packages/core/connectors/","details":[{"label":"产品部分","value":"③ Task 与状态机"}]},{"id":"coordination","parent":"core","lane":1,"label":"派发与恢复","summary":"承接、交接、unknown 与历史回读","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":15},{"path":"docs/architecture/contracts.md","line":145,"endLine":153}],"path":"packages/core/coordination/","details":[{"label":"产品部分","value":"③ Task 与状态机"}]},{"id":"scheduling","parent":"core","lane":1,"label":"日程规则","summary":"时区、稳定触发键、错过与重叠","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":15},{"path":"docs/architecture/contracts.md","line":171,"endLine":187}],"path":"packages/core/scheduling/","details":[{"label":"产品部分","value":"③ Task 与状态机"}]},{"id":"knowledge","parent":"core","lane":1,"label":"知识维护","summary":"贡献、候选、审阅、发布与撤回影响","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":16},{"path":"docs/architecture/wiki-integration.md","line":40,"endLine":46},{"path":"docs/architecture/knowledge-flow.md","line":69,"endLine":100}],"path":"packages/core/knowledge/","details":[{"label":"产品部分","value":"④ Wiki 与 evaluator"}]},{"id":"evaluation","parent":"core","lane":1,"label":"消费与效果评价","summary":"协议、条件、case、采用与总成本","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":16},{"path":"docs/architecture/contracts.md","line":163,"endLine":169}],"path":"packages/core/evaluation/","details":[{"label":"产品部分","value":"④ Wiki 与 evaluator"}]},{"id":"queries","parent":"core","lane":1,"label":"查询与上下文","summary":"授权读取、固定依据、变化/反例及缺项","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":76},{"path":"docs/architecture/contracts.md","line":113,"endLine":125}],"path":"packages/core/queries/","details":[{"label":"产品部分","value":"跨能力查询装配"}]},{"id":"sourcebridge","parent":"knowledge","lane":1,"label":"SourceBridge","summary":"按固定来源、权限和处理版本送入知识空间","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":121},{"path":"docs/architecture/knowledge-flow.md","line":92,"endLine":110}],"details":[{"label":"边界","value":"core 内组合用例，不是独立服务；传递、索引、知识维护分别核对。"}]},{"id":"publication","parent":"knowledge","lane":1,"label":"候选与受控发布","summary":"批准绑定候选 hash / 基线，写前再次核权","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/wiki-integration.md","line":76,"endLine":82},{"path":"docs/architecture/contracts.md","line":95,"endLine":111}]},{"id":"contextquery","parent":"queries","lane":1,"label":"ContextQuery","summary":"导航、执行依据、当前变化与缺项分开返回","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":121}]},{"id":"contracts","parent":null,"lane":1,"label":"共同合同与端口","summary":"跨包身份、结果、DTO 与中立 I/O 端口","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":112},{"path":"docs/architecture/contracts.md","line":123,"endLine":139}],"path":"packages/contracts","details":[{"label":"源码边界","value":"浏览器安全出口不带平台 SDK；生成协议类型留在适配器。"},{"label":"结果","value":"applied / rejected / pending / unknown 绑定各操作的效果范围。"}]},{"id":"store-ports","parent":"contracts","lane":1,"label":"主数据与事务端口","summary":"Task / Schedule / Document / Relation Store","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":39,"endLine":93},{"path":"docs/architecture/contracts.md","line":127,"endLine":133}]},{"id":"unitofwork","parent":"contracts","lane":1,"label":"UnitOfWork","summary":"同一 PG 连接原子提交对象、操作与 outbox","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":127,"endLine":133}]},{"id":"runtime-port","parent":"contracts","lane":1,"label":"SessionRuntime","summary":"承接、观察、停止与按能力声明恢复","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":135,"endLine":153}]},{"id":"knowledge-ports","parent":"contracts","lane":1,"label":"知识与来源端口","summary":"EvidenceStore / KnowledgeRepository","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":95,"endLine":111}]},{"id":"source-ports","parent":"contracts","lane":1,"label":"独立原文与大载荷端口","summary":"DocumentSource / BlobStore","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":103,"endLine":121}]},{"id":"connector-port","parent":"contracts","lane":1,"label":"Connector 与绑定合同","summary":"受控投影、入站观察与独立同步状态","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":189,"endLine":195}]},{"id":"query-command","parent":"contracts","lane":1,"label":"Query / Command 协议","summary":"身份、operationId、预期修订与变更意图","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":133}]},{"id":"adapters","parent":null,"lane":2,"label":"平台边界包","summary":"把中立端口映射为真实平台协议","kind":"group","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":114,"endLine":119}],"details":[{"label":"层级","value":"源码包分组，由协调进程装配；不是六个常驻服务。"}]},{"id":"pg-adapter","parent":"adapters","lane":2,"label":"PostgreSQL 适配器","summary":"同连接 Store、Journal / outbox 与 SQL 迁移","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":117}],"path":"packages/adapter-postgres","details":[{"label":"禁止越界","value":"不保存外置 Wiki 正文或 Git 正式正文。"}]},{"id":"feishu-adapter","parent":"adapters","lane":2,"label":"飞书 connector","summary":"Bitable Task 投影、入站 command 与对账","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":114}],"path":"packages/connector-feishu","details":[{"label":"禁止越界","value":"飞书不是 Task/Schedule 主数据；不绕过 core 写库。"}]},{"id":"wiki-adapter","parent":"adapters","lane":2,"label":"Wiki HTTP 适配器","summary":"候选 OpenViking、外置修订与能力报告","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":115}],"path":"packages/adapter-wiki-openviking","details":[{"label":"禁止越界","value":"普通写页不等于 Wiki 编译；不能决定产品下一步。"}]},{"id":"codex-adapter","parent":"adapters","lane":2,"label":"Codex App Server 适配器","summary":"stdio、握手、Thread/Turn 与断线回读","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":116}],"path":"packages/adapter-codex-app-server","details":[{"label":"禁止越界","value":"Turn 完成不是任务验收；不推断既有桌面聊天可控。"}]},{"id":"git-adapter","parent":"adapters","lane":2,"label":"Git 文档适配器","summary":"白名单路径、固定 commit 原文与 hash","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":118}],"path":"packages/adapter-git-documents","details":[{"label":"禁止越界","value":"不自动采纳 PR、不读取越权目录，不另造正式 Document 行。"}]},{"id":"blob-adapter","parent":"adapters","lane":2,"label":"本机 Blob 适配器","summary":"受控目录、临时写/hash、发布与孤儿对账","kind":"module","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":119}],"path":"packages/adapter-local-blobs","details":[{"label":"禁止越界","value":"不与 PG 共事务，不绕权限暴露本机路径。"}]},{"id":"authority","parent":null,"lane":2,"label":"数据权威与外部边界","summary":"PG、Wiki、Git、原件、投影和执行历史分别持有","kind":"group","status":"selected","sources":[{"path":"docs/architecture/storage.md","line":7,"endLine":15},{"path":"docs/architecture/packages.md","line":46,"endLine":74}],"details":[{"label":"状态","value":"本图表示已选归属与拟议接入，不表示 PG/Wiki/connector 已部署。"},{"label":"跨系统","value":"没有 PG + 文件 + Wiki + 飞书 + Codex 的共同事务。"}]},{"id":"postgres","parent":"authority","lane":2,"label":"PostgreSQL 主数据","summary":"Task、过程文档、关系与运行/同步记录","kind":"external","status":"selected","sources":[{"path":"docs/architecture/storage.md","line":13,"endLine":35},{"path":"docs/architecture/storage.md","line":97,"endLine":135}],"details":[{"label":"已确定","value":"PostgreSQL 引擎及主数据/运行记录归属；服务、表和具体版本尚未实现。"},{"label":"不持有","value":"Wiki 正文/内部知识依赖、Git 正式文档正文。"}]},{"id":"pg-work","parent":"postgres","lane":2,"label":"工作与过程文档","summary":"TaskRevision、DocumentRevision、Review 决定","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":25,"endLine":33}]},{"id":"pg-basis","parent":"postgres","lane":2,"label":"关系与固定依据","summary":"Relation、TaskBasis、GitSourceRef、KnowledgeRef","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":71,"endLine":104}]},{"id":"pg-runtime","parent":"postgres","lane":2,"label":"运行与调度记录","summary":"Role/Session/Run、Schedule/Occurrence、Journal","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":101,"endLine":130}]},{"id":"pg-evaluation","parent":"postgres","lane":2,"label":"评价与影响记录","summary":"case/效果、影响复核、贡献与处理回执","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":129,"endLine":135}]},{"id":"wiki-service","parent":"authority","lane":2,"label":"外置 Wiki 服务","summary":"知识正文、来源、修订与知识内部依赖","kind":"external","status":"proposed","sources":[{"path":"docs/architecture/wiki-integration.md","line":7,"endLine":11},{"path":"docs/architecture/wiki-integration.md","line":115,"endLine":127}],"details":[{"label":"候选","value":"OpenViking；正式基座未采纳。外置 revision/manifest 层须实现。"},{"label":"并发","value":"未验证服务端拒旧基线前，受限试点单维护者串行发布并回读。"}]},{"id":"git-repos","parent":"authority","lane":2,"label":"受管 Git 仓库","summary":"产品/架构/规范正文及固定 commit","kind":"external","status":"selected","sources":[{"path":"docs/architecture/knowledge-flow.md","line":11,"endLine":18},{"path":"docs/architecture/packages.md","line":118}],"details":[{"label":"权威","value":"原仓库审阅和合入流程；正式文档不进入 Document Table。"}]},{"id":"blob-store","parent":"authority","lane":2,"label":"仓库外受控原件","summary":"大 Markdown / HTML 报告、附件与资源包","kind":"external","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":165,"endLine":185}],"details":[{"label":"准备与提交","value":"先准备/hash/资源清单，再由 PG 登记唯一 canonical payloadRef；孤儿单独恢复。"}]},{"id":"feishu","parent":"authority","lane":2,"label":"飞书 Bitable","summary":"首期 Task 协作投影与受控编辑","kind":"external","status":"selected","sources":[{"path":"docs/architecture/packages.md","line":24,"endLine":46},{"path":"docs/architecture/contracts.md","line":189,"endLine":195}],"details":[{"label":"接入状态","value":"归属方向已确定，生产 connector 未部署；云文档是另一套待验证 API。"}]},{"id":"codex","parent":"authority","lane":2,"label":"自管 Codex App Server","summary":"实际 Thread / Turn 与执行历史","kind":"external","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":57,"endLine":74},{"path":"docs/architecture/codex-integration.md","line":108,"endLine":119}],"details":[{"label":"证据","value":"有固定版本隔离实测；生产 SessionRuntime 和真实主数据尚未接通。"},{"label":"桌面边界","value":"既有 Desktop 聊天是独立接入面；历史可见不证明可接管、双写或自动唤醒。"}]},{"id":"support","parent":null,"lane":0,"label":"现有工具与条件性测试","summary":"公开 docs 工具、演示/隔离证据及可选夹具","kind":"group","status":"existing","sources":[{"path":"docs/architecture/packages.md","line":3,"endLine":7},{"path":"docs/architecture/packages.md","line":125}],"details":[{"label":"层级","value":"当前存在物与条件性候选；均不等于生产 harness。"}]},{"id":"docs-tool","parent":"support","lane":0,"label":"文档工具","summary":"Markdown 检查、本地站点与 Mermaid 渲染","kind":"module","status":"existing","sources":[{"path":"docs/architecture/packages.md","line":125}],"path":"scripts/docs/"},{"id":"prototype","parent":"support","lane":0,"label":"工作台原型","summary":"可点击模拟页面，无真实 API 接入","kind":"module","status":"existing","sources":[{"path":"docs/architecture/overview.md","line":105,"endLine":109}],"path":"docs/assets/workbench-prototype.html"},{"id":"experiments","parent":"support","lane":0,"label":"Wiki / Codex 隔离证据","summary":"固定版本/样本观察，不转移为生产保证","kind":"module","status":"existing","sources":[{"path":"docs/architecture/packages.md","line":3,"endLine":7},{"path":"docs/architecture/codex-integration.md","line":108,"endLine":119}]},{"id":"testkit","parent":"support","lane":0,"label":"共享故障测试夹具","summary":"重复需求出现时再建立，非生产依赖","kind":"module","status":"conditional","sources":[{"path":"docs/architecture/packages.md","line":125}],"path":"packages/testkit"},{"id":"task-store","parent":"store-ports","lane":1,"label":"TaskStore","summary":"任务当前头、修订、接受与交付","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":39,"endLine":67}]},{"id":"document-store","parent":"store-ports","lane":1,"label":"DocumentStore","summary":"过程文档修订、审阅采纳和整理记录","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":69,"endLine":93}]},{"id":"relation-store","parent":"store-ports","lane":1,"label":"RelationStore","summary":"跨对象导航与固定修订绑定","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":87,"endLine":93}]},{"id":"schedule-store","parent":"store-ports","lane":1,"label":"ScheduleStore","summary":"定义、稳定触发键与可追溯实例","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":171,"endLine":187}]},{"id":"role-registry","parent":"store-ports","lane":1,"label":"RoleRegistry","summary":"逻辑职责修订与实例绑定","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":135,"endLine":143}]},{"id":"operation-journal","parent":"store-ports","lane":1,"label":"OperationJournal","summary":"操作意图、收据、水位与未知结果","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153}]},{"id":"evidence-store","parent":"knowledge-ports","lane":1,"label":"EvidenceStore","summary":"原始来源与证据定位，区别于模型解释","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":95,"endLine":111}]},{"id":"knowledge-repository","parent":"knowledge-ports","lane":1,"label":"KnowledgeRepository","summary":"外置认识、来源、候选和固定修订读取","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":95,"endLine":111}]},{"id":"document-source","parent":"source-ports","lane":1,"label":"DocumentSource","summary":"Git 白名单路径、固定 commit 原始字节","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":121}]},{"id":"blob-port","parent":"source-ports","lane":1,"label":"BlobStore","summary":"受控大原件的准备、核验、发布与撤回","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":103,"endLine":111}]},{"id":"wiki-content","parent":"wiki-service","lane":2,"label":"知识正文与内部依赖","summary":"来源、知识修订、历史和知识内部支持/反例链","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/wiki-integration.md","line":7,"endLine":11}]},{"id":"git-content","parent":"git-repos","lane":2,"label":"正式文档原文","summary":"各仓库 docs/ 原文；按固定 commit 与 hash 引用","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/knowledge-flow.md","line":11,"endLine":18}]},{"id":"blob-content","parent":"blob-store","lane":2,"label":"大过程文档原件载荷","summary":"唯一 canonical payload 与必要资源清单","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/storage.md","line":165,"endLine":179}]},{"id":"feishu-content","parent":"feishu","lane":2,"label":"Task 协作投影","summary":"远端可见版本与原生编辑观察，非主任务本体","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/packages.md","line":24,"endLine":46}]},{"id":"codex-history","parent":"codex","lane":2,"label":"Thread / Turn 执行历史","summary":"宿主执行记录；项目另持 Task/Run/验收引用","kind":"detail","status":"proposed","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153}]}],"edges":[{"id":"e1","to":"workbench","label":"经工作台等受控入口提交目标/提议","kind":"runtime","sources":[{"path":"docs/architecture/overview.md","line":19,"endLine":35},{"path":"docs/architecture/contracts.md","line":123,"endLine":143}],"from":"owner"},{"id":"e2","to":"agent-tools","label":"可经工具提交/读取","kind":"runtime","sources":[{"path":"docs/architecture/overview.md","line":19,"endLine":35},{"path":"docs/architecture/contracts.md","line":123,"endLine":143}],"from":"domain-session"},{"id":"e3","to":"agent-tools","label":"可经工具发起维护与下一步","kind":"runtime","sources":[{"path":"docs/architecture/overview.md","line":19,"endLine":35},{"path":"docs/architecture/contracts.md","line":123,"endLine":143}],"from":"cognition-role"},{"id":"e4","to":"agent-tools","label":"可经工具提交职责试行","kind":"runtime","sources":[{"path":"docs/architecture/overview.md","line":19,"endLine":35},{"path":"docs/architecture/contracts.md","line":123,"endLine":143}],"from":"division-role"},{"id":"e5","to":"api","label":"共同 Query / Command API","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":120,"endLine":123},{"path":"docs/architecture/contracts.md","line":123,"endLine":133}],"from":"workbench"},{"id":"e6","to":"api","label":"共同 Query / Command API","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":120,"endLine":123},{"path":"docs/architecture/contracts.md","line":123,"endLine":133}],"from":"cli"},{"id":"e7","to":"api","label":"共同 Query / Command API","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":120,"endLine":123},{"path":"docs/architecture/contracts.md","line":123,"endLine":133}],"from":"agent-tools"},{"id":"e8","to":"tasks","label":"核权限/基线后推进任务","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e9","to":"documents","label":"过程修订与采纳","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e10","to":"queries","label":"装配授权读取","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e11","to":"connectors","label":"核入站 command","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e12","to":"knowledge","label":"受控贡献/复核/发布","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e13","to":"evaluation","label":"记录条件与逐 case 观察","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e14","to":"roles","label":"记录职责试行与决定","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e15","to":"scheduling","label":"修订日程定义","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":123,"endLine":143},{"path":"docs/architecture/packages.md","line":13,"endLine":16}],"from":"api"},{"id":"e16","to":"relations","label":"改版定位相关对象/基线","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":69,"endLine":93}],"from":"documents"},{"id":"e17","to":"contextquery","label":"装配有限固定上下文","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":125}],"from":"queries"},{"id":"e18","to":"sourcebridge","label":"组合固定来源及权限","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":121}],"from":"knowledge"},{"id":"e19","to":"publication","label":"候选批准后核基线发布","kind":"runtime","sources":[{"path":"docs/architecture/wiki-integration.md","line":76,"endLine":82}],"from":"knowledge"},{"id":"e20","to":"codex-adapter","label":"经 SessionRuntime 承接/观察","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153},{"path":"docs/architecture/packages.md","line":116}],"from":"coordination"},{"id":"e21","to":"scheduling","label":"计算到期和触发实例","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":171,"endLine":187}],"from":"daemon-due"},{"id":"e22","to":"tasks","label":"关联可追溯 Task；仍核接受规则","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":171,"endLine":187}],"from":"scheduling"},{"id":"e23","to":"coordination","label":"先对账未知动作，再派发","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153}],"from":"reconcile"},{"id":"e24","to":"feishu-adapter","label":"执行已提交投影意图","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":24,"endLine":46}],"from":"outbox"},{"id":"e25","to":"api","label":"入站身份/基线 command","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":114},{"path":"docs/architecture/contracts.md","line":189,"endLine":195}],"from":"feishu-adapter"},{"id":"e26","to":"feishu","label":"任务投影与回读","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":114}],"from":"feishu-adapter"},{"id":"e27","to":"codex","label":"stdio 请求/事件；断线回读","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":116}],"from":"codex-adapter"},{"id":"e28","to":"wiki-adapter","label":"受控发布与修订回读","kind":"runtime","sources":[{"path":"docs/architecture/wiki-integration.md","line":76,"endLine":82},{"path":"docs/architecture/packages.md","line":115}],"from":"publication"},{"id":"e29","to":"wiki-adapter","label":"选定来源入库并核处理回执","kind":"runtime","sources":[{"path":"docs/architecture/knowledge-flow.md","line":92,"endLine":100}],"from":"sourcebridge"},{"id":"e30","to":"wiki-service","label":"HTTP / 外置 revision 映射","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":115},{"path":"docs/architecture/wiki-integration.md","line":115,"endLine":127}],"from":"wiki-adapter"},{"id":"e31","to":"git-adapter","label":"读取白名单固定 Git 原文","kind":"runtime","sources":[{"path":"docs/architecture/knowledge-flow.md","line":102,"endLine":110}],"from":"sourcebridge"},{"id":"e32","to":"git-repos","label":"固定 commit 只读","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":118}],"from":"git-adapter"},{"id":"e33","to":"blob-adapter","label":"大载荷先准备/核验","kind":"runtime","sources":[{"path":"docs/architecture/storage.md","line":165,"endLine":179}],"from":"documents"},{"id":"e34","to":"blob-store","label":"受控原件发布与核验","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":119}],"from":"blob-adapter"},{"id":"e35","to":"pg-adapter","label":"经 Store / UnitOfWork 提交","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":127,"endLine":133},{"path":"docs/architecture/packages.md","line":117}],"from":"tasks"},{"id":"e36","to":"pg-adapter","label":"修订、决定及 outbox 同库提交","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":127,"endLine":133}],"from":"documents"},{"id":"e37","to":"pg-adapter","label":"跨对象关系与固定绑定","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":117},{"path":"docs/architecture/storage.md","line":97,"endLine":104}],"from":"relations"},{"id":"e38","to":"pg-adapter","label":"操作、Run 与恢复水位","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":117},{"path":"docs/architecture/contracts.md","line":145,"endLine":153}],"from":"coordination"},{"id":"e39","to":"pg-adapter","label":"条件/case/采用/效果记录","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":163,"endLine":169}],"from":"evaluation"},{"id":"e40","to":"postgres","label":"同连接 SQL 事务与迁移","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":117},{"path":"docs/architecture/storage.md","line":137,"endLine":163}],"from":"pg-adapter"},{"id":"e41","to":"pg-adapter","label":"主数据与关系授权读取","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":76,"endLine":78}],"from":"queries"},{"id":"e42","to":"wiki-adapter","label":"按固定修订读取外置知识","kind":"runtime","sources":[{"path":"docs/architecture/packages.md","line":76,"endLine":78}],"from":"queries"},{"id":"e43","to":"reviews","label":"效果与成本成为回看依据","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":155,"endLine":169}],"from":"evaluation"},{"id":"e44","to":"tasks","label":"继续/补证等形成可追溯工作","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":155,"endLine":161}],"from":"reviews"},{"id":"e45","to":"core","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e46","to":"contracts","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e47","to":"pg-adapter","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e48","to":"feishu-adapter","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e49","to":"wiki-adapter","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e50","to":"codex-adapter","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e51","to":"git-adapter","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e52","to":"blob-adapter","label":"装配依赖","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104}],"from":"coordinator"},{"id":"e53","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"core"},{"id":"e54","to":"contracts","label":"仅浏览器安全合同出口","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"workbench"},{"id":"e55","to":"contracts","label":"依赖公开 API 合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"cli"},{"id":"e56","to":"contracts","label":"依赖公开 API 合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"agent-tools"},{"id":"e57","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"pg-adapter"},{"id":"e58","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"feishu-adapter"},{"id":"e59","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"wiki-adapter"},{"id":"e60","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"codex-adapter"},{"id":"e61","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"git-adapter"},{"id":"e62","to":"contracts","label":"依赖中立合同","kind":"dependency","sources":[{"path":"docs/architecture/packages.md","line":80,"endLine":104},{"path":"docs/architecture/packages.md","line":112,"endLine":123}],"from":"blob-adapter"},{"id":"e63","to":"pg-work","label":"持有工作对象与过程文档修订","kind":"ownership","sources":[{"path":"docs/architecture/storage.md","line":25,"endLine":33}],"from":"postgres"},{"id":"e64","to":"pg-basis","label":"持有引用、关系和依据集合","kind":"ownership","sources":[{"path":"docs/architecture/storage.md","line":71,"endLine":104}],"from":"postgres"},{"id":"e65","to":"pg-runtime","label":"持有调度/运行/恢复记录","kind":"ownership","sources":[{"path":"docs/architecture/storage.md","line":101,"endLine":130}],"from":"postgres"},{"id":"e66","to":"pg-evaluation","label":"持有评价与跨对象影响记录","kind":"ownership","sources":[{"path":"docs/architecture/storage.md","line":129,"endLine":135}],"from":"postgres"},{"id":"e67","to":"wiki-content","label":"持有知识正文、来源、历史与内部依赖","kind":"ownership","sources":[{"path":"docs/architecture/wiki-integration.md","line":7,"endLine":11}],"from":"wiki-service"},{"id":"e68","to":"git-content","label":"持有正式文档原文，原仓库审阅","kind":"ownership","sources":[{"path":"docs/architecture/knowledge-flow.md","line":102,"endLine":110}],"from":"git-repos"},{"id":"e69","to":"blob-content","label":"持有大过程文档唯一原件载荷","kind":"ownership","sources":[{"path":"docs/architecture/storage.md","line":165,"endLine":179}],"from":"blob-store"},{"id":"e70","to":"feishu-content","label":"持有 Task 协作投影和编辑观察","kind":"ownership","sources":[{"path":"docs/architecture/packages.md","line":24,"endLine":46}],"from":"feishu"},{"id":"e71","to":"codex-history","label":"持有真实执行历史，不持项目验收","kind":"ownership","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153}],"from":"codex"},{"id":"e72","from":"wiki-adapter","to":"knowledge","label":"查询知识内部依赖与修订有效性","kind":"runtime","sources":[{"path":"docs/architecture/knowledge-flow.md","line":112,"endLine":114}]},{"id":"e73","from":"knowledge","to":"relations","label":"组合跨对象关系定位影响","kind":"runtime","sources":[{"path":"docs/architecture/knowledge-flow.md","line":112,"endLine":122}]},{"id":"e74","from":"relations","to":"tasks","label":"旧依据任务待复核；保留旧 Run","kind":"runtime","sources":[{"path":"docs/architecture/storage.md","line":83,"endLine":91}]},{"id":"e75","from":"coordination","to":"contextquery","label":"派发前核权限、接受状态与关键依据","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":120,"endLine":121}]},{"id":"e76","from":"sourcebridge","to":"pg-adapter","label":"读取 Task/过程文档/成果的固定来源","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":119}]},{"id":"e77","from":"sourcebridge","to":"evidence-store","label":"经证据端口定位授权来源原件","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":119}]},{"id":"e78","from":"contextquery","to":"git-adapter","label":"核验固定 Git 来源与缺项","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":113,"endLine":121}]},{"id":"e79","from":"tasks","to":"coordination","label":"已接受任务与固定依据供派发选择","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":145,"endLine":153}]},{"id":"e80","from":"roles","to":"coordination","label":"职责约定供责任承接选择","kind":"runtime","sources":[{"path":"docs/architecture/contracts.md","line":135,"endLine":151}]}],"journeys":[{"id":"revision","label":"需求改版","note":"从过程文档修订，经共同 API/core/PG 记录与关系定位受影响任务；固定依据保留旧版，实际影响由责任者复核。高亮仅显示已声明关系，不计算自动影响范围。","focus":["workbench","document-ui","api","documents","relations","tasks","pg-adapter","postgres","pg-work","pg-basis","contextquery","git-adapter","git-repos","coordination"],"checks":["核对具体 DocumentRevision、采纳决定与变更片段；普通链接不代表执行依据。","定位 TaskBasis、TaskRevision 和旧 Run 使用版；按未执行/进行中/已完成分别判断。","责任者接受换基线、保留旧版或补救的决定；Git 正式正文仍走原仓库审阅。"]},{"id":"execution","label":"任务执行与恢复","note":"已接受任务的派发、运行和回读分开记录；超时先按操作/Thread/Turn 对账，unknown 不盲重发。Turn 结束不代替任务验收。","focus":["api","tasks","coordination","reconcile","outbox","pg-adapter","postgres","pg-runtime","codex-adapter","codex","contextquery","roles"],"checks":["核对 operationId、TaskRevision/BasisSet、责任 Role 与承载 Session。","回读已知 Thread/Turn 和 Journal 水位，核外部副作用是否已发生。","不能排除已执行时保留 unknown，由责任者决定下一次对账；运行终态不代替验收。"]},{"id":"correction","label":"知识纠正","note":"选定固定来源，经 SourceBridge、候选审核及受控发布进入外置 Wiki；后续读取和效果成为回看证据。送达、索引、发布、采用与实际收益各自核对。","focus":["api","knowledge","sourcebridge","publication","git-adapter","git-repos","wiki-adapter","wiki-service","queries","contextquery","evaluation","reviews","tasks","relations","coordination","pg-adapter","postgres","evidence-store"],"checks":["核对原来源、权限/撤回状态、具体知识 ID 与已发布修订。","组合知识内部依赖和 PG Relation，逐项复核 TaskBasis；不改写旧 Run。","分别核候选批准、发布回执、下一消费者实际采用与效果；缺项保持未知。"]}]}</script><script>(() => {
@@ -467,6 +633,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, .map-node:focus-visi
     if (ro) ro.observe(stage);
     window.addEventListener("resize", queueEdges);
     window.addEventListener("hashchange", () => {
+      if (new URLSearchParams(location.hash.slice(1)).has("read") || !location.hash) return;
       const next = readState(model);
       Object.assign(state, next);
       selectedEdge = null;
@@ -542,7 +709,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, .map-node:focus-visi
       });
     }
     function renderedNode(id) {
-      return [...lanes.querySelectorAll("[data-node-id]")].find((element) => element.dataset.nodeId === id);
+      return [...lanes.querySelectorAll("[data-node-id]")].find((element2) => element2.dataset.nodeId === id);
     }
     function focusRenderedNode(id, part = "card") {
       const card = renderedNode(id);
@@ -778,15 +945,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, .map-node:focus-visi
       marker.append(tip);
       defs.append(marker);
       svg.append(defs);
-      function boxFor(element) {
-        const rect = element.getBoundingClientRect();
+      function boxFor(element2) {
+        const rect = element2.getBoundingClientRect();
         const left = (rect.left - box.left) / scale, right = (rect.right - box.left) / scale;
         const top = (rect.top - box.top) / scale, bottom = (rect.bottom - box.top) / scale;
         return { left, right, top, bottom, height: bottom - top };
       }
-      const nodeBoxes = new Map([...lanes.querySelectorAll("[data-node-id]")].map((element) => {
-        const node = byId.get(element.dataset.nodeId);
-        return [node.id, { ...boxFor(element), lane: node.lane }];
+      const nodeBoxes = new Map([...lanes.querySelectorAll("[data-node-id]")].map((element2) => {
+        const node = byId.get(element2.dataset.nodeId);
+        return [node.id, { ...boxFor(element2), lane: node.lane }];
       }));
       const laneBoxes = [...lanes.children].map(boxFor);
       for (const route of routeProjectedEdges(projected.edges, nodeBoxes, laneBoxes, width)) {
@@ -842,14 +1009,460 @@ button:focus-visible, a:focus-visible, input:focus-visible, .map-node:focus-visi
     render();
     return { focusNode, render, state };
   }
+
+  // scripts/architecture-map/reading.js
+  var READ_IDS = ["loop", "revision", "recovery", "authority"];
+  var READING_REGIONS = Object.freeze({
+    decision: { label: "\u5224\u65AD\u4E0E\u8D23\u4EFB", modules: ["owner", "domain-session", "cognition-role", "division-role", "cognition", "roles"] },
+    task: { label: "\u53D7\u63A7 Task", modules: ["tasks", "documents", "relations", "pg-basis", "coordination"] },
+    run: { label: "Session / Run", modules: ["sessions", "runtime-port", "codex-adapter", "pg-runtime", "reconcile"] },
+    use: { label: "\u771F\u5B9E\u4F7F\u7528\u4E0E\u8BC4\u4EF7", modules: ["evaluation", "evaluation-ui", "pg-evaluation", "reviews"] },
+    wiki: { label: "\u8BA4\u8BC6\u4E0E\u4FEE\u8BA2", modules: ["knowledge", "sourcebridge", "publication", "wiki-service", "wiki-content"] },
+    review: { label: "\u5BA1\u9605\u4E0E\u4E0B\u4E00\u6B65", modules: ["reviews", "cognition", "tasks", "roles"] },
+    postgres: { label: "PostgreSQL \u4E3B\u6570\u636E", modules: ["postgres", "pg-work", "pg-basis", "pg-runtime", "pg-evaluation"] },
+    git: { label: "\u53D7\u7BA1 Git \u6B63\u6587", modules: ["git-repos", "git-content", "git-adapter"] },
+    feishu: { label: "\u98DE\u4E66\u534F\u4F5C\u6295\u5F71", modules: ["feishu", "feishu-content", "feishu-adapter", "connectors"] }
+  });
+  var READING_MECHANISMS = Object.freeze({
+    loop: {
+      label: "\u4E00\u8F6E\u5DE5\u4F5C\u600E\u6837\u95ED\u5408",
+      kicker: "\u5DE5\u4F5C\u95ED\u73AF",
+      lead: "\u5224\u65AD\u3001\u6267\u884C\u4E0E\u53CD\u9988\u76F8\u8FDE\uFF1B\u4EA4\u4ED8\u3001\u9A8C\u6536\u548C\u5B9E\u9645\u6548\u679C\u5206\u522B\u6838\u5BF9\u3002",
+      route: ["decision", "task", "run", "use", "review", "wiki", "decision"],
+      steps: [
+        { region: "decision", title: "\u63D0\u51FA\u6709\u4F9D\u636E\u7684\u5224\u65AD", body: "\u9886\u57DF session \u5BF9\u7167\u76EE\u6807\u3001\u6765\u6E90\u548C\u53CD\u4F8B\uFF1B\u8DE8\u9886\u57DF\u65F6\u7531\u8BA4\u77E5\u8D23\u4EFB\u7EFC\u5408\u3002\u4EBA\u7C7B\u8D1F\u8D23\u4EBA\u4FDD\u7559\u76EE\u6807\u3001\u6388\u6743\u4E0E\u5173\u952E\u53D6\u820D\u3002", gate: "\u5224\u65AD\u53EF\u4EE5\u9009\u62E9\u7EE7\u7EED\u3001\u8865\u8BC1\u3001\u4FEE\u8BA2\u3001\u505C\u6B62\u6216\u7B49\u5F85\u3002" },
+        { region: "task", title: "\u63A5\u53D7\u5E76\u56FA\u5B9A\u4EFB\u52A1\u4F9D\u636E", body: "Task \u5199\u660E\u627F\u63A5\u8005\u3001\u4EA4\u4ED8\u548C\u9A8C\u6536\uFF1BTaskBasis \u56FA\u5B9A\u672C\u6B21\u5B9E\u9645\u91C7\u7528\u7684\u8FC7\u7A0B Document\u3001\u77E5\u8BC6\u6216 Git \u6765\u6E90\u4FEE\u8BA2\u3002", gate: "\u5DF2\u6388\u6743\u3001\u5DF2\u63A5\u53D7\u4E14\u5173\u952E\u4F9D\u636E\u6709\u6548\uFF0C\u624D\u5141\u8BB8\u6D3E\u53D1\u3002" },
+        { region: "run", title: "\u8FD0\u884C\u4E0E\u4EA4\u4ED8", body: "\u4E00\u6B21 Task \u53EF\u6709\u591A\u6B21 Run\uFF1B\u6BCF\u6B21 Run \u4FDD\u7559\u81EA\u5DF1\u7684\u8F93\u5165\u3001\u72B6\u6001\u3001\u56DE\u6267\u548C\u5386\u53F2\u3002", gate: "Run \u7EC8\u6001\u3001\u901A\u77E5\u9001\u8FBE\u548C\u4EA7\u7269\u5B58\u5728\u5747\u4E0D\u7B49\u4E8E Task \u9A8C\u6536\u3002" },
+        { region: "use", title: "\u89C2\u5BDF\u771F\u5B9E\u4F7F\u7528\u4E0E\u6548\u679C", body: "Task \u6309\u81EA\u8EAB\u7EA6\u5B9A\u5224\u636E\u9A8C\u6536\uFF1B\u63A5\u7EED\u65B9\u6CBF\u771F\u5B9E\u8DEF\u5F84\u4F7F\u7528\u6210\u679C\uFF0C\u53E6\u8BB0\u5F55\u91C7\u7528\u3001\u5931\u8D25\u3001\u6548\u679C\u548C\u6210\u672C\u3002", gate: "\u672A\u5B9E\u9645\u4F7F\u7528\u65F6\u6548\u679C\u4E3A\u672A\u77E5\uFF1B\u82E5 Task \u5224\u636E\u8981\u6C42\u6D88\u8D39\uFF0C\u7F3A\u5C11\u6D88\u8D39\u8BC1\u636E\u4E0D\u80FD\u9A8C\u6536\u3002" },
+        { region: "review", title: "\u8D23\u4EFB\u8005\u590D\u6838\u8BC4\u4EF7", body: "\u5BF9\u7167\u91C7\u7528\u3001\u4EA4\u4ED8\u5408\u683C\u3001\u5B9E\u9645\u6548\u679C\u548C\u6210\u672C\uFF0C\u51B3\u5B9A\u7EE7\u7EED\u3001\u8865\u8BC1\u3001\u4FEE\u8BA2\u6216\u505C\u6B62\u3002", gate: "\u81EA\u52A8\u8BC4\u5206\u4E0D\u81EA\u52A8\u6279\u51C6\u77E5\u8BC6\u3001\u9A8C\u6536\u4EFB\u52A1\u6216\u5173\u95ED\u76EE\u6807\u3002" },
+        { region: "wiki", title: "\u5BA1\u9605\u540E\u7EF4\u62A4\u8BA4\u8BC6", body: "Wiki \u4FDD\u7559\u539F\u5224\u65AD\u3001\u53CD\u4F8B\u3001\u9002\u7528\u6761\u4EF6\u4E0E\u4FEE\u8BA2\uFF1B\u6539\u7248\u5F71\u54CD\u672A\u6267\u884C Task \u7684\u4F9D\u636E\u9009\u62E9\u3002", gate: "\u4FEE\u8BA2\u4E0D\u6539\u5199\u5DF2\u5B8C\u6210 Run \u7684\u539F\u4F9D\u636E\u548C\u9A8C\u6536\u3002" }
+      ],
+      sources: ["cognition", "tasks", "evaluation", "knowledge"]
+    },
+    revision: {
+      label: "\u9700\u6C42\u6216\u8BA4\u8BC6\u6539\u7248",
+      kicker: "\u7248\u672C\u4E0E\u5F71\u54CD",
+      lead: "\u65B0\u4FEE\u8BA2\u6539\u53D8\u672A\u6765\u7684\u53EF\u7528\u4F9D\u636E\uFF0C\u4F46\u4E0D\u6539\u5199\u65E7 Run \u5F53\u65F6\u91C7\u7528\u7684\u7248\u672C\u3002",
+      route: ["wiki", "review", "task", "run"],
+      steps: [
+        { region: "wiki", title: "\u4E24\u4E2A\u6743\u5A01\u4EA7\u751F\u65B0\u4FEE\u8BA2", body: "\u8FC7\u7A0B Document \u65B0\u7248\u5F52 PG\uFF1B\u77E5\u8BC6\u65B0\u7248\u5F52\u5916\u7F6E Wiki\u3002\u4E24\u8005\u90FD\u4FDD\u7559\u6765\u6E90\u3001\u65E7\u5224\u65AD\u548C\u53D8\u5316\u7406\u7531\u3002", gate: "\u53D1\u5E03\u3001\u7D22\u5F15\u53EF\u67E5\u4E0E\u6D88\u8D39\u8005\u91C7\u7528\u5206\u522B\u8BB0\u5F55\u3002" },
+        { region: "review", title: "\u626B\u63CF\u5F71\u54CD\u5E76\u4EA4\u7ED9\u8D23\u4EFB\u8005", body: "\u627E\u51FA\u5F15\u7528\u65E7\u7248\u7684 Task\uFF0C\u5F62\u6210\u5F85\u590D\u6838\u9879\uFF1B\u901A\u77E5\u9001\u8FBE\u4E0D\u8BC1\u660E\u5DF2\u5904\u7406\u3002", gate: "\u5F71\u54CD\u626B\u63CF\u53EA\u8865\u9F50\u5F85\u529E\uFF0C\u4E0D\u80FD\u66FF\u4EE3\u6D3E\u53D1\u524D\u6709\u6548\u6027\u68C0\u67E5\u3002" },
+        { region: "task", title: "\u9010\u9879\u51B3\u5B9A\u57FA\u7EBF", body: "\u672A\u6267\u884C\u4EFB\u52A1\u53EF\u6362\u57FA\u7EBF\u3001\u4FDD\u7559\u65E7\u7248\u5E76\u8BF4\u660E\uFF0C\u6216\u5F00\u8865\u6551\u4EFB\u52A1\uFF1B\u6267\u884C\u4E2D\u7531\u8D23\u4EFB\u8005\u5224\u65AD\u662F\u5426\u505C\u6B62\u3002", gate: "\u5173\u952E\u4F9D\u636E\u7F3A\u5931\u3001\u64A4\u56DE\u6216\u5F85\u590D\u6838\u65F6\u6682\u505C\u65B0\u6D3E\u53D1\u3002" },
+        { region: "run", title: "\u5386\u53F2\u4ECD\u6309\u539F\u7248\u89E3\u91CA", body: "\u65E7 Run \u4ECD\u6307\u5411\u5F53\u65F6\u7684 TaskBasis\uFF1B\u5DF2\u5B8C\u6210\u4EFB\u52A1\u4FDD\u7559\u539F\u9A8C\u6536\uFF0C\u9700\u8981\u65F6\u53E6\u5EFA\u8865\u6551\u3002", gate: "\u666E\u901A\u5BFC\u822A\u94FE\u63A5\u4E0D\u80FD\u5192\u5145\u56FA\u5B9A\u6267\u884C\u4F9D\u636E\u3002" }
+      ],
+      sources: ["documents", "pg-basis", "knowledge", "relations"]
+    },
+    recovery: {
+      label: "\u6D3E\u53D1\u7ED3\u679C\u672A\u77E5",
+      kicker: "\u5BF9\u8D26\u4E0E\u6062\u590D",
+      lead: "\u8D85\u65F6\u4E0D\u7B49\u4E8E\u672A\u542F\u52A8\uFF1B\u5148\u67E5\u540C\u4E00\u64CD\u4F5C\u7684\u771F\u5B9E\u7ED3\u679C\uFF0C\u518D\u51B3\u5B9A\u662F\u5426\u7EE7\u7EED\u3002",
+      route: ["task", "run", "task"],
+      steps: [
+        { region: "task", title: "\u4FDD\u7559\u539F\u64CD\u4F5C ID", body: "\u8BB0\u5F55\u6D3E\u53D1\u610F\u56FE\u4E0E\u5DF2\u77E5 Run \u5173\u8054\uFF0C\u4E0D\u7528\u65B0\u7684\u8BF7\u6C42\u63A9\u76D6\u672A\u77E5\u3002", gate: "Task \u72B6\u6001\u4E0D\u80FD\u4EE3\u8868 Run \u6216\u5916\u90E8\u540C\u6B65\u72B6\u6001\u3002" },
+        { region: "run", title: "\u6309\u5C42\u56DE\u8BFB", body: "\u56DE\u8BFB PG Journal / outbox\u3001\u8FD0\u884C\u65F6 Session / \u52A8\u4F5C\uFF1B\u4EC5\u5728\u9A8C\u6536\u8981\u6C42\u8FDC\u7AEF\u53EF\u89C1\u65F6\u6838\u5BF9 connector \u6295\u5F71\u3002", gate: "\u672C\u5E93\u5E42\u7B49\u952E\u4E0D\u80FD\u66FF\u4EE3\u8FD0\u884C\u65F6\u6216\u5916\u90E8\u526F\u4F5C\u7528\u53BB\u91CD\u3002" },
+        { region: "task", title: "\u6309\u8BC1\u636E\u5206\u6D41", body: "\u8BC1\u5B9E\u5DF2\u542F\u52A8\u5219\u8DDF\u8E2A\u539F Run\uFF1B\u8BC1\u5B9E\u672A\u542F\u52A8\u624D\u91CD\u53D1\uFF1B\u4ECD\u4E0D\u80FD\u6392\u9664\u6267\u884C\u5219\u4FDD\u6301 unknown\u3002", gate: "unknown \u65F6\u7981\u6B62\u91CD\u590D\u6267\u884C\uFF0C\u4EA4\u7ED9\u8D23\u4EFB\u8005\u5904\u7406\u3002" }
+      ],
+      sources: ["coordination", "reconcile", "pg-runtime", "operation-journal"]
+    },
+    authority: {
+      label: "\u6570\u636E\u7531\u8C01\u6301\u6709",
+      kicker: "\u6743\u5A01\u8FB9\u754C",
+      lead: "\u6B63\u6587\u3001\u4E3B\u6570\u636E\u4E0E\u534F\u4F5C\u6295\u5F71\u5404\u6709\u6240\u6709\u8005\uFF1B\u8DE8\u8FB9\u754C\u53EA\u6709\u5E26\u7248\u672C\u7684\u5F15\u7528\u6216\u53D7\u63A7\u547D\u4EE4\u3002",
+      route: ["postgres", "wiki", "git", "feishu"],
+      steps: [
+        { region: "postgres", title: "PG \u6301\u9879\u76EE\u4E3B\u8BB0\u5F55", body: "Task\u3001Schedule\u3001\u8FC7\u7A0B Document \u4FEE\u8BA2\u3001\u5173\u7CFB\u3001\u56FA\u5B9A\u4F9D\u636E\u3001Run / Sync / Review \u7B49\u8BB0\u5F55\u5F52 evoLoop\u3002", gate: "\u53EA\u4FDD\u5B58 Wiki \u8EAB\u4EFD\u4E0E\u4FEE\u8BA2\u5F15\u7528\uFF0C\u4E0D\u590D\u5236 Wiki \u6B63\u6587\u548C\u5185\u90E8\u4F9D\u8D56\u3002" },
+        { region: "wiki", title: "\u5916\u7F6E Wiki \u6301\u8BA4\u8BC6", body: "\u77E5\u8BC6\u6B63\u6587\u3001\u6765\u6E90\u3001\u53CD\u4F8B\u3001\u9002\u7528\u6761\u4EF6\u3001\u4FEE\u8BA2\u53CA\u5185\u90E8\u4F9D\u8D56\u7531 Wiki \u7EF4\u62A4\u3002", gate: "\u53D7\u63A7\u53D1\u5E03\u4E0E\u6D88\u8D39\u8005\u91C7\u7528\u662F\u4E0D\u540C\u72B6\u6001\u3002" },
+        { region: "git", title: "Git \u6301\u6B63\u5F0F\u89C4\u8303", body: "\u4EA7\u54C1\u3001\u67B6\u6784\u3001\u5F00\u53D1\u6B63\u6587\u4F9D\u539F\u4ED3\u5E93 PR \u548C\u5BA1\u9605\u6D41\u7A0B\u6539\u53D8\uFF0CTask \u4EE5\u56FA\u5B9A commit \u5F15\u7528\u3002", gate: "\u6B63\u5F0F docs/ \u4E0D\u521B\u5EFA\u8FC7\u7A0B Document \u884C\u3002" },
+        { region: "feishu", title: "\u98DE\u4E66\u63D0\u4F9B\u534F\u4F5C\u6295\u5F71", body: "\u9996\u671F Task \u89C6\u56FE\u662F PG \u4E3B\u8BB0\u5F55\u7684\u6295\u5F71\uFF1B\u5165\u7AD9\u7F16\u8F91\u5E26\u8EAB\u4EFD\u4E0E\u6240\u89C1\u7248\u672C\uFF0C\u7ECF connector / core \u6838\u9A8C\u3002", gate: "\u8FDC\u7AEF\u5220\u9664\u3001\u65E7\u7248\u7F16\u8F91\u6216\u540C\u6B65\u6210\u529F\u90FD\u4E0D\u76F4\u63A5\u6539\u5199\u4E3B\u8BB0\u5F55\u4E0E\u9A8C\u6536\u3002" }
+      ],
+      sources: ["postgres", "wiki-service", "git-repos", "feishu"]
+    }
+  });
+  function parseReadingState(hash = "") {
+    const params = new URLSearchParams(String(hash).replace(/^#/, ""));
+    const read = params.get("read");
+    return READ_IDS.includes(read) ? read : null;
+  }
+  function element(tag, className, content) {
+    const result = document.createElement(tag);
+    if (className) result.className = className;
+    if (content !== void 0) result.textContent = content;
+    return result;
+  }
+  function makeButton(label, className, action) {
+    const node = element("button", className, label);
+    node.type = "button";
+    node.addEventListener("click", action);
+    return node;
+  }
+  function sourceHref(model, source) {
+    const base = model.repository.url.replace(/\/$/, "");
+    return `${base}/blob/${encodeURIComponent(model.repository.revision)}/${source.path.split("/").map(encodeURIComponent).join("/")}#L${source.line}`;
+  }
+  function addSources(container, model, ids) {
+    const seen = /* @__PURE__ */ new Set();
+    const byId = new Map(model.nodes.map((node) => [node.id, node]));
+    for (const id of ids) {
+      const node = byId.get(id);
+      if (!node) continue;
+      for (const source of node.sources.slice(0, 2)) {
+        const key = `${source.path}:${source.line}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const a = element("a", "sys-source", `${source.path}:${source.line}`);
+        a.href = sourceHref(model, source);
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        container.append(a);
+      }
+    }
+  }
+  function addExploreButtons(container, model, ids, onExplore) {
+    const byId = new Map(model.nodes.map((node) => [node.id, node]));
+    for (const id of ids) {
+      const node = byId.get(id);
+      if (!node) continue;
+      const status = node.status === "proposed" ? " \xB7 \u62DF\u8BAE" : node.status === "selected" ? " \xB7 \u65B9\u5411\u5DF2\u5B9A" : "";
+      container.append(makeButton(`${node.label}${status} \u2197`, "sys-module-link", () => onExplore?.(id)));
+    }
+  }
+  function makeRegion(key, model, onExplore) {
+    const spec = READING_REGIONS[key];
+    const region = element("section", `sys-region sys-region-${key}`);
+    region.dataset.region = key;
+    const text = {
+      decision: ["01 / \u4EBA\u4E0E\u9886\u57DF\u8BA4\u77E5", "\u5224\u65AD\u4E0B\u4E00\u6B65", "\u76EE\u6807\u3001\u6765\u6E90\u4E0E\u53CD\u4F8B\u6536\u675F\u6210\u9009\u62E9\u3002"],
+      task: ["02 / \u534F\u8C03\u8F6F\u4EF6", "\u5DF2\u63A5\u53D7\u7684 Task", "\u6D3E\u53D1\u524D\u6838\u9A8C\u63A5\u53D7\u3001\u6388\u6743\u4E0E\u4F9D\u636E\u6709\u6548\u6027\u3002"],
+      run: ["03 / \u627F\u63A5\u4E0E\u6267\u884C", "Session \u2192 Run", "Role \u6301\u7EED\uFF1BSession \u627F\u8F7D\uFF1BRun \u8BB0\u5F55\u4E00\u6B21\u5B9E\u9645\u8FD0\u884C\u3002"],
+      use: ["04 / \u4F7F\u7528\u4E0E\u6548\u679C", "\u5B9E\u9645\u4F7F\u7528", "Task \u6309\u7EA6\u5B9A\u9A8C\u6536\uFF1B\u6548\u679C\u53E6\u770B\u771F\u5B9E\u4F7F\u7528\u3002"],
+      wiki: ["06 / \u5916\u7F6E\u77E5\u8BC6\u6743\u5A01", "\u8BA4\u8BC6 r2 \u2192 r3", "\u7ECF\u5BA1\u9605\u4FEE\u8BA2\uFF0C\u4FDD\u7559\u6765\u6E90\u3001\u53CD\u4F8B\u548C\u9002\u7528\u6761\u4EF6\u3002"],
+      review: ["05 / \u8D23\u4EFB\u8005\u590D\u6838", "\u5BA1\u9605\u8BC4\u4EF7", "\u6BD4\u8F83\u91C7\u7528\u3001\u7ED3\u679C\u548C\u6210\u672C\uFF1B\u53EF\u7EE7\u7EED\u3001\u8865\u8BC1\u3001\u4FEE\u8BA2\u6216\u505C\u6B62\u3002"]
+    }[key];
+    region.append(element("span", "sys-region-kicker", text[0]), element("h3", "", text[1]), element("p", "", text[2]));
+    if (key === "task") region.append(element("div", "sys-evidence sys-evidence-task", "Task \u4EA4\u4ED8 + \u9A8C\u6536\u5224\u636E \xB7 \u4F8B\uFF1ADOC r2 \u9501\u5B9A"));
+    if (key === "run") region.append(element("div", "sys-evidence sys-evidence-run", "Run \u7ED3\u675F \u2260 Task \u9A8C\u6536 \xB7 \u6CBF\u7528\u56FA\u5B9A\u4F9D\u636E"));
+    if (key === "use") region.append(element("div", "sys-evidence sys-evidence-use", "\u6D88\u8D39 / \u5931\u8D25 / \u6548\u679C / \u6210\u672C\u8BC1\u636E"));
+    const toggle = makeButton("\uFF0B \u7EC6\u8282", "sys-region-toggle", () => {
+      const next = region.getAttribute("aria-expanded") !== "true";
+      region.closest(".sys-reading")?.querySelectorAll('.sys-region[aria-expanded="true"]').forEach((item) => {
+        if (item === region) return;
+        item.setAttribute("aria-expanded", "false");
+        const control = item.querySelector(".sys-region-toggle");
+        control.setAttribute("aria-expanded", "false");
+        control.setAttribute("aria-label", `\u5C55\u5F00${READING_REGIONS[item.dataset.region].label}\u5BF9\u5E94\u6A21\u5757`);
+        control.textContent = "\uFF0B \u7EC6\u8282";
+      });
+      region.setAttribute("aria-expanded", String(next));
+      toggle.setAttribute("aria-expanded", String(next));
+      toggle.textContent = next ? "\u2212 \u6536\u8D77" : "\uFF0B \u7EC6\u8282";
+      toggle.setAttribute("aria-label", `${next ? "\u6536\u8D77" : "\u5C55\u5F00"}${spec.label}\u5BF9\u5E94\u6A21\u5757`);
+    });
+    toggle.setAttribute("aria-label", `\u5C55\u5F00${spec.label}\u5BF9\u5E94\u6A21\u5757`);
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", `sys-modules-${key}`);
+    region.setAttribute("aria-expanded", "false");
+    region.append(toggle);
+    const drawer = element("div", "sys-region-drawer");
+    drawer.id = `sys-modules-${key}`;
+    drawer.append(element("strong", "", `${spec.label} \xB7 \u6A21\u578B\u5B9A\u4F4D`));
+    if (key === "decision") drawer.append(element("p", "", "\u76EE\u6807\u53D8\u5316\u3001\u65B0\u8BC1\u636E\u4E0E\u7528\u6237\u7EA0\u6B63\u4E5F\u53EF\u76F4\u63A5\u89E6\u53D1\u590D\u6838\uFF0C\u4E0D\u5FC5\u7B49\u5230\u4E00\u8F6E\u5DE5\u4F5C\u7ED3\u675F\u3002"));
+    if (key === "task") drawer.append(element("p", "", "TaskBasis \u56FA\u5B9A\u5B9E\u9645\u91C7\u7528\u7684\u6765\u6E90\u4FEE\u8BA2\uFF0C\u666E\u901A\u5BFC\u822A\u4E0D\u4EE3\u8868\u63A5\u53D7\u3002\u4EFB\u52A1\u521B\u5EFA\u4E0D\u7B49\u4E8E\u63A5\u53D7\u6267\u884C\u3002"));
+    if (key === "use") drawer.append(element("p", "", "\u901A\u77E5\u9001\u8FBE\u4F46\u63A5\u7EED\u65B9\u672A\u6838\u5BF9\u65F6\uFF0C\u6548\u679C\u4ECD\u672A\u77E5\u3002\u7EAF\u5B9E\u73B0\u4EFB\u52A1\u53EF\u6309\u7EA6\u5B9A\u5B8C\u6210\uFF0C\u9636\u6BB5\u6548\u679C\u53E6\u884C\u6838\u9A8C\u3002"));
+    addExploreButtons(drawer, model, spec.modules, onExplore);
+    region.append(drawer);
+    return region;
+  }
+  function makeLoopStage(model, onExplore) {
+    const scroll = element("div", "sys-stage-scroll");
+    scroll.setAttribute("aria-label", "\u5DE5\u4F5C\u4E0E\u53CD\u9988\u95ED\u73AF\u7A7A\u95F4\u56FE\uFF1B\u7A84\u5C4F\u53EF\u6A2A\u5411\u6EDA\u52A8\uFF0C\u56FE\u540E\u6709\u5B8C\u6574\u6587\u5B57\u6B65\u9AA4");
+    const stage = element("div", "sys-stage sys-stage-loop");
+    stage.append(element("div", "sys-human-band", "\u4EBA\u7C7B\u76EE\u6807 / \u6210\u529F\u6761\u4EF6 / \u6388\u6743\u4E0E\u5173\u952E\u53D6\u820D\u3000\u2193\u3000\u9886\u57DF\u5224\u65AD\u4E0E\u53D7\u63A7\u6267\u884C"));
+    const paths = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    paths.setAttribute("class", "sys-paths");
+    paths.setAttribute("viewBox", "0 0 1200 570");
+    paths.setAttribute("aria-hidden", "true");
+    paths.innerHTML = `<defs><marker id="sys-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8"/></marker><marker id="sys-arrow-feedback" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8"/></marker></defs>
+    <path class="sys-path sys-path-main" d="M330 180 H440" marker-end="url(#sys-arrow)"/>
+    <path class="sys-path sys-path-main" d="M740 180 H850" marker-end="url(#sys-arrow)"/>
+    <path class="sys-path sys-path-main" d="M1000 260 V385" marker-end="url(#sys-arrow)"/>
+    <path class="sys-path sys-path-feedback" d="M850 465 H740" marker-end="url(#sys-arrow-feedback)"/>
+    <path class="sys-path sys-path-feedback" d="M440 465 H330" marker-end="url(#sys-arrow-feedback)"/>
+    <path class="sys-path sys-path-feedback" d="M190 385 V260" marker-end="url(#sys-arrow-feedback)"/>
+    <text class="sys-edge-label" x="385" y="166" text-anchor="middle">\u63A5\u53D7</text>
+    <text class="sys-edge-label" x="795" y="166" text-anchor="middle">\u6D3E\u53D1</text>
+    <text class="sys-edge-label" x="1016" y="326">\u4EA4\u4ED8\u4E0E\u9A8C\u6536</text>
+    <text class="sys-edge-label sys-edge-label-feedback" x="795" y="448" text-anchor="middle">\u4F7F\u7528\u53CD\u9988</text>
+    <text class="sys-edge-label sys-edge-label-feedback" x="385" y="448" text-anchor="middle">\u5BA1\u9605\u540E\u4FEE\u8BA2</text>
+    <text class="sys-edge-label sys-edge-label-feedback" x="206" y="326">\u6309\u4EFB\u52A1\u8BFB\u53D6</text>`;
+    stage.append(paths);
+    for (const key of ["decision", "task", "run", "use", "review", "wiki"]) stage.append(makeRegion(key, model, onExplore));
+    scroll.append(stage);
+    return scroll;
+  }
+  function makeFocusCard(className, kicker, title, body, gate, moduleIds, model, onExplore) {
+    const card = element("section", `sys-focus-card ${className}`);
+    card.append(element("span", "sys-region-kicker", kicker), element("h3", "", title), element("p", "", body));
+    if (gate) card.append(element("div", "sys-focus-gate", gate));
+    const details = element("details", "sys-focus-modules");
+    details.append(element("summary", "", "\u5BF9\u5E94\u6A21\u5757\u4E0E\u7AEF\u53E3"));
+    const links = element("div", "sys-authority-links");
+    addExploreButtons(links, model, moduleIds, onExplore);
+    details.append(links);
+    card.append(details);
+    return card;
+  }
+  function makeFocusedStage(read, model, onExplore) {
+    const scroll = element("div", "sys-stage-scroll");
+    scroll.setAttribute("aria-label", `${READING_MECHANISMS[read].label}\u7A7A\u95F4\u8DEF\u5F84\uFF1B\u7A84\u5C4F\u53EF\u6A2A\u5411\u6EDA\u52A8\uFF0C\u56FE\u540E\u6709\u5B8C\u6574\u6587\u5B57\u6B65\u9AA4`);
+    const stage = element("div", `sys-stage sys-stage-${read}`);
+    stage.append(element("div", "sys-human-band", read === "revision" ? "\u7248\u672C\u53D8\u5316 \xB7 \u65B0\u7684\u53EF\u7528\u4F9D\u636E\u5F71\u54CD\u4E0B\u4E00\u6B21\u884C\u52A8\uFF0C\u4E0D\u8FFD\u6EAF\u6539\u5199\u5DF2\u53D1\u751F\u7684 Run" : "\u8FD0\u884C\u7ED3\u679C\u672A\u77E5 \xB7 \u540C\u4E00\u64CD\u4F5C\u5148\u56DE\u8BFB\u8BC1\u636E\uFF0C\u672A\u786E\u8BA4\u524D\u4E0D\u5236\u9020\u7B2C\u4E8C\u6B21\u526F\u4F5C\u7528"));
+    const paths = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    paths.setAttribute("class", "sys-paths");
+    paths.setAttribute("viewBox", "0 0 1200 570");
+    paths.setAttribute("aria-hidden", "true");
+    if (read === "revision") {
+      paths.innerHTML = `<defs><marker id="sys-focus-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8"/></marker><marker id="sys-focus-feedback" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8"/></marker></defs>
+      <path class="sys-path sys-path-main" d="M355 169 H435" marker-end="url(#sys-focus-arrow)"/>
+      <path class="sys-path sys-path-main" d="M740 169 H820" marker-end="url(#sys-focus-arrow)"/>
+      <path class="sys-path sys-path-feedback" d="M980 267 V319" marker-end="url(#sys-focus-feedback)"/>
+      <path class="sys-path sys-path-history" d="M205 247 V340" marker-end="url(#sys-focus-arrow)"/>
+      <text class="sys-edge-label" x="395" y="150" text-anchor="middle">\u5F71\u54CD</text>
+      <text class="sys-edge-label" x="780" y="150" text-anchor="middle">\u590D\u6838</text>
+      <text class="sys-edge-label sys-edge-label-feedback" x="996" y="302">\u9009\u62E9</text>
+      <text class="sys-edge-label sys-edge-label-history" x="217" y="301">\u4FDD\u7559 r2 \u5F15\u7528</text>`;
+      stage.append(paths);
+      stage.append(makeFocusCard("sys-focus-a", "01 / \u6765\u6E90\u4FDD\u7559\u5404\u7248", "\u540C\u4E00\u6765\u6E90\uFF1Ar2 \u2192 r3", "\u8FC7\u7A0B Document \u4FEE\u8BA2\u5F52 PG\uFF1B\u77E5\u8BC6\u4FEE\u8BA2\u5F52\u5916\u7F6E Wiki\u3002\u65B0\u6DFB r3\uFF0Cr2 \u539F\u4EF6\u7EE7\u7EED\u53EF\u67E5\u3002", "\u53D1\u5E03 \u2260 \u6D88\u8D39\u8005\u91C7\u7528", ["documents", "pg-work", "knowledge", "wiki-service"], model, onExplore));
+      stage.append(makeFocusCard("sys-focus-b", "02 / \u5F71\u54CD\u5173\u7CFB", "\u627E\u5230\u53D7\u5F71\u54CD Task", "\u626B\u63CF\u5F15\u7528\u65E7\u4F9D\u636E\u7684\u4EFB\u52A1\uFF0C\u628A\u5C1A\u672A\u6267\u884C\u8005\u5217\u4E3A\u5F85\u590D\u6838\u3002\u901A\u77E5\u53EA\u662F\u63D0\u9192\u3002", "\u626B\u63CF\u4E0D\u4EE3\u66FF\u6D3E\u53D1\u524D\u6821\u9A8C", READING_REGIONS.review.modules, model, onExplore));
+      stage.append(makeFocusCard("sys-focus-c", "03 / \u8D23\u4EFB\u8005\u51B3\u5B9A", "\u590D\u6838\u4EFB\u52A1\u57FA\u7EBF", "\u6838\u5BF9\u6388\u6743\u3001\u63A5\u53D7\u4E0E\u5173\u952E\u4F9D\u636E\u7684\u6709\u6548\u6027\uFF1B\u5F85\u590D\u6838\u6216\u64A4\u56DE\u65F6\u6682\u505C\u65B0\u6D3E\u53D1\u3002", "\u672A\u6267\u884C Task \u9010\u9879\u9009\u62E9", READING_REGIONS.task.modules, model, onExplore));
+      stage.append(makeFocusCard("sys-focus-history", "\u5386\u53F2\u4E0D\u56DE\u5199", "\u65E7 Run \u4ECD\u6309 r2 \u89E3\u91CA", "\u65E7 Run \u4FDD\u7559\u5F53\u65F6 TaskBasis \u548C\u539F\u9A8C\u6536\uFF1B\u5FC5\u8981\u65F6\u53E6\u5EFA\u8865\u6551\u4EFB\u52A1\u3002", "\u666E\u901A\u5BFC\u822A \u2260 \u56FA\u5B9A\u6267\u884C\u4F9D\u636E", READING_REGIONS.run.modules, model, onExplore));
+      const choices = element("div", "sys-focus-choices");
+      choices.append(element("strong", "", "\u672A\u6267\u884C\u4EFB\u52A1\u7684\u590D\u6838\u7ED3\u679C"));
+      for (const choice of ["\u6362\u5230 r3 \u57FA\u7EBF", "\u4FDD\u7559 r2 \u5E76\u8BF4\u660E", "\u53E6\u5EFA\u8865\u6551 Task"]) choices.append(element("span", "", choice));
+      stage.append(choices);
+    } else {
+      paths.innerHTML = `<defs><marker id="sys-focus-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8"/></marker><marker id="sys-focus-feedback" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8"/></marker></defs>
+      <path class="sys-path sys-path-main" d="M345 173 H425" marker-end="url(#sys-focus-arrow)"/>
+      <path class="sys-path sys-path-main" d="M730 173 H815" marker-end="url(#sys-focus-arrow)"/>
+      <path class="sys-path sys-path-feedback" d="M985 260 V306 H210 V344" marker-end="url(#sys-focus-feedback)"/>
+      <path class="sys-path sys-path-feedback" d="M985 260 V319 H580 V344" marker-end="url(#sys-focus-feedback)"/>
+      <path class="sys-path sys-path-feedback" d="M985 260 V344" marker-end="url(#sys-focus-feedback)"/>
+      <text class="sys-edge-label" x="385" y="153" text-anchor="middle">\u6D3E\u53D1</text>
+      <text class="sys-edge-label" x="773" y="153" text-anchor="middle">\u56DE\u8BFB</text>
+      <text class="sys-edge-label sys-edge-label-feedback" x="733" y="297">\u51ED\u8BC1\u636E\u5206\u6D41 \u2193</text>`;
+      stage.append(paths);
+      stage.append(makeFocusCard("sys-focus-a", "01 / \u539F\u64CD\u4F5C", "\u5DF2\u63A5\u53D7 Task / \u539F\u64CD\u4F5C ID", "\u4FDD\u7559\u56FA\u5B9A\u4F9D\u636E\u3001\u6D3E\u53D1\u610F\u56FE\u548C\u5DF2\u77E5 Run \u8EAB\u4EFD\uFF0C\u907F\u514D\u628A\u8D85\u65F6\u5F53\u6210\u672A\u542F\u52A8\u3002", "\u53D1\u9001\u8BF7\u6C42 \u2260 \u63A5\u6536\u6216\u6267\u884C", READING_REGIONS.task.modules, model, onExplore));
+      stage.append(makeFocusCard("sys-focus-b", "02 / \u4E0D\u786E\u5B9A\u6027", "Run \u56DE\u6267\u672A\u77E5", "\u53EF\u80FD\u672A\u542F\u52A8\uFF0C\u4E5F\u53EF\u80FD\u5DF2\u542F\u52A8\u800C\u56DE\u6267\u4E22\u5931\uFF1BTask \u5B8C\u6210\u6001\u4E0D\u80FD\u4EE3\u66FF Run \u7ED3\u679C\u3002", "\u4E0D\u76F2\u76EE\u91CD\u53D1", READING_REGIONS.run.modules, model, onExplore));
+      stage.append(makeFocusCard("sys-focus-c", "03 / \u5BF9\u8D26\u95E8", "\u6309\u539F\u64CD\u4F5C\u56DE\u8BFB", "\u67E5 PG Journal / outbox\uFF0C\u518D\u67E5\u8FD0\u884C\u65F6 Session / \u52A8\u4F5C\uFF1B\u8FDC\u7AEF\u53EF\u89C1\u53EA\u5728\u9A8C\u6536\u8981\u6C42\u65F6\u6838\u5BF9\u3002", "\u672C\u5E93\u5E42\u7B49\u952E\u4E0D\u80FD\u4EE3\u66FF\u5916\u90E8\u53BB\u91CD", ["operation-journal", "reconcile", "pg-runtime", "runtime-port"], model, onExplore));
+      stage.append(makeFocusCard("sys-focus-outcome sys-focus-outcome-a", "\u7ED3\u679C A", "\u5DF2\u542F\u52A8 \u2192 \u8DDF\u8E2A\u539F Run", "\u6309\u5DF2\u77E5\u8EAB\u4EFD\u7EE7\u7EED\u89C2\u5BDF\uFF0C\u4FDD\u7559\u540C\u4E00\u6B21\u6267\u884C\u7684\u56DE\u6267\u548C\u6210\u679C\u3002", "", READING_REGIONS.run.modules.slice(0, 2), model, onExplore));
+      stage.append(makeFocusCard("sys-focus-outcome sys-focus-outcome-b", "\u7ED3\u679C B", "\u672A\u542F\u52A8 \u2192 \u624D\u53EF\u91CD\u53D1", "\u53EA\u6709\u8BC1\u636E\u6392\u9664\u5DF2\u6267\u884C\uFF0C\u624D\u53D1\u8D77\u53D7\u63A7\u91CD\u8BD5\u3002", "", READING_REGIONS.task.modules.slice(0, 2), model, onExplore));
+      stage.append(makeFocusCard("sys-focus-outcome sys-focus-outcome-c", "\u7ED3\u679C C", "\u4ECD\u672A\u77E5 \u2192 \u6682\u505C", "\u4FDD\u6301 unknown\uFF0C\u7981\u6B62\u91CD\u590D\u6267\u884C\uFF0C\u4EA4\u7ED9\u8D23\u4EFB\u8005\u5904\u7406\u3002", "", ["coordination", "reconcile"], model, onExplore));
+    }
+    scroll.append(stage);
+    return scroll;
+  }
+  function makeAuthorityStage(model, onExplore) {
+    const stage = element("div", "sys-authority-stage");
+    stage.append(element("div", "sys-authority-intro", "\u4E09\u5904\u6B63\u6587 / \u4E3B\u8BB0\u5F55\u5404\u5B88\u81EA\u5DF1\u7684\u6743\u5A01\u3002\u8DE8\u57DF\u5F15\u7528\u5E26\u8EAB\u4EFD\u4E0E\u7248\u672C\uFF1B\u4FEE\u6539\u8D70\u5404\u81EA\u7684\u5BA1\u9605\u95E8\u3002"));
+    const grid = element("div", "sys-authority-grid");
+    const cards = [
+      ["postgres", "\u9879\u76EE\u4E3B\u8BB0\u5F55", "PostgreSQL / evoLoop", "Task \xB7 Schedule \xB7 \u8FC7\u7A0B Document \u4FEE\u8BA2 \xB7 Run / Review / Sync", "\u53EA\u4FDD\u5B58 Wiki \u5F15\u7528\u4E0E\u8DE8\u5BF9\u8C61\u5173\u7CFB\uFF1B\u56FA\u5B9A TaskBasis"],
+      ["wiki", "\u77E5\u8BC6\u6B63\u6587", "\u5916\u7F6E Wiki", "\u6765\u6E90 \xB7 \u53CD\u4F8B \xB7 \u9002\u7528\u6761\u4EF6 \xB7 \u77E5\u8BC6\u4FEE\u8BA2\u4E0E\u5185\u90E8\u4F9D\u8D56", "\u53D1\u5E03\u9700\u5BA1\u9605\uFF1B\u8BFB\u53D6\u6216\u9001\u8FBE\u4E0D\u8BC1\u660E\u91C7\u7528"],
+      ["git", "\u6B63\u5F0F\u89C4\u8303", "\u53D7\u7BA1 Git", "\u4EA7\u54C1 / \u67B6\u6784 / \u5F00\u53D1 docs/ \u6B63\u6587\u548C\u56FA\u5B9A commit", "\u53EA\u7ECF\u539F\u4ED3\u5E93 PR / \u5BA1\u9605\u6539\u5199\uFF1B\u4E0D\u5EFA Document \u884C"]
+    ];
+    for (const [key, eyebrow, heading, body, gate] of cards) {
+      const card = element("section", `sys-authority-card sys-authority-${key}`);
+      card.dataset.region = key;
+      card.append(element("span", "sys-region-kicker", eyebrow), element("h3", "", heading), element("p", "", body), element("div", "sys-authority-gate", gate));
+      const links2 = element("div", "sys-authority-links");
+      addExploreButtons(links2, model, READING_REGIONS[key].modules, onExplore);
+      card.append(links2);
+      grid.append(card);
+    }
+    stage.append(grid);
+    const feishu = element("section", "sys-feishu-projection");
+    feishu.dataset.region = "feishu";
+    feishu.append(element("span", "sys-region-kicker", "\u534F\u4F5C\u5165\u53E3 / \u6295\u5F71"), element("h3", "", "\u98DE\u4E66 Bitable"));
+    feishu.append(element("p", "", "PG \u4EFB\u52A1\u89C6\u56FE \u2192 \u98DE\u4E66\u6295\u5F71\u3002\u5165\u7AD9\u7F16\u8F91\u987B\u5E26\u8EAB\u4EFD\u548C\u6240\u89C1\u7248\u672C\uFF0C\u7ECF\u8FC7 connector / core \u6838\u9A8C\uFF1B\u8FDC\u7AEF\u5220\u9664\u4E0D\u9ED8\u8BA4\u5220\u9664\u4E3B\u8BB0\u5F55\u3002"));
+    const links = element("div", "sys-authority-links");
+    addExploreButtons(links, model, READING_REGIONS.feishu.modules, onExplore);
+    feishu.append(links);
+    stage.append(feishu);
+    stage.append(element("div", "sys-authority-legend", "\u8BFB\u53D6 / \u56FA\u5B9A\u5F15\u7528 \u2192\u3000\u53D7\u63A7\u547D\u4EE4 \u21E5 \u6821\u9A8C\u540E\u5199 PG\u3000\u3000\u4FEE\u8BA2\u6B63\u6587 \u2197 \u5404\u81EA\u6743\u5A01\u6D41\u7A0B"));
+    return stage;
+  }
+  function showDetails(container, model, mechanism, onExplore) {
+    const section = element("details", "sys-explanation");
+    section.append(element("summary", "", "\u9605\u8BFB\u8BF4\u660E\u4E0E\u56FA\u5B9A\u6765\u6E90"), element("p", "sys-explanation-lead", mechanism.lead));
+    const steps = element("ol", "sys-steps");
+    for (const [index, item] of mechanism.steps.entries()) {
+      const li = element("li", "sys-step");
+      li.dataset.region = item.region;
+      li.append(element("span", "sys-step-index", String(index + 1).padStart(2, "0")), element("h3", "", item.title), element("p", "", item.body), element("div", "sys-step-gate", `\u95E8\u69DB \xB7 ${item.gate}`));
+      const modules = element("div", "sys-step-modules");
+      addExploreButtons(modules, model, READING_REGIONS[item.region].modules.slice(0, 3), onExplore);
+      li.append(modules);
+      steps.append(li);
+    }
+    section.append(steps);
+    const sources = element("div", "sys-explanation-sources");
+    sources.append(element("strong", "", "\u56FA\u5B9A\u6765\u6E90 \xB7 "));
+    addSources(sources, model, mechanism.sources);
+    section.append(sources);
+    container.append(section);
+  }
+  function mountSystemReading(root, model, { onExplore } = {}) {
+    if (!root || !model?.nodes || !model.repository) throw new Error("\u9605\u8BFB\u5C42\u9700\u8981\u6302\u8F7D\u8282\u70B9\u4E0E\u67B6\u6784\u6A21\u578B");
+    let read = parseReadingState(location.hash) || "loop";
+    const render = (focusNav = false) => {
+      root.replaceChildren();
+      const app = element("section", `sys-reading sys-read-${read}`);
+      const nav = element("nav", "sys-mechanisms");
+      nav.setAttribute("aria-label", "\u9009\u62E9\u8981\u7406\u89E3\u7684\u673A\u5236");
+      for (const id of READ_IDS) {
+        const item = READING_MECHANISMS[id];
+        const button2 = makeButton(item.label, id === read ? "sys-active" : "", () => {
+          if (read === id) return;
+          location.hash = `read=${id}`;
+          read = id;
+          render(true);
+        });
+        button2.setAttribute("aria-current", id === read ? "page" : "false");
+        button2.setAttribute("aria-pressed", String(id === read));
+        nav.append(button2);
+      }
+      app.append(nav);
+      const mechanism = READING_MECHANISMS[read];
+      const stageTitle = element("div", "sys-stage-title");
+      stageTitle.append(element("span", "sys-stage-index", `${READ_IDS.indexOf(read) + 1} / 4`), element("h2", "", mechanism.kicker), element("p", "", mechanism.lead));
+      app.append(stageTitle);
+      app.append(read === "authority" ? makeAuthorityStage(model, onExplore) : read === "loop" ? makeLoopStage(model, onExplore) : makeFocusedStage(read, model, onExplore));
+      if (read !== "authority") {
+        const legend = element("div", "sys-legend");
+        const labels = read === "loop" ? ["\u2014 \u884C\u52A8\u4E0E\u6D3E\u53D1", "\u2014 \u4F7F\u7528\u53CD\u9988\u4E0E\u5BA1\u9605\u4FEE\u8BA2", "\u865A\u7EBF\u5916\u6846\uFF1A\u5916\u7F6E Wiki"] : read === "revision" ? ["\u2501\u2501 \u65B0\u7248\u89E6\u53D1\u5F71\u54CD\u590D\u6838", "\u2501\u2501 \u8D23\u4EFB\u8005\u9009\u62E9\u540E\u7EED", "\u2504 \u4FDD\u7559\u5386\u53F2 r2 \u5F15\u7528"] : ["\u2501\u2501 \u6D3E\u53D1\u4E0E\u56DE\u8BFB", "\u2501\u2501 \u51ED\u8BC1\u636E\u5206\u6D41", "unknown\uFF1A\u6682\u505C\u91CD\u590D\u6267\u884C"];
+        labels.forEach((label, index) => legend.append(element("span", ["sys-legend-action", "sys-legend-feedback", "sys-legend-basis"][index], label)));
+        app.append(legend);
+      }
+      showDetails(app, model, mechanism, onExplore);
+      const footer = element("div", "sys-footer");
+      footer.append(element("span", "", `\u5B8C\u6574\u6A21\u5757\uFF1A${model.nodes.length} \u4E2A\u53EF\u6298\u53E0\u8282\u70B9\uFF0C\u4FDD\u7559\u539F\u6A21\u578B\u4E0E\u56FA\u5B9A\u6765\u6E90\u3002`));
+      footer.append(makeButton("\u67E5\u770B\u5B8C\u6574\u6A21\u5757 \u2197", "sys-all-modules", () => onExplore?.(null)));
+      app.append(footer);
+      root.append(app);
+      if (focusNav) nav.querySelector(".sys-active")?.focus();
+    };
+    const onHashChange = () => {
+      if (location.hash && !new URLSearchParams(location.hash.slice(1)).has("read")) return;
+      const next = parseReadingState(location.hash) || "loop";
+      if (next !== read) {
+        read = next;
+        render(true);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    render();
+    return { destroy() {
+      window.removeEventListener("hashchange", onHashChange);
+      root.replaceChildren();
+    } };
+  }
+
+  // scripts/architecture-map/app.js
+  function pageView(hash = "") {
+    const params = new URLSearchParams(hash.replace(/^#/, ""));
+    if (params.has("read")) return "reading";
+    return ["open", "node", "mode", "journey", "zoom"].some((key) => params.has(key)) || params.get("view") === "modules" ? "modules" : "reading";
+  }
+  function mountSystemApp(root, model) {
+    validateModel(model);
+    root.className = "system-app";
+    const create = (tag, className, text) => {
+      const element2 = document.createElement(tag);
+      element2.className = className;
+      if (text) element2.textContent = text;
+      return element2;
+    };
+    const header = create("header", "system-header");
+    const identity = create("div", "system-identity");
+    identity.append(
+      create("span", "system-name", "evoLoop"),
+      create("span", "system-status", "\u76EE\u6807\u8BBE\u8BA1 \xB7 \u4E1A\u52A1\u7CFB\u7EDF\u5C1A\u672A\u5B9E\u73B0")
+    );
+    const title = create("h1", "", "\u7CFB\u7EDF\u67B6\u6784");
+    const controls = create("nav", "system-views");
+    controls.setAttribute("aria-label", "\u67B6\u6784\u9605\u8BFB\u5C42\u6B21");
+    const readingButton = create("button", "", "\u7406\u89E3\u7CFB\u7EDF");
+    const moduleButton = create("button", "", "\u5B8C\u6574\u6A21\u5757 \xB7 12 \u4E2A\u62DF\u8BAE\u5305");
+    readingButton.type = moduleButton.type = "button";
+    controls.append(readingButton, moduleButton);
+    const refs = create("details", "system-sources");
+    refs.append(create("summary", "", "\u56FE\u6E90\u4E0E\u7248\u672C"));
+    const sourceList = create("div", "system-source-list");
+    for (const [label, href] of [
+      ["Archify \u5DE5\u4F5C\u4E0E\u53CD\u9988\u673A\u5236\u56FE", "evoloop-system-loop.html"],
+      ["Archify \u56DB\u90E8\u5206\u8D23\u4EFB\u56FE", model.nativeOverviewUrl],
+      ["Archify \u5B8C\u6574\u6A21\u5757\u6811", model.nativeTreeUrl],
+      ["\u56FA\u5B9A\u6587\u6863\u6765\u6E90 \xB7 " + model.repository.revision.slice(0, 12), model.repository.url + "/tree/" + model.repository.revision]
+    ]) {
+      const anchor = create("a", "", label);
+      anchor.href = href;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      sourceList.append(anchor);
+    }
+    refs.append(sourceList);
+    const bar = create("div", "system-bar");
+    bar.append(controls, refs);
+    header.append(identity, title, bar);
+    const readingPanel = create("main", "system-reading-panel");
+    const readingRoot = create("div", "");
+    readingPanel.append(readingRoot);
+    const modulePanel = create("main", "system-module-panel");
+    const atlasRoot = create("div", "");
+    modulePanel.append(atlasRoot);
+    root.replaceChildren(header, readingPanel, modulePanel);
+    let atlas = null;
+    let atlasHash = "#view=modules&open=authority";
+    let readingHash = "#read=loop";
+    const selectHash = (hash) => {
+      if (location.hash !== hash) location.hash = hash;
+      else show();
+    };
+    readingButton.addEventListener("click", () => {
+      if (pageView(location.hash) === "modules") atlasHash = location.hash;
+      selectHash(readingHash);
+    });
+    moduleButton.addEventListener("click", () => {
+      if (new URLSearchParams(location.hash.slice(1)).has("read")) readingHash = location.hash;
+      selectHash(atlasHash);
+    });
+    mountSystemReading(readingRoot, model, { onExplore: (id) => {
+      const params = new URLSearchParams({ view: "modules" });
+      if (id) params.set("node", id);
+      else params.append("open", "authority");
+      selectHash("#" + params);
+    } });
+    function show() {
+      const modules = pageView(location.hash) === "modules";
+      readingPanel.hidden = modules;
+      modulePanel.hidden = !modules;
+      readingButton.setAttribute("aria-pressed", String(!modules));
+      moduleButton.setAttribute("aria-pressed", String(modules));
+      if (modules) {
+        atlasHash = location.hash;
+        if (!atlas) atlas = mountArchitectureViewer(atlasRoot, model);
+      } else if (new URLSearchParams(location.hash.slice(1)).has("read")) readingHash = location.hash;
+    }
+    window.addEventListener("hashchange", show);
+    show();
+  }
   if (typeof document !== "undefined") {
     const root = document.getElementById("architecture-app");
     const data = document.getElementById("architecture-model");
     if (root && data) {
       try {
-        mountArchitectureViewer(root, JSON.parse(data.textContent));
+        mountSystemApp(root, JSON.parse(data.textContent));
       } catch (error) {
-        root.textContent = `\u67B6\u6784\u5730\u56FE\u65E0\u6CD5\u8F7D\u5165\uFF1A${error.message}`;
+        root.textContent = `\u67B6\u6784\u56FE\u65E0\u6CD5\u8F7D\u5165\uFF1A${error.message}`;
       }
     }
   }

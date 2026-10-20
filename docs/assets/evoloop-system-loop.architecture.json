@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "evoLoop 工作与反馈闭环 · 目标架构",
+    "locale": "zh-CN",
+    "output": "docs/assets/evoloop-system-loop.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/cyl19970726/evoLoop",
+      "revision": "286e749c4242fcf045cd1d439c8e81424dcc774b"
+    },
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "external": { "label": "判断者 / Session 承载者" },
+        "backend": { "label": "协调软件" },
+        "database": { "label": "数据权威" }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "judgment_owner",
+      "type": "external",
+      "label": "判断责任者",
+      "sublabel": "负责人 / 认知 session：选择与审阅",
+      "pos": [40, 150],
+      "size": [180, 84],
+      "sources": [
+        { "path": "docs/architecture/overview.md", "line": 19, "end_line": 32, "label": "判断与逻辑责任" },
+        { "path": "docs/architecture/overview.md", "line": 52, "end_line": 54, "label": "反馈后的下一步判断" }
+      ]
+    },
+    {
+      "id": "accepted_task",
+      "type": "database",
+      "label": "PostgreSQL 主数据",
+      "sublabel": "已接受 TaskRevision + TaskBasis 固定依据",
+      "pos": [320, 150],
+      "size": [180, 84],
+      "sources": [
+        { "path": "docs/architecture/overview.md", "line": 42, "end_line": 48, "label": "任务接受与运行基线" },
+        { "path": "docs/architecture/knowledge-flow.md", "line": 13, "end_line": 18, "label": "PG、Document、Git、Wiki 权威" }
+      ]
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "协调软件",
+      "sublabel": "派发前重核权限 / 接受 / 依据；回读与对账",
+      "pos": [600, 150],
+      "size": [190, 84],
+      "sources": [
+        { "path": "docs/architecture/contracts.md", "line": 149, "end_line": 153, "label": "派发、回读与恢复" },
+        { "path": "docs/architecture/knowledge-flow.md", "line": 67, "label": "派发前有效性门槛" }
+      ]
+    },
+    {
+      "id": "domain_run",
+      "type": "external",
+      "label": "领域 Session / Run",
+      "sublabel": "Session 承载逻辑 Role；Run 是一次运行",
+      "pos": [890, 150],
+      "size": [180, 84],
+      "sources": [
+        { "path": "docs/architecture/overview.md", "line": 46, "end_line": 48, "label": "Run 与交付核对" },
+        { "path": "docs/architecture/contracts.md", "line": 137, "end_line": 139, "label": "Role / Session / Run 区分" }
+      ]
+    },
+    {
+      "id": "delivery_use",
+      "type": "external",
+      "label": "交付与真实使用评价",
+      "sublabel": "消费证据 / 真人效果 / 成本；缺项保留未知",
+      "pos": [890, 430],
+      "size": [180, 84],
+      "sources": [
+        { "path": "docs/architecture/overview.md", "line": 48, "end_line": 54, "label": "消费证据与实际使用" },
+        { "path": "docs/architecture/contracts.md", "line": 157, "end_line": 167, "label": "效果与评价证据" }
+      ]
+    },
+    {
+      "id": "knowledge_review",
+      "type": "external",
+      "label": "认知维护者审阅",
+      "sublabel": "反馈先形成候选；不自动采纳",
+      "pos": [600, 430],
+      "size": [190, 84],
+      "sources": [
+        { "path": "docs/architecture/overview.md", "line": 52, "end_line": 54, "label": "维护、评价与下一步" },
+        { "path": "docs/architecture/packages.md", "line": 70, "label": "候选、审阅与发布" }
+      ]
+    },
+    {
+      "id": "external_wiki",
+      "type": "database",
+      "label": "仓库外 Wiki",
+      "sublabel": "知识正文 / 来源 / 修订 / 反例的权威",
+      "pos": [320, 430],
+      "size": [180, 84],
+      "sources": [
+        { "path": "docs/architecture/knowledge-flow.md", "line": 16, "end_line": 18, "label": "Wiki 权威与只读来源" },
+        { "path": "docs/architecture/packages.md", "line": 70, "label": "外置正文和发布边界" }
+      ]
+    }
+  ],
+  "connections": [
+    { "id": "judge-to-task", "from": "judgment_owner", "to": "accepted_task", "label": "授权 + 接受", "variant": "emphasis" },
+    { "id": "task-to-coordinator", "from": "accepted_task", "to": "coordinator", "label": "已接受 Task", "variant": "emphasis" },
+    { "id": "coordinator-to-run", "from": "coordinator", "to": "domain_run", "label": "派发 Run", "variant": "emphasis" },
+    { "id": "run-readback", "from": "domain_run", "to": "coordinator", "label": "运行回执 / 交付状态", "fromSide": "bottom", "toSide": "bottom", "via": [[980, 290], [695, 290]] },
+    { "id": "run-to-use", "from": "domain_run", "to": "delivery_use", "label": "Run 结束 ≠ 验收", "variant": "security" },
+    { "id": "use-to-review", "from": "delivery_use", "to": "knowledge_review", "label": "使用反馈" },
+    { "id": "review-to-wiki", "from": "knowledge_review", "to": "external_wiki", "label": "审阅通过后发布修订", "variant": "emphasis" },
+    { "id": "wiki-to-judgment", "from": "external_wiki", "to": "judgment_owner", "label": "已审阅认识供判断；Task 显式固定", "fromSide": "bottom", "toSide": "left", "via": [[410, 610], [20, 610], [20, 192]] }
+  ],
+  "cards": [
+    {
+      "dot": "slate",
+      "title": "阅读边界",
+      "items": [
+        "目标架构，业务系统尚未实现或部署",
+        "Wiki 保存外置知识正文；PostgreSQL 保存 Task 主数据与知识引用",
+        "消息送达、Run 结束和产物存在都不能替代真实消费或验收证据"
+      ]
+    }
+  ]
+}

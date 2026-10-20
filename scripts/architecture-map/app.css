@@ -1,0 +1,37 @@
+.system-app { min-height: 100vh; background: #fff; color: #252b31; }
+.system-header { max-width: 1280px; margin: auto; padding: 30px 40px 0; }
+.system-identity { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #818991; font-size: 11px; }
+.system-name { color: #66717b; font-weight: 500; }
+.system-status { color: #9299a0; }
+.system-header h1 { margin: 8px 0 25px; font-size: 27px; font-weight: 550; letter-spacing: -.04em; line-height: 1.2; }
+.system-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e6e9ec; }
+.system-views { display: flex; gap: 25px; }
+.system-views button { padding: 0 0 12px; border: 0; border-bottom: 1px solid transparent; background: none; color: #858d95; font-size: 12px; font-weight: 400; }
+.system-views button[aria-pressed="true"] { color: #252b31; border-bottom-color: #252b31; }
+.system-sources { position: relative; align-self: start; color: #858d95; font-size: 11px; }
+.system-sources summary { cursor: pointer; padding-bottom: 10px; }
+.system-source-list { position: absolute; right: 0; width: 245px; padding: 18px; border: 1px solid #dce1e5; border-radius: 5px; background: #fff; z-index: 20; display: grid; gap: 13px; }
+.system-source-list a { color: #658299; }
+.system-module-panel .map-header { display: none; }
+.system-module-panel .architecture-viewer { min-height: 0; background: #fff; }
+.system-module-panel .map-toolbar, .system-module-panel .journey-bar { padding-left: 40px; padding-right: 40px; box-shadow: none; }
+.system-module-panel .map-canvas, .system-module-panel .map-detail { max-height: calc(100vh - 260px); }
+.system-module-panel .map-node { box-shadow: none; border-left-width: 1px; border-radius: 4px; }
+.system-module-panel .map-lane h2 { border: 0; background: none; }
+.system-module-panel .map-edge { stroke-width: 1.2; }
+.system-app [hidden] { display: none !important; }
+@media (max-width: 800px) {
+  .system-header { padding: 22px 20px 0; }
+  .system-identity { flex-wrap: wrap; gap: 5px; }
+  .system-views { gap: 18px; }
+  .system-views button { font-size: 11px; }
+}
+@media (prefers-color-scheme: dark) {
+  .system-app, .system-module-panel .architecture-viewer { background: #15181c; color: #dde1e5; }
+  .system-name, .system-sources, .system-views button { color: #9ba5af; }
+  .system-status { color: #89939d; }
+  .system-bar { border-color: #363d45; }
+  .system-views button[aria-pressed="true"] { color: #dde1e5; border-bottom-color: #a3adb7; }
+  .system-source-list { background: #191d22; border-color: #363d45; }
+  .system-source-list a { color: #95b3ca; }
+}

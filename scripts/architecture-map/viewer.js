@@ -343,6 +343,8 @@ export function mountArchitectureViewer(root, model) {
   if (ro) ro.observe(stage);
   window.addEventListener('resize', queueEdges);
   window.addEventListener('hashchange', () => {
+    // The system reading page shares this asset, but has its own deep links.
+    if (new URLSearchParams(location.hash.slice(1)).has('read') || !location.hash) return;
     const next = readState(model);
     Object.assign(state, next);
     selectedEdge = null;
@@ -633,13 +635,4 @@ export function mountArchitectureViewer(root, model) {
   }
   render();
   return { focusNode, render, state };
-}
-
-if (typeof document !== 'undefined') {
-  const root = document.getElementById('architecture-app');
-  const data = document.getElementById('architecture-model');
-  if (root && data) {
-    try { mountArchitectureViewer(root, JSON.parse(data.textContent)); }
-    catch (error) { root.textContent = `架构地图无法载入：${error.message}`; }
-  }
 }
