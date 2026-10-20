@@ -34,15 +34,17 @@ PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨�
 | `task` / `task_revision` | 头表 `(project_id, task_id)` PK，含当前版本和当前修订指针；快照表 `(project_id, task_id, task_revision_id)` PK，含目标、责任、验收判据、接受决定、时间及内容 hash | 头表按旧版本条件更新；每次接受或影响执行的变更插入不可变快照。当前头用于待办查询，旧 Run 只读其固定快照 |
 | `schedule` / `schedule_revision` / `occurrence` | 定义头键 `(project_id, schedule_id)`；不可变定义快照键 `(project_id, schedule_id, schedule_revision_id)`；触发键 `(project_id, schedule_id, planned_at_utc)` 唯一 | 快照固定时区、规则、启停及错过/重叠策略；Occurrence 复合 FK 指向实际计算所用 ScheduleRevision，并关联创建/复用的 Task。定义改版不改写旧触发 |
 | `document` | Document 仅用于过程文档；头键 `(project_id, document_id)`、版本/类型/权限及已采纳修订指针 | 仓库 `docs/` 正式文档不建此行；Task 与 Document 通过稳定 ID 多对多导航 |
-| `document_revision` | `(project_id, document_id, revision_id)` PK；`format`、`media_type`、`original_name`、源 `content_hash`、`body` 或 `payload_ref`、`entrypoint`、`assets_manifest`、可读完整性状态、作者/时间/基线/变更理由 | FK 到过程 Document；不可变；`body` 与 `payload_ref` 必须 XOR；每个 payload_ref 唯一归属一个 revision。内联正文限小型 Markdown/自包含 HTML；较大报告和 bundle 以 canonical BlobStore 引用读取 |
+| `document_revision` | `(project_id, document_id, revision_id)` PK；`format`、`media_type`、`original_name`、源 `content_hash`、`body` 或 `payload_ref`、`entrypoint`、`assets_manifest`、保存时资源完整性、作者/时间/基线/变更理由 | FK 到过程 Document；不可变；`body` 与 `payload_ref` 必须 XOR；每个 payload_ref 唯一归属一个 revision。内联正文限小型 Markdown/自包含 HTML；较大报告和 bundle 以 canonical BlobStore 引用读取 |
 | `document_review_decision` | `(project_id, decision_id)` PK；document/revision、决定者、决定、依据、时间 | 复合 FK 到被审修订；批准/拒绝另追加决定，不原位改 revision；批准后才在同事务条件移动已采纳指针 |
 | `document_text_derivative` | 过程 DocumentRevision、`source_hash`、extractor/version、提取状态、派生纯文本、缺失资源/内容清单、生成时间 | 复合 FK 到源 revision；每个 extractor 版本单独留痕。仅供索引/Wiki；源 hash 改变时不得复用为新源正文 |
 | `git_source_ref` | `(project_id, git_source_ref_id)` PK；repo 身份、path、commit、原始字节 hash、验证/权限/可达状态 | 独立来源记录，不依附 Document 行；Git 文件移动或版本变化新增引用，旧引用保留 |
 | `document_incorporation` / `incorporation_source` / `incorporation_target` | 整理 ID、理由、责任与关联任务；来源 DocumentRevision/片段；目标 repo/path/章节、base commit、差异/PR、merge commit；构建/部署状态分列 | 多来源到多 Git 目标；来源 FK 指向固定过程 DocumentRevision 和 Task/Review，目标位置不 FK 到 Document。核实合入后可关联实际 GitSourceRef；不复制正式正文，不覆盖源文档 |
-| `knowledge_ref` / `knowledge_ref_revision` | `(project_id, knowledge_ref_id)` 及加 `revision_id` 的复合 PK；外部空间/ID/revision、可选 hash、观察时间、有效/待复核/撤回/不可达 | 只登记外部身份、固定版本及本地处置状态；正文和内部依赖不入库 |
+| `knowledge_ref` / `knowledge_ref_revision` | `(project_id, knowledge_ref_id)` 及加 `revision_id` 的复合 PK；外部空间/ID/revision、可选 hash；有效/待复核/撤回/不可达另记带时间的观察 | 固定身份/版本不随状态观察改写；只登记外部引用和本地处置，正文和内部依赖不入库 |
 | `external_binding` | `(project_id, binding_id)` PK；connector、外部 scope/ID、双方最后确认版本、方向、同步状态 | `(connector, external_scope, external_id)` 唯一；内部对象用类型化 FK，不能把投影版本当主版本 |
 
 Document 可在同一事务里先建目录、再建首个过程文档修订、再记录审核决定并设已采纳指针；复合 FK 保证修订及指针属于该 Document。现行已采纳指针必须对应已批准的审核决定；此规则跨行，须由受控写入路径及必要的约束触发器保证，不能声称单行 CHECK 已验证。每个 revision 的 `format`/`media_type` 描述内容，`original_name` 保留上传名，`content_hash` 校验精确源载荷；`body` 与 `payload_ref` 以 CHECK 保证恰有一者非空。BlobStore payload_ref 是唯一 canonical 载荷位置，`entrypoint` 指向 bundle 内 HTML 入口，`assets_manifest` 逐项记录相对路径、媒体类型和字节 hash；资源未齐或核验不通过时标记 incomplete/unavailable，不得报告完整可读。Markdown 和小型自包含 HTML 可内联；较大报告/资源包走 BlobStore。GitSourceRef 仍是独立来源，不进入 Document 表。GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新的 GitSourceRef，旧 TaskBasis 仍保留旧 repo/path/commit；原仓库删除或权限丢失标不可达并复核。
+
+修订载荷、源 hash 和保存时的资源清单不可变；当前权限、blob 可达性、资源核验和知识有效性是带观察时间/依据的状态记录，不能在不可变 revision 行内覆盖过去事实。已采纳指针及审核决定单独维护。缺失资源后补或原件修改须形成新 DocumentRevision；相同原件重新可达只追加观察，不能借此变更正文/hash。历史下载也受当前权限约束。具体语义以[修订合同](contracts.md#2a-documentstore-与-relationstore)为准。
 
 Schedule 头表只提供当前可编辑入口；每次规则、时区、错过或重叠策略改变都插入不可变 `schedule_revision`。到期计算读取某一修订，`occurrence` 保存 `schedule_revision_id` 并以 `(project_id, schedule_id, schedule_revision_id)` 复合 FK 约束，同时保存原计划 UTC 时点。触发去重仍按稳定 `(project_id, schedule_id, planned_at_utc)`，修订号是被观察基线，不作为同一时点重复创建任务的理由；若改版改变该时点是否应触发，先对账旧实例并记录重算决定。
 
@@ -158,6 +160,8 @@ BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系�
 
 ## 切片与验收
 
-**第一切片**落 project、Task/不可变 TaskRevision、过程 Document/Revision、Task↔Document 多对多链接、独立 DocumentReviewDecision、GitSourceRef 登记、固定 BasisSet、最小 Run、OperationJournal/outbox、飞书 Task 出站 Binding 和最小 CLI。用真实 PostgreSQL 验证复合 FK、旧版本拒绝、旧 Run 回读旧 TaskRevision/BasisSet、文档批准不修改正文、TaskBasis 固定过程文档修订/GitSourceRef/Wiki 修订、同操作两个对象产生两条 outbox、事务最后一步回滚、重复 operation ID、出站写成后丢回执；GitSourceRef 验证固定 commit/path/hash。飞书入站编辑等字段、身份和基线能力验证后开放。
+存储随[包架构 S1—S4](packages.md#切片与验证)接入，下面只列各片的持久化检查，不另定义一套实施顺序。
 
-**后续切片**再引入 Schedule/ScheduleRevision/Occurrence、KnowledgeRef 与实时派发校验、blob/source fingerprint/ingestion receipt、DocumentIncorporation、分工与认知讨论的 Role/Session/Review/Contribution 记录、更多关系类型、飞书云文档 connector、细粒度检索/权限及跨系统恢复。不要为未接入的 Wiki 或 connector 预造可编辑副本。自动检查通过后仍由真实消费者核对依据能否找到、冲突能否处理、旧版本能否复现；这些效果尚无运行证据。
+**S1 主数据与出站投影**落 project、Task/不可变 TaskRevision、过程 Document/Revision、Task↔Document 多对多链接、独立 DocumentReviewDecision、GitSourceRef 登记、固定 BasisSet、OperationJournal/outbox、飞书 Task 出站 Binding 和最小 CLI。用真实 PostgreSQL 验证复合 FK、旧版本拒绝、旧 TaskRevision/BasisSet 回读、文档批准不修改正文、TaskBasis 固定过程文档修订/GitSourceRef、同操作两个对象产生两条 outbox、事务最后一步回滚、重复 operation ID、出站写成后丢回执；GitSourceRef 验证固定 commit/path/hash。未接 Wiki 时不要求不存在的 KnowledgeRefRevision，也不能把缺项当作验证通过。飞书入站编辑等字段、身份和基线能力验证后开放。
+
+**后续持久化**：S2 加真实 Run/Session 映射，验证旧 Run 仍读旧 TaskRevision/BasisSet 及未知派发恢复；S3 加 Schedule/ScheduleRevision/Occurrence；S4 加 KnowledgeRef、知识依据绑定、source fingerprint/ingestion receipt、影响复核与评价。blob 在首次较大 Markdown/HTML 报告或资源包切片接入，同时验证发布中断、资源缺失、核 hash 和恢复；它不是收真实原件后的补救项。DocumentIncorporation、职责试行记录、更多关系类型和云文档 connector 随相应用例接入；权限与跨系统恢复逐片验证。不要为未接入的 Wiki 或 connector 预造可编辑副本。自动检查通过后仍由真实消费者核对依据能否找到、冲突能否处理、旧版本能否复现；这些效果尚无运行证据。

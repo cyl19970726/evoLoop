@@ -2,7 +2,7 @@
 
 推荐包架构 v0.5 · **主数据与连接器方向已由用户选定，具体实现仍是提案；尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
 
-用户选定 **evoLoop 保存主数据，飞书作为 connector 与协作入口**。PostgreSQL 保存 Task、Schedule、evoLoop 原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态，以及运行 Journal/outbox；Git 中已有正式产品/架构/规范正文仍以 Git 为权威，必要时以独立 Git 来源引用连接，不纳入 Document Table；Wiki 正文、来源、知识历史与内部依赖仍由外置 KnowledgeRepository 持有。首期其余架构提议为 TypeScript `strict`、Node.js 24 LTS、npm workspaces、模块化 `core`、Fastify 本地 API、独立 OpenViking HTTP 服务和自管 Codex App Server stdio。PostgreSQL 拟通过 `pg`（node-postgres）接入，驱动与固定版本仍待首片验证。OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定。本机 Python 证明已在[独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2)跑通，是研究证据，不决定生产语言。
+用户选定 **evoLoop 保存主数据，飞书作为 connector 与协作入口**。PostgreSQL 保存 Task、Schedule、evoLoop 原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态，以及运行 Journal/outbox；Git 中已有正式产品/架构/规范正文仍以 Git 为权威，必要时以独立 Git 来源引用连接，不纳入 Document Table；Wiki 正文、来源、知识历史与内部依赖仍由外置 KnowledgeRepository 持有。首期其余架构提议为 TypeScript `strict`、Node.js 24 LTS、npm workspaces、模块化 `core`、Fastify 本地 API、独立 OpenViking HTTP 服务和自管 Codex App Server stdio。PostgreSQL 拟通过 `pg`（node-postgres）接入，驱动与固定版本仍待首片验证。OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定。本机 Python 夹具的[固定实测与能力范围](codex-integration.md#隔离实测与生产能力分开)是研究证据，不决定生产语言，也未提供独立 daemon 可用的桌面宿主消息入口。
 
 ## 源码依赖
 
@@ -108,12 +108,16 @@ Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位�
 
 ## 切片与验证
 
-1. **主数据与首次投影：** 创建 `contracts`、`core/tasks`、`core/documents`、`core/relations`、PostgreSQL 适配器（SQL 迁移推荐 node-pg-migrate）、最小协调 API/CLI；使一条 Task、原生需求 Document 修订及关系按基线写入，并经 `UnitOfWork` 将对象、关系、操作记录与 outbox 原子提交；最后一步失败应全部回滚。再加飞书 connector 的 Bitable Task **出站投影**，核对 ExternalBinding、重复发送与回读。飞书 API 能力未验证时，先由核心 CLI 写主数据，不把入站回写当作首片前置条件。
+本节集中维护**推荐实施顺序**，不是新增路线或任务状态表；产品阶段和验收仍见[阶段路线](../roadmap.md)。S1—S4 是包含多个可独立审阅交付的小切片组，实际任务只取其中有明确输入、产物和验收的一项。专题页的“首片”指该专题首次接入，不表示所有专题必须在 S1 同时完成。技术栈提案未采纳前不据此自动开始业务实现。
+
+1. **S1 主数据与首次投影：** 创建 `contracts`、`core/tasks`、`core/documents`、`core/relations`、PostgreSQL 适配器（SQL 迁移推荐 node-pg-migrate）、最小协调 API/CLI；使一条 Task、原生需求 Document 修订及关系按基线写入，并经 `UnitOfWork` 将对象、关系、操作记录与 outbox 原子提交；最后一步失败应全部回滚。再加飞书 connector 的 Bitable Task **出站投影**，核对 ExternalBinding、重复发送与回读。飞书 API 能力未验证时，先由核心 CLI 写主数据，不把入站回写当作首片前置条件。
+
+   S1 的最小依据只需可核对的过程 DocumentRevision 和 GitSourceRef；Wiki 未接通时报告缺项，不伪造知识修订或宣称 Wiki 场景通过。原件起步可用内联 Markdown；一旦承接较大报告或资源包，BlobStore 必须随该阅读切片接入并验证，不能先收真实原件再补持久化。Run/Session 恢复随 S2 接入，Schedule 随 S3，知识引用与发布/评价随 S4；未接功能不预建完整空表。
 
    在第一片主数据合同可用后，增加 `apps/workbench` 的读取/提议/复核页面，首片先覆盖原生需求、Git 固定引用和 Task 的依据导航；Wiki 尚未接入时显式显示能力缺项。页面缓存不承担服务端业务规则。
 
-2. **受控编辑与执行恢复：** 在真实测试表验证飞书字段权限、行为者、版本标记、分页与事件；仅能获得足够身份/基线的字段开放入站 command，冲突保留待处理。另加 Codex App Server、扩展 Journal/outbox 与 `core/coordination`；验证丢响应、已知/未知 Turn ID、重启回读与成果核验。`turn/completed` 只推进运行状态。
-3. **一次日程：** 加 `core/scheduling` 与 PG `ScheduleStore`；以可控时钟验证到期、漏触发、重叠、暂停/改期、时区和恢复。若需飞书日程投影，单独验证字段与同步语义；不把首期 Bitable Task 投影扩写成日程权威。
-4. **知识与真实使用：** 加 OpenViking HTTP 适配器、外置修订层、`core/knowledge` 与 evaluation；验证相反解释、同基线写、来源撤回、审阅发布、独立 session 消费，以及与直接读原始材料的成本/效果比较。飞书云文档 connector 属另一套 API，待明确文档映射与审核边界后单独验证；Agent 工具随真实操作需要加入。
+2. **S2 受控编辑与执行恢复：** 在真实测试表验证飞书字段权限、行为者、版本标记、分页与事件；仅能获得足够身份/基线的字段开放入站 command，冲突保留待处理。另加 Codex App Server、扩展 Journal/outbox 与 `core/coordination`；验证丢响应、已知/未知 Turn ID、重启回读与成果核验。`turn/completed` 只推进运行状态。
+3. **S3 一次日程：** 加 `core/scheduling` 与 PG `ScheduleStore`；以可控时钟验证到期、漏触发、重叠、暂停/改期、时区和恢复。若需飞书日程投影，单独验证字段与同步语义；不把首期 Bitable Task 投影扩写成日程权威。
+4. **S4 知识与真实使用：** 加 OpenViking HTTP 适配器、外置修订层、`core/knowledge` 与 evaluation；验证相反解释、同基线写、来源撤回、审阅发布、独立 session 消费，以及与直接读原始材料的成本/效果比较。飞书云文档 connector 属另一套 API，待明确文档映射与审核边界后单独验证；Agent 工具随真实操作需要加入。
 
 核心规则用端口替身和固定时钟验证；每个适配器以固定版本/测试环境做合同测试；跨系统用故障与恢复演练；用户面对的效果由真实消费者亲用单独记录。通过局部测试不等于部署或整个认知闭环有效。具体失败语义和验收范围以[领域合同](contracts.md)及[开发规范](../development/standards.md)为准。
