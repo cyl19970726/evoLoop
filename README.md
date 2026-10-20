@@ -12,7 +12,10 @@ evoLoop 面向一个人和多个 Agent session 共同推进的项目。它连接
 
 | 你想了解什么 | 文档 |
 | --- | --- |
+| 现在可以体验什么，这一轮先做多小 | [当前阶段](docs/roadmap.md#当前基线) · [当前阶段的一个小任务](docs/roadmap.md#当前阶段的一个小任务) |
 | 产品是什么、解决谁的什么问题、如何验收 | [产品定义](docs/product/definition.md) |
+| 已有具体问题，最少应读哪些章节 | [按眼前任务进入](docs/README.md#按眼前任务进入) |
+| 工作台怎样帮助查依据、作决定和看后果 | [项目工作台](docs/product/workbench.md) |
 | 四部分怎样共同推动下一步、何时继续或停止 | [Agent loop](docs/product/agent-loop.md) |
 | 认识怎样进入 Wiki、被使用及证明有效 | [Wiki 建设与有效性评价](docs/product/wiki-evaluation.md) |
 | Dogfood、新需求、日常讨论和定时工作如何接续 | [日常工作闭环](docs/product/daily-loop.md) |

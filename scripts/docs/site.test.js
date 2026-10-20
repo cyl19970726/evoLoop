@@ -29,6 +29,46 @@ test('rewrites published relative Markdown links and heading anchors', async t =
   assert.match(topic, /id="second-heading"/);
 });
 
+test('long pages link their local outline to the rendered headings', async t => {
+  const root = await fixture(t);
+  await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n## 中文与 **strong**\n\n### `inline` [link](https://example.com)\n\n## 中文与 **strong**\n\n### <script>alert(1)</script>\n');
+  await build(root);
+  const html = await fs.readFile(path.join(root, 'site/index.html'), 'utf8');
+  const outline = html.match(/<nav class="page-toc"[^>]*>(.*?)<\/nav>/s)?.[1];
+  assert.ok(outline, 'long page has a local outline');
+  assert.match(outline, /^<details><summary>本页目录<\/summary>/);
+  for (const id of ['中文与-strong', 'inline-link', '中文与-strong-1', 'alert1']) {
+    assert.match(html, new RegExp(`<h[23] id="${id}">`));
+    assert.match(outline, new RegExp(`href="#${encodeURIComponent(id)}"`));
+  }
+  assert.match(outline, /中文与 strong/);
+  assert.match(outline, /inline link/);
+  assert.match(outline, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(outline, /<script>/);
+  assert.match(outline, /class="toc-h3"/);
+  assert.ok(html.indexOf('class="page-toc"') > html.indexOf('<h1 id="home">'));
+  assert.ok(html.indexOf('class="page-toc"') < html.indexOf('<h2 id="中文与-strong">'));
+  assert.ok(html.indexOf('class="page-toc"') > html.indexOf('</aside>'));
+});
+
+test('heading slugs stay unique when a title already contains a numeric suffix', async t => {
+  const root = await fixture(t);
+  await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n## Same\n\n## Same-1\n\n## Same\n\n## Same-1\n');
+  await build(root);
+  const html = await fs.readFile(path.join(root, 'site/index.html'), 'utf8');
+  assert.deepEqual([...html.matchAll(/<h2 id="([^"]+)"/g)].map(match => match[1]), ['same', 'same-1', 'same-2', 'same-1-1']);
+  for (const id of ['same', 'same-1', 'same-2', 'same-1-1']) {
+    assert.match(html, new RegExp(`href="#${id}"`));
+  }
+});
+
+test('short pages do not get an empty or unnecessary local outline', async t => {
+  const root = await fixture(t);
+  await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n## One section\n\n### One detail\n');
+  await build(root);
+  assert.doesNotMatch(await fs.readFile(path.join(root, 'site/index.html'), 'utf8'), /class="page-toc"/);
+});
+
 test('rejects manifest traversal and symlinked sources', async t => {
   const root = await fixture(t, [{ path: '../outside.md', title: 'Bad', group: 'Start' }]);
   await assert.rejects(check(root), /invalid repository-relative path/);

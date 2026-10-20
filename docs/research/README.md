@@ -8,7 +8,7 @@
 
 | 研究 | 回答的问题 | 证据与状态 |
 | --- | --- | --- |
-| [产品文档评估与改进建议](product-docs-evaluation-20261020.md) | 当前文档能否帮助理解产品、选择下一步并形成可验收任务？应怎样调整内容层级与颗粒度？ | 固定合并基线、三个独立 Agent 消费案例与 HTML 阅读检查；建议未采纳，非真人验收 |
+| [产品文档评估与改进建议](product-docs-evaluation-20261020.md) | 当前文档能否帮助理解产品、选择下一步并形成可验收任务？应怎样调整内容层级与颗粒度？ | 固定合并基线的三个独立 Agent 案例与 HTML 检查；末尾追加用户授权后的修复及复测状态，非真人验收 |
 
 ## 认知 Wiki：先看综合判断，再下钻
 
@@ -33,7 +33,7 @@
 
 ## 运行时与协作接入
 
-[Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。已运行范围为版本、schema 与初始化握手；真实任务、模型执行、桌面聊天互通和定时恢复均未验证。实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
+[Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。该原调查实际只运行版本、schema 与初始化握手，未验证真实任务、模型执行、桌面聊天互通或定时恢复。后续独立 [PR #2 的固定提交](https://github.com/cyl19970726/evoLoop/pull/2/commits/9c095fce1eee68b3fbd87bfdbd053a0ca58dc195)验证了自管线程的隔离夹具闭环和桌面宿主通知消费；它不证明真实项目任务接通、现有桌面聊天互控或生产恢复。当前阶段另见[路线](../roadmap.md#当前基线)，实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
 
 ## 早期候选与其他探索
 

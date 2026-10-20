@@ -51,18 +51,24 @@ function slug(text) {
 function headings(tokens) {
   const ids = new Map();
   const anchors = new Set();
+  const outline = [];
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].type !== 'heading_open') continue;
     const inline = tokens[i + 1];
-    const title = (inline.children || []).map(t => t.type === 'image' ? t.content : (t.content || '')).join('');
-    const base = slug(title);
-    const count = ids.get(base) || 0;
+    const title = (inline.children || []).map(t =>
+      t.type === 'softbreak' || t.type === 'hardbreak' ? ' ' : (t.content || '')).join('');
+    const base = slug(title) || 'section';
+    let count = ids.get(base) || 0;
+    while (anchors.has(count ? `${base}-${count}` : base)) count++;
     ids.set(base, count + 1);
     const id = count ? `${base}-${count}` : base;
     tokens[i].attrSet('id', id);
     anchors.add(id);
+    if (tokens[i].tag === 'h2' || tokens[i].tag === 'h3') {
+      outline.push({ id, title, level: tokens[i].tag });
+    }
   }
-  return anchors;
+  return { anchors, outline };
 }
 function localUrl(raw, source) {
   if (privateLocation.test(raw)) fail(`${source}: private local address is forbidden: ${raw}`);
@@ -124,7 +130,7 @@ export async function check(root) {
     const content = await fs.readFile(filename, 'utf8');
     if (privateLocation.test(content)) fail(`${source}: contains a private local address`);
     const tokens = markdown.parse(content, {});
-    pages.push({ ...entry, source, output, tokens, anchors: headings(tokens), hasMermaid: tokens.some(token => token.type === 'fence' && /^mermaid(?:\s|$)/i.test(token.info.trim())) });
+    pages.push({ ...entry, source, output, tokens, ...headings(tokens), hasMermaid: tokens.some(token => token.type === 'fence' && /^mermaid(?:\s|$)/i.test(token.info.trim())) });
   }
   const byPath = new Map(pages.map(page => [page.source, page]));
   const assets = new Set();
@@ -159,9 +165,14 @@ function pageHtml(manifest, page, pages) {
   }
   const nav = [...groups].map(([group, items]) => `<section class="nav-group"><h2>${escapeHtml(group)}</h2>${items.map(item =>
     `<a href="${escapeHtml(relUrl(page.output, item.output))}"${item.source === page.source ? ' aria-current="page"' : ''}>${escapeHtml(item.title)}</a>`).join('')}</section>`).join('');
+  const outline = page.outline.length >= 3 ? `<nav class="page-toc" aria-label="本页目录"><details><summary>本页目录</summary><ol>${page.outline.map(({ id, title, level }) =>
+    `<li class="toc-${level}"><a href="#${escapeHtml(encodeURIComponent(id))}">${escapeHtml(title)}</a></li>`).join('')}</ol></details></nav>` : '';
+  const titleEnd = page.tokens.findIndex(token => token.type === 'heading_close' && token.tag === 'h1');
+  const article = titleEnd < 0 ? `${outline}${markdown.renderer.render(page.tokens, markdown.options, {})}` :
+    `${markdown.renderer.render(page.tokens.slice(0, titleEnd + 1), markdown.options, {})}${outline}${markdown.renderer.render(page.tokens.slice(titleEnd + 1), markdown.options, {})}`;
   const stylesheet = relUrl(page.output, 'assets/style.css');
   const script = page.hasMermaid ? `<script defer src="${escapeHtml(relUrl(page.output, 'assets/mermaid.js'))}"></script>` : '';
-  return `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(manifest.description)}"><title>${escapeHtml(page.title)} · ${escapeHtml(manifest.title)}</title><link rel="stylesheet" href="${escapeHtml(stylesheet)}">${script}</head><body><div class="layout"><aside class="sidebar"><a class="brand" href="${escapeHtml(relUrl(page.output, 'index.html'))}">${escapeHtml(manifest.title)}</a><details class="mobile-nav"><summary>目录</summary><nav>${nav}</nav></details><nav class="desktop-nav">${nav}</nav></aside><main class="content"><p class="eyebrow">${escapeHtml(page.group)}</p><article class="markdown">${markdown.renderer.render(page.tokens, markdown.options, {})}</article><footer>${escapeHtml(manifest.title)}</footer></main></div></body></html>\n`;
+  return `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(manifest.description)}"><title>${escapeHtml(page.title)} · ${escapeHtml(manifest.title)}</title><link rel="stylesheet" href="${escapeHtml(stylesheet)}">${script}</head><body><div class="layout"><aside class="sidebar"><a class="brand" href="${escapeHtml(relUrl(page.output, 'index.html'))}">${escapeHtml(manifest.title)}</a><details class="mobile-nav"><summary>目录</summary><nav>${nav}</nav></details><nav class="desktop-nav">${nav}</nav></aside><main class="content"><p class="eyebrow">${escapeHtml(page.group)}</p><article class="markdown">${article}</article><footer>${escapeHtml(manifest.title)}</footer></main></div></body></html>\n`;
 }
 
 export async function build(root) {

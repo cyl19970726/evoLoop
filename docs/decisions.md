@@ -2,6 +2,8 @@
 
 2026-10-20。此页登记当前方向及待验证选择；引用来源是已公开抽象的项目要求和[历史来源说明](references/lineage.md)。原始会话不随公开仓库发布。编号用于其他文档引用，详细方案只在所属正文维护。
 
+当前有效边界速查：[两维度与四部分](product/definition.md#两个维度四个组成部分)（DEC-012）· [领域自主与分工](product/daily-loop.md#一条提议怎样变成可做的任务)（DEC-002/013/014）· [任务、过程文档、Git 与外置 Wiki 的权威](architecture/project-data.md)（DEC-006/018/022/023）· [表格和 Markdown/HTML 全文](product/workbench.md#从表格打开完整过程文档)（DEC-024）· [阶段与当前状态](roadmap.md)。旧决定、被取代部分和 PROP 的验证状态仍以下表及其来源为准。
+
 ## 用户已确定的方向
 
 | 编号 | 方向 | 对文档与实现的影响 |
