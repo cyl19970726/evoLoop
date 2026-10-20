@@ -1,0 +1,11 @@
+# OpenViking knowledge adapter
+
+This pilot adapter requires a running OpenViking HTTP service on loopback and an absolute `manifestRoot` outside the development checkout. OpenViking stores every candidate and published Markdown body at an immutable URI. The external manifest stores stable knowledge/revision IDs, hashes, current pointers, source references, relations, review decisions, validity observations, and operation receipts. Back up and restore **both** stores together. PostgreSQL must retain only business links and receipts, not a second editable Wiki body.
+
+The coordinator supplies current authorization callbacks. Only `maintainerId` may publish, withdraw a source, or reconcile an uncertain write. The adapter serializes each project's manifest changes with an external lock file, checks the expected revision, writes a new URI with `mode: create`, reads it back, then advances the manifest pointer. A crash leaves an unresolved lock for operator inspection. Direct OpenViking/Studio writes can bypass this gate; this package does **not** claim server-side multi-writer CAS.
+
+`get` reads the fixed OpenViking body and checks its SHA-256. Source withdrawal preserves old revisions and marks current dependent pages for review; it does not erase the source or approve a new conclusion. `reconcile` only inspects a previously uncertain external write and never sends a new write. A missing or changed body remains unavailable.
+
+The `capabilities` result deliberately reports migration as unsupported and semantic index health as unverified. No-credential smoke checks used isolated OpenViking 0.5.0 and 0.5.1 installations. Both completed content read/write and fixed-revision read after a full service restart. Local embedding work reported a missing optional component. Semantic compilation, native conditional writes, complete export/import, authenticated multi-user access, and production recovery are not validated by this package.
+
+The real service test is opt-in with `OPENVIKING_TEST_URL` and `OPENVIKING_TEST_MANIFEST_ROOT`. It creates a unique pilot page and performs write, publish, fixed read, and withdrawal. Point it only at a disposable local service and external pilot data directory.

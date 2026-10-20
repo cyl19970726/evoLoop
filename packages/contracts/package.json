@@ -5,7 +5,19 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
-    "./ports": "./dist/ports.js"
+    "./ports": "./dist/ports.js",
+    "./runtime": "./dist/runtime.js",
+    "./sources": "./dist/sources.js",
+    "./knowledge": "./dist/knowledge.js",
+    "./collaboration": "./dist/collaboration.js",
+    "./workflow": "./dist/workflow.js",
+    "./scheduling": "./dist/scheduling.js",
+    "./process-documents": "./dist/process-documents.js",
+    "./roles": "./dist/roles.js",
+    "./delivery": "./dist/delivery.js",
+    "./references": "./dist/references.js"
   },
-  "dependencies": { "zod": "4.6.7" }
+  "dependencies": {
+    "zod": "4.6.7"
+  }
 }

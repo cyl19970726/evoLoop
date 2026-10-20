@@ -6,14 +6,20 @@ import { fileURLToPath } from 'node:url';
 import { validateModel, projectGraph } from './viewer.js';
 const model = validateModel(JSON.parse(await fs.readFile(new URL('../../docs/assets/evoloop-system.model.json', import.meta.url), 'utf8')));
 
-test('published map covers every proposed package and cites reachable document spans', async () => {
+test('published target map covers all target packages and distinguishes the one unbuilt workspace', async () => {
   const packages = await fs.readFile(new URL('../../docs/architecture/packages.md', import.meta.url), 'utf8');
-  const rows = [...packages.matchAll(/^\| `(packages\/[^`]+|apps\/[^`]+)` \|/gm)].map(match => match[1]);
+  const rows = [...packages.matchAll(/^\| `(packages\/[^`]+|apps\/[^`]+)`(（未建）)? \|/gm)]
+    .map(match => ({ path: match[1], unbuilt: Boolean(match[2]) }));
   assert.equal(rows.length, 12);
-  for (const path of rows) {
+  assert.equal(new Set(rows.map(row => row.path)).size, rows.length);
+  assert.deepEqual(rows.filter(row => row.unbuilt).map(row => row.path), ['packages/agent-tools']);
+  for (const { path, unbuilt } of rows) {
     const nodes = model.nodes.filter(node => node.path === path);
     assert.equal(nodes.length, 1, `${path} needs exactly one map location`);
-    assert.equal(nodes[0].status, 'proposed', `${path} is not implemented`);
+    assert.equal(nodes[0].status, 'proposed', `${path} is a target-map location`);
+    const manifest = new URL(`../../${path}/package.json`, import.meta.url);
+    const exists = await fs.access(manifest).then(() => true, () => false);
+    assert.equal(exists, !unbuilt, `${path} documentation and workspace state disagree`);
   }
   const cache = new Map();
   for (const item of [...model.nodes, ...model.edges]) {

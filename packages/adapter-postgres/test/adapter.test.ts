@@ -29,7 +29,7 @@ function project(id = randomUUID()): Project { return { id, title: "Adapter test
 function document(projectId: string, id = randomUUID(), revisionId = randomUUID()): { head: Document; revision: DocumentRevision } {
   return {
     head: { projectId, id, title: "Requirement", version: 1, currentRevisionId: revisionId, adoptedRevisionId: null },
-    revision: { projectId, documentId: id, id: revisionId, body: "# Requirement", format: "markdown", contentHash: "h1", author: actor, createdAt: now, previousRevisionId: null, reason: "create" },
+    revision: { projectId, documentId: id, id: revisionId, body: "# Requirement", format: "markdown", mediaType: "text/markdown", originalName: `${id}.md`, payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: "h1", author: actor, createdAt: now, previousRevisionId: null, reason: "create" },
   };
 }
 function readyTask(projectId: string, documentId: string, documentRevisionId: string): { head: Task; revision: TaskRevision; basis: BasisSet } {
@@ -55,9 +55,11 @@ async function seedDocument(): Promise<{ p: Project; d: ReturnType<typeof docume
 }
 
 test("migration can run twice without changing history", async () => {
+  const before = await pool.query("SELECT count(*)::int AS count FROM pgmigrations");
   await migrate(connectionString, schema);
   const result = await pool.query("SELECT count(*)::int AS count FROM pgmigrations");
-  assert.equal(result.rows[0].count, 1);
+  assert.ok(before.rows[0].count >= 2);
+  assert.equal(result.rows[0].count, before.rows[0].count);
 });
 
 test("adopted document pointer requires a decision; revisions and decisions stay immutable", async () => {

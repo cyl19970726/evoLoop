@@ -1,14 +1,25 @@
+import { ReferencePanel } from "./references/ReferencePanel";
+import { CollaborationPanel } from "./collaboration/CollaborationPanel";
+import { KnowledgePanel } from "./knowledge/KnowledgePanel";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type {
   BasisSet, Command, Document, DocumentDetail, DocumentRevision, Impact,
   Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision,
 } from "@evoloop/contracts";
 import { api, ApiError, errorText, isUnconfirmed, type Session } from "./api";
+import { UploadDocument } from "./documents/UploadDocument";
+import { OriginalDocumentReader } from "./documents/OriginalDocumentReader";
+import { RuntimePanel } from "./runtime/RuntimePanel";
+import { RolesPanel } from "./roles/RolesPanel";
+import { SchedulingPanel } from "./scheduling/SchedulingPanel";
+import { JourneyBoard } from "./workflow/JourneyBoard";
+import { TaskWorkflow } from "./workflow/TaskWorkflow";
+import { ActionForm, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
 import { addReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 
 type Section = "overview" | "work" | "knowledge" | "task" | "document";
 type Route = { projectId: string | null; section: Section; id?: string; revision?: string };
-type UnknownCommand = Extract<Command, { type: "task.reviewBasis" }>;
+type UnknownCommand = Command;
 
 function readRoute(): Route {
   const raw = window.location.hash.slice(1) || "/";
@@ -88,7 +99,7 @@ function OperationCheck({ receipt, token, onConfirmed }: {
   receipt: OperationReceipt; token: string;
   onConfirmed: (result: Operation["result"]) => void;
 }) {
-  const [status, setStatus] = useState("这次复核可能已提交。请按原操作 ID 核对，确认前不要为同一任务重发。");
+  const [status, setStatus] = useState("这次操作可能已提交。请按原操作 ID 核对，确认前不要重复提交。");
   const [busy, setBusy] = useState(false);
   async function check() {
     setBusy(true);
@@ -109,13 +120,13 @@ function OperationCheck({ receipt, token, onConfirmed }: {
   }
   return <Alert kind="error">
     <strong>提交结果待核对</strong><p>{status}</p>
-    <p>项目 <ShortId value={receipt.projectId} /> · 任务 <ShortId value={receipt.taskId} /> · 提交于 {date(receipt.createdAt)}</p>
+    <p>项目 <ShortId value={receipt.projectId} /> · 对象 <ShortId value={receipt.taskId} /> · 提交于 {date(receipt.createdAt)}</p>
     <p>操作 ID：<code>{receipt.operationId}</code></p>
     <div className="actions"><button onClick={check} disabled={busy}>{busy ? "核对中…" : "按操作 ID 核对"}</button></div>
   </Alert>;
 }
 
-function ProjectChooser({ token, principal, receipts, onRefreshSession }: { token: string; principal: Principal; receipts: OperationReceipt[]; onRefreshSession: () => Promise<void> }) {
+function ProjectChooser({ token, principal, receipts, onRefreshSession, context }: { token: string; principal: Principal; receipts: OperationReceipt[]; onRefreshSession: () => Promise<void>; context: MutationContext }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
   const [refresh, setRefresh] = useState(0);
@@ -144,12 +155,13 @@ function ProjectChooser({ token, principal, receipts, onRefreshSession }: { toke
     <div className="eyebrow">选择项目</div><h1>你的项目</h1>
     <button type="button" className="quiet" onClick={refreshProjects} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新项目"}</button>
     {refreshError && <Alert kind="error">刷新失败：{refreshError}</Alert>}
-    {projects.length ? <div className="project-list">{projects.map(p => <a className="project-item" key={p.id} href={href(p.id, "overview")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入工作台 →</span></a>)}</div> : <Alert>当前没有可读取的项目。可用 CLI 准备项目与首份需求，再回到这里。</Alert>}
-    {missing.length > 0 && <Alert kind="error">有 {missing.length} 个授权项目暂不可读取；请核对服务端项目状态。</Alert>}
+    {projects.length ? <div className="project-list">{projects.map(p => <a className="project-item" key={p.id} href={href(p.id, "overview")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入工作台 →</span></a>)}</div> : <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
+    {missing.length > 0 && <Alert>有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在项目不会被覆盖。</Alert>}
+    {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, onChanged: () => { setRefresh(v => v + 1); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
   </section>;
 }
 
-function Board({ token, projectId, section, refresh }: { token: string; projectId: string; section: "overview" | "work"; refresh: number }) {
+function Board({ token, projectId, section, refresh, context }: { token: string; projectId: string; section: "overview" | "work"; refresh: number; context: MutationContext }) {
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Page<Task> | null>(null);
   const [documents, setDocuments] = useState<Page<Document> | null>(null);
@@ -199,34 +211,38 @@ function Board({ token, projectId, section, refresh }: { token: string; projectI
   return <div className="content">
     <div className="eyebrow">{section === "overview" ? "项目总览" : "工作"}</div>
     <h1>{project?.title || "项目"}</h1>
-    <p className="lede">从待复核影响进入决定，或沿任务与过程文档查看固定依据。</p>
+    <p className="lede">读目标与依据，推进工作，用实际交付和反馈决定下一步。</p>
+    {section === "overview" && <JourneyBoard context={context} refresh={refresh} />}
     <div className="stats"><div><strong>{impacts.filter(i => i.state === "pending").length}</strong><span>待复核影响</span></div><div><strong>{tasks?.items.length || 0}</strong><span>已载入任务</span></div><div><strong>{documents?.items.length || 0}</strong><span>已载入过程文档</span></div></div>
     <section className="panel"><div className="panel-head"><h2>待复核</h2><span>依据变化需要明确决定</span></div>
       {impacts.filter(i => i.state === "pending").length ? <ul className="impact-list">{impacts.filter(i => i.state === "pending").map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>任务 <ShortId value={i.taskId} /></strong><span>过程文档版本 <ShortId value={i.fromRevisionId} /> → <ShortId value={i.toRevisionId} /></span><span className="arrow">查看影响 →</span></a></li>)}</ul> : <p className="empty">当前没有待复核影响。</p>}
     </section>
     <section className="panel"><div className="panel-head"><h2>任务</h2><span>固定执行依据见任务详情</span></div>
       <div className="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>负责人</th><th>版本</th></tr></thead><tbody>{tasks?.items.map(t => <tr key={t.id}><td><a href={href(projectId, "task", t.id)}>{t.title}</a><small><ShortId value={t.id} /></small></td><td><span className="pill">{t.state}</span></td><td>{t.owner}</td><td>v{t.version}</td></tr>)}</tbody></table></div>
-      {!tasks?.items.length && <p className="empty">还没有任务。可用 CLI 准备第一条任务。</p>}
+      {!tasks?.items.length && <p className="empty">还没有任务。请从总览提出首项工作。</p>}
       {tasks?.nextCursor && <button className="more" disabled={loadingMore.includes("tasks")} onClick={() => more("tasks")}>{loadingMore.includes("tasks") ? "加载中…" : "加载更多任务"}</button>}
     </section>
     <section className="panel"><div className="panel-head"><h2>过程文档</h2><span>按需读取完整正文</span></div>
       <div className="table-wrap"><table><thead><tr><th>文档</th><th>当前修订</th><th>已采纳修订</th><th>版本</th></tr></thead><tbody>{documents?.items.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} /></small></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未采纳"}</td><td>v{d.version}</td></tr>)}</tbody></table></div>
-      {!documents?.items.length && <p className="empty">还没有过程文档。可用 CLI 准备第一份 Markdown 需求。</p>}
+      {!documents?.items.length && <p className="empty">还没有过程文档。可在下方保存第一份需求或讨论。</p>}
+      <details className="workflow-detail"><summary>保存过程文档</summary><ActionForm context={context} title="创建文档" fields={[{ name: "title", label: "文档名称" }, { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]} build={v => ({ type: "document.create", documentId: crypto.randomUUID(), ...v })} /></details>
+      <UploadDocument context={context} />
       {documents?.nextCursor && <button className="more" disabled={loadingMore.includes("documents")} onClick={() => more("documents")}>{loadingMore.includes("documents") ? "加载中…" : "加载更多文档"}</button>}
     </section>
+    {section === "work" && <><ReferencePanel context={context} /><CollaborationPanel context={context} refresh={refresh} /><RuntimePanel context={context} refresh={refresh} /><SchedulingPanel context={context} refresh={refresh} /><RolesPanel context={context} refresh={refresh} /></>}
   </div>;
 }
 
-function RevisionBody({ revision, label }: { revision: DocumentRevision; label?: string }) {
+function RevisionBody({ revision, label, token }: { revision: DocumentRevision; label?: string; token: string }) {
   return <section className="revision-body">
     {label && <div className="eyebrow">{label}</div>}
     <div className="revision-meta"><span>修订 <ShortId value={revision.id} /></span><span>{date(revision.createdAt)}</span><span>作者 {revision.author}</span></div>
-    <pre>{revision.body}</pre>
-    <p className="muted">原文 Markdown · <code title={revision.contentHash}>{revision.contentHash.slice(0, 22)}…</code> · 仅按文本展示</p>
+    {revision.body !== null && revision.format === "markdown" ? <pre>{revision.body}</pre> : <OriginalDocumentReader token={token} projectId={revision.projectId} documentId={revision.documentId} revisionId={revision.id} />}
+    <p className="muted">原件 {revision.format} · <code title={revision.contentHash}>{revision.contentHash.slice(0, 22)}…</code></p>
   </section>;
 }
 
-function DocumentPage({ token, projectId, id, selectedRevision }: { token: string; projectId: string; id: string; selectedRevision?: string }) {
+function DocumentPage({ token, projectId, id, selectedRevision, context, refresh }: { token: string; projectId: string; id: string; selectedRevision?: string; context: MutationContext; refresh: number }) {
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [revision, setRevision] = useState<DocumentRevision | null>(null);
   const [error, setError] = useState("");
@@ -238,7 +254,7 @@ function DocumentPage({ token, projectId, id, selectedRevision }: { token: strin
       if (active) { setDetail(d); setRevision(r); }
     }).catch(cause => { if (active) setError(errorText(cause)); });
     return () => { active = false; };
-  }, [token, projectId, id, selectedRevision]);
+  }, [token, projectId, id, selectedRevision, refresh]);
   if (error) return <div className="content"><Alert kind="error">{error}</Alert></div>;
   if (!detail || !revision) return <div className="content"><p>正在读取文档…</p></div>;
   return <div className="content reading">
@@ -250,7 +266,10 @@ function DocumentPage({ token, projectId, id, selectedRevision }: { token: strin
       {detail.adopted && <a className="button-link" href={href(projectId, "document", id, detail.adopted.id)}>已采纳版 <ShortId value={detail.adopted.id} /></a>}
       {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
     </div>
-    <RevisionBody revision={revision} />
+    <RevisionBody token={token} revision={revision} />
+    <details className="workflow-detail"><summary>修订与采纳</summary>{detail.current.format === "markdown" && detail.current.body !== null && <ActionForm key={`revise:${detail.document.version}`} context={context} title="保存候选修订" fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]} build={v => ({ type: "document.revise", documentId: id, expectedVersion: detail.document.version, ...v })} />}
+    <UploadDocument context={context} mode="revise" documentId={id} expectedVersion={detail.document.version} />
+    {detail.current.id !== detail.adopted?.id && <ActionForm key={`adopt:${detail.document.version}`} context={context} review title="采纳当前修订" fields={[{ name: "reason", label: "采纳依据", kind: "textarea" }]} build={v => ({ type: "document.adopt", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} />}</details>
   </div>;
 }
 
@@ -323,8 +342,8 @@ function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, 
   }
   return <div className="review-layout">
     <div className="compare">
-      {before ? <RevisionBody revision={before} label="任务原依据" /> : <p>正在读取原依据…</p>}
-      {after ? <RevisionBody revision={after} label="新文档修订" /> : <p>正在读取新修订…</p>}
+      {before ? <RevisionBody token={token} revision={before} label="任务原依据" /> : <p>正在读取原依据…</p>}
+      {after ? <RevisionBody token={token} revision={after} label="新文档修订" /> : <p>正在读取新修订…</p>}
     </div>
     <form className="review-form" onSubmit={submit}>
       <div className="eyebrow">复核决定 · Task v{readVersion}</div>
@@ -344,8 +363,8 @@ function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, 
   </div>;
 }
 
-function TaskPage({ token, projectId, id, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
-  token: string; projectId: string; id: string; refresh: number;
+function TaskPage({ context, token, projectId, id, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
+  context: MutationContext; token: string; projectId: string; id: string; refresh: number;
   onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -382,6 +401,9 @@ function TaskPage({ token, projectId, id, refresh, onChanged, onAttempt, onKnown
     <div className="task-header"><span className="pill">{detail.task.state}</span><span>负责人：{detail.task.owner}</span><span>当前修订 <ShortId value={detail.revision.id} /></span></div>
     {error && <Alert kind="error">{error}</Alert>}
     <section className="panel"><h2>目标与验收</h2><p>{detail.task.goal}</p><h3>验收条件</h3><p>{detail.task.acceptance}</p></section>
+    <RuntimePanel context={context} refresh={refresh} task={detail.task} />
+    <ReferencePanel key={`refs:${detail.task.currentRevisionId}`} context={context} taskId={detail.task.id} taskRevisionId={detail.task.currentRevisionId} taskVersion={detail.task.version} />
+    <TaskWorkflow key={`${detail.task.id}:${detail.task.version}`} context={context} detail={detail} />
     <section className="panel"><div className="panel-head"><h2>当前固定依据</h2><span>任务修订 <ShortId value={detail.revision.id} /></span></div><Basis basis={detail.basis} projectId={projectId} /></section>
     <section className="panel"><div className="panel-head"><h2>待复核的依据变化</h2><span>{pending.length} 项</span></div>
       {!pending.length && <p className="empty">当前没有待复核影响。</p>}
@@ -414,12 +436,12 @@ export function App() {
     setReceipts(next);
     setReceiptStorageAvailable(writeReceipts(next));
   }
-  function beginAttempt(command: UnknownCommand): boolean {
+  function beginAttempt(command: RecoverableCommand): boolean {
     if (!session) return false;
     const next = addReceipt(receiptsRef.current, {
       actorId: session!.principal.actorId,
       projectId: command.projectId,
-      taskId: command.taskId,
+      taskId: command.taskId ?? command.goalId ?? command.stageId ?? command.documentId ?? command.projectId,
       operationId: command.operationId,
       commandType: command.type,
       createdAt: new Date().toISOString(),
@@ -451,6 +473,7 @@ export function App() {
   }, [client, projectId, session, refresh]);
   if (!session) return <AuthGate hasReceipts={receipts.length > 0} onSuccess={(value, next) => { setToken(value); setSession(next); }} />;
   const principal = session.principal;
+  const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: () => setRefresh(v => v + 1) };
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="#/">evoLoop <span>工作台</span></a><div className="identity"><span>{principal.actorId}</span><button className="quiet" onClick={() => {
       if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
@@ -471,11 +494,11 @@ export function App() {
       {!receiptStorageAvailable && <div className="global-alert"><Alert kind="error">浏览器未能暂存操作回执。请复制上方操作 ID；刷新或关闭页面后可能无法从此界面找回。</Alert></div>}
       {operationNotice && <div className="global-alert"><Alert kind="info">{operationNotice} <button className="quiet" onClick={() => setOperationNotice("")}>关闭</button></Alert></div>}
       {projectError ? <div className="content"><Alert kind="error">项目暂不可读取：{projectError}</Alert><button onClick={() => setRefresh(v => v + 1)}>重试读取项目</button></div> : <>
-        {(route.section === "overview" || route.section === "work") && <Board token={token} projectId={projectId} section={route.section} refresh={refresh} />}
-        {route.section === "knowledge" && <div className="content narrow"><div className="eyebrow">知识</div><h1>知识空间尚未接通</h1><Alert>当前切片仅支持过程文档、任务固定依据与影响复核。Wiki、知识图谱和来源查询须待知识后端接入后开放。</Alert><p className="muted">飞书同步与 Codex 会话控制也尚未接通。</p></div>}
-        {route.section === "task" && route.id && <TaskPage token={token} projectId={projectId} id={route.id} refresh={refresh} onChanged={() => setRefresh(v => v + 1)} onAttempt={beginAttempt} onKnown={finishKnown} blockedByUnknown={visibleReceipts.some(r => r.projectId === projectId && r.taskId === route.id)} canReview={principal.permissions.includes("review")} />}
-        {route.section === "document" && route.id && <DocumentPage token={token} projectId={projectId} id={route.id} selectedRevision={route.revision} />}
+        {(route.section === "overview" || route.section === "work") && <Board context={context} token={token} projectId={projectId} section={route.section} refresh={refresh} />}
+        {route.section === "knowledge" && <div className="content"><div className="eyebrow">知识</div><h1>知识空间</h1><KnowledgePanel context={context} refresh={refresh} /></div>}
+        {route.section === "task" && route.id && <TaskPage context={context} token={token} projectId={projectId} id={route.id} refresh={refresh} onChanged={() => setRefresh(v => v + 1)} onAttempt={beginAttempt} onKnown={finishKnown} blockedByUnknown={visibleReceipts.some(r => r.projectId === projectId && r.taskId === route.id)} canReview={principal.permissions.includes("review")} />}
+        {route.section === "document" && route.id && <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={route.id} selectedRevision={route.revision} />}
       </>}
-    </> : <ProjectChooser token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} />}
+    </> : <ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} />}
   </div>;
 }

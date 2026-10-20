@@ -6,7 +6,7 @@
 
 产品沿**认知演进、协作执行**两个维度展开，由四部分共同支撑：**认知循环、动态多 session、任务与状态机、外置 LLM Wiki 与有效性评价**。认知循环产生有依据的下一步，协作机制将它落实，实际使用结果再修订认识。
 
-当前已有**本机 S1a 工作切片**：真实 PostgreSQL 保存过程 Markdown 文档与任务，需求采纳后逐项复核任务依据，并能回查旧版本。提供协调 API、CLI 与 React 工作台；飞书、Wiki、Codex 派发及完整认知循环仍未接入。见[本机运行](docs/development/local-run.md)与[设计审阅及实测](docs/research/design-review-20261020.md)。
+当前已有**本机试用切片**：11 个 npm 工作区和迁移至 009 的 PostgreSQL 支撑目标、阶段、任务、过程文档、交付、使用观察、职责与日程；协调 API、CLI 和 React 工作台可操作。固定 Git 原件、本机 Blob/静态 HTML 阅读、外置 OpenViking 0.5.1 与自管 Codex 运行均有受限实测。首项任务已有交付和独立 Agent 使用观察；后续运行的终态误判已由普通工作台显式复核修正，真人亲用、语义索引、飞书真实租户与生产部署未验。见[当前阶段](docs/roadmap.md#当前基线)与[本机运行](docs/development/local-run.md)。
 
 ## 从这里开始
 
