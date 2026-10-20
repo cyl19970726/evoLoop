@@ -1450,6 +1450,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, .map-node:focus-visi
       if (modules) {
         atlasHash = location.hash;
         if (!atlas) atlas = mountArchitectureViewer(atlasRoot, model);
+        requestAnimationFrame(() => {
+          if (!modulePanel.hidden && atlas.state.focus) atlas.focusNode(atlas.state.focus, true);
+        });
       } else if (new URLSearchParams(location.hash.slice(1)).has("read")) readingHash = location.hash;
     }
     window.addEventListener("hashchange", show);
