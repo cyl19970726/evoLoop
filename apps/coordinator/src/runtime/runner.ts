@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import { DomainError } from "@evoloop/contracts/ports";
+import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
@@ -195,18 +197,35 @@ export class RuntimeRunner {
     }
     return binding;
   }
+  /** Register provenance and inspect metadata for reads without opening another native writer. */
+  private async readBinding(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
+    if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd))
+      throw new DomainError("FORBIDDEN", "当前会话授权或工作目录已失效，无法读取原生历史。");
+    const binding = bindingOf(session);
+    await this.runtime.registerBinding(binding);
+    await this.runtime.inspect(binding);
+    return binding;
+  }
+  private readFailure(error: unknown): DomainError {
+    if (error instanceof DomainError) return error;
+    const detail = error instanceof RuntimeServerError ? `原生读取 ${error.method} 被拒绝（${error.category}，代码 ${error.code}）` :
+      "原生读取或归属校验失败";
+    return new DomainError("RUNTIME_READ_UNAVAILABLE", `${detail}。已保存的运行状态仍可读；请检查执行连接后重试读取，不要重发运行。`);
+  }
   async history(principal: Principal, projectId: string, sessionId: string) {
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, sessionId);
-    let binding: RuntimeBinding;
-    try { binding = await this.restore(session); }
-    catch (error) { throw new Error(error instanceof Error && error.name === "RuntimeServerError" ? error.message : "Owned runtime history is unavailable; no dispatch was replayed"); }
-    const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
-    const result = [];
-    for (const turn of turns.slice(0,20)) {
-      const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
-      result.push({ id: turn.id, status: turn.status, messages: items.filter(item => ["userMessage", "agentMessage"].includes(String(object(item)?.type))).map(item => ({type:String(object(item)?.type),text:textOf(item)})) });
+    try {
+      const binding = await this.readBinding(session);
+      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
+      const result = [];
+      for (const turn of turns.slice(0,20)) {
+        const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
+        result.push({ id: turn.id, status: turn.status, messages: items.filter(item => ["userMessage", "agentMessage"].includes(String(object(item)?.type))).map(item => ({type:String(object(item)?.type),text:textOf(item)})) });
+      }
+      return { turns: result, truncated: turns.length > 20, observedAt: new Date().toISOString() };
+    } catch (error) {
+      throw this.readFailure(error);
     }
-    return { turns: result, truncated: turns.length > 20, observedAt: new Date().toISOString() };
   }
   private async input(principal: Principal, run: RuntimeRunRecord): Promise<string> {
     const fixed = await this.deps.workflow.getTaskRevision(principal, run.projectId, run.taskId, run.taskRevisionId);
@@ -331,13 +350,19 @@ export class RuntimeRunner {
       if (matched) this.approvalQueue.splice(this.approvalQueue.indexOf(approval), 1);
     }
   }
-  async result(principal: Principal, projectId: string, runId: string): Promise<{ messages: string[] }> {
+  async result(principal: Principal, projectId: string, runId: string): Promise<{ messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }> {
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
-    if (!run.nativeTurnId) return { messages: [] };
+    if (!run.nativeTurnId) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚未绑定原生 Turn，没有可确认的原生答复；请先阅读运行回执。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
-    const binding = await this.restore(session);
-    const items = await collect(cursor => this.runtime.listItems(binding, run.nativeTurnId!, cursor), 100);
-    return { messages: finalMessages(items) };
+    try {
+      const binding = await this.readBinding(session);
+      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
+      if (!turns.some(turn => turn.id === run.nativeTurnId)) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "已绑定的原生 Turn 当前不可见；已保存的结果摘要不是原生全文，请稍后重试读取。");
+      const items = await collect(cursor => this.runtime.listItems(binding, run.nativeTurnId!, cursor), 100);
+      return { messages: finalMessages(items), source: "owned-native-history",
+        finalPhaseConfirmed: items.some(item => object(item)?.type === "agentMessage" && object(item)?.phase === "final_answer"),
+        observedAt: new Date().toISOString() };
+    } catch (error) { throw this.readFailure(error); }
   }
   /** Explicit reviewer readback of a previously recorded terminal observation; never starts a turn. */
   async reconcile(principal: Principal, projectId: string, runId: string, expectedVersion: number, reason: string): Promise<RuntimeRunRecord> {
@@ -353,7 +378,7 @@ export class RuntimeRunner {
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
     if (session.state !== "ready" || !this.authorized(session, run.actorId) || !this.authorized(session, principal.actorId))
       throw new Error("Session authority is no longer available");
-    const binding = await this.restore(session);
+    const binding = await this.readBinding(session);
     const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
     const turn = turns.find(candidate => candidate.id === run.nativeTurnId);
     if (!turn || !["completed", "failed", "interrupted"].includes(turn.status) || !turn.completedAtUtc)

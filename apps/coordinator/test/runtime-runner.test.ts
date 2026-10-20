@@ -5,6 +5,7 @@ import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 
 const projectId = randomUUID();
@@ -36,6 +37,7 @@ class FakeRuntime {
   disconnect(reason: string) { this.ready = false; for (const listener of this.disconnectListeners) listener(reason); }
   async registerBinding(_binding: RuntimeBinding) {}
   async resume(binding: RuntimeBinding) { return binding; }
+  async inspect(_binding: RuntimeBinding): Promise<unknown> { return { thread: { id: session.nativeThreadId, sessionId: session.nativeSessionId, cwd: session.cwd } }; }
   async listTurns(): Promise<RuntimePage<RuntimeTurn>> { return { data: [], nextCursor: null }; }
   async listItems(): Promise<RuntimePage<unknown>> { return { data: [], nextCursor: null }; }
   async startTurn() { this.starts++; throw Error("unknown start must not replay"); }
@@ -154,6 +156,69 @@ test("explicit reviewer readback corrects only a settled owned turn without repl
     const expectedItems = [{ id: "message-1", type: "agentMessage", phase: "final_answer", text: "Finished" }];
     assert.deepEqual(calls[0]?.[5], { itemsDigest: createHash("sha256").update(JSON.stringify(expectedItems)).digest("hex"),
       completedAtUtc: "2026-10-20T12:14:44.000Z" });
+    assert.equal(runtime.starts, 0);
+  } finally { await runner.stop(); }
+});
+
+test("read-only history and result page owned data without native resume or turn replay", async () => {
+  const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
+  const runtime = new FakeRuntime();
+  let resumes = 0, registrations = 0, inspections = 0, turnPages = 0, itemPages = 0;
+  runtime.resume = async () => { resumes++; throw new Error("native resume unavailable"); };
+  runtime.registerBinding = async () => { registrations++; };
+  runtime.inspect = async () => { inspections++; return { thread: { id: session.nativeThreadId, sessionId: session.nativeSessionId, cwd: session.cwd } }; };
+  runtime.listTurns = async (_binding: RuntimeBinding, cursor?: string) => {
+    turnPages++;
+    return cursor ? { data: [{ id: "turn-1", status: "completed" }], nextCursor: null } :
+      { data: [{ id: "turn-2", status: "completed" }], nextCursor: "turn-page-2" };
+  };
+  runtime.listItems = async (_binding: RuntimeBinding, turnId: string, cursor?: string) => {
+    itemPages++;
+    if (turnId === "turn-2") return { data: [], nextCursor: null };
+    return cursor ? { data: [{ id: "final", type: "agentMessage", phase: "final_answer", text: "Owned final" }], nextCursor: null } :
+      { data: [{ id: "commentary", type: "agentMessage", phase: "commentary", text: "Working" }], nextCursor: "item-page-2" };
+  };
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [observed], getRuntimeSession: async () => session,
+    getRuntimeRun: async () => observed } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
+  const reviewer = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [reviewer], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    const history = await runner.history(reviewer, projectId, session.id);
+    const result = await runner.result(reviewer, projectId, observed.id);
+    assert.equal(history.turns.length, 2);
+    assert.deepEqual(result.messages, ["Owned final"]);
+    assert.equal(result.finalPhaseConfirmed, true);
+    assert.equal(result.source, "owned-native-history");
+    assert.equal(resumes, 0); assert.equal(runtime.starts, 0);
+    assert.equal(registrations, 2); assert.equal(inspections, 2);
+    assert.equal(turnPages, 4); assert.equal(itemPages, 5);
+  } finally { await runner.stop(); }
+});
+
+test("native read rejection reports a read-specific error without private protocol text", async () => {
+  const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
+  const runtime = new FakeRuntime();
+  runtime.listTurns = async () => ({ data: [{ id: "turn-1", status: "completed" }], nextCursor: null });
+  runtime.listItems = async () => { throw new RuntimeServerError("thread/items/list", 17, -32000, "private native path and material"); };
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [observed], getRuntimeSession: async () => session,
+    getRuntimeRun: async () => observed } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
+  const reviewer = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [reviewer], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    await assert.rejects(() => runner.result(reviewer, projectId, observed.id), error => {
+      assert.equal((error as { code?: string }).code, "RUNTIME_READ_UNAVAILABLE");
+      assert.match((error as Error).message, /原生读取 thread\/items\/list 被拒绝/);
+      assert.doesNotMatch((error as Error).message, /private native path/);
+      return true;
+    });
     assert.equal(runtime.starts, 0);
   } finally { await runner.stop(); }
 });

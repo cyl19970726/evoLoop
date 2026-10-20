@@ -2,6 +2,7 @@ import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from 
 import { request } from "../api";
 export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string; sandbox: "read-only" | "workspace-write" }
 export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[] }
+export interface NativeResult { messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }
 export function runtimeClient(token: string, projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/runtime`;
   const get = <T>(path: string) => request<T>(token, base + path, 15000);
@@ -11,7 +12,7 @@ export function runtimeClient(token: string, projectId: string) {
     events: (runId: string) => get<RuntimeRecordEvent[]>(`/runs/${encodeURIComponent(runId)}/events`),
     history: (sessionId: string) => get<{turns:{id:string;status:string;messages:{type:string;text:string}[]}[];truncated:boolean;observedAt:string}>(`/sessions/${encodeURIComponent(sessionId)}/history`),
     sessionEvents: (sessionId: string) => get<RuntimeRecordEvent[]>(`/sessions/${encodeURIComponent(sessionId)}/events`),
-    result: (runId: string) => get<{ messages: string[] }>(`/runs/${encodeURIComponent(runId)}/result`),
+    result: (runId: string) => get<NativeResult>(`/runs/${encodeURIComponent(runId)}/result`),
     reconcile: (runId: string, expectedVersion: number, reason: string) => request<RuntimeRunRecord>(token, `${base}/runs/${encodeURIComponent(runId)}/reconcile`, 120000, { method: "POST", body: JSON.stringify({ expectedVersion, reason }) }),
     recover: () => request<{ available: boolean }>(token, `${base}/recover`, 30000, { method: "POST" }),
   };

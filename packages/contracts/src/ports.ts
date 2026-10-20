@@ -5,9 +5,13 @@ import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from 
 import type { RoleReader, RoleTransaction } from "./roles.js";
 import type { SchedulingReader, SchedulingTransaction } from "./scheduling.js";
 import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./process-documents.js";
+import type { DiscussionRecord, DiscussionEvent } from "./discussions.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader {
+  getDiscussion(id: string): Promise<DiscussionRecord | null>;
+  listDiscussions(limit: number, cursor?: string): Promise<Page<DiscussionRecord>>;
+  listDiscussionEvents(id: string): Promise<DiscussionEvent[]>;
   getRuntimeSession(id: string): Promise<RuntimeSessionRecord | null>;
   listRuntimeSessions(): Promise<RuntimeSessionRecord[]>;
   getRuntimeRun(id: string): Promise<RuntimeRunRecord | null>;
@@ -33,6 +37,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listDocuments(limit: number, cursor?: string): Promise<Page<Document>>;
   getTask(id: string): Promise<Task | null>;
   getTaskRevision(taskId: string, revisionId: string): Promise<TaskRevision | null>;
+  listTaskRevisions(taskId: string): Promise<TaskRevision[]>;
   getBasisSet(taskId: string, taskRevisionId: string, basisSetId: string): Promise<BasisSet | null>;
   listTasks(limit: number, cursor?: string): Promise<Page<Task>>;
   listLinks(taskId: string): Promise<TaskDocumentLink[]>;
@@ -43,6 +48,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   findTasksUsingDocument(documentId: string): Promise<Task[]>;
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction {
+  insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
+  updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;
   updateRuntimeSession(session: RuntimeSessionRecord, expectedVersion: number): Promise<void>;
   insertRuntimeRun(run: RuntimeRunRecord): Promise<void>;

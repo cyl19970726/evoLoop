@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import type { Task } from "@evoloop/contracts";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
-import { errorText } from "../api";
+import { ApiError, errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
-import { runtimeClient, type RuntimeStatus } from "./client";
+import { runtimeClient, type NativeResult, type RuntimeStatus } from "./client";
+
+function readErrorText(cause: unknown): string {
+  if (cause instanceof ApiError && (cause.status === 0 || cause.status >= 500))
+    return "原生历史读取失败或超时。已保存的运行记录仍可查看；请检查执行连接后重试读取，不要重发运行。";
+  return errorText(cause);
+}
 
 const pending = ["requested", "dispatching", "running", "unknown"];
 const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox]);
@@ -74,15 +80,15 @@ function RuntimeEvidence({ load, label }: { load(): Promise<RuntimeRecordEvent[]
   </div>;
 }
 function RunCard({ context, run, mayAbandon }: { context: MutationContext; run: RuntimeRunRecord; mayAbandon: boolean }) {
-  const [messages, setMessages] = useState<string[] | null>(null);
+  const [nativeResult, setNativeResult] = useState<NativeResult | null>(null);
   const [error,setError] = useState("");
   return <details className="workflow-detail"><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
     <p>任务修订 <code>{run.taskRevisionId}</code></p><p>依据集合 <code>{run.basisSetId}</code></p>
     {run.state === "unknown" && <Notice error>派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
     {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="workflow-detail"><summary>复核只读派发并保留失败记录</summary><p>仅适用于没有绑定 Turn 的只读运行。放弃会关闭旧会话的后续派发；不证明外部未执行，也不自动重发。</p><ActionForm context={context} review title="复核并放弃未知只读派发" fields={[reasonField,{name:"evidence",label:"所属线程历史与失败原因核对证据",kind:"textarea"}]} build={v=>({type:"runtime.run.abandonReadOnly",runId:run.id,expectedVersion:run.version,...v})} /></details>}
-    {run.resultSummary && <p className="history-body">结果摘要：{run.resultSummary}</p>}
-    {run.nativeTurnId && <button onClick={async () => { try { setMessages((await runtimeClient(context.token,context.projectId).result(run.id)).messages); } catch(cause) { setError(errorText(cause)); } }}>读取完整最终答复</button>}
-    {error && <Notice error>{error}</Notice>}{messages?.map((text,index)=><pre className="runtime-result" key={index}>{text}</pre>)}
+    {run.resultSummary && <p className="history-body">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}
+    {run.nativeTurnId && <button onClick={async () => { try { setNativeResult(await runtimeClient(context.token,context.projectId).result(run.id)); setError(""); } catch(cause) { setError(readErrorText(cause)); } }}>读取原生答复</button>}
+    {error && <Notice error>{error}</Notice>}{nativeResult && <><p>来源：自有原生线程历史 · 读回时间 {nativeResult.observedAt} · {nativeResult.finalPhaseConfirmed ? "已确认最终答复阶段" : "原生记录未标记最终答复阶段，以下内容需复核"}</p>{nativeResult.messages.length === 0 && <p className="empty">当前原生记录没有可显示的答复。</p>}{nativeResult.messages.map((text,index)=><pre className="runtime-result" key={index}>{text}</pre>)}</>}
     {run.nativeTurnId && ["completed","failed","interrupted"].includes(run.state) && context.principal.permissions.includes("review") && <ReconcileRun context={context} run={run} />}
     <RuntimeEvidence label="阅读运行、交接与审批回执" load={() => runtimeClient(context.token,context.projectId).events(run.id)} />
     {pending.includes(run.state) && run.nativeTurnId && !run.interruptRequested && <ActionForm context={context} review title="请求中断本次运行" fields={[reasonField]} build={v=>({type:"runtime.run.interrupt",runId:run.id,...v})} />}
@@ -117,5 +123,5 @@ function ReconcileRun({ context, run }: { context: MutationContext; run: Runtime
 function SessionHistory({context,sessionId}:{context:MutationContext;sessionId:string}) {
   const [history,setHistory]=useState<Awaited<ReturnType<ReturnType<typeof runtimeClient>["history"]>>|null>(null);
   const [error,setError]=useState("");
-  return <div><button onClick={async()=>{try{setHistory(await runtimeClient(context.token,context.projectId).history(sessionId));setError("");}catch(cause){setError(errorText(cause));}}}>读取所属线程历史</button>{error&&<Notice error>{error}</Notice>}{history&&<><p>读回 {history.turns.length} 个 Turn · {history.observedAt} · {history.truncated?"有更多历史未读，不代表完整":"当前范围读取完成"}</p>{history.turns.map(turn=><details key={turn.id}><summary>{turn.id} · {turn.status}</summary>{turn.messages.map((m,i)=><pre className="runtime-result" key={i}>{m.type}: {m.text}</pre>)}</details>)}</>}</div>;
+  return <div><button onClick={async()=>{try{setHistory(await runtimeClient(context.token,context.projectId).history(sessionId));setError("");}catch(cause){setError(readErrorText(cause));}}}>读取所属线程历史</button>{error&&<Notice error>{error}</Notice>}{history&&<><p>读回 {history.turns.length} 个 Turn · {history.observedAt} · {history.truncated?"有更多历史未读，不代表完整":"当前范围读取完成"}</p>{history.turns.map(turn=><details key={turn.id}><summary>{turn.id} · {turn.status}</summary>{turn.messages.map((m,i)=><pre className="runtime-result" key={i}>{m.type}: {m.text}</pre>)}</details>)}</>}</div>;
 }

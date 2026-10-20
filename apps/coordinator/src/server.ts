@@ -183,6 +183,19 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/stages/:id/reviews", async request => {
     const p = params(request.params); return options.service.listStageReviews(who(request.principal), p.projectId!, p.id!);
   });
+  app.get("/api/projects/:projectId/tasks/:id/revisions", async request => {
+    const p = params(request.params); return options.service.listTaskRevisions(who(request.principal), p.projectId!, p.id!);
+  });
+  app.get("/api/projects/:projectId/discussions", async request => {
+    const p = params(request.params); const q = pageSchema.parse(request.query);
+    return options.service.listDiscussions(who(request.principal), p.projectId!, q.limit, q.cursor);
+  });
+  app.get("/api/projects/:projectId/discussions/:id", async request => {
+    const p = params(request.params); return options.service.getDiscussion(who(request.principal), p.projectId!, p.id!);
+  });
+  app.get("/api/projects/:projectId/discussions/:id/events", async request => {
+    const p = params(request.params); return options.service.listDiscussionEvents(who(request.principal), p.projectId!, p.id!);
+  });
   for (const entity of ["documents", "tasks"] as const) {
     app.get(`/api/projects/:projectId/${entity}`, async request => {
       const p = params(request.params); const q = pageSchema.parse(request.query);

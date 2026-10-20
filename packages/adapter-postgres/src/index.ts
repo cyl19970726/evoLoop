@@ -7,6 +7,7 @@ import { PgRuntimeStore } from "./runtime.js";
 import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
 import { PgDocumentPayloadStore } from "./documents.js";
+import { PgDiscussionQueries } from "./discussions.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
 import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
@@ -38,7 +39,7 @@ const rowGoal = (r: Row): Goal => ({ projectId:r.project_id,id:r.goal_id,version
 const rowGoalRevision = (r: Row): GoalRevision => ({...rowGoal(r),reason:r.reason});
 const rowStage = (r: Row): Stage => ({ projectId:r.project_id,id:r.stage_id,goalId:r.goal_id,version:r.version,deliverable:r.deliverable,learningQuestion:r.learning_question,state:r.state,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowStageRevision = (r: Row): StageRevision => ({projectId:r.project_id,stageId:r.stage_id,id:r.revision_id,version:r.version,state:r.state,deliverable:r.deliverable,learningQuestion:r.learning_question,actorId:r.actor_id,reason:r.reason,createdAt:iso(r.created_at)});
-const rowStageReview = (r: Row): StageReview => ({ projectId:r.project_id,id:r.review_id,stageId:r.stage_id,stageVersion:r.stage_version,adopted:r.adopted,rejected:r.rejected,gap:r.gap,nextChoice:r.next_choice,evidence:r.evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
+const rowStageReview = (r: Row): StageReview => ({ projectId:r.project_id,id:r.review_id,stageId:r.stage_id,stageVersion:r.stage_version,supersedesReviewId:r.supersedes_review_id,adopted:r.adopted,rejected:r.rejected,gap:r.gap,nextChoice:r.next_choice,evidence:r.evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowProposal = (r: Row): TaskProposal => ({ projectId:r.project_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,stageId:r.stage_id,consumer:r.consumer,useRequired:r.use_required,evidence:r.evidence,stopCondition:r.stop_condition,createdAt:iso(r.created_at) });
 const rowJudgement = (r: Row): TaskJudgement => ({ projectId:r.project_id,id:r.judgement_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,decision:r.decision,reason:r.reason,evidence:r.evidence,relookCondition:r.relook_condition,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowDelivery = (r: Row): Delivery => ({ projectId:r.project_id,id:r.delivery_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,artifactRef:r.artifact_ref,artifactRevision:r.artifact_revision,contentHash:r.content_hash,technicalResult:r.technical_result,technicalEvidence:r.technical_evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
@@ -64,13 +65,18 @@ class PgReader implements Reader {
   protected readonly scheduling: PgSchedulingQueries;
   protected readonly references: PgReferenceStore;
   protected readonly payloads: PgDocumentPayloadStore;
+  protected readonly discussions: PgDiscussionQueries;
   constructor(protected readonly client: PoolClient, protected readonly projectId: string) {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
     this.scheduling = new PgSchedulingQueries(client, projectId);
     this.payloads = new PgDocumentPayloadStore(client, projectId);
+    this.discussions = new PgDiscussionQueries(client, projectId);
   }
+  getDiscussion(id: string) { return this.discussions.getDiscussion(id); }
+  listDiscussions(limit: number, cursor?: string) { return this.discussions.listDiscussions(limit, cursor); }
+  listDiscussionEvents(id: string) { return this.discussions.listDiscussionEvents(id); }
   getTaskExternalHead(taskId:string,slotId:string){return this.references.getTaskExternalHead(taskId,slotId);}
   getTaskExternalSnapshot(taskId:string,revisionId:string,slotId:string){return this.references.getTaskExternalSnapshot(taskId,revisionId,slotId);}
   listTaskExternalSnapshot(taskId:string,revisionId:string){return this.references.listTaskExternalSnapshot(taskId,revisionId);}
@@ -106,7 +112,7 @@ class PgReader implements Reader {
   async getStage(id:string):Promise<Stage|null> { const r=await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND stage_id=$2",[this.projectId,id]);return r.rows[0]?rowStage(r.rows[0]):null; }
   async listStages(goalId?:string):Promise<Stage[]> { const r=await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND ($2::uuid IS NULL OR goal_id=$2::uuid) ORDER BY created_at,stage_id LIMIT $3",[this.projectId,goalId??null,maxDetailRows+1]);return bounded(r.rows.map(rowStage),"stages"); }
   async listStageRevisions(stageId:string):Promise<StageRevision[]> {const r=await this.client.query("SELECT * FROM stage_revision WHERE project_id=$1 AND stage_id=$2 ORDER BY version LIMIT $3",[this.projectId,stageId,maxDetailRows+1]);return bounded(r.rows.map(rowStageRevision),"stage revisions");}
-  async listStageReviews(stageId:string):Promise<StageReview[]> { const r=await this.client.query("SELECT * FROM stage_review WHERE project_id=$1 AND stage_id=$2 ORDER BY created_at,review_id LIMIT $3",[this.projectId,stageId,maxDetailRows+1]);return bounded(r.rows.map(rowStageReview),"stage reviews"); }
+  async listStageReviews(stageId:string):Promise<StageReview[]> { const r=await this.client.query("SELECT * FROM stage_review WHERE project_id=$1 AND stage_id=$2 ORDER BY stage_version,review_id LIMIT $3",[this.projectId,stageId,maxDetailRows+1]);return bounded(r.rows.map(rowStageReview),"stage reviews"); }
   async getTaskProposal(taskId:string,taskRevisionId?:string):Promise<TaskProposal|null> { const r=await this.client.query("SELECT p.* FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=$1 AND p.task_id=$2 AND ($3::uuid IS NULL OR p.task_revision_id=$3::uuid) ORDER BY r.version DESC LIMIT 1",[this.projectId,taskId,taskRevisionId??null]);return r.rows[0]?rowProposal(r.rows[0]):null; }
   async listTaskJudgements(taskId:string):Promise<TaskJudgement[]> {const r=await this.client.query("SELECT j.* FROM task_judgement j JOIN task_revision r ON r.project_id=j.project_id AND r.task_id=j.task_id AND r.revision_id=j.task_revision_id WHERE j.project_id=$1 AND j.task_id=$2 ORDER BY r.version,j.created_at,j.judgement_id LIMIT $3",[this.projectId,taskId,maxDetailRows+1]);return bounded(r.rows.map(rowJudgement),"task judgements");}
   async getDelivery(id:string):Promise<Delivery|null> {const r=await this.client.query("SELECT * FROM delivery WHERE project_id=$1 AND delivery_id=$2",[this.projectId,id]);return r.rows[0]?rowDelivery(r.rows[0]):null;}
@@ -137,6 +143,10 @@ class PgReader implements Reader {
   async getTaskRevision(taskId: string, revisionId: string): Promise<TaskRevision | null> {
     const r = await this.client.query("SELECT * FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [this.projectId, taskId, revisionId]);
     return r.rows[0] ? rowTaskRevision(r.rows[0]) : null;
+  }
+  async listTaskRevisions(taskId: string): Promise<TaskRevision[]> {
+    const r = await this.client.query("SELECT * FROM task_revision WHERE project_id=$1 AND task_id=$2 ORDER BY version LIMIT $3", [this.projectId, taskId, maxDetailRows + 1]);
+    return bounded(r.rows.map(rowTaskRevision), "task revisions");
   }
   async getBasisSet(taskId: string, taskRevisionId: string, basisSetId: string): Promise<BasisSet | null> {
     const found = await this.client.query("SELECT * FROM basis_set WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND basis_set_id=$4 AND sealed", [this.projectId, taskId, taskRevisionId, basisSetId]);
@@ -180,6 +190,8 @@ class PgReader implements Reader {
 }
 
 class PgTransaction extends PgReader implements Transaction {
+  insertDiscussion(value: import("@evoloop/contracts").DiscussionRecord, event: import("@evoloop/contracts").DiscussionEvent) { return this.discussions.insertDiscussion(value, event); }
+  updateDiscussion(value: import("@evoloop/contracts").DiscussionRecord, expectedVersion: number, event: import("@evoloop/contracts").DiscussionEvent) { return this.discussions.updateDiscussion(value, expectedVersion, event); }
   insertFormalSourceDecision(value:FormalSourceDecision){return this.references.insertFormalSourceDecision(value);}
   insertTaskExternalDecision(value:TaskExternalReferenceRecord){return this.references.insertTaskExternalDecision(value);}
   advanceTaskExternalHead(value:TaskExternalReferenceHead,expectedVersion:number){return this.references.advanceTaskExternalHead(value,expectedVersion);}
@@ -215,7 +227,7 @@ class PgTransaction extends PgReader implements Transaction {
   async insertStage(s:Stage,r:StageRevision):Promise<void> {this.assertScope(s.projectId);await this.client.query("INSERT INTO project_stage(project_id,stage_id,goal_id,version,deliverable,learning_question,state,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[s.projectId,s.id,s.goalId,s.version,s.deliverable,s.learningQuestion,s.state,s.actorId,s.createdAt]);await this.insertStageRevision(r);}
   private async insertStageRevision(r:StageRevision):Promise<void> {await this.client.query("INSERT INTO stage_revision(project_id,stage_id,revision_id,version,state,deliverable,learning_question,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",[r.projectId,r.stageId,r.id,r.version,r.state,r.deliverable,r.learningQuestion,r.actorId,r.reason,r.createdAt]);}
   async updateStage(s:Stage,r:StageRevision,expectedVersion:number):Promise<void> {this.assertScope(s.projectId);const q=await this.client.query("UPDATE project_stage SET version=$3,state=$4,actor_id=$5,created_at=$6 WHERE project_id=$1 AND stage_id=$2 AND version=$7",[s.projectId,s.id,s.version,s.state,s.actorId,s.createdAt,expectedVersion]);if(!q.rowCount)throw new DomainError("VERSION_CONFLICT","stage version changed",(await this.getStage(s.id))?.version);await this.insertStageRevision(r);}
-  async insertStageReview(r:StageReview):Promise<void> {this.assertScope(r.projectId);await this.client.query("INSERT INTO stage_review(project_id,review_id,stage_id,stage_version,adopted,rejected,gap,next_choice,evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",[r.projectId,r.id,r.stageId,r.stageVersion,r.adopted,r.rejected,r.gap,r.nextChoice,r.evidence,r.reason,r.actorId,r.createdAt]);}
+  async insertStageReview(r:StageReview):Promise<void> {this.assertScope(r.projectId);await this.client.query("INSERT INTO stage_review(project_id,review_id,stage_id,stage_version,supersedes_review_id,adopted,rejected,gap,next_choice,evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",[r.projectId,r.id,r.stageId,r.stageVersion,r.supersedesReviewId,r.adopted,r.rejected,r.gap,r.nextChoice,r.evidence,r.reason,r.actorId,r.createdAt]);}
   async insertTaskProposal(p:TaskProposal):Promise<void> {this.assertScope(p.projectId);await this.client.query("INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,evidence,stop_condition,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[p.projectId,p.taskId,p.taskRevisionId,p.stageId,p.consumer,p.useRequired,p.evidence,p.stopCondition,p.createdAt]);}
   async insertTaskJudgement(j:TaskJudgement):Promise<void> {this.assertScope(j.projectId);await this.client.query("INSERT INTO task_judgement(project_id,judgement_id,task_id,task_revision_id,decision,reason,evidence,relook_condition,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",[j.projectId,j.id,j.taskId,j.taskRevisionId,j.decision,j.reason,j.evidence,j.relookCondition,j.actorId,j.createdAt]);}
   async insertDelivery(d:Delivery):Promise<void> {this.assertScope(d.projectId);await this.client.query("INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",[d.projectId,d.id,d.taskId,d.taskRevisionId,d.artifactRef,d.artifactRevision,d.contentHash,d.technicalResult,d.technicalEvidence,d.reason,d.actorId,d.createdAt]);}

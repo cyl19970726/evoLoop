@@ -26,6 +26,7 @@ type WorkflowCommand = Extract<
       | "stage.propose"
       | "stage.accept"
       | "stage.review"
+      | "stage.review.correct"
       | "task.judge"
       | "task.revise"
       | "task.start"
@@ -249,6 +250,7 @@ export async function applyWorkflow({
         id: nextId(),
         stageId: stage.id,
         stageVersion: stage.version,
+        supersedesReviewId: null,
         adopted: c.adopted,
         rejected: c.rejected,
         gap: c.gap,
@@ -272,6 +274,48 @@ export async function applyWorkflow({
         id: nextId(),
         version: next.version,
         state: next.state,
+        deliverable: next.deliverable,
+        learningQuestion: next.learningQuestion,
+        actorId,
+        reason: c.reason,
+        createdAt: now,
+      };
+      await tx.updateStage(next, revision, stage.version);
+      return result(c.operationId, stage.id, review.id, next.version);
+    }
+    case "stage.review.correct": {
+      const stage = found(await tx.getStage(c.stageId), "stage");
+      version(stage.version, c.expectedVersion);
+      if (stage.state !== "reviewed")
+        throw new DomainError("INVALID_STATE", "only a reviewed stage can be corrected");
+      const reviews = await tx.listStageReviews(stage.id);
+      const latest = reviews.reduce<StageReview | null>((best, item) =>
+        best === null || item.stageVersion > best.stageVersion ? item : best, null);
+      if (!latest || latest.stageVersion !== stage.version - 1 || latest.id !== c.supersedesReviewId)
+        throw new DomainError("REVIEW_TARGET_CHANGED", "correction must supersede the latest review of this stage");
+      const review: StageReview = {
+        projectId: c.projectId,
+        id: nextId(),
+        stageId: stage.id,
+        stageVersion: stage.version,
+        supersedesReviewId: latest.id,
+        adopted: c.adopted,
+        rejected: c.rejected,
+        gap: c.gap,
+        nextChoice: c.nextChoice,
+        evidence: c.evidence,
+        reason: c.reason,
+        actorId,
+        createdAt: now,
+      };
+      await tx.insertStageReview(review);
+      const next: Stage = { ...stage, version: stage.version + 1, actorId, createdAt: now };
+      const revision = {
+        projectId: c.projectId,
+        stageId: stage.id,
+        id: nextId(),
+        version: next.version,
+        state: "reviewed" as const,
         deliverable: next.deliverable,
         learningQuestion: next.learningQuestion,
         actorId,

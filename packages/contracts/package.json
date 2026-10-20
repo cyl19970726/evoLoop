@@ -15,6 +15,7 @@
     "./process-documents": "./dist/process-documents.js",
     "./roles": "./dist/roles.js",
     "./delivery": "./dist/delivery.js",
+    "./discussions": "./dist/discussions.js",
     "./references": "./dist/references.js"
   },
   "dependencies": {

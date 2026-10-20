@@ -35,6 +35,7 @@ for await (const line of lines) {
     }
     send({ id, result: { thread } }); continue;
   }
+  if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
   if (method === "thread/resume" || method === "thread/read") { send({ id, result: { thread: mode === "changed-session" ? { ...thread, sessionId: "different-session" } : thread } }); continue; }
   if (method === "thread/turns/list") {
     turnListReads++;

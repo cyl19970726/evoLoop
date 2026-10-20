@@ -9,6 +9,7 @@ import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applySchedule } from "./scheduling/commands.js";
+import { applyDiscussion } from "./discussions.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
 export { RuntimeWorkflowService } from "./runtime/service.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
@@ -119,7 +120,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
-    return command.type === "document.adopt" || command.type === "task.accept" || command.type === "task.reviewBasis" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "task.judge" || command.type === "task.close" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose"
+    return command.type === "document.adopt" || command.type === "task.accept" || command.type === "task.reviewBasis" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "task.judge" || command.type === "task.close" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
@@ -352,6 +353,9 @@ export class WorkflowService {
           }
       }
       default:
+        if (command.type === "discussion.prepare" || command.type === "discussion.handoff.record" || command.type === "discussion.decision.record" || command.type === "discussion.action.link") {
+          return applyDiscussion({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hasher: this.deps.hasher });
+        }
         if (command.type === "schedule.create" || command.type === "schedule.revise") {
           return applySchedule(tx, principal, command as ScheduleCommand, now);
         }
@@ -367,6 +371,19 @@ export class WorkflowService {
     return this.deps.uow.read(projectId, async (reader) => {
       required(await reader.getProject(), "Project");
       return action(reader);
+    });
+  }
+
+  getDiscussion(principal: Principal, projectId: string, id: string): Promise<import("@evoloop/contracts").DiscussionRecord> {
+    return this.read(principal, projectId, async reader => required(await reader.getDiscussion(id), "Discussion"));
+  }
+  listDiscussions(principal: Principal, projectId: string, limit = 50, cursor?: string): Promise<Page<import("@evoloop/contracts").DiscussionRecord>> {
+    return this.read(principal, projectId, reader => reader.listDiscussions(pageLimit(limit), cursor));
+  }
+  listDiscussionEvents(principal: Principal, projectId: string, id: string): Promise<import("@evoloop/contracts").DiscussionEvent[]> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getDiscussion(id), "Discussion");
+      return reader.listDiscussionEvents(id);
     });
   }
 
@@ -399,6 +416,16 @@ export class WorkflowService {
       const basis = revision.basisSetId
         ? required(await reader.getBasisSet(taskId, revision.id, revision.basisSetId), "Basis set") : null;
       return { revision, basis };
+    });
+  }
+  listTaskRevisions(principal: Principal, projectId: string, taskId: string): Promise<Array<{ revision: TaskRevision; basis: BasisSet | null }>> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getTask(taskId), "Task");
+      const revisions = await reader.listTaskRevisions(taskId);
+      return Promise.all(revisions.map(async revision => ({ revision,
+        basis: revision.basisSetId
+          ? required(await reader.getBasisSet(taskId, revision.id, revision.basisSetId), "Basis set") : null,
+      })));
     });
   }
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {
