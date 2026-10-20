@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000) });
+
 const id = z.uuid();
 const text = z.string().trim().min(1).max(4000);
 const common = { projectId: id, operationId: id };

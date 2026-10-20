@@ -4,7 +4,7 @@
 
 本页把[总览](overview.md)的逻辑责任映射到拟议实现。先看核心模块承担什么、它们怎样装配到运行单位，再查源码依赖和完整包表。包是代码边界，进程是部署单位，Role/Session 是职责与承载关系，三者不逐一对应。
 
-TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界适配包已有代码；它们的运行证据各不相同。Git 固定来源、本机 Blob、Codex App Server 与外置 OpenViking 已有受限实跑，飞书仍只有 fake HTTP 与真实 PG 测试。各包落地不等于跨系统首版或真人使用通过；其余技术范围见[技术选型](technology-selection.md)。
+TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界适配包已有代码；它们的运行证据各不相同。Git 固定来源、本机 Blob、Codex App Server 与外置 OpenViking 已有受限实跑，飞书仍只有 fake HTTP 与真实 PG 测试。默认由人通过工作台观察、与现有 Agent 会话沟通；Agent 带固定依据经业务 skill+CLI 完成大多数常规写入；人再在工作台核对结果。工作台与 CLI 共用 API/core，人工直接操作可按需存在，不是每次 Agent 写入的前置审批。skill 是过程约定，不是第 12 个 npm 包，也不是前端开发技能；CLI 已提供具名命令与未知结果恢复，具体用法和未验边界见[业务技能与 CLI](../development/agent-cli.md)。各包落地不等于跨系统首版或真人使用通过；其余技术范围见[技术选型](technology-selection.md)。
 
 ## 四部分映射到一个 `core`
 
@@ -19,7 +19,7 @@ TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界�
 
 ## 完整模块索引
 
-[打开可折叠的完整模块索引](../assets/evoloop-system.html#view=modules)，按责任查 12 个目标包、`core` 子模块、端口与外部权威。可逐层展开、搜索，再切换运行协作、源码依赖与权威归属；折叠后的汇总连线仍可追到原端点和固定来源。索引表示**目标职责与关系**；当前有 11 个工作区，`packages/agent-tools` 尚未建立，图中的 `core` 子模块也不是当前目录结构。下面的运行装配图和源码依赖图分别解释两种不同的边。
+[打开可折叠的完整模块索引](../assets/evoloop-system.html#view=modules)，按责任查 12 个目标包、`core` 子模块、端口与外部权威。可逐层展开、搜索，再切换运行协作、源码依赖与权威归属；折叠后的汇总连线仍可追到原端点和固定来源。索引表示**目标职责与关系**；当前有 11 个工作区，`packages/agent-tools` 是可选 MCP 目标、尚未建立，也无需为凑齐目标图而造空包；图中的 `core` 子模块不是当前目录结构。下面的运行装配图和源码依赖图分别解释两种不同的边。
 
 ## 进程与权威边界
 
@@ -30,7 +30,7 @@ TypeScript/Node 核心、共同协调 API、PostgreSQL 主数据及六个边界�
 ```mermaid
 %%{init: {"flowchart":{"wrappingWidth":180,"nodeSpacing":24,"rankSpacing":34}}}%%
 flowchart TB
-  H["人／工作台／CLI<br/>Agent 工具入口"]:::entry --> A
+  H["人观察与沟通／工作台<br/>Agent 常规执行／业务 skill＋CLI<br/>可选 MCP 工具"]:::entry --> A
   subgraph coordinator["拟议单活协调进程"]
     A["共同 API<br/>输入与身份核验"]:::core --> C["core 用例<br/>权限、状态与基线"]:::core
     C --> L["PG 适配器"]:::adapter
@@ -69,7 +69,7 @@ flowchart TB
 
 紫＝同一协调进程；蓝＝其中的边界适配包；绿＝独立执行运行时；青＝外部正文权威。首期 OpenViking 的上游 Python/Rust 部署留在独立服务，evoLoop 通过 HTTP 接入。Git 正式正文与外置 Wiki 不迁入 PG；PG 只记录固定引用和跨对象关系。完整包名与依赖范围在后文表中查阅。
 
-**统一写路径。** 工作台、Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与身份 → `core` 读取 PG 当前版本并检查授权、接受/文档审核状态与冲突 → PG 同一事务提交 Task/Document/Relation 变更及出站 outbox → connector 投影到飞书并回读同步结果。飞书原生编辑是受控入口：事件提示回读，connector 将变化映射为带可核验行为者与基线的 command，仍经 `core` 审核后写 PG；身份或基线不足、字段冲突时停下并显式复核，不采用最后写入覆盖。Task、文档审核、运行、同步、实际效果状态分别维护；投影成功不等于交付或效果完成。
+**统一写路径。** 人在工作台观察进展、变化和依据，与现有 Agent 会话沟通目标或取舍；Agent 经业务 skill+CLI 承担大多数常规写入，必要时可用同类 MCP 工具，人工直接写入按需保留。它们经同一 API 提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与身份 → `core` 读取 PG 当前版本并检查授权、接受/文档审核状态与冲突 → PG 同一事务提交 Task/Document/Relation 变更及出站 outbox → connector 投影到飞书并回读同步结果 → 人再从共同查询核对后果。业务 skill 不提供旁路写入、另一个状态机或额外授权；CLI 负责机器调用和未知回执恢复，不要求 Agent 模拟人在 GUI 点击。飞书原生编辑是受控入口：事件提示回读，connector 将变化映射为带可核验行为者与基线的 command，仍经 `core` 审核后写 PG；身份或基线不足、字段冲突时停下并显式复核，不采用最后写入覆盖。Task、文档审核、运行、同步、实际效果状态分别维护；投影成功不等于交付或效果完成。
 
 Wiki 候选和不可变修订正文存于**开发仓库外的 OpenViking 服务**，evoLoop 的外置 manifest 固定修订、来源和关系；这层语义由适配器提供，不是 OpenViking 原生跨系统事务。PostgreSQL 只记知识引用、任务/文档与知识的跨对象 Relation、操作结果与水位，不复制 Wiki 正文或内部知识依赖权威。0.5.1 的外置写读、重启回读和候选→审阅→发布产品路径已在受限环境实跑；语义索引、多写者条件发布和生产恢复尚未验。贡献先成候选，由单一维护发布者回读基线、审阅冲突与撤回影响、发布经审阅的修订、再核对结果；必须关闭 OpenViking 及其他工具的旁路写入。知识存入、通知成功、认知 session 实际使用及目标消费者效果分别核验。
 
@@ -89,7 +89,7 @@ Wiki 候选和不可变修订正文存于**开发仓库外的 OpenViking 服务*
 %%{init: {"flowchart":{"wrappingWidth":320,"nodeSpacing":30,"rankSpacing":42}}}%%
 flowchart TB
   D["应用装配<br/>apps/coordinator"]:::app
-  C["调用入口<br/>apps/workbench · apps/cli<br/>packages/agent-tools"]:::app
+  C["调用入口<br/>apps/workbench · apps/cli<br/>可选 packages/agent-tools"]:::app
   K["业务规则<br/>packages/core"]:::core
   A["边界包 · 随切片建立<br/>connector-feishu · adapter-postgres<br/>adapter-wiki-openviking<br/>adapter-codex-app-server<br/>adapter-git-documents · adapter-local-blobs"]:::adapter
   P["共同合同与端口<br/>packages/contracts<br/>Zod schema · JSON Schema"]:::port
@@ -109,9 +109,9 @@ flowchart TB
 
 ## 当前工作区与目标责任
 
-根 `package.json` 采用 `packages/*`、`apps/*` 工作区；各目录的 `package.json` 实有 **11 个**：8 个 `packages`、3 个 `apps`。下表保留 12 个目标责任，其中 `packages/agent-tools` 尚未建立；已建包不表示整行目标均已完成。“可依赖”列给出边界，实际 package 依赖为 `core`→`contracts`、六个边界包→`contracts`、`cli`/`workbench`→`contracts`，coordinator 装配 core、contracts 与所需边界包。平台依赖留在适配器：PG 的 `pg`/迁移工具、coordinator 的 Fastify、浏览器的 React；core 不导入平台包。
+根 `package.json` 采用 `packages/*`、`apps/*` 工作区；各目录的 `package.json` 实有 **11 个**：8 个 `packages`、3 个 `apps`。下表保留 12 个目标责任，其中 `packages/agent-tools` 只是可选 MCP 扩展、尚未建立；项目本地业务 skill 也不属于 npm 工作区。已建包不表示整行目标均已完成。“可依赖”列给出边界，实际 package 依赖为 `core`→`contracts`、六个边界包→`contracts`、`cli`/`workbench`→`contracts`，coordinator 装配 core、contracts 与所需边界包。平台依赖留在适配器：PG 的 `pg`/迁移工具、coordinator 的 Fastify、浏览器的 React；core 不导入平台包。
 
-当前 `packages/core/src/` 的实际边界是根 `index.ts`/`workflow.ts`，以及 `documents/`、`roles/`、`runtime/`、`scheduling/`、`delivery/`、`references/`。`knowledge/`、`evaluation/`、`queries/`、`cognition/` 等仍是目标责任名称；知识 HTTP 路由现由 coordinator 装配适配器，不能把目标图读成这些目录已实现。运行装配分布在 coordinator 的 `runtime/`、`scheduling/`、`collaboration/`、`knowledge/`、`documents/` 与 `references/` 路由/泵。
+当前 `packages/core/src/` 的实际边界是根 `index.ts`/`workflow.ts`/`discussions.ts`，以及 `documents/`、`roles/`、`runtime/`、`scheduling/`、`delivery/`、`references/`。`knowledge/`、`evaluation/`、`queries/`、`cognition/` 等仍是目标责任名称；知识 HTTP 路由现由 coordinator 装配适配器，不能把目标图读成这些目录已实现。运行装配分布在 coordinator 的 `runtime/`、`scheduling/`、`collaboration/`、`knowledge/`、`documents/` 与 `references/` 路由/泵。
 
 | 工作区／包 | 对外接口与责任 | 可依赖 | 禁止承担 |
 | --- | --- | --- | --- |
@@ -120,13 +120,13 @@ flowchart TB
 | `packages/connector-feishu` | `CollaborationConnector` 实现：Bitable 任务投影、绑定映射、出站与入站编辑观察；候选由协调层审核，分页与结果未知回读已在 fake HTTP 中验证 | `contracts`、HTTP | 持有 Task/Schedule 主数据、绕过 core 写库、以最后写入覆盖冲突；飞书云文档 API 不在首期 Bitable 范围 |
 | `packages/adapter-wiki-openviking` | 当前实现 `KnowledgeRepository`：OpenViking HTTP 映射、外置 manifest、固定修订读取、候选/审核/发布与能力报告；未来更完整的认知维护由目标 `core/knowledge` 用例承接 | `contracts`、HTTP/文件客户端 | 自建第二个认知执行栈、把普通写页当自动 compile、直接认定搜索摘要为原始证据 |
 | `packages/adapter-codex-app-server` | `RuntimePort` 实现；自管 stdio 子进程、握手、Thread/Turn 请求与事件、断线回读和版本能力探测 | `contracts`、局部协议类型 | 任务验收、调度权威、推断 Desktop 聊天已受控 |
-| `packages/adapter-postgres` | 实现 `UnitOfWork`、日程存储和投影/引用读取；保存 Task、过程文档修订、职责历史、运行、触发、外部绑定、journal/outbox 与水位；包内维护至 009 的 SQL 迁移 | `contracts`、`pg`（node-postgres）、迁移工具 | 复制 Git 正式文档正文，或接管 Wiki 正文/来源/知识内部依赖的权威 |
+| `packages/adapter-postgres` | 实现 `UnitOfWork`、日程存储和投影/引用读取；保存 Task、过程文档修订、负责人讨论、职责历史、运行、触发、外部绑定、journal/outbox 与水位；包内维护至 011 的 SQL 迁移 | `contracts`、`pg`（node-postgres）、迁移工具 | 复制 Git 正式文档正文，或接管 Wiki 正文/来源/知识内部依赖的权威 |
 | `packages/adapter-git-documents` | `DocumentSource` 实现：按项目登记仓库、白名单路径和固定 commit 读取原文/hash，报告不可达；引用登记与审核由协调 API/PG 承担 | `contracts`、受控 Git 子进程 | 自动采纳 PR、读取未授权目录、把 HTML 当第二份正式正文、擅自修改源仓库 |
 | `packages/adapter-local-blobs` | 首个本机切片的 `BlobStore`：受控目录、临时写入/hash核验、发布及孤儿对账；后续远程存储另做适配 | `contracts`、受限文件 I/O | 持有知识综合正文、绕过权限暴露路径、假定文件与PG同事务 |
 | `apps/workbench` | 已有任务/过程文档/知识/职责/运行/日程/协作与复核页面，按权限调用共同 API；更完整的导航和独立消费仍待验 | 浏览器安全的 `contracts` 出口、React、Vite；Router/Query 仍为目标 | 导入 core/平台 SDK、持有服务凭据、直接写库、嵌入或假定控制 Desktop 会话 |
-| `packages/agent-tools`（未建） | 目标：窄 MCP/Agent 工具调用协调 API，提供查询、提议、交付、审阅和贡献 | `contracts`、API 客户端、MCP SDK | 常驻自动协调进程、直接写适配器、假定独立 daemon 能调用当前桌面宿主工具或自动唤醒/监听 Desktop |
+| `packages/agent-tools`（未建） | 可选目标：若确需 MCP，提供窄工具调用协调 API；不为与工作台平行而强制建包 | `contracts`、API 客户端、MCP SDK | 常驻自动协调进程、直接写适配器、假定独立 daemon 能调用当前桌面宿主工具或自动唤醒/监听 Desktop |
 | `apps/coordinator` | 单活进程；同源工作台静态资源、Fastify Query/Command API、身份/凭据与数据库连接装配、入站 command、到期计算循环、outbox 与周期对账、健康状态 | `core`、`contracts`、所需边界包 | 绕过 `core` 的快速写入路径，或把飞书投影当主数据 |
-| `apps/cli` | 本地检查、提出和管理命令，经同一 API 调用用例 | `contracts`、API 客户端 | 再启动一个写入协调者或独立实现业务状态机 |
+| `apps/cli` | Agent 的机器操作入口：按权限读固定依据、查询命令 schema、提交已支持请求与恢复未知回执，经同一 API 调用用例；已实现具名读写与恢复，以[实际帮助](../development/agent-cli.md)核可用范围 | `contracts`、API 客户端 | 再启动一个写入协调者、独立实现业务状态机，或让技能绕过服务端授权和版本规则 |
 
 `packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
 
@@ -157,7 +157,7 @@ Wiki 前端代码按[集成方案](wiki-integration.md)拆为组件、数据 hoo
 
 | 能力边界 | 当前代码与已观察证据 | 尚不能据此声称 |
 | --- | --- | --- |
-| 主数据与工作流 | PG 迁移至 009；目标→阶段→提案判断→接受 Task→交付→使用观察→阶段复核由 API/工作台与真实 PG 集成测试覆盖，操作 journal、固定依据和出站意图可回读 | 声明式使用观察等于真实消费者使用；完整首版由真人验收 |
+| 主数据与工作流 | PG 迁移至 011；目标→阶段→提案判断→接受 Task→交付→使用观察→阶段复核及负责人讨论由 API/工作台与真实 PG 集成测试覆盖，操作 journal、固定依据和出站意图可回读 | 声明式使用观察等于真实消费者使用；完整首版由真人验收 |
 | 文档、Git 与原件 | 固定 Git commit/hash 只读，过程 Markdown/HTML 元数据和本机 Blob 原件由各边界包处理；HTML/Blob 上传、静态阅读和下载仍在独立消费者核验 | 任意 HTML 脚本安全、外部资源长期可用或整理结果已经合入正式文档 |
 | 飞书协作 | connector、PG 投影/回读/候选复核在 fake HTTP + 真实 PG 下验证，未知结果不盲目重发 | 真实飞书租户的权限、字段、限流、事件和双向协作已验；目前尚未实连 |
 | Codex 运行 | 自管 App Server 0.154.0 的 owned Thread/Turn 已用可见模型 `gpt-6-astra` 实际完成，重启后回读完整答复；运行记录与交付、消费分开 | 默认 `gpt-6.1-sol` 可用（当前账号返回 400）；Turn 完成等于 Task 验收；Desktop 既有聊天受控。结果展示的 CSS 重写缺陷仍在修复 |

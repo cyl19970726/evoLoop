@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Principal } from "@evoloop/contracts";
 import { idSchema } from "@evoloop/contracts";
-import { documentPayloadCommandSchema } from "@evoloop/contracts/process-documents";
+import { documentImportSchema } from "@evoloop/contracts/process-documents";
 import type { DocumentPayloadRevision, DocumentPayloadUnitOfWork } from "@evoloop/contracts/process-documents";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -13,8 +13,6 @@ import { readDocumentOriginal } from "./read-original.js";
 const maxBundleBytes = 16 * 1024 * 1024;
 const hash = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
 const paramsSchema = z.strictObject({ projectId: idSchema, id: idSchema, revisionId: idSchema });
-const uploadSchema = z.strictObject({ blobId: idSchema, base64: z.string().max(22_400_000) });
-const bodySchema = z.strictObject({ command: documentPayloadCommandSchema, uploads: z.array(uploadSchema).max(51) });
 const scoped = (principal: Principal | null, projectId: string, permission: "read" | "write"): Principal => {
   if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes(permission))
     throw new DomainError("FORBIDDEN", "Project permission is required");
@@ -40,7 +38,7 @@ export function registerDocumentRoutes(app: FastifyInstance, options: DocumentRo
   app.post("/api/projects/:projectId/documents/import", { bodyLimit: 24 * 1024 * 1024 }, async (request, reply) => {
     const { projectId } = z.strictObject({ projectId: idSchema }).parse(request.params);
     const principal = scoped(request.principal, projectId, "write");
-    const parsed = bodySchema.parse(request.body);
+    const parsed = documentImportSchema.parse(request.body);
     if (parsed.command.projectId !== projectId) throw new DomainError("INVALID_COMMAND", "Project path and command differ");
     // The authenticated actor is the only author of the new revision.
     const command = { ...parsed.command, author: principal.actorId };

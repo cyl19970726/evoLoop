@@ -7,6 +7,7 @@ import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
+import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import type { RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
 import { registerCollaborationRoutes } from "./collaboration/routes.js";
@@ -154,7 +155,7 @@ export async function buildServer(options: {
       throw new DomainError("FORBIDDEN", "重新核对运行需要本项目复核权限。");
     }
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法重新读取原生运行。");
-    const body = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000) }).parse(request.body);
+    const body = runtimeReconcileSchema.parse(request.body);
     const run = await options.service.getRuntimeRun(principal, p.projectId!, p.id!);
     const session = await options.service.getRuntimeSession(principal, p.projectId!, run.sessionId);
     if (!callerGrants(p.projectId!, principal.actorId).some(grant => grant.roleId === session.roleId &&

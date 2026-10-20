@@ -76,6 +76,7 @@
 | 文档 | 负责回答的问题 | 谁在变更时维护 |
 | --- | --- | --- |
 | [开发规范](development/standards.md) | 实际工作如何执行、验证、交接并改善 | 承担相应开发与方法维护工作的 session |
+| [Agent skill 与 CLI](development/agent-cli.md) | Agent 根据人类沟通读取固定依据、执行业务变更、恢复并核对共同状态 | 使用 evoLoop 推进实际工作的 Agent；人类从工作台观察结果 |
 | [文档维护](development/documentation.md) | 文档如何保持一致、生成 HTML 并发布 | 修改正文或构建工具的贡献者 |
 
 这里的维护责任是工作分配，不要求项目第一天就建立同名常设角色。专门产品、架构或开发规范 session 是否出现，由实际任务与职责演进决定。

@@ -66,11 +66,12 @@ node scripts/seed-review-demo.mjs --project YOUR_PROJECT_UUID
 
 脚本经 API 建立合成需求、两个已接受但未运行的 Task，再修订并采纳需求新版；不会随启动自动运行。打开输出的项目 URL，分别为任务 A 采用新版依据、为任务 B 保留旧版，并核对决定历史和固定旧修订。任务仍为 `ready`，并非已执行或交付。真实目标→阶段→提案→交付→消费者使用→下一步的路径可在工作台操作，但需人实际试用，不能由合成示例替代。
 
-CLI 使用同一令牌和 API：
+人主要从工作台观察进展、依据和结果；多数日常修改在与 Agent 沟通后，由 Agent 使用业务 skill 和 CLI 完成。CLI 使用同一令牌和 API，语法、固定原件、专用请求与私有回执恢复见 [Agent CLI](agent-cli.md)：
 
 ```bash
-npm run cli -- command .local/command.json
-npm run cli -- get /api/projects/YOUR_PROJECT_UUID/tasks
+npm run --silent cli -- help
+npm run --silent cli -- command run .local/command.json
+npm run --silent cli -- list tasks --project "$PROJECT_ID"
 ```
 
 命令需稳定的 `operationId`、`projectId`；修改已有对象还需读入的 `expectedVersion`。同一 ID、身份和内容返回原回执；不同内容复用 ID 被拒绝。结果未知时先查 `/api/projects/PROJECT_ID/operations/OPERATION_ID`；404 只表示当次未查到，不能证明外部动作没发生。未知 Turn 必须按已有原生 thread 和 operation 标记对账，不能换 ID 盲目重派。工作台临时恢复索引在当前标签页 `sessionStorage`，不存令牌或正文；关闭标签页可能失去索引，重要操作应另存 ID。

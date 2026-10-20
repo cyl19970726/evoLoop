@@ -80,3 +80,20 @@ export interface KnowledgeRepository {
   reconcile(projectId: string, operationId: string, actorId: string): Promise<PublishResult | null>;
   retractSource(projectId: string, sourceKey: string, operationId: string, actorId: string): Promise<string[]>;
 }
+import { z } from "zod";
+export { z } from "zod";
+
+const uuid = z.uuid();
+export const knowledgeCandidateInputSchema = z.strictObject({
+  operationId: uuid, knowledgeId: uuid, candidateId: uuid, candidateRevision: uuid,
+  expectedRevision: uuid.nullable(), title: z.string().trim().min(1).max(240),
+  body: z.string().min(1).max(1024 * 1024), pageType: z.enum(["topic", "concept", "analysis", "decision"]),
+  epistemicStatus: z.enum(["observation", "inference", "hypothesis", "adopted", "disputed", "superseded"]),
+  sources: z.array(z.strictObject({ documentId: uuid, revisionId: uuid, fragment: z.string().max(240).nullable().default(null) })).min(1).max(100),
+  relations: z.array(z.strictObject({ toKnowledgeId: uuid, toRevision: uuid,
+    type: z.enum(["supports", "contradicts", "related", "member_of", "supersedes"]),
+    sourceKeys: z.array(z.string().max(400)).max(100).default([]) })).max(100).default([]),
+});
+export const knowledgeReviewInputSchema = z.strictObject({ candidateRevision: uuid, contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  expectedRevision: uuid.nullable(), decision: z.enum(["accept", "reject"]), reason: z.string().trim().min(1).max(4000) });
+export const knowledgeOperationInputSchema = z.strictObject({ operationId: uuid });

@@ -5,7 +5,7 @@ import { idSchema, type Document, type DocumentDetail, type Principal, type Page
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
 import type { RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { BlobStore } from "@evoloop/contracts/sources";
-import type { CandidateDecision, KnowledgeCandidate, KnowledgeRepository, KnowledgeSourceRef } from "@evoloop/contracts/knowledge";
+import { knowledgeCandidateInputSchema, knowledgeReviewInputSchema, knowledgeOperationInputSchema, type CandidateDecision, type KnowledgeCandidate, type KnowledgeRepository, type KnowledgeSourceRef } from "@evoloop/contracts/knowledge";
 import { DomainError } from "@evoloop/contracts/ports";
 
 const uuid = idSchema;
@@ -18,19 +18,6 @@ const sourceId = (key: string): string => {
 const sha = (body: string) => createHash("sha256").update(body, "utf8").digest("hex");
 const params = (raw: unknown) => z.record(z.string(), uuid).parse(raw);
 const pageQuery = z.strictObject({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().optional() });
-const candidateInput = z.strictObject({
-  operationId: uuid, knowledgeId: uuid, candidateId: uuid, candidateRevision: uuid,
-  expectedRevision: uuid.nullable(), title: z.string().trim().min(1).max(240),
-  body: z.string().min(1).max(1024 * 1024), pageType: z.enum(["topic", "concept", "analysis", "decision"]),
-  epistemicStatus: z.enum(["observation", "inference", "hypothesis", "adopted", "disputed", "superseded"]),
-  sources: z.array(z.strictObject({ documentId: uuid, revisionId: uuid, fragment: z.string().max(240).nullable().default(null) })).min(1).max(100),
-  relations: z.array(z.strictObject({ toKnowledgeId: uuid, toRevision: uuid,
-    type: z.enum(["supports", "contradicts", "related", "member_of", "supersedes"]),
-    sourceKeys: z.array(z.string().max(400)).max(100).default([]) })).max(100).default([]),
-});
-const reviewInput = z.strictObject({ candidateRevision: uuid, contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-  expectedRevision: uuid.nullable(), decision: z.enum(["accept", "reject"]), reason: z.string().trim().min(1).max(4000) });
-const operationInput = z.strictObject({ operationId: uuid });
 const permission = (principal: Principal | null, projectId: string, kind: "read" | "write" | "review"): Principal => {
   if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes(kind))
     throw new DomainError("FORBIDDEN", `Project ${kind} permission is required`);
@@ -173,7 +160,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, options: Knowledge
   app.post("/api/projects/:projectId/knowledge/candidates", { bodyLimit: 2 * 1024 * 1024 }, async request => {
     const projectId = params(request.params).projectId!;
     const principal = permission(request.principal, projectId, "write");
-    const input = candidateInput.parse(request.body);
+    const input = knowledgeCandidateInputSchema.parse(request.body);
     if (Buffer.byteLength(input.body, "utf8") > 1024 * 1024) throw new DomainError("INVALID_COMMAND", "Candidate body exceeds 1 MiB");
     const repo = await repository(principal, projectId);
     const current = await repo.get(projectId, input.knowledgeId);
@@ -206,7 +193,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, options: Knowledge
   app.post("/api/projects/:projectId/knowledge/candidates/:id/review", async request => {
     const p = params(request.params);
     const principal = permission(request.principal, p.projectId!, "review");
-    const input = reviewInput.parse(request.body);
+    const input = knowledgeReviewInputSchema.parse(request.body);
     const repo = await repository(principal, p.projectId!);
     const candidate = await repo.getCandidate(p.projectId!, p.id!);
     if (!candidate) throw new DomainError("NOT_FOUND", "Candidate was not found");
@@ -220,7 +207,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, options: Knowledge
   app.post("/api/projects/:projectId/knowledge/candidates/:id/publish", async request => {
     const p = params(request.params);
     const principal = permission(request.principal, p.projectId!, "review");
-    const input = operationInput.parse(request.body);
+    const input = knowledgeOperationInputSchema.parse(request.body);
     const repo = await repository(principal, p.projectId!);
     const candidate = await repo.getCandidate(p.projectId!, p.id!);
     if (!candidate) throw new DomainError("NOT_FOUND", "Candidate was not found");
@@ -237,7 +224,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, options: Knowledge
   app.post("/api/projects/:projectId/knowledge/sources/:id/retract", async request => {
     const p = params(request.params);
     const principal = permission(request.principal, p.projectId!, "review");
-    const input = operationInput.parse(request.body);
+    const input = knowledgeOperationInputSchema.parse(request.body);
     await options.workflow.getDocument(principal, p.projectId!, p.id!);
     const affected = await (await repository(principal, p.projectId!)).retractSource(p.projectId!, sourceKey(p.id!), input.operationId, principal.actorId);
     return { status: "recorded", operationId: input.operationId, affected };
