@@ -50,62 +50,107 @@
     {
       "path": "docs/architecture/overview.md",
       "title": "架构总览",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/technology-selection.md",
-      "title": "技术选型与 Wiki 改造",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/packages.md",
-      "title": "包架构与运行分层",
-      "group": "架构与协作"
+      "group": "架构 · 整体与主线",
+      "headingAliases": {
+        "1-目标决定与当前事实": "1-架构要接住什么",
+        "2-分层与依赖": "2-四部分如何组成系统",
+        "3-数据归属和引用": "4-为什么要有这些对象和权威边界",
+        "4-工作与知识闭环": "3-沿一轮工作理解系统",
+        "5-角色与-session-的关系": "2-四部分如何组成系统",
+        "6-可靠运行是待实现的能力": "5-变化和失败如何处理",
+        "7-待验证取舍与实施切片": "7-当前做到哪里怎样继续实现",
+        "架构页各自维护什么": "8-按问题深入专题"
+      }
     },
     {
       "path": "docs/architecture/project-data.md",
       "title": "任务、文档、Wiki 与 Connector",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/frontend.md",
-      "title": "前端架构与交互边界",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/wiki-workspace.md",
-      "title": "Wiki 知识工作区前端",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/wiki-integration.md",
-      "title": "Wiki 前端与知识服务集成",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/wiki-maintenance.md",
-      "title": "Wiki 编纂与审阅机制",
-      "group": "架构与协作"
-    },
-    {
-      "path": "docs/architecture/storage.md",
-      "title": "存储逻辑与固定依据",
-      "group": "架构与协作"
+      "group": "架构 · 整体与主线",
+      "headingAliases": {
+        "4-关系与认知读取": "3-关系与认知读取",
+        "3-文档表怎样设计": "4-文档表怎样设计",
+        "3a-工作文档怎样沉淀为仓库正式文档": "6-工作文档怎样沉淀为仓库正式文档",
+        "6-首个切片与实际验收": "7-首个切片与实际验收"
+      }
     },
     {
       "path": "docs/architecture/knowledge-flow.md",
       "title": "Task、文档与 Wiki 的关联",
-      "group": "架构与协作"
+      "group": "架构 · 整体与主线",
+      "headingAliases": {
+        "4-任务执行时怎样读取": "3-任务执行时怎样读取",
+        "3-从材料变化到-wiki-发布": "4-从材料变化到-wiki-发布"
+      }
+    },
+    {
+      "path": "docs/architecture/packages.md",
+      "title": "包架构与运行分层",
+      "group": "架构 · 运行与实现"
+    },
+    {
+      "path": "docs/architecture/technology-selection.md",
+      "title": "技术选型与 Wiki 改造",
+      "group": "架构 · 运行与实现",
+      "headingAliases": {
+        "2-为什么主语言选-typescript": "1-为什么主语言选-typescript",
+        "4-wiki-到底选哪个复用什么": "2-wiki-到底选哪个复用什么",
+        "5-正式采用与-fork-的门槛": "3-正式采用与-fork-的门槛",
+        "1-推荐决定": "4-推荐决定",
+        "3-数据与部署边界": "5-数据与部署边界"
+      }
     },
     {
       "path": "docs/architecture/contracts.md",
       "title": "接口与协作合同",
-      "group": "架构与协作"
+      "group": "架构 · 合同与存储"
+    },
+    {
+      "path": "docs/architecture/storage.md",
+      "title": "存储逻辑与固定依据",
+      "group": "架构 · 合同与存储"
     },
     {
       "path": "docs/architecture/codex-integration.md",
       "title": "Codex 运行时接入",
-      "group": "架构与协作"
+      "group": "架构 · 运行与实现"
+    },
+    {
+      "path": "docs/architecture/frontend.md",
+      "title": "前端架构与交互边界",
+      "group": "架构 · 界面与知识专题",
+      "headingAliases": {
+        "3-组件路由与查询模型": "2-组件路由与查询模型",
+        "4-修改刷新与失败如何呈现": "3-修改刷新与失败如何呈现",
+        "5-会话与权限边界": "4-会话与权限边界",
+        "2-推荐前端技术与取舍": "5-推荐前端技术与取舍"
+      }
+    },
+    {
+      "path": "docs/architecture/wiki-maintenance.md",
+      "title": "Wiki 编纂与审阅机制",
+      "group": "架构 · 界面与知识专题"
+    },
+    {
+      "path": "docs/architecture/wiki-workspace.md",
+      "title": "Wiki 知识工作区前端",
+      "group": "架构 · 界面与知识专题",
+      "headingAliases": {
+        "3-evoloop-前端查询层和知识端": "2-evoloop-前端查询层和知识端",
+        "2-从-nashsu-固定版抽取的前端机制": "3-从-nashsu-固定版抽取的前端机制"
+      }
+    },
+    {
+      "path": "docs/architecture/wiki-integration.md",
+      "title": "Wiki 前端与知识服务集成",
+      "group": "架构 · 界面与知识专题",
+      "headingAliases": {
+        "3-共同-api-的读取协议": "2-共同-api-的读取协议",
+        "4-固定来源怎样进入外置知识空间": "3-固定来源怎样进入外置知识空间",
+        "6-命令发布和纠正": "4-命令发布和纠正",
+        "5-openviking-v051-的原生面与适配面": "6-openviking-v051-的原生面与适配面",
+        "2-nashsu-前端接缝": "7-nashsu-前端接缝",
+        "7-包落点切片和验证": "8-包落点切片和验证"
+      }
     },
     {
       "path": "docs/development/standards.md",

@@ -2,23 +2,13 @@
 
 状态：2026-10-20 **可实现的设计提案，尚未建表、迁移或验证。** 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
-## 技术选择是否合理
+## 对象与固定依据模型
 
-**当前推荐是“一套业务数据库 + 各自权威的文档/知识存储 + 可重建索引”。** PostgreSQL 已由用户选定，其余实现选择仍待首片确认。表多不等于每片都要建立所有表；下面先确定边界，按实际功能建立必需结构。
+PostgreSQL 中的当前对象用于工作入口：Task 说明当前目标和状态，过程 Document 提供要求与讨论，Schedule 说明何时触发，Relation 帮人导航。飞书任务记录是协作投影，Git 正式 `docs/` 是独立来源，Wiki 正文及其内部知识依赖留在外置知识系统；它们不会因为被 PG 登记而变成 Document 行或第二份可编辑正文。
 
-| 层 | 首期具体建议 | 选择理由与避免的重复 |
-| --- | --- | --- |
-| 业务持久化 | PostgreSQL 18.x；`pg` 驱动、参数化 SQL、同连接 UnitOfWork | Task、Doc、关系、基线和 outbox 可同库事务；不另建 SQLite 过渡库或单独业务图数据库 |
-| 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；小型过程文档正文可内联 PG，Markdown/HTML 均保存源字节；较大报告/资源 bundle 走 BlobStore | JSONB 只放经 schema 校验的资源 manifest 等元数据；不把 Wiki 正文复制入 JSONB，也不把外置载荷当第二份可改正文 |
-| 数据迁移 | 推荐 `node-pg-migrate` 执行版本化、可审阅的 SQL；单一部署步骤，固定稳定版本 | 用已有 runner 管迁移记录与互斥，避免另写迁移框架；不启用启动时自动改生产 schema。当前未安装，不能用文档工具的最新预发布版代替已锁定依赖 |
-| Git 正式文档 | 保留仓库正文和固定 commit；PG 可登记独立 GitSourceRef 来源元数据，由白名单适配器读取 | 工作台显示同一正式版本；不建立“从网页再抓一次”的第二份规范，也不创建 Document 行 |
-| Wiki 来源/正文/内部关联 | OpenViking 候选服务持外置内容与修订；若补发布格式，与 Wiki 同一知识空间 | nashsu 的页面和图谱体验可通过知识查询模型实现，无需同时保留它的另一套可编辑 vault |
-| 附件与不可重建原件 | 首个本机切片使用仓库外受控目录，通过 BlobStore 端口访问；PG 保存 blob 元数据 | 大型原件不塞业务表，不装第二套文件管理产品；迁到常在线主机时再选择受控持久卷或对象存储，并演练搬迁和恢复 |
-| 检索与关系展示 | PG 先按 ID、标题和结构化过滤检索；Wiki 语义检索沿用知识后端；前端图谱是有权限的有界关系视图 | 首期不新增 Elasticsearch、Neo4j、Redis 或第二向量库；关系可视化不要求图数据库。中文全文效果和跨源排序单独验证 |
+接受任务时，系统保存不可变 TaskRevision 和一整套 BasisSet。TaskBasis 的成员指向当时实际采用的过程 DocumentRevision、固定 repo/path/commit/hash 的 GitSourceRef，或外置知识的固定修订。普通 Task↔Document 链接只指对象身份，供查找；固定依据才回答“这次决定和 Run 到底按哪一版执行”。旧 Run 同时绑定 TaskRevision 与 BasisSet，所以当前任务、文档或知识后来改版，不会改变旧运行的目标与依据。来源撤回或不可达产生待复核，派发前还须重新核查有效性。
 
-依据：[PostgreSQL JSON 类型](https://www.postgresql.org/docs/18/datatype-json.html)说明 JSONB 的存储与查询能力；[pg 事务](https://node-postgres.com/features/transactions)要求同一 client；[node-pg-migrate](https://salsita.github.io/node-pg-migrate/migrations/)提供迁移记录、锁和事务执行机制。项目选择不等于这些库已经通过本项目验证。迁移只用已锁版本支持的 SQL 路径；已经执行的迁移不可编辑，变更追加新文件。需要非事务 DDL 的迁移单独设计恢复，数据不可逆时采用向前修复/备份恢复，不假定自动 down 无损。
-
-**仍需明确的部署项**是数据库实例位置、容量/保留、备份频率与恢复目标、Wiki 固定版的底层后端及真实写入能力。这些在保存第一份真实且不可重建材料前落实。开发和 CI 用同主版本真实 PG 验约束，部署步骤先验空库建立、旧版升级和中断恢复。没有测量依据时不增加新的存储引擎；若 OpenViking 复用收益不足，重新比较薄知识后端，而不是在其旁边补一整套重复系统。
+保存时形成的修订载荷、hash 和资源清单是历史事实；当前权限、可达性、完整性复核、采纳和同步进度是随时间变化的观察或决定。新内容形成新修订，原件重新可访问则追加核验记录。原始 HTML、图片和 Markdown 与供检索的提取文本分开；HTML 构建视图、飞书投影和 Wiki 索引不能冒充权威原件。下面先列逻辑键与约束，再说明事务、恢复和建议技术。
 
 ## 权威与共同键
 
@@ -26,7 +16,9 @@ PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨�
 
 项目权限在服务端由已验证身份和项目成员/受委派操作范围判断；首片单用户也不信任模型自报 Role。复合外键防误关联，不等于访问授权；查询、命令及关系遍历都须检查当前权限。未来多用户或数据库 RLS 的隔离加固需独立验证，不能仅凭 project_id 字段宣称安全多租户。
 
-租户对象以不可重用的稳定 ID 标识，主键采用 `(project_id, object_id)`；外键也带 `project_id`。即使 ID 采用全局唯一 UUID/ULID，也用复合键防止错项目关系成立。对象 ID 不等于飞书 record ID、Git 路径、Wiki URI 或标题。固定修订有独立 revision ID 与内容/来源校验；当前指针可变，历史修订不可原位覆盖。跨项目关系需另有明确授权对象；首版 Relation 限定同一项目。PostgreSQL 支持多列唯一约束和引用唯一列组的外键，实际 DDL 与删除行为仍须在选定版本测试。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
+租户对象以不可重用的稳定 ID 标识，主键采用 `(project_id, object_id)`；外键也带 `project_id`。即使 ID 采用全局唯一 UUID/ULID，也用复合键防止错项目关系成立。
+
+对象 ID 不等于飞书 record ID、Git 路径、Wiki URI 或标题。固定修订有独立 revision ID 与内容/来源校验；当前指针可变，历史修订不可原位覆盖。跨项目关系需另有明确授权对象；首版 Relation 限定同一项目。PostgreSQL 支持多列唯一约束和引用唯一列组的外键，实际 DDL 与删除行为仍须在选定版本测试。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
 
 | 表或表组 | 主键、核心字段和唯一约束 | 外键与职责 |
 | --- | --- | --- |
@@ -42,7 +34,13 @@ PostgreSQL 保存 Task、Schedule、任务关联过程 Document/Revision、跨�
 | `knowledge_ref` / `knowledge_ref_revision` | `(project_id, knowledge_ref_id)` 及加 `revision_id` 的复合 PK；外部空间/ID/revision、可选 hash；有效/待复核/撤回/不可达另记带时间的观察 | 固定身份/版本不随状态观察改写；只登记外部引用和本地处置，正文和内部依赖不入库 |
 | `external_binding` | `(project_id, binding_id)` PK；connector、外部 scope/ID、双方最后确认版本、方向、同步状态 | `(connector, external_scope, external_id)` 唯一；内部对象用类型化 FK，不能把投影版本当主版本 |
 
-Document 可在同一事务里先建目录、再建首个过程文档修订、再记录审核决定并设已采纳指针；复合 FK 保证修订及指针属于该 Document。现行已采纳指针必须对应已批准的审核决定；此规则跨行，须由受控写入路径及必要的约束触发器保证，不能声称单行 CHECK 已验证。每个 revision 的 `format`/`media_type` 描述内容，`original_name` 保留上传名，`content_hash` 校验精确源载荷；`body` 与 `payload_ref` 以 CHECK 保证恰有一者非空。BlobStore payload_ref 是唯一 canonical 载荷位置，`entrypoint` 指向 bundle 内 HTML 入口，`assets_manifest` 逐项记录相对路径、媒体类型和字节 hash；资源未齐或核验不通过时标记 incomplete/unavailable，不得报告完整可读。Markdown 和小型自包含 HTML 可内联；较大报告/资源包走 BlobStore。GitSourceRef 仍是独立来源，不进入 Document 表。GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新的 GitSourceRef，旧 TaskBasis 仍保留旧 repo/path/commit；原仓库删除或权限丢失标不可达并复核。
+Document 可在同一事务里先建目录、再建首个过程文档修订、再记录审核决定并设已采纳指针；复合 FK 保证修订及指针属于该 Document。
+
+现行已采纳指针必须对应已批准的审核决定；此规则跨行，须由受控写入路径及必要的约束触发器保证，不能声称单行 CHECK 已验证。每个 revision 的 `format`/`media_type` 描述内容，`original_name` 保留上传名，`content_hash` 校验精确源载荷；`body` 与 `payload_ref` 以 CHECK 保证恰有一者非空。
+
+BlobStore payload_ref 是唯一 canonical 载荷位置，`entrypoint` 指向 bundle 内 HTML 入口，`assets_manifest` 逐项记录相对路径、媒体类型和字节 hash；资源未齐或核验不通过时标记 incomplete/unavailable，不得报告完整可读。Markdown 和小型自包含 HTML 可内联；较大报告/资源包走 BlobStore。GitSourceRef 仍是独立来源，不进入 Document 表。
+
+GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内容 hash 并记录验证结果；仓库 HEAD、同名路径或相同 hash 都不替代固定 commit。路径移动建立新的 GitSourceRef，旧 TaskBasis 仍保留旧 repo/path/commit；原仓库删除或权限丢失标不可达并复核。
 
 修订载荷、源 hash 和保存时的资源清单不可变；当前权限、blob 可达性、资源核验和知识有效性是带观察时间/依据的状态记录，不能在不可变 revision 行内覆盖过去事实。已采纳指针及审核决定单独维护。缺失资源后补或原件修改须形成新 DocumentRevision；相同原件重新可达只追加观察，不能借此变更正文/hash。历史下载也受当前权限约束。具体语义以[修订合同](contracts.md#2a-documentstore-与-relationstore)为准。
 
@@ -72,11 +70,27 @@ erDiagram
 
 ## 关系与执行基线
 
-`relation(from_type, from_id, to_type, to_id)` 若没有 FK，会让已删除、跨项目或拼错的 ID 悄悄进入关系图。首版把**导航关系**与**固定修订绑定**分开。`relation` 的 source/target 各有 `task_id`、`document_id`、`git_source_ref_id`、`knowledge_ref_id`、`delivery_id`、`review_id`、`evidence_ref_id` 等受支持的类型化 nullable 列，每端 `num_nonnulls(...)=1`，每列用 `(project_id, typed_id)` 复合 FK 指向具体实体。Task↔Document 普通多对多链接作为仅指稳定 documentId 的导航关系保存，不要求固定修订，也不隐含采用；需要作为任务依据时，再在 TaskBasis 固定 DocumentRevision。`relation_revision_binding` 以 `(project_id, relation_id)` 复合 FK 接导航关系，再以各端类型化 revision/source 列引用 TaskRevision、DocumentRevision、GitSourceRef、KnowledgeRefRevision，或固定的 Delivery/Review/EvidenceRef 版本；本行 `CHECK` 约束每端恰好一种目标；对应目标的复合 FK 保证版本/引用属于同一对象和项目；绑定与导航行的对象类型/ID 一致性由同事务写入及约束触发器核验，不能靠跨表 CHECK。固定修订关系没有可解析版本/来源就不得创建。新对象类型须经迁移、合同和查询变更；JSON 泛型 ID 不能充当外键。Relation 自身有 `(project_id, relation_id)` PK、类型、建立者、依据、创建/失效时间与版本。允许的类型组合由约束或受控类型表限制；关系存在不证明任务符合依据。
+`relation(from_type, from_id, to_type, to_id)` 若没有 FK，会让已删除、跨项目或拼错的 ID 悄悄进入关系图。首版把**导航关系**与**固定修订绑定**分开。
 
-固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到过程 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 到 `basis_set`，因此旧 Run 的目标、判据和依据均可重放；仅 FK 到可变 Task 头不够。Task 头更新或接受新依据要产生新快照/集合并复核，旧 Run 不跟随当前指针变化。知识撤回、GitSourceRef 不可达或过程文档被取代时，影响任务标待复核；**派发前还须实时向来源端核固定引用的有效性**，不能只依赖后台影响扫描已完成。无法确认时暂停派发。Wiki 内部“来源支持哪条主张”的依赖仍由外置知识系统维护。
+### 导航关系与版本绑定
+
+`relation` 的 source/target 各有 `task_id`、`document_id`、`git_source_ref_id`、`knowledge_ref_id`、`delivery_id`、`review_id`、`evidence_ref_id` 等受支持的类型化 nullable 列，每端 `num_nonnulls(...)=1`，每列用 `(project_id, typed_id)` 复合 FK 指向具体实体。Task↔Document 普通多对多链接作为仅指稳定 documentId 的导航关系保存，不要求固定修订，也不隐含采用；需要作为任务依据时，再在 TaskBasis 固定 DocumentRevision。
+
+`relation_revision_binding` 以 `(project_id, relation_id)` 复合 FK 接导航关系，再以各端类型化 revision/source 列引用 TaskRevision、DocumentRevision、GitSourceRef、KnowledgeRefRevision，或固定的 Delivery/Review/EvidenceRef 版本；本行 `CHECK` 约束每端恰好一种目标；对应目标的复合 FK 保证版本/引用属于同一对象和项目；绑定与导航行的对象类型/ID 一致性由同事务写入及约束触发器核验，不能靠跨表 CHECK。
+
+固定修订关系没有可解析版本/来源就不得创建。新对象类型须经迁移、合同和查询变更；JSON 泛型 ID 不能充当外键。Relation 自身有 `(project_id, relation_id)` PK、类型、建立者、依据、创建/失效时间与版本。允许的类型组合由约束或受控类型表限制；关系存在不证明任务符合依据。
+
+### 执行依据集合与旧运行
+
+固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到过程 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。
+
+Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 到 `basis_set`，因此旧 Run 的目标、判据和依据均可重放；仅 FK 到可变 Task 头不够。Task 头更新或接受新依据要产生新快照/集合并复核，旧 Run 不跟随当前指针变化。
+
+知识撤回、GitSourceRef 不可达或过程文档被取代时，影响任务标待复核；**派发前还须实时向来源端核固定引用的有效性**，不能只依赖后台影响扫描已完成。无法确认时暂停派发。Wiki 内部“来源支持哪条主张”的依赖仍由外置知识系统维护。
 
 `basis_set/task_basis` 是接受和派发依据的唯一写入入口。用于导航的相同“任务依据”关系由该集合派生；若物化关系，必须同事务生成并只读，禁止另从 Relation 编辑出第二份不同基线。其他解释性关系仍可独立提出，但不能据此隐式改变执行依据。
+
+### 外部绑定的约束
 
 ExternalBinding 也使用类型化对象列、恰好一项非空 CHECK 和复合 FK。首期只开放 Task→飞书 Bitable 记录；Document→飞书云文档须按另一套 API 单独验证。唯一约束覆盖 connector、外部租户/空间、外部 ID；另约束同一内部对象在同一目标视图至多一个有效绑定。远端删除记绑定异常，不默认删除内部对象。入站变化缺行为者、读入基线或字段归属时留待处理差异，不按最后写入时间覆盖。
 
@@ -150,13 +164,43 @@ sequenceDiagram
 
 ## 原件、权限、删除和恢复
 
-附件、原始会话、Evidence 原件、大型成果和较大过程报告/资源 bundle 在仓库外受控 blob/原权威位置；PG 的 `blob_ref` 仅登记 project、稳定 ID、存储 URI、字节 hash、大小、媒体类型、权限范围、生命周期状态及唯一所属 revision/payload。路径不能作为永久身份，读取前再授权并核 hash。过程报告载荷先 prepare 到临时位置、核验主文件和 manifest 中全部资源的字节 hash、再原子发布 immutable blob；随后在 PG 单一事务登记 BlobRef、DocumentRevision、canonical payloadRef 与当前指针。PG 事务失败时发布物尚未成为可读文档，由对账清理未引用 blob；缺资源只可记录 incomplete，不得登记成完整可读报告。PG 内联正文直接在 revision 事务提交，且与 payloadRef 互斥。拟议 SourceBridge 按白名单读取 PG 固定 revision、Git commit 或成果；`ingestion_receipt` 记录源 kind+ID+revision、片段定位、`contentHash`、`policyVersion`、`transformerVersion`、目标知识空间、外部 `sourceRef` 及提交/回读/撤回状态。**同一原来源固定 revision 与片段若重新读出不同 contentHash，先报来源漂移并暂停摄入，不将它当合法新事实。** 合法变化须有新的来源 revision 或明确不同片段；策略/转换器升版可在原 hash 不变时形成可追溯重处理。`source_fingerprint` 的独立唯一键防止带新 hash 的回执去重键掩盖漂移。它是**传递回执**，不存 Wiki 来源正文或内部依赖；语义见[知识流](knowledge-flow.md)。
+### 原件登记与发布
+
+附件、原始会话、Evidence 原件、大型成果和较大过程报告/资源 bundle 在仓库外受控 blob/原权威位置；PG 的 `blob_ref` 仅登记 project、稳定 ID、存储 URI、字节 hash、大小、媒体类型、权限范围、生命周期状态及唯一所属 revision/payload。路径不能作为永久身份，读取前再授权并核 hash。
+
+过程报告载荷先 prepare 到临时位置、核验主文件和 manifest 中全部资源的字节 hash、再原子发布 immutable blob；随后在 PG 单一事务登记 BlobRef、DocumentRevision、canonical payloadRef 与当前指针。PG 事务失败时发布物尚未成为可读文档，由对账清理未引用 blob；缺资源只可记录 incomplete，不得登记成完整可读报告。PG 内联正文直接在 revision 事务提交，且与 payloadRef 互斥。
+
+### 来源传递的校验与回执
+
+拟议 SourceBridge 按白名单读取 PG 固定 revision、Git commit 或成果；`ingestion_receipt` 记录源 kind+ID+revision、片段定位、`contentHash`、`policyVersion`、`transformerVersion`、目标知识空间、外部 `sourceRef` 及提交/回读/撤回状态。**同一原来源固定 revision 与片段若重新读出不同 contentHash，先报来源漂移并暂停摄入，不将它当合法新事实。** 合法变化须有新的来源 revision 或明确不同片段；策略/转换器升版可在原 hash 不变时形成可追溯重处理。`source_fingerprint` 的独立唯一键防止带新 hash 的回执去重键掩盖漂移。它是**传递回执**，不存 Wiki 来源正文或内部依赖；语义见[知识流](knowledge-flow.md)。
+
+### 文件与数据库的恢复边界
 
 BlobStore 首片发布顺序为临时写入 → 核字节 hash → 同文件系统原子移入受控位置 → PG 登记可读引用；未登记的文件不通过 API 暴露，失败孤儿由对账按保留策略清理。PG 与文件没有共同事务，不能提前承诺“上传完成”；备份清单固定已登记 blob 的 ID/hash 与 PG 恢复点，恢复时核缺失和多余项。
+
+### 权限、删除与跨系统恢复
 
 业务删除默认归档/标失效，保留已执行任务和旧修订引用；真正删除遵守另定保留政策，先查关系、投影、索引、blob、备份及外部副本。权限收紧先阻断新读取/投影，再按 connector 能力撤销既有可见副本；不能承诺收回已下载内容。索引、outbox、日志、备份和导出不得扩大源对象权限；备份加密、恢复权限及保留周期需在部署前确定。
 
 恢复分别检验 PG 主数据+outbox、受控 blob、Git 固定 commit、外置 Wiki 固定 revision 和飞书投影。PG 恢复点若早于已发生的外部副作用，不能只恢复数据库就重新派发；先冻结写入，按 operation/binding 与外部实际状态对账。Git 或 Wiki 修订不可达时标依据缺失并安排复核，不能从旧摘要补造正文。跨系统一致恢复是验收用例，不由单一 PG 备份保证。
+
+## 技术选择是否合理
+
+**当前推荐是“一套业务数据库 + 各自权威的文档/知识存储 + 可重建索引”。** PostgreSQL 已由用户选定，其余实现选择仍待首片确认。表多不等于每片都要建立所有表；下面先确定边界，按实际功能建立必需结构。
+
+| 层 | 首期具体建议 | 选择理由与避免的重复 |
+| --- | --- | --- |
+| 业务持久化 | PostgreSQL 18.x；`pg` 驱动、参数化 SQL、同连接 UnitOfWork | Task、Doc、关系、基线和 outbox 可同库事务；不另建 SQLite 过渡库或单独业务图数据库 |
+| 字段与正文 | 身份/状态/版本/权限/关系用有类型的列；小型过程文档正文可内联 PG，Markdown/HTML 均保存源字节；较大报告/资源 bundle 走 BlobStore | JSONB 只放经 schema 校验的资源 manifest 等元数据；不把 Wiki 正文复制入 JSONB，也不把外置载荷当第二份可改正文 |
+| 数据迁移 | 推荐 `node-pg-migrate` 执行版本化、可审阅的 SQL；单一部署步骤，固定稳定版本 | 用已有 runner 管迁移记录与互斥，避免另写迁移框架；不启用启动时自动改生产 schema。当前未安装，不能用文档工具的最新预发布版代替已锁定依赖 |
+| Git 正式文档 | 保留仓库正文和固定 commit；PG 可登记独立 GitSourceRef 来源元数据，由白名单适配器读取 | 工作台显示同一正式版本；不建立“从网页再抓一次”的第二份规范，也不创建 Document 行 |
+| Wiki 来源/正文/内部关联 | OpenViking 候选服务持外置内容与修订；若补发布格式，与 Wiki 同一知识空间 | nashsu 的页面和图谱体验可通过知识查询模型实现，无需同时保留它的另一套可编辑 vault |
+| 附件与不可重建原件 | 首个本机切片使用仓库外受控目录，通过 BlobStore 端口访问；PG 保存 blob 元数据 | 大型原件不塞业务表，不装第二套文件管理产品；迁到常在线主机时再选择受控持久卷或对象存储，并演练搬迁和恢复 |
+| 检索与关系展示 | PG 先按 ID、标题和结构化过滤检索；Wiki 语义检索沿用知识后端；前端图谱是有权限的有界关系视图 | 首期不新增 Elasticsearch、Neo4j、Redis 或第二向量库；关系可视化不要求图数据库。中文全文效果和跨源排序单独验证 |
+
+依据：[PostgreSQL JSON 类型](https://www.postgresql.org/docs/18/datatype-json.html)说明 JSONB 的存储与查询能力；[pg 事务](https://node-postgres.com/features/transactions)要求同一 client；[node-pg-migrate](https://salsita.github.io/node-pg-migrate/migrations/)提供迁移记录、锁和事务执行机制。项目选择不等于这些库已经通过本项目验证。迁移只用已锁版本支持的 SQL 路径；已经执行的迁移不可编辑，变更追加新文件。需要非事务 DDL 的迁移单独设计恢复，数据不可逆时采用向前修复/备份恢复，不假定自动 down 无损。
+
+**仍需明确的部署项**是数据库实例位置、容量/保留、备份频率与恢复目标、Wiki 固定版的底层后端及真实写入能力。这些在保存第一份真实且不可重建材料前落实。开发和 CI 用同主版本真实 PG 验约束，部署步骤先验空库建立、旧版升级和中断恢复。没有测量依据时不增加新的存储引擎；若 OpenViking 复用收益不足，重新比较薄知识后端，而不是在其旁边补一整套重复系统。
 
 ## 切片与验收
 

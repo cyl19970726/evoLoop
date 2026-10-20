@@ -2,7 +2,80 @@
 
 推荐包架构 v0.5 · **主数据与连接器方向已由用户选定，具体实现仍是提案；尚未实现或部署。** 当前分支是文档与 `scripts/docs/` 工具，协议实测代码另见 PR #2。技术选择的依据见[技术选型](technology-selection.md)；本页规定若采用该方案，包如何协作。[领域合同](contracts.md)定义状态与失败语义，[日常工作闭环](../product/daily-loop.md)定义产品行为，[架构总览](overview.md)定义权威归属，[Codex 接入](codex-integration.md)说明运行时映射。
 
-用户选定 **evoLoop 保存主数据，飞书作为 connector 与协作入口**。PostgreSQL 保存 Task、Schedule、evoLoop 原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态，以及运行 Journal/outbox；Git 中已有正式产品/架构/规范正文仍以 Git 为权威，必要时以独立 Git 来源引用连接，不纳入 Document Table；Wiki 正文、来源、知识历史与内部依赖仍由外置 KnowledgeRepository 持有。首期其余架构提议为 TypeScript `strict`、Node.js 24 LTS、npm workspaces、模块化 `core`、Fastify 本地 API、独立 OpenViking HTTP 服务和自管 Codex App Server stdio。PostgreSQL 拟通过 `pg`（node-postgres）接入，驱动与固定版本仍待首片验证。OpenViking 的固定版本、补丁和升级条件由[技术选型](technology-selection.md)与验证记录确定。本机 Python 夹具的[固定实测与能力范围](codex-integration.md#隔离实测与生产能力分开)是研究证据，不决定生产语言，也未提供独立 daemon 可用的桌面宿主消息入口。
+本页把[总览](overview.md)的逻辑责任映射到拟议实现。先看核心模块承担什么、它们怎样装配到运行单位，再查源码依赖和完整包表。包是代码边界，进程是部署单位，Role/Session 是职责与承载关系，三者不逐一对应。
+
+推荐方案是 TypeScript/Node 的模块化核心及同一协调 API，PG 保存主数据，飞书、Git、Wiki 和 Codex 经适配器连接。其余技术仍是[选型提案](technology-selection.md)，不把 Python 隔离夹具算成生产包实现。
+
+## 四部分映射到一个 `core`
+
+| 产品部分 | `core` 内部模块 | 主要责任 |
+| --- | --- | --- |
+| ① 认知循环 | `cognition/`、`reviews/` | 装配目标、来源和反例，形成有依据的回看任务；记录责任 session 的选择及下一动作，检查是否被后续工作实际采用。 |
+| ② 动态多 session | `roles/`、`sessions/` | 逻辑 Role 与承载 Session 分离，职责试行、交接、回看与撤回；新聊天窗口不自动生新 Role。 |
+| ③ Task 与状态机 | `tasks/`、`documents/`、`relations/`、`connectors/`、`coordination/`、`scheduling/` | Task 与原生 Document 的提议/审核/交付，跨对象关系、飞书投影命令、派发与 `unknown` 恢复、到期实例和周期对账；主状态在 PostgreSQL。 |
+| ④ Wiki 与 evaluator | `knowledge/`、`evaluation/` | 来源与相反解释、候选/审核/修订/撤回依赖、独立消费和真实效果评价；正文通过外置 Wiki 端口读取，PG 只登记知识引用与跨对象关系。 |
+
+四部分是**产品能力**，不是四个进程或四个固定 Role。项目和架构 session 是责任承载者，软件模块只是使其工作可追溯。模块间经包内清晰接口协作；只有实际独立发布、团队边界或依赖冲突出现后再考虑拆 `core`。
+
+## 进程与权威边界
+
+这里分两幅图读同一套推荐装配：先看主数据和飞书投影，再看执行与外部正文。箭头表示运行调用、投影或回读，和后文源码依赖箭头的含义不同。两幅图中的协调服务是**同一个单活进程**；所有服务仍待实现，OpenViking 是候选。
+
+### 主数据与协作投影
+
+```mermaid
+%%{init: {"flowchart":{"wrappingWidth":180,"nodeSpacing":24,"rankSpacing":34}}}%%
+flowchart TB
+  H["人／工作台／CLI<br/>Agent 工具入口"]:::entry --> A
+  subgraph coordinator["拟议单活协调进程"]
+    A["共同 API<br/>输入与身份核验"]:::core --> C["core 用例<br/>权限、状态与基线"]:::core
+    C --> L["PG 适配器"]:::adapter
+    C -->|已提交的投影意图| F["飞书 connector"]:::adapter
+    F -->|受控 command| A
+  end
+  L --> DB["PostgreSQL 主数据<br/>任务、过程文档、关系<br/>运行与同步记录"]:::authority
+  F <-->|投影、回读与编辑观察| FS["飞书 Bitable<br/>首期任务协作投影"]:::projection
+  H -.->|人在飞书原生编辑| FS
+  classDef entry fill:#FFF1D6,stroke:#A86412,color:#402700
+  classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
+  classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
+  classDef authority fill:#E2F4F2,stroke:#297A73,color:#154B47
+  classDef projection fill:#FFF5DF,stroke:#A86412,color:#493822
+```
+
+黄＝人/工具入口与外部投影；紫＝协调进程内规则；蓝＝边界包；青＝本体持久化。虚线是人在飞书的编辑，仍需经 connector、API 和核心规则才能改变本体；PostgreSQL 适配器按同库事务保存对象、操作与投影意图。
+
+### 执行与外部正文
+
+```mermaid
+%%{init: {"flowchart":{"wrappingWidth":180,"nodeSpacing":24,"rankSpacing":34}}}%%
+flowchart TB
+  C["同一协调进程<br/>经 core 与端口装配"]:::core
+  C --> R["App Server 适配器"]:::adapter
+  C --> W["Wiki HTTP 适配器"]:::adapter
+  C --> G["Git 文档适配器"]:::adapter
+  R <-->|stdio 请求与运行事件| AS["自管 Codex App Server<br/>Thread／Turn"]:::runtime
+  W <-->|受控发布与固定修订读取| OV["外置 Wiki 服务候选<br/>OpenViking"]:::authority
+  G -->|固定 commit 只读| GR["受管项目 Git<br/>正式文档正文"]:::authority
+  classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
+  classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
+  classDef authority fill:#E2F4F2,stroke:#297A73,color:#154B47
+  classDef runtime fill:#E7F2E9,stroke:#3C7654,color:#183C28
+```
+
+紫＝同一协调进程；蓝＝其中的边界适配包；绿＝独立执行运行时；青＝外部正文权威。若采用 OpenViking，其上游 Python/Rust 部署留在独立服务，evoLoop 通过 HTTP 接入。Git 正式正文与外置 Wiki 不迁入 PG；PG 只记录固定引用和跨对象关系。完整包名与依赖范围在后文表中查阅。
+
+**统一写路径。** 工作台、Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与身份 → `core` 读取 PG 当前版本并检查授权、接受/文档审核状态与冲突 → PG 同一事务提交 Task/Document/Relation 变更及出站 outbox → connector 投影到飞书并回读同步结果。飞书原生编辑是受控入口：事件提示回读，connector 将变化映射为带可核验行为者与基线的 command，仍经 `core` 审核后写 PG；身份或基线不足、字段冲突时停下并显式复核，不采用最后写入覆盖。Task、文档审核、运行、同步、实际效果状态分别维护；投影成功不等于交付或效果完成。
+
+Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位置**，以 immutable revision 文件及 manifest 记录固定修订和内部依赖；这是 evoLoop 需实现的版本层设计，不能假定 OpenViking 原生提供相同事务。PostgreSQL 只记知识引用、任务/文档与知识的跨对象 Relation、操作结果与水位，不复制 Wiki 正文或内部知识依赖权威。贡献先成候选，由单一维护发布者回读基线、审阅冲突与撤回影响、发布经审阅的修订、再核对结果；必须关闭 OpenViking 及其他工具的旁路写入。若无法关闭旁路或缺少经验证的原子条件写，安全多写者发布仍不支持。知识存入、通知成功、认知 session 实际使用及目标消费者效果分别核验。
+
+首期认知执行由已登记的 Codex App Server Session 承载，不同时启用 VikingBot 再养一套默认派发、权限和恢复栈。OpenViking 只承担本方案明确验证过的知识服务能力；若它的原生工作流参与写入，也必须走同一候选审核与单维护者发布规则。
+
+调度采用确定性状态表：从 PostgreSQL 当前 `ScheduleStore` 计算到期 UTC 实例，以稳定触发键记意图，按错过/重叠策略创建或关联独立 Task；重启先对账 `unknown`、outbox 和水位，周期对账补外部事件遗漏。PG 事务可原子提交本库 Task 与 outbox，不能把飞书、Wiki 或 App Server 副作用变成跨系统原子操作。定时器响起本身不接受新需求，也不证明任务完成。首期保持一个活动协调者，不额外引入 Redis 或 Temporal；工作台是该协调服务的客户端；多协调者仍需独立验证资格和副作用恢复。
+
+前端组件与 Query/Command 读写分工见[前端架构](frontend.md)。`core/knowledge` 中的 SourceBridge 组合各来源端口；`core/queries` 装配有限上下文与页面读取模型，后端通过同一授权层供工作台和 Agent 使用。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
+
+工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记过程文档来源、仓库目标基线、差异/PR 和核实的合入结果；目标是独立 Git 来源而非 Document 行，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#6-工作文档怎样沉淀为仓库正式文档)。
 
 ## 源码依赖
 
@@ -52,59 +125,6 @@ flowchart TB
 `packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
 
 Wiki 前端代码按[集成方案](wiki-integration.md)拆为组件、数据 hooks 和共同 DTO：显示组件只收 props/事件；服务数据走共同 API；OpenViking DTO、目录及发布清单细节只留适配器。`SourceBridge` 是 `core/knowledge` 的组合用例，所用来源/知识端口属于 contracts；不把它再造为独立服务。上游可抽取代码须登记固定来源与依赖闭包，不直接导入 nashsu 的整个 Zustand/Tauri/摄入链。评价记录暂由 PG 适配器随真实切片支持，复用 Task/Run/Review 的固定引用，不能把 Wiki 正文移入评价表。
-
-## 四部分映射到一个 `core`
-
-| 产品部分 | `core` 内部模块 | 主要责任 |
-| --- | --- | --- |
-| ① 认知循环 | `cognition/`、`reviews/` | 装配目标、来源和反例，形成有依据的回看任务；记录责任 session 的选择及下一动作，检查是否被后续工作实际采用。 |
-| ② 动态多 session | `roles/`、`sessions/` | 逻辑 Role 与承载 Session 分离，职责试行、交接、回看与撤回；新聊天窗口不自动生新 Role。 |
-| ③ Task 与状态机 | `tasks/`、`documents/`、`relations/`、`connectors/`、`coordination/`、`scheduling/` | Task 与原生 Document 的提议/审核/交付，跨对象关系、飞书投影命令、派发与 `unknown` 恢复、到期实例和周期对账；主状态在 PostgreSQL。 |
-| ④ Wiki 与 evaluator | `knowledge/`、`evaluation/` | 来源与相反解释、候选/审核/修订/撤回依赖、独立消费和真实效果评价；正文通过外置 Wiki 端口读取，PG 只登记知识引用与跨对象关系。 |
-
-四部分是**产品能力**，不是四个进程或四个固定 Role。项目和架构 session 是责任承载者，软件模块只是使其工作可追溯。模块间经包内清晰接口协作；只有实际独立发布、团队边界或依赖冲突出现后再考虑拆 `core`。
-
-## 进程与权威边界
-
-下图实线箭头表示**运行命令、投影或回读**，与源码依赖图不同；虚线表示人在飞书投影上的受控编辑，不能直接改主数据。OpenViking 是独立服务与独立数据位置，Python/Rust 留在其上游部署，evoLoop 通过 HTTP 接入；不是 npm 包、`core` 子进程或本仓库的 fork。
-
-```mermaid
-%%{init: {"flowchart":{"wrappingWidth":210,"nodeSpacing":27,"rankSpacing":37}}}%%
-flowchart LR
-  H["人／Desktop 讨论"]:::human --> B["工作台／CLI／Agent 工具入口"]:::entry
-  B --> A["Fastify 本地协调 API<br/>单活 Node 进程"]:::app
-  A --> C["core 用例与检查"]:::core
-  C --> L["PostgreSQL 适配器"]:::adapter --> DB["PostgreSQL 主数据<br/>Task · Schedule · Document · Relation<br/>Binding · Journal · outbox"]:::authority
-  C -->|经存储端口读取 outbox 后投影| F["飞书 connector"]:::adapter --> FS["飞书 Bitable<br/>首期 Task 协作投影"]:::projection
-  FS -->|观察编辑| F
-  F -->|带身份与基线的 command| A
-  C --> W["Wiki HTTP 适配器"]:::adapter --> OV["独立 OpenViking 服务<br/>外置 Wiki 数据"]:::authority
-  C --> R["App Server 适配器"]:::adapter <-->|请求与运行事件| AS["自管 Codex App Server<br/>stdio Thread／Turn"]:::external
-  C --> G["Git 文档适配器"]:::adapter --> GR["受管项目 Git<br/>固定 commit 正式正文"]:::authority
-  H -.->|原生编辑| FS
-  classDef human fill:#FFF1D6,stroke:#A86412,color:#402700
-  classDef entry fill:#FBE7CA,stroke:#A86412,color:#402700
-  classDef app fill:#EFE7FA,stroke:#8056A8,color:#40275D
-  classDef core fill:#E7E3F6,stroke:#8056A8,color:#40275D
-  classDef adapter fill:#E5F0FF,stroke:#4270A8,color:#172F4B
-  classDef authority fill:#E2F4F2,stroke:#297A73,color:#154B47
-  classDef projection fill:#FFF5DF,stroke:#A86412,color:#493822
-  classDef external fill:#E7F2E9,stroke:#3C7654,color:#183C28
-```
-
-图例：黄＝人/入口与飞书协作投影；紫＝evoLoop 进程与规则；蓝＝适配器/连接器；青＝各自范围内的主数据（PostgreSQL）或知识权威（外置 Wiki）；绿＝外部执行运行时。Git 正式文档仍由 Git 持正文，PG 可记录独立来源 ref+commit，但不把仓库文件放进 Document Table；该表只管理与 Task 直接关联的过程文档及修订。源码 npm 包、进程、业务 Session/Role、上游仓库是不同边界。
-
-**统一写路径。** 工作台、Desktop 工具、CLI 和自管 App Server 工作线程提交操作 ID、行为者/Session、对象 ID、读入基线与证据 → 协调 API 校验输入与身份 → `core` 读取 PG 当前版本并检查授权、接受/文档审核状态与冲突 → PG 同一事务提交 Task/Document/Relation 变更及出站 outbox → connector 投影到飞书并回读同步结果。飞书原生编辑是受控入口：事件提示回读，connector 将变化映射为带可核验行为者与基线的 command，仍经 `core` 审核后写 PG；身份或基线不足、字段冲突时停下并显式复核，不采用最后写入覆盖。Task、文档审核、运行、同步、实际效果状态分别维护；投影成功不等于交付或效果完成。
-
-Wiki 的来源和不可变修订正文拟存**开发仓库外的 Wiki 数据位置**，以 immutable revision 文件及 manifest 记录固定修订和内部依赖；这是 evoLoop 需实现的版本层设计，不能假定 OpenViking 原生提供相同事务。PostgreSQL 只记知识引用、任务/文档与知识的跨对象 Relation、操作结果与水位，不复制 Wiki 正文或内部知识依赖权威。贡献先成候选，由单一维护发布者回读基线、审阅冲突与撤回影响、发布经审阅的修订、再核对结果；必须关闭 OpenViking 及其他工具的旁路写入。若无法关闭旁路或缺少经验证的原子条件写，安全多写者发布仍不支持。知识存入、通知成功、认知 session 实际使用及目标消费者效果分别核验。
-
-首期认知执行由已登记的 Codex App Server Session 承载，不同时启用 VikingBot 再养一套默认派发、权限和恢复栈。OpenViking 只承担本方案明确验证过的知识服务能力；若它的原生工作流参与写入，也必须走同一候选审核与单维护者发布规则。
-
-调度采用确定性状态表：从 PostgreSQL 当前 `ScheduleStore` 计算到期 UTC 实例，以稳定触发键记意图，按错过/重叠策略创建或关联独立 Task；重启先对账 `unknown`、outbox 和水位，周期对账补外部事件遗漏。PG 事务可原子提交本库 Task 与 outbox，不能把飞书、Wiki 或 App Server 副作用变成跨系统原子操作。定时器响起本身不接受新需求，也不证明任务完成。首期保持一个活动协调者，不额外引入 Redis 或 Temporal；工作台是该协调服务的客户端；多协调者仍需独立验证资格和副作用恢复。
-
-前端组件与 Query/Command 读写分工见[前端架构](frontend.md)。`core/knowledge` 中的 SourceBridge 组合各来源端口；`core/queries` 装配有限上下文与页面读取模型，后端通过同一授权层供工作台和 Agent 使用。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
-
-工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记过程文档来源、仓库目标基线、差异/PR 和核实的合入结果；目标是独立 Git 来源而非 Document 行，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#3a-工作文档怎样沉淀为仓库正式文档)。
 
 ## 切片与验证
 

@@ -37,6 +37,28 @@ test('rejects manifest traversal and symlinked sources', async t => {
   await assert.rejects(check(root), /symlinks are not allowed/);
 });
 
+test('keeps renamed heading links pointing at the new section', async t => {
+  const root = await fixture(t, [
+    { path: 'README.md', title: 'Home', group: 'Start', headingAliases: { 'old-section': 'new-section' } },
+  ]);
+  await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n[old](#old-section) [new](#new-section)\n\n## New section\n');
+  await build(root);
+  const html = await fs.readFile(path.join(root, 'site/index.html'), 'utf8');
+  assert.match(html, /id="old-section" aria-hidden="true"><\/span><h2 id="new-section"/);
+  assert.match(html, /href="index.html#old-section"/);
+  assert.match(html, /href="index.html#new-section"/);
+});
+
+test('rejects ambiguous, unsafe or missing heading alias targets', async t => {
+  const root = await fixture(t);
+  for (const headingAliases of [{ old: 'missing' }, { home: 'home' }, { '<unsafe>': 'home' }, []]) {
+    await fs.writeFile(path.join(root, 'docs/site.json'), JSON.stringify({ title: 'Test', description: 'Test docs', pages: [
+      { path: 'README.md', title: 'Home', group: 'Start', headingAliases },
+    ] }));
+    await assert.rejects(check(root), /headingAliases/);
+  }
+});
+
 test('rejects links to unpublished pages and missing anchors', async t => {
   const root = await fixture(t);
   await fs.writeFile(path.join(root, 'README.md'), '# Home\n\n[secret](docs/private.md)\n');

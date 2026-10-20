@@ -2,6 +2,8 @@
 
 状态：2026-10-20 **前端设计提议，尚未实现**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；当前没有复制组件或代码。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](frontend.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。OpenViking 仍只是外置内容服务候选，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。
 
+本页先回答读者如何进入专题、读完整知识页并追踪修订，再说明查询与权限如何保证这些阅读路径；固定上游组件仅是后面的实现参考。
+
 ## 1. 浏览对象和屏幕
 
 知识点是可引用的判断/概念/实体等单元；专题是围绕问题聚合知识点、反例、来源和未决问题的阅读入口。两者首先都是外置知识页，均有稳定 `knowledgeId`、固定 `revision`、类型、标题、摘要或正文、适用范围、状态、来源修订和页间关系；专题成员关系由知识端维护。本文的“知识点/专题”是 evoLoop **拟议读取模型**，不声称 nashsu 已有这两个独立实体或可直接提供这些 ID。外置后端若只给 URI 和可变文件名，适配器须建立并核对稳定身份与修订；路径或标题不得成为跨系统主键。下表路由均以 `/app/p/:projectId` 为前缀。
@@ -32,22 +34,7 @@ URL 中的 `knowledgeId` 与 `revision` 均不可静默改成最新版。跨对�
 
 外置服务没有原生专题/双链 API 时，适配器从已发布 manifest 和结构化页元数据构建**可重建的只读查询索引**，和知识空间一起维护版本水位；发布正文仍是唯一权威。索引更新失败时显示旧水位/缺项，并支持按固定 ID 直接回查正文。不能为显示知识卡片而在 PG 复制一套可编辑知识模型，也不能让浏览器扫描整个外置目录。
 
-## 2. 从 nashsu 固定版抽取的前端机制
-
-下面概括交互来源；精确到导出符号、直接依赖、锁定版本和复用等级的证据见[前端源码复用核查](../research/nashsu-llm-wiki/frontend-reuse.md)。组件 props/事件、共同 API 示例、OpenViking 原生路由与需要补齐的能力见[集成方案](wiki-integration.md)，避免将“可参考的界面”误作“已可直接导入的组件”。
-
-| 固定源码里的实现 | 可借的交互或算法 | evoLoop 落点与适配差异 |
-| --- | --- | --- |
-| [KnowledgeTree](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/layout/knowledge-tree.tsx) 读 Markdown 的 title/type/tags/origin/sources，按类型列页；[来源筛选](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/knowledge-source-filter.ts) | 类型树、来源筛选、知识点列表和原始材料入口 | `knowledge` 模块的专题/类型导航；服务端分页和权限过滤，来源按稳定 source ID/revision，不让浏览器遍历 vault |
-| [WikiEditor](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/wiki-editor.tsx)、[WikiReader](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/wiki-reader.tsx)、[FrontmatterPanel](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/frontmatter-panel.tsx) | Markdown 正文、来源卡、Related 芯片、缺失链接提示与阅读/编辑切换 | 默认只读固定修订；编辑器只产候选差异，服务端校验基线、权限和来源。外部 URL 受 allowlist/安全策略约束 |
-| [PageLinksPanel](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/page-links-panel.tsx) 展示 outgoing/backlinks/missing；[路径解析器](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-page-resolver.ts) | 双链、断链和来源定位面板 | API 按 page ID/revision 返回类型化边及解析状态；不能仅靠同名 slug 找目标，缺链留待复核 |
-| [wiki-graph](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-graph.ts) 从 `related`/wikilink 建页图；[GraphView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/graph/graph-view.tsx) 用 Graphology、Sigma、布局 worker；[相关性](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/graph-relevance.ts) 用直接链接、共来源、共同邻居和类型亲和 | 局部关系图、焦点/邻居高亮、筛选和群组发现 | 首片取服务端有界子图，边带类型/来源/修订；相关性只作发现排序，不充当证据强度或知识正确率 |
-| [ReviewView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/review/review-view.tsx)、[review-store](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/review-store.ts) | 待审卡、建议动作、批量筛选与处理痕迹 | PG 记录维护任务/决定/回执，候选与差异在外置 Wiki；Review resolve 不等于修订、发布或用户已采用 |
-| [SourcesView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/sources/sources-view.tsx)、[SearchView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/search/search-view.tsx) | 来源浏览、检索结果下钻到原件或知识页 | SourceBridge/KnowledgeQuery 分别核授权、固定修订、原件可达；生成的来源摘要标派生，不替代原文 |
-
-nashsu 的组件并非可直接导入的无状态 UI：多处调用大型 [wiki-store](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/wiki-store.ts)；树、预览、图和双链依赖 [`commands/fs.ts`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/commands/fs.ts) 的 Tauri `invoke`，来源导入还依赖 Tauri dialog、前端摄入队列，图谱构建会遍历读取 vault。UI 层仅参考布局、反馈和纯解析/筛选函数；需复用代码时单独核 GPL-3.0、依赖与替换成本。本阶段未复制。[固定版组件边界](../research/nashsu-llm-wiki/architecture.md#1-组件依赖与进程边界)
-
-## 3. evoLoop 前端、查询层和知识端
+## 2. evoLoop 前端、查询层和知识端
 
 ```mermaid
 flowchart LR
@@ -78,11 +65,26 @@ flowchart LR
   classDef data fill:#E2F4F2,stroke:#297A73,color:#154B47
 ```
 
-黄＝视图；蓝＝浏览器读取/临时交互；紫＝共同 API；青＝权威边界。浏览器只接收授权后的数据，不引入数据库驱动、Tauri 文件命令、上游服务凭据或模型客户端。TanStack Query 缓存只能加速读取；发布成功回读固定修订并使相应列表、页、图和待审查询失效。[前端架构](frontend.md#3-组件路由与查询模型)
+黄＝视图；蓝＝浏览器读取/临时交互；紫＝共同 API；青＝权威边界。浏览器只接收授权后的数据，不引入数据库驱动、Tauri 文件命令、上游服务凭据或模型客户端。TanStack Query 缓存只能加速读取；发布成功回读固定修订并使相应列表、页、图和待审查询失效。[前端架构](frontend.md#2-组件路由与查询模型)
 
 建议的只读 query 形状是 `listKnowledge(project, type/topic/status/source, cursor)`、`getKnowledge(id, revision)`、`getTopicMembers(id, revision, cursor)`、`getLinks(id, revision, direction, cursor)`、`getGraphNeighborhood(focus, depth≤1, limit)`、`listReview(project, state, cursor)`。每个响应返回稳定 ID、固定 revision、内容/来源校验、状态、权限能力、`observedAt` 与缺项；图边另给类型、方向、两端 revision 和来源。搜索结果标记命中的是正文、来源摘要还是原件。服务端对列表、关系遍历、搜索和原件逐项鉴权并限量；不可达时显示最后核对时间和缺项，不把缓存旧页显示为当前有效。
 
-命令仅走共同 API：`submitKnowledgeCorrection` 创建候选，`reviewKnowledgeCandidate` 记录决定，`publishKnowledgeCandidate` 在受控写入口核旧 revision 并回读，`requestImpactReview` 连接 PG 跨对象影响。写入成功后回包丢失用同一 operation ID 查询和核对；Review 状态、Wiki 发布、派生索引完成及新 session 实际采用分别显示。[维护机制](wiki-maintenance.md#首片与发布门槛) · [前端命令流程](frontend.md#4-修改刷新与失败如何呈现)
+命令仅走共同 API：`submitKnowledgeCorrection` 创建候选，`reviewKnowledgeCandidate` 记录决定，`publishKnowledgeCandidate` 在受控写入口核旧 revision 并回读，`requestImpactReview` 连接 PG 跨对象影响。写入成功后回包丢失用同一 operation ID 查询和核对；Review 状态、Wiki 发布、派生索引完成及新 session 实际采用分别显示。[维护机制](wiki-maintenance.md#首片与发布门槛) · [前端命令流程](frontend.md#3-修改刷新与失败如何呈现)
+
+## 3. 从 nashsu 固定版抽取的前端机制
+
+下面概括交互来源；精确到导出符号、直接依赖、锁定版本和复用等级的证据见[前端源码复用核查](../research/nashsu-llm-wiki/frontend-reuse.md)。组件 props/事件、共同 API 示例、OpenViking 原生路由与需要补齐的能力见[集成方案](wiki-integration.md)，避免将“可参考的界面”误作“已可直接导入的组件”。
+
+| 固定源码里的实现 | 可借的交互或算法 | evoLoop 落点与适配差异 |
+| --- | --- | --- |
+| [KnowledgeTree](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/layout/knowledge-tree.tsx) 读 Markdown 的 title/type/tags/origin/sources，按类型列页；[来源筛选](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/knowledge-source-filter.ts) | 类型树、来源筛选、知识点列表和原始材料入口 | `knowledge` 模块的专题/类型导航；服务端分页和权限过滤，来源按稳定 source ID/revision，不让浏览器遍历 vault |
+| [WikiEditor](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/wiki-editor.tsx)、[WikiReader](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/wiki-reader.tsx)、[FrontmatterPanel](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/frontmatter-panel.tsx) | Markdown 正文、来源卡、Related 芯片、缺失链接提示与阅读/编辑切换 | 默认只读固定修订；编辑器只产候选差异，服务端校验基线、权限和来源。外部 URL 受 allowlist/安全策略约束 |
+| [PageLinksPanel](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/editor/page-links-panel.tsx) 展示 outgoing/backlinks/missing；[路径解析器](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-page-resolver.ts) | 双链、断链和来源定位面板 | API 按 page ID/revision 返回类型化边及解析状态；不能仅靠同名 slug 找目标，缺链留待复核 |
+| [wiki-graph](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/wiki-graph.ts) 从 `related`/wikilink 建页图；[GraphView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/graph/graph-view.tsx) 用 Graphology、Sigma、布局 worker；[相关性](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/graph-relevance.ts) 用直接链接、共来源、共同邻居和类型亲和 | 局部关系图、焦点/邻居高亮、筛选和群组发现 | 首片取服务端有界子图，边带类型/来源/修订；相关性只作发现排序，不充当证据强度或知识正确率 |
+| [ReviewView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/review/review-view.tsx)、[review-store](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/review-store.ts) | 待审卡、建议动作、批量筛选与处理痕迹 | PG 记录维护任务/决定/回执，候选与差异在外置 Wiki；Review resolve 不等于修订、发布或用户已采用 |
+| [SourcesView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/sources/sources-view.tsx)、[SearchView](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/components/search/search-view.tsx) | 来源浏览、检索结果下钻到原件或知识页 | SourceBridge/KnowledgeQuery 分别核授权、固定修订、原件可达；生成的来源摘要标派生，不替代原文 |
+
+nashsu 的组件并非可直接导入的无状态 UI：多处调用大型 [wiki-store](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/wiki-store.ts)；树、预览、图和双链依赖 [`commands/fs.ts`](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/commands/fs.ts) 的 Tauri `invoke`，来源导入还依赖 Tauri dialog、前端摄入队列，图谱构建会遍历读取 vault。UI 层仅参考布局、反馈和纯解析/筛选函数；需复用代码时单独核 GPL-3.0、依赖与替换成本。本阶段未复制。[固定版组件边界](../research/nashsu-llm-wiki/architecture.md#1-组件依赖与进程边界)
 
 ## 4. 首片验收
 
