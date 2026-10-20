@@ -35,8 +35,8 @@
 | DEC-025 | 产品文档按使用者理解与设计推导重排，并补齐从目标到首次有效交付的连续体验 | 用户要求验证整套理解及页面/功能/交互推导；文档查找和任务切片检查只是部分证据。保留既有产品边界，新增具体旅程与界面行为是待验证设计，不因此批准技术栈或上线能力 |
 | DEC-026 | 停止继续完整实现工作台静态原型，问题转入真实前端首片方案；当时暂不写前端代码；该暂停已由 DEC-028 取代 | 用户明确选择先收敛方案，待主数据/API 首片一起实现。原型审查发现的问题保留为实施与验收约束；目录不按全部对象平铺，具体精简导航仍待真实前端验证。此决定不批准待选技术栈或把本地未完成原型候选当作交付 |
 | DEC-027 | 暂用 OpenViking 作为首个知识后端，前端保留类似 nashsu 的知识图谱与阅读体验；允许以后自研替换 | 用户明确本阶段方向，采纳 PROP-008 的后端选择部分。知识合同、稳定 ID/修订/关系和迁移验收独立于供应商；具体版本、补丁、前端依赖和自研计划仍待验证。此次只补架构，保留 DEC-026 的暂不写前端代码范围 |
-
 | DEC-028 | 全面、多角度审阅设计，修正后开始实现，保持明确抽象与分包 | 授权进入真实主数据/API/前端首片，取代 DEC-026 的暂停。S1a 实现过程 Markdown 修订、任务固定依据与影响复核；本次工程选择及固定版本见技术选型。外部平台接入、完整 Agent loop 和生产部署仍未完成。 |
+| DEC-029 | 按已接能力重组真实前端，并区分人的 GUI 与 Agent 业务入口 | 人用浅色、无绿色的双层左栏默认阅读、按需判断与反馈；工作和知识先行、总览待真实反馈。保留 React/TS/Vite 与当前 hash 路由，按需使用 Tailwind、shadcn/ui 和项目内开发技能；Agent 常规业务入口另由项目业务 skill 配合 CLI／MCP 调用相同 API/core，浏览器 Agent QA 不算真人亲用。F1—F4 的源码、测试和实际使用分别验收，不因本决定声称完成。 |
 
 ## 当前设计提议
 
@@ -50,7 +50,7 @@
 | PROP-006 | core、contracts 与平台适配分层，单活 daemon 装配；日程与任务主数据按 DEC-018 存于 evoLoop | 语言与部署选型、外置运行记录实现、真实表结构及时间/去重/重叠语义 |
 | PROP-007 | 主应用推荐 TS/Node 24 LTS、npm workspaces、Fastify、Zod；主数据及运行存储按 DEC-017/018 使用 PostgreSQL | S1a 已采用并锁定 TS/Node/npm/Fastify/Zod、PG 驱动与迁移，见[技术选型](architecture/technology-selection.md)；协议迁移与生产恢复仍待后续验证 |
 | PROP-008 | OpenViking 接入方向已由 DEC-027 采纳；独立服务、认知维护留在 evoLoop 与有限 fork 仍按能力细化 | v0.5.1 是新候选而非已通过版本；核所有写入入口、来源撤回、修订/恢复及许可安排后再确定补丁 |
-| PROP-009 | 推荐同源 React/TS/Vite 工作台，Router + Query 管理导航和读取；共用协调 API | 见[前端架构](architecture/frontend.md)；S1a 已有本机 React/TS/Vite 读取与复核；Router/Query 未安装，远程手机访问需登录/常在线部署 |
+| PROP-009 | 同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](architecture/frontend.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，远程手机访问需登录/常在线部署 |
 | PROP-010 | 采用固定 Task/Document 修订、类型化关系和来源桥接，连接 PG、Git 与外置 Wiki | 见[存储](architecture/storage.md)与[知识关联](architecture/knowledge-flow.md)；需实测约束、纠正传播、权限变化和跨系统恢复 |
 | PROP-011 | 经共同 API 改造知识阅读/关系/Review，按固定来源接 OpenViking 与 PG/Git；原型覆盖六条产品路径 | [集成方案](architecture/wiki-integration.md)和[原型审阅](research/workbench-prototype-review.md)说明切片；待验证代码移植、许可安排、发布恢复和真实效果 |
 
@@ -77,3 +77,5 @@
 DEC-027 依据用户本轮“暂时用 OpenViking、以后可能自己实现知识库、保留类似 nashsu 的图谱前端”的要求。新增可替换合同与迁移验收，明确后端方向已选但生产能力未验；历史研究仍保留当时的候选状态。
 
 DEC-028 来自用户要求“全面 review 所有设计，没有问题就开始实现”，并要求多角度审阅。工程实现中仍发现并修正了具体合同与恢复缺口，见[设计审阅与首片实测](research/design-review-20261020.md)。它授权可逆的实现选择，不把所有候选技术、生产发布或完整产品验收视为已完成。
+
+DEC-029 记录用户对真实前端重组及入口分工的明确要求：图形界面服务人的阅读、判断、反馈；现有 CLI 和后续业务 skill／MCP 服务 Agent 的常规工作，共用 API/core 的权威与恢复语义。界面组合按 [F1—F4](roadmap.md#前端重组-f1f4实施里程碑待验收) 推进；frontend-design 与 web-design-guidelines 只用于开发和评审，不是 evoLoop 业务 skill。组件来源、许可及项目范围记在 `apps/workbench/THIRD_PARTY.md`；该记录不证明新布局已通过普通入口或真人验收。

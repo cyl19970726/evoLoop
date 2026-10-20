@@ -97,9 +97,10 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [preview, setPreview] = useState("");
+  const [assetPreview, setAssetPreview] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    setOriginal(null); setError("");
+    setOriginal(null); setAssetPreview(null); setError("");
     request<Original>(token, base(projectId, documentId, revisionId), 30000)
       .then(result => { if (active) setOriginal(result); })
       .catch(cause => { if (active) setError(errorText(cause)); });
@@ -122,15 +123,24 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
   return <section className="panel reading"><div className="panel-head"><h2>固定修订原件</h2>
     <button onClick={() => download(original.revision.originalName,
       new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
-    <p className="muted">固定修订：<code>{original.revision.id}</code></p>
+    <p className="muted">正在阅读固定修订：<code>{original.revision.id}</code></p>
     <p className="muted">SHA-256：<code>{original.revision.contentHash}</code></p>
     {original.revision.format === "html" ? <><p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
       <iframe title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
-        style={{ width: "100%", minHeight: 420, border: "1px solid #dce7e7", borderRadius: 8 }} /></>
+        style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /></>
       : <p>完整 Markdown 原文：</p>}
     <div className="revision-body"><pre>{original.body}</pre></div>
-    {original.assets.length > 0 && <div><h3>配套资源</h3><ul>{original.assets.map(asset => <li key={asset.path}>
-      {asset.path} <code className="break-anywhere">{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code> <button onClick={() => download(asset.path.split("/").at(-1) ?? "resource",
-        new Blob([blobBytes(asset.base64)], { type: asset.mediaType }))}>下载</button></li>)}</ul></div>}
+    {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => <li key={asset.path}>
+      <span className="break-anywhere">{asset.path}<small>{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
+      <span className="actions"><button onClick={() => setAssetPreview(value => value === asset.path ? null : asset.path)}
+        aria-expanded={assetPreview === asset.path}> {assetPreview === asset.path ? "收起预览" : "预览"}</button>
+      <button onClick={() => download(asset.path.split("/").at(-1) ?? "resource",
+        new Blob([blobBytes(asset.base64)], { type: asset.mediaType }))}>下载</button></span>
+      {assetPreview === asset.path && <div className="doc-asset-preview">
+        {asset.mediaType === "image/svg+xml" ? <img alt={`资源 ${asset.path} 的静态预览`} src={`data:image/svg+xml;base64,${asset.base64}`} />
+          : asset.mediaType === "text/css" ? <pre>{new TextDecoder().decode(bytes(asset.base64))}</pre>
+          : <p>此资源类型无法在页面安全预览，请下载查看。</p>}
+      </div>}
+    </li>)}</ul></div>}
   </section>;
 }

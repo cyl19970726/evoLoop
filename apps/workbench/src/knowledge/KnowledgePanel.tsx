@@ -4,6 +4,7 @@ import type { KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapa
 import { errorText, isUnconfirmed } from "../api";
 import { Notice, type MutationContext } from "../workflow/ActionForm";
 import { knowledgeClient, type SourceDocument } from "./client";
+import "./knowledge.css";
 
 interface ExternalReceipt { projectId: string; actorId: string; operationId: string; kind: "publish" | "retract"; targetId: string; createdAt: string }
 const receiptKey = "evoloop.external-knowledge-operations.v1";
@@ -20,11 +21,34 @@ function saveReceipts(values: ExternalReceipt[]): boolean {
   try { sessionStorage.setItem(receiptKey, JSON.stringify(values)); return true; } catch { return false; }
 }
 const sourceId = (key: string) => key.startsWith("document:") ? key.slice(9) : null;
-const documentLink = (projectId: string, documentId: string, revision: string) =>
-  `#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revision)}`;
+const knowledgeHash = (projectId: string, selection?: { knowledgeId: string; knowledgeRevision?: string } | { candidateId: string }) => {
+  const path = `#/p/${encodeURIComponent(projectId)}/knowledge`;
+  if (!selection) return path;
+  const params = new URLSearchParams();
+  if ("candidateId" in selection) params.set("candidateId", selection.candidateId);
+  else { params.set("knowledgeId", selection.knowledgeId);
+    if (selection.knowledgeRevision) params.set("knowledgeRevision", selection.knowledgeRevision); }
+  return `${path}?${params}`;
+};
+function readKnowledgeHash(projectId: string): { view: "list" | "read" | "review"; id?: string; revision?: string } {
+  const [path, query = ""] = window.location.hash.split("?");
+  if (path !== knowledgeHash(projectId)) return { view: "list" };
+  const params = new URLSearchParams(query);
+  const candidate = params.get("candidateId");
+  if (candidate) return { view: "review", id: candidate };
+  if (params.get("review") === "1") return { view: "review" };
+  const id = params.get("knowledgeId");
+  return id ? { view: "read", id, revision: params.get("knowledgeRevision") || undefined } : { view: "list" };
+}
+const documentLink = (projectId: string, documentId: string, revision: string, returnHash: string) =>
+  `#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revision)}&return=${encodeURIComponent(returnHash)}`;
 const statusText = (status: string) => ({ valid: "有效", needs_review: "待复核", withdrawn: "已撤回", pending: "待审",
   accepted: "已接受", rejected: "未采纳", published: "已发布", truncated: "已截断", partial: "部分缺项",
-  unavailable: "不可用", complete: "完整" } as Record<string, string>)[status] ?? status;
+  unavailable: "不可用", complete: "完整", reachable: "可读取", active: "已登记",
+  supports: "支持", contradicts: "挑战／反例", related: "相关观察", member_of: "属于", supersedes: "取代",
+  topic: "专题", concept: "概念", analysis: "分析", decision: "决定",
+  observation: "观察", inference: "推断", hypothesis: "假设", adopted: "已采纳判断",
+  disputed: "有争议", superseded: "已取代" } as Record<string, string>)[status] ?? status;
 
 const graphNodeKey = (id: string, revision: string) => `${id}\0${revision}`;
 
@@ -33,18 +57,21 @@ function Graph({ graph, onOpen }: { graph: KnowledgeGraph; onOpen(id: string, re
     index === 0 ? { x: 300, y: 150 } : { x: 300 + 205 * Math.cos(2 * Math.PI * (index - 1) / Math.max(1, graph.nodes.length - 1)),
       y: 150 + 110 * Math.sin(2 * Math.PI * (index - 1) / Math.max(1, graph.nodes.length - 1)) }]));
   return <div><p>关系图：{statusText(graph.status)} · 水位 {graph.watermark}。只显示已登记的固定关系。</p>
-    <svg role="img" aria-label="固定知识关系图" viewBox="0 0 600 300" style={{ width: "100%", maxWidth: 700, background: "#f7faf9", borderRadius: 10 }}>
+    <svg aria-hidden="true" viewBox="0 0 600 300" style={{ width: "100%", maxWidth: 700, background: "#f5f7fc", borderRadius: 10 }}>
       {graph.edges.map(edge => { const a = positions.get(graphNodeKey(edge.fromKnowledgeId, edge.fromRevision)), b = positions.get(graphNodeKey(edge.toKnowledgeId, edge.toRevision));
         return a && b ? <g key={edge.edgeId}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-          stroke={edge.state === "active" ? "#4c8c83" : "#b97664"} strokeWidth="2" />
+          stroke={edge.state === "active" ? "#536ec3" : "#a36a68"} strokeWidth="2" />
           <title>{edge.type} · {edge.state} · {edge.fromRevision} → {edge.toRevision}</title></g> : null; })}
       {graph.nodes.map(node => { const point = positions.get(graphNodeKey(node.knowledgeId, node.revision))!;
-        return <g key={graphNodeKey(node.knowledgeId, node.revision)} onClick={() => onOpen(node.knowledgeId, node.revision)} style={{ cursor: "pointer" }}>
-          <circle cx={point.x} cy={point.y} r="30" fill={node.validity === "valid" ? "#d7ece6" : "#f6ded6"} stroke="#547c75" />
+        return <g key={graphNodeKey(node.knowledgeId, node.revision)}>
+          <circle cx={point.x} cy={point.y} r="30" fill={node.validity === "valid" ? "#e6ebfc" : "#f6ded6"} stroke="#596ba4" />
           <text x={point.x} y={point.y + 4} textAnchor="middle" fontSize="11">{node.title.slice(0, 8)}</text>
           <title>{node.title} · {node.revision} · {statusText(node.validity)}</title>
         </g>; })}
     </svg>
+    <div className="knowledge-graph-nodes" aria-label="关系图中的知识页">{graph.nodes.map(node =>
+      <button key={graphNodeKey(node.knowledgeId, node.revision)} onClick={() => onOpen(node.knowledgeId, node.revision)}>
+        {node.title} · 固定版 {node.revision.slice(0, 8)}</button>)}</div>
     {graph.status !== "complete" && <Notice error>关系数据{statusText(graph.status)}，不能据此断言没有其他关联。</Notice>}
   </div>;
 }
@@ -57,12 +84,12 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [candidateCursor, setCandidateCursor] = useState<string | null>(null);
   const [sources, setSources] = useState<SourceDocument[]>([]);
   const [capabilities, setCapabilities] = useState<KnowledgeCapabilities | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [fixedRevision, setFixedRevision] = useState<string | undefined>();
+  const [selectedId, setSelectedId] = useState<string | null>(() => { const route = readKnowledgeHash(context.projectId); return route.view === "read" ? route.id ?? null : null; });
+  const [fixedRevision, setFixedRevision] = useState<string | undefined>(() => readKnowledgeHash(context.projectId).revision);
   const [page, setPage] = useState<KnowledgeRevision | null>(null);
   const [history, setHistory] = useState<KnowledgeSummary[]>([]);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeHash(context.projectId); return route.view === "review" ? route.id ?? null : null; });
   const [candidate, setCandidate] = useState<KnowledgeCandidateRecord | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -71,14 +98,31 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [pageType, setPageType] = useState<"topic" | "concept" | "analysis" | "decision">("concept");
   const [epistemic, setEpistemic] = useState<"observation" | "inference" | "hypothesis" | "adopted" | "disputed" | "superseded">("inference");
   const [selectedSource, setSelectedSource] = useState("");
+  const [selectedSourceRevision, setSelectedSourceRevision] = useState("");
   const [relationTarget, setRelationTarget] = useState("");
+  const [relationRevision, setRelationRevision] = useState("");
   const [relationType, setRelationType] = useState<"supports" | "contradicts" | "related" | "member_of" | "supersedes">("related");
   const [reviewReason, setReviewReason] = useState("");
+  const [composeKnowledgeId, setComposeKnowledgeId] = useState<string | null>(null);
+  const [editingRevision, setEditingRevision] = useState<string | null>(null);
+  const [composeTouched, setComposeTouched] = useState(false);
+  const [composeConflict, setComposeConflict] = useState("");
   const [externalReceipts, setExternalReceipts] = useState(readReceipts);
   const [busy, setBusy] = useState(false);
   const [localRefresh, setLocalRefresh] = useState(0);
+  const [view, setView] = useState<"list" | "read" | "review" | "compose">(() => readKnowledgeHash(context.projectId).view);
   const canWrite = context.principal.permissions.includes("write");
   const canReview = context.principal.permissions.includes("review");
+  useEffect(() => {
+    const sync = () => {
+      const route = readKnowledgeHash(context.projectId);
+      if (route.view === "read") { setSelectedId(route.id ?? null); setFixedRevision(route.revision); setView("read"); }
+      else if (route.view === "review") { setSelectedCandidateId(route.id ?? null); setView("review"); }
+      else if (window.location.hash === knowledgeHash(context.projectId)) setView("list");
+    };
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, [context.projectId]);
   useEffect(() => {
     let active = true;
     setError("");
@@ -91,10 +135,16 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   }, [context.token, context.projectId, refresh, localRefresh]);
   useEffect(() => {
     if (!selectedId) { setPage(null); setHistory([]); setGraph(null); return; }
-    let active = true; setPage(null); setError("");
-    Promise.all([client.page(selectedId, fixedRevision), client.history(selectedId), client.graph(selectedId)])
-      .then(([next, past, nearby]) => { if (active) { setPage(next); setHistory(past.items); setGraph(nearby); } })
-      .catch(cause => { if (active) setError(errorText(cause)); });
+    let active = true; setPage(null); setHistory([]); setGraph(null); setError("");
+    Promise.allSettled([client.page(selectedId, fixedRevision), client.history(selectedId), client.graph(selectedId)])
+      .then(([read, past, nearby]) => { if (!active) return;
+        if (read.status === "fulfilled") setPage(read.value);
+        else setError(`正文读取失败：${errorText(read.reason)}`);
+        if (past.status === "fulfilled") setHistory(past.value.items);
+        if (nearby.status === "fulfilled") setGraph(nearby.value);
+        if (read.status === "fulfilled" && (past.status === "rejected" || nearby.status === "rejected"))
+          setError("正文已读取；历史或关系暂不可用，请稍后回读。");
+      });
     return () => { active = false; };
   }, [context.token, context.projectId, selectedId, fixedRevision, refresh, localRefresh]);
   useEffect(() => {
@@ -153,19 +203,33 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     if (!canWrite || busy || context.blocked || !selectedSource) return;
     const source = sources.find(item => item.documentId === selectedSource && item.state === "reachable");
     if (!source) { setMessage("请选择可达且已采纳的固定文档来源。"); return; }
+    if (!selectedSourceRevision || source.revisionId !== selectedSourceRevision) {
+      setComposeConflict("所选来源的已采纳修订已变化。草稿保留；请重新选择并核对固定来源。"); return;
+    }
     const target = pages.find(item => item.knowledgeId === relationTarget);
     if (relationTarget && !target) { setMessage("关系目标必须是已发布的固定知识页。"); return; }
+    if (target && target.revision !== relationRevision) {
+      setComposeConflict("关系目标的发布修订已变化。草稿保留；请重新选择目标并核对关系。"); return;
+    }
     setBusy(true); setMessage("");
     const candidateId = crypto.randomUUID();
     try {
-      const current = selectedId ? await client.page(selectedId) : null;
-      const result = await client.propose({ operationId: crypto.randomUUID(), knowledgeId: selectedId ?? crypto.randomUUID(),
-        candidateId, candidateRevision: crypto.randomUUID(), expectedRevision: current?.revision ?? null,
+      if (composeKnowledgeId) {
+        const current = await client.page(composeKnowledgeId);
+        if (!editingRevision || current.revision !== editingRevision) {
+          setComposeConflict(`编辑基线为 ${editingRevision?.slice(0, 8) ?? "未知"}，当前发布版为 ${current.revision.slice(0, 8)}。草稿已保留；请阅读当前版后明确重新整理。`);
+          return;
+        }
+      }
+      const result = await client.propose({ operationId: crypto.randomUUID(), knowledgeId: composeKnowledgeId ?? crypto.randomUUID(),
+        candidateId, candidateRevision: crypto.randomUUID(), expectedRevision: editingRevision,
         title: title.trim(), body, pageType, epistemicStatus: epistemic,
-        sources: [{ documentId: source.documentId, revisionId: source.revisionId, fragment: null }],
-        relations: target ? [{ toKnowledgeId: target.knowledgeId, toRevision: target.revision,
+        sources: [{ documentId: source.documentId, revisionId: selectedSourceRevision, fragment: null }],
+        relations: target ? [{ toKnowledgeId: target.knowledgeId, toRevision: relationRevision,
           type: relationType, sourceKeys: [source.sourceKey] }] : [] });
-      setSelectedCandidateId(result.candidateId); setMessage("候选已保存，仍需明确审阅后才能发布。"); refreshAll();
+      setComposeTouched(false); setComposeConflict("");
+      openCandidate(result.candidateId);
+      setMessage("候选已保存，仍需明确审阅后才能发布。"); refreshAll();
     } catch (cause) { setMessage(`${errorText(cause)}。若连接中断，请按候选 ID ${candidateId} 回读候选列表，不要盲目重提。`); }
     finally { setBusy(false); }
   }
@@ -180,58 +244,164 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     } catch (cause) { setMessage(errorText(cause)); }
     finally { setBusy(false); }
   }
-  return <div className="journey-board"><section className="panel"><div className="panel-head"><h2>知识空间</h2><button onClick={refreshAll}>回读当前状态</button></div>
-    <p>正文、历史与内部关系保存在外部知识空间。页面只显示真实固定版和已登记关系。</p>
-    {capabilities && <p className="muted">后端 {capabilities.backendVersion ?? "不可达"} · 语义索引未验证；普通内容写入不等于自动编纂。</p>}
+  const openPage = (id: string, revision?: string) => {
+    setPage(null); setHistory([]); setGraph(null);
+    setSelectedId(id); setFixedRevision(revision); setView("read");
+    window.location.hash = knowledgeHash(context.projectId, { knowledgeId: id, knowledgeRevision: revision });
+  };
+  const openCandidate = (id: string) => {
+    setSelectedCandidateId(id); setView("review");
+    window.location.hash = knowledgeHash(context.projectId, { candidateId: id });
+  };
+  const showList = () => { setView("list"); window.location.hash = knowledgeHash(context.projectId); };
+  const showReview = () => { setView("review"); window.location.hash = `${knowledgeHash(context.projectId)}?review=1`; };
+  const startNewCandidate = () => {
+    if (!composeTouched) {
+      setComposeKnowledgeId(null); setEditingRevision(null); setTitle(""); setBody("");
+      setSelectedSource(""); setSelectedSourceRevision(""); setRelationTarget(""); setRelationRevision(""); setComposeConflict("");
+    }
+    setView("compose");
+  };
+  const resetDraft = () => {
+    if (composeTouched && !window.confirm("清空尚未保存的知识候选草稿？")) return;
+    setComposeKnowledgeId(null); setEditingRevision(null); setTitle(""); setBody("");
+    setSelectedSource(""); setSelectedSourceRevision(""); setRelationTarget(""); setRelationRevision(""); setComposeTouched(false); setComposeConflict("");
+  };
+  const startRevision = () => {
+    if (!page || !readingCurrent) return;
+    if (composeTouched) { setMessage("已有未保存的候选草稿；请先继续原草稿或明确清空后再基于此页编辑。"); setView("compose"); return; }
+    setComposeKnowledgeId(page.knowledgeId); setEditingRevision(page.revision); setComposeConflict("");
+    setTitle(page.title); setBody(page.body); setPageType(page.pageType); setEpistemic(page.epistemicStatus);
+    setSelectedSource(sourceId(page.sources[0]?.sourceKey ?? "") ?? "");
+    setSelectedSourceRevision(page.sources[0]?.originRevision ?? "");
+    setRelationTarget(""); setRelationRevision(""); setView("compose");
+  };
+  const currentSummary = pages.find(item => item.knowledgeId === selectedId);
+  const currentRevision = currentSummary?.revision ?? history[0]?.revision;
+  const readingCurrent = !!page && (!fixedRevision || page.revision === currentRevision);
+  const relationName = (id: string, revision: string) =>
+    graph?.nodes.find(item => item.knowledgeId === id && item.revision === revision)?.title ??
+    pages.find(item => item.knowledgeId === id)?.title ?? id.slice(0, 8);
+  const outgoing = page?.relations.map(item => ({ edge: item, otherId: item.toKnowledgeId,
+    otherRevision: item.toRevision, direction: "指向" })) ?? [];
+  const incoming = readingCurrent ? graph?.edges.filter(item => item.toKnowledgeId === page?.knowledgeId &&
+    item.toRevision === page.revision && item.fromKnowledgeId !== page.knowledgeId).map(item => ({
+      edge: item, otherId: item.fromKnowledgeId, otherRevision: item.fromRevision, direction: "来自" })) ?? [] : [];
+  const relations = [...outgoing, ...incoming.filter(item => !outgoing.some(other => other.edge.edgeId === item.edge.edgeId))];
+  return <div className="knowledge-space">
+    <div className="knowledge-toolbar">
+      <div><p className="muted">独立知识空间 · 固定修订与可追溯来源</p></div>
+      <div className="actions"><button onClick={refreshAll}>回读当前状态</button>
+        {canWrite && <button onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</button>}
+        <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
+    </div>
+    {capabilities && <p className="muted">后端 {capabilities.backendVersion ?? "不可达"} · 语义索引未验证。页面只显示已登记的固定关系。</p>}
     {error && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
     {visibleReceipts.map(item => <Notice key={item.operationId} error>外部{item.kind === "publish" ? "发布" : "撤回"}结果待核 · 操作 <code>{item.operationId}</code>
       <button disabled={busy} onClick={() => reconcile(item.operationId)}>按此 ID 对账</button></Notice>)}
-    <div className="review-layout"><nav aria-label="知识页和候选"><h3>已发布知识</h3>
-      <p><button onClick={() => { setSelectedId(null); setFixedRevision(undefined); setPage(null); }}>新建知识候选</button></p>
-      {pages.length ? pages.map(item => <p key={item.knowledgeId}><button onClick={() => { setSelectedId(item.knowledgeId); setFixedRevision(undefined); }}>
-        {item.title} · {statusText(item.validity)}</button></p>) : <p className="empty">暂无已发布知识。</p>}
+
+    {view === "list" && <section className="knowledge-list" aria-label="已发布知识列表">
+      <div className="knowledge-list-head"><h2>已发布知识</h2><span className="muted">选一页阅读全文与固定依据</span></div>
+      {pages.length ? pages.map(item => <button className="knowledge-list-row" key={item.knowledgeId} onClick={() => openPage(item.knowledgeId)}>
+        <span><strong>{item.title}</strong><small>{statusText(item.pageType)} · 修订 {item.revision.slice(0, 8)}</small></span>
+        <span>{statusText(item.validity)} <span aria-hidden="true">→</span></span></button>) : <p className="empty">暂无已发布知识。</p>}
       {pageCursor && <button onClick={async () => { try { const next = await client.pages(pageCursor); setPages(previous => [...previous, ...next.items]); setPageCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多知识</button>}
-      <h3>候选与审阅</h3>{candidates.map(item => <p key={item.candidateId}><button onClick={() => setSelectedCandidateId(item.candidateId)}>
-        {item.title} · {statusText(item.status)}</button></p>)}
-      {candidateCursor && <button onClick={async () => { try { const next = await client.candidates(candidateCursor); setCandidates(previous => [...previous, ...next.items]); setCandidateCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多候选</button>}
-    </nav><div>{page && <article><h3>{page.title} · {statusText(page.observedValidity)}</h3>
-      <p className="muted">固定版 {page.revision} · {page.epistemicStatus} · SHA-256 {page.contentHash}</p>
-      {page.validity !== page.observedValidity && <Notice error>此固定版创建时有效性为 {statusText(page.validity)}；目前标为 {statusText(page.observedValidity)}。</Notice>}
-      <pre className="history-body">{page.body}</pre><h4>固定来源</h4><ul>{page.sources.map(source => { const id = sourceId(source.sourceKey);
-        return <li key={`${source.sourceKey}:${source.originRevision}`}>{id ? <a href={documentLink(context.projectId, id, source.originRevision)}>
-          文档 {id.slice(0, 8)} · 修订 {source.originRevision.slice(0, 8)}</a> : source.sourceKey}
-          {` · ${source.state} · ${source.contentHash.slice(0, 12)}`}</li>; })}</ul>
-      <h4>历史修订</h4>{history.map(item => <button key={item.revision} onClick={() => setFixedRevision(item.revision)}>
-        {item.revision.slice(0, 8)} · {statusText(item.validity)}</button>)}
-      {graph && <Graph graph={graph} onOpen={(id, revision) => { setSelectedId(id); setFixedRevision(revision); }} />}
-    </article>}
-    {candidate && <article><h3>候选：{candidate.title} · {statusText(candidate.status)}</h3>
-      <p className="muted">候选 {candidate.candidateId} · 固定基线 {candidate.expectedRevision ?? "新页"} · {candidate.contentHash}</p>
-      <pre className="history-body">{candidate.body}</pre>
-      <p>来源：{candidate.sources.map(source => source.sourceKey).join("、")}</p>
-      {candidate.decision && <p>审阅：{candidate.decision.decision === "accept" ? "接受" : "未采纳"} · {candidate.decision.reason} · {candidate.decision.reviewerId}</p>}
-      {candidate.status === "pending" && canReview && <div className="workflow-form"><label>审阅意见<textarea value={reviewReason} onChange={event => setReviewReason(event.target.value)} /></label>
-        <div className="actions"><button disabled={busy || !reviewReason.trim()} onClick={() => review("accept")}>接受候选</button>
-          <button disabled={busy || !reviewReason.trim()} onClick={() => review("reject")}>不采纳</button></div></div>}
-      {candidate.status === "accepted" && canReview && <button className="primary" disabled={busy || visibleReceipts.length > 0}
-        onClick={() => externalWrite("publish", candidate.candidateId)}>发布固定修订</button>}
-    </article>}</div></div>
-  </section><section className="panel"><h2>提出候选</h2><p>来源只能选择本项目已采纳的固定文档修订；候选、审阅、发布各自独立。</p>
-    <form className="workflow-form" onSubmit={propose}><label>标题<input required value={title} onChange={event => setTitle(event.target.value)} /></label>
-      <label>页面类型<select value={pageType} onChange={event => setPageType(event.target.value as typeof pageType)}>
-        <option value="topic">专题</option><option value="concept">概念</option><option value="analysis">分析</option><option value="decision">决定</option></select></label>
-      <label>认识状态<select value={epistemic} onChange={event => setEpistemic(event.target.value as typeof epistemic)}>
-        {(["observation", "inference", "hypothesis", "adopted", "disputed", "superseded"] as const).map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      <label>完整 Markdown 正文<textarea required value={body} onChange={event => setBody(event.target.value)} /></label>
-      <label>已采纳的固定来源<select required value={selectedSource} onChange={event => setSelectedSource(event.target.value)}><option value="">请选择</option>
-        {sources.filter(item => item.state === "reachable").map(item => <option key={item.documentId} value={item.documentId}>{item.title} · {item.revisionId.slice(0, 8)}</option>)}</select></label>
-      <label>显式关系目标（可选）<select value={relationTarget} onChange={event => setRelationTarget(event.target.value)}><option value="">无</option>
-        {pages.map(item => <option key={item.knowledgeId} value={item.knowledgeId}>{item.title} · {item.revision.slice(0, 8)}</option>)}</select></label>
-      {relationTarget && <label>关系类型<select value={relationType} onChange={event => setRelationType(event.target.value as typeof relationType)}>
-        {(["supports", "contradicts", "related", "member_of", "supersedes"] as const).map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
-      <button className="primary" disabled={!canWrite || busy || context.blocked}>保存候选</button></form>
-    {canReview && <details><summary>撤回固定来源</summary><p>撤回会把引用及其内部依赖标为待复核，旧版仍可回读。</p>
-      {sources.map(item => <p key={item.documentId}>{item.title} · {statusText(item.state)} <button disabled={busy || visibleReceipts.length > 0 || item.state !== "reachable"}
-        onClick={() => externalWrite("retract", item.documentId)}>撤回此来源</button></p>)}</details>}
-  </section></div>;
+    </section>}
+
+    {view === "read" && <div className="knowledge-reader">
+      <div className="knowledge-reader-main"><button className="knowledge-back" onClick={showList}>← 返回知识列表</button>
+        {page ? <article>
+          <p className="knowledge-kicker">{statusText(page.pageType)} · {statusText(page.epistemicStatus)} · {statusText(page.observedValidity)}</p>
+          <h2>{page.title}</h2>
+          <div className="knowledge-version"><span><strong>正在阅读</strong> {page.revision.slice(0, 8)}{readingCurrent ? " · 当前版" : " · 固定历史版"}</span>
+            <span><strong>当前发布</strong> {currentRevision?.slice(0, 8) ?? "尚未核到"}</span></div>
+          {page.validity !== page.observedValidity && <Notice error>此固定版创建时为{statusText(page.validity)}；目前标为{statusText(page.observedValidity)}。使用前请复核来源。</Notice>}
+          {fixedRevision && !readingCurrent && <button onClick={() => openPage(page.knowledgeId)}>阅读当前发布版</button>}
+          <div className="knowledge-fulltext"><pre>{page.body}</pre></div>
+          <p className="muted">正文 SHA-256 <code className="break-anywhere">{page.contentHash}</code></p>
+          {canWrite && <details className="knowledge-maintenance"><summary>基于此页提出修订候选</summary>
+            {readingCurrent ? <><p className="muted">编辑基线固定为当前所读版；打开编辑区后仍须保存、审阅、发布。</p><button onClick={startRevision}>打开候选编辑区</button></>
+              : <p className="muted">正在阅读历史版。请先阅读当前发布版，再明确基于当前版提出修订；历史正文不会自动当作当前基线。</p>}</details>}
+        </article> : error ? <p>无法读取此固定修订。</p> : <p>正在读取知识全文…</p>}
+      </div>
+      {page && <aside className="knowledge-reader-side" aria-label="来源、关系与版本">
+        <section><h3>固定来源</h3>{page.sources.length ? <ul className="knowledge-source-list">{page.sources.map(source => { const id = sourceId(source.sourceKey);
+          return <li key={`${source.sourceKey}:${source.originRevision}`}><strong>{id ? "过程文档" : source.sourceKey}</strong>
+            <span>{statusText(source.state)} · 修订 {source.originRevision.slice(0, 8)}</span>
+            <code title={source.contentHash}>SHA-256 {source.contentHash.slice(0, 16)}…</code>
+            {source.fragment && <span>片段：{source.fragment}</span>}
+            {id && <a href={documentLink(context.projectId, id, source.originRevision,
+              knowledgeHash(context.projectId, { knowledgeId: page.knowledgeId, knowledgeRevision: fixedRevision }))}>阅读固定原件 →</a>}</li>; })}</ul> : <p className="muted">此版未登记来源。</p>}</section>
+        <section><h3>挑战与反例</h3>{relations.filter(item => item.edge.type === "contradicts").length ?
+          <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type === "contradicts").map(item =>
+            <li key={item.edge.edgeId}><button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
+              <small>{item.direction}此页 · {statusText(item.edge.state)} · 固定版 {item.otherRevision.slice(0, 8)} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
+          : <p className="muted">此版未登记挑战关系；不能据此断言没有反例。请结合正文与来源判断。</p>}</section>
+        <section><h3>其他已登记关系</h3>{relations.filter(item => item.edge.type !== "contradicts").length ?
+          <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type !== "contradicts").map(item =>
+            <li key={item.edge.edgeId}><span>{statusText(item.edge.type)} · {statusText(item.edge.state)}</span>
+              <button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
+              <small>{item.direction}此页 · 固定版 {item.otherRevision.slice(0, 8)} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
+          : <p className="muted">此版未登记其他关系。</p>}</section>
+        <section><h3>历史版本</h3><div className="knowledge-history">{history.map(item => <button key={item.revision}
+          className={page.revision === item.revision ? "selected" : ""} onClick={() => openPage(item.knowledgeId, item.revision)}>
+          {item.revision.slice(0, 8)} · {statusText(item.validity)}</button>)}</div></section>
+        {graph && readingCurrent && <details className="knowledge-graph"><summary>关系图（辅助导航）</summary>
+          <Graph graph={graph} onOpen={openPage} /></details>}
+      </aside>}
+    </div>}
+
+    <section className="knowledge-workspace" hidden={view !== "review"} aria-label="候选与审阅">
+      <div className="knowledge-workspace-head"><button className="knowledge-back" onClick={showList}>← 返回知识列表</button><h2>候选与审阅</h2></div>
+      <div className="knowledge-review-layout"><nav aria-label="知识候选">{candidates.length ? candidates.map(item => <button key={item.candidateId}
+        className={selectedCandidateId === item.candidateId ? "selected" : ""} onClick={() => openCandidate(item.candidateId)}>
+        <strong>{item.title}</strong><small>{statusText(item.status)}</small></button>) : <p className="empty">暂无候选。</p>}
+        {candidateCursor && <button onClick={async () => { try { const next = await client.candidates(candidateCursor); setCandidates(previous => [...previous, ...next.items]); setCandidateCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多候选</button>}
+      </nav><div>{candidate ? <article><h3>{candidate.title} · {statusText(candidate.status)}</h3>
+        <p className="muted">候选 {candidate.candidateId} · 固定基线 {candidate.expectedRevision ?? "新页"} · SHA-256 <code>{candidate.contentHash}</code></p>
+        <pre className="history-body knowledge-candidate-body">{candidate.body}</pre>
+        <h4>固定来源</h4><ul>{candidate.sources.map(item => { const id = sourceId(item.sourceKey);
+          return <li key={`${item.sourceKey}:${item.originRevision}`}>{id ? <a href={documentLink(context.projectId, id, item.originRevision,
+            knowledgeHash(context.projectId, { candidateId: candidate.candidateId }))}>
+            过程文档 · 修订 {item.originRevision.slice(0, 8)} →</a> : `${item.sourceKey} · ${item.originRevision.slice(0, 8)}`}
+            {` · ${statusText(item.state)}`}</li>; })}</ul>
+        <h4>拟议关系</h4>{candidate.relations.length ? <ul>{candidate.relations.map(item => <li key={item.edgeId}>
+          {statusText(item.type)} · 目标固定版 {item.toRevision.slice(0, 8)} · 来源 {item.sourceKeys.join("、") || "未登记"}</li>)}</ul> : <p className="muted">未拟议页间关系。</p>}
+        {candidate.decision && <p>审阅{candidate.decision.decision === "accept" ? "已接受" : "未采纳"} · {candidate.decision.reason} · {candidate.decision.reviewerId}。审阅不等于正文已发布。</p>}
+        {candidate.status === "pending" && canReview && <div className="workflow-form"><label>审阅意见<textarea value={reviewReason} onChange={event => setReviewReason(event.target.value)} /></label>
+          <div className="actions"><button disabled={busy || !reviewReason.trim()} onClick={() => review("accept")}>接受候选</button>
+            <button disabled={busy || !reviewReason.trim()} onClick={() => review("reject")}>不采纳</button></div></div>}
+        {candidate.status === "accepted" && canReview && <button className="primary" disabled={busy || visibleReceipts.length > 0}
+          onClick={() => externalWrite("publish", candidate.candidateId)}>发布固定修订</button>}
+      </article> : <p className="empty">选一条候选查看全文与审阅结果。</p>}</div></div>
+    </section>
+
+    <section className="knowledge-workspace knowledge-compose" hidden={view !== "compose"} data-dirty={composeTouched ? "true" : undefined} aria-label="提出知识候选">
+      <button className="knowledge-back" onClick={() => setView(selectedId ? "read" : "list")}>← 返回{selectedId ? "阅读" : "知识列表"}</button>
+      <div className="knowledge-workspace-head"><h2>{composeKnowledgeId ? "提出修订候选" : "提出知识候选"}</h2>
+        <button onClick={resetDraft}>清空草稿</button></div>
+      <p>来源只能选择本项目已采纳的固定文档修订；候选、审阅、发布各自独立。</p>
+      {composeKnowledgeId && <p className="muted">固定编辑基线：<code>{editingRevision}</code>。当前版变化时不会自动替换草稿。</p>}
+      {selectedSourceRevision && <p className="muted">所选来源修订：<code>{selectedSourceRevision}</code>。来源变化时须重新选择。</p>}
+      {composeConflict && <Notice error>{composeConflict} <button onClick={() => composeKnowledgeId && openPage(composeKnowledgeId)}>阅读当前版</button></Notice>}
+      <form className="workflow-form" onSubmit={propose}><label>标题<input required value={title} onChange={event => { setTitle(event.target.value); setComposeTouched(true); }} /></label>
+        <label>页面类型<select value={pageType} onChange={event => { setPageType(event.target.value as typeof pageType); setComposeTouched(true); }}>
+          <option value="topic">专题</option><option value="concept">概念</option><option value="analysis">分析</option><option value="decision">决定</option></select></label>
+        <label>认识状态<select value={epistemic} onChange={event => { setEpistemic(event.target.value as typeof epistemic); setComposeTouched(true); }}>
+          {(["observation", "inference", "hypothesis", "adopted", "disputed", "superseded"] as const).map(value => <option key={value} value={value}>{statusText(value)}</option>)}</select></label>
+        <label>完整 Markdown 正文<textarea required value={body} onChange={event => { setBody(event.target.value); setComposeTouched(true); }} /></label>
+        <label>已采纳的固定来源<select required value={selectedSource} onChange={event => { const id = event.target.value; setSelectedSource(id);
+          setSelectedSourceRevision(sources.find(item => item.documentId === id)?.revisionId ?? ""); setComposeConflict(""); setComposeTouched(true); }}><option value="">请选择</option>
+          {sources.filter(item => item.state === "reachable").map(item => <option key={item.documentId} value={item.documentId}>{item.title} · {item.revisionId.slice(0, 8)}</option>)}</select></label>
+        <label>显式关系目标（可选）<select value={relationTarget} onChange={event => { const id = event.target.value; setRelationTarget(id);
+          setRelationRevision(pages.find(item => item.knowledgeId === id)?.revision ?? ""); setComposeConflict(""); setComposeTouched(true); }}><option value="">无</option>
+          {pages.map(item => <option key={item.knowledgeId} value={item.knowledgeId}>{item.title} · {item.revision.slice(0, 8)}</option>)}</select></label>
+        {relationTarget && <label>关系类型<select value={relationType} onChange={event => { setRelationType(event.target.value as typeof relationType); setComposeTouched(true); }}>
+          {(["supports", "contradicts", "related", "member_of", "supersedes"] as const).map(value => <option key={value} value={value}>{statusText(value)}</option>)}</select></label>}
+        <button className="primary" disabled={!canWrite || busy || context.blocked || !!composeConflict}>保存候选</button></form>
+      {canReview && <details className="knowledge-retract"><summary>撤回固定来源</summary><p>撤回会把引用及其内部依赖标为待复核，旧版仍可回读。</p>
+        {sources.map(item => <p key={item.documentId}>{item.title} · {statusText(item.state)} <button disabled={busy || visibleReceipts.length > 0 || item.state !== "reachable"}
+          onClick={() => externalWrite("retract", item.documentId)}>撤回此来源</button></p>)}</details>}
+    </section>
+  </div>;
 }

@@ -48,6 +48,11 @@ test("artifact links allow this project's fixed routes and web URLs only", () =>
   assert.equal(safeArtifactHref(`#/p/${project}/tasks/${task}?revision=${task}`, project),
     `#/p/${project}/tasks/${task}?revision=${task}`);
   assert.equal(safeArtifactHref("https://example.test/report#fixed", project), "https://example.test/report#fixed");
+  const fixed = `#/p/${project}/documents/${task}?revision=${task}`;
+  assert.equal(safeArtifactHref(`http://127.0.0.1:55337/${fixed}`, project), fixed);
+  assert.equal(safeArtifactHref(`http://localhost:55337/app/${fixed}`, project), fixed);
+  assert.equal(safeArtifactHref(`https://example.test/${fixed}`, project), `https://example.test/${fixed}`);
+  assert.equal(safeArtifactHref(`http://127.0.0.1:55337/unrelated/${fixed}`, project), `http://127.0.0.1:55337/unrelated/${fixed}`);
   for (const unsafe of ["javascript:alert(1)", "file:///private/report", "data:text/html,hello",
     "//example.test/report", `#/p/${task}/tasks/${task}`, `#/p/${project}/tasks/../knowledge`,
     `#/p/${project}/tasks/${task}?next=javascript:alert(1)`, "https://user:pass@example.test/report"]) {

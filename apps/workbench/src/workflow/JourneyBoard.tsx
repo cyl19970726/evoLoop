@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { Document, Goal, Page, Stage, TaskDetail } from "@evoloop/contracts";
 import { api, errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "./ActionForm";
@@ -45,7 +45,8 @@ function nextAction(stage: Stage, tasks: TaskDetail[]): string {
   if (tasks.some(detail => detail.task.state === "proposed")) return "判断任务提议；拒绝或待补证不等于已接受。";
   return "核对交付和使用结果，再作阶段回看。";
 }
-export function JourneyBoard({ context, refresh }: { context: MutationContext; refresh: number }) {
+export function JourneyBoard({ context, refresh, propose = false }: { context: MutationContext; refresh: number; propose?: boolean }) {
+  const hasLoaded = useRef(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -58,7 +59,7 @@ export function JourneyBoard({ context, refresh }: { context: MutationContext; r
     const client = api(context.token);
     Promise.all([loadComplete("目标", cursor => client.goals(context.projectId, cursor)), client.stages(context.projectId),
       loadComplete("过程文档", cursor => client.documents(context.projectId, cursor))])
-      .then(([g, s, d]) => { if (active) { setGoals(g); setStages(s); setDocuments(d); } })
+      .then(([g, s, d]) => { if (active) { setGoals(g); setStages(s); setDocuments(d); hasLoaded.current = true; } })
       .catch(cause => { if (active) setError(errorText(cause)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -70,9 +71,13 @@ export function JourneyBoard({ context, refresh }: { context: MutationContext; r
       .catch(cause => { if (active) setRelationError(errorText(cause)); });
     return () => { active = false; };
   }, [context.token, context.projectId, refresh]);
-  if (loading) return <section className="panel"><p>正在读取目标与阶段…</p></section>;
-  if (error) return <section className="panel"><Notice error>{error}</Notice><button onClick={context.onChanged}>重试读取目标</button></section>;
+  if (loading && !hasLoaded.current) return <section className="panel"><p>正在读取目标与阶段…</p></section>;
+  if (error && !hasLoaded.current) return <section className="panel"><Notice error>{error}</Notice><button onClick={context.onChanged}>重试读取目标</button></section>;
+  context = { ...context, blocked: context.blocked || loading || !!error };
   return <div className="journey-board">
+    {loading && <Notice>正在回读目标与阶段；草稿保留，读取完成后再提交。</Notice>}
+    {error && <Notice error>回读失败：{error}。下方保留上次读取与草稿，请重试读取。</Notice>}
+    <div hidden={propose}>
     <section className="panel"><div className="panel-head"><h2>目标 → 阶段 → 任务</h2><span>当前项目真实对象；不以工程里程碑推算完成百分比</span></div>
       <p className="muted">这里的“阶段”来自本项目的 Goal/Stage/Task 数据。产品旅程 J1–J6 见仓库 <code>docs/product/definition.md</code>；实施路线 M0–M4 见 <code>docs/roadmap.md</code>，两套编号不自动映射到本项目。</p>
       {relationError && <Notice error>任务关联未完整读取：{relationError}。不能据此判断进度；请回读。</Notice>}
@@ -100,23 +105,24 @@ export function JourneyBoard({ context, refresh }: { context: MutationContext; r
     </section>
     <section className="panel"><div className="panel-head"><h2>目标与下一步</h2><span>目标 {goals.length} 项 · 阶段 {stages.length} 项 · 文档 {documents.length} 项已完整读取</span></div>
       {!goals.length && <p className="empty">先留下目标、消费者与授权范围，再形成首阶段。这里不会自动创建示例数据。</p>}
-      {goals.map(goal => <details className="workflow-detail" key={`${goal.id}:${goal.version}`}><summary>{goal.outcome} <span className="pill">v{goal.version}</span></summary>
+      {goals.map(goal => <details className="workflow-detail" key={goal.id}><summary>{goal.outcome} <span className="pill">v{goal.version}</span></summary>
         <dl>{goalFields.map(field => <div key={field.name}><dt>{field.label}</dt><dd>{goal[field.name as keyof Goal]}</dd></div>)}</dl>
         <RevisionHistory label="阅读目标修订历史" load={async () => (await api(context.token).goalRevisions(context.projectId, goal.id)).map(r => ({ key: String(r.version), title: `目标 v${r.version}`, body: goalFields.map(f => `${f.label}：${r[f.name as keyof typeof r]}`).join("\n"), reason: r.reason, actorId: r.actorId, createdAt: r.createdAt }))} />
-        <ActionForm context={context} title="修订目标" fields={[...goalFields.map(f => ({ ...f, value: String(goal[f.name as keyof Goal]) })), reasonField]} build={v => ({ type: "goal.revise", goalId: goal.id, expectedVersion: goal.version, ...v })} />
+        <ActionForm context={{ ...context, draftScope: `goal:${goal.id}`, draftBaseline: String(goal.version) }} title="修订目标" fields={[...goalFields.map(f => ({ ...f, value: String(goal[f.name as keyof Goal]) })), reasonField]} build={v => ({ type: "goal.revise", goalId: goal.id, expectedVersion: goal.version, ...v })} />
       </details>)}
-      <details className="workflow-detail" open={!goals.length}><summary>建立一个目标</summary><ActionForm context={context} title="保存目标" fields={goalFields} build={v => ({ type: "goal.create", goalId: crypto.randomUUID(), ...v })} /></details>
+      <details className="workflow-detail" open={!goals.length}><summary>建立一个目标</summary><ActionForm context={{ ...context, draftScope: "new-goal" }} title="保存目标" fields={goalFields} build={v => ({ type: "goal.create", goalId: crypto.randomUUID(), ...v })} /></details>
     </section>
     <section className="panel"><div className="panel-head"><h2>阶段交付与学习问题</h2><span>阶段接受与结果回看分别记录</span></div>
       {!stages.length && <p className="empty">还没有阶段候选。阶段需回答交付什么、想弄清什么。</p>}
-      {stages.map(stage => <StageCard key={`${stage.id}:${stage.version}`} stage={stage} context={context} />)}
+      {stages.map(stage => <StageCard key={stage.id} stage={stage} context={{ ...context, draftScope: `stage:${stage.id}`, draftBaseline: String(stage.version) }} />)}
       {goals.length > 0 && <details className="workflow-detail"><summary>提议下一阶段</summary><ActionForm context={context} title="提出阶段" fields={[
         { name: "goalId", label: "对应目标", kind: "select", options: goals.map(g => option(g.id, g.outcome)) },
         { name: "deliverable", label: "阶段交付", kind: "textarea" }, { name: "learningQuestion", label: "学习问题", kind: "textarea" }, reasonField,
       ]} build={v => ({ type: "stage.propose", stageId: crypto.randomUUID(), ...v })} /></details>}
     </section>
-    <section className="panel"><h2>提出工作</h2><p>缺陷、反馈和新需求进入同一任务集合。提议经判断和接受后才能开始。</p>
-      <ActionForm context={context} title="提出任务" fields={[
+    </div>
+    <details className="panel proposal-panel" open={propose}><summary>提出任务</summary><p>缺陷、反馈和新需求进入同一任务集合。提议经判断和接受后才能开始。</p>
+      <ActionForm context={{ ...context, draftScope: "new-task" }} initiallyOpen={propose} title="提出任务" fields={[
         { name: "title", label: "任务名称" }, { name: "stageId", label: "所属阶段", kind: "select", options: stages.filter(s => s.state === "active").map(s => option(s.id, s.deliverable)) },
         { name: "goal", label: "这项工作要改变什么", kind: "textarea" }, { name: "acceptance", label: "技术与消费者验收", kind: "textarea" },
         { name: "owner", label: "责任者", value: context.principal.actorId }, { name: "consumer", label: "目标消费者" },
@@ -125,7 +131,7 @@ export function JourneyBoard({ context, refresh }: { context: MutationContext; r
         { name: "evidence", label: "来源、复现或反馈证据", kind: "textarea" }, { name: "stopCondition", label: "停止条件", kind: "textarea" },
       ]} build={v => ({ ...v, type: "task.propose", taskId: crypto.randomUUID(), useRequired: v.useRequired === "true", documentIds: JSON.parse(v.documentIds || "[]") })} onApplied={result => { window.location.hash = `/p/${context.projectId}/tasks/${result.entityId}`; }} />
       {!stages.some(s => s.state === "active") && <Notice>先提出并接受一个阶段，才能按完整旅程提出任务。</Notice>}
-    </section>
+    </details>
   </div>;
 }
 
