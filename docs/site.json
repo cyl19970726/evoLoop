@@ -18,11 +18,6 @@
       "group": "产品与阶段"
     },
     {
-      "path": "docs/product/workbench.md",
-      "title": "项目工作台设计",
-      "group": "产品与阶段"
-    },
-    {
       "path": "docs/product/agent-loop.md",
       "title": "Agent loop：四部分协作",
       "group": "产品与阶段"
@@ -30,6 +25,11 @@
     {
       "path": "docs/product/daily-loop.md",
       "title": "Dogfood 与日常工作",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/workbench.md",
+      "title": "项目工作台设计",
       "group": "产品与阶段"
     },
     {
@@ -180,6 +180,11 @@
     {
       "path": "docs/research/README.md",
       "title": "研究与探索",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/product-docs-evaluation-20261020.md",
+      "title": "产品文档评估与改进",
       "group": "研究 · 综合判断"
     },
     {
