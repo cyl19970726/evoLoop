@@ -99,8 +99,15 @@ export function safeArtifactHref(value: string, projectId: string): string | nul
   }
   try {
     const url = new URL(reference);
-    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname && !url.username && !url.password
-      ? url.href : null;
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password) return null;
+    // Pilot artifacts may name another local frontend port. Keep this project's
+    // valid fixed deep link in the authenticated workbench; preserve the original text.
+    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+      && ["/", "/app/"].includes(url.pathname) && !url.search && url.hash.startsWith("#/p/")) {
+      const local = safeArtifactHref(url.hash, projectId);
+      if (local) return local;
+    }
+    return url.href;
   } catch { return null; }
 }
 

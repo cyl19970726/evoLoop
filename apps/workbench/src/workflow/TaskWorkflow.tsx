@@ -9,25 +9,40 @@ const stateLabel: Record<TaskRevision["state"], string> = {
   blocked: "阻塞", deferred: "暂缓", cancelled: "已取消",
 };
 
-export function TaskWorkflow({ context, detail }: { context: MutationContext; detail: TaskDetail }) {
+export function TaskWorkflow({ context, detail, mode = "actions" }: { context: MutationContext; detail: TaskDetail; mode?: "actions" | "delivery" | "history" }) {
   const task = detail.task;
   const [linked, setLinked] = useState<DocumentDetail[]>([]);
   const [revisions, setRevisions] = useState<TaskRevision[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
+    if (mode !== "actions") return;
     let active = true;
     Promise.all(detail.links.map(link => api(context.token).document(context.projectId, link.documentId)))
       .then(items => { if (active) setLinked(items); }).catch(cause => { if (active) setError(errorText(cause)); });
     return () => { active = false; };
-  }, [context.token, context.projectId, task.id, task.version]);
+  }, [context.token, context.projectId, task.id, task.version, mode]);
   const base = { taskId: task.id, expectedVersion: task.version };
   const deliveries = detail.deliveries ?? [];
   const latest = deliveries[deliveries.length - 1];
   const proposal = detail.proposal;
   const latestStateDecision = revisions.filter((revision, index) => index > 0 && revision.state !== revisions[index - 1]?.state).at(-1);
-  return <section className="panel"><div className="panel-head"><h2>执行、交付与实际使用</h2><button onClick={context.onChanged}>回读当前状态</button></div>
-    <h3>任务状态与决定</h3>
-    {latestStateDecision ? <article className="decision"><strong>{stateLabel[latestStateDecision.state]}</strong><p>理由：{latestStateDecision.reason}</p><small>{latestStateDecision.actorId} · {latestStateDecision.createdAt} · 固定修订 v{latestStateDecision.version}</small><p><a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(latestStateDecision.id)}`}>打开当次固定修订与依据 →</a></p></article>
+  if (mode === "delivery") return <section className="panel task-records"><div className="panel-head"><h2>交付与使用记录</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
+    {deliveries.length === 0 && <p className="empty">还没有交付；任务状态不代替产物和使用证据。</p>}
+    {[...deliveries].reverse().map(delivery => <article className="decision" key={delivery.id}>
+      <h3>{delivery.id === latest?.id ? "最新交付" : "历史交付"} · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"}</h3>
+      <p className="break-anywhere">产物：{safeArtifactHref(delivery.artifactRef, context.projectId)
+        ? <a href={safeArtifactHref(delivery.artifactRef, context.projectId)!} target={(safeArtifactHref(delivery.artifactRef, context.projectId) ?? "").startsWith("#") ? undefined : "_blank"} rel={(safeArtifactHref(delivery.artifactRef, context.projectId) ?? "").startsWith("#") ? undefined : "noopener noreferrer"}>{delivery.artifactRef}</a>
+        : delivery.artifactRef} · 固定修订 {delivery.artifactRevision}</p><p className="break-anywhere">SHA-256 {delivery.contentHash}</p>
+      <p><strong>技术检查证据</strong><br />{delivery.technicalEvidence}</p>
+      <p className="muted">产物链接只指向位置；固定修订、哈希与实际内容仍须独立核对。</p>
+      <h3>这次交付的使用观察</h3>
+      {(detail.observations ?? []).filter(observation => observation.deliveryId === delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
+      {(detail.observations ?? []).filter(observation => observation.deliveryId === delivery.id).map(observation => <div className="history" key={observation.id}><strong>{observation.observer}（{observation.observerKind}） · {observation.result}</strong><p>{observation.evidence}</p><p>记录理由：{observation.reason}</p><small>登记者 {observation.actorId} · {observation.createdAt}</small></div>)}
+    </article>)}
+    {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}><h3>任务验收决定</h3><p>{closure.acceptanceEvidence}</p><p>{closure.reason}</p><small>审阅者 {closure.actorId} · {closure.createdAt}</small></article>)}
+  </section>;
+  if (mode === "history") return <section className="panel"><div className="panel-head"><h2>任务状态与决定</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
+    {latestStateDecision ? <article className="decision"><strong>最近状态决定：{stateLabel[latestStateDecision.state]}</strong><p>理由：{latestStateDecision.reason}</p><small>{latestStateDecision.actorId} · {latestStateDecision.createdAt} · 固定修订 v{latestStateDecision.version}</small><p><a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(latestStateDecision.id)}`}>打开当次固定修订与依据 →</a></p></article>
       : <p className="muted">{revisions.length ? "目前只有初始提议，尚无状态变更决定。" : "正在读取状态决定历史；读取失败时不能据当前状态推断理由。"}</p>}
     <RevisionHistory label="重新读取完整任务状态时间线" autoLoad load={async () => {
       const rows = await api(context.token).taskRevisions(context.projectId, task.id);
@@ -38,7 +53,12 @@ export function TaskWorkflow({ context, detail }: { context: MutationContext; de
         href: `#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(revision.id)}` }));
     }} />
     {proposal && <dl><div><dt>目标消费者</dt><dd>{proposal.consumer}</dd></div><div><dt>完成要求</dt><dd>{proposal.useRequired ? "需有本次交付的实际使用记录" : "技术子任务；不据此判阶段效果"}</dd></div><div><dt>提议证据</dt><dd>{proposal.evidence}</dd></div><div><dt>停止条件</dt><dd>{proposal.stopCondition}</dd></div></dl>}
+    <h3>提议判断历史</h3>{(detail.judgements ?? []).length === 0 && <p className="empty">尚无提议判断。</p>}
+    {(detail.judgements ?? []).map(judgement => <article className="decision" key={judgement.id}><strong>{judgement.decision}</strong><p>{judgement.reason}</p><p>证据：{judgement.evidence}</p>{judgement.relookCondition && <p>重看条件：{judgement.relookCondition}</p>}<small>{judgement.actorId} · {judgement.createdAt}</small></article>)}
+  </section>;
+  return <section className="panel"><div className="panel-head"><h2>任务操作</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
     {error && <Notice error>关联依据暂不可读：{error}</Notice>}
+    <details className="workflow-detail task-command-disclosure"><summary>打开任务操作</summary><p className="muted">选择当前任务的判断、交付、验收或状态操作。提交前请核对任务版本与恢复回执。</p>
     {task.state === "proposed" && <>
       <ActionForm context={context} review title="判断提议" fields={[
         { name: "decision", label: "处理方式", kind: "select", options: [option("approve", "依据充分，可接受"), option("needsEvidence", "需要补证"), option("defer", "暂缓并约定重看"), option("reject", "拒绝并保留理由")] },
@@ -79,19 +99,6 @@ export function TaskWorkflow({ context, detail }: { context: MutationContext; de
     {["ready", "active", "review"].includes(task.state) && <details className="workflow-detail"><summary>记录阻塞、暂缓或取消</summary><ActionForm context={context} title="保存状态决定" fields={[
       { name: "action", label: "状态", kind: "select", options: [option("block", "阻塞，保留需解决事项"), option("defer", "暂缓，保留重看条件"), option("cancel", "取消，保留工作历史")] }, reasonField,
     ]} build={v => ({ ...base, type: `task.${v.action}`, reason: v.reason })} /></details>}
-    <h3>提议判断历史</h3>{(detail.judgements ?? []).length === 0 && <p className="empty">尚无提议判断。</p>}
-    {(detail.judgements ?? []).map(j => <article className="decision" key={j.id}><strong>{j.decision}</strong><p>{j.reason}</p><p>证据：{j.evidence}</p>{j.relookCondition && <p>重看条件：{j.relookCondition}</p>}<small>{j.actorId} · {j.createdAt}</small></article>)}
-    <h3>交付与使用历史</h3>{deliveries.length === 0 && <p className="empty">还没有交付；任务状态不代替产物和使用证据。</p>}
-    {deliveries.map(delivery => <article className="decision" key={delivery.id}><strong>{delivery.id === latest?.id ? "最新交付" : "历史交付"} · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"}</strong>
-      <p className="break-anywhere">{safeArtifactHref(delivery.artifactRef, context.projectId)
-        ? <a href={safeArtifactHref(delivery.artifactRef, context.projectId)!} target={delivery.artifactRef.startsWith("#") ? undefined : "_blank"} rel={delivery.artifactRef.startsWith("#") ? undefined : "noopener noreferrer"}>{delivery.artifactRef}</a>
-        : delivery.artifactRef} · {delivery.artifactRevision}</p><small className="break-anywhere">SHA-256 {delivery.contentHash}</small><p>{delivery.technicalEvidence}</p>
-      <p className="muted">链接只帮助打开产物位置；固定修订、哈希与实际内容仍须独立核对。</p>
-      {(detail.observations ?? []).filter(o => o.deliveryId === delivery.id).map(o => <div className="history" key={o.id}><strong>{o.observer}（{o.observerKind}） · {o.result}</strong><p>{o.evidence}</p><p>{o.reason}</p><small>登记者 {o.actorId} · {o.createdAt}</small></div>)}
-    </article>)}
-    {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}>
-      <h3>任务验收决定</h3><p>{closure.acceptanceEvidence}</p><p>{closure.reason}</p>
-      <small>审阅者 {closure.actorId} · {closure.createdAt}</small>
-    </article>)}
+    </details>
   </section>;
 }

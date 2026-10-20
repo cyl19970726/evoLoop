@@ -35,6 +35,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
   const canWrite = context.principal.permissions.includes("write");
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
     if (busy || unknown || stale || context.blocked || !canWrite) return;
     setMessage("");
     if (!main || !reason.trim() || mode === "create" && !title.trim() ||
@@ -77,6 +78,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
       if (result.status === "rejected") {
         setMessage(result.message); setStale(result.code === "VERSION_CONFLICT");
       } else {
+        setTitle(""); setReason(""); setMain(null); setAssets([]); setFormat("markdown"); form.reset();
         setMessage("原件和固定修订已保存。"); context.onChanged();
       }
     } catch (cause) {
@@ -90,7 +92,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
       }
     } finally { setBusy(false); }
   }
-  return <form className="workflow-form panel" onSubmit={submit}>
+  return <form data-dirty={main || assets.length || title || reason ? "true" : undefined} className="workflow-form panel" onSubmit={submit}>
     <h3>{mode === "create" ? "导入过程文档" : "上传新修订"}</h3>
     {mode === "create" && <label>标题<input required value={title} onChange={event => setTitle(event.target.value)} /></label>}
     <label>格式<select value={format} onChange={event => { setFormat(event.target.value as "markdown" | "html"); setAssets([]); }}>

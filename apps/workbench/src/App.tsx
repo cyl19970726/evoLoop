@@ -2,66 +2,52 @@ import { ReferencePanel } from "./references/ReferencePanel";
 import { CollaborationPanel } from "./collaboration/CollaborationPanel";
 import { DiscussionPanel } from "./discussions/DiscussionPanel";
 import { KnowledgePanel } from "./knowledge/KnowledgePanel";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect, type FormEvent } from "react";
 import type {
-  BasisSet, Command, Document, DocumentDetail, DocumentRevision, Impact,
-  Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision,
+  Operation, Principal, Project,
 } from "@evoloop/contracts";
-import { api, ApiError, errorText, isUnconfirmed, type Session } from "./api";
-import { UploadDocument } from "./documents/UploadDocument";
-import { OriginalDocumentReader } from "./documents/OriginalDocumentReader";
+import { api, ApiError, errorText, type Session } from "./api";
 import { RuntimePanel } from "./runtime/RuntimePanel";
 import { RolesPanel } from "./roles/RolesPanel";
 import { SchedulingPanel } from "./scheduling/SchedulingPanel";
 import { JourneyBoard } from "./workflow/JourneyBoard";
-import { TaskWorkflow } from "./workflow/TaskWorkflow";
-import { ActionForm, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
+import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
 import { addReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 
-type Section = "overview" | "work" | "knowledge" | "task" | "document";
-type Route = { projectId: string | null; section: Section; id?: string; revision?: string };
-type UnknownCommand = Command;
-
-function readRoute(): Route {
-  const raw = window.location.hash.slice(1) || "/";
-  const [pathname, search = ""] = raw.split("?");
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts[0] !== "p" || !parts[1]) return { projectId: null, section: "overview" };
-  const section = parts[2];
-  const revision = new URLSearchParams(search).get("revision") || undefined;
-  if (section === "tasks" && parts[3]) return { projectId: parts[1], section: "task", id: parts[3], revision };
-  if (section === "documents" && parts[3]) return { projectId: parts[1], section: "document", id: parts[3], revision };
-  if (section === "work" || section === "knowledge") return { projectId: parts[1], section };
-  return { projectId: parts[1], section: "overview" };
-}
-
-function href(projectId: string, section: Section, id?: string, revision?: string): string {
-  const part = section === "task" ? `tasks/${id}` : section === "document" ? `documents/${id}` : section;
-  return `#/p/${projectId}/${part}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`;
-}
-
+import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
+import { TaskPage } from "./workflow/TaskPage";
+import { DocumentPage } from "./documents/DocumentPage";
+import { WorkbenchShell, sectionNames } from "./ui/WorkbenchShell";
+import { WorkIndex } from "./workflow/WorkIndex";
 function useRoute(): Route {
   const [route, setRoute] = useState(readRoute);
   useEffect(() => {
-    const onHash = () => setRoute(readRoute());
+    const rememberList = () => {
+      const current = readRoute();
+      if (current.projectId && ["work", "inbox"].includes(current.section)) {
+        try { sessionStorage.setItem(`evoloop:list:${current.projectId}`, window.location.hash); } catch { /* memory-only navigation remains available */ }
+      }
+    };
+    rememberList();
+    let previousHash = window.location.hash;
+    const onHash = () => {
+      const next = readRoute();
+      if (next.projectId !== (previousHash.split("?")[0].split("/")[2] ?? null) && document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。离开当前项目会清除页面草稿，确定离开？")) {
+        window.location.replace(previousHash); return;
+      }
+      if (next.projectId !== (previousHash.split("?")[0].split("/")[2] ?? null)) clearCommandDrafts();
+      const oldParts = previousHash.split("?")[0].split("/");
+      if (next.section === "document" && next.projectId && oldParts[2] === next.projectId && !(oldParts[3] === "documents" && oldParts[4])) {
+        try { sessionStorage.setItem(`evoloop:document-return:${next.projectId}`, previousHash); } catch { /* optional navigation state */ }
+      }
+      window.dispatchEvent(new Event("evoloop:will-navigate"));
+      previousHash = window.location.hash;
+      rememberList(); setRoute(next);
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   return route;
-}
-
-function date(value?: string): string {
-  if (!value) return "—";
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleString("zh-CN");
-}
-
-function ShortId({ value }: { value: string }) {
-  return <code title={value}>{value.slice(0, 8)}</code>;
-}
-
-function Alert({ children, kind = "info" }: { children: ReactNode; kind?: "info" | "error" | "success" }) {
-  return <div className={`notice ${kind}`} role={kind === "error" ? "alert" : "status"}>{children}</div>;
 }
 
 function AuthGate({ onSuccess, hasReceipts }: { onSuccess: (token: string, session: Session) => void; hasReceipts: boolean }) {
@@ -156,297 +142,10 @@ function ProjectChooser({ token, principal, receipts, onRefreshSession, context 
     <div className="eyebrow">选择项目</div><h1>你的项目</h1>
     <button type="button" className="quiet" onClick={refreshProjects} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新项目"}</button>
     {refreshError && <Alert kind="error">刷新失败：{refreshError}</Alert>}
-    {projects.length ? <div className="project-list">{projects.map(p => <a className="project-item" key={p.id} href={href(p.id, "overview")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入工作台 →</span></a>)}</div> : <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
+    {projects.length ? <div className="project-list">{projects.map(p => <a className="project-item" key={p.id} href={href(p.id, "work")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入工作台 →</span></a>)}</div> : <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
     {missing.length > 0 && <Alert>有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在项目不会被覆盖。</Alert>}
     {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, onChanged: () => { setRefresh(v => v + 1); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
   </section>;
-}
-
-function Board({ token, projectId, section, refresh, context }: { token: string; projectId: string; section: "overview" | "work"; refresh: number; context: MutationContext }) {
-  const [project, setProject] = useState<Project | null>(null);
-  const [tasks, setTasks] = useState<Page<Task> | null>(null);
-  const [taskJudgements, setTaskJudgements] = useState<Record<string, string>>({});
-  const [documents, setDocuments] = useState<Page<Document> | null>(null);
-  const [impacts, setImpacts] = useState<Impact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState<string[]>([]);
-  const [error, setError] = useState("");
-  const epochRef = useRef(0);
-  const moreInFlightRef = useRef(new Set<string>());
-  useEffect(() => {
-    let active = true;
-    const epoch = ++epochRef.current;
-    moreInFlightRef.current.clear();
-    setLoading(true); setLoadingMore([]); setError("");
-    const client = api(token);
-    Promise.all([client.project(projectId), client.tasks(projectId), client.documents(projectId), client.impacts(projectId)])
-      .then(([p, t, d, i]) => { if (active && epoch === epochRef.current) { setProject(p); setTasks(t); setDocuments(d); setImpacts(i); } })
-      .catch(cause => { if (active && epoch === epochRef.current) setError(errorText(cause)); })
-      .finally(() => { if (active && epoch === epochRef.current) setLoading(false); });
-    return () => { active = false; };
-  }, [token, projectId, refresh]);
-  useEffect(() => {
-    let active = true;
-    const proposed = (tasks?.items ?? []).filter(task => task.state === "proposed");
-    setTaskJudgements({});
-    let next = 0;
-    void Promise.all(Array.from({ length: Math.min(6, proposed.length) }, async () => {
-      while (active && next < proposed.length) {
-        const task = proposed[next++]!;
-        try {
-          const detail = await api(token).task(projectId, task.id);
-          const current = (detail.judgements ?? []).filter(j => j.taskRevisionId === detail.revision.id)
-            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
-          if (active) setTaskJudgements(previous => ({ ...previous, [task.id]: current?.decision ?? "none" }));
-        } catch { if (active) setTaskJudgements(previous => ({ ...previous, [task.id]: "unavailable" })); }
-      }
-    }));
-    return () => { active = false; };
-  }, [token, projectId, tasks]);
-  async function more(kind: "tasks" | "documents") {
-    if (moreInFlightRef.current.has(kind)) return;
-    const epoch = epochRef.current;
-    moreInFlightRef.current.add(kind);
-    setLoadingMore(current => [...current, kind]);
-    try {
-      const client = api(token);
-      if (kind === "tasks" && tasks?.nextCursor) {
-        const page = await client.tasks(projectId, tasks.nextCursor);
-        if (epoch === epochRef.current) setTasks({ items: [...tasks.items, ...page.items], nextCursor: page.nextCursor });
-      }
-      if (kind === "documents" && documents?.nextCursor) {
-        const page = await client.documents(projectId, documents.nextCursor);
-        if (epoch === epochRef.current) setDocuments({ items: [...documents.items, ...page.items], nextCursor: page.nextCursor });
-      }
-    } catch (cause) { if (epoch === epochRef.current) setError(errorText(cause)); }
-    finally {
-      if (epoch === epochRef.current) {
-        moreInFlightRef.current.delete(kind);
-        setLoadingMore(current => current.filter(value => value !== kind));
-      }
-    }
-  }
-  if (loading) return <div className="content"><p>正在读取项目…</p></div>;
-  if (error) return <div className="content"><Alert kind="error">{error}</Alert></div>;
-  return <div className="content">
-    <div className="eyebrow">{section === "overview" ? "项目总览" : "工作"}</div>
-    <h1>{project?.title || "项目"}</h1>
-    <p className="lede">读目标与依据，推进工作，用实际交付和反馈决定下一步。</p>
-    {section === "overview" && <><JourneyBoard context={context} refresh={refresh} /><DiscussionPanel context={context} refresh={refresh} /></>}
-    <div className="stats"><div><strong>{impacts.filter(i => i.state === "pending").length}</strong><span>待复核影响</span></div><div><strong>{tasks?.items.length || 0}</strong><span>已载入任务</span></div><div><strong>{documents?.items.length || 0}</strong><span>已载入过程文档</span></div></div>
-    <section className="panel"><div className="panel-head"><h2>待复核</h2><span>依据变化需要明确决定</span></div>
-      {impacts.filter(i => i.state === "pending").length ? <ul className="impact-list">{impacts.filter(i => i.state === "pending").map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>任务 <ShortId value={i.taskId} /></strong><span>过程文档版本 <ShortId value={i.fromRevisionId} /> → <ShortId value={i.toRevisionId} /></span><span className="arrow">查看影响 →</span></a></li>)}</ul> : <p className="empty">当前没有待复核影响。</p>}
-    </section>
-    <section className="panel"><div className="panel-head"><h2>任务</h2><span>固定执行依据见任务详情</span></div>
-      <div className="table-wrap"><table><thead><tr><th>任务</th><th>执行状态</th><th>接受判断</th><th>负责人</th><th>版本</th></tr></thead><tbody>{tasks?.items.map(t => <tr key={t.id}><td><a href={href(projectId, "task", t.id)}>{t.title}</a><small><ShortId value={t.id} /></small></td><td><span className="pill">{t.state}</span></td><td><span className="pill subtle">{t.state !== "proposed" ? "已接受" : ({ approve: "可接受", reject: "已拒绝", defer: "暂缓判断", needsEvidence: "待补证", none: "待判断", unavailable: "判断不可读" } as Record<string, string>)[taskJudgements[t.id] ?? ""] ?? "读取中…"}</span></td><td>{t.owner}</td><td>v{t.version}</td></tr>)}</tbody></table></div>
-      {!tasks?.items.length && <p className="empty">还没有任务。请从总览提出首项工作。</p>}
-      {tasks?.nextCursor && <button className="more" disabled={loadingMore.includes("tasks")} onClick={() => more("tasks")}>{loadingMore.includes("tasks") ? "加载中…" : "加载更多任务"}</button>}
-    </section>
-    <section className="panel"><div className="panel-head"><h2>过程文档</h2><span>按需读取完整正文</span></div>
-      <div className="table-wrap"><table><thead><tr><th>文档</th><th>当前修订</th><th>已采纳修订</th><th>版本</th></tr></thead><tbody>{documents?.items.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} /></small></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未采纳"}</td><td>v{d.version}</td></tr>)}</tbody></table></div>
-      {!documents?.items.length && <p className="empty">还没有过程文档。可在下方保存第一份需求或讨论。</p>}
-      <details className="workflow-detail"><summary>保存过程文档</summary><ActionForm context={context} title="创建文档" fields={[{ name: "title", label: "文档名称" }, { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]} build={v => ({ type: "document.create", documentId: crypto.randomUUID(), ...v })} /></details>
-      <UploadDocument context={context} />
-      {documents?.nextCursor && <button className="more" disabled={loadingMore.includes("documents")} onClick={() => more("documents")}>{loadingMore.includes("documents") ? "加载中…" : "加载更多文档"}</button>}
-    </section>
-    {section === "work" && <><DiscussionPanel context={context} refresh={refresh} /><ReferencePanel context={context} /><CollaborationPanel context={context} refresh={refresh} /><RuntimePanel context={context} refresh={refresh} /><SchedulingPanel context={context} refresh={refresh} /><RolesPanel context={context} refresh={refresh} /></>}
-  </div>;
-}
-
-function RevisionBody({ revision, label, token }: { revision: DocumentRevision; label?: string; token: string }) {
-  return <section className="revision-body">
-    {label && <div className="eyebrow">{label}</div>}
-    <div className="revision-meta"><span>修订 <ShortId value={revision.id} /></span><span>{date(revision.createdAt)}</span><span>作者 {revision.author}</span></div>
-    {revision.body !== null && revision.format === "markdown" ? <pre>{revision.body}</pre> : <OriginalDocumentReader token={token} projectId={revision.projectId} documentId={revision.documentId} revisionId={revision.id} />}
-    <p className="muted">原件 {revision.format} · <code title={revision.contentHash}>{revision.contentHash.slice(0, 22)}…</code></p>
-  </section>;
-}
-
-function DocumentPage({ token, projectId, id, selectedRevision, context, refresh }: { token: string; projectId: string; id: string; selectedRevision?: string; context: MutationContext; refresh: number }) {
-  const [detail, setDetail] = useState<DocumentDetail | null>(null);
-  const [revision, setRevision] = useState<DocumentRevision | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    setDetail(null); setRevision(null); setError("");
-    api(token).document(projectId, id).then(async d => {
-      const r = selectedRevision ? await api(token).documentRevision(projectId, id, selectedRevision) : d.current;
-      if (active) { setDetail(d); setRevision(r); }
-    }).catch(cause => { if (active) setError(errorText(cause)); });
-    return () => { active = false; };
-  }, [token, projectId, id, selectedRevision, refresh]);
-  if (error) return <div className="content"><Alert kind="error">{error}</Alert></div>;
-  if (!detail || !revision) return <div className="content"><p>正在读取文档…</p></div>;
-  return <div className="content reading">
-    <a className="back" href={href(projectId, "work")}>← 返回工作</a>
-    <div className="eyebrow">过程文档</div><h1>{detail.document.title}</h1>
-    <p className="lede">{selectedRevision ? "正在阅读固定历史修订。" : "正在阅读当前修订。"} 已采纳版与当前版分别标明。</p>
-    <div className="actions">
-      <a className="button-link" href={href(projectId, "document", id, detail.current.id)}>当前版 <ShortId value={detail.current.id} /></a>
-      {detail.adopted && <a className="button-link" href={href(projectId, "document", id, detail.adopted.id)}>已采纳版 <ShortId value={detail.adopted.id} /></a>}
-      {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
-    </div>
-    <RevisionBody token={token} revision={revision} />
-    <details className="workflow-detail"><summary>修订与采纳</summary>{detail.current.format === "markdown" && detail.current.body !== null && <ActionForm key={`revise:${detail.document.version}`} context={context} title="保存候选修订" fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]} build={v => ({ type: "document.revise", documentId: id, expectedVersion: detail.document.version, ...v })} />}
-    <UploadDocument context={context} mode="revise" documentId={id} expectedVersion={detail.document.version} />
-    {detail.current.id !== detail.adopted?.id && <ActionForm key={`adopt:${detail.document.version}`} context={context} review title="采纳当前修订" fields={[{ name: "reason", label: "采纳依据", kind: "textarea" }]} build={v => ({ type: "document.adopt", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} />}</details>
-  </div>;
-}
-
-function Basis({ basis, projectId }: { basis: BasisSet | null; projectId: string }) {
-  if (!basis) return <p className="empty">这个任务修订没有固定依据集合。</p>;
-  return <ul className="basis-list">{basis.members.map(member => <li key={`${member.documentId}:${member.revisionId}`}><a href={href(projectId, "document", member.documentId, member.revisionId)}>过程文档 <ShortId value={member.documentId} /> · 修订 <ShortId value={member.revisionId} /> →</a></li>)}</ul>;
-}
-
-function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
-  token: string; projectId: string; detail: TaskDetail; impact: Impact;
-  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean;
-}) {
-  const [before, setBefore] = useState<DocumentRevision | null>(null);
-  const [after, setAfter] = useState<DocumentRevision | null>(null);
-  const [reason, setReason] = useState("");
-  const [acceptance, setAcceptance] = useState("");
-  const [decision, setDecision] = useState<"adopt" | "retain">("adopt");
-  const [busy, setBusy] = useState(false);
-  const [conflict, setConflict] = useState(false);
-  const [message, setMessage] = useState("");
-  const [readVersion, setReadVersion] = useState(detail.task.version);
-  useEffect(() => {
-    let active = true;
-    setBefore(null); setAfter(null); setMessage(""); setConflict(false);
-    setReadVersion(detail.task.version);
-    Promise.all([
-      api(token).documentRevision(projectId, impact.documentId, impact.fromRevisionId),
-      api(token).documentRevision(projectId, impact.documentId, impact.toRevisionId),
-    ]).then(([a, b]) => { if (active) { setBefore(a); setAfter(b); } })
-      .catch(cause => { if (active) setMessage(errorText(cause)); });
-    return () => { active = false; };
-  }, [token, projectId, impact.id]);
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy || conflict || blockedByUnknown || !canReview || impact.state !== "pending" || !reason.trim()) return;
-    const command: UnknownCommand = {
-      type: "task.reviewBasis", projectId, taskId: detail.task.id,
-      expectedVersion: readVersion, impactId: impact.id, decision,
-      reason: reason.trim(), ...(decision === "adopt" && acceptance.trim() ? { acceptance: acceptance.trim() } : {}),
-      operationId: crypto.randomUUID(),
-    };
-    if (!onAttempt(command)) {
-      setMessage(`无法保存操作回执，本次未发送。请启用浏览器会话存储后重试。操作 ID：${command.operationId}`);
-      return;
-    }
-    setBusy(true); setMessage("");
-    try {
-      const result = await api(token).command(command);
-      onKnown(command.operationId);
-      if (result.status === "applied") {
-        setMessage("复核已应用，正在回读任务与列表。");
-        onChanged();
-      } else {
-        setMessage(`复核被拒绝：${result.message}`);
-        setConflict(true);
-        onChanged();
-      }
-    } catch (cause) {
-      if (isUnconfirmed(cause)) {
-        setMessage("结果尚未确认。先核对原操作 ID，暂勿再次提交。");
-        setConflict(true);
-      } else {
-        onKnown(command.operationId);
-        if (cause instanceof ApiError && cause.status === 409) {
-          setMessage(`版本已变化：${cause.message}。输入已保留；请查看回读后的依据并明确重新选择。`);
-          setConflict(true); onChanged();
-        } else { setMessage(errorText(cause)); }
-      }
-    } finally { setBusy(false); }
-  }
-  return <div className="review-layout">
-    <div className="compare">
-      {before ? <RevisionBody token={token} revision={before} label="任务原依据" /> : <p>正在读取原依据…</p>}
-      {after ? <RevisionBody token={token} revision={after} label="新文档修订" /> : <p>正在读取新修订…</p>}
-    </div>
-    <form className="review-form" onSubmit={submit}>
-      <div className="eyebrow">复核决定 · Task v{readVersion}</div>
-      <h3>这次变化如何影响任务？</h3>
-      <label className="choice"><input type="radio" checked={decision === "adopt"} onChange={() => setDecision("adopt")} />采用新修订</label>
-      <label className="choice"><input type="radio" checked={decision === "retain"} onChange={() => setDecision("retain")} />保留原依据</label>
-      <label htmlFor="reason">理由</label>
-      <textarea id="reason" value={reason} onChange={e => setReason(e.target.value)} minLength={1} maxLength={4000} required rows={4} placeholder="说明判断依据与影响" />
-      {decision === "adopt" && <><label htmlFor="acceptance">新的验收条件（可选）</label><textarea id="acceptance" value={acceptance} onChange={e => setAcceptance(e.target.value)} maxLength={4000} rows={3} placeholder="留空则沿用当前验收条件" /></>}
-      <button className="primary" type="submit" disabled={busy || conflict || blockedByUnknown || !canReview || impact.state !== "pending" || !before || !after}>{busy ? "正在提交…" : "提交复核决定"}</button>
-      {!canReview && <Alert>当前身份没有复核权限，仍可阅读固定依据。</Alert>}
-      {impact.state !== "pending" && <Alert>这项影响已不再待复核。保留当前输入供你核对，不能按旧状态提交。</Alert>}
-      {blockedByUnknown && <Alert kind="error">同一任务有结果未确认的命令。请先按上方操作 ID 核对。</Alert>}
-      {conflict && !blockedByUnknown && <button type="button" className="quiet" onClick={() => { setReadVersion(detail.task.version); setConflict(false); setMessage("请再次核对原依据、新修订和当前任务，再提交保留的输入。"); }}>重新核对当前版本</button>}
-      {message && <Alert kind={conflict ? "error" : "info"}>{message}</Alert>}
-    </form>
-  </div>;
-}
-
-function TaskPage({ context, token, projectId, id, selectedRevision, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
-  context: MutationContext; token: string; projectId: string; id: string; refresh: number;
-  selectedRevision?: string;
-  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean;
-}) {
-  const [detail, setDetail] = useState<TaskDetail | null>(null);
-  const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
-  const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
-  const [error, setError] = useState("");
-  const historyRequestRef = useRef(0);
-  useEffect(() => { ++historyRequestRef.current; setHistorical(null); }, [id, projectId]);
-  useEffect(() => {
-    let active = true;
-    setError("");
-    api(token).task(projectId, id).then(value => {
-      if (!active) return;
-      setDetail(value);
-      setSelectedImpactId(current => value.impacts.some(i => i.id === current) ? current : value.impacts.find(i => i.state === "pending")?.id || null);
-    }).catch(cause => { if (active) setError(errorText(cause)); });
-    return () => { active = false; };
-  }, [token, projectId, id, refresh]);
-  async function showHistory(revisionId: string) {
-    const sequence = ++historyRequestRef.current;
-    setHistorical(null); setError("");
-    try {
-      const value = await api(token).taskRevision(projectId, id, revisionId);
-      if (sequence === historyRequestRef.current) setHistorical({ taskId: id, ...value });
-    } catch (cause) { if (sequence === historyRequestRef.current) setError(errorText(cause)); }
-  }
-  useEffect(() => {
-    if (selectedRevision) void showHistory(selectedRevision);
-    else { ++historyRequestRef.current; setHistorical(null); }
-  }, [selectedRevision, token, projectId, id]);
-  if (error && !detail) return <div className="content"><Alert kind="error">{error}</Alert></div>;
-  if (!detail || detail.task.id !== id) return <div className="content"><p>正在读取任务…</p></div>;
-  const pending = detail.impacts.filter(i => i.state === "pending");
-  const selected = detail.impacts.find(i => i.id === selectedImpactId);
-  return <div className="content">
-    <a className="back" href={href(projectId, "work")}>← 返回工作</a>
-    <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
-    <div className="task-header"><span className="pill">{detail.task.state}</span><span>负责人：{detail.task.owner}</span><span>当前修订 <ShortId value={detail.revision.id} /></span></div>
-    {selectedRevision && <section className="panel" id="fixed-task-revision"><h2>固定历史任务修订</h2>
-      {!historical && !error && <p>正在读取指定修订与当时的完整依据…</p>}
-      {!historical && error && <Alert kind="error">固定修订不可读取；不能把当前任务当成当时依据。</Alert>}
-      {historical?.taskId === id && <><p><strong>v{historical.revision.version} · {historical.revision.state}</strong> · {date(historical.revision.createdAt)} · {historical.revision.actorId}</p><p><strong>当次理由：</strong>{historical.revision.reason}</p><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></>}
-      <p><a href={href(projectId, "task", id)}>返回当前任务 →</a></p>
-    </section>}
-    {error && <Alert kind="error">{error}</Alert>}
-    <section className="panel"><h2>目标与验收</h2><p>{detail.task.goal}</p><h3>验收条件</h3><p>{detail.task.acceptance}</p></section>
-    <RuntimePanel context={context} refresh={refresh} task={detail.task} />
-    <ReferencePanel key={`refs:${detail.task.currentRevisionId}`} context={context} taskId={detail.task.id} taskRevisionId={detail.task.currentRevisionId} taskVersion={detail.task.version} />
-    <TaskWorkflow key={`${detail.task.id}:${detail.task.version}`} context={context} detail={detail} />
-    <section className="panel"><div className="panel-head"><h2>当前固定依据</h2><span>任务修订 <ShortId value={detail.revision.id} /></span></div><Basis basis={detail.basis} projectId={projectId} /></section>
-    <section className="panel"><div className="panel-head"><h2>待复核的依据变化</h2><span>{pending.length} 项</span></div>
-      {!pending.length && <p className="empty">当前没有待复核影响。</p>}
-      {pending.length > 0 && <div className="impact-tabs">{pending.map(i => <button key={i.id} className={i.id === selectedImpactId ? "active" : ""} onClick={() => setSelectedImpactId(i.id)}>文档 <ShortId value={i.documentId} /> · <ShortId value={i.toRevisionId} /></button>)}</div>}
-      {selected && <ImpactReview key={selected.id} token={token} projectId={projectId} detail={detail} impact={selected} onChanged={onChanged} onAttempt={onAttempt} onKnown={onKnown} blockedByUnknown={blockedByUnknown} canReview={canReview} />}
-    </section>
-    <section className="panel"><h2>已作决定</h2>
-      {!detail.decisions.length && <p className="empty">尚无复核决定。</p>}
-      {detail.decisions.map(d => <div className="decision" key={d.id}><strong>{d.decision === "adopt" ? "采用新修订" : "保留原依据"}</strong><span>{date(d.createdAt)} · {d.actorId}</span><p>{d.reason}</p><button className="quiet" onClick={() => showHistory(d.previousTaskRevisionId)}>查看决定前的任务依据</button></div>)}
-      {!selectedRevision && historical?.taskId === id && <div className="history"><h3>固定任务修订 v{historical.revision.version} · {historical.revision.state}</h3><p><strong>当次理由：</strong>{historical.revision.reason}</p><p>{historical.revision.goal}</p><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></div>}
-    </section>
-  </div>;
 }
 
 export function App() {
@@ -459,6 +158,7 @@ export function App() {
   const [receiptStorageAvailable, setReceiptStorageAvailable] = useState(true);
   const [operationNotice, setOperationNotice] = useState("");
   const [projectError, setProjectError] = useState("");
+  const [projectTitle, setProjectTitle] = useState("");
   const projectId = route.projectId && session?.principal.projectIds.includes(route.projectId) ? route.projectId : null;
   const client = useMemo(() => api(token), [token]);
   const visibleReceipts = session ? forPrincipal(receipts, session.principal.actorId, session.principal.projectIds) : [];
@@ -488,7 +188,7 @@ export function App() {
   }
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!receiptsRef.current.length) return;
+      if (!receiptsRef.current.length && !document.querySelector('[data-dirty="true"]')) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -498,38 +198,62 @@ export function App() {
   useEffect(() => {
     if (!projectId || !session) return;
     let active = true;
-    client.project(projectId).then(() => { if (active) setProjectError(""); })
+    client.project(projectId).then(p => { if (active) { setProjectError(""); setProjectTitle(p.title); } })
       .catch(cause => { if (active) setProjectError(errorText(cause)); });
     return () => { active = false; };
   }, [client, projectId, session, refresh]);
   if (!session) return <AuthGate hasReceipts={receipts.length > 0} onSuccess={(value, next) => { setToken(value); setSession(next); }} />;
   const principal = session.principal;
   const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: () => setRefresh(v => v + 1) };
-  return <div className="app-shell">
-    <header className="topbar"><a className="brand" href="#/">evoLoop <span>工作台</span></a><div className="identity"><span>{principal.actorId}</span><button className="quiet" onClick={() => {
-      if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
-      setToken(""); setSession(null);
-    }}>退出</button></div></header>
-    {projectId ? <>
-      <nav className="main-nav" aria-label="主导航">
-        <a className={route.section === "overview" ? "active" : ""} href={href(projectId, "overview")}>总览</a>
-        <a className={["work", "task", "document"].includes(route.section) ? "active" : ""} href={href(projectId, "work")}>工作</a>
-        <a className={route.section === "knowledge" ? "active" : ""} href={href(projectId, "knowledge")}>知识</a>
-        <a href="#/">切换项目</a>
-      </nav>
-      {visibleReceipts.filter(r => r.projectId === projectId).map(receipt => <div className="global-alert" key={receipt.operationId}><OperationCheck receipt={receipt} token={token} onConfirmed={result => {
-        setOperationNotice(result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`);
-        replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId));
-        setRefresh(v => v + 1);
-      }} /></div>)}
-      {!receiptStorageAvailable && <div className="global-alert"><Alert kind="error">浏览器未能暂存操作回执。请复制上方操作 ID；刷新或关闭页面后可能无法从此界面找回。</Alert></div>}
-      {operationNotice && <div className="global-alert"><Alert kind="info">{operationNotice} <button className="quiet" onClick={() => setOperationNotice("")}>关闭</button></Alert></div>}
-      {projectError ? <div className="content"><Alert kind="error">项目暂不可读取：{projectError}</Alert><button onClick={() => setRefresh(v => v + 1)}>重试读取项目</button></div> : <>
-        {(route.section === "overview" || route.section === "work") && <Board context={context} token={token} projectId={projectId} section={route.section} refresh={refresh} />}
-        {route.section === "knowledge" && <div className="content"><div className="eyebrow">知识</div><h1>知识空间</h1><KnowledgePanel context={context} refresh={refresh} /></div>}
-        {route.section === "task" && route.id && <TaskPage context={context} token={token} projectId={projectId} id={route.id} selectedRevision={route.revision} refresh={refresh} onChanged={() => setRefresh(v => v + 1)} onAttempt={beginAttempt} onKnown={finishKnown} blockedByUnknown={visibleReceipts.some(r => r.projectId === projectId && r.taskId === route.id)} canReview={principal.permissions.includes("review")} />}
-        {route.section === "document" && route.id && <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={route.id} selectedRevision={route.revision} />}
-      </>}
-    </> : <ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} />}
-  </div>;
+  function logout() {
+    if (document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。退出会清除本页草稿，确定退出？")) return;
+    if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
+    clearCommandDrafts(); setToken(""); setSession(null);
+  }
+  if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="#/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
+  const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
+  const operationChecks = <>{projectReceipts.map(receipt => <div className="global-alert" key={receipt.operationId}><OperationCheck receipt={receipt} token={token} onConfirmed={result => {
+    setOperationNotice(result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`);
+    replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); setRefresh(v => v + 1);
+  }} /></div>)}{!projectReceipts.length && <p className="empty">当前身份没有待核对的共同命令回执。知识、外部来源和协作操作的专用回执仍在各自页面核对。</p>}</>;
+  return <WorkbenchShell route={route} projectTitle={projectTitle} actor={principal.actorId} receiptCount={projectReceipts.length} logout={logout}>
+    {route.section !== "operations" && projectReceipts.length > 0 && <div className="global-alert"><Alert kind="error">{projectReceipts.length} 项操作结果尚未确认，提交已暂缓。<a href={href(projectId, "operations")}>按原操作 ID 核对</a></Alert></div>}
+    {!receiptStorageAvailable && <div className="global-alert"><Alert kind="error">浏览器未能暂存操作回执。请保留原操作 ID，并在待核对操作中查询。</Alert></div>}
+    {operationNotice && <div className="global-alert"><Alert>{operationNotice} <button className="quiet" onClick={() => setOperationNotice("")}>关闭</button></Alert></div>}
+    {projectError && <div className="global-alert"><Alert kind="error">项目暂不可读取：{projectError} <button onClick={context.onChanged}>重试读取项目</button></Alert></div>}
+    <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationChecks} />
+  </WorkbenchShell>;
+}
+
+function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: React.ReactNode }) {
+  // Visited pages stay mounted for this authenticated project. No form text or token is persisted.
+  const cache = useRef(new Map<string, Route>());
+  const positions = useRef(new Map<string, number>());
+  const key = `${route.section}:${route.id ?? ""}:${route.revision ?? ""}:${route.action ?? ""}`;
+  cache.current.set(key, route);
+  useLayoutEffect(() => {
+    const handle = requestAnimationFrame(() => {
+      window.scrollTo(0, positions.current.get(key) ?? 0);
+      document.querySelector<HTMLElement>(`[data-page-key="${CSS.escape(key)}"] h1`)?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [key]);
+  useEffect(() => {
+    const remember = () => positions.current.set(key, window.scrollY);
+    window.addEventListener("evoloop:will-navigate", remember);
+    return () => window.removeEventListener("evoloop:will-navigate", remember);
+  }, [key]);
+  const { projectId, token, principal } = context;
+  function page(r: Route) {
+    if (["work", "inbox", "documents"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox" | "documents"} />;
+    if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} />;
+    if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
+    if (r.section === "knowledge") return <div className="content knowledge-page"><h1 tabIndex={-1}>知识空间</h1><KnowledgePanel context={context} refresh={refresh} /></div>;
+    if (r.section === "operations") return <div className="content"><h1 tabIndex={-1}>待核对操作</h1><p className="lede">结果未知时先查原操作 ID，确认前不要重复提交。</p>{operations}</div>;
+    if (r.section === "repository") return <div className="content"><h1 tabIndex={-1}>仓库规范</h1><p className="lede">产品、架构与开发规范由仓库 docs 维护。它们与过程文档分别保存。</p><section className="panel"><h2>正式文档</h2><div className="repository-links"><a href="https://github.com/cyl19970726/evoLoop/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">贡献与变更入口 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/README.md" target="_blank" rel="noreferrer">文档目录 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/decisions.md" target="_blank" rel="noreferrer">当前决定 ↗</a></div><p className="muted">以上打开仓库现行文档；任务实际采用的固定 commit 与摘要在相应任务依据中查阅。</p></section><details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
+    if (r.section === "overview") return <div className="content"><h1 tabIndex={-1}>总览</h1><p className="lede">总览将在工作、文档知识与协作路径经实际使用反馈后整理。</p><section className="panel"><h2>从当前工作开始</h2><p>先阅读真实对象与证据，再判断下一步。</p><div className="context-links"><a href={href(projectId, "work")}>查看任务</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "discussions")}>负责人讨论</a><a href={href(projectId, "knowledge")}>阅读知识</a></div></section></div>;
+    const components = { journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <DiscussionPanel context={context} refresh={refresh} />, runtime: <RuntimePanel context={context} refresh={refresh} />, schedules: <SchedulingPanel context={context} refresh={refresh} />, roles: <RolesPanel context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
+    return <div className="content"><h1 tabIndex={-1}>{sectionNames[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
+  }
+  return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>{page(r)}</div>)}</>;
 }
