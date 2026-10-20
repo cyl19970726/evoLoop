@@ -1,6 +1,6 @@
 # Agent loop：从认识到下一步
 
-2026-10-20 · 产品行为设计，尚未部署。本文展开[产品定义](definition.md)的四部分如何协作：认知循环、动态多 session、任务与状态机、LLM Wiki 与评价。两个贯穿维度是**认知演进**与**协作执行**；四部分的整体关系见[架构图](../architecture/overview.md#2-分层与依赖)，主数据边界见[项目数据](../architecture/project-data.md)。
+2026-10-20 · 产品行为设计，尚未部署。本文展开[产品定义](definition.md)的四部分如何协作：认知循环、动态多 session、任务与状态机、LLM Wiki 与评价。两个贯穿维度是**认知演进**与**协作执行**；四部分的整体关系见[架构图](../architecture/overview.md#2-四部分如何组成系统)，主数据边界见[项目数据](../architecture/project-data.md)。
 
 ## 一轮循环应留下什么
 

@@ -36,7 +36,7 @@
 
 ## 具体接入形状与先验收什么
 
-保持 evoLoop 已拟的 React 工作台：`KnowledgeQuery` 用 `projectId + knowledgeId + revision` 从外置 KnowledgeRepository 取授权正文、来源、知识内部边和候选；同一响应包含修订校验、状态、`observedAt`、缺项。`Task/DocumentQuery` 从 PG 的 `KnowledgeRef/Relation` 取跨对象固定依据和维护/采用回执；飞书继续 Task connector。浏览器通过共同 API 分页获取专题/知识点、来源筛选、出入链、焦点一跳子图和待审项。图节点为稳定知识 ID，边给方向/类型/所读修订；不要在浏览器遍历全部 Markdown、用 basename 合并同名页，或把来源重合分数当事实支持。[工作台接口提议](../../architecture/wiki-workspace.md#3-evoloop-前端查询层和知识端) · [知识流](../../architecture/knowledge-flow.md)
+保持 evoLoop 已拟的 React 工作台：`KnowledgeQuery` 用 `projectId + knowledgeId + revision` 从外置 KnowledgeRepository 取授权正文、来源、知识内部边和候选；同一响应包含修订校验、状态、`observedAt`、缺项。`Task/DocumentQuery` 从 PG 的 `KnowledgeRef/Relation` 取跨对象固定依据和维护/采用回执；飞书继续 Task connector。浏览器通过共同 API 分页获取专题/知识点、来源筛选、出入链、焦点一跳子图和待审项。图节点为稳定知识 ID，边给方向/类型/所读修订；不要在浏览器遍历全部 Markdown、用 basename 合并同名页，或把来源重合分数当事实支持。[工作台接口提议](../../architecture/wiki-workspace.md#2-evoloop-前端查询层和知识端) · [知识流](../../architecture/knowledge-flow.md)
 
 首个代码复用验证应在独立试验分支对 1–2 个**纯函数符号**做许可证审查、边界/回归测试和与项目 API 形状的类型比对；再做一页只读知识点和一跳图的 props 驱动样片。比对源码复制量、传递依赖、构建体积、同名/改名/撤回/权限/旧 revision 表现。若适配成本超过重写清晰组件，就保留交互参考而不搬源码。组件移植通过编译并不证明知识维护效果；还需按[Wiki 维护首片](../../architecture/wiki-maintenance.md#首片与发布门槛)让新 session 实际用修订完成任务。
 

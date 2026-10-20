@@ -2,6 +2,8 @@
 
 状态：2026-10-20 **可实施设计提议，尚未编码或部署**。用户已确定 PostgreSQL 持有 evoLoop 任务、日程、原生文档与跨对象关系；OpenViking **v0.5.1 是待验证的外置 Wiki 候选**，nashsu/llm_wiki **v0.6.12（`48fd970e`）是前端参考**。本页给两者之间的最小接缝，不改变[领域合同](contracts.md)、[存储权威](storage.md)、[知识流](knowledge-flow.md)、[Wiki 维护](wiki-maintenance.md)和[工作台架构](frontend.md)。本地 OpenViking checkout 为 v0.5.0；v0.5.1 能力判断来自固定上游源码，旧版实测不能当作新版验收。[候选核查](../research/wiki-base-selection-20261019.md) · [技术取舍](technology-selection.md)
 
+本页是工作台与外置知识服务的实现接缝：先沿一次读取、来源进入和发布纠正走完数据路径，最后查 API 字段、上游路由与组件映射。人的浏览和维护判断分别见[Wiki 工作区](wiki-workspace.md)与[Wiki 维护机制](wiki-maintenance.md)。
+
 ## 1. 一个入口，三个正文权威
 
 `apps/workbench/knowledge` 展示知识点、专题、来源、双链、关系图和待审；所有浏览器读写经过 evoLoop 的 `/api/v1`。API 负责身份、项目范围、能力、固定版本、命令基线与分源状态。PG 是 Task、仅含过程文档的 Document Table、Relation 及运行维护记录的权威；Git 仓库 `docs/` 独立维护产品、架构与规范，文件不进入 Document Table；外置 KnowledgeRepository 是 Wiki 正文、来源、内部依赖与历史的权威。PG 的 KnowledgeRef 只登记外部知识身份与固定修订，不能成为第二份可编辑 Wiki。公开文档站只读 Git 派生视图，飞书仅是协作投影入口。
@@ -31,51 +33,11 @@ flowchart TB
 
 箭头表示调用或提交方向，不表示 PG、Git、Wiki 存在全局事务。黄色是浏览器；蓝色是共同协议；紫色是领域判断；绿色是 evoLoop 主数据；青色是外部正文权威。浏览器不能持有数据库、Git 或 OpenViking 凭据。
 
-## 2. nashsu 前端接缝
+## 2. 共同 API 的读取协议
 
-以固定 [nashsu v0.6.12 源码](https://github.com/nashsu/llm_wiki/tree/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src)和[前端复用核查](../research/nashsu-llm-wiki/frontend-reuse.md)为边界；保留交互语言，不直接搬其文件系统状态。`KnowledgeTree` 的类型/来源筛选、`WikiReader` 的 Markdown/来源阅读、`PageLinksPanel` 的出链/反链/缺链、`GraphView` 的聚焦与邻域、`ReviewView` 的待审比较分别映射成 API 数据视图。`wiki-page-types`、`wikilink-transform` 等纯解析代码可单独评估复用；阅读组件直接依赖 `useWikiStore`，图构建直接遍历 Tauri 文件，必须拆出数据适配和事件接口。任何源码复制先核许可和依赖；目前未复制。
+读取从项目/身份过滤的专题或知识列表开始，按稳定 ID 与固定 revision 打开正文，再分别读取来源、关系和关联 Task 的当时基线。QueryService 装配 PG 业务关系、Git 固定出处与外置 Wiki 页；每个来源各自核对，索引滞后或源不可达必须显示缺项。列表和关联页按项目、身份、ACL 与服务端最大页长过滤，返回游标；详情可指定不可变修订。读者先核当前页和任务当时所读的固定版，再沿来源与关系查看原件。各源状态分别可见，不能由一条搜索命中推断知识仍有效。具体查询字段和失效响应列在本页后面的协议表。
 
-| 组件边界（拟议） | 输入 | 只向上发出的事件 |
-| --- | --- | --- |
-| `KnowledgeNavigator` | 已授权的专题/类型/来源游标页、选中 ID | `onOpenKnowledge(id, revision?)`、`onFilter(query)`、`onLoadMore(cursor)` |
-| `KnowledgeReader` | 固定 `KnowledgePage`、来源可达性、当前版差异 | `onOpenSource(sourceKey)`、`onOpenRelation(id)`、`onProposeCorrection(basisRevision)` |
-| `KnowledgeLinks` / `GraphNeighborhood` | 服务端有界边、解析状态、下一页 | `onFocus(id)`、`onExpand(depth, cursor)`、`onOpenEvidence(edgeId)` |
-| `CandidateReview` | 候选与固定基线、权限能力、影响预览 | `onSubmitReview(decision, basis)`、`onPublish(operationId)` |
-
-组件不调用 Tauri 文件命令、不扫描全库、不直接写 OpenViking，也不从前端缓存决定有效性。路由沿用 `/app/p/:projectId/knowledge/:knowledgeId?revision=...`；固定修订深链保留旧页，另给当前版链接。图的相关性排序只用于发现，不赋予边“支持”或“已验证”语义。
-
-## 3. 共同 API 的读取协议
-
-以下均为 **evoLoop 拟议 API**，不是 OpenViking 原生路径。列表和关联页按项目、身份、ACL 与服务端最大页长过滤，返回游标；详情可指定不可变修订。初期用最小可验证闭环，不要求一次做完所有 UI。
-
-| Query | 用途与返回核心字段 |
-| --- | --- |
-| `GET /api/v1/projects/{p}/knowledge?pageType=topic&status=published&cursor=...` | `items[{knowledgeId,revision,title,pageType,epistemicStatus,validity,sourceCount}]`、`nextCursor`、`watermark` |
-| `GET /api/v1/projects/{p}/knowledge/{id}?revision={rev}` | 固定 `body`、`contentHash`、`sources[{sourceKey,originRevision,fragment,state}]`、`currentRevision`、`capabilities` |
-| `GET /api/v1/projects/{p}/knowledge/{id}/members?revision={rev}&cursor=...` | 专题成员 ID、固定修订、成员理由与游标 |
-| `GET /api/v1/projects/{p}/knowledge/{id}/links?revision={rev}&direction=both&cursor=...` | 出链/反链、端点修订、关系类型、来源与断链原因 |
-| `GET /api/v1/projects/{p}/knowledge/graph?focus={id}&depth=1&limit=80` | 有界节点/边、截断标志、下一次展开游标；服务端强制上限 |
-| `GET /api/v1/projects/{p}/tasks/{id}/context` | `ContextQuery`：TaskRevision/BasisSet、原生 DocumentRevision、Git commit、知识固定修订及缺项 |
-| `GET /api/v1/projects/{p}/knowledge/reviews?state=pending&cursor=...` | PG 中的维护决定/影响复核状态与外置候选引用 |
-
-响应示意（字段名待 `contracts` 的浏览器 schema 定稿）：
-
-```json
-{
-  "knowledgeId": "k_7f2", "revision": "kr_19", "currentRevision": "kr_20",
-  "pageType": "concept", "epistemicStatus": "inference", "validity": "needs_review",
-  "body": "...", "contentHash": "sha256:...", "observedAt": "2026-10-20T08:00:00Z",
-  "sources": [{"sourceKey": "doc:d_4@dr_8#scope", "originRevision": "dr_8",
-    "fragment": "scope", "state": "reachable"}],
-  "sourceStatus": {"wiki": "verified", "postgres": "verified", "git": "not_used"},
-  "missing": [], "capabilities": ["read", "propose_correction"],
-  "watermark": {"wikiManifest": "wm_81", "postgres": "pg_440"}
-}
-```
-
-`observedAt` 和各源水位只说明分别核对的时间；PG、Git、Wiki 没有共同瞬间快照。索引滞后或上游不可达时返回可解释的 `stale/unknown` 与 `missing`，历史缓存不能被标成“当前有效”。原件与关系端点逐项复核 ACL；列表/搜索、图、来源卡、附件均不因有索引命中而越权。客户端缓存键至少含 actor、project、对象 ID、固定 revision、过滤/游标、授权版本和 Wiki 水位；切身份、权限收紧或发布/撤回后清除相关缓存。Markdown 禁不可信 HTML、危险 URL，附件经共同 API 授权读取。
-
-## 4. 固定来源怎样进入外置知识空间
+## 3. 固定来源怎样进入外置知识空间
 
 `SourceBridge` 仅按白名单读取 PG 的 TaskRevision/BasisSet、原生 DocumentRevision、Delivery/Review 固定证据，以及 Git 的 repo/path/commit/blob hash；`adapter-git-documents` 负责固定 commit 读取。正式 Git 文档路径移动时用 commit 与 blob 校验定位，不能把现行路径的不同正文当旧来源。草稿、未授权文件和会话原始文本不能因“有链接”自动摄入。[来源协议](knowledge-flow.md#来源桥接的最小协议)
 
@@ -83,23 +45,9 @@ flowchart TB
 
 `ContextQuery` 把 PG 的 Task/Document 关系、Git 固定正文校验、Wiki 固定页和当前有效性组合成限量上下文包，标出任务当时基线与当前差异。任务派发前实时核知识状态、来源可达和权限；已撤回或待复核的关键依据阻止最新派发。后台影响扫描补全处理清单，不能替代派发门槛。通知已投递也不证明下一 session 实际采用，须在交付/解释中核对。
 
-## 5. OpenViking v0.5.1 的原生面与适配面
+## 4. 命令、发布和纠正
 
-固定 [内容路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/content.py)、[检索路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/search.py)、[资源路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/resources.py)和 [compile 路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/compile.py)可核到下列 HTTP 面；是否满足合同仍需候选版集成实测。
-
-| 已见的上游接口 | evoLoop 用法与未满足的合同 |
-| --- | --- |
-| `GET /api/v1/content/read?uri=...`、`/abstract`、`/overview` | 读指定 URI 内容/派生摘要；不把 URI 当稳定知识 ID，不把摘要当固定历史修订 |
-| `POST /api/v1/search/find`、`/search`、`/glob` | 候选发现/检索；服务端仍要按项目/权限过滤、限制分页并核到固定身份 |
-| `POST /api/v1/resources` | 摄入经 SourceBridge 放行的材料；回执是摄入状态，不是知识已编纂或已采纳 |
-| `POST /api/v1/content/write`、`/batch-write` | 内容写入；v0.5.1 `batch-write` 的每项可带 `expected_sha256`，普通 `write` 不提供同样条件字段。不能据此声称整组发布事务或多写者安全 |
-| `POST /api/v1/compile` | 可选生成/编纂入口；普通内容写入不会自动完成知识综合、审阅、撤回传播或效果验收 |
-
-适配器必须在**开发仓库与 PG 正文表之外**的受控 Wiki 命名空间实现稳定 `knowledgeId`、不可变修订文件/manifest、候选/已发布指针、来源依赖、专题成员、双链和反链、失效标记及可重建只读索引。若后端没有原生事件水位，以受控发布日志 + manifest diff/周期核对生成查询水位；页面内容仍由外置空间持有。不能假定 OpenViking 提供原子 manifest 交换、全局游标或跨页事务。只有一个活动发布者，关闭其他 OpenViking/工具直写路径；条件写与读后核对未验前，多写者发布不在支持范围。
-
-## 6. 命令、发布和纠正
-
-工作台、CLI、Agent 工具统一走共同 Command API。比如纠正命令：`POST /api/v1/projects/{p}/knowledge/{id}/candidates`，body `{operationId, expectedRevision:"kr_19", proposedPatch, sourceKeys:["doc:d_4@dr_8#scope"], reason, actorSessionId}`。服务端检查身份、项目、来源权限、固定基线和候选格式；候选正文存外置空间，PG 记候选引用/维护任务/操作结果。`POST /reviews/{reviewId}/decisions` 记录 `{operationId, expectedReviewVersion, decision, rationale}`；`POST /candidates/{candidateId}/publish` 仅在采纳决定有效时执行。冲突返回当前 revision、差异定位和 `operationId`；客户端保留输入，不盲重试新 ID。端点、字段与错误码需在 `contracts` 中定稿。
+工作台、CLI、Agent 工具统一走共同 Command API。下述流程只描述服务与外置知识端的写入接缝；谁提出、如何审阅及何时复核由[维护机制](wiki-maintenance.md)规定。比如纠正命令：`POST /api/v1/projects/{p}/knowledge/{id}/candidates`，body `{operationId, expectedRevision:"kr_19", proposedPatch, sourceKeys:["doc:d_4@dr_8#scope"], reason, actorSessionId}`。服务端检查身份、项目、来源权限、固定基线和候选格式；候选正文存外置空间，PG 记候选引用/维护任务/操作结果。`POST /reviews/{reviewId}/decisions` 记录 `{operationId, expectedReviewVersion, decision, rationale}`；`POST /candidates/{candidateId}/publish` 仅在采纳决定有效时执行。冲突返回当前 revision、差异定位和 `operationId`；客户端保留输入，不盲重试新 ID。端点、字段与错误码需在 `contracts` 中定稿。
 
 ```mermaid
 sequenceDiagram
@@ -133,7 +81,65 @@ sequenceDiagram
 
 发布先准备不可变正文/元数据，再核完整性和依赖，最后受控推进发布清单/当前指针。读端只暴露已核清单引用的完整修订；中断留下的未引用文件属于待恢复或孤儿，不自动成为当前版。指针切换的原子性/条件写须在候选后端验证，未通过则保持受限独占发布，不能宣称跨页事务；旧版读取与重建索引也须单独验证。
 
-## 7. 包落点、切片和验证
+## 5. 查询 DTO 与错误语义
+
+以下均为 **evoLoop 拟议 API**，不是 OpenViking 原生路径；字段名待 `contracts` 的浏览器 schema 定稿。
+
+| Query | 用途与返回核心字段 |
+| --- | --- |
+| `GET /api/v1/projects/{p}/knowledge?pageType=topic&status=published&cursor=...` | `items[{knowledgeId,revision,title,pageType,epistemicStatus,validity,sourceCount}]`、`nextCursor`、`watermark` |
+| `GET /api/v1/projects/{p}/knowledge/{id}?revision={rev}` | 固定 `body`、`contentHash`、`sources[{sourceKey,originRevision,fragment,state}]`、`currentRevision`、`capabilities` |
+| `GET /api/v1/projects/{p}/knowledge/{id}/members?revision={rev}&cursor=...` | 专题成员 ID、固定修订、成员理由与游标 |
+| `GET /api/v1/projects/{p}/knowledge/{id}/links?revision={rev}&direction=both&cursor=...` | 出链/反链、端点修订、关系类型、来源与断链原因 |
+| `GET /api/v1/projects/{p}/knowledge/graph?focus={id}&depth=1&limit=80` | 有界节点/边、截断标志、下一次展开游标；服务端强制上限 |
+| `GET /api/v1/projects/{p}/tasks/{id}/context` | `ContextQuery`：TaskRevision/BasisSet、原生 DocumentRevision、Git commit、知识固定修订及缺项 |
+| `GET /api/v1/projects/{p}/knowledge/reviews?state=pending&cursor=...` | PG 中的维护决定/影响复核状态与外置候选引用 |
+
+响应示意（字段名待 `contracts` 的浏览器 schema 定稿）：
+
+```json
+{
+  "knowledgeId": "k_7f2", "revision": "kr_19", "currentRevision": "kr_20",
+  "pageType": "concept", "epistemicStatus": "inference", "validity": "needs_review",
+  "body": "...", "contentHash": "sha256:...", "observedAt": "2026-10-20T08:00:00Z",
+  "sources": [{"sourceKey": "doc:d_4@dr_8#scope", "originRevision": "dr_8",
+    "fragment": "scope", "state": "reachable"}],
+  "sourceStatus": {"wiki": "verified", "postgres": "verified", "git": "not_used"},
+  "missing": [], "capabilities": ["read", "propose_correction"],
+  "watermark": {"wikiManifest": "wm_81", "postgres": "pg_440"}
+}
+```
+
+`observedAt` 和各源水位只说明分别核对的时间；PG、Git、Wiki 没有共同瞬间快照。索引滞后或上游不可达时返回可解释的 `stale/unknown` 与 `missing`，历史缓存不能被标成“当前有效”。原件与关系端点逐项复核 ACL；列表/搜索、图、来源卡、附件均不因有索引命中而越权。客户端缓存键至少含 actor、project、对象 ID、固定 revision、过滤/游标、授权版本和 Wiki 水位；切身份、权限收紧或发布/撤回后清除相关缓存。Markdown 禁不可信 HTML、危险 URL，附件经共同 API 授权读取。
+
+## 6. OpenViking v0.5.1 的原生面与适配面
+
+固定 [内容路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/content.py)、[检索路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/search.py)、[资源路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/resources.py)和 [compile 路由](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/compile.py)可核到下列 HTTP 面；是否满足合同仍需候选版集成实测。
+
+| 已见的上游接口 | evoLoop 用法与未满足的合同 |
+| --- | --- |
+| `GET /api/v1/content/read?uri=...`、`/abstract`、`/overview` | 读指定 URI 内容/派生摘要；不把 URI 当稳定知识 ID，不把摘要当固定历史修订 |
+| `POST /api/v1/search/find`、`/search`、`/glob` | 候选发现/检索；服务端仍要按项目/权限过滤、限制分页并核到固定身份 |
+| `POST /api/v1/resources` | 摄入经 SourceBridge 放行的材料；回执是摄入状态，不是知识已编纂或已采纳 |
+| `POST /api/v1/content/write`、`/batch-write` | 内容写入；v0.5.1 `batch-write` 的每项可带 `expected_sha256`，普通 `write` 不提供同样条件字段。不能据此声称整组发布事务或多写者安全 |
+| `POST /api/v1/compile` | 可选生成/编纂入口；普通内容写入不会自动完成知识综合、审阅、撤回传播或效果验收 |
+
+适配器必须在**开发仓库与 PG 正文表之外**的受控 Wiki 命名空间实现稳定 `knowledgeId`、不可变修订文件/manifest、候选/已发布指针、来源依赖、专题成员、双链和反链、失效标记及可重建只读索引。若后端没有原生事件水位，以受控发布日志 + manifest diff/周期核对生成查询水位；页面内容仍由外置空间持有。不能假定 OpenViking 提供原子 manifest 交换、全局游标或跨页事务。只有一个活动发布者，关闭其他 OpenViking/工具直写路径；条件写与读后核对未验前，多写者发布不在支持范围。
+
+## 7. nashsu 前端接缝
+
+以固定 [nashsu v0.6.12 源码](https://github.com/nashsu/llm_wiki/tree/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src)和[前端复用核查](../research/nashsu-llm-wiki/frontend-reuse.md)为边界；保留交互语言，不直接搬其文件系统状态。`KnowledgeTree` 的类型/来源筛选、`WikiReader` 的 Markdown/来源阅读、`PageLinksPanel` 的出链/反链/缺链、`GraphView` 的聚焦与邻域、`ReviewView` 的待审比较分别映射成 API 数据视图。`wiki-page-types`、`wikilink-transform` 等纯解析代码可单独评估复用；阅读组件直接依赖 `useWikiStore`，图构建直接遍历 Tauri 文件，必须拆出数据适配和事件接口。任何源码复制先核许可和依赖；目前未复制。
+
+| 组件边界（拟议） | 输入 | 只向上发出的事件 |
+| --- | --- | --- |
+| `KnowledgeNavigator` | 已授权的专题/类型/来源游标页、选中 ID | `onOpenKnowledge(id, revision?)`、`onFilter(query)`、`onLoadMore(cursor)` |
+| `KnowledgeReader` | 固定 `KnowledgePage`、来源可达性、当前版差异 | `onOpenSource(sourceKey)`、`onOpenRelation(id)`、`onProposeCorrection(basisRevision)` |
+| `KnowledgeLinks` / `GraphNeighborhood` | 服务端有界边、解析状态、下一页 | `onFocus(id)`、`onExpand(depth, cursor)`、`onOpenEvidence(edgeId)` |
+| `CandidateReview` | 候选与固定基线、权限能力、影响预览 | `onSubmitReview(decision, basis)`、`onPublish(operationId)` |
+
+组件不调用 Tauri 文件命令、不扫描全库、不直接写 OpenViking，也不从前端缓存决定有效性。路由沿用 `/app/p/:projectId/knowledge/:knowledgeId?revision=...`；固定修订深链保留旧页，另给当前版链接。图的相关性排序只用于发现，不赋予边“支持”或“已验证”语义。
+
+## 8. 包落点、切片和验证
 
 只在实际切片出现时加代码包，不预建空目录。`apps/workbench/knowledge` 持组件和数据 hooks；`packages/contracts` 定浏览器 DTO、Command/Query、`KnowledgeRepository` 与来源端口；`packages/core/knowledge` 持 SourceBridge 组合用例、候选、审阅和发布，`core/queries` 装配读取与上下文；`packages/adapter-wiki-openviking` 适配服务 HTTP/外置 manifest；`packages/adapter-git-documents` 读 Git 固定 commit；`packages/adapter-postgres` 只持业务主数据、跨对象关系、回执、Journal/outbox。`apps/coordinator` 装配身份、路由和单活发布工作；没有新增 Wiki 前端 daemon 或独立认知执行栈。[包架构](packages.md)
 
