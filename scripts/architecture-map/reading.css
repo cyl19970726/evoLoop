@@ -1,0 +1,127 @@
+.sys-reading {
+  --sys-paper: #fff;
+  --sys-ink: #252b31;
+  --sys-muted: #737b83;
+  --sys-line: #dce1e5;
+  --sys-blue: #78838d;
+  --sys-copper: #63839b;
+  --sys-panel: #fff;
+  max-width: 1280px;
+  margin: auto;
+  padding: 20px 40px 28px;
+  color: var(--sys-ink);
+  background: var(--sys-paper);
+  font: 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-width: 0;
+}
+.sys-reading * { box-sizing: border-box; }
+.sys-reading h2, .sys-reading h3, .sys-reading p { margin: 0; }
+.sys-reading button { font: inherit; cursor: pointer; }
+.sys-reading button:focus-visible, .sys-reading a:focus-visible, .sys-reading summary:focus-visible { outline: 2px solid #7195b1; outline-offset: 4px; }
+.sys-reading .sys-mechanisms { display: flex; gap: 25px; flex-wrap: wrap; margin: 0 0 18px; }
+.sys-reading .sys-mechanisms button { padding: 0 0 7px; background: none; border: 0; border-bottom: 1px solid transparent; border-radius: 0; color: var(--sys-muted); font-size: 12px; font-weight: 400; }
+.sys-reading .sys-mechanisms button:hover { color: var(--sys-ink); }
+.sys-reading .sys-mechanisms button.sys-active { border-bottom-color: var(--sys-ink); color: var(--sys-ink); }
+.sys-reading .sys-stage-title { display: flex; align-items: baseline; gap: 15px; margin-bottom: 6px; }
+.sys-reading .sys-stage-index { display: none; }
+.sys-reading .sys-stage-title h2 { font-size: 13px; font-weight: 550; }
+.sys-reading .sys-stage-title p { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-stage-scroll { width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+.sys-reading .sys-stage { width: 1200px; height: 570px; position: relative; isolation: isolate; background: var(--sys-paper); }
+.sys-reading .sys-human-band { position: absolute; left: 50px; right: 50px; top: 24px; color: var(--sys-muted); font-size: 12px; font-weight: 400; }
+.sys-reading .sys-paths { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.sys-reading .sys-path { fill: none; stroke: var(--sys-blue); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+.sys-reading .sys-path-feedback { stroke: var(--sys-copper); }
+.sys-reading .sys-path-history { stroke: #9ba4ab; stroke-dasharray: 4 5; }
+.sys-reading #sys-arrow path, .sys-reading #sys-focus-arrow path { fill: var(--sys-blue); }
+.sys-reading #sys-arrow-feedback path, .sys-reading #sys-focus-feedback path { fill: var(--sys-copper); }
+.sys-reading .sys-edge-label { fill: var(--sys-muted); font: 400 12px ui-sans-serif, system-ui, sans-serif; paint-order: stroke; stroke: var(--sys-paper); stroke-width: 4px; }
+.sys-reading .sys-edge-label-feedback { fill: var(--sys-copper); }
+.sys-reading .sys-region { position: absolute; z-index: 1; min-width: 0; padding: 15px 18px; background: var(--sys-panel); border: 1px solid var(--sys-line); border-radius: 5px; color: var(--sys-ink); }
+.sys-reading .sys-region-kicker { display: block; color: var(--sys-muted); font-size: 10px; font-weight: 400; letter-spacing: .02em; }
+.sys-reading .sys-region h3 { margin: 6px 0 7px; font-size: 19px; font-weight: 550; line-height: 1.25; letter-spacing: -.02em; }
+.sys-reading .sys-region p { color: var(--sys-muted); font-size: 12px; line-height: 1.6; }
+.sys-reading .sys-region-decision { left: 50px; top: 100px; width: 280px; height: 160px; }
+.sys-reading .sys-region-task { left: 440px; top: 100px; width: 300px; height: 160px; border-color: #aabac5; }
+.sys-reading .sys-region-run { left: 850px; top: 100px; width: 300px; height: 160px; }
+.sys-reading .sys-region-use { left: 850px; top: 385px; width: 300px; height: 160px; }
+.sys-reading .sys-region-review { left: 440px; top: 385px; width: 300px; height: 160px; }
+.sys-reading .sys-region-wiki { left: 50px; top: 385px; width: 280px; height: 160px; border-style: dashed; }
+.sys-reading .sys-evidence { margin-top: 7px; padding: 0; color: var(--sys-muted); font-size: 10px; font-weight: 400; line-height: 1.4; }
+.sys-reading .sys-region-toggle { position: absolute; left: 18px; bottom: 10px; padding: 0; border: 0; background: none; color: var(--sys-muted); font-size: 11px; font-weight: 400; }
+.sys-reading .sys-region-toggle:hover { color: var(--sys-ink); }
+.sys-reading .sys-region[aria-expanded="true"] { z-index: 8; border-color: #90a5b4; }
+.sys-reading .sys-region-drawer { display: none; position: absolute; z-index: 10; left: -1px; top: calc(100% + 7px); width: 315px; max-height: 270px; overflow: auto; padding: 16px; border: 1px solid var(--sys-line); border-radius: 5px; background: var(--sys-panel); color: var(--sys-ink); }
+.sys-reading .sys-region-run .sys-region-drawer, .sys-reading .sys-region-use .sys-region-drawer { left: auto; right: -1px; }
+.sys-reading .sys-region-wiki .sys-region-drawer, .sys-reading .sys-region-review .sys-region-drawer, .sys-reading .sys-region-use .sys-region-drawer { top: auto; bottom: calc(100% + 7px); }
+.sys-reading .sys-region[aria-expanded="true"] .sys-region-drawer { display: grid; gap: 9px; }
+.sys-reading .sys-region-drawer strong { font-size: 12px; font-weight: 550; }
+.sys-reading .sys-region-drawer p { font-size: 12px; }
+.sys-reading .sys-module-link { padding: 2px 0; border: 0; border-radius: 0; background: none; color: #658299; font-size: 11px; font-weight: 400; text-align: left; }
+.sys-reading .sys-module-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.sys-reading .sys-legend { display: flex; gap: 20px; flex-wrap: wrap; margin: 4px 0 25px; color: var(--sys-muted); font-size: 10px; }
+.sys-reading .sys-legend-action { color: var(--sys-blue); }
+.sys-reading .sys-legend-feedback { color: var(--sys-copper); }
+.sys-reading .sys-explanation { border-top: 1px solid var(--sys-line); padding: 15px 0; color: var(--sys-muted); }
+.sys-reading .sys-explanation > summary { width: max-content; cursor: pointer; font-size: 12px; }
+.sys-reading .sys-explanation-lead { margin: 16px 0 !important; font-size: 13px; }
+.sys-reading .sys-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; list-style: none; margin: 20px 0; padding: 0; }
+.sys-reading .sys-step { min-width: 0; padding: 12px 0; border-top: 1px solid var(--sys-line); }
+.sys-reading .sys-step-index { color: #9aa3aa; font-size: 10px; }
+.sys-reading .sys-step h3 { margin: 4px 0 8px; color: var(--sys-ink); font-size: 14px; font-weight: 550; }
+.sys-reading .sys-step p, .sys-reading .sys-step-gate { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-step-gate { margin-top: 10px; }
+.sys-reading .sys-step-modules { display: grid; gap: 3px; margin-top: 12px; }
+.sys-reading .sys-explanation-sources { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 15px; margin: 15px 0; font-size: 11px; }
+.sys-reading .sys-explanation-sources strong { font-weight: 500; }
+.sys-reading .sys-source { color: #658299; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.sys-reading .sys-footer { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding-top: 12px; border-top: 1px solid var(--sys-line); color: var(--sys-muted); font-size: 11px; }
+.sys-reading .sys-all-modules { padding: 0; border: 0; background: none; color: #658299; font-size: 11px; }
+.sys-reading .sys-focus-card { position: absolute; z-index: 1; padding: 16px 17px 11px; border: 1px solid var(--sys-line); border-radius: 5px; background: var(--sys-panel); color: var(--sys-ink); }
+.sys-reading .sys-focus-card h3 { margin: 7px 0 9px; font-size: 17px; font-weight: 550; line-height: 1.3; }
+.sys-reading .sys-focus-card p { color: var(--sys-muted); font-size: 12px; line-height: 1.6; }
+.sys-reading .sys-focus-gate { margin-top: 9px; color: var(--sys-muted); font-size: 11px; }
+.sys-reading .sys-focus-modules { margin-top: 10px; color: #658299; font-size: 11px; }
+.sys-reading .sys-focus-modules > summary { cursor: pointer; width: max-content; font-weight: 400; }
+.sys-reading .sys-focus-modules[open] { position: relative; z-index: 5; }
+.sys-reading .sys-focus-modules[open] .sys-authority-links { position: absolute; left: -4px; top: 23px; width: min(310px, 90vw); max-height: 170px; overflow: auto; padding: 12px; border: 1px solid var(--sys-line); background: var(--sys-panel); }
+.sys-reading .sys-stage-revision .sys-focus-a, .sys-reading .sys-stage-recovery .sys-focus-a { left: 55px; top: 87px; width: 300px; height: 173px; }
+.sys-reading .sys-stage-revision .sys-focus-b, .sys-reading .sys-stage-recovery .sys-focus-b { left: 435px; top: 87px; width: 305px; height: 173px; }
+.sys-reading .sys-stage-revision .sys-focus-c, .sys-reading .sys-stage-recovery .sys-focus-c { left: 820px; top: 87px; width: 330px; height: 180px; border-color: #aabac5; }
+.sys-reading .sys-stage-revision .sys-focus-history { left: 55px; top: 340px; width: 315px; height: 160px; border-style: dashed; }
+.sys-reading .sys-focus-choices { position: absolute; left: 450px; top: 325px; width: 670px; min-height: 180px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 18px; border: 1px solid var(--sys-line); border-radius: 5px; }
+.sys-reading .sys-focus-choices strong { grid-column: 1 / -1; color: var(--sys-ink); font-size: 12px; font-weight: 500; }
+.sys-reading .sys-focus-choices span { display: flex; align-items: center; justify-content: center; min-height: 60px; padding: 8px; border-top: 1px solid var(--sys-line); color: var(--sys-muted); font-size: 12px; text-align: center; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome { top: 344px; height: 172px; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome-a { left: 55px; width: 310px; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome-b { left: 430px; width: 310px; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome-c { left: 800px; width: 350px; border-color: #aabac5; }
+.sys-reading .sys-stage-recovery .sys-focus-outcome h3 { font-size: 17px; }
+.sys-reading .sys-authority-stage { padding: 24px 10px; background: var(--sys-paper); }
+.sys-reading .sys-authority-intro { margin-bottom: 40px; color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-authority-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
+.sys-reading .sys-authority-card { min-width: 0; padding: 18px 0; border-top: 1px solid var(--sys-line); }
+.sys-reading .sys-authority-card h3 { margin: 8px 0 12px; font-size: 19px; font-weight: 550; }
+.sys-reading .sys-authority-card p { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-authority-gate { margin: 18px 0; color: var(--sys-muted); font-size: 11px; }
+.sys-reading .sys-authority-links { display: grid; gap: 6px; margin-top: 10px; }
+.sys-reading .sys-feishu-projection { margin: 40px 0 20px; padding: 18px 0; border-top: 1px dashed var(--sys-line); }
+.sys-reading .sys-feishu-projection h3 { margin: 8px 0; font-size: 17px; font-weight: 550; }
+.sys-reading .sys-feishu-projection p { color: var(--sys-muted); font-size: 12px; }
+.sys-reading .sys-feishu-projection .sys-authority-links { grid-template-columns: repeat(4, max-content); gap: 20px; }
+.sys-reading .sys-authority-legend { color: var(--sys-muted); font-size: 11px; }
+@media (max-width: 800px) {
+  .sys-reading { padding: 20px; }
+  .sys-reading .sys-mechanisms { gap: 12px 20px; }
+  .sys-reading .sys-stage-title { display: block; }
+  .sys-reading .sys-stage-title p { margin-top: 6px; }
+  .sys-reading .sys-steps { grid-template-columns: 1fr; }
+  .sys-reading .sys-authority-grid { grid-template-columns: 1fr; gap: 20px; }
+  .sys-reading .sys-feishu-projection .sys-authority-links { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .sys-reading .sys-footer { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-color-scheme: dark) {
+  .sys-reading { --sys-paper: #15181c; --sys-panel: #191d22; --sys-ink: #dde1e5; --sys-muted: #a2abb4; --sys-line: #363d45; --sys-blue: #9aa6b0; --sys-copper: #8caac1; }
+  .sys-reading .sys-region-task, .sys-reading .sys-stage-revision .sys-focus-c, .sys-reading .sys-stage-recovery .sys-focus-c, .sys-reading .sys-stage-recovery .sys-focus-outcome-c { border-color: #627886; }
+  .sys-reading .sys-module-link, .sys-reading .sys-all-modules, .sys-reading .sys-source, .sys-reading .sys-focus-modules { color: #95b3ca; }
+}

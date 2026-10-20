@@ -10,6 +10,8 @@
 
 evoLoop 的 PostgreSQL 保存 Task、Document/Revision、跨对象 Relation、知识固定引用、维护任务、贡献/投递回执、影响复核和发布操作结果；不复制可编辑 Wiki 正文或内部依赖。飞书只是 Task connector。工作台显示来源、候选、差异、待审阅与实际使用证据，通过共同 API 发命令，不在浏览器另设一套发布状态。外置知识端不可达或固定修订失效时，需该依据的派发暂停；PG 中的回执不能伪装成内容已被采纳。[知识流](knowledge-flow.md#3-任务执行时怎样读取) · [存储设计](storage.md#权威与共同键)
 
+下图专看**维护者从固定来源形成候选、经审阅发布，再核下一位使用者是否采用**。它补足[知识流的传递流程](knowledge-flow.md#4-从材料变化到-wiki-发布)里的责任和消费门槛；同一路径上的异常要逐项对账。
+
 ```mermaid
 flowchart TB
   P["PG / Git 固定修订<br/>Task · Document · 正式规范 · 亲用反馈"]:::source

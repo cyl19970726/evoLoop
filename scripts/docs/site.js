@@ -103,10 +103,11 @@ function localUrl(raw, source) {
   if (resolved === '..' || resolved.startsWith('../') || path.posix.isAbsolute(resolved)) {
     fail(`${source}: link escapes repository: ${raw}`);
   }
+  const rawFragment = hashIndex < 0 ? '' : raw.slice(hashIndex + 1);
   let fragment;
-  try { fragment = hashIndex < 0 ? '' : decodeURIComponent(raw.slice(hashIndex + 1)); }
+  try { fragment = decodeURIComponent(rawFragment); }
   catch { fail(`${source}: malformed anchor: ${raw}`); }
-  return { target: relative ? resolved : source, fragment, query };
+  return { target: relative ? resolved : source, fragment, rawFragment, query };
 }
 function walkTokens(tokens, callback) {
   for (const token of tokens) {
@@ -118,7 +119,7 @@ function walkTokens(tokens, callback) {
 function relUrl(from, to, fragment = '', query = '') {
   let relative = path.posix.relative(path.posix.dirname(from), to);
   if (!relative) relative = path.posix.basename(to);
-  return `${relative.split('/').map(encodeURIComponent).join('/')}${query}${fragment ? `#${encodeURIComponent(fragment)}` : ''}`;
+  return `${relative.split('/').map(encodeURIComponent).join('/')}${query}${fragment ? `#${fragment}` : ''}`;
 }
 export async function check(root) {
   const manifestFile = await regularFile(root, 'docs/site.json', 'manifest');
@@ -156,17 +157,18 @@ export async function check(root) {
     for (const { token, attr, raw } of links) {
       const local = localUrl(raw, page.source);
       if (!local) continue;
-      const { target, fragment, query } = local;
+      const { target, fragment, rawFragment, query } = local;
       if (target.endsWith('.md')) {
         const destination = byPath.get(target);
         if (!destination) fail(`${page.source}: Markdown link is not published: ${raw}`);
         if (fragment && !destination.anchors.has(fragment)) fail(`${page.source}: missing heading #${fragment} in ${target}`);
-        token.attrSet(attr, relUrl(page.output, destination.output, fragment, query));
+        token.attrSet(attr, relUrl(page.output, destination.output, encodeURIComponent(fragment), query));
       } else {
         if (!target.startsWith('docs/assets/')) fail(`${page.source}: local asset must be under docs/assets/: ${raw}`);
         await regularFile(root, target, page.source);
         assets.add(target);
-        token.attrSet(attr, relUrl(page.output, target, fragment, query));
+        // Asset viewers may interpret the hash as parameters, including escaped values.
+        token.attrSet(attr, relUrl(page.output, target, rawFragment, query));
       }
     }
   }

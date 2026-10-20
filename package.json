@@ -8,7 +8,8 @@
   "scripts": {
     "docs:check": "node scripts/docs/cli.js check",
     "docs:build": "node scripts/docs/cli.js build",
-    "test": "node --test scripts/docs/*.test.js"
+    "test": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
+    "architecture:build": "node scripts/architecture-map/build.mjs"
   },
   "dependencies": {
     "esbuild": "0.28.2",

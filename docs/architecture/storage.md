@@ -46,6 +46,8 @@ GitSourceRef 激活前须读取指定 commit 的指定路径、计算原始内�
 
 Schedule 头表只提供当前可编辑入口；每次规则、时区、错过或重叠策略改变都插入不可变 `schedule_revision`。到期计算读取某一修订，`occurrence` 保存 `schedule_revision_id` 并以 `(project_id, schedule_id, schedule_revision_id)` 复合 FK 约束，同时保存原计划 UTC 时点。触发去重仍按稳定 `(project_id, schedule_id, planned_at_utc)`，修订号是被观察基线，不作为同一时点重复创建任务的理由；若改版改变该时点是否应触发，先对账旧实例并记录重算决定。
 
+第一幅 ER 图只核**执行快照能否从旧 Run 回到当时的 TaskRevision 与 BasisSet**；它不是全库表图。Document 的独立修订和审核决定也画在此处，以防把候选正文或导航链接误当执行依据。
+
 ```mermaid
 erDiagram
   PROJECT ||--o{ TASK : owns
@@ -103,6 +105,8 @@ ExternalBinding 也使用类型化对象列、恰好一项非空 CHECK 和复合
 | `task_effect_review` | `(project_id, review_id)`；task ID/版本、目标消费者、亲用证据、结论/时间 | 复合 FK 到固定 TaskRevision；结果未知可保留，不用空值伪装成功 |
 | `blob_ref` / `source_fingerprint` / `ingestion_receipt` | 各自 `(project_id, id)` PK；外置 URI/hash/可见范围，或源对象/修订/片段/hash/策略/转换器/目标/sourceRef/回执 | `source_fingerprint` 对 `(project_id, source_kind, source_id, source_revision, fragment)` 唯一并固定 contentHash；回执再按该身份+hash+policyVersion+transformerVersion+target 去重；不存 Wiki 来源正文与内部依赖 |
 
+第二幅 ER 图只核**导航关系端点、固定版本绑定和外部投影绑定**，避免把 Relation、TaskBasis 或飞书记录混为一类关系。完整列约束仍以上表和正文为准。
+
 ```mermaid
 erDiagram
   TASK ||--o{ RELATION : typed_endpoint
@@ -139,6 +143,8 @@ erDiagram
 `operation_journal` 用 `(project_id, operation_id)` 唯一记录请求身份、目标、读入基线、预期副作用及 `pending/applied/rejected/unknown`；重发同一操作 ID 只返回旧结果或待对账状态。`outbox` 用 `(project_id, event_id)` PK，`(project_id, operation_id, effect_key, target_connector, event_kind)` 去重。`effect_key` 是命令内稳定的对象/项目项键：一次操作变更多个 Task、关系或投影时各项不同，同一项重试时不变。载荷只保存目标对象 ID/版本、最少投影内容、可见范围、尝试与回读回执，不把 outbox 当长期第二正文。唯一键字段均应非空；不能假设普通 UNIQUE 将多个 NULL 视为冲突。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
 
 一次主数据变更在 `UnitOfWork` 里用同一数据库事务/连接：校验身份/项目/读入版本 → 条件更新 Task/Document/Relation → 插入 Journal/outbox → 提交。旧版本冲突则不产生投影。提交后才向飞书、Codex 或 Wiki 发网络请求。PG 能原子提交本库对象和 outbox，不能跨服务保证恰好一次；外部回执丢失时记 `unknown` 并按 operation/binding/远端回读对账。首期只有一个活动协调者，失去独占资格停止新写入与 outbox 重试。
+
+下面的时序图放大**本库事务与外部副作用之间的断点**。它解释操作记录为何需要 `pending/unknown` 和回读，通用恢复选择见[总览](overview.md#派发结果未知先对账再决定)。
 
 ```mermaid
 sequenceDiagram

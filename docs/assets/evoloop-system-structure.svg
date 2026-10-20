@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 445" width="1060" height="445" role="img" aria-labelledby="plain-title plain-description">
+<title id="plain-title">evoLoop 系统结构 · 目标设计</title><desc id="plain-description">判断责任通过共同入口使用同一协调进程；进程装配核心、接口与适配器，连接五个各守权威的外部边界。展开协调进程可查看内部装配。</desc>
+<style>text{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.plain-paper{fill:var(--plain-paper,#fff)}.plain-node rect{fill:var(--plain-paper,#fff);stroke:var(--plain-border,#cbd3da);stroke-width:1}.plain-node-label{font-size:17px;fill:var(--plain-ink,#29333b);font-weight:550}.plain-node-line{font-size:14px;fill:var(--plain-muted,#65717b)}.plain-kicker,.plain-group-label{font-size:11px;fill:var(--plain-muted,#65717b)}.plain-group{fill:none;stroke:var(--plain-border,#cbd3da);stroke-dasharray:5 5}.plain-edge{fill:none;stroke:var(--plain-muted,#7c8994);stroke-width:1.15}.plain-feedback{stroke:var(--plain-accent,#63849c)}.plain-reference{stroke-dasharray:4 4}.plain-edge-label{font-size:12px;fill:var(--plain-muted,#65717b);paint-order:stroke;stroke:var(--plain-paper,#fff);stroke-width:4}.plain-label-feedback{fill:var(--plain-accent,#63849c)}.plain-selected rect,.plain-node[role=button]:hover rect,.plain-node:focus-visible rect{stroke:var(--plain-accent,#63849c);stroke-width:2}.plain-node[role=button]{cursor:pointer}.plain-node:focus-visible{outline:none}</style>
+<defs><marker id="plain-main-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker><marker id="plain-feedback-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#63849c"/></marker><marker id="plain-reference-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#7c8994"/></marker></defs>
+<rect class="plain-paper" width="100%" height="100%"/>
+<text class="plain-node-label" x="24" y="25">evoLoop 系统结构 · 目标设计</text>
+<path class="plain-edge plain-main" d="M235,125 L310,125" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="272" y="110" text-anchor="middle">判断／授权</text>
+<path class="plain-edge plain-main" d="M515,125 L650,125" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="582" y="110" text-anchor="middle">受控命令／查询</text>
+<path class="plain-edge plain-main" d="M690,185 L690,215 L120,215 L120,310" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="280" y="203" text-anchor="middle">同库事务读写</text>
+<path class="plain-edge plain-main" d="M720,185 L720,240 L325,240 L325,310" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="450" y="228" text-anchor="middle">固定修订读／审阅后发布</text>
+<path class="plain-edge plain-main" d="M750,185 L750,265 L530,265 L530,310" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="640" y="253" text-anchor="middle">固定 commit 只读</text>
+<path class="plain-edge plain-main" d="M810,185 L810,240 L735,240 L735,310" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="790" y="228" text-anchor="middle">派发／回读</text>
+<path class="plain-edge plain-main" d="M900,185 L900,215 L940,215 L940,310" marker-end="url(#plain-main-arrow)"/>
+<text class="plain-edge-label plain-label-main" x="950" y="203" text-anchor="middle">Task 投影</text>
+<path class="plain-edge plain-feedback" d="M1030,360 L1048,360 L1048,195 L1020,195 L1020,145 L1010,145" marker-end="url(#plain-feedback-arrow)"/>
+<text class="plain-edge-label plain-label-feedback" x="1015" y="285" text-anchor="middle">编辑后受控核验</text>
+<g class="plain-node"><title>目标与判断责任：人类 · 认知／领域 Session</title><rect x="30" y="80" width="205" height="90" rx="4"/>
+<text class="plain-node-label" x="42" y="105">目标与判断责任</text>
+<text class="plain-node-line" x="42" y="126">人类 · 认知／领域 Session</text>
+</g>
+<g class="plain-node"><title>调用入口：工作台／CLI／Agent 工具</title><rect x="310" y="80" width="205" height="90" rx="4"/>
+<text class="plain-node-label" x="322" y="105">调用入口</text>
+<text class="plain-node-line" x="322" y="126">工作台／CLI／Agent 工具</text>
+</g>
+<g class="plain-node"><title>PostgreSQL：Task／Document 主数据</title><rect x="30" y="310" width="180" height="100" rx="4"/>
+<text class="plain-node-label" x="42" y="335">PostgreSQL</text>
+<text class="plain-node-line" x="42" y="356">Task／Document 主数据</text>
+</g>
+<g class="plain-node"><title>外置 Wiki：认识正文 · 修订 · 来源</title><rect x="235" y="310" width="180" height="100" rx="4"/>
+<text class="plain-node-label" x="247" y="335">外置 Wiki</text>
+<text class="plain-node-line" x="247" y="356">认识正文 · 修订 · 来源</text>
+</g>
+<g class="plain-node"><title>项目 Git 仓库：正式规范正文与审阅</title><rect x="440" y="310" width="180" height="100" rx="4"/>
+<text class="plain-node-label" x="452" y="335">项目 Git 仓库</text>
+<text class="plain-node-line" x="452" y="356">正式规范正文与审阅</text>
+</g>
+<g class="plain-node"><title>Codex 运行时：Thread／Turn 历史</title><rect x="645" y="310" width="180" height="100" rx="4"/>
+<text class="plain-node-label" x="657" y="335">Codex 运行时</text>
+<text class="plain-node-line" x="657" y="356">Thread／Turn 历史</text>
+</g>
+<g class="plain-node"><title>飞书 Bitable：任务协作投影与编辑</title><rect x="850" y="310" width="180" height="100" rx="4"/>
+<text class="plain-node-label" x="862" y="335">飞书 Bitable</text>
+<text class="plain-node-line" x="862" y="356">任务协作投影与编辑</text>
+</g>
+<g class="plain-node"><title>同一协调进程 · 拟议：共同 API · core 业务用例；中立合同与端口 · 适配器装配</title><rect x="650" y="65" width="360" height="120" rx="4"/>
+<text class="plain-node-label" x="662" y="90">同一协调进程 · 拟议</text>
+<text class="plain-node-line" x="662" y="111">共同 API · core 业务用例</text>
+<text class="plain-node-line" x="662" y="127">中立合同与端口 · 适配器装配</text>
+</g>
+</svg>

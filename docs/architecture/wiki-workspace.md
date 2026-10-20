@@ -36,6 +36,8 @@ URL 中的 `knowledgeId` 与 `revision` 均不可静默改成最新版。跨对�
 
 ## 2. evoLoop 前端、查询层和知识端
 
+下图用于检查**知识导航、阅读、焦点图和待审视图如何共用授权查询**，以及本地 UI 状态与可重建缓存的范围。它不重复总览的系统结构，也不把浏览器缓存当知识权威。
+
 ```mermaid
 flowchart LR
   subgraph client["React 工作台 · apps/workbench/knowledge"]
