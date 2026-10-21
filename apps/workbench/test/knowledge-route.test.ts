@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { matchesKnowledgeRevision, transitionKnowledgeRoute } from "../src/knowledge/knowledgeRoute.ts";
+import { findFixedKnowledgeTitle, matchesKnowledgeRevision, transitionKnowledgeRoute,
+  unresolvedFixedKnowledgeTitle } from "../src/knowledge/knowledgeRoute.ts";
 
 const projectId = "044d070e-0000-4000-8000-000000000001";
 const knowledgeId = "2b026d3e-0000-4000-8000-000000000001";
@@ -63,4 +64,17 @@ test("canonical reader query rejects legacy revision and mixed selection paramet
   const mixed = transitionKnowledgeRoute({ route: { view: "list" as const }, page: null, history: [], graph: null },
     `${path}?knowledgeId=${knowledgeId}&knowledgeRevision=${requestedRevision}&candidateId=other`, projectId);
   assert.equal(mixed.route.view, "invalid");
+});
+
+test("relation titles resolve by both fixed knowledge ID and revision, never by current title alone", () => {
+  const historicalTitle = "固定材料可读与实际使用证据要分别核对";
+  const currentTitle = "固定证据、实际使用与完整旅程须分别验收";
+  const sameIdDifferentRevision = [
+    { knowledgeId, revision: oldRevision, title: historicalTitle },
+    { knowledgeId, revision: requestedRevision, title: currentTitle },
+  ];
+  assert.equal(findFixedKnowledgeTitle(knowledgeId, oldRevision, sameIdDifferentRevision), historicalTitle);
+  assert.equal(findFixedKnowledgeTitle(knowledgeId, requestedRevision, sameIdDifferentRevision), currentTitle);
+  assert.equal(findFixedKnowledgeTitle(knowledgeId, "another-revision", sameIdDifferentRevision), null);
+  assert.equal(unresolvedFixedKnowledgeTitle, "固定目标（标题未读取）");
 });

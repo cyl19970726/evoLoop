@@ -66,3 +66,15 @@ export function matchesKnowledgeRevision(
   // A separately fetched list/history may still carry an older revision.
   return !!page && page.knowledgeId === selectedId && (!fixedRevision || page.revision === fixedRevision);
 }
+
+export interface FixedKnowledgeTitle { knowledgeId: string; revision: string; title: string }
+
+/** A relation label is valid only for the exact immutable target revision. */
+export function findFixedKnowledgeTitle(
+  id: string, revision: string, records: readonly FixedKnowledgeTitle[],
+): string | null {
+  const match = records.find(item => item.knowledgeId === id && item.revision === revision && item.title.trim());
+  return match?.title.trim() ?? null;
+}
+
+export const unresolvedFixedKnowledgeTitle = "固定目标（标题未读取）";
