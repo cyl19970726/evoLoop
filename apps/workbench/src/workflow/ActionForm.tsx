@@ -4,7 +4,7 @@ import { api, errorText, isStaleConflict, isUnconfirmed } from "../api";
 
 export interface RecoverableCommand {
   projectId: string; operationId: string; type: Operation["commandType"];
-  taskId?: string; goalId?: string; stageId?: string; documentId?: string; discussionId?: string;
+  taskId?: string; goalId?: string; stageId?: string | null; documentId?: string; discussionId?: string;
 }
 export interface MutationContext {
   token: string; projectId: string; principal: Principal; blocked: boolean;
