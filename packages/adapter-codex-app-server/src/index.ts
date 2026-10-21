@@ -11,6 +11,24 @@ const OWNER = "evoloop-codex-app-server" as const;
 const SCHEMA_SHA256 = "f3487938786b729cb6773dbc9e83a7efab9c78c845db7094e8f539f373cbacc9";
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
+// The App Server and its probes must not inherit coordinator credentials or Node execution flags.
+// CODEX_HOME (or HOME) carries the existing Codex ChatGPT login; no API key is required.
+const CHILD_ENV_KEYS = [
+  "HOME", "USER", "LOGNAME", "PATH", "SHELL", "TMPDIR", "TMP", "TEMP",
+  "LANG", "LC_ALL", "LC_CTYPE", "TERM", "CODEX_HOME",
+  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+] as const;
+function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of CHILD_ENV_KEYS) {
+    const value = source[key];
+    if (typeof value === "string" && value.length > 0) environment[key] = value;
+  }
+  return environment;
+}
 const finite = (value: number): boolean => Number.isFinite(value) && value > 0;
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
@@ -88,6 +106,8 @@ export interface CodexAppServerOptions {
   decideApproval?: (request: RuntimeApprovalRequest, binding: RuntimeBinding) => Promise<"accept" | "decline">;
   /** Required to restore a persisted binding after restart. Must consult the trusted project store. */
   verifyBinding?: (binding: RuntimeBinding) => Promise<boolean>;
+  /** Synthetic parent environment for process-boundary tests; all values still pass through the allowlist. */
+  environment?: NodeJS.ProcessEnv;
 }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -106,10 +126,12 @@ export class CodexAppServerAdapter implements RuntimePort {
   private ready = false;
   private readonly executable: string;
   private readonly timeout: number;
+  private readonly environment: NodeJS.ProcessEnv;
 
   constructor(private readonly options: CodexAppServerOptions = {}) {
     this.executable = options.executable ?? "codex";
     this.timeout = options.requestTimeoutMs ?? 15_000;
+    this.environment = childEnvironment(options.environment ?? process.env);
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
   }
   isReady(): boolean { return this.ready && !!this.child; }
@@ -126,7 +148,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       if (version !== expected) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${expected}, got ${version}`);
       await this.probeSchema();
     }
-    const child = spawn(this.executable, this.options.spawnArgs ?? ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(this.executable, this.options.spawnArgs ?? ["app-server", "--stdio"], {
+      stdio: ["pipe", "pipe", "pipe"], env: this.environment,
+    });
     this.child = child;
     child.stderr.resume(); // Do not persist stderr: it may contain private paths or content.
     child.on("error", error => this.disconnect(error.message));
@@ -147,7 +171,7 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   private probeVersion(): Promise<string> {
     return new Promise((resolveVersion, reject) => {
-      const child = spawn(this.executable, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(this.executable, ["--version"], { stdio: ["ignore", "pipe", "pipe"], env: this.environment });
       let output = "";
       const timer = setTimeout(() => { child.kill(); reject(new RuntimeProtocolError("version probe timed out")); }, this.timeout);
       child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); if (output.length > 256) child.kill(); });
@@ -160,7 +184,9 @@ export class CodexAppServerAdapter implements RuntimePort {
   private async probeSchema(): Promise<void> {
     const directory = await mkdtemp(resolve(tmpdir(), "evoloop-codex-schema-"));
     try {
-      await execFileAsync(this.executable, ["app-server", "generate-json-schema", "--out", directory], { timeout: this.timeout, maxBuffer: 64 * 1024 });
+      await execFileAsync(this.executable, ["app-server", "generate-json-schema", "--out", directory], {
+        timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
+      });
       const schema = await readFile(resolve(directory, "codex_app_server_protocol.v2.schemas.json"));
       if (createHash("sha256").update(schema).digest("hex") !== SCHEMA_SHA256) throw new RuntimeProtocolError("Codex App Server stable schema changed; review capabilities before use");
     } finally { await rm(directory, { recursive: true, force: true }); }
