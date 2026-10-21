@@ -77,9 +77,50 @@ async function checkCurrentDocument(ctx: Context, record: DiscussionRecord, expe
   if (revision.format !== "markdown" || revision.body === null) throw new DomainError("DOCUMENT_FORMAT", "Discussion document must remain inline Markdown");
   return { version: document.version, body: revision.body };
 }
-async function appendDocument(ctx: Context, record: DiscussionRecord, expectedRevisionId: string, section: string, reason: string): Promise<{ record: DiscussionRecord; revisionId: string; documentVersion: number }> {
-  const current = await checkCurrentDocument(ctx, record, expectedRevisionId);
-  const body = `${current.body}\n\n${section}`;
+type Recovery = NonNullable<Extract<DiscussionCommand, { type: "discussion.decision.record" }>["documentRecovery"]>;
+async function checkRecoverableDocument(ctx: Context, record: DiscussionRecord, expectedRevisionId: string,
+  recovery: Recovery): Promise<{ version: number; body: string; provenance: string }> {
+  if (record.projectId !== ctx.command.projectId || record.id !== ctx.command.discussionId)
+    fail("DOCUMENT_SCOPE", "Recovery must stay in the selected project Discussion");
+  const document = need(await ctx.tx.getDocument(record.documentId), "Discussion document");
+  if (document.projectId !== record.projectId || document.id !== record.documentId || document.kind !== "discussion")
+    fail("DOCUMENT_SCOPE", "Recovery requires this discussion's owned Document");
+  if (document.status === "archived") fail("DOCUMENT_ARCHIVED", "Archived discussion document cannot be recovered");
+  if (document.currentRevisionId === record.currentDocumentRevisionId)
+    fail("RECOVERY_NOT_NEEDED", "Discussion and Document already have the same current revision");
+  if (document.currentRevisionId !== expectedRevisionId)
+    fail("DOCUMENT_CHANGED", "Recovery must name the Document's current revision", document.version);
+  if (document.version !== recovery.expectedDocumentVersion)
+    fail("VERSION_CONFLICT", "Document version changed since recovery was observed", document.version);
+  const current = need(await ctx.tx.getDocumentRevision(document.id, expectedRevisionId), "Current Discussion document revision");
+  const previous = need(await ctx.tx.getDocumentRevision(document.id, record.currentDocumentRevisionId), "Previous Discussion document revision");
+  for (const revision of [current, previous]) {
+    if (revision.projectId !== record.projectId || revision.documentId !== document.id)
+      fail("DOCUMENT_SCOPE", "Recovery revision does not belong to this discussion's Document");
+    const body = revision.body;
+    if (body === null) throw new DomainError("DOCUMENT_FORMAT", "Recovery requires an inline Markdown Document revision");
+    if (revision.format !== "markdown" || revision.mediaType !== "text/markdown" || revision.payloadRef !== null)
+      fail("DOCUMENT_FORMAT", "Recovery requires an inline Markdown Document revision");
+    if (ctx.hasher.hash(body) !== revision.contentHash)
+      fail("DOCUMENT_HASH_MISMATCH", "Discussion document revision hash does not match its body");
+  }
+  const provenance = ["## 文档重接确认",
+    `原讨论持有修订：${record.currentDocumentRevisionId}`,
+    `原修订 SHA-256：${previous.contentHash}`,
+    `读入文档修订：${expectedRevisionId}`,
+    `读入修订 SHA-256：${current.contentHash}`,
+    `读入文档版本：v${document.version}`,
+    `确认者：${quoted(ctx.principal.actorId)}`,
+    `确认时间：${quoted(ctx.now)}`,
+    `重接理由：${quoted(recovery.reason)}`,
+    "此记录确认基于真实当前正文继续讨论；不改写旧修订、旧决定或此前冻结的执行输入。"].join("\n");
+  return { version: document.version, body: current.body!, provenance };
+}
+async function appendDocument(ctx: Context, record: DiscussionRecord, expectedRevisionId: string, section: string,
+  reason: string, recovery?: Recovery): Promise<{ record: DiscussionRecord; revisionId: string; documentVersion: number }> {
+  const current = recovery ? await checkRecoverableDocument(ctx, record, expectedRevisionId, recovery) :
+    await checkCurrentDocument(ctx, record, expectedRevisionId);
+  const body = `${current.body}\n\n${"provenance" in current ? `${current.provenance}\n\n` : ""}${section}`;
   const revisionId = ctx.nextId();
   await ctx.tx.insertDocumentRevision(documentRevision(ctx, record.documentId, revisionId, expectedRevisionId, body, reason));
   const document = need(await ctx.tx.getDocument(record.documentId), "Discussion document");
@@ -179,7 +220,7 @@ export async function applyDiscussion(ctx: Context): Promise<{ result: AppliedRe
     if (old.latestDecisionEventId !== (command.supersedesDecisionEventId ?? null)) fail("DECISION_TARGET_CHANGED", "Correction must supersede the latest decision");
     const appended = await appendDocument(ctx, old, command.documentRevisionId,
       `## 讨论决定\n选择：${quoted(command.choice)}\n理由：${quoted(command.reason)}\n未决：${quoted(command.unresolved)}\n再看条件：${quoted(command.relookCondition)}\n证据：${quoted(command.evidence)}`,
-      command.reason);
+      command.reason, command.documentRecovery);
     const record: DiscussionRecord = { ...appended.record, version: old.version + 1, status: "decided", updatedAt: now };
     const event = { ...eventBase(ctx, record, "decision", appended.revisionId), choice: command.choice,
       reason: command.reason, unresolved: command.unresolved, relookCondition: command.relookCondition,

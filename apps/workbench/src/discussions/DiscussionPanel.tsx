@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DiscussionEvent, DiscussionRecord, DiscussionTarget, Document, Goal, Page, Stage, Task } from "@evoloop/contracts";
+import type { DiscussionEvent, DiscussionRecord, DiscussionTarget, Document, DocumentRevision, Goal, Page, Stage, Task } from "@evoloop/contracts";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import { api, errorText, request, safeArtifactHref } from "../api";
 import { roleClient } from "../roles/client";
@@ -13,6 +13,40 @@ const safeSessionRef = (value: string, projectId: string) =>
 export function discussionCopyEnvelope(origin: string, projectId: string, documentId: string, revisionId: string, body: string): string {
   const fixed = `${origin}/#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revisionId)}`;
   return `工作台入口：${origin}/\n固定原件入口：${fixed}\n以下正文才是被 SHA-256 核对的原件；此定位封套在复制时添加，不属于原件哈希。\n\n${body}`;
+}
+interface VerifiedDocumentHead { version: number; revisionId: string; contentHash: string; author: string; body: string }
+
+/** An explicit recovery uses the observed owner Document head; the old Discussion revision stays fixed. */
+export function discussionDecisionPayload(record: DiscussionRecord, latestDecision: DiscussionEvent | undefined,
+  head: VerifiedDocumentHead, values: Record<string, string>): Record<string, unknown> {
+  const mismatch = head.revisionId !== record.currentDocumentRevisionId;
+  if (mismatch && (values.confirmRecovery !== "confirmed" || !values.documentRecoveryReason?.trim()))
+    throw new Error("请先核对两版并明确确认恢复及理由");
+  return { type: "discussion.decision.record", discussionId: record.id, expectedVersion: record.version,
+    documentRevisionId: mismatch ? head.revisionId : record.currentDocumentRevisionId,
+    choice: values.choice, unresolved: values.unresolved, relookCondition: values.relookCondition,
+    evidence: values.evidence, reason: values.reason,
+    ...(latestDecision ? { supersedesDecisionEventId: latestDecision.id } : {}),
+    ...(mismatch ? { documentRecovery: { expectedDocumentVersion: head.version, reason: values.documentRecoveryReason.trim() } } : {}) };
+}
+
+async function verifiedMarkdown(token: string, projectId: string, documentId: string, revisionId: string): Promise<{ revision: DocumentRevision; body: string }> {
+  const revision = await api(token).documentRevision(projectId, documentId, revisionId);
+  if (revision.projectId !== projectId || revision.documentId !== documentId || revision.id !== revisionId)
+    throw new Error("文档原件不属于当前项目或指定修订");
+  let content = revision.body;
+  if (content === null) {
+    const original = await request<{ status: string; body?: string; assets?: unknown[] }>(token,
+      `/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/original`, 15000);
+    if (original.status !== "available" || typeof original.body !== "string" || original.assets?.length)
+      throw new Error("固定原件或资源不可完整读取");
+    content = original.body;
+  }
+  if (revision.format !== "markdown" || content === null) throw new Error("交接包不是完整 Markdown 原文");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  const hash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  if (hash !== revision.contentHash) throw new Error("交接包固定原文哈希不匹配");
+  return { revision, body: content };
 }
 const statusLabel: Record<DiscussionRecord["status"], string> = {
   prepared: "交接包已准备，待人工承接", handed_off: "已人工登记承接观察",
@@ -110,7 +144,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     </button>)}</div>
     {nextCursor && <button type="button" className="more" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "加载中…" : "加载更多讨论"}</button>}
     {detailError && <Notice error>讨论详情或事件不可读：{detailError}。不能据列表状态提交后续动作。</Notice>}
-    {selected && <DiscussionDetail key={`${selected.id}:${selected.version}`} context={context} record={selected} events={events} choices={choices} />}
+    {selected && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
   </section>;
 }
 
@@ -155,6 +189,25 @@ function PrepareDiscussion({ context, choices, onPrepared }: { context: Mutation
 function DiscussionDetail({ context, record, events, choices }: { context: MutationContext; record: DiscussionRecord; events: DiscussionEvent[]; choices: Choices }) {
   const [verifiedCurrentRevisionId, setVerifiedCurrentRevisionId] = useState<string | null>(null);
   const currentVerified = verifiedCurrentRevisionId === record.currentDocumentRevisionId;
+  const [documentHead, setDocumentHead] = useState<VerifiedDocumentHead | null>(null);
+  const [headError, setHeadError] = useState("");
+  useEffect(() => {
+    let active = true; setDocumentHead(null); setHeadError("");
+    void (async () => {
+      const detail = await api(context.token).document(context.projectId, record.documentId);
+      if (detail.document.projectId !== context.projectId || detail.document.id !== record.documentId
+        || detail.current.projectId !== context.projectId || detail.current.documentId !== record.documentId
+        || detail.current.id !== detail.document.currentRevisionId) throw new Error("讨论所属文档当前头不可核实");
+      const { revision, body } = await verifiedMarkdown(context.token, context.projectId, record.documentId, detail.document.currentRevisionId);
+      if (revision.contentHash !== detail.current.contentHash) throw new Error("文档当前头的哈希回读不一致");
+      if (active) setDocumentHead({ version: detail.document.version, revisionId: revision.id,
+        contentHash: revision.contentHash, author: revision.author, body });
+    })().catch(cause => { if (active) setHeadError(errorText(cause)); });
+    return () => { active = false; };
+  }, [context.token, context.projectId, record.documentId, record.version]);
+  const headMismatch = documentHead !== null && documentHead.revisionId !== record.currentDocumentRevisionId;
+  const ordinaryReady = currentVerified && documentHead !== null && !headMismatch;
+  const recoveryReady = currentVerified && documentHead !== null && headMismatch;
   const latestDecision = events.filter(event => event.kind === "decision" && event.id === record.latestDecisionEventId)[0];
   const superseded = new Set(events.flatMap(event => event.supersedesDecisionEventId ? [event.supersedesDecisionEventId] : []));
   const targetChoices = [
@@ -168,6 +221,10 @@ function DiscussionDetail({ context, record, events, choices }: { context: Mutat
     { name: "unresolved", label: "未解决的问题", kind: "textarea" },
     { name: "relookCondition", label: "重看条件", kind: "textarea" },
     { name: "evidence", label: "讨论证据与实际观察", kind: "textarea" }, reasonField,
+    ...(headMismatch ? [
+      { name: "confirmRecovery", label: "核对两版后的恢复确认", kind: "select" as const, options: [option("confirmed", "我已核对两版，确认从文档当前版追加恢复记录和本次决定")] },
+      { name: "documentRecoveryReason", label: "为何需要受控恢复", kind: "textarea" as const },
+    ] : []),
   ];
   return <div className="discussion-detail"><h3>{kindLabel[record.kind]} · {statusLabel[record.status]}</h3>
     {record.status === "decided" && <Notice>{latestDecision?.supersedesDecisionEventId
@@ -182,19 +239,22 @@ function DiscussionDetail({ context, record, events, choices }: { context: Mutat
     <PackageReader context={context} record={record} revisionId={record.preparedDocumentRevisionId} label="最初准备的固定交接包"
       onVerified={record.currentDocumentRevisionId === record.preparedDocumentRevisionId ? setVerifiedCurrentRevisionId : undefined} />
     {record.currentDocumentRevisionId !== record.preparedDocumentRevisionId && <PackageReader context={context} record={record} revisionId={record.currentDocumentRevisionId} label="当前事件后的固定交接包" onVerified={setVerifiedCurrentRevisionId} />}
-    {!currentVerified && <Notice error>当前固定交接包尚未完整核验，或原件不可读取。先读回当前修订并核对哈希，才能登记承接、决定或行动链接。</Notice>}
-    {currentVerified && record.status === "prepared" && <ActionForm key={`handoff:${record.version}`} context={context} title="登记人工承接观察" fields={[
+    {!currentVerified && <Notice error>讨论登记的固定交接包尚未完整核验，或原件不可读取。先读回登记修订并核对哈希。</Notice>}
+    {!documentHead && !headError && <p className="muted">正在回读文档当前版、Markdown 与 SHA-256…</p>}
+    {headError && <Notice error>文档当前版未核实：{headError}。暂不能登记决定或行动。</Notice>}
+    {headMismatch && documentHead && <Notice error>讨论登记正文与文档当前版不同，请核对两版。讨论登记修订 <code>{record.currentDocumentRevisionId}</code>；文档当前修订 <code>{documentHead.revisionId}</code> · v{documentHead.version} · SHA-256 <code>{documentHead.contentHash}</code> · 作者 {documentHead.author}。旧讨论原件不改写；只有明确确认后才能从文档当前版追加恢复记录和决定。</Notice>}
+    {headMismatch && documentHead && <details className="workflow-detail"><summary>核对文档当前版 Markdown 与哈希 · v{documentHead.version}</summary><pre className="discussion-package">{documentHead.body}</pre><p>SHA-256 <code>{documentHead.contentHash}</code></p></details>}
+    {ordinaryReady && record.status === "prepared" && <ActionForm key={`handoff:${record.version}`} context={context} title="登记人工承接观察" fields={[
       { name: "evidence", label: "实际如何观察到已有会话承接", kind: "textarea", hint: "仅登记人工观察，不证明桌面自动投递或对方完成阅读。" }, reasonField,
     ]} build={values => ({ type: "discussion.handoff.record", discussionId: record.id, expectedVersion: record.version,
       documentRevisionId: record.currentDocumentRevisionId, ...values })} />}
-    {currentVerified && record.status !== "prepared" && <details className="workflow-detail"><summary>{latestDecision ? "追加讨论决定纠正" : "登记讨论决定"}</summary>
+    {(ordinaryReady || recoveryReady) && record.status !== "prepared" && <details className="workflow-detail"><summary>{latestDecision ? "追加讨论决定纠正" : "登记讨论决定"}</summary>
       {latestDecision && <p>将明确纠正当前决定 <code>{latestDecision.id}</code>；旧决定与已链接对象仍保留历史，不会自动撤销行动。</p>}
+      {recoveryReady && <Notice>此决定同时会从已核对的文档当前版追加受控恢复记录。未选“确认”并填写恢复理由时不会提交；讨论登记旧版与旧决定均保留。</Notice>}
       <ActionForm key={`decision:${record.version}:${record.latestDecisionEventId ?? "first"}`} context={context} review title={latestDecision ? "保存决定纠正" : "保存讨论决定"} fields={decisionFields}
-        build={values => ({ type: "discussion.decision.record", discussionId: record.id, expectedVersion: record.version,
-          documentRevisionId: record.currentDocumentRevisionId, ...values,
-          ...(latestDecision ? { supersedesDecisionEventId: latestDecision.id } : {}) })} />
+        build={values => discussionDecisionPayload(record, latestDecision, documentHead!, values)} />
     </details>}
-    {currentVerified && latestDecision && targetChoices.length > 0 && <details className="workflow-detail"><summary>链接实际后续对象</summary>
+    {ordinaryReady && latestDecision && targetChoices.length > 0 && <details className="workflow-detail"><summary>链接实际后续对象</summary>
       <p>只链接已经存在且可读取的对象；讨论决定本身不会创建任务、阶段或常设职责。</p>
       <ActionForm key={`action:${record.version}:${latestDecision.id}`} context={context} review title="登记行动链接" fields={[
         { name: "target", label: "实际后续对象", kind: "select", options: targetChoices.map(item => option(item.value, item.label)) }, reasonField,
@@ -236,30 +296,15 @@ function DiscussionTargetLink({ target, choices, projectId }: { target: Discussi
 
 function PackageReader({ context, record, revisionId, label, onVerified }: { context: MutationContext; record: DiscussionRecord; revisionId: string; label: string; onVerified?: (revisionId: string | null) => void }) {
   const [body, setBody] = useState<string | null>(null);
+  const [verifiedHash, setVerifiedHash] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   useEffect(() => {
-    let active = true; setBody(null); setError(""); setCopied(false);
+    let active = true; setBody(null); setVerifiedHash(""); setError(""); setCopied(false);
     onVerified?.(null);
     void (async () => {
-      if (onVerified) {
-        const current = await api(context.token).document(context.projectId, record.documentId);
-        if (current.document.currentRevisionId !== revisionId) throw new Error("交接包的当前文档指针已变化，请回读讨论状态");
-      }
-      const revision = await api(context.token).documentRevision(context.projectId, record.documentId, revisionId);
-      let content = revision.body;
-      if (content === null) {
-        const original = await request<{ status: string; body?: string; assets?: unknown[] }>(context.token,
-          `/api/projects/${encodeURIComponent(context.projectId)}/documents/${encodeURIComponent(record.documentId)}/revisions/${encodeURIComponent(revisionId)}/original`, 15000);
-        if (original.status !== "available" || typeof original.body !== "string" || original.assets?.length)
-          throw new Error("固定原件或资源不可完整读取");
-        content = original.body;
-      }
-      if (revision.format !== "markdown" || content === null) throw new Error("交接包不是完整 Markdown 原文");
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
-      const hash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
-      if (hash !== revision.contentHash) throw new Error("交接包固定原文哈希不匹配");
-      if (active) { setBody(content); onVerified?.(revisionId); }
+      const { revision, body: content } = await verifiedMarkdown(context.token, context.projectId, record.documentId, revisionId);
+      if (active) { setBody(content); setVerifiedHash(revision.contentHash); onVerified?.(revisionId); }
     })().catch(cause => { if (active) setError(errorText(cause)); });
     return () => { active = false; };
   }, [context.token, context.projectId, record.documentId, revisionId]);
@@ -272,6 +317,7 @@ function PackageReader({ context, record, revisionId, label, onVerified }: { con
     {error && <Notice error>{error}</Notice>}
     {body === null && !error && <p>正在核对完整原文与哈希…</p>}
     {body !== null && <><p>复制时会在原文前加入工作台入口与固定文档链接作为定位封套；原件哈希只核下方正文。复制不表示对方收到、阅读或同意。</p>
+      <p>固定原件 SHA-256 <code className="break-anywhere">{verifiedHash}</code></p>
       <button type="button" onClick={() => void copy()}>{copied ? "已复制完整包" : "复制完整包"}</button>
       <pre className="discussion-package">{body}</pre></>}
   </details>;

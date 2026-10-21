@@ -40,6 +40,8 @@ Task 主正文的唯一权威是 DocumentRevision。Task 与每个 TaskRevision 
 
 负责人讨论沿同一授权 Command/Query API 和 Journal/outbox 提交。准备时固定 Goal/Stage 版本、所选 Task 修订与已采用过程文档；承接观察和讨论决定追加到交接文档修订中，人工登记者与时间单独标明。修改须核对讨论版本与交接文档现行修订，避免覆盖在文档入口另做的修改。后续对象只建立固定链接，执行和亲用仍按各对象记录验证；决定纠正保留旧事件并要求重新核对后续链接。目标会话标签或引用不构成原生会话归属、送达或自动回写证明。
 
+若通用文档修订已推进所属 Document、而 Discussion 仍登记旧版，普通决定拒绝 `DOCUMENT_CHANGED`。`discussion.decision.record.documentRecovery` 提供显式受控接续：同时核对 Discussion 版本、最新决定、实际当前 Document 修订及 `expectedDocumentVersion`，要求同项目所属非归档 Markdown 原件及两版哈希可核。新修订以实际编辑版为 parent，追加旧/新固定修订、哈希、读入版本、确认者/时间和理由，再追加决定；Document 与 Discussion 同事务各推进一次。无需新增状态或迁移，不改写旧版、已采纳指针或评价冻结输入。不失配、过期或范围/权限不符均拒绝；确定拒绝后的重新判断属于新意图，未知回包仍先原 ID 对账。
+
 关系至少带项目、两端稳定 ID/类型、相关修订、关系类型、建立者、依据、时间与当前有效性。`specifies`、`implements`、`justified_by`、`validates`、`contradicts`、`supersedes` 等类型需有定义；“implements”表达实现目标，实际符合要求还需验收证据。跨项目关联必须显式授权，不能借关系遍历绕过源对象权限。
 
 认知读取可按任务生成一份有限上下文：当前任务与实际基线 → 相关文档修订 → 当前知识及与旧基线的差异/重要反例 → 真实结果和来源入口 → 待确认冲突。每项返回其权威位置、读取版本与时间；关系索引和同步缓存不可伪装成当前知识。关系记录不要求第一版引入图数据库，PostgreSQL 足以先表达这些带类型的连接。

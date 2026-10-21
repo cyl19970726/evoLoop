@@ -119,6 +119,8 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
     documentRevisionId: handoff.revisionId, choice: "Research", reason: "Consumer use remains unclear",
     unresolved: "Second team still needs a trial", relookCondition: "After external trial", evidence: "Recorded discussion notes" };
   await assert.rejects(issue(writer, decision), /Permission review/);
+  rejected(await issue(reviewer, { ...decision, documentRecovery: { expectedDocumentVersion: 2,
+    reason: "There is no external edit to recover" } }), "RECOVERY_NOT_NEEDED");
   const decided = applied(await issue(reviewer, decision));
   assert.equal(decided.version, 3);
   const decisionEventId = (await service.getDiscussion(reviewer, projectId, discussionId)).latestDecisionEventId!;
@@ -147,10 +149,71 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   assert.equal(events.at(-1)?.supersedesDecisionEventId, decisionEventId);
   assert.equal(events[2]?.choice, "Research", "prior decision is immutable");
   assert.equal((await service.getDocument(reviewer, projectId, documentId)).document.adoptedRevisionId, null);
-  applied(await issue(writer, { type: "document.revise", documentId, expectedVersion: 4,
+  const edited = applied(await issue(writer, { type: "document.revise", documentId, expectedVersion: 4,
     body: "External edit to handoff record", reason: "Independent edit" }));
   rejected(await issue(reviewer, { ...action, expectedVersion: 6, decisionEventId: current.latestDecisionEventId,
     target: { kind: "task", id: taskId, revisionId: task.revisionId } }), "DOCUMENT_CHANGED");
+  const oldEvents = await service.listDiscussionEvents(reviewer, projectId, discussionId);
+  const oldCorrectedBody = (await service.getDocumentRevision(reviewer, projectId, documentId, corrected.revisionId!)).body;
+  const oldCorrectedRevision = await service.getDocumentRevision(reviewer, projectId, documentId, corrected.revisionId!);
+  const editedRevision = await service.getDocumentRevision(reviewer, projectId, documentId, edited.revisionId!);
+  const oldBaseline = await service.getDiscussion(reviewer, projectId, discussionId);
+  const ordinaryOperation = randomUUID();
+  const nextDecision = { ...decision, expectedVersion: 6, documentRevisionId: edited.revisionId,
+    choice: "Research the external edit", supersedesDecisionEventId: current.latestDecisionEventId };
+  rejected(await issue(reviewer, nextDecision, ordinaryOperation), "DOCUMENT_CHANGED");
+  const journalBefore = (await pool.query("SELECT result FROM operation_journal WHERE project_id=$1 AND operation_id=$2",
+    [projectId, ordinaryOperation])).rows[0]?.result;
+  assert.equal(journalBefore?.code, "DOCUMENT_CHANGED", "ordinary refusal remains durably journaled");
+  const recovery = { ...nextDecision,
+    documentRecovery: { expectedDocumentVersion: 5, reason: "Reviewer observed the independent edit and explicitly restores discussion continuity" } };
+  await assert.rejects(issue(writer, recovery), /Permission review/);
+  await assert.rejects(issue(foreign, recovery), /Permission review/);
+  rejected(await issue(reviewer, { ...recovery, documentRecovery: { ...recovery.documentRecovery,
+    expectedDocumentVersion: 4 } }), "VERSION_CONFLICT");
+  rejected(await issue(reviewer, { ...recovery, documentRevisionId: corrected.revisionId }), "DOCUMENT_CHANGED");
+  rejected(await issue(reviewer, { ...recovery, supersedesDecisionEventId: decisionEventId }), "DECISION_TARGET_CHANGED");
+  assert.equal((await service.getDocument(reviewer, projectId, documentId)).document.version, 5);
+  assert.equal((await service.getDiscussion(reviewer, projectId, discussionId)).version, 6);
+  assert.deepEqual(await service.listDiscussionEvents(reviewer, projectId, discussionId), oldEvents,
+    "failed recovery attempts cannot append a partial decision");
+  const recoveryOperation = randomUUID();
+  const recovered = applied(await issue(reviewer, recovery, recoveryOperation));
+  assert.deepEqual(await issue(reviewer, recovery, recoveryOperation), recovered, "replay must not append twice");
+  assert.equal(recovered.version, 7);
+  const recoveredDiscussion = await service.getDiscussion(reviewer, projectId, discussionId);
+  const recoveredDocument = (await service.getDocument(reviewer, projectId, documentId)).document;
+  const recoveredRevision = await service.getDocumentRevision(reviewer, projectId, documentId, recovered.revisionId!);
+  assert.equal(recoveredDiscussion.currentDocumentRevisionId, recovered.revisionId);
+  assert.equal(recoveredDocument.currentRevisionId, recovered.revisionId);
+  assert.equal(recoveredDocument.version, 6);
+  assert.equal(recoveredDocument.adoptedRevisionId, null);
+  assert.equal(recoveredRevision.previousRevisionId, edited.revisionId, "recovery appends from the actual edited head");
+  assert.match(recoveredRevision.body!, /External edit to handoff record/);
+  assert.match(recoveredRevision.body!, /Research the external edit/);
+  assert.match(recoveredRevision.body!, /## 文档重接确认/);
+  for (const marker of [corrected.revisionId!, oldCorrectedRevision.contentHash, edited.revisionId!,
+    editedRevision.contentHash, "读入文档版本：v5", reviewer.actorId, recovery.documentRecovery.reason])
+    assert.ok(recoveredRevision.body!.includes(marker), `missing recovery provenance ${marker}`);
+  assert.equal((await service.getDocumentRevision(reviewer, projectId, documentId, corrected.revisionId!)).body, oldCorrectedBody);
+  assert.deepEqual(recoveredDiscussion.goal, oldBaseline.goal);
+  assert.deepEqual(recoveredDiscussion.stage, oldBaseline.stage);
+  assert.deepEqual(recoveredDiscussion.task, oldBaseline.task);
+  assert.deepEqual(recoveredDiscussion.adoptedDocuments, oldBaseline.adoptedDocuments);
+  const afterRecoveryEvents = await service.listDiscussionEvents(reviewer, projectId, discussionId);
+  assert.deepEqual(afterRecoveryEvents.slice(0, oldEvents.length), oldEvents, "old events stay byte-exact");
+  assert.equal(afterRecoveryEvents.length, oldEvents.length + 1);
+  assert.equal(afterRecoveryEvents.at(-1)?.supersedesDecisionEventId, current.latestDecisionEventId);
+  assert.deepEqual((await pool.query("SELECT result FROM operation_journal WHERE project_id=$1 AND operation_id=$2",
+    [projectId, ordinaryOperation])).rows[0]?.result, journalBefore);
+  const losingRace = await issue(reviewer, { ...recovery, documentRevisionId: recovered.revisionId }, randomUUID());
+  rejected(losingRace, "VERSION_CONFLICT");
+  assert.equal((await service.getDocument(reviewer, projectId, documentId)).document.version, 6,
+    "losing CAS cannot append a partial document revision");
+  const recoveredLink = applied(await issue(reviewer, { type: "discussion.action.link", discussionId,
+    expectedVersion: 7, decisionEventId: recoveredDiscussion.latestDecisionEventId,
+    target: { kind: "task", id: taskId, revisionId: task.revisionId }, reason: "Continue after explicit recovery" }));
+  assert.equal(recoveredLink.version, 8);
   const outbox = await pool.query("SELECT kind,version FROM outbox_event WHERE project_id=$1 AND operation_id=$2 ORDER BY kind", [projectId, prepareOperation]);
   assert.deepEqual(outbox.rows, [{ kind: "discussion", version: 1 }, { kind: "document", version: 1 }]);
   await assert.rejects(pool.query("UPDATE discussion_event SET choice='rewritten' WHERE project_id=$1 AND event_id=$2", [projectId, decisionEventId]), /immutable/);
