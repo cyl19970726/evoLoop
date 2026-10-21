@@ -408,7 +408,9 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         {candidateCursor && <button onClick={async () => { try { const next = await client.candidates(candidateCursor); setCandidates(previous => [...previous, ...next.items]); setCandidateCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多候选</button>}
       </nav><div>{candidate ? <article><h3>{candidate.title} · {statusText(candidate.status)}</h3>
         <p className="muted">候选 {candidate.candidateId} · 固定基线 {candidate.expectedRevision ?? "新页"} · SHA-256 <code>{candidate.contentHash}</code></p>
-        <pre className="history-body knowledge-candidate-body">{candidate.body}</pre>
+        <div className="knowledge-candidate-preview"><MarkdownBody source={candidate.body}
+          identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} /></div>
+        <details className="knowledge-candidate-source"><summary>核对 Markdown 原文</summary><pre>{candidate.body}</pre></details>
         <h4>固定来源</h4><ul>{candidate.sources.map(item => { const id = sourceId(item.sourceKey);
           return <li key={`${item.sourceKey}:${item.originRevision}`}>{id ? <a href={documentLink(context.projectId, id, item.originRevision,
             knowledgeHash(context.projectId, { candidateId: candidate.candidateId }))}>
