@@ -107,6 +107,8 @@ sequenceDiagram
 
 本机 `codex-cli 0.154.0` 的 v2 schema 显示：`TurnStartParams` 必需 `threadId` 和 `input`，`TurnSteerParams` 必需 `threadId`、`expectedTurnId`、`input`，`TurnInterruptParams` 必需 `threadId` 与 `turnId`。`thread/start` 的 `cwd`、`model`、`sandbox`、`approvalPolicy` 可选；选择时遵守项目授权与运行环境，而不是用固定高权限配置求方便。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是实现时的外部合同；每次 CLI 升级重生 schema 并检查实验字段门控。
 
+当前已实现的退出边界是停止新增 Run、逐个确认终态，解除后续 Run 的逻辑在途占用，Session 与历史仍保留。正常 `runtime.session.close` 或逐原生线程归档尚未暴露；`closed` 只用于无 native Turn 绑定的未知只读 Run 放弃特例，不能用于正常完成后的会话收束。适配器的 `close()` 关闭共享 App Server 子进程，是服务停止动作，不代表逐 Session 已关闭。试行记录须按此核对退出承诺。
+
 ## 隔离实测与生产能力分开
 
 [独立 PR #2](https://github.com/cyl19970726/evoLoop/pull/2) 的隔离成果经本轮冲突协调后随本提交纳入；证据仍固定到原实验 `9c095fce`，见[实测报告](../research/codex-app-server-proof-20261019.md)。它补充了首次调查仅握手的范围，本轮仅重跑离线协议检查，没有重跑模型实验。实验未连接真实 Task/Document 主数据、飞书 connector 或生产 Wiki。
