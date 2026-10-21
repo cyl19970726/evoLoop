@@ -282,8 +282,8 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     setRelationTarget(""); setRelationRevision(""); setView("compose");
   };
   const currentSummary = pages.find(item => item.knowledgeId === selectedId);
-  const currentRevision = currentSummary?.revision ?? history[0]?.revision;
-  const visiblePage = matchesKnowledgeRevision(page, selectedId, fixedRevision, currentRevision) ? page : null;
+  const currentRevision = !fixedRevision && page?.knowledgeId === selectedId ? page.revision : currentSummary?.revision ?? history[0]?.revision;
+  const visiblePage = matchesKnowledgeRevision(page, selectedId, fixedRevision) ? page : null;
   const readingCurrent = !!visiblePage && (!fixedRevision || visiblePage.revision === currentRevision);
   const relationName = (id: string, revision: string) =>
     graph?.nodes.find(item => item.knowledgeId === id && item.revision === revision)?.title ??

@@ -61,9 +61,8 @@ export function matchesKnowledgeRevision(
   page: { knowledgeId: string; revision: string } | null,
   selectedId: string | null,
   fixedRevision?: string,
-  currentRevision?: string,
 ): boolean {
-  return !!page && page.knowledgeId === selectedId && (fixedRevision
-    ? page.revision === fixedRevision
-    : !!currentRevision && page.revision === currentRevision);
+  // The unversioned read endpoint is authoritative for its own response.
+  // A separately fetched list/history may still carry an older revision.
+  return !!page && page.knowledgeId === selectedId && (!fixedRevision || page.revision === fixedRevision);
 }

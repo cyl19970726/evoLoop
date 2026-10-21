@@ -23,10 +23,19 @@ test("switching an already loaded page to a canonical fixed revision detaches th
   assert.deepEqual(next.history, []);
   assert.equal(next.graph, null);
   assert.equal(matchesKnowledgeRevision(oldPage, next.route.id, next.route.revision), false);
-  assert.equal(matchesKnowledgeRevision(oldPage, next.route.id, undefined, requestedRevision), false);
+  assert.equal(matchesKnowledgeRevision(next.page, next.route.id), false);
 
   const failedRead = null;
   assert.equal(matchesKnowledgeRevision(failedRead, next.route.id, next.route.revision), false);
+});
+
+test("an unversioned page response remains readable when the separately fetched listing is stale", () => {
+  const staleListing = { knowledgeId, revision: oldRevision };
+  const currentResponse = { knowledgeId, revision: requestedRevision };
+  assert.notEqual(staleListing.revision, currentResponse.revision);
+  assert.equal(matchesKnowledgeRevision(currentResponse, knowledgeId), true);
+  assert.equal(matchesKnowledgeRevision(currentResponse, "another-page"), false);
+  assert.equal(matchesKnowledgeRevision(currentResponse, knowledgeId, oldRevision), false);
 });
 
 test("unsupported legacy child path visibly invalidates the prior knowledge selection", () => {
