@@ -12,10 +12,10 @@ const canonical = (value: unknown): string => JSON.stringify(value, (_key, child
   return object ? Object.fromEntries(Object.keys(object).sort().map(key => [key, object[key]])) : child;
 });
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
-export interface Recovery { kind: "core" | "candidate" | "publish" | "manual"; path: string }
+export interface Recovery { kind: "core" | "candidate" | "publish" | "ingestion" | "manual"; path: string }
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
-  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover";
+  confirmation: "command" | "candidate" | "publish" | "ingestion" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover";
   targetId?: string;
 }
 export interface Receipt extends Intent {
@@ -111,6 +111,15 @@ function confirmed(receipt: Receipt, result: unknown): boolean {
   if (receipt.confirmation === "candidate") return value.operationId === receipt.operationId && value.candidateId === body?.candidateId &&
     value.candidateRevision === body?.candidateRevision && value.knowledgeId === body?.knowledgeId &&
     value.contentHash === sha(String(body?.body));
+  if (receipt.confirmation === "ingestion") {
+    const source = record(value.source);
+    return value.operationId === receipt.operationId && value.actorId === receipt.actorId &&
+      source?.sourceKey === `document:${body?.documentId}` && source.originRevision === body?.revisionId &&
+      typeof source.contentHash === "string" && /^[a-f0-9]{64}$/.test(source.contentHash) &&
+      typeof value.title === "string" && value.title.length > 0 && value.indexStatus === "unverified" &&
+      ["submitted", "completed", "failed"].includes(String(value.status)) &&
+      (value.taskId === null || typeof value.taskId === "string");
+  }
   if (receipt.confirmation === "review") {
     const decision = record(value.decision);
     return value.status === "recorded" && !!decision && decision.candidateId === receipt.targetId && typeof decision.reviewerId === "string" &&

@@ -48,6 +48,32 @@ test("evaluation CLI reads preserve fixed revision, attempt and source identitie
     assert.equal((await run(["command", "schema", "evaluation.create"])).code, 0);
   } finally { fetch.mock.restore(); }
 });
+test("named knowledge reads validate and encode fixed inputs", async () => {
+  const p = "00000000-0000-4000-8000-000000000001", k = "00000000-0000-4000-8000-000000000002";
+  const r = "00000000-0000-4000-8000-000000000003", op = "00000000-0000-4000-8000-000000000004";
+  const requests: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    requests.push(String(url)); return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fake-local-fixture", EVOLOOP_PROJECT: p };
+  try {
+    assert.equal((await run(["knowledge-query", "what & why?", "--scope", "sources", "--limit", "3"], env)).code, 0);
+    assert.equal((await run(["knowledge-lint", k, "--revision", r], env)).code, 0);
+    assert.equal((await run(["candidate-lint", k], env)).code, 0);
+    assert.equal((await run(["knowledge-ingestion", op], env)).code, 0);
+    assert.deepEqual(requests.map(url => new URL(url).pathname + new URL(url).search), [
+      `/api/projects/${p}/knowledge/query?query=what+%26+why%3F&scope=sources&limit=3`,
+      `/api/projects/${p}/knowledge/pages/${k}/lint?revision=${r}`,
+      `/api/projects/${p}/knowledge/candidates/${k}/lint`,
+      `/api/projects/${p}/knowledge/ingestions/${op}`,
+    ]);
+    for (const args of [["knowledge-query", " ", "--scope", "published"], ["knowledge-query", "hello", "--limit", "21"],
+      ["knowledge-query", "hello", "--scope", "all"], ["knowledge-lint", k], ["candidate-lint", "latest"], ["knowledge-ingestion", "latest"]]) {
+      assert.equal((await run(args, env)).code, 2);
+    }
+    assert.equal(requests.length, 4);
+  } finally { fetch.mock.restore(); }
+});
 test("specialist request mistakes stay actionable local input errors before any network request", async () => {
   const result = await run(["request", "unknown", "--project", "11111111-1111-4111-8111-111111111111", "--file", "package.json"], { EVOLOOP_TOKEN: "dummy" });
   assert.equal(result.code, 2); assert.equal(JSON.parse(result.stderr).error.code, "INVALID_INPUT");

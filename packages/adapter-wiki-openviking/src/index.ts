@@ -4,7 +4,7 @@ import { mkdir, open, rename, unlink, lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import type {
   CandidateDecision, CandidateStatus, KnowledgeCandidate, KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapabilities, KnowledgeGraph, KnowledgePage, KnowledgeRelation,
-  KnowledgeRepository, KnowledgeRevision, KnowledgeSummary, PublishResult,
+  KnowledgeRepository, KnowledgeRevision, KnowledgeSummary, PublishResult, KnowledgeIngestRequest, KnowledgeIngestion, KnowledgeQuery, KnowledgeQueryResult, KnowledgeQueryHit,
 } from "@evoloop/contracts/knowledge";
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
@@ -14,12 +14,14 @@ const sha = (text: string): string => createHash("sha256").update(text, "utf8").
 type Metadata = Omit<KnowledgeRevision, "body" | "observedValidity"> & { uri: string };
 type CandidateMetadata = Omit<KnowledgeCandidate, "body"> & { uri: string; decision?: CandidateDecision };
 interface Operation { candidateId: string; status: "unknown" | "published" | "conflict"; revision?: string; currentRevision?: string | null }
+interface IngestRecord { fingerprint: string; ingestion: KnowledgeIngestion; uri: string }
 interface State {
   formatVersion: 1; generation: number; heads: Record<string, string>; revisions: Record<string, Metadata>;
   candidates: Record<string, CandidateMetadata>; operations: Record<string, Operation>;
   validityOverrides: Record<string, "needs_review" | "withdrawn">; withdrawnSources: string[];
+  ingestions?: Record<string, IngestRecord>;
 }
-const fresh = (): State => ({ formatVersion: 1, generation: 0, heads: {}, revisions: {}, candidates: {}, operations: {}, validityOverrides: {}, withdrawnSources: [] });
+const fresh = (): State => ({ formatVersion: 1, generation: 0, heads: {}, revisions: {}, candidates: {}, operations: {}, validityOverrides: {}, withdrawnSources: [], ingestions: {} });
 const key = (id: string, revision: string): string => `${id}\0${revision}`;
 const validId = (value: string): void => { if (!idPattern.test(value)) throw new Error("invalid knowledge identifier"); };
 const pageLimit = (value: number, max = 100): void => { if (!Number.isInteger(value) || value < 1 || value > max) throw new RangeError(`limit must be 1..${max}`); };
@@ -33,6 +35,9 @@ export interface OpenVikingOptions {
   mayReview: (projectId: string, reviewerId: string) => Promise<boolean>;
   mayPublish: (projectId: string, actorId: string) => Promise<boolean>;
   mayReconcile: (projectId: string, actorId: string) => Promise<boolean>;
+  mayIngest?: (projectId: string, actorId: string) => Promise<boolean>;
+  /** Observing an existing task is separate from authority to start an ingestion. */
+  mayObserveIngestion?: (projectId: string) => Promise<boolean>;
 }
 
 /** OpenViking holds every candidate and published body; an external manifest owns immutable identities and relations. */
@@ -118,6 +123,135 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
     if (parsed.status !== "ok") throw new Error("OpenViking returned an unsuccessful response");
     return parsed.result;
   }
+  private async upload(body: string): Promise<string> {
+    const form = new FormData();
+    form.set("file", new Blob([body], { type: "text/markdown" }), "source.md");
+    const response = await fetch(new URL("/api/v1/resources/temp_upload", this.base), {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body: form,
+    });
+    if (!response.ok) throw new Error(`OpenViking HTTP ${response.status}`);
+    const payload = await response.json() as { status?: string; result?: { temp_file_id?: unknown } };
+    if (payload.status !== "ok" || typeof payload.result?.temp_file_id !== "string" || !payload.result.temp_file_id || payload.result.temp_file_id.length > 256) throw new Error("invalid OpenViking upload response");
+    return payload.result.temp_file_id;
+  }
+  private ingestUri(projectId: string, source: KnowledgeIngestRequest["source"], bodyHash: string): string {
+    const digest = sha(JSON.stringify([source.sourceKey, source.originRevision, source.contentHash, bodyHash]));
+    return `viking://resources/evoloop/${projectId}/sources/${digest}`;
+  }
+  private async ingestAllowed(input: KnowledgeIngestRequest): Promise<void> {
+    if (!this.options.mayIngest || !(await this.options.mayIngest(input.projectId, input.actorId))) throw new Error("source ingestion denied");
+  }
+  async ingestSource(input: KnowledgeIngestRequest): Promise<KnowledgeIngestion> {
+    const { projectId, operationId, actorId, source, title, body } = input;
+    [projectId, operationId, actorId].forEach(validId);
+    if (!source.sourceKey || source.sourceKey.length > 400 || !source.originRevision || source.originRevision.length > 128 ||
+      !hashPattern.test(source.contentHash) || sha(body) !== source.contentHash || source.state !== "reachable" || !title || title.length > 240 ||
+      !body || Buffer.byteLength(body) > maxBody) throw new Error("source ingestion input invalid");
+    await this.ingestAllowed(input);
+    return this.locked(projectId, async (state) => {
+      const fingerprint = sha(JSON.stringify([actorId, source.sourceKey, source.originRevision, source.contentHash, title, sha(body)]));
+      const existing = state.ingestions?.[operationId];
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) throw new Error("ingestion operation ID conflict");
+        return existing.ingestion;
+      }
+      if (state.operations[operationId] || Object.values(state.candidates).some((item) => item.operationId === operationId)) throw new Error("operation ID reused");
+      if (state.withdrawnSources.includes(source.sourceKey)) throw new Error("source withdrawn");
+      const uri = this.ingestUri(projectId, source, sha(body));
+      if (Object.values(state.ingestions ?? {}).some((item) => item.ingestion.source.sourceKey === source.sourceKey &&
+        item.ingestion.source.originRevision === source.originRevision && item.ingestion.source.contentHash === source.contentHash)) {
+        throw new Error("source revision already submitted");
+      }
+      const ingestion: KnowledgeIngestion = { operationId, actorId, source, title, status: "unknown", taskId: null, indexStatus: "unverified" };
+      state.ingestions ??= {};
+      state.ingestions[operationId] = { fingerprint, ingestion, uri };
+      state.generation++; await this.save(projectId, state); // Intent must survive an uncertain upload/add response.
+      try {
+        await this.ingestAllowed(input);
+        const temp_file_id = await this.upload(body);
+        await this.ingestAllowed(input);
+        const result = await this.request("POST", "/api/v1/resources", {
+          temp_file_id, to: uri, create_parent: true, source_name: "source.md", reason: "evoLoop fixed source revision", wait: false, strict: true,
+        }) as { status?: unknown; task_id?: unknown; root_uri?: unknown } | null;
+        if (!result || result.status !== "success" || typeof result.task_id !== "string" || !result.task_id || result.task_id.length > 256) throw new Error("invalid OpenViking resource response");
+        if (result.root_uri !== undefined && (typeof result.root_uri !== "string" ||
+          (result.root_uri !== uri && !result.root_uri.startsWith(uri + "/")))) throw new Error("OpenViking resource target changed");
+        if (typeof result.root_uri === "string") state.ingestions[operationId]!.uri = result.root_uri;
+        ingestion.status = "submitted"; ingestion.taskId = result.task_id;
+        state.generation++; await this.save(projectId, state);
+      } catch { /* Unknown side effect: never replay this operation or resource target. */ }
+      return ingestion;
+    });
+  }
+  async getIngestion(projectId: string, operationId: string): Promise<KnowledgeIngestion | null> {
+    [projectId, operationId].forEach(validId);
+    return this.locked(projectId, async (state) => {
+      const record = state.ingestions?.[operationId];
+      if (!record) return null;
+      if (!(await this.options.mayRead(projectId, record.ingestion.source.sourceKey))) throw new Error("source status permission denied");
+      if (!record.ingestion.taskId || record.ingestion.status === "completed" || record.ingestion.status === "failed") return record.ingestion;
+      // A lost writer lease may still read the saved status, but cannot advance the durable record.
+      if (!await this.options.mayObserveIngestion?.(projectId)) return record.ingestion;
+      try {
+        const task = await this.request("GET", `/api/v1/tasks/${encodeURIComponent(record.ingestion.taskId)}`) as { status?: unknown; task_id?: unknown } | null;
+        if (!task || task.task_id !== record.ingestion.taskId) return record.ingestion;
+        if (!await this.options.mayObserveIngestion?.(projectId)) return record.ingestion;
+        if (task.status === "completed") record.ingestion.status = "completed";
+        else if (task.status === "failed" || task.status === "cancelled") record.ingestion.status = "failed";
+        else if (task.status !== "pending" && task.status !== "running" && task.status !== "cancelling") return record.ingestion;
+        if (record.ingestion.status !== "submitted") { state.generation++; await this.save(projectId, state); }
+      } catch { /* Expired or unreachable tasks leave the last known state. */ }
+      return record.ingestion;
+    });
+  }
+  async query(projectId: string, input: KnowledgeQuery): Promise<KnowledgeQueryResult> {
+    validId(projectId); pageLimit(input.limit, 20);
+    if (!input.query.trim() || input.query.length > 2000 || !["published", "sources"].includes(input.scope)) throw new Error("invalid knowledge query");
+    const state = await this.load(projectId);
+    const targets = new Map<string, KnowledgeQueryHit>();
+    let excluded = 0;
+    if (input.scope === "published") {
+      for (const [id, revision] of Object.entries(state.heads)) {
+        const meta = state.revisions[key(id, revision)];
+        if (!meta || !(await this.options.mayRead(projectId, id)) || this.observedValidity(state, meta) !== "valid") { excluded++; continue; }
+        targets.set(meta.uri, { kind: "wiki", id, revision, contentHash: meta.contentHash, title: meta.title, score: 0 });
+      }
+    } else {
+      for (const record of Object.values(state.ingestions ?? {})) {
+        const source = record.ingestion.source;
+        if (record.ingestion.status !== "completed" || state.withdrawnSources.includes(source.sourceKey) ||
+          !(await this.options.mayRead(projectId, source.sourceKey))) { excluded++; continue; }
+        const match = /^document:([0-9a-fA-F-]{36})$/.exec(source.sourceKey);
+        if (!match) { excluded++; continue; }
+        targets.set(record.uri, { kind: "document", id: match[1]!, revision: source.originRevision,
+          contentHash: source.contentHash, title: record.ingestion.title, score: 0 });
+      }
+    }
+    const entries = [...targets.entries()].slice(0, 100);
+    excluded += Math.max(0, targets.size - entries.length);
+    if (!entries.length) return { items: [], scope: input.scope, coverage: "bounded", indexStatus: "unverified", excluded };
+    const result = await this.request("POST", "/api/v1/search/find", {
+      query: input.query, target_uri: entries.map(([uri]) => uri), limit: input.limit, read_content: false,
+    }) as { resources?: unknown } | null;
+    if (!result || !Array.isArray(result.resources)) throw new Error("invalid OpenViking search response");
+    const allowed = new Map(entries);
+    const items: KnowledgeQueryHit[] = [];
+    const seen = new Set<string>();
+    for (const raw of result.resources) {
+      if (!raw || typeof raw !== "object") { excluded++; continue; }
+      const hit = raw as { uri?: unknown; score?: unknown };
+      if (typeof hit.uri !== "string" || typeof hit.score !== "number" || !Number.isFinite(hit.score)) { excluded++; continue; }
+      const hitUri = hit.uri;
+      const entry = [...allowed.entries()].find(([uri]) => hitUri === uri || (input.scope === "sources" && hitUri.startsWith(uri + "/")));
+      if (!entry) { excluded++; continue; }
+      const citationKey = `${entry[1].kind}\0${entry[1].id}\0${entry[1].revision}`;
+      if (seen.has(citationKey)) { excluded++; continue; }
+      seen.add(citationKey);
+      items.push({ ...entry[1], score: hit.score });
+      if (items.length >= input.limit) break;
+    }
+    return { items, scope: input.scope, coverage: "bounded", indexStatus: "unverified", excluded };
+  }
   async capabilities(): Promise<KnowledgeCapabilities> {
     try {
       const response = await fetch(new URL("/health", this.base), { redirect: "error", signal: AbortSignal.timeout(5000) });
@@ -144,11 +278,29 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
     try { await this.createBody(uri, body); } catch { /* A lost response may follow a successful create. */ }
     try { return sha((await this.readBody(uri)) ?? "") === contentHash; } catch { return false; }
   }
+  private observedValidity(state: State, meta: Metadata, visiting = new Set<string>()): Metadata["validity"] {
+    if (meta.validity === "withdrawn") return "withdrawn";
+    if (meta.sources.some((source) => state.withdrawnSources.includes(source.sourceKey))) return "needs_review";
+    const override = state.heads[meta.knowledgeId] === meta.revision ? state.validityOverrides[meta.knowledgeId] : undefined;
+    if (override) return override;
+    const fixed = key(meta.knowledgeId, meta.revision);
+    if (visiting.has(fixed)) return meta.validity;
+    visiting.add(fixed);
+    try {
+      for (const relation of meta.relations) {
+        if (relation.type !== "supports" || relation.fromKnowledgeId !== meta.knowledgeId || relation.fromRevision !== meta.revision) continue;
+        if (relation.state !== "active" || relation.sourceKeys.some((sourceKey) => state.withdrawnSources.includes(sourceKey))) return "needs_review";
+        const target = state.revisions[key(relation.toKnowledgeId, relation.toRevision)];
+        if (!target || this.observedValidity(state, target, visiting) !== "valid") return "needs_review";
+      }
+      return meta.validity;
+    } finally { visiting.delete(fixed); }
+  }
   private async materialize(meta: Metadata): Promise<KnowledgeRevision> {
     const body = await this.readBody(meta.uri);
     if (body === null || sha(body) !== meta.contentHash) throw new Error("fixed Wiki revision unavailable or changed");
     const state = await this.load(meta.projectId);
-    return { ...meta, body, observedValidity: state.validityOverrides[meta.knowledgeId] ?? meta.validity };
+    return { ...meta, body, observedValidity: this.observedValidity(state, meta) };
   }
   async list(projectId: string, limit: number, cursor?: string): Promise<KnowledgePage<KnowledgeSummary>> {
     pageLimit(limit); const state = await this.load(projectId);
@@ -158,7 +310,7 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
       if (cursor && id <= cursor) continue;
       if (!(await this.options.mayRead(projectId, id))) continue;
       const meta = state.revisions[key(id, state.heads[id]!)];
-      if (meta) permitted.push({ knowledgeId: id, revision: meta.revision, title: meta.title, pageType: meta.pageType, validity: state.validityOverrides[id] ?? meta.validity });
+      if (meta) permitted.push({ knowledgeId: id, revision: meta.revision, title: meta.title, pageType: meta.pageType, validity: this.observedValidity(state, meta) });
     }
     return { items: permitted.slice(0, limit), nextCursor: permitted.length > limit ? permitted[limit - 1]!.knowledgeId : null, watermark: state.generation };
   }
@@ -188,7 +340,7 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
     if (!focus) return { nodes: [], edges: [], status: "unavailable", watermark: state.generation };
     const edges: KnowledgeRelation[] = [];
     const nodes = new Map<string, KnowledgeSummary>();
-    const add = (m: Metadata): void => { nodes.set(key(m.knowledgeId, m.revision), { knowledgeId: m.knowledgeId, revision: m.revision, title: m.title, pageType: m.pageType, validity: state.validityOverrides[m.knowledgeId] ?? m.validity }); };
+    const add = (m: Metadata): void => { nodes.set(key(m.knowledgeId, m.revision), { knowledgeId: m.knowledgeId, revision: m.revision, title: m.title, pageType: m.pageType, validity: this.observedValidity(state, m) }); };
     add(focus);
     const outgoing = focus.relations;
     const incoming = Object.entries(state.heads).flatMap(([id, revision]) => state.revisions[key(id, revision)]?.relations.filter((r) => r.toKnowledgeId === focusKnowledgeId && r.toRevision === focusRevision) ?? []);
@@ -268,6 +420,7 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
     }
     if (!(await this.options.mayPropose(candidate))) throw new Error("candidate permission denied");
     return this.locked(projectId, async (state) => {
+      if (state.ingestions?.[candidate.operationId] || state.operations[candidate.operationId]) throw new Error("operation ID reused");
       const existing = state.candidates[candidateId];
       if (existing) {
         if (existing.contentHash !== candidate.contentHash || existing.operationId !== candidate.operationId ||
@@ -312,6 +465,7 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
     return this.locked(projectId, async (state) => {
       const candidate = state.candidates[candidateId];
       if (!candidate) throw new Error("candidate missing");
+      if (state.ingestions?.[operationId]) throw new Error("operation ID reused");
       const previous = state.operations[operationId];
       if (previous && previous.candidateId !== candidateId) throw new Error("operation ID reused for another candidate");
       if (actorId !== this.options.maintainerId || !(await this.options.mayPublish(projectId, actorId))) throw new Error("single maintainer publish gate denied");
@@ -359,6 +513,7 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
     [projectId, operationId, actorId].forEach(validId);
     if (actorId !== this.options.maintainerId || !(await this.options.mayReconcile(projectId, actorId))) throw new Error("single maintainer reconcile gate denied");
     return this.locked(projectId, async (state) => {
+      if (state.ingestions?.[operationId]) throw new Error("operation ID reused");
       const op = state.operations[operationId];
       if (!op) return null;
       if (op.status !== "unknown") return this.result(operationId, op);
@@ -408,6 +563,7 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
         }
       }
       const affected = [...affectedSet].sort();
+      if (state.ingestions?.[operationId]) throw new Error("operation ID reused");
       const op = state.operations[operationId];
       if (op && op.candidateId !== `withdraw:${sourceKey}`) throw new Error("operation ID reused");
       if (!state.withdrawnSources.includes(sourceKey)) state.withdrawnSources.push(sourceKey);

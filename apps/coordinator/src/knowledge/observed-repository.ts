@@ -64,5 +64,8 @@ export function withObservedSources(
     publish: (projectId, candidateId, operationId, actorId) => repository.publish(projectId, candidateId, operationId, actorId),
     reconcile: (projectId, operationId, actorId) => repository.reconcile(projectId, operationId, actorId),
     retractSource: (projectId, sourceKey, operationId, actorId) => repository.retractSource(projectId, sourceKey, operationId, actorId),
+    ...(repository.ingestSource ? { ingestSource: repository.ingestSource.bind(repository) } : {}),
+    ...(repository.getIngestion ? { getIngestion: repository.getIngestion.bind(repository) } : {}),
+    ...(repository.query ? { query: repository.query.bind(repository) } : {}),
   };
 }

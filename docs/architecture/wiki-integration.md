@@ -49,6 +49,8 @@ flowchart TB
 
 ## 4. 命令、发布和纠正
 
+**当前实现映射。** 下面时序保留目标 PG/outbox 接缝；现行知识候选、审阅、发布和摄入的操作记录在仓库外 manifest，正文及摄入派生资源在 OpenViking。知识发布回执用 `POST /api/projects/{p}/knowledge/operations/{id}/reconcile`，摄入用 `GET /api/projects/{p}/knowledge/ingestions/{id}`；普通 PG `/operations/{id}` 不包含这些知识操作。恢复须包含 manifest 和后端正文/资源的外部快照，不能仅恢复 PG。原生摄入、检索和只读结构检查见[当前知识路径](knowledge-flow.md#当前怎样使用-ingestquery-和-lint)；协议与接口不等于已经实测模型或索引效果。
+
 工作台、CLI、Agent 工具统一走共同 Command API。下述流程只描述服务与外置知识端的写入接缝；谁提出、如何审阅及何时复核由[维护机制](wiki-maintenance.md)规定。比如纠正命令：`POST /api/v1/projects/{p}/knowledge/{id}/candidates`，body `{operationId, expectedRevision:"kr_19", proposedPatch, sourceKeys:["doc:d_4@dr_8#scope"], reason, actorSessionId}`。服务端检查身份、项目、来源权限、固定基线和候选格式；候选正文存外置空间，PG 记候选引用/维护任务/操作结果。`POST /reviews/{reviewId}/decisions` 记录 `{operationId, expectedReviewVersion, decision, rationale}`；`POST /candidates/{candidateId}/publish` 仅在采纳决定有效时执行。冲突返回当前 revision、差异定位和 `operationId`；客户端保留输入，不盲重试新 ID。端点、字段与错误码需在 `contracts` 中定稿。
 
 下图放大**一次已获审阅的发布命令**：PG 记录意图与外部写入分开，回包丢失时按原操作和内容回读。它回答适配器怎么恢复，发布资格与后续采用仍由维护合同判断。

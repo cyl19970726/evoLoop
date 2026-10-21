@@ -266,6 +266,54 @@ test("knowledge publish readback uses its dedicated reconcile route, never a cor
   assert.equal(done.state, "confirmed");
   assert.deepEqual(paths, [intent.recovery.path, intent.recovery.path]);
 });
+test("knowledge ingestion reconciles only the original actor and fixed source without replay", async t => {
+  const store = await temporaryStore(t), operationId = randomUUID(), documentId = randomUUID(), revisionId = randomUUID();
+  const actor = verifiedActor("original-agent");
+  const intent: Intent = { id: operationId, projectId, operationId, kind: "knowledge.ingest",
+    path: `/api/projects/${projectId}/knowledge/ingestions`, body: { operationId, documentId, revisionId },
+    recovery: { kind: "ingestion", path: `/api/projects/${projectId}/knowledge/ingestions/${operationId}` }, confirmation: "ingestion" };
+  let posts = 0, observedActor = actor.actorId, observedRevision = revisionId, status = "unknown";
+  const transport = client(async (url, init) => {
+    if (init?.method === "POST") { posts++; throw new Error("reply lost"); }
+    assert.equal((url as URL).pathname, intent.recovery.path);
+    return response({ operationId, actorId: observedActor, source: { sourceKey: `document:${documentId}`,
+      originRevision: observedRevision, contentHash: "a".repeat(64), fragment: null, state: "reachable" },
+      title: "Fixed source", status, taskId: null, indexStatus: "unverified" });
+  });
+  await assert.rejects(() => dispatchMutation(transport, store, apiUrl, token, intent, () => {}, actor), pendingError);
+  await assert.rejects(() => dispatchMutation(transport, store, apiUrl, token, intent, () => {}, actor), pendingError);
+  assert.equal(posts, 1);
+  for (const change of [() => { status = "submitted"; observedActor = "other-agent"; },
+    () => { observedActor = actor.actorId; observedRevision = randomUUID(); }]) {
+    change();
+    await assert.rejects(() => reconcileReceipt(transport, store, apiUrl, token, intent.id, actor), pendingError);
+  }
+  observedRevision = revisionId;
+  const recovered = await reconcileReceipt(transport, store, apiUrl, token, intent.id, actor);
+  assert.equal(recovered.state, "confirmed");
+  assert.equal((recovered.result as { status: string }).status, "submitted");
+  assert.equal(posts, 1);
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor),
+    error => error instanceof ReceiptError && error.code === "RETRY_UNSUPPORTED");
+});
+
+test("native ingestion processing failure is a known result, while unknown processing stays pending", async t => {
+  const store = await temporaryStore(t), operationId = randomUUID(), documentId = randomUUID(), revisionId = randomUUID();
+  const actor = verifiedActor("original-agent");
+  const intent: Intent = { id: operationId, projectId, operationId, kind: "knowledge.ingest",
+    path: `/api/projects/${projectId}/knowledge/ingestions`, body: { operationId, documentId, revisionId },
+    recovery: { kind: "ingestion", path: `/api/projects/${projectId}/knowledge/ingestions/${operationId}` }, confirmation: "ingestion" };
+  await store.prepare(apiUrl, token, intent, actor);
+  let status = "unknown";
+  const transport = client(async () => response({ operationId, actorId: actor.actorId, source: { sourceKey: `document:${documentId}`,
+    originRevision: revisionId, contentHash: "a".repeat(64), fragment: null, state: "reachable" },
+    title: "Fixed source", status, taskId: null, indexStatus: "unverified" }));
+  await assert.rejects(() => reconcileReceipt(transport, store, apiUrl, token, operationId, actor), pendingError);
+  status = "failed";
+  const result = await reconcileReceipt(transport, store, apiUrl, token, operationId, actor);
+  assert.equal(result.state, "confirmed");
+  assert.equal((result.result as { status: string }).status, "failed");
+});
 
 test("candidate readback confirms only the exact fixed candidate revision and content", async t => {
   const store = await temporaryStore(t), operationId = randomUUID(), candidateId = randomUUID();

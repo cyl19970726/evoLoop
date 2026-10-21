@@ -86,13 +86,15 @@ erDiagram
 
 ### 执行依据集合与旧运行
 
-固定执行版本也不能靠“当前 Task/文档”动态解析。`task_revision` 在接受或改变目标/判据/责任等执行语义时插入完整不可变快照；`task` 头仅供当前查询与乐观竞争。`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识一次已接受的完整依据集合，`task_basis` 的每行 FK 到该集合，并三选一 FK 到过程 DocumentRevision、GitSourceRef 或 KnowledgeRefRevision，针对每种非空目标建立部分唯一索引。接受时在同一事务写齐成员、封存集合并条件推进 Task 当前修订/集合指针；Run 只能引用已封存集合。封存后成员不得增删改，改依据要创建新的 TaskRevision 与 BasisSet；仅 FK 和成员去重不足以保护旧 Run 的依据。
+固定执行版本不能靠“当前 Task/文档”动态解析。`task_revision` 保存不可变快照；`task` 头仅供当前查询与乐观竞争。**当前实现的完整依据由两部分组成：**`basis_set/basis_member` 固定过程 DocumentRevision；`task_external_ref_decision/head/snapshot` 保存 Git/Wiki 的 adopt/retain/replace 决定、所观察的当前修订及每次 TaskRevision 的固定外部快照。`taskInputSignature` 按同一 TaskRevision 组合两部分，不只读取 BasisSet。外部正文的可达、权限及有效性仍须由来源适配器回读，PG 的引用不是远端正文的外键。
+
+`basis_set` 以 `(project_id, task_id, task_revision_id, basis_set_id)` 标识封存的 Document 依据；接受时同事务写齐成员、封存并条件推进 Task 当前指针。Run 绑定该集合及 TaskRevision，再由此定位外部 snapshot。封存成员和外部 snapshot 均不可事后修改；新依据决定创建新任务修订。前文 `task_basis` 三类来源的 ER 表达是目标逻辑视图，不能照图再写一份与当前外部 snapshot 不同的基线。
 
 Run 同时持 `(project_id, task_id, task_revision_id, basis_set_id)` 复合 FK 到 `basis_set`，因此旧 Run 的目标、判据和依据均可重放；仅 FK 到可变 Task 头不够。Task 头更新或接受新依据要产生新快照/集合并复核，旧 Run 不跟随当前指针变化。
 
 知识撤回、GitSourceRef 不可达或过程文档被取代时，影响任务标待复核；**派发前还须实时向来源端核固定引用的有效性**，不能只依赖后台影响扫描已完成。无法确认时暂停派发。Wiki 内部“来源支持哪条主张”的依赖仍由外置知识系统维护。
 
-`basis_set/task_basis` 是接受和派发依据的唯一写入入口。用于导航的相同“任务依据”关系由该集合派生；若物化关系，必须同事务生成并只读，禁止另从 Relation 编辑出第二份不同基线。其他解释性关系仍可独立提出，但不能据此隐式改变执行依据。
+当前 Document 依据经 Task 命令写入封存集合，Git/Wiki 依据经受控 `reference.task` 决定及同事务快照固定。导航关系不能另写出第二份执行基线；普通 query 命中同样不等于采用。其他解释性关系可独立提出，但不能据此隐式改变执行依据。
 
 ### 外部绑定的约束
 
