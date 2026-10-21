@@ -48,7 +48,7 @@
 
 TaskRevision 从创建时就固定主正文 revision。执行中改变正文或验收须先核清在途运行，再显式 reopen→update→start；旧 Run、封存集合与操作回执保持原义。任务主文档不能通过通用 document.revise/publish 旁路修改。历史 TaskRevision 可以保留旧八态，当前 Task 仅四态；新写命令不继续保留旧八态流程。
 
-`Delivery` 指向固定任务修订、产物、技术检查与证据，登记后仍是 in_progress。`task.close` 要求当前有效的最新技术通过交付、验收达标及必要证据；只有明确 useRequired 的任务才检查指定消费者实际使用，不默认增加验收状态、独立验证任务或真人审批。未通过继续处理；取消和重开保留旧结果，旧交付不能自动满足新一轮验收。
+`Delivery` 指向交付登记产生的固定任务修订、产物、技术检查与证据，登记后仍是 in_progress。`delivery.record.runId` 可显式关联同项目、同 Task 的确定终态 Run；登记前核对当前完整业务输入与该 Run 的固定执行修订一致。执行修订沿 Run 读取，不能把登记修订当成执行修订。旧无归因交付保留 `runId: null`；有署名的 Run 归因也不等于系统证明模型生成了产物字节。`task.close` 要求当前有效的最新技术通过交付、验收达标及必要证据；只有明确 useRequired 的任务才检查指定消费者实际使用，不默认增加验收状态、独立验证任务或真人审批。未通过继续处理；取消和重开保留旧结果，旧交付不能自动满足新一轮验收。
 
 旧 TaskProposal/TaskJudgement 等记录可读取历史，不是新任务的必经工作流。未决定的问题可保存在 issue/spec 或讨论中，普通工作不必先制造额外材料。写作和业务含义见[任务与过程文档](../product/tasks-and-documents.md)。
 
@@ -175,7 +175,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 每次首次或重试都要以新的受管 Session 预留真实 Run，并在同一事务追加 `EvaluationAttempt`。它分别保存来源 `sourceTaskRevisionId` 与本次派生、实际执行的 `actualTaskRevisionId`；两者不可混写。派生时重新核 Task 签名及外部来源快照，变更则拒绝派发。启动前协调器应从固定协议、共同材料、必需 Task 依据/外部来源及该组 Wiki 修订生成受控 Blob 输入包，记录内容 hash、清单 hash、构建版本和固定来源；Run 绑定包后才可派发，原生执行须读取相同字节。不存在包或来源不可核时不能用摘要代替运行。
 
-评审为每个尝试追加固定 Delivery/Observation、来源忠实、知识采用、交付质量、真人效果、逐项成本与证据；`null` 成本是未知而非零，Agent 使用不等于真人效果。纠正以 `supersedesId` 指向旧判定，不覆盖历史。结论须引用包括失败与重试在内的全部尝试的当前判定，说明可比性、局限、下一步选择及受影响固定引用。首片没有全阶段成本覆盖及技术隔离证明，只能记 `with_limits` 或 `unknown`，即使两组有尝试及局部成本也不能记完全可比。后续行动可固定引用同项目现有 Task 的指定 TaskRevision；核实身份后仍不自动创建、开始或关闭它。PG 保存四种事实及固定身份，原件与输入包由受控 Blob 保存，活 Wiki 正文仍外置。评价结论不自动关闭 Task、发布 Wiki 或代替阶段回看；后续行动仍走既有授权与任务规则。目标方法见[产品评价约定](../product/wiki-evaluation.md)。
+评审为每个尝试追加固定 Delivery/Observation、来源忠实、知识采用、交付质量、真人效果、逐项成本与证据；Delivery 必须显式关联该 Attempt 的 Run，Observation 必须属于所选 Delivery，旧无归因交付不能自动匹配。`null` 成本是未知而非零，Agent 使用不等于真人效果。纠正以 `supersedesId` 指向旧判定，不覆盖历史。结论须引用包括失败与重试在内的全部尝试的当前判定，说明可比性、局限、下一步选择及受影响固定引用。首片没有全阶段成本覆盖及技术隔离证明，只能记 `with_limits` 或 `unknown`，即使两组有尝试及局部成本也不能记完全可比。后续行动可固定引用同项目现有 Task 的指定 TaskRevision；核实身份后仍不自动创建、开始或关闭它。PG 保存四种事实及固定身份，原件与输入包由受控 Blob 保存，活 Wiki 正文仍外置。评价结论不自动关闭 Task、发布 Wiki 或代替阶段回看；后续行动仍走既有授权与任务规则。目标方法见[产品评价约定](../product/wiki-evaluation.md)。
 
 ## 7. ScheduleStore 与触发实例
 

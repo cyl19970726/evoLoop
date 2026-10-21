@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commandSchema, type BasisSet, type Principal, type Task, type TaskRevision } from "@evoloop/contracts";
+import { commandSchema, type BasisSet, type Delivery, type Principal, type Task, type TaskRevision } from "@evoloop/contracts";
 import type { EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationRevision } from "@evoloop/contracts/evaluation";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { applyEvaluation, taskSignature } from "../src/evaluation/index.ts";
 import { reserveRuntime } from "../src/runtime/reserve.ts";
 import { RuntimeWorkflowService } from "../src/runtime/service.ts";
+import { applyWorkflow } from "../src/workflow.ts";
 
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 const hash = "a".repeat(64);
@@ -22,7 +23,7 @@ const basis: BasisSet = { projectId, taskId, taskRevisionId: sourceRevisionId, i
 function fixture() {
   const state = { task: { ...task }, revisions: [sourceRevision], bases: [basis], definitions: [] as EvaluationRevision[],
     attempts: [] as EvaluationAttempt[], assessments: [] as EvaluationAssessment[], conclusions: [] as EvaluationConclusion[], runs: [] as any[],
-    events: [] as any[], sessions: [{ projectId, id: id(10), roleId: "evaluator", cwd: "/tmp/eval", authorizationScope: "project",
+    events: [] as any[], deliveries: [] as Delivery[], sessions: [{ projectId, id: id(10), roleId: "evaluator", cwd: "/tmp/eval", authorizationScope: "project",
       model: "model-a", sandbox: "read-only", approvalPolicy: "on-request", state: "ready", version: 2,
       nativeThreadId: "native", nativeSessionId: "session", operationId: id(11), actorId: "reviewer",
       createdAt: "2026-10-21T00:00:00Z", updatedAt: "2026-10-21T00:00:00Z" }] };
@@ -31,7 +32,7 @@ function fixture() {
     getTaskRevision: async (_task: string, key: string) => state.revisions.find(item => item.id === key) ?? null,
     getBasisSet: async (_task: string, rev: string) => state.bases.find(item => item.taskRevisionId === rev) ?? null,
     getDocumentRevision: async (documentId: string, revisionId: string) => documentId === primaryId && revisionId === id(6)
-      ? { contentHash: hash } : null,
+      ? { projectId, documentId, id: revisionId, contentHash: hash } : null,
     getDocument: async (key: string) => key === primaryId ? { id: primaryId, adoptedRevisionId: id(6) } : null,
     getGitSourceRef: async () => null,
     listTaskExternalSnapshot: async () => [],
@@ -44,7 +45,8 @@ function fixture() {
     insertEvaluationAttempt: async (value: EvaluationAttempt) => { state.attempts.push(value); },
     insertEvaluationAssessment: async (value: EvaluationAssessment) => { state.assessments.push(value); },
     insertEvaluationConclusion: async (value: EvaluationConclusion) => { state.conclusions.push(value); },
-    getDelivery: async () => null,
+    getDelivery: async (key: string) => state.deliveries.find(item => item.id === key) ?? null,
+    insertDelivery: async (value: Delivery) => { state.deliveries.push(value); },
     listObservations: async () => [],
     getRuntimeSession: async (key: string) => state.sessions.find(item => item.id === key) ?? null,
     listRuntimeRuns: async (key?: string) => state.runs.filter(item => !key || item.taskId === key),
@@ -60,6 +62,63 @@ function fixture() {
   } as unknown as Transaction;
   return { state, tx };
 }
+
+test("two terminal Runs may each register a Delivery against unchanged business input", async () => {
+  const { state, tx } = fixture();
+  const runA = { projectId, id: id(70), taskId, taskRevisionId: sourceRevisionId, state: "completed" };
+  const runB = { projectId, id: id(71), taskId, taskRevisionId: sourceRevisionId, state: "failed" };
+  state.runs.push(runA, runB);
+  let sequence = 80;
+  const deliver = (runId: string, expectedVersion: number) => applyWorkflow({ tx, principal,
+    command: { type: "delivery.record", projectId, operationId: id(sequence++), taskId, runId,
+      expectedVersion, artifactRef: "repo://result", artifactRevision: "commit-1", contentHash: hash,
+      technicalResult: "passed", technicalEvidence: "Checked fixed artifact", reason: "Register observed result" },
+    now: "2026-10-21T00:10:00Z", nextId: () => id(sequence++) });
+  await deliver(runA.id, 2);
+  assert.equal(state.deliveries[0]?.runId, runA.id);
+  assert.notEqual(state.deliveries[0]?.taskRevisionId, sourceRevisionId,
+    "Delivery revision records registration, not execution");
+  await deliver(runB.id, 3);
+  assert.equal(state.deliveries[1]?.runId, runB.id);
+  assert.equal(state.task.version, 4);
+  const latest = state.revisions.find(item => item.id === state.task.currentRevisionId)!;
+  latest.content = "Changed business instructions";
+  await assert.rejects(deliver(runA.id, 4), error =>
+    (error as { code?: string }).code === "DELIVERY_INPUT_CHANGED");
+  assert.equal(state.deliveries.length, 2);
+  state.runs.push({ ...runA, id: id(72), taskId: id(73) });
+  await assert.rejects(deliver(id(72), 4), error =>
+    (error as { code?: string }).code === "DELIVERY_RUN_MISMATCH");
+});
+
+test("assessment matches Delivery by declared Run, never by its later registration revision", async () => {
+  const { state, tx } = fixture();
+  const frozen = await definition(tx);
+  state.definitions.push({ projectId, evaluationId: id(190), id: id(191), version: 1,
+    definition: frozen, actorId: principal.actorId, reason: "fixed", createdAt: "2026-10-21T00:00:00Z" });
+  state.attempts.push({ projectId, id: id(192), evaluationId: id(190), revisionId: id(191),
+    caseId: id(20), conditionId: id(21), ordinal: 1, runId: id(193),
+    sourceTaskRevisionId: sourceRevisionId, actualTaskRevisionId: sourceRevisionId,
+    sessionId: id(10), actorId: principal.actorId, createdAt: "2026-10-21T00:01:00Z" });
+  state.runs.push({ projectId, id: id(193), taskId, taskRevisionId: sourceRevisionId,
+    evaluationBinding: { attemptId: id(192) }, state: "completed" });
+  const delivery: Delivery = { projectId, id: id(194), taskId, taskRevisionId: id(195), runId: id(193),
+    artifactRef: "repo://result", artifactRevision: "commit-1", contentHash: hash,
+    technicalResult: "passed", technicalEvidence: "Checked", reason: "Delivered",
+    actorId: principal.actorId, createdAt: "2026-10-21T00:02:00Z" };
+  state.deliveries.push(delivery, { ...delivery, id: id(196), runId: id(197) });
+  const command = { type: "evaluation.assessment.record" as const, projectId, operationId: id(198),
+    evaluationId: id(190), revisionId: id(191), assessmentId: id(199), attemptId: id(192),
+    deliveryId: id(196), observationId: null, supersedesId: null,
+    values: { sourceFidelity: "unknown" as const, knowledgeAdoption: "not_applicable" as const,
+      deliveryQuality: "qualified" as const, humanEffect: "unknown" as const },
+    costs: [], evidence: [], assessorKind: "agent" as const, reason: "Review registered result" };
+  await assert.rejects(applyEvaluation({ tx, command, principal, now: "2026-10-21T00:03:00Z" }), error =>
+    (error as { code?: string }).code === "DELIVERY_MISMATCH");
+  await applyEvaluation({ tx, command: { ...command, deliveryId: delivery.id }, principal,
+    now: "2026-10-21T00:03:00Z" });
+  assert.equal(state.assessments[0]?.deliveryId, delivery.id);
+});
 
 async function definition(tx: Transaction): Promise<EvaluationDefinition> {
   return { ownerTaskId: taskId, question: "Does the fixed Wiki help?",

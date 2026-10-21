@@ -68,6 +68,7 @@ export const workflowCommands = [
     ...common,
     type: z.literal("delivery.record"),
     taskId: id,
+    runId: id.optional(),
     expectedVersion: version,
     artifactRef: text,
     artifactRevision: text,
@@ -206,6 +207,8 @@ export interface Delivery {
   id: string;
   taskId: string;
   taskRevisionId: string;
+  /** Explicitly declared source Run; null for deliveries registered without one. */
+  runId: string | null;
   artifactRef: string;
   artifactRevision: string;
   contentHash: string;

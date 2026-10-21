@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { TaskDetail } from "@evoloop/contracts";
+import type { RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
 import { api } from "../api";
+import { runtimeClient } from "../runtime/client";
 import { deliveryTarget, verifiedDocumentTitle, type DeliveryArtifactInput, type DeliveryTarget } from "./deliveryPresentation";
 
 type Delivery = NonNullable<TaskDetail["deliveries"]>[number];
@@ -56,16 +57,32 @@ export function DeliveryArtifact({ delivery, projectId, name }: { delivery: Deli
   </div>;
 }
 
-export function DeliveryPanel({ detail, projectId, names, onChanged }: { detail: TaskDetail; projectId: string; names: Record<string, ArtifactName>; onChanged: () => void }) {
+export function DeliveryPanel({ detail, projectId, token, names, onChanged }: { detail: TaskDetail; projectId: string; token?: string; names: Record<string, ArtifactName>; onChanged: () => void }) {
   const deliveries = detail.deliveries ?? [];
   const latestId = deliveries.at(-1)?.id;
+  const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
+  const [runError, setRunError] = useState("");
+  useEffect(() => {
+    if (!token || !deliveries.some(item => item.runId)) return;
+    let active = true;
+    setRuns([]); setRunError("");
+    runtimeClient(token, projectId).runs(detail.task.id)
+      .then(rows => { if (active) setRuns(rows.filter(row => row.projectId === projectId && row.taskId === detail.task.id)); })
+      .catch(() => { if (active) setRunError("来源 Run 暂未读到；不能推断执行修订。"); });
+    return () => { active = false; };
+  }, [token, projectId, detail.task.id, detail.task.version, deliveries]);
   return <section className="panel task-records"><div className="panel-head"><h2>交付与使用记录</h2><button type="button" onClick={onChanged}>回读当前状态</button></div>
+    {runError && <p className="muted">{runError}</p>}
     {!deliveries.length && <p className="empty">还没有交付；任务状态不代替产物和使用证据。</p>}
     {[...deliveries].reverse().map(delivery => <article className="decision task-delivery-record" key={delivery.id}>
       <h3>{delivery.id === latestId ? "最新交付" : "历史交付"} · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"}</h3>
       <DeliveryArtifact delivery={delivery} projectId={projectId} name={names[delivery.id]} />
+      <p>交付登记 Task 修订 <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}><code>{delivery.taskRevisionId}</code> ↗</a></p>
+      <p>{delivery.runId ? <>明确归属 Run <code>{delivery.runId}</code>；{runs.find(run => run.id === delivery.runId)
+        ? <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(runs.find(run => run.id === delivery.runId)!.taskRevisionId)}`}>实际执行 Task 修订 <code>{runs.find(run => run.id === delivery.runId)!.taskRevisionId}</code> ↗</a>
+        : "实际执行修订待回读"}；<a href={`#/p/${projectId}/runtime`}>核对运行记录 →</a></> : "未声明来源 Run；旧交付不会自动归于任何评价尝试。"}</p>
       <p><strong>技术检查证据</strong><br />{delivery.technicalEvidence}</p>
-      <p className="muted">产物链接指向位置；固定修订、哈希与实际内容仍须分别核对。</p>
+      <p className="muted">Run 归属由登记者声明；运行终态不代表交付合格，也不证明产物字节由模型生成。产物修订、哈希与实际内容仍须分别核对。</p>
       <h3>这次交付的使用观察</h3>
       {(detail.observations ?? []).filter(item => item.deliveryId === delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
       {(detail.observations ?? []).filter(item => item.deliveryId === delivery.id).map(item => <div className="history" key={item.id}><strong>{item.observer}（{item.observerKind}） · {item.result}</strong><p>{item.evidence}</p><p>记录理由：{item.reason}</p><small>登记者 {item.actorId} · {item.createdAt}</small></div>)}
