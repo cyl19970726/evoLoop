@@ -16,6 +16,7 @@ import type { DeliveryStore } from "@evoloop/contracts/delivery";
 import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
+import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 
 declare module "fastify" { interface FastifyRequest { principal: Principal | null } }
 const pageSchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: idSchema.optional() });
@@ -32,6 +33,7 @@ export async function buildServer(options: {
   collaboration?: {runner: CollaborationRunner; store: DeliveryStore; consumerId: string; hasGrant(projectId:string,actorId:string):boolean};
   documents?: Omit<DocumentRouteOptions, "workflow">;
   knowledge?: Omit<KnowledgeRouteOptions, "workflow">;
+  readEvaluationPacket?: ReadEvaluationPacket;
 }) {
   const credentials = authConfigSchema.parse(options.credentials);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -220,6 +222,7 @@ export async function buildServer(options: {
   if (options.references) registerReferenceRoutes(app, options.references);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service);
+  registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });
   if (options.documents) registerDocumentRoutes(app, { workflow: options.service, ...options.documents });
   if (options.webRoot) {

@@ -4,9 +4,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTr
 import { Button } from "../components/ui/button";
 import { href, type Route, type Section } from "./shared";
 
-export const sectionNames: Record<Section, string> = { overview: "总览", work: "任务", inbox: "待判断与复核", task: "任务详情", documents: "过程文档", document: "文档阅读", knowledge: "知识空间", journey: "目标与阶段", discussions: "负责人讨论", collaboration: "协作回执", runtime: "分工与会话", schedules: "日程", roles: "职责提案", repository: "仓库规范", operations: "待核对操作" };
+export const sectionNames: Record<Section, string> = { overview: "总览", work: "任务", inbox: "待判断与复核", task: "任务详情", documents: "过程文档", document: "文档阅读", knowledge: "知识空间", journey: "目标与阶段", discussions: "负责人讨论", collaboration: "协作回执", runtime: "分工与会话", schedules: "日程", roles: "职责提案", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果" };
 const groups = [
-  { title: "推进工作", links: [["inbox", CircleHelp], ["work", ListTodo], ["documents", FileText], ["journey", Target]] },
+  { title: "推进工作", links: [["inbox", CircleHelp], ["work", ListTodo], ["documents", FileText], ["journey", Target], ["evaluations", Target]] },
   { title: "协作辅助", links: [["discussions", MessageSquare], ["runtime", Terminal], ["schedules", CalendarDays], ["roles", Users], ["collaboration", GitBranch]] },
 ] as const;
 

@@ -6,9 +6,10 @@ import type { RoleReader, RoleTransaction } from "./roles.js";
 import type { SchedulingReader, SchedulingTransaction } from "./scheduling.js";
 import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./process-documents.js";
 import type { DiscussionRecord, DiscussionEvent } from "./discussions.js";
+import type { EvaluationReader, EvaluationTransaction } from "./evaluation.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
-export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader {
+export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader {
   getDiscussion(id: string): Promise<DiscussionRecord | null>;
   listDiscussions(limit: number, cursor?: string): Promise<Page<DiscussionRecord>>;
   listDiscussionEvents(id: string): Promise<DiscussionEvent[]>;
@@ -49,7 +50,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getOperation(id: string): Promise<Operation | null>;
   findTasksUsingDocument(documentId: string): Promise<Task[]>;
 }
-export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction {
+export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;

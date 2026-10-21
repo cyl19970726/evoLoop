@@ -275,6 +275,20 @@ async function seedTwoTasks(f: ReturnType<typeof fixture>, documentIds = [docume
   }
 }
 
+test("fixed basis read checks project authority and revision ownership before shared source validation", async () => {
+  const f = fixture();
+  await seedTwoTasks(f);
+  const fixed = await f.service.getTask(principal, projectId, taskA);
+  assert.ok(fixed.basis);
+  await f.service.validateTaskRevisionBasis(principal, projectId, taskA, fixed.revision.id, fixed.basis.id);
+  await assert.rejects(() => f.service.validateTaskRevisionBasis(principal, projectId, taskA,
+    fixed.revision.id, "00000000-0000-4000-8000-000000009999"), error =>
+      error instanceof DomainError && error.code === "BASIS_UNAVAILABLE");
+  await assert.rejects(() => f.service.validateTaskRevisionBasis({ ...principal, permissions: [] }, projectId,
+    taskA, fixed.revision.id, fixed.basis!.id), error =>
+      error instanceof DomainError && error.code === "FORBIDDEN");
+});
+
 test("Task creation owns a primary Document and pins each changed body to an immutable revision", async () => {
   const f = fixture();
   await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });

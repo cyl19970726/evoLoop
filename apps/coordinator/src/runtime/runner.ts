@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
-import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import { createHash, randomUUID } from "node:crypto";
+import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
+import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding } from "@evoloop/contracts/runtime";
+import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import type { WorkflowService } from "@evoloop/core";
@@ -8,6 +9,10 @@ import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
 import { fixedDocumentMaterial } from "./materials.js";
 import type { ReadDocumentOriginal } from "./materials.js";
+import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId, evaluationPacketBlobPayload, evaluationPacketMediaType,
+  uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
+
+interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void };
@@ -67,6 +72,8 @@ export class RuntimeRunner {
     principals: Principal[]; canWrite(): boolean; allowedCwd(projectId: string, cwd: string): Promise<boolean>;
     hasGrant(scope: RuntimeGrant): boolean;
     readDocumentOriginal?: ReadDocumentOriginal;
+    readEvaluationMaterial?: ReadEvaluationMaterial;
+    blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
   status() { return { available: this.available && this.runtime.isReady(), error: this.currentError }; }
   private principal(projectId: string): Principal {
@@ -227,28 +234,28 @@ export class RuntimeRunner {
       throw this.readFailure(error);
     }
   }
-  private async input(principal: Principal, run: RuntimeRunRecord): Promise<string> {
+  private async input(principal: Principal, run: RuntimeRunRecord): Promise<TaskInputMaterial> {
     const fixed = await this.deps.workflow.getTaskRevision(principal, run.projectId, run.taskId, run.taskRevisionId);
     const current = await this.deps.workflow.getTask(principal, run.projectId, run.taskId);
     if (!fixed.basis || fixed.basis.id !== run.basisSetId || current.impacts.some(i => i.state === "pending")) throw new Error("Fixed basis needs review");
+    await this.deps.workflow.validateTaskRevisionBasis(principal, run.projectId, run.taskId,
+      run.taskRevisionId, run.basisSetId);
     const materials: string[] = [];
+    const sources: EvaluationFixedRef[] = [];
     const primary = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId,
       fixed.revision.contentDocumentId, fixed.revision.contentRevisionId);
     if (primary.projectId !== run.projectId || primary.documentId !== fixed.revision.contentDocumentId ||
       primary.id !== fixed.revision.contentRevisionId || primary.format !== "markdown" || primary.body !== fixed.revision.content)
       throw new Error("Fixed Task content differs from its pinned primary Document revision");
     materials.push(await fixedDocumentMaterial(principal, primary, this.deps.readDocumentOriginal));
+    sources.push({ kind: "document", id: primary.documentId, revision: primary.id, contentHash: primary.contentHash });
     for (const member of fixed.basis.members) {
       if (member.documentId === fixed.revision.contentDocumentId && member.revisionId === fixed.revision.contentRevisionId) continue;
-      const document = await this.deps.workflow.getDocument(principal, run.projectId, member.documentId);
       const revision = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId, member.documentId, member.revisionId);
       if (revision.projectId !== run.projectId || revision.documentId !== member.documentId || revision.id !== member.revisionId)
         throw new Error("Fixed document revision scope differs from the accepted basis");
-      if (document.document.adoptedRevisionId !== revision.id) {
-        const retained = current.decisions.some(d => d.decision === "retain" && current.impacts.some(i => i.id === d.impactId && i.documentId === member.documentId && i.fromRevisionId === revision.id && i.toRevisionId === document.document.adoptedRevisionId));
-        if (!retained) throw new Error("Source changed after acceptance; explicit review is required");
-      }
       materials.push(await fixedDocumentMaterial(principal, revision, this.deps.readDocumentOriginal));
+      sources.push({ kind: "document", id: revision.documentId, revision: revision.id, contentHash: revision.contentHash });
     }
     if (this.deps.readExternalMaterials) {
       const external = await this.deps.readExternalMaterials(principal, run.projectId, run.taskId, run.taskRevisionId);
@@ -256,8 +263,122 @@ export class RuntimeRunner {
     }
     const input = `${marker(run.operationId)}\nProject task: ${fixed.revision.title}\nContent: ${fixed.revision.content}\nAcceptance: ${fixed.revision.acceptance}\nTask revision: ${fixed.revision.id}\nBasis set: ${fixed.basis.id}\n\n${materials.join("\n\n---\n\n")}\n\nAuthorized task input:\n${run.input}\n\nReport actual files, checks and limits. Native turn completion is not task acceptance or consumer use.`;
     if (Buffer.byteLength(input, "utf8") > 256 * 1024) throw new Error("Complete required context exceeds the first-version input limit");
-    return input;
+    return { input, sources: uniqueEvaluationSources(sources), revision: fixed.revision, basis: fixed.basis };
   }
+
+  private async evaluationSources(principal: Principal, session: RuntimeSessionRecord, run: RuntimeRunRecord,
+    taskInput: TaskInputMaterial): Promise<{ evaluation: Awaited<ReturnType<WorkflowService["getEvaluation"]>>; sources: EvaluationFixedRef[] }> {
+    const binding = run.evaluationBinding;
+    if (!binding) throw new Error("Evaluation binding is missing");
+    const evaluation = await this.deps.workflow.getEvaluation(principal, run.projectId, binding.evaluationId, binding.revisionId);
+    const definition = evaluation.definition;
+    const condition = definition.conditions.find(item => item.id === binding.conditionId);
+    if (evaluation.projectId !== run.projectId || evaluation.id !== binding.revisionId ||
+        definition.case.id !== binding.caseId || definition.case.taskId !== run.taskId ||
+        definition.case.sourceTaskRevisionId !== binding.sourceTaskRevisionId ||
+        run.taskRevisionId !== binding.actualTaskRevisionId || run.input !== definition.case.commonInput || !condition)
+      throw new Error("Evaluation binding no longer matches its frozen case, condition or Run input");
+    if (!session.model || session.model !== condition.model || session.cwd !== condition.environment.cwd ||
+        session.authorizationScope !== condition.environment.authorizationScope || session.sandbox !== condition.environment.sandbox ||
+        session.approvalPolicy !== condition.environment.approvalPolicy)
+      throw new Error("Owned session no longer matches the frozen evaluation condition");
+
+    const signature = definition.case.sourceSignature;
+    const revision = taskInput.revision;
+    if (revision.projectId !== run.projectId || revision.taskId !== run.taskId || revision.id !== run.taskRevisionId ||
+        revision.title !== signature.title || revision.contentDocumentId !== signature.contentDocumentId ||
+        revision.contentRevisionId !== signature.contentRevisionId || revision.acceptance !== signature.acceptance ||
+        revision.owner !== signature.owner || (revision.kind ?? "unclassified") !== signature.kind)
+      throw new Error("Actual Task revision differs from the frozen evaluation business signature");
+    const primary = taskInput.sources.find(source => source.kind === "document" &&
+      source.id === signature.contentDocumentId && source.revision === signature.contentRevisionId);
+    if (!primary) throw new Error("Frozen Task primary content is missing from the verified Task input");
+    const signatureDocuments = uniqueEvaluationSources([
+      primary,
+      ...signature.basis.map(source => ({ kind: "document" as const, id: source.documentId,
+        revision: source.revisionId, contentHash: source.contentHash })),
+    ]);
+    const actualDocuments = taskInput.sources.filter(source => source.kind === "document");
+    if (canonicalEvaluationJson(signatureDocuments) !== canonicalEvaluationJson(actualDocuments))
+      throw new Error("Actual Task basis differs from the frozen evaluation source signature");
+    if (signature.external.length && !this.deps.readExternalMaterials)
+      throw new Error("Frozen Task external references cannot be loaded; evaluation input is incomplete");
+
+    const staticMaterials = [definition.protocol, ...definition.case.materials];
+    if (staticMaterials.some(source => source.kind !== "document" && source.kind !== "git"))
+      throw new Error("Evaluation protocol and common materials must be fixed Document or Git sources");
+    if (condition.wikiRefs !== null && condition.wikiRefs?.some(source => source.kind !== "wiki"))
+      throw new Error("Evaluation Wiki condition contains a non-Wiki source");
+    const external = signature.external.map(source => ({ kind: source.kind, id: source.referenceId,
+      revision: source.revision, contentHash: source.contentHash }));
+    return { evaluation, sources: uniqueEvaluationSources([...taskInput.sources, ...external, ...staticMaterials, ...(condition.wikiRefs ?? [])]) };
+  }
+
+  private async loadEvaluationPacket(principal: Principal, run: RuntimeRunRecord, expectedTaskInput: string) {
+    const packet = run.evaluationPacket;
+    if (!packet || !this.deps.readEvaluationMaterial || !this.deps.blobsForPrincipal)
+      throw new Error("Verified evaluation packet storage or fixed-source reader is unavailable");
+    const payload = evaluationPacketBlobPayload(packet.payloadRef, run.projectId, packet.contentHash);
+    const stored = await (await this.deps.blobsForPrincipal(principal)).read(payload);
+    if (stored.status !== "available" || stored.payload.id !== payload.id || stored.payload.projectId !== run.projectId ||
+        stored.payload.contentHash !== packet.contentHash || stored.payload.size !== payload.size || stored.payload.mediaType !== payload.mediaType)
+      throw new Error("Stored evaluation packet Blob is unavailable or mismatched");
+    let content: string;
+    try { content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(stored.bytes); }
+    catch { throw new Error("Stored evaluation packet is not valid UTF-8"); }
+    const verified = await verifyEvaluationPacket(principal, run, content, this.deps.readEvaluationMaterial, expectedTaskInput);
+    if (verified.manifestHash !== packet.manifestHash || verified.builderVersion !== packet.builderVersion ||
+        canonicalEvaluationJson(verified.sources) !== canonicalEvaluationJson(uniqueEvaluationSources(packet.sources)))
+      throw new Error("Stored evaluation packet does not match its attached Run manifest");
+    return { content, contentHash: packet.contentHash, manifestHash: verified.manifestHash,
+      builderVersion: verified.builderVersion, sources: verified.sources };
+  }
+
+  private async prepareEvaluationInput(principal: Principal, session: RuntimeSessionRecord, run: RuntimeRunRecord): Promise<{ run: RuntimeRunRecord; input: string }> {
+    if (!this.deps.readEvaluationMaterial || !this.deps.blobsForPrincipal)
+      throw new Error("Evaluation packet storage or fixed-source reader is unavailable");
+    const taskInput = await this.input(principal, run);
+    const { sources } = await this.evaluationSources(principal, session, run, taskInput);
+    let attached = run;
+    if (!attached.evaluationPacket) {
+      const built = await buildEvaluationPacket(principal, run, taskInput.input, sources, this.deps.readEvaluationMaterial);
+      const bytes = Buffer.from(built.content, "utf8");
+      const payload = { id: evaluationPacketBlobId(bytes.length, randomUUID()), projectId: run.projectId,
+        contentHash: built.contentHash, size: bytes.length, mediaType: evaluationPacketMediaType };
+      const blobs = await this.deps.blobsForPrincipal(principal);
+      const prepared = await blobs.prepare(payload, bytes);
+      if (!(await blobs.verify(prepared))) throw new Error("Evaluation packet Blob preparation failed verification");
+      await blobs.publish(prepared);
+      const binding: EvaluationPacketBinding = { payloadRef: payload.id, contentHash: built.contentHash,
+        manifestHash: built.manifestHash, builderVersion: built.builderVersion, sources: built.sources };
+      attached = await this.deps.trusted.attachEvaluationPacket(run.projectId, run.id, run.version, binding);
+      if (attached.version !== run.version + 1 || !attached.evaluationPacket ||
+          attached.evaluationPacket.payloadRef !== payload.id || attached.evaluationPacket.contentHash !== built.contentHash)
+        throw new Error("Evaluation packet attachment acknowledgement does not match the persisted Run");
+    }
+    if (canonicalEvaluationJson(uniqueEvaluationSources(attached.evaluationPacket?.sources ?? [])) !== canonicalEvaluationJson(sources))
+      throw new Error("Attached evaluation packet references differ from the required fixed source set");
+    // Read the attached Blob back and recheck all source permissions/hashes before native dispatch.
+    const packet = await this.loadEvaluationPacket(principal, attached, taskInput.input);
+    return { run: attached, input: packet.content };
+  }
+
+  async readEvaluationPacket(principal: Principal, projectId: string, runId: string) {
+    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+      throw new Error("Project read authority is unavailable for evaluation packet");
+    const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (run.projectId !== projectId || !run.evaluationBinding || !run.evaluationPacket)
+      throw new Error("Run has no attached evaluation packet");
+    const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+    if (!this.authorized(session, run.actorId) || !await this.deps.allowedCwd(projectId, session.cwd))
+      throw new Error("Runtime session authority is no longer available");
+    const taskInput = await this.input(principal, run);
+    const { sources } = await this.evaluationSources(principal, session, run, taskInput);
+    if (canonicalEvaluationJson(sources) !== canonicalEvaluationJson(uniqueEvaluationSources(run.evaluationPacket.sources)))
+      throw new Error("Packet manifest no longer matches the frozen Task and Evaluation sources");
+    return this.loadEvaluationPacket(principal, run, taskInput.input);
+  }
+
   private async process(principal: Principal, original: RuntimeRunRecord): Promise<void> {
     if (!["requested", "running", "unknown"].includes(original.state)) return;
     const session = await this.deps.workflow.getRuntimeSession(principal, original.projectId, original.sessionId);
@@ -270,7 +391,12 @@ export class RuntimeRunner {
     let run = original;
     if (run.state === "requested") {
       let input: string;
-      try { input = await this.input(principal, run); }
+      try {
+        if (run.evaluationBinding) {
+          const prepared = await this.prepareEvaluationInput(principal, session, run);
+          run = prepared.run; input = prepared.input;
+        } else input = (await this.input(principal, run)).input;
+      }
       catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, error instanceof Error ? error.message : "Preflight failed"); return; }
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
       try {

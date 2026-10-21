@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import { runCli } from "../src/application.ts";
 
 async function run(args: string[], env: Record<string, string | undefined> = {}) {
@@ -25,6 +25,28 @@ test("an unauthenticated fresh Agent can discover help, IDs, exact command schem
   const requestSchema = await run(["request", "schema", "knowledge.propose"]); assert.equal(requestSchema.code, 0);
   assert.ok(JSON.parse(requestSchema.stdout).properties.pageType.enum.includes("concept"));
   assert.match(JSON.parse((await run(["id"])).stdout).id, /^[\da-f-]{36}$/);
+});
+test("evaluation CLI reads preserve fixed revision, attempt and source identities", async () => {
+  const p = "00000000-0000-4000-8000-000000000001", e = "00000000-0000-4000-8000-000000000002";
+  const r = "00000000-0000-4000-8000-000000000003", a = "00000000-0000-4000-8000-000000000004";
+  const requests: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    requests.push(String(url)); return new Response(JSON.stringify({ fixed: true }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fake-local-fixture", EVOLOOP_PROJECT: p, EVOLOOP_API_URL: "http://127.0.0.1:4318" };
+  try {
+    assert.equal((await run(["evaluation", e, "--revision", r], env)).code, 0);
+    assert.equal((await run(["evaluation-source", a], env)).code, 0);
+    assert.equal((await run(["evaluation-packet", e, "--revision", r, "--attempt", a], env)).code, 0);
+    assert.equal((await run(["list", "evaluations", "--task", a, "--limit", "10"], env)).code, 0);
+    assert.deepEqual(requests.map(url => new URL(url).pathname + new URL(url).search), [
+      `/api/projects/${p}/evaluations/${e}?revision=${r}`, `/api/projects/${p}/evaluations/source-task/${a}`,
+      `/api/projects/${p}/evaluations/${e}/attempts/${a}/packet?revision=${r}`, `/api/projects/${p}/evaluations?limit=10&taskId=${a}`,
+    ]);
+    assert.equal((await run(["evaluation-packet", e, "--attempt", a], env)).code, 2);
+    assert.equal(requests.length, 4);
+    assert.equal((await run(["command", "schema", "evaluation.create"])).code, 0);
+  } finally { fetch.mock.restore(); }
 });
 test("specialist request mistakes stay actionable local input errors before any network request", async () => {
   const result = await run(["request", "unknown", "--project", "11111111-1111-4111-8111-111111111111", "--file", "package.json"], { EVOLOOP_TOKEN: "dummy" });

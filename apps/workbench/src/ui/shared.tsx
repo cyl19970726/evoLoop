@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { DocumentRevision } from "@evoloop/contracts";
 import { OriginalDocumentReader } from "../documents/OriginalDocumentReader";
 import { MarkdownBody } from "./MarkdownBody";
-export type Section = "overview" | "work" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations";
+export type Section = "overview" | "work" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string };
 
 
@@ -16,12 +16,13 @@ export function readRoute(): Route {
   const revision = new URLSearchParams(search).get("revision") || undefined;
   if (section === "tasks" && parts[3]) return { projectId: parts[1], section: "task", id: parts[3], revision };
   if (section === "documents" && parts[3]) return { projectId: parts[1], section: "document", id: parts[3], revision };
+  if (section === "evaluations") return { projectId: parts[1], section: "evaluations", id: parts[3], revision };
   if (["work", "knowledge", "documents", "inbox", "journey", "discussions", "collaboration", "runtime", "schedules", "roles", "repository", "operations"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action };
   return { projectId: parts[1], section: "overview" };
 }
 
 export function href(projectId: string, section: Section, id?: string, revision?: string): string {
-  const part = section === "task" ? `tasks/${id}` : section === "document" ? `documents/${id}` : section;
+  const part = section === "task" ? `tasks/${id}` : section === "document" ? `documents/${id}` : section === "evaluations" && id ? `evaluations/${id}` : section;
   return `#/p/${projectId}/${part}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`;
 }
 
@@ -60,7 +61,7 @@ export function taskListHref(projectId: string): string {
 function isProjectRoute(value: string | null, projectId: string): value is string {
   if (!value?.startsWith(`#/p/${projectId}/`)) return false;
   const path = value.split("?")[0].slice(`#/p/${projectId}/`.length);
-  return /^(work|inbox|documents|journey|discussions|runtime|schedules|roles|knowledge|repository|operations|collaboration|tasks\/[0-9a-f-]{36})$/i.test(path);
+  return /^(work|inbox|documents|journey|discussions|runtime|schedules|roles|knowledge|repository|operations|collaboration|evaluations(?:\/[0-9a-f-]{36})?|tasks\/[0-9a-f-]{36})$/i.test(path);
 }
 export function documentReturnHref(projectId: string): string {
   const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");

@@ -1,9 +1,12 @@
 import type { BasisRetention, BasisSet, DocumentBasis } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
-import type { Transaction } from "@evoloop/contracts/ports";
+import type { Reader } from "@evoloop/contracts/ports";
+
+type BasisReader = Pick<Reader, "getDocument" | "getDocumentRevision" | "hasDocumentAdoption" |
+  "listImpacts" | "listBasisDecisions">;
 
 /** New revisions carry only checkpoints still matching their fixed member and current published head. */
-export async function currentRetentions(tx: Pick<Transaction, "getDocument">, basis: BasisSet,
+export async function currentRetentions(tx: Pick<Reader, "getDocument">, basis: BasisSet,
   members: DocumentBasis[] = basis.members): Promise<BasisRetention[] | undefined> {
   const kept: BasisRetention[] = [];
   for (const retention of basis.retentions ?? []) {
@@ -16,7 +19,7 @@ export async function currentRetentions(tx: Pick<Transaction, "getDocument">, ba
 }
 
 /** A retained older basis remains valid only against the currently adopted replacement. */
-export async function validateDispatchBasis(tx: Transaction, taskId: string, basis: BasisSet): Promise<void> {
+export async function validateDispatchBasis(tx: BasisReader, taskId: string, basis: BasisSet): Promise<void> {
   const impacts = await tx.listImpacts(taskId);
   const decisions = await tx.listBasisDecisions(taskId);
   const retentions = basis.retentions ?? [];
