@@ -2,6 +2,7 @@ import { ReferencePanel } from "./references/ReferencePanel";
 import { CollaborationPanel } from "./collaboration/CollaborationPanel";
 import { DiscussionPanel } from "./discussions/DiscussionPanel";
 import { KnowledgePanel } from "./knowledge/KnowledgePanel";
+import { EvaluationPage } from "./evaluation/EvaluationPage";
 import { useEffect, useMemo, useRef, useState, useLayoutEffect, type FormEvent } from "react";
 import type {
   Operation, Principal, Project,
@@ -249,6 +250,11 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
     if (r.section === "knowledge") return <div className="content knowledge-page"><h1 tabIndex={-1}>知识空间</h1><KnowledgePanel context={context} refresh={refresh} /></div>;
+    if (r.section === "evaluations") {
+      const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+      return <EvaluationPage context={context} evaluationId={r.id} selectedRevision={r.revision} refresh={refresh}
+        taskId={query.get("taskId") ?? undefined} knowledgePageId={query.get("knowledgePageId") ?? undefined} />;
+    }
     if (r.section === "operations") return <div className="content"><h1 tabIndex={-1}>待核对操作</h1><p className="lede">结果未知时先查原操作 ID，确认前不要重复提交。</p>{operations}</div>;
     if (r.section === "repository") return <div className="content"><h1 tabIndex={-1}>仓库规范</h1><p className="lede">产品、架构与开发规范由仓库 docs 维护。它们与过程文档分别保存。</p><section className="panel"><h2>正式文档</h2><div className="repository-links"><a href="https://github.com/cyl19970726/evoLoop/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">贡献与变更入口 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/README.md" target="_blank" rel="noreferrer">文档目录 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/decisions.md" target="_blank" rel="noreferrer">当前决定 ↗</a></div><p className="muted">以上打开仓库现行文档；任务实际采用的固定 commit 与摘要在相应任务依据中查阅。</p></section><details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
     if (r.section === "overview") return <div className="content"><h1 tabIndex={-1}>总览</h1><p className="lede">总览将在工作、文档知识与协作路径经实际使用反馈后整理。</p><section className="panel"><h2>从当前工作开始</h2><p>先阅读真实对象与证据，再判断下一步。</p><div className="context-links"><a href={href(projectId, "work")}>查看任务</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "discussions")}>负责人讨论</a><a href={href(projectId, "knowledge")}>阅读知识</a></div></section></div>;

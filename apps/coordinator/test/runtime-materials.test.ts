@@ -44,6 +44,11 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     basis: { id: run.basisSetId, members: [{ documentId: contentDocumentId, revisionId: contentRevisionId }, { documentId, revisionId }] } };
   const current = { impacts: [], decisions: [] };
   const workflow = { getTaskRevision: async () => fixed, getTask: async () => current,
+    validateTaskRevisionBasis: async (_principal: Principal, selectedProjectId: string,
+      selectedTaskId: string, selectedRevisionId: string, selectedBasisId: string) => {
+      assert.equal(selectedProjectId, projectId); assert.equal(selectedTaskId, run.taskId);
+      assert.equal(selectedRevisionId, run.taskRevisionId); assert.equal(selectedBasisId, run.basisSetId);
+    },
     getDocument: async () => ({ document: { adoptedRevisionId: revisionId } }),
     getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
       requestedDocumentId === contentDocumentId ? primary : revision };
@@ -52,8 +57,8 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     readDocumentOriginal: async () => original,
   });
-  const readInput = (runner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<string> }).input.bind(runner);
-  const input = await readInput(principal, run);
+  const readInput = (runner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<{ input: string }> }).input.bind(runner);
+  const input = (await readInput(principal, run)).input;
   assert.match(input, /"format":"html"/);
   assert.match(input, /figure.svg/);
   assert.match(input, /Authorized task input:\nwork/);
@@ -66,5 +71,5 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     trusted: {} as never, principals: [principal], canWrite: () => true,
     allowedCwd: async () => true, hasGrant: () => true, readDocumentOriginal: async () => huge,
   });
-  await assert.rejects((largeRunner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<string> }).input(principal, run), /input limit/);
+  await assert.rejects((largeRunner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<{ input: string }> }).input(principal, run), /input limit/);
 });

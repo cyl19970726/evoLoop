@@ -1,5 +1,5 @@
 import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { EvaluationPacketBinding, RuntimeBinding, RuntimeTurn } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { event } from "./reserve.js";
@@ -85,6 +85,8 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "requested") throw new DomainError("RUN_NOT_REQUESTED", "turn start was already attempted");
+      if (current.evaluationBinding && !current.evaluationPacket)
+        throw new DomainError("EVALUATION_PACKET_MISSING", "a verified fixed-input packet is required before evaluation dispatch");
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
       if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "owned session is not ready");
       const task = required(await tx.getTask(current.taskId), "task");
@@ -100,6 +102,37 @@ export class RuntimeWorkflowService {
       const next = { ...current, state: "dispatching" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
       await this.emit(tx, runId, current.sessionId, "run.dispatching", "External turn/start may now begin", null, projectId);
+      return next;
+    });
+  }
+
+  /** Coordinator registers the already verified Blob-backed native input before any startTurn attempt. */
+  async attachEvaluationPacket(projectId: string, runId: string, expectedVersion: number,
+    packet: EvaluationPacketBinding): Promise<RuntimeRunRecord> {
+    if (!/^[a-f0-9]{64}$/.test(packet.contentHash) || !/^[a-f0-9]{64}$/.test(packet.manifestHash) ||
+      !packet.payloadRef || !packet.builderVersion || !packet.sources.length)
+      throw new DomainError("INVALID_EVALUATION_PACKET", "packet requires Blob identity, hashes, builder and fixed sources");
+    return this.deps.uow.transaction(projectId, async tx => {
+      const run = required(await tx.getRuntimeRun(runId), "runtime run");
+      if (!run.evaluationBinding || run.state !== "requested" || run.version !== expectedVersion || run.evaluationPacket)
+        throw new DomainError("EVALUATION_PACKET_CONFLICT", "packet can only be attached once to a requested evaluation Run", run.version);
+      const revision = required(await tx.getEvaluation(run.evaluationBinding.evaluationId, run.evaluationBinding.revisionId), "evaluation revision");
+      const condition = revision.definition.conditions.find(item => item.id === run.evaluationBinding?.conditionId);
+      if (!condition) throw new DomainError("EVALUATION_CONDITION_MISSING", "Run condition is unavailable");
+      const signature = revision.definition.case.sourceSignature;
+      const mandatory = [
+        ...signature.basis.map(item => ({ kind: "document" as const, id: item.documentId,
+          revision: item.revisionId, contentHash: item.contentHash })),
+        ...signature.external.map(item => ({ kind: item.kind, id: item.referenceId,
+          revision: item.revision, contentHash: item.contentHash })),
+      ];
+      const expected = [revision.definition.protocol, ...revision.definition.case.materials, ...mandatory, ...(condition.wikiRefs ?? [])];
+      const key = (item: typeof expected[number]) => `${item.kind}:${item.id}:${item.revision}:${item.contentHash}`;
+      if ([...new Set(expected.map(key))].sort().join("|") !== [...new Set(packet.sources.map(key))].sort().join("|") ||
+        packet.sources.length !== new Set(packet.sources.map(key)).size)
+        throw new DomainError("EVALUATION_PACKET_SOURCES", "packet manifest differs from frozen sources");
+      const next = { ...run, evaluationPacket: packet, version: run.version + 1, updatedAt: this.deps.clock.now() };
+      await tx.updateRuntimeRun(next, run.version);
       return next;
     });
   }

@@ -21,6 +21,8 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
+import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
+import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { loadIntegrations } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -54,8 +56,15 @@ if (blobRoot === process.cwd() || blobRoot.startsWith(process.cwd() + sep)) thro
 const blobsForPrincipal = (principal: Principal) => new LocalBlobStore(blobRoot,
   async payload => principal.projectIds.includes(payload.projectId) && principal.permissions.includes("read"),
   async payload => {
-    const record = await service.getRegisteredBlob(principal, payload.projectId, payload.id);
-    return !!record && record.projectId === payload.projectId && record.contentHash === payload.contentHash && record.size === payload.size && record.mediaType === payload.mediaType;
+    try {
+      const record = await service.getRegisteredBlob(principal, payload.projectId, payload.id);
+      if (record.projectId === payload.projectId && record.contentHash === payload.contentHash &&
+          record.size === payload.size && record.mediaType === payload.mediaType) return true;
+    } catch { /* Evaluation packets are registered on their immutable Run binding. */ }
+    if (payload.mediaType !== evaluationPacketMediaType) return false;
+    const runs = await service.listRuntimeRuns(principal, payload.projectId);
+    return runs.some(run => run.projectId === payload.projectId && run.evaluationPacket?.payloadRef === payload.id &&
+      run.evaluationPacket.contentHash === payload.contentHash);
   });
 const gitForPrincipal = (principal:Principal) => new GitDocumentSource(integrations.repositories, async ref => principal.projectIds.includes(ref.projectId) && principal.permissions.includes("read"));
 const knowledge = integrations.knowledge;
@@ -92,6 +101,11 @@ const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter(
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal}),
   readDocumentOriginal: (principal, revision) => readDocumentOriginal({ uow, blobsForPrincipal }, principal, revision),
+  readEvaluationMaterial: (principal, projectId, source) => readEvaluationMaterial(principal, projectId, source, {
+    workflow: service, gitForPrincipal, knowledgeForPrincipal: repositoryForPrincipal,
+    readDocumentOriginal: (reader, revision) => readDocumentOriginal({ uow, blobsForPrincipal }, reader, revision),
+  }),
+  blobsForPrincipal,
   principals: credentials, canWrite: lease.canWrite, allowedCwd: integrations.allowedRuntimeCwd,
   hasGrant: integrations.hasRuntimeGrant }) : null;
 if (runner) {
@@ -116,7 +130,8 @@ const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: 
 });
 await collaboration.start();
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
-  ...(runner ? { runtime: runner } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
+  ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
+    runner.readEvaluationPacket(principal, projectId, runId) } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
   allowedRuntimeCwds: integrations.allowedRuntimeCwds, hasRuntimeGrant: integrations.hasRuntimeGrant,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId)},

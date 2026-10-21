@@ -10,7 +10,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt"]);
+const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -44,7 +44,7 @@ function mode(args: Args, names: string[]): string | undefined {
 }
 const readModes = ["events", "history", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
 const listPaths: Record<string, string> = { tasks: "tasks", documents: "documents", goals: "goals", stages: "stages", discussions: "discussions", roles: "roles",
-  schedules: "schedules", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
+  schedules: "schedules", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
 const reads: Record<string, { path: string; modes: string[]; list?: boolean }> = {
   goal: { path: "goals", modes: ["revisions"] }, stage: { path: "stages", modes: ["revisions", "reviews"] },
   discussion: { path: "discussions", modes: ["events"] }, role: { path: "roles", modes: ["revisions", "reviews", "handoffs", "bindings"], list: true },
@@ -56,6 +56,8 @@ const help = {
   commands: ["id", "session", "project UUID", `list ${Object.keys(listPaths).join("|")} --project UUID [--limit 1..100] [--cursor CURSOR]`,
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID]",
     "document UUID --project UUID [--revision UUID]", "original DOCUMENT_UUID --project UUID --revision UUID [--out NEW_DIRECTORY]",
+    "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
+    "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
     `read ${Object.keys(reads).join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
@@ -134,16 +136,33 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "list") {
-    check(args, 2, ["project", "limit", "cursor"]);
+    check(args, 2, ["project", "limit", "cursor", "task", "knowledge"]);
     const entity = args.words[1]!, suffix = listPaths[entity]; if (!suffix) throw new UsageError("Unknown list; use help.");
     const query = new URLSearchParams();
     if (args.options.has("limit") || args.options.has("cursor")) {
-      if (!["tasks", "documents", "goals", "discussions", "roles", "knowledge", "candidates"].includes(entity)) throw new UsageError("This endpoint is not paginated; omit --limit/--cursor.");
+      if (!["tasks", "documents", "goals", "discussions", "roles", "evaluations", "knowledge", "candidates"].includes(entity)) throw new UsageError("This endpoint is not paginated; omit --limit/--cursor.");
       const limit = Number(option(args, "limit") ?? 50); if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new UsageError("--limit must be 1..100.");
       query.set("limit", String(limit)); const cursor = option(args, "cursor");
       if (cursor) query.set("cursor", ["knowledge", "candidates"].includes(entity) ? cursor : uuid(cursor, "Cursor"));
     }
+    if (args.options.has("task") || args.options.has("knowledge")) {
+      if (entity !== "evaluations") throw new UsageError("--task/--knowledge filters apply only to evaluations.");
+      if (args.options.has("task")) query.set("taskId", uuid(option(args, "task"), "Task"));
+      if (args.options.has("knowledge")) query.set("knowledgePageId", uuid(option(args, "knowledge"), "Knowledge page"));
+    }
     return client.get(`${prefix}/${suffix}${query.size ? `?${query}` : ""}`);
+  }
+  if (action === "evaluation") {
+    check(args, 2, ["project", "revision"]); const rev = revision();
+    return client.get(`${prefix}/evaluations/${uuid(args.words[1], "Evaluation")}${rev ? `?revision=${rev}` : ""}`);
+  }
+  if (action === "evaluation-source") {
+    check(args, 2, ["project"]);
+    return client.get(`${prefix}/evaluations/source-task/${uuid(args.words[1], "Source Task")}`);
+  }
+  if (action === "evaluation-packet") {
+    check(args, 2, ["project", "revision", "attempt"]);
+    return client.get(`${prefix}/evaluations/${uuid(args.words[1], "Evaluation")}/attempts/${uuid(option(args, "attempt"), "Attempt")}/packet?revision=${uuid(option(args, "revision"), "Evaluation revision")}`);
   }
   if (action === "task" || action === "document") {
     check(args, 2, action === "task" ? ["project", "revision", "history"] : ["project", "revision"]);

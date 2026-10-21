@@ -2,6 +2,7 @@ import type { AppliedResult, BasisSet, Command, Principal, RuntimeRecordEvent, R
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { validateDispatchBasis } from "./basis.js";
+import { canonicalEvaluationJson, nextAttemptOrdinal, taskSignature } from "../evaluation/index.js";
 
 type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
@@ -91,8 +92,29 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   }
   const previous = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "task revision");
   const originalBasis = required(previous.basisSetId ? await tx.getBasisSet(task.id, previous.id, previous.basisSetId) : null, "sealed basis");
+  const previousExternal = command.evaluation ? await tx.listTaskExternalSnapshot(task.id, previous.id) : [];
   await validateDispatchBasis(tx, task.id, originalBasis);
   if (await tx.getRuntimeRun(command.runId)) throw new DomainError("ALREADY_EXISTS", "runtime run exists");
+  let evaluation: Awaited<ReturnType<Transaction["getEvaluation"]>> = null;
+  if (command.evaluation) {
+    evaluation = required(await tx.getEvaluation(command.evaluation.evaluationId, command.evaluation.revisionId), "frozen evaluation");
+    const chosen = evaluation.definition.conditions.find(item => item.id === command.evaluation?.conditionId);
+    if (evaluation.definition.case.id !== command.evaluation.caseId || !chosen ||
+      evaluation.definition.case.taskId !== task.id || command.input !== evaluation.definition.case.commonInput)
+      throw new DomainError("EVALUATION_INPUT_MISMATCH", "Run must use the frozen case, condition and common instruction");
+    if (!session.model || session.model !== chosen.model || session.cwd !== chosen.environment.cwd ||
+      session.authorizationScope !== chosen.environment.authorizationScope ||
+      session.sandbox !== chosen.environment.sandbox || session.approvalPolicy !== chosen.environment.approvalPolicy)
+      throw new DomainError("EVALUATION_ENV_MISMATCH", "Session model or declared environment differs from the frozen condition");
+    if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id))
+      throw new DomainError("EVALUATION_SESSION_REUSED", "Each evaluation attempt requires a fresh unused owned session");
+    const source = evaluation.definition.case;
+    const actual = await taskSignature(tx, task);
+    if (canonicalEvaluationJson(actual) !== canonicalEvaluationJson(source.sourceSignature))
+      throw new DomainError("EVALUATION_SOURCE_CHANGED", "Task business signature changed since the case was frozen");
+    if (actual.external.some(item => item.kind === "wiki"))
+      throw new DomainError("WIKI_REQUIRED_BY_TASK", "Direct condition cannot remove a required Task Wiki source");
+  }
   // This is the dispatch freeze: the new active revision and sealed basis become the run's immutable keys.
   const revisionId = nextId();
   const basisSetId = nextId();
@@ -106,15 +128,36 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   };
   await tx.insertTaskRevision(revision);
   await tx.insertSealedBasisSet(basis);
+  if (command.evaluation) {
+    // PG's existing task_revision trigger snapshots current heads. Reject drift instead of inserting duplicates.
+    const actualExternal = await tx.listTaskExternalSnapshot(task.id, revisionId);
+    const keys = (items: typeof actualExternal) => items.map(item =>
+      `${item.slotId}:${item.version}:${item.id}:${item.kind}:${item.referenceId}:${item.revision}:${item.contentHash}`).sort().join("|");
+    if (keys(actualExternal) !== keys(previousExternal))
+      throw new DomainError("EVALUATION_EXTERNAL_CHANGED", "Current external heads differ from the frozen Task sources");
+  }
   await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId, state: "in_progress" }, task.version);
+  const attemptId = command.evaluation ? nextId() : null;
   const run: RuntimeRunRecord = {
     projectId: command.projectId, id: command.runId, taskId: task.id,
     taskRevisionId: revisionId, basisSetId, sessionId: session.id,
     operationId: command.operationId, input: command.input, inputHash: hash(command.input),
     state: "requested", version: 1, nativeTurnId: null, interruptRequested: false,
     resultSummary: null, actorId: principal.actorId, createdAt: now, updatedAt: now,
+    ...(command.evaluation ? { evaluationBinding: { ...command.evaluation,
+      sourceTaskRevisionId: evaluation!.definition.case.sourceTaskRevisionId,
+      actualTaskRevisionId: revisionId, attemptId: attemptId! }, evaluationPacket: null } : {}),
   };
   await tx.insertRuntimeRun(run);
+  if (command.evaluation) {
+    const attempts = await tx.listEvaluationAttempts(command.evaluation.evaluationId, command.evaluation.revisionId);
+    await tx.insertEvaluationAttempt({ projectId: command.projectId, id: attemptId!,
+      evaluationId: command.evaluation.evaluationId, revisionId: command.evaluation.revisionId,
+      caseId: command.evaluation.caseId, conditionId: command.evaluation.conditionId,
+      ordinal: nextAttemptOrdinal(attempts, command.evaluation.caseId, command.evaluation.conditionId),
+      runId: run.id, sourceTaskRevisionId: evaluation!.definition.case.sourceTaskRevisionId,
+      actualTaskRevisionId: revisionId, sessionId: session.id, actorId: principal.actorId, createdAt: now });
+  }
   await tx.appendRuntimeEvent(event(command.projectId, nextId(), run.id, session.id, "run.requested", "Run reserved; no external turn started", null, principal.actorId, now));
   return { result: applied(command.operationId, run.id, 1, revision.id), effects: [
     { kind: "task", entityId: task.id, version: task.version + 1 },

@@ -8,6 +8,7 @@ import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
 import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
+import { PgEvaluationStore } from "./evaluation.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
 import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
@@ -84,6 +85,7 @@ class PgReader implements Reader {
   protected readonly references: PgReferenceStore;
   protected readonly payloads: PgDocumentPayloadStore;
   protected readonly discussions: PgDiscussionQueries;
+  protected readonly evaluations: PgEvaluationStore;
   constructor(protected readonly client: PoolClient, protected readonly projectId: string) {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
@@ -91,7 +93,14 @@ class PgReader implements Reader {
     this.scheduling = new PgSchedulingQueries(client, projectId);
     this.payloads = new PgDocumentPayloadStore(client, projectId);
     this.discussions = new PgDiscussionQueries(client, projectId);
+    this.evaluations = new PgEvaluationStore(client, projectId);
   }
+  getEvaluation(id: string, revisionId?: string) { return this.evaluations.getEvaluation(id, revisionId); }
+  listEvaluations(limit: number, cursor?: string, taskId?: string, knowledgePageId?: string) { return this.evaluations.listEvaluations(limit, cursor, taskId, knowledgePageId); }
+  listEvaluationRevisions(id: string) { return this.evaluations.listEvaluationRevisions(id); }
+  listEvaluationAttempts(id: string, revisionId: string) { return this.evaluations.listEvaluationAttempts(id, revisionId); }
+  listEvaluationAssessments(id: string, revisionId: string) { return this.evaluations.listEvaluationAssessments(id, revisionId); }
+  listEvaluationConclusions(id: string, revisionId: string) { return this.evaluations.listEvaluationConclusions(id, revisionId); }
   getDiscussion(id: string) { return this.discussions.getDiscussion(id); }
   listDiscussions(limit: number, cursor?: string) { return this.discussions.listDiscussions(limit, cursor); }
   listDiscussionEvents(id: string) { return this.discussions.listDiscussionEvents(id); }
@@ -236,6 +245,10 @@ class PgReader implements Reader {
 }
 
 class PgTransaction extends PgReader implements Transaction {
+  insertEvaluationRevision(value: import("@evoloop/contracts/evaluation").EvaluationRevision) { return this.evaluations.insertEvaluationRevision(value); }
+  insertEvaluationAttempt(value: import("@evoloop/contracts/evaluation").EvaluationAttempt) { return this.evaluations.insertEvaluationAttempt(value); }
+  insertEvaluationAssessment(value: import("@evoloop/contracts/evaluation").EvaluationAssessment) { return this.evaluations.insertEvaluationAssessment(value); }
+  insertEvaluationConclusion(value: import("@evoloop/contracts/evaluation").EvaluationConclusion) { return this.evaluations.insertEvaluationConclusion(value); }
   insertDiscussion(value: import("@evoloop/contracts").DiscussionRecord, event: import("@evoloop/contracts").DiscussionEvent) { return this.discussions.insertDiscussion(value, event); }
   updateDiscussion(value: import("@evoloop/contracts").DiscussionRecord, expectedVersion: number, event: import("@evoloop/contracts").DiscussionEvent) { return this.discussions.updateDiscussion(value, expectedVersion, event); }
   insertFormalSourceDecision(value:FormalSourceDecision){return this.references.insertFormalSourceDecision(value);}

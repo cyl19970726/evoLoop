@@ -128,7 +128,9 @@ erDiagram
 
 图例：黄＝PG 业务对象；紫＝外部知识引用；青＝跨对象关系及平台绑定。关系图省略两端同样受约束的复合 FK；每条关系两端均须存在且同 project。固定版本绑定不修改导航对象身份。ExternalBinding 首期只接 Task，其他类型启用前加对应有外键的列及测试。
 
-分工与认知讨论页的结果也需要稳定定位，但可在后续切片落地，不先做通用聊天数据库：
+014 评价切片新增 `evaluation_head`、`evaluation_revision`、`evaluation_attempt`、`evaluation_assessment`、`evaluation_conclusion`：head 只指向当前定义，四种事实按项目及评价修订保存并追加。`runtime_run` 另存评价绑定与输入包引用；attempt 以同项目 FK 约束真实 Run、Session、来源 TaskRevision 与执行 TaskRevision，assessment 约束 Delivery/Observation 属于该次执行，conclusion 约束所选判定属于固定修订。业务层还须核对全部尝试、当前更正链、同项目后续 Task/TaskRevision 引用和未知成本；首片结论不能记完全可比。协议、来源与 Wiki 只存固定引用和 hash；输入包及较大产物在仓库外受控 Blob，活 Wiki 正文不进 PG 评价表或正式 Git 文档。014 的定向真实 PG 回归已覆盖派生 Run/Attempt 及外部来源变化拒绝；完整入口集成与真实两组业务运行尚未完成，不能据表定义声称已完成实际评价。
+
+分工与认知讨论页的其他结果也需要稳定定位，但可在后续切片落地，不先做通用聊天数据库：
 
 | 后续表组 | 记录什么 | 固定引用与权威边界 |
 | --- | --- | --- |
@@ -136,7 +138,6 @@ erDiagram
 | `stage_review` / `review_decision` | 阶段目标、读入 Task/过程 Document/GitSourceRef/KnowledgeRef 固定版本、消费者实际使用观察、下一步选择、决定者、时间、被取代决定 | 每次决定是不可变记录，复合 FK 到本项目固定 TaskRevision/DocumentRevision/GitSourceRef；知识端只存固定外部 revision 引用；新判断追加而非改旧结论 |
 | `impact_review` | 来源撤回、过程文档改版、GitSourceRef 不可达或知识失效触发的影响对象/基线、责任者、待复核/已处理及决定 | 复合 FK 到本地 Task、过程 Document、GitSourceRef、Relation 的固定来源及可用的 KnowledgeRefRevision；外部知识内部依赖仍由 KnowledgeRepository 查询 |
 | `knowledge_contribution` | 贡献者、输入来源固定版本、提交操作、外部 candidate ID/revision、回读状态和审核结果引用 | 只存外置候选的身份与回执，绝不复制候选或 Wiki 正文；同一来源/操作可查重复与撤回影响 |
-| `evaluation` / `evaluation_case` / `consumer_outcome` | 评价的冻结协议/条件与输入引用；各 case 的 TaskRevision、Run、首次产物/重试、独立判断、成本和缺项 | 项目内复合 FK 指向固定 Task/Run/Review，协议与原件保留受控引用；条件修改产生新修订，结果追加。采用、产物合格、真人效果分列，未知不填零；大原件不复制进这些表 |
 
 这些记录为讨论页提供查询与交接锚点，不把聊天文本或通知送达当作判断已被消费的证据。关联到外部 Git/Wiki 的字段只能保存经权限检查的固定引用；没有外部修订可核验时显示缺项，而不是伪造本库 FK。
 
