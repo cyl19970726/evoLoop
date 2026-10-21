@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clearKnowledgeReturnsOnLogin, knowledgeReturnHref } from "../src/ui/returnRoute.ts";
+import { clearKnowledgeReturnsOnLogin, knowledgeReturnHref, rememberKnowledgeSource } from "../src/ui/returnRoute.ts";
 
 const project = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
@@ -35,4 +35,29 @@ test("actor B's verified login removes actor A's same-project return without tou
   assert.equal(knowledgeReturnHref(project, session), null);
   assert.equal(entries.get(`evoloop:knowledge-return:${other}`), `#/p/${other}/work`);
   assert.equal(entries.get("evoloop:operation-receipts"), "unconfirmed-operation");
+});
+
+test("fixed evaluation → Wiki → fixed source Document → Wiki preserves the evaluation return", () => {
+  const entries = new Map<string, string>();
+  const session = { getItem: (name: string) => entries.get(name) ?? null,
+    setItem: (name: string, value: string) => { entries.set(name, value); },
+    removeItem: (name: string) => { entries.delete(name); } };
+  const source = `#/p/${project}/evaluations/${evaluation}?revision=${revision}`;
+  const wiki = `#/p/${project}/knowledge?knowledgeId=${evaluation}&knowledgeRevision=${revision}`;
+  const document = `#/p/${project}/documents/${evaluation}?revision=${revision}&return=${encodeURIComponent(wiki)}`;
+  rememberKnowledgeSource(project, source, wiki, session);
+  entries.set(`evoloop:document-return:${project}`, wiki);
+  rememberKnowledgeSource(project, document, wiki, session);
+  assert.equal(knowledgeReturnHref(project, session), source);
+
+  // A later ordinary Document → Knowledge entry has no matching nested return.
+  rememberKnowledgeSource(project, `#/p/${project}/documents/${evaluation}?revision=${revision}`, wiki, session);
+  assert.equal(knowledgeReturnHref(project, session), null);
+  rememberKnowledgeSource(project, `#/p/${project}/tasks/${evaluation}?revision=${revision}`, wiki, session);
+  assert.equal(knowledgeReturnHref(project, session), `#/p/${project}/tasks/${evaluation}?revision=${revision}`);
+
+  // A forged or stale explicit return without a matching prior Wiki entry must not retain this source.
+  entries.set(`evoloop:document-return:${project}`, `#/p/${project}/knowledge`);
+  rememberKnowledgeSource(project, document, wiki, session);
+  assert.equal(knowledgeReturnHref(project, session), null);
 });
