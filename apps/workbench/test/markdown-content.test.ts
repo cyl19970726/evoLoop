@@ -97,3 +97,14 @@ test("default shared Markdown rendering keeps title headings", () => {
   const html = splitMarkdown("# 外层标题").map(part => part.kind === "html" ? part.value : "").join("");
   assert.match(html, /<h1>外层标题<\/h1>/);
 });
+
+test("candidate Markdown preview keeps sections, tables and lists after title deduplication", () => {
+  const title = "固定知识标题";
+  const body = `# ${title}\n\n## 验收范围\n\n| 项目 | 状态 |\n| --- | --- |\n| 来源 | 固定 |\n\n- 保留的候选事实`;
+  const rendered = splitMarkdown(body, { omitLeadingTitle: title })
+    .map(part => part.kind === "html" ? part.value : "").join("");
+  assert.doesNotMatch(rendered, /<h1>固定知识标题<\/h1>/);
+  assert.match(rendered, /<h2>验收范围<\/h2>/);
+  assert.match(rendered, /<table>[\s\S]*<td>固定<\/td>[\s\S]*<\/table>/);
+  assert.match(rendered, /<li>保留的候选事实<\/li>/);
+});
