@@ -53,6 +53,7 @@ test("native ingestion persists intent, polls tasks, and searches only permitted
   const parent = await mkdtemp(join(tmpdir(), "evoloop-native-wiki-"));
   const options = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/`, manifestRoot: join(parent, "manifest"),
     maintainerId: "maintainer", mayRead: async () => !denied, mayIngest: async () => !leaseDenied,
+    mayObserveIngestion: async () => !leaseDenied,
     mayPropose: async () => true, mayReview: async () => true, mayPublish: async () => true, mayReconcile: async () => true };
   const repo = new OpenVikingKnowledgeRepository(options);
   const ingestion: KnowledgeIngestRequest = { projectId: "p1", operationId: "ingest1", actorId: "writer", source, title: "Source", body: "source body" };
@@ -61,6 +62,10 @@ test("native ingestion persists intent, polls tasks, and searches only permitted
     const restarted = new OpenVikingKnowledgeRepository(options);
     assert.equal((await restarted.getIngestion("p1", "ingest1"))?.status, "submitted");
     taskStatus = "completed";
+    const stoppedObserver = new OpenVikingKnowledgeRepository({ ...options, mayObserveIngestion: async () => false });
+    assert.equal((await stoppedObserver.getIngestion("p1", "ingest1"))?.status, "submitted", "lease loss leaves durable state unchanged");
+    const otherReader = new OpenVikingKnowledgeRepository({ ...options, mayIngest: async () => false });
+    assert.equal((await otherReader.getIngestion("p1", "ingest1"))?.status, "completed", "status observation survives loss of original writer authority");
     assert.equal((await restarted.getIngestion("p1", "ingest1"))?.status, "completed");
     assert.equal((await restarted.getIngestion("p1", "ingest1"))?.indexStatus, "unverified");
     const target = String((calls.find((item) => item.path === "/api/v1/resources")?.body as { to: string }).to);

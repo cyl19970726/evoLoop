@@ -36,6 +36,8 @@ export interface OpenVikingOptions {
   mayPublish: (projectId: string, actorId: string) => Promise<boolean>;
   mayReconcile: (projectId: string, actorId: string) => Promise<boolean>;
   mayIngest?: (projectId: string, actorId: string) => Promise<boolean>;
+  /** Observing an existing task is separate from authority to start an ingestion. */
+  mayObserveIngestion?: (projectId: string) => Promise<boolean>;
 }
 
 /** OpenViking holds every candidate and published body; an external manifest owns immutable identities and relations. */
@@ -189,11 +191,11 @@ export class OpenVikingKnowledgeRepository implements KnowledgeRepository {
       if (!(await this.options.mayRead(projectId, record.ingestion.source.sourceKey))) throw new Error("source status permission denied");
       if (!record.ingestion.taskId || record.ingestion.status === "completed" || record.ingestion.status === "failed") return record.ingestion;
       // A lost writer lease may still read the saved status, but cannot advance the durable record.
-      if (!this.options.mayIngest || !(await this.options.mayIngest(projectId, record.ingestion.actorId))) return record.ingestion;
+      if (!await this.options.mayObserveIngestion?.(projectId)) return record.ingestion;
       try {
         const task = await this.request("GET", `/api/v1/tasks/${encodeURIComponent(record.ingestion.taskId)}`) as { status?: unknown; task_id?: unknown } | null;
         if (!task || task.task_id !== record.ingestion.taskId) return record.ingestion;
-        if (!(await this.options.mayIngest(projectId, record.ingestion.actorId))) return record.ingestion;
+        if (!await this.options.mayObserveIngestion?.(projectId)) return record.ingestion;
         if (task.status === "completed") record.ingestion.status = "completed";
         else if (task.status === "failed" || task.status === "cancelled") record.ingestion.status = "failed";
         else if (task.status !== "pending" && task.status !== "running" && task.status !== "cancelling") return record.ingestion;
