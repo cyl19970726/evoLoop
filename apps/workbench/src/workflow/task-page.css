@@ -41,6 +41,19 @@
 .task-evidence { margin-top: 8px; }
 .task-use-evidence { border-top: 1px solid #e4e8f0; margin-top: 14px; padding-top: 14px; }
 .task-use-evidence p { margin: 7px 0 0; }
+.delivery-artifact { min-width: 0; margin: 12px 0; padding: 13px 14px; border: 1px solid #dfe5f2; border-radius: 8px; background: #f8faff; }
+.delivery-artifact-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; min-width: 0; }
+.delivery-artifact-link { min-width: 0; max-width: 100%; font-weight: 700; font-size: 1.02rem; line-height: 1.5; overflow-wrap: anywhere; }
+.delivery-artifact-version { flex: 0 0 auto; color: #596783; font-size: .86rem; }
+.delivery-artifact .task-fineprint { margin: 5px 0 0; }
+.delivery-artifact-check { margin-top: 10px; font-size: .84rem; color: #586781; }
+.delivery-artifact-check summary { cursor: pointer; color: #315ec7; }
+.delivery-artifact-check dl { display: grid; gap: 7px; margin: 10px 0 0; }
+.delivery-artifact-check dl div { min-width: 0; }
+.delivery-artifact-check dt { font-weight: 650; }
+.delivery-artifact-check dd { margin: 1px 0 0; overflow-wrap: anywhere; }
+.delivery-artifact-check code { white-space: normal; overflow-wrap: anywhere; }
+.task-delivery-record { min-width: 0; }
 .task-page .review-layout { grid-template-columns: minmax(0, 1fr); }
 .task-page .compare { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .task-review-disclosure { border-top: 1px solid #e0e5f0; padding-top: 16px; }
