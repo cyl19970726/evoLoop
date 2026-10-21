@@ -43,12 +43,14 @@ export function DeliveryArtifact({ delivery, projectId, name }: { delivery: Deli
     ? <a className="delivery-artifact-link" href={target.href} target={target.href.startsWith("#") ? undefined : "_blank"} rel={target.href.startsWith("#") ? undefined : "noopener noreferrer"}>{label} ↗</a>
     : <strong className="delivery-artifact-link">{label}</strong>;
   return <div className="delivery-artifact">
-    <div className="delivery-artifact-main">{link}<span className="delivery-artifact-version">固定版 <code title={delivery.artifactRevision}>{delivery.artifactRevision.slice(0, 8)}</code></span></div>
+    <div className="delivery-artifact-main">{link}{target.kind !== "fallback" && <span className="delivery-artifact-version">{target.kind === "knowledge" ? "知识固定修订" : target.kind === "evaluation" ? "评价固定定义" : "文档固定修订"} <code title={target.revisionId}>{target.revisionId.slice(0, 8)}</code></span>}</div>
+    {(target.kind === "knowledge" || target.kind === "evaluation") && <p className="task-fineprint">入口指向固定修订；交付产物声明版本另见下方核对信息。</p>}
     {target.kind === "document" && name?.title && <p className="task-fineprint">文档现名称；入口固定到本次交付的原修订。</p>}
     {target.kind === "document" && name?.checked && !name.title && <p className="task-fineprint">标题或原件校验未通过；请核对下方原始信息。</p>}
     <details className="delivery-artifact-check"><summary>核对完整位置、修订与哈希</summary>
       <dl><div><dt>原始位置</dt><dd className="break-anywhere"><code>{delivery.artifactRef}</code></dd></div>
-      <div><dt>固定修订</dt><dd className="break-anywhere"><code>{delivery.artifactRevision}</code></dd></div>
+      {target.kind !== "fallback" && <div><dt>入口固定修订</dt><dd className="break-anywhere"><code>{target.revisionId}</code></dd></div>}
+      <div><dt>交付产物声明版本</dt><dd className="break-anywhere"><code>{delivery.artifactRevision}</code></dd></div>
       <div><dt>SHA-256</dt><dd className="break-anywhere"><code>{delivery.contentHash}</code></dd></div></dl>
     </details>
   </div>;
