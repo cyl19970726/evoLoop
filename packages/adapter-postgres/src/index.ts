@@ -13,7 +13,7 @@ import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
 import type {
-  BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, Impact,
+  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, Impact,
   Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
@@ -151,6 +151,11 @@ class PgReader implements Reader {
     const r = await this.client.query("SELECT * FROM document_revision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3", [this.projectId, documentId, revisionId]);
     return r.rows[0] ? rowDocumentRevision(r.rows[0]) : null;
   }
+  async hasDocumentAdoption(documentId: string, revisionId: string): Promise<boolean> {
+    const r = await this.client.query("SELECT EXISTS(SELECT 1 FROM document_decision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3) AS adopted",
+      [this.projectId, documentId, revisionId]);
+    return r.rows[0]?.adopted === true;
+  }
   async listDocuments(limit: number, cursor?: string): Promise<Page<Document>> {
     pageLimit(limit);
     const r = await this.client.query(`SELECT d.*, t.task_id AS primary_task_id FROM process_document d
@@ -181,8 +186,15 @@ class PgReader implements Reader {
   async getBasisSet(taskId: string, taskRevisionId: string, basisSetId: string): Promise<BasisSet | null> {
     const found = await this.client.query("SELECT * FROM basis_set WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND basis_set_id=$4 AND sealed", [this.projectId, taskId, taskRevisionId, basisSetId]);
     if (!found.rows[0]) return null;
+    const retentions: unknown = found.rows[0].retentions;
+    if (!Array.isArray(retentions) || retentions.some(item => !item || typeof item !== "object" ||
+      ["documentId", "revisionId", "observedAdoptedRevisionId", "reason", "actorId", "createdAt"]
+        .some(key => typeof item[key] !== "string" || !item[key])))
+      throw new DomainError("INVALID_BASIS", "Sealed basis has malformed retention evidence");
     const members = await this.client.query("SELECT document_id, document_revision_id FROM basis_member WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND basis_set_id=$4 ORDER BY document_id", [this.projectId, taskId, taskRevisionId, basisSetId]);
-    return { projectId: this.projectId, taskId, taskRevisionId, id: basisSetId, sealed: true, members: members.rows.map((m) => ({ documentId: m.document_id, revisionId: m.document_revision_id })) };
+    return { projectId: this.projectId, taskId, taskRevisionId, id: basisSetId, sealed: true,
+      members: members.rows.map((m) => ({ documentId: m.document_id, revisionId: m.document_revision_id })),
+      ...(retentions.length ? { retentions: retentions as BasisRetention[] } : {}) };
   }
   async listTasks(limit: number, cursor?: string): Promise<Page<Task>> {
     pageLimit(limit);
@@ -311,7 +323,8 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async insertSealedBasisSet(b: BasisSet): Promise<void> {
     this.assertScope(b.projectId);
-    await this.client.query("INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed) VALUES($1,$2,$3,$4,false)", [this.projectId, b.taskId, b.taskRevisionId, b.id]);
+    await this.client.query("INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed,retentions) VALUES($1,$2,$3,$4,false,$5::jsonb)",
+      [this.projectId, b.taskId, b.taskRevisionId, b.id, JSON.stringify(b.retentions ?? [])]);
     for (const member of b.members) {
       await this.client.query("INSERT INTO basis_member(project_id,task_id,task_revision_id,basis_set_id,document_id,document_revision_id) VALUES($1,$2,$3,$4,$5,$6)", [this.projectId, b.taskId, b.taskRevisionId, b.id, member.documentId, member.revisionId]);
     }
