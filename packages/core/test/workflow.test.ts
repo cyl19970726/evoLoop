@@ -125,6 +125,8 @@ class MemoryUow implements UnitOfWork {
         const found = state.documentRevisions[revision];
         return found?.documentId === document ? found : null;
       },
+      hasDocumentAdoption: async (document, revision) => state.documentDecisions.some(
+        decision => decision.documentId === document && decision.revisionId === revision),
       listDocuments: async (limit, cursor) => {
         const values = Object.values(state.documents).sort((a, b) => a.id.localeCompare(b.id));
         const start = cursor ? Math.max(0, values.findIndex((item) => item.id === cursor) + 1) : 0;
@@ -558,7 +560,14 @@ test("candidate revision, duplicate operation and UTF-8 byte cap are enforced wi
   const outboxBefore = f.uow.state.outbox.length;
   const invalid = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: proposal,
     expectedVersion: 1, basis: [{ documentId, revisionId: candidate.status === "applied" ? candidate.revisionId! : "" }], reason: "Try" });
-  assert.equal(invalid.status === "rejected" ? invalid.code : "applied", "BASIS_CHANGED");
+  assert.equal(invalid.status === "rejected" ? invalid.code : "applied", "BASIS_UNAVAILABLE");
+  const falseRetention = await f.service.execute(principal, { type: "task.start", projectId,
+    operationId: f.operation(), taskId: proposal, expectedVersion: 1,
+    basis: [{ documentId, revisionId: candidate.status === "applied" ? candidate.revisionId! : "" }],
+    retentions: [{ documentId, revisionId: candidate.status === "applied" ? candidate.revisionId! : "",
+      observedAdoptedRevisionId: before.adopted!.id, reason: "Try treating a draft as an old approved source" }],
+    reason: "Draft must not be retained" });
+  assert.equal(falseRetention.status === "rejected" ? falseRetention.code : "applied", "BASIS_UNAVAILABLE");
   assert.equal((await f.service.getTask(principal, projectId, proposal)).task.state, "todo");
   assert.equal(f.uow.state.outbox.length, outboxBefore);
   const overBytes = "好".repeat(23000);

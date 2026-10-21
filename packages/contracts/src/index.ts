@@ -83,6 +83,11 @@ export interface TaskRevision {
 export interface BasisSet {
   projectId: string; taskId: string; taskRevisionId: string; id: string;
   members: DocumentBasis[]; sealed: true;
+  retentions?: BasisRetention[];
+}
+export interface BasisRetention {
+  documentId: string; revisionId: string; observedAdoptedRevisionId: string;
+  reason: string; actorId: string; createdAt: string;
 }
 export interface TaskDocumentLink {
   projectId: string; id: string; taskId: string; documentId: string; actorId: string; createdAt: string;

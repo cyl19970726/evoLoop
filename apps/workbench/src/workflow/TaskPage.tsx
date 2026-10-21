@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useId, type FormEvent } from "react";
 import type { BasisSet, Command, DocumentDetail, DocumentRevision, Impact, TaskDetail, TaskRevision } from "@evoloop/contracts";
-import { api, ApiError, errorText, isUnconfirmed, safeArtifactHref } from "../api";
+import { api, ApiError, errorText, isUnconfirmed } from "../api";
 import { Alert, ShortId, RevisionBody, date, href, taskListHref } from "../ui/shared";
 import type { MutationContext } from "./ActionForm";
 import { RuntimePanel } from "../runtime/RuntimePanel";
@@ -9,6 +9,7 @@ import { TaskWorkflow } from "./TaskWorkflow";
 import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
+import { DeliveryArtifact, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -18,13 +19,16 @@ const taskTabs: { id: TaskTab; label: string }[] = [
   { id: "history", label: "历史" }, { id: "actions", label: "任务操作" },
 ];
 const useResults = { used: "已使用", failed: "使用失败", notUsed: "尚未使用" } as const;
+const emptyDeliveries: NonNullable<TaskDetail["deliveries"]> = [];
 function Basis({ basis, projectId, documents }: { basis: BasisSet | null; projectId: string; documents?: Record<string, DocumentDetail> }) {
   if (!basis) return <p className="empty">这个任务修订没有固定依据集合。</p>;
   return <ul className="basis-list task-basis-list">{basis.members.map(member => {
     const document = documents?.[member.documentId];
+    const retention = basis.retentions?.find(item => item.documentId === member.documentId && item.revisionId === member.revisionId);
     return <li key={`${member.documentId}:${member.revisionId}`}>
       <a href={href(projectId, "document", member.documentId, member.revisionId)}>{document?.document.title || <>过程文档 <ShortId value={member.documentId} /></>} · 固定修订 <ShortId value={member.revisionId} /> ↗</a>
       {document && <span className="task-basis-status">{document.document.adoptedRevisionId === member.revisionId ? "文档现发布此版" : document.document.adoptedRevisionId ? <>文档现发布 <ShortId value={document.document.adoptedRevisionId} />；本任务仍固定此版</> : "文档当前无发布修订；本任务仍固定此版"}</span>}
+      {retention && <details><summary>开始时明确保留旧版的审阅记录</summary><p>{retention.reason}</p><p>当时核对的发布版 <ShortId value={retention.observedAdoptedRevisionId} /> · {retention.actorId} · {date(retention.createdAt)}</p><p className="muted">此决定只覆盖当时观察的发布版；来源再改版仍需复核。</p></details>}
     </li>;
   })}</ul>;
 }
@@ -164,6 +168,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     else { ++historyRequestRef.current; setHistorical(null); }
     if (selectedRevision) setTab("history");
   }, [selectedRevision, token, projectId, id]);
+  const deliveryNames = useDeliveryNames(token, projectId, detail?.deliveries ?? emptyDeliveries);
   if (error && !detail) return <div className="content"><Alert kind="error">{error}</Alert></div>;
   if (!detail || detail.task.id !== id) return <div className="content"><p>正在读取任务…</p></div>;
   const taskContext = { ...context, draftScope: `task:${id}`, draftBaseline: detail.revision.id };
@@ -194,7 +199,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <section className="panel task-focus"><h2>验收条件</h2><p>{detail.task.acceptance}</p><p className="task-fineprint">任务状态、技术检查和实际使用分别记录；关闭决定见交付记录。</p></section>
         <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => setTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
         <section className="panel task-focus task-delivery-summary"><div className="panel-head"><h2>最新交付与使用</h2><button type="button" className="quiet" onClick={() => setTab("delivery")}>查看完整记录 →</button></div>
-          {!latest ? <p className="empty">尚无交付记录；执行状态不能代替交付。</p> : <><p><strong>技术检查：{latest.technicalResult === "passed" ? "通过" : "失败"}</strong></p><p className="task-use-summary"><strong>实际使用：</strong>{latestObservations.length ? latestObservations.map(o => `${o.observerKind === "human" ? "人类" : "Agent"} · ${useResults[o.result]}`).join("；") : "尚无本次交付的使用记录"}</p><details className="task-summary-evidence"><summary>阅读技术检查证据</summary><p className="task-evidence">{latest.technicalEvidence}</p></details><p className="task-fineprint break-anywhere">产物：{safeArtifactHref(latest.artifactRef, projectId) ? <a href={safeArtifactHref(latest.artifactRef, projectId)!} target={(safeArtifactHref(latest.artifactRef, projectId) ?? "").startsWith("#") ? undefined : "_blank"} rel={(safeArtifactHref(latest.artifactRef, projectId) ?? "").startsWith("#") ? undefined : "noopener noreferrer"}>{latest.artifactRef}</a> : latest.artifactRef}<br />固定修订：{latest.artifactRevision}<br />SHA-256 {latest.contentHash}</p>
+          {!latest ? <p className="empty">尚无交付记录；执行状态不能代替交付。</p> : <><DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /><p><strong>技术检查：{latest.technicalResult === "passed" ? "通过" : "失败"}</strong></p><p className="task-use-summary"><strong>实际使用：</strong>{latestObservations.length ? latestObservations.map(o => `${o.observerKind === "human" ? "人类" : "Agent"} · ${useResults[o.result]}`).join("；") : "尚无本次交付的使用记录"}</p><details className="task-summary-evidence"><summary>阅读技术检查证据</summary><p className="task-evidence">{latest.technicalEvidence}</p></details>
             <div className="task-use-evidence"><strong>本次交付的实际使用</strong>{latestObservations.length ? latestObservations.map(observation => <p key={observation.id}>{observation.observer} · {useResults[observation.result]}：{observation.evidence}</p>) : <p>尚无本次交付的使用观察；旧交付的使用记录不沿用。</p>}</div></>}
         </section>
       </div>
@@ -208,7 +213,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       </section>
     </section>
     <section role="tabpanel" id={panelId("delivery")} aria-labelledby={tabId("delivery")} hidden={tab !== "delivery"}>
-      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} mode="delivery" />
+      <DeliveryPanel detail={detail} projectId={projectId} names={deliveryNames} onChanged={onChanged} />
     </section>
     <section role="tabpanel" id={panelId("runtime")} aria-labelledby={tabId("runtime")} hidden={tab !== "runtime"}>
       <RuntimePanel context={context} refresh={refresh} task={detail.task} />
@@ -229,7 +234,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </section>
     </section>
     <section role="tabpanel" id={panelId("actions")} aria-labelledby={tabId("actions")} hidden={tab !== "actions"}>
-      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} mode="actions" />
+      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} documents={basisDocuments} mode="actions" />
     </section>
   </div>;
 }

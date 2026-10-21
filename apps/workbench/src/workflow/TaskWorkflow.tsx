@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { TaskDetail, TaskRevision, TaskRevisionState } from "@evoloop/contracts";
+import type { DocumentDetail, TaskDetail, TaskRevision, TaskRevisionState } from "@evoloop/contracts";
 import { api, safeArtifactHref } from "../api";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "./ActionForm";
 import { RevisionHistory } from "./RevisionHistory";
@@ -11,10 +11,20 @@ export const taskStateLabel: Record<TaskRevisionState, string> = {
 };
 export const taskKindLabel = { implementation: "实施", research: "调研", validation: "验证" } as const;
 
-export function TaskWorkflow({ context, detail, mode = "actions" }: { context: MutationContext; detail: TaskDetail; mode?: "actions" | "delivery" | "history" }) {
+export function TaskWorkflow({ context, detail, documents, mode = "actions" }: { context: MutationContext; detail: TaskDetail; documents?: Record<string, DocumentDetail>; mode?: "actions" | "delivery" | "history" }) {
   const task = detail.task;
   const [revisions, setRevisions] = useState<TaskRevision[]>([]);
   const base = { taskId: task.id, expectedVersion: task.version };
+  const olderSources = (detail.basis?.members ?? []).flatMap(member => {
+    const document = documents?.[member.documentId]?.document;
+    const checkpoint = detail.basis?.retentions?.some(item => item.documentId === member.documentId
+      && item.revisionId === member.revisionId && item.observedAdoptedRevisionId === document?.adoptedRevisionId);
+    const reviewedImpact = detail.impacts.some(impact => impact.documentId === member.documentId && impact.fromRevisionId === member.revisionId
+      && impact.toRevisionId === document?.adoptedRevisionId && impact.state === "resolved"
+      && detail.decisions.some(decision => decision.impactId === impact.id && decision.decision === "retain"));
+    return document?.adoptedRevisionId && document.adoptedRevisionId !== member.revisionId && !checkpoint && !reviewedImpact
+      ? [{ ...member, title: document.title, observedAdoptedRevisionId: document.adoptedRevisionId }] : [];
+  });
   const deliveries = detail.deliveries ?? [];
   const latest = deliveries.at(-1);
   const observedUse = !detail.proposal?.useRequired || (detail.observations ?? []).filter(item => item.deliveryId === latest?.id && item.observer === detail.proposal?.consumer).at(-1)?.result === "used";
@@ -62,8 +72,14 @@ export function TaskWorkflow({ context, detail, mode = "actions" }: { context: M
         ...(detail.proposal.evidence ? { evidence: detail.proposal.evidence } : {}),
         ...(detail.proposal.stopCondition ? { stopCondition: detail.proposal.stopCondition } : {}),
       } : {}), reason: v.reason })} />}
-    {task.state === "todo" && <><ActionForm context={context} review title="开始任务并固定依据" fields={[reasonField]}
-      build={v => ({ ...base, type: "task.start", reason: v.reason })} /><Notice>任务正文的固定修订由服务自动加入依据，无需预建独立文档；额外来源可由 Agent 按固定修订提交。</Notice></>}
+    {task.state === "todo" && <><ActionForm context={context} review title="开始任务并固定依据" fields={[reasonField,
+      ...olderSources.map(source => ({ name: `retain_${source.documentId}`, label: `如需保留《${source.title}》旧版 ${source.revisionId.slice(0, 8)}，请写理由`, kind: "textarea" as const, optional: true,
+        hint: `已核到发布版 ${source.observedAdoptedRevisionId.slice(0, 8)}；先从依据页读两版。留空不会自动同意使用旧版。` })),
+    ]} build={v => {
+      const retentions = olderSources.filter(source => v[`retain_${source.documentId}`]?.trim()).map(source => ({ documentId: source.documentId,
+        revisionId: source.revisionId, observedAdoptedRevisionId: source.observedAdoptedRevisionId, reason: v[`retain_${source.documentId}`].trim() }));
+      return { ...base, type: "task.start", reason: v.reason, ...(retentions.length ? { retentions } : {}) };
+    }} /><Notice>任务正文的固定修订由服务自动加入依据，无需预建独立文档；额外来源可由 Agent 按固定修订提交。已有且仍适用的保留决定会沿用；新的逐项理由与依据一起封存，上游再改版仍需复核。</Notice></>}
     {task.state === "in_progress" && <>
       <details className="workflow-detail" open={!latest}><summary>{latest ? "提交新的交付（旧记录保留）" : "登记本次交付"}</summary><ActionForm context={context} title="登记交付" fields={[
         { name: "artifactRef", label: "产物位置", hint: "可追溯的文档、文件或 PR 地址" }, { name: "artifactRevision", label: "产物固定修订" },

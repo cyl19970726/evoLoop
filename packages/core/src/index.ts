@@ -7,7 +7,7 @@ import type {
 import { DomainError } from "@evoloop/contracts/ports";
 import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
-import { validateDispatchBasis } from "./runtime/basis.js";
+import { currentRetentions, validateDispatchBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applySchedule } from "./scheduling/commands.js";
 import { applyDiscussion } from "./discussions.js";
@@ -348,9 +348,12 @@ export class WorkflowService {
         await tx.insertTaskRevision(revision);
         if (basisSetId && prior.basisSetId) {
           const basis = required(await tx.getBasisSet(task.id, prior.id, prior.basisSetId), "Basis set");
-          await tx.insertSealedBasisSet({ ...basis, id: basisSetId, taskRevisionId: revisionId,
+          const retentions = await currentRetentions(tx, basis);
+          await tx.insertSealedBasisSet({ projectId: basis.projectId, taskId: basis.taskId, sealed: true,
+            id: basisSetId, taskRevisionId: revisionId,
             members: basis.members.map(member => member.documentId === task.contentDocumentId
-              ? { documentId: member.documentId, revisionId: contentRevisionId } : { ...member }) });
+              ? { documentId: member.documentId, revisionId: contentRevisionId } : { ...member }),
+            ...(retentions ? { retentions } : {}) });
         }
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
           title: revision.title, content: revision.content, contentRevisionId, kind, acceptance: revision.acceptance,
@@ -383,6 +386,9 @@ export class WorkflowService {
         const prior = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "Task revision");
         const inherited = prior.basisSetId ? required(await tx.getBasisSet(task.id, prior.id, prior.basisSetId), "Basis set") : null;
         const extras = command.basis ?? inherited?.members.filter(item => item.documentId !== main.id) ?? [];
+        const retentions = command.retentions
+          ? command.retentions.map(item => ({ ...item, actorId, createdAt: now }))
+          : command.basis === undefined ? inherited?.retentions?.map(item => ({ ...item })) ?? [] : [];
         if (extras.length > 19) throw new DomainError("BASIS_LIMIT", "Select at most 19 extra sources alongside the primary content");
         if (new Set(extras.map(item => item.documentId)).size !== extras.length || extras.some(item => item.documentId === main.id))
           throw new DomainError("DUPLICATE_DOCUMENT", "Basis must use distinct linked documents; primary is automatic");
@@ -393,8 +399,11 @@ export class WorkflowService {
             throw new DomainError("UNPUBLISHED_BASIS", "Basis must pin a published document revision");
           required(await tx.getDocumentRevision(doc.id, item.revisionId), "Basis revision");
         }
+        if (retentions.some(item => item.documentId === main.id || !linked.has(item.documentId)))
+          throw new DomainError("INVALID_RETENTION", "Only selected linked external documents may be retained");
         await validateDispatchBasis(tx, task.id, { projectId: task.projectId, taskId: task.id,
-          taskRevisionId: prior.id, id: prior.basisSetId ?? main.id, members: extras, sealed: true });
+          taskRevisionId: prior.id, id: prior.basisSetId ?? main.id, members: extras, sealed: true,
+          ...(retentions.length ? { retentions } : {}) });
         if ((await tx.listImpacts(task.id)).some(item => item.state === "pending"))
           throw new DomainError("PENDING_BASIS_REVIEW", "Resolve source changes before starting work");
         let documentVersion = main.version;
@@ -412,7 +421,8 @@ export class WorkflowService {
           basisSetId, actorId, reason: command.reason, createdAt: now };
         const basis: BasisSet = { projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
           id: basisSetId, sealed: true,
-          members: [{ documentId: main.id, revisionId: task.contentRevisionId }, ...extras] };
+          members: [{ documentId: main.id, revisionId: task.contentRevisionId }, ...extras],
+          ...(retentions.length ? { retentions } : {}) };
         await tx.insertTaskRevision(revision);
         await tx.insertSealedBasisSet(basis);
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
@@ -445,7 +455,9 @@ export class WorkflowService {
           ...previousRevision, id: revisionId, version: task.version + 1, state: task.state, basisSetId: basisId,
           acceptance: command.acceptance ?? task.acceptance, actorId, reason: command.reason, createdAt: now,
         };
-        const basis: BasisSet = { projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId, id: basisId, members: nextMembers, sealed: true };
+        const retentions = await currentRetentions(tx, previousBasis, nextMembers);
+        const basis: BasisSet = { projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId, id: basisId,
+          members: nextMembers, sealed: true, ...(retentions ? { retentions } : {}) };
         const decision: BasisDecision = {
           projectId: command.projectId, id: decisionId, impactId: impact.id, taskId: task.id,
           previousTaskRevisionId: previousRevision.id, nextTaskRevisionId: revisionId,

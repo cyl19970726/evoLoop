@@ -4,6 +4,7 @@ import type { DocumentSource, GitSourceRef } from "@evoloop/contracts/sources";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { FormalSourceDecisionCommand, ReferenceTransaction, ReferenceUnitOfWork, RegisterGitReference,
   TaskExternalReferenceCommand, TaskExternalReferenceRecord } from "@evoloop/contracts/references";
+import { currentRetentions } from "../runtime/basis.js";
 
 export interface ExternalReferenceObservation {
   status: "reachable" | "unavailable" | "withdrawn" | "needs_review";
@@ -167,7 +168,10 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
     if (revision.basisSetId && nextBasisId) {
       const basis = await tx.getBasisSet(task.id, revision.id, revision.basisSetId);
       if (!basis || !basis.sealed) throw new DomainError("BASIS_UNAVAILABLE", "Current process basis is unavailable");
-      await tx.insertSealedBasisSet({ ...basis, id: nextBasisId, taskRevisionId: nextRevisionId });
+      const retentions = await currentRetentions(tx, basis);
+      await tx.insertSealedBasisSet({ projectId: basis.projectId, taskId: basis.taskId, sealed: true,
+        id: nextBasisId, taskRevisionId: nextRevisionId, members: basis.members.map(item => ({ ...item })),
+        ...(retentions ? { retentions } : {}) });
     }
     await tx.updateTask({ ...task, version: nextRevision.version, currentRevisionId: nextRevisionId }, task.version);
     return { status: "applied", operationId: command.operationId, entityId: command.taskId,

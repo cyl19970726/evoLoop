@@ -15,6 +15,7 @@ import type {
 } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Transaction } from "@evoloop/contracts/ports";
+import { currentRetentions } from "./runtime/basis.js";
 
 type WorkflowCommand = Extract<
   Command,
@@ -111,11 +112,11 @@ async function newTaskRevision(
       await tx.getBasisSet(task.id, previous.id, previous.basisSetId),
       "basis set",
     );
+    const retentions = await currentRetentions(tx, old);
     const copy: BasisSet = {
-      ...old,
-      taskRevisionId: id,
-      id: basisSetId,
-      members: old.members.map((x) => ({ ...x })),
+      projectId: old.projectId, taskId: old.taskId, taskRevisionId: id, id: basisSetId,
+      sealed: true, members: old.members.map((x) => ({ ...x })),
+      ...(retentions ? { retentions } : {}),
     };
     await tx.insertSealedBasisSet(copy);
   }

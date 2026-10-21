@@ -10,7 +10,7 @@
 
 ## 链接要带阅读理由
 
-长规格、issue、讨论和报告可以链接引用。链接说明文档名称、要读的章节和与本任务的关系；任务说明仍保留必要摘要。执行依据引用固定修订，背景阅读与实际采用分清，不因正文里出现链接就自动采纳所有内容。使用服务实际返回的受控链接和固定标识，不编造链接语法。当前工作台使用 hash 深链：Task 为 `#/p/PROJECT_UUID/tasks/TASK_UUID`，固定过程文档为 `#/p/PROJECT_UUID/documents/DOCUMENT_UUID?revision=REVISION_UUID`；填写真实 UUID。报告在外部阅读时在 `#` 前加本次已知的工作台 origin（不要带令牌）。不要猜 `/app/p/...` 等路径；无法确认时保留明确 ID/修订与可执行的 CLI 读取命令。
+长规格、issue、讨论和报告可以链接引用。链接说明文档名称、要读的章节和与本任务的关系；任务说明仍保留必要摘要。执行依据引用固定修订，背景阅读与实际采用分清，不因正文里出现链接就自动采纳所有内容。使用服务实际返回的受控链接和固定标识，不编造链接语法。当前工作台使用 hash 深链：Task 为 `#/p/PROJECT_UUID/tasks/TASK_UUID`，固定过程文档为 `#/p/PROJECT_UUID/documents/DOCUMENT_UUID?revision=REVISION_UUID`，固定知识页为 `#/p/PROJECT_UUID/knowledge?knowledgeId=KNOWLEDGE_UUID&knowledgeRevision=REVISION_UUID`；填写真实 UUID。知识页不能写成 `/knowledge/KNOWLEDGE_UUID?revision=...`。报告在外部阅读时在 `#` 前加本次已知的工作台 origin（不要带令牌）。打开后核对可见的知识或文档 ID、固定修订与哈希；旧正文仍可见不代表请求的固定版已读到。不要猜 `/app/p/...` 等路径；无法确认时保留明确 ID/修订与可执行的 CLI 读取命令。
 
 ## 图只用在需要它的地方
 

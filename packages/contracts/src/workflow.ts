@@ -53,6 +53,8 @@ export const workflowCommands = [
     expectedVersion: version,
     reason: text,
     basis: z.array(z.strictObject({ documentId: id, revisionId: id })).max(19).optional(),
+    retentions: z.array(z.strictObject({ documentId: id, revisionId: id,
+      observedAdoptedRevisionId: id, reason: text })).max(19).optional(),
   }),
   z.strictObject({
     ...common,
