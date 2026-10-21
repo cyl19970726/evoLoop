@@ -61,7 +61,9 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
       }}>以当前版重新开始上传</button></Alert>}
     <UploadDocument key={`${id}:${uploadGeneration}`} context={{ ...formContext, blocked: formContext.blocked || uploadStale }} mode="revise"
       documentId={id} expectedVersion={uploadBaselineVersion ?? detail.document.version} />
-    {detail.current.id === detail.adopted?.id && <p className="muted">当前修订已发布；如需更新，请先保存新修订。</p>}<ActionForm context={{ ...formContext, blocked: formContext.blocked || detail.current.id === detail.adopted?.id }} review title="发布当前修订" fields={[{ name: "reason", label: "发布依据", kind: "textarea" }]} build={v => ({ type: "document.publish", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} /></>}
+    {detail.current.id === detail.adopted?.id
+      ? <p className="muted">当前修订已发布；如需更新，请先保存新修订。</p>
+      : <ActionForm context={formContext} review title="发布当前修订" fields={[{ name: "reason", label: "发布依据", kind: "textarea" }]} build={v => ({ type: "document.publish", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} />}</>}
     <ActionForm context={formContext} review title={archived ? "恢复文档" : "归档文档"} fields={[{ name: "reason", label: archived ? "恢复理由" : "归档理由", kind: "textarea" }]} build={v => ({ type: archived ? "document.restore" : "document.archive", documentId: id, expectedVersion: detail.document.version, ...v })} /></details>}
   </div>;
 }
