@@ -24,9 +24,11 @@ function Basis({ basis, projectId, documents }: { basis: BasisSet | null; projec
   if (!basis) return <p className="empty">这个任务修订没有固定依据集合。</p>;
   return <ul className="basis-list task-basis-list">{basis.members.map(member => {
     const document = documents?.[member.documentId];
+    const retention = basis.retentions?.find(item => item.documentId === member.documentId && item.revisionId === member.revisionId);
     return <li key={`${member.documentId}:${member.revisionId}`}>
       <a href={href(projectId, "document", member.documentId, member.revisionId)}>{document?.document.title || <>过程文档 <ShortId value={member.documentId} /></>} · 固定修订 <ShortId value={member.revisionId} /> ↗</a>
       {document && <span className="task-basis-status">{document.document.adoptedRevisionId === member.revisionId ? "文档现发布此版" : document.document.adoptedRevisionId ? <>文档现发布 <ShortId value={document.document.adoptedRevisionId} />；本任务仍固定此版</> : "文档当前无发布修订；本任务仍固定此版"}</span>}
+      {retention && <details><summary>开始时明确保留旧版的审阅记录</summary><p>{retention.reason}</p><p>当时核对的发布版 <ShortId value={retention.observedAdoptedRevisionId} /> · {retention.actorId} · {date(retention.createdAt)}</p><p className="muted">此决定只覆盖当时观察的发布版；来源再改版仍需复核。</p></details>}
     </li>;
   })}</ul>;
 }
@@ -231,7 +233,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </section>
     </section>
     <section role="tabpanel" id={panelId("actions")} aria-labelledby={tabId("actions")} hidden={tab !== "actions"}>
-      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} mode="actions" />
+      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} documents={basisDocuments} mode="actions" />
     </section>
   </div>;
 }
