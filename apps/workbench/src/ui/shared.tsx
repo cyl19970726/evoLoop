@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { DocumentRevision } from "@evoloop/contracts";
 import { OriginalDocumentReader } from "../documents/OriginalDocumentReader";
 import { MarkdownBody } from "./MarkdownBody";
+import { isProjectRoute } from "./returnRoute";
 export type Section = "overview" | "work" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string };
 
@@ -58,11 +59,6 @@ export function taskListHref(projectId: string): string {
   return href(projectId, "work");
 }
 
-function isProjectRoute(value: string | null, projectId: string): value is string {
-  if (!value?.startsWith(`#/p/${projectId}/`)) return false;
-  const path = value.split("?")[0].slice(`#/p/${projectId}/`.length);
-  return /^(work|inbox|documents|journey|discussions|runtime|schedules|roles|knowledge|repository|operations|collaboration|evaluations(?:\/[0-9a-f-]{36})?|tasks\/[0-9a-f-]{36})$/i.test(path);
-}
 export function documentReturnHref(projectId: string): string {
   const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
   const requested = query.get("return");

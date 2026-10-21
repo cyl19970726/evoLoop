@@ -5,7 +5,7 @@ import { date } from "../ui/shared";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import { runtimeClient, type NativeResult } from "../runtime/client";
 import { DefinitionForm } from "./DefinitionForm";
-import { assessmentLabels, attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, type NextActionRef } from "./presentation";
+import { assessmentLabels, attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, fixedRefHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, verifiedFixedDocumentTitle, type NextActionRef } from "./presentation";
 import "./evaluation.css";
 
 type EvaluationRead = Awaited<ReturnType<ReturnType<typeof api>["evaluation"]>>;
@@ -14,12 +14,10 @@ const short = (value: string) => value.slice(0, 8);
 const stateLabel: Record<string, string> = { requested: "待派发", dispatching: "派发中", running: "运行中", completed: "已完成", failed: "失败", interrupted: "已中断", unknown: "结果未知" };
 const choiceLabel: Record<string, string> = { read_direct: "先读直接来源", adopt_with_limits: "带限制采用", maintain: "维持当前做法", research: "继续研究", wait: "等待证据", stop: "停止" };
 
-function FixedRef({ value, projectId }: { value: EvaluationFixedRef; projectId: string }) {
-  const link = value.kind === "document" && /^[0-9a-f-]{36}$/i.test(value.id) && /^[0-9a-f-]{36}$/i.test(value.revision)
-    ? `#/p/${projectId}/documents/${value.id}?revision=${encodeURIComponent(value.revision)}`
-    : value.kind === "wiki" && /^[0-9a-f-]{36}$/i.test(value.id) && /^[0-9a-f-]{36}$/i.test(value.revision)
-      ? `#/p/${projectId}/knowledge/${value.id}?revision=${encodeURIComponent(value.revision)}` : null;
-  return <span className="evaluation-ref">{link ? <a href={link}>{value.kind} {short(value.id)} · 固定版 {short(value.revision)} ↗</a> : <span>{value.kind} {value.id} · 固定版 {value.revision}</span>}<code title={value.contentHash}>SHA-256 {short(value.contentHash)}…</code></span>;
+function FixedRef({ value, projectId, currentTitle }: { value: EvaluationFixedRef; projectId: string; currentTitle?: string }) {
+  const link = fixedRefHref(projectId, value);
+  const label = <>{currentTitle && <strong>现名称《{currentTitle}》 · </strong>}{value.kind} {short(value.id)} · 固定版 {short(value.revision)} ↗</>;
+  return <span className="evaluation-ref">{link ? <a href={link}>{label}</a> : <span>{value.kind} {value.id} · 固定版 {value.revision}</span>}<code title={value.contentHash}>SHA-256 {short(value.contentHash)}…</code></span>;
 }
 
 export function EvaluationPage({ context, evaluationId, selectedRevision, refresh, taskId, knowledgePageId }: { context: MutationContext; evaluationId?: string; selectedRevision?: string; refresh: number; taskId?: string; knowledgePageId?: string }) {
@@ -64,6 +62,9 @@ function EvaluationDetail({ context, read, selectedRevision, onChanged }: { cont
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
   const [sideError, setSideError] = useState("");
   const [sideEpoch, setSideEpoch] = useState(0);
+  const titleScope = `${context.projectId}:${context.principal.actorId}:${revision.id}`;
+  const [titleRead, setTitleRead] = useState<{ scope: string; titles: Record<string, string> }>({ scope: "", titles: {} });
+  const documentTitles = titleRead.scope === titleScope ? titleRead.titles : {};
   useEffect(() => {
     let active = true;
     setTask(null); setRuns([]); setSessions([]); setSideError("");
@@ -73,28 +74,57 @@ function EvaluationDetail({ context, read, selectedRevision, onChanged }: { cont
       .catch(cause => { if (active) setSideError(errorText(cause)); });
     return () => { active = false; };
   }, [context.token, context.projectId, definition.case.taskId, revision.id, sideEpoch]);
+  useEffect(() => {
+    let active = true;
+    setTitleRead({ scope: titleScope, titles: {} });
+    const refs = [definition.protocol, ...definition.case.materials].filter(ref => ref.kind === "document");
+    void Promise.all(refs.map(async ref => {
+      try {
+        const [detail, fixed] = await Promise.all([
+          api(context.token).document(context.projectId, ref.id),
+          api(context.token).documentRevision(context.projectId, ref.id, ref.revision),
+        ]);
+        return { key: `${ref.id}:${ref.revision}`, title: verifiedFixedDocumentTitle(ref, context.projectId, detail.document, fixed) };
+      } catch { return { key: `${ref.id}:${ref.revision}`, title: null }; }
+    })).then(rows => { if (active) setTitleRead({ scope: titleScope, titles: Object.fromEntries(rows.filter(row => row.title).map(row => [row.key, row.title!])) }); });
+    return () => { active = false; };
+  }, [context.token, context.projectId, context.principal.actorId, revision.id, titleScope]);
   const effective = currentAssessments(assessments);
   const current = revisions.every(item => item.version <= revision.version);
+  const latestConclusion = conclusions.at(-1);
   return <>
     {selectedRevision && <Notice>正在阅读固定定义 v{revision.version}；尝试、判定与结论只取此修订，不与其他版本合并。<a href={evaluationHref(context.projectId, revision.evaluationId)}>回到最新定义 →</a></Notice>}
-    <section className="panel evaluation-definition"><div className="panel-head"><h2>{definition.question}</h2><span>定义 v{revision.version} · {short(revision.id)}</span></div>
-      <p><strong>比较边界：</strong>{definition.limits}</p><p><strong>公开判定条件：</strong>{definition.case.criteria}</p><p><strong>共同指令：</strong>{definition.case.commonInput}</p>
-      <p>共同任务 <a href={`#/p/${context.projectId}/tasks/${definition.case.taskId}?revision=${encodeURIComponent(definition.case.sourceTaskRevisionId)}`}>{short(definition.case.taskId)} · 来源修订 {short(definition.case.sourceTaskRevisionId)} ↗</a>；运行将形成另一条实际修订，不把二者当同一 ID。</p>
-      <div className="evaluation-fixed"><strong>协议</strong><FixedRef value={definition.protocol} projectId={context.projectId} /><strong>共用材料</strong>{definition.case.materials.map((ref, index) => <FixedRef key={`${ref.kind}:${ref.id}:${index}`} value={ref} projectId={context.projectId} />)}</div>
-      <details><summary>核对共同任务的固定业务签名</summary><pre>{JSON.stringify(definition.case.sourceSignature, null, 2)}</pre></details>
-      <p className="muted">没有隐藏答案隔离保证；同机工具能否访问其他来源尚未验证。一次 case 不得推出因果收益或统计胜者。</p>
+    <section className="panel evaluation-overview"><div className="panel-head"><h2>{definition.question}</h2><span>固定定义 v{revision.version} · {short(revision.id)}</span></div>
+      <p className="evaluation-limit-preview"><strong>可比限制：</strong>{definition.limits}</p>
+      <div className="evaluation-glance">{definition.conditions.map(condition => { const conditionAttempts = attemptsForCondition(revision, attempts, condition.id);
+        const last = conditionAttempts.at(-1); const lastRun = runs.find(item => item.id === last?.runId);
+        const judged = assessments.filter(item => conditionAttempts.some(attempt => attempt.id === item.attemptId)).length;
+        return <button key={condition.id} type="button" onClick={() => document.getElementById(`evaluation-condition-${condition.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          <strong>{condition.kind === "direct" ? "直接材料" : "加入固定 Wiki"}</strong><span>{conditionAttempts.length} 次尝试 · {last ? stateLabel[lastRun?.state ?? ""] ?? "运行待回读" : "尚未运行"} · {judged} 项判定</span>
+        </button>; })}
+        <button type="button" onClick={() => document.getElementById("evaluation-conclusions")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          <strong>结论与下一步</strong><span>{latestConclusion ? `${latestConclusion.comparability === "with_limits" ? "有限比较" : "未知"} · ${choiceLabel[latestConclusion.nextChoice] ?? latestConclusion.nextChoice}` : "尚无结论；需看两条件的实际尝试与判定"}</span>
+        </button></div>
+      <p className="muted">完整限制、指令、固定来源与业务签名在下方“冻结输入与证据”；来源页可返回此固定评价定义。</p>
     </section>
-    <section className="panel"><div className="panel-head"><h2>定义版本</h2><span>修订追加，旧版不覆盖</span></div><div className="evaluation-revisions">{revisions.map(item => <a key={item.id} aria-current={item.id === revision.id ? "page" : undefined} href={evaluationHref(context.projectId, item.evaluationId, item.id)}>v{item.version} · {date(item.createdAt)} · {item.actorId}</a>)}</div></section>
+    <section className="panel evaluation-definition"><details><summary>冻结输入与证据 · 协议、共同材料、指令与完整限制</summary>
+      <p><strong>完整比较边界：</strong>{definition.limits}</p><p><strong>公开判定条件：</strong>{definition.case.criteria}</p><p><strong>共同指令：</strong>{definition.case.commonInput}</p>
+      <p>共同任务 <a href={`#/p/${context.projectId}/tasks/${definition.case.taskId}?revision=${encodeURIComponent(definition.case.sourceTaskRevisionId)}`}>{short(definition.case.taskId)} · 来源修订 {short(definition.case.sourceTaskRevisionId)} ↗</a>；运行将形成另一条实际修订，不把二者当同一 ID。</p>
+      <div className="evaluation-fixed"><strong>协议</strong><FixedRef value={definition.protocol} projectId={context.projectId} currentTitle={documentTitles[`${definition.protocol.id}:${definition.protocol.revision}`]} /><strong>共用材料</strong>{definition.case.materials.map((ref, index) => <FixedRef key={`${ref.kind}:${ref.id}:${index}`} value={ref} projectId={context.projectId} currentTitle={documentTitles[`${ref.id}:${ref.revision}`]} />)}</div>
+      <details><summary>核对共同任务的固定业务签名</summary><pre>{JSON.stringify(definition.case.sourceSignature, null, 2)}</pre></details>
+      <p className="muted">现名称只作阅读辅助，已逐项核对同项目固定修订及哈希；不能代表原修订创建时的标题。没有隐藏答案隔离保证；同机工具能否访问其他来源尚未验证。一次 case 不得推出因果收益或统计胜者。</p>
+    </details></section>
+    <section className="panel"><details><summary>定义版本 · 当前 v{revision.version}，修订追加不覆盖</summary><div className="evaluation-revisions">{revisions.map(item => <a key={item.id} aria-current={item.id === revision.id ? "page" : undefined} href={evaluationHref(context.projectId, item.evaluationId, item.id)}>v{item.version} · {date(item.createdAt)} · {item.actorId}</a>)}</div></details></section>
     {sideError && <Notice error>任务或运行旁证读取失败：{sideError}。既有评价事实仍可读；运行状态不能据此猜测。</Notice>}
-    <section className="evaluation-conditions">{definition.conditions.map(condition => <section className="panel evaluation-condition" key={condition.id}>
+    <section className="evaluation-conditions">{definition.conditions.map(condition => <section className="panel evaluation-condition" id={`evaluation-condition-${condition.id}`} key={condition.id}>
       <div className="panel-head"><h2>{condition.kind === "direct" ? "直接材料" : "加入固定 Wiki"}</h2><span>{attemptsForCondition(revision, attempts, condition.id).length} 次尝试</span></div>
       <p>模型 {condition.model} · {condition.environment.sandbox} · {condition.environment.approvalPolicy}</p><p className="evaluation-env">{condition.environment.cwd} · {condition.environment.authorizationScope}</p>
-      {condition.kind === "direct" ? <p>Wiki：明确不适用；不从共同任务中删除必需来源。</p> : <div className="evaluation-fixed"><strong>本条件新增的 Wiki 固定来源</strong>{condition.wikiRefs?.map((ref, index) => <FixedRef key={`${ref.id}:${index}`} value={ref} projectId={context.projectId} />)}</div>}
+      {condition.kind === "direct" ? <p>Wiki：明确不适用；不从共同任务中删除必需来源。</p> : <div className="evaluation-fixed"><strong>本条件新增的 Wiki 固定来源</strong><small>同窗口阅读；知识页可返回本次固定评价定义。</small>{condition.wikiRefs?.map((ref, index) => <FixedRef key={`${ref.id}:${index}`} value={ref} projectId={context.projectId} />)}</div>}
       {attemptsForCondition(revision, attempts, condition.id).map(attempt => <AttemptCard key={attempt.id} context={context} revision={revision} attempt={attempt} run={runs.find(item => item.id === attempt.runId)} task={task} assessments={assessments.filter(item => item.attemptId === attempt.id)} onChanged={onChanged} />)}
       {!attemptsForCondition(revision, attempts, condition.id).length && <p className="empty">尚无真实尝试；条件定义本身不是运行结果。</p>}
       {!selectedRevision && current && task && <RunForm context={context} revision={revision} conditionId={condition.id} task={task} sessions={sessions} runs={runs} attempts={attempts} />}
     </section>)}</section>
-    <section className="panel evaluation-conclusions"><h2>评价判定与下一步</h2>
+    <section className="panel evaluation-conclusions" id="evaluation-conclusions"><h2>评价判定与下一步</h2>
       {!conclusions.length && <p className="empty">尚无结论。缺少两组真实尝试或成本时，只能明确限制或未知。</p>}
       {conclusions.map(item => <ConclusionRecord key={item.id} item={item} assessments={assessments} projectId={context.projectId} />)}
       {!selectedRevision && <ConclusionForm context={context} revision={revision} assessments={effective} conclusions={conclusions} />}
