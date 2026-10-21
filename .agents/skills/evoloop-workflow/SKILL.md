@@ -25,4 +25,6 @@ Keep evidence categories separate: native Run completion, technical validation, 
 
 For a real direct-material/Wiki comparison, read [the evaluation guide](references/evaluation.md) before freezing inputs or reserving Runs. Freeze the definition first, keep every actual attempt and unknown cost, then record signed assessments and a limited next-step decision; do not reconstruct the experiment from a report afterward.
 
+For an owner discussion, read [the discussion guide](references/discussions.md). Record decisions through `discussion.decision.record`, which appends the owned Document and discussion event together. If a separate Document edit has advanced its head, read both fixed originals before explicitly requesting controlled recovery; never silently move the discussion pointer or replay an already rejected decision as an unknown result.
+
 Keep tokens, raw sessions, external Wiki bodies, private originals, and local receipt files in a private local directory outside the repository or explicitly ignored by Git; never publish them. An `original --out` target must be a new directory under an existing parent. Use fixed links and permitted summaries when reporting what was read. Manual discussion handoff records are declarations, not proof that an existing Desktop chat received or adopted them.

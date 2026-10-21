@@ -27,6 +27,7 @@ export const discussionCommands = [
   z.strictObject({ ...common, type: z.literal("discussion.decision.record"),
     expectedVersion: version, documentRevisionId: id, choice: text, reason: text,
     unresolved: text, relookCondition: text, evidence: text,
+    documentRecovery: z.strictObject({ expectedDocumentVersion: version, reason: text }).optional(),
     supersedesDecisionEventId: id.optional() }),
   z.strictObject({ ...common, type: z.literal("discussion.action.link"),
     expectedVersion: version, decisionEventId: id, target: discussionTargetSchema, reason: text }),
