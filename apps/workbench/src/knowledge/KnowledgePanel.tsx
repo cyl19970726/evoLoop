@@ -1,11 +1,12 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapabilities, KnowledgeGraph,
   KnowledgeRevision, KnowledgeSummary, PublishResult } from "@evoloop/contracts/knowledge";
 import { errorText, isUnconfirmed } from "../api";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { Notice, type MutationContext } from "../workflow/ActionForm";
 import { knowledgeClient, type SourceDocument } from "./client";
-import { matchesKnowledgeRevision, readKnowledgeRoute, transitionKnowledgeRoute } from "./knowledgeRoute";
+import { findFixedKnowledgeTitle, matchesKnowledgeRevision, readKnowledgeRoute, transitionKnowledgeRoute,
+  unresolvedFixedKnowledgeTitle } from "./knowledgeRoute";
 import "./knowledge.css";
 
 interface ExternalReceipt { projectId: string; actorId: string; operationId: string; kind: "publish" | "retract"; targetId: string; createdAt: string }
@@ -43,6 +44,9 @@ const statusText = (status: string) => ({ valid: "有效", needs_review: "待复
   disputed: "有争议", superseded: "已取代" } as Record<string, string>)[status] ?? status;
 
 const graphNodeKey = (id: string, revision: string) => `${id}\0${revision}`;
+const relationTitleKey = (id: string, revision: string) => `${id}\0${revision}`;
+
+interface RelationTitleCache { scope: string; entries: Record<string, string | null> }
 
 function Graph({ graph, onOpen }: { graph: KnowledgeGraph; onOpen(id: string, revision: string): void }) {
   const positions = new Map(graph.nodes.map((node, index) => [graphNodeKey(node.knowledgeId, node.revision),
@@ -69,7 +73,7 @@ function Graph({ graph, onOpen }: { graph: KnowledgeGraph; onOpen(id: string, re
 }
 
 export function KnowledgePanel({ context, refresh }: { context: MutationContext; refresh: number }) {
-  const client = knowledgeClient(context.token, context.projectId);
+  const client = useMemo(() => knowledgeClient(context.token, context.projectId), [context.token, context.projectId]);
   const [pages, setPages] = useState<KnowledgeSummary[]>([]);
   const [pageCursor, setPageCursor] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<KnowledgeCandidateSummary[]>([]);
@@ -82,6 +86,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [currentHead, setCurrentHead] = useState<{ knowledgeId: string; revision: string } | null>(null);
   const [history, setHistory] = useState<KnowledgeSummary[]>([]);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
+  const [relationTitleCache, setRelationTitleCache] = useState<RelationTitleCache>({ scope: "", entries: {} });
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "review" ? route.id ?? null : null; });
   const [candidate, setCandidate] = useState<KnowledgeCandidateRecord | null>(null);
   const [error, setError] = useState("");
@@ -288,15 +293,45 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     : currentHead?.knowledgeId === selectedId ? currentHead.revision : undefined;
   const visiblePage = matchesKnowledgeRevision(page, selectedId, fixedRevision) ? page : null;
   const readingCurrent = !!visiblePage && (!fixedRevision || visiblePage.revision === currentRevision);
-  const relationName = (id: string, revision: string) =>
-    graph?.nodes.find(item => item.knowledgeId === id && item.revision === revision)?.title ??
-    pages.find(item => item.knowledgeId === id)?.title ?? id.slice(0, 8);
+  const relationScope = `${context.projectId}\0${context.token}`;
+  const relationName = (id: string, revision: string) => {
+    const graphTitle = findFixedKnowledgeTitle(id, revision, graph?.nodes ?? []);
+    const cached = relationTitleCache.scope === relationScope ? relationTitleCache.entries[relationTitleKey(id, revision)] : undefined;
+    return graphTitle ?? (typeof cached === "string" ? cached : unresolvedFixedKnowledgeTitle);
+  };
   const outgoing = visiblePage?.relations.map(item => ({ edge: item, otherId: item.toKnowledgeId,
     otherRevision: item.toRevision, direction: "指向" })) ?? [];
   const incoming = readingCurrent ? graph?.edges.filter(item => item.toKnowledgeId === visiblePage?.knowledgeId &&
     item.toRevision === visiblePage.revision && item.fromKnowledgeId !== visiblePage.knowledgeId).map(item => ({
       edge: item, otherId: item.fromKnowledgeId, otherRevision: item.fromRevision, direction: "来自" })) ?? [] : [];
   const relations = [...outgoing, ...incoming.filter(item => !outgoing.some(other => other.edge.edgeId === item.edge.edgeId))];
+  const relationTargetKeyList = [...new Set(relations.map(item => relationTitleKey(item.otherId, item.otherRevision)))].sort().join("\n");
+  useEffect(() => {
+    let active = true;
+    setRelationTitleCache(previous => previous.scope === relationScope ? previous : { scope: relationScope, entries: {} });
+    const targets = [...new Map(relations.map(item => [relationTitleKey(item.otherId, item.otherRevision),
+      { id: item.otherId, revision: item.otherRevision }])).values()];
+    for (const target of targets) {
+      const exactGraphTitle = findFixedKnowledgeTitle(target.id, target.revision, graph?.nodes ?? []);
+      const key = relationTitleKey(target.id, target.revision);
+      const cached = relationTitleCache.scope === relationScope ? relationTitleCache.entries[key] : undefined;
+      if (exactGraphTitle || cached !== undefined) continue;
+      void client.page(target.id, target.revision).then(fixed => {
+        if (!active) return;
+        const title = fixed.knowledgeId === target.id && fixed.revision === target.revision && fixed.title.trim()
+          ? fixed.title.trim() : null;
+        setRelationTitleCache(previous => previous.scope === relationScope
+          ? { ...previous, entries: { ...previous.entries, [key]: title } }
+          : { scope: relationScope, entries: { [key]: title } });
+      }).catch(() => {
+        if (!active) return;
+        setRelationTitleCache(previous => previous.scope === relationScope
+          ? { ...previous, entries: { ...previous.entries, [key]: null } }
+          : { scope: relationScope, entries: { [key]: null } });
+      });
+    }
+    return () => { active = false; };
+  }, [client, relationScope, relationTargetKeyList, graph, relationTitleCache]);
   return <div className="knowledge-space">
     <div className="knowledge-toolbar">
       <div><p className="muted">独立知识空间 · 固定修订与可追溯来源</p></div>
@@ -348,13 +383,13 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         <section><h3>挑战与反例</h3>{relations.filter(item => item.edge.type === "contradicts").length ?
           <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type === "contradicts").map(item =>
             <li key={item.edge.edgeId}><button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
-              <small>{item.direction}此页 · {statusText(item.edge.state)} · 固定版 {item.otherRevision.slice(0, 8)} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
+              <small>{item.direction}此页 · {statusText(item.edge.state)} · 固定版 {item.otherRevision} · 知识 ID {item.otherId} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
           : <p className="muted">此版未登记挑战关系；不能据此断言没有反例。请结合正文与来源判断。</p>}</section>
         <section><h3>其他已登记关系</h3>{relations.filter(item => item.edge.type !== "contradicts").length ?
           <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type !== "contradicts").map(item =>
             <li key={item.edge.edgeId}><span>{statusText(item.edge.type)} · {statusText(item.edge.state)}</span>
               <button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
-              <small>{item.direction}此页 · 固定版 {item.otherRevision.slice(0, 8)} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
+              <small>{item.direction}此页 · 固定版 {item.otherRevision} · 知识 ID {item.otherId} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
           : <p className="muted">此版未登记其他关系。</p>}</section>
         <section><h3>历史版本</h3><div className="knowledge-history">{history.map(item => <button key={item.revision}
           className={visiblePage.revision === item.revision ? "selected" : ""} onClick={() => openPage(item.knowledgeId, item.revision)}>
