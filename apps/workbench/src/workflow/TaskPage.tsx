@@ -180,6 +180,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     {selectedRevision && <Alert>正在查看固定历史任务修订 <ShortId value={selectedRevision} />。下方页首是当前任务摘要；历史面板单独列出当时状态与依据。<a href={href(projectId, "task", id)}>返回当前任务</a></Alert>}
     <header className="task-page-header">
       <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
+      <p><a href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(id)}`}>查看此任务的评价与后果 →</a></p>
       <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<span>责任者：{detail.task.owner}</span><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
     </header>
     {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => setTab("history")}>查看历史时间线 →</button></Alert>}

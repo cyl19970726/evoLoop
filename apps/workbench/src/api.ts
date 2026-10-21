@@ -2,6 +2,7 @@ import type {
   Command, CommandResult, Document, DocumentDetail, DocumentRevision,
   Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, Goal, GoalRevision, Stage, StageRevision, StageReview,
   DiscussionRecord, DiscussionEvent,
+  EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
 } from "@evoloop/contracts";
 
 export interface Session {
@@ -82,6 +83,10 @@ export function api(token: string, timeoutMs = 15000) {
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),
+    evaluations: (p: string, cursor?: string, taskId?: string, knowledgePageId?: string) => call<Page<EvaluationRevision>>(`${projectPath(p)}/evaluations?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${taskId ? `&taskId=${key(taskId)}` : ""}${knowledgePageId ? `&knowledgePageId=${key(knowledgePageId)}` : ""}`),
+    evaluation: (p: string, id: string, revision?: string) => call<{ revision: EvaluationRevision; revisions: EvaluationRevision[]; attempts: EvaluationAttempt[]; assessments: EvaluationAssessment[]; conclusions: EvaluationConclusion[] }>(`${projectPath(p)}/evaluations/${key(id)}${revision ? `?revision=${key(revision)}` : ""}`),
+    evaluationSourceTask: (p: string, taskId: string) => call<{ sourceTaskRevisionId: string; sourceSignature: EvaluationSourceSignature }>(`${projectPath(p)}/evaluations/source-task/${key(taskId)}`),
+    evaluationPacket: (p: string, id: string, revisionId: string, attemptId: string) => call<{ content: string; contentHash: string; manifestHash: string; builderVersion: string; sources: EvaluationFixedRef[] }>(`${projectPath(p)}/evaluations/${key(id)}/attempts/${key(attemptId)}/packet?revision=${key(revisionId)}`),
     impacts: (p: string) => call<Impact[]>(`${projectPath(p)}/impacts`),
     operation: async (p: string, id: string) => checkedOperation(await call<unknown>(`${projectPath(p)}/operations/${key(id)}`), id),
     command: async (command: Command) => checkedCommandResult(await call<unknown>("/api/commands", { method: "POST", body: JSON.stringify(command) }), command.operationId),

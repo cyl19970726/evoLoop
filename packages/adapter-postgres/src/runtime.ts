@@ -24,6 +24,12 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   nativeTurnId: r.native_turn_id, interruptRequested: r.interrupt_requested,
   resultSummary: r.result_summary, actorId: r.actor_id,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
+  evaluationBinding: r.evaluation_id ? {
+    evaluationId: r.evaluation_id, revisionId: r.evaluation_revision_id, caseId: r.evaluation_case_id,
+    conditionId: r.evaluation_condition_id, sourceTaskRevisionId: r.evaluation_source_task_revision_id,
+    actualTaskRevisionId: r.evaluation_actual_task_revision_id, attemptId: r.evaluation_attempt_id,
+  } : null,
+  evaluationPacket: r.evaluation_packet ?? null,
 });
 const event = (r: QueryResultRow): RuntimeRecordEvent => ({
   projectId: r.project_id, id: r.event_id, runId: r.run_id, sessionId: r.session_id,
@@ -77,15 +83,21 @@ export class PgRuntimeStore {
   }
   async insertRuntimeRun(item: RuntimeRunRecord): Promise<void> {
     this.scope(item.projectId);
-    await this.client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,interrupt_requested,result_summary,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-      [item.projectId,item.id,item.taskId,item.taskRevisionId,item.basisSetId,item.sessionId,item.operationId,item.input,item.inputHash,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.actorId,item.createdAt,item.updatedAt]);
+    const binding = item.evaluationBinding;
+    await this.client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,interrupt_requested,result_summary,actor_id,created_at,updated_at,
+      evaluation_id,evaluation_revision_id,evaluation_case_id,evaluation_condition_id,evaluation_source_task_revision_id,evaluation_actual_task_revision_id,evaluation_attempt_id,evaluation_packet)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::jsonb)`,
+      [item.projectId,item.id,item.taskId,item.taskRevisionId,item.basisSetId,item.sessionId,item.operationId,item.input,item.inputHash,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.actorId,item.createdAt,item.updatedAt,
+        binding?.evaluationId ?? null,binding?.revisionId ?? null,binding?.caseId ?? null,binding?.conditionId ?? null,
+        binding?.sourceTaskRevisionId ?? null,binding?.actualTaskRevisionId ?? null,binding?.attemptId ?? null,
+        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null]);
   }
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
-    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8
-      WHERE project_id=$1 AND run_id=$2 AND version=$9`,
-      [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,expectedVersion]);
+    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb
+      WHERE project_id=$1 AND run_id=$2 AND version=$10`,
+      [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,
+        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime run version changed", (await this.getRuntimeRun(item.id))?.version);
   }
   async appendRuntimeEvent(item: RuntimeRecordEvent): Promise<void> {

@@ -4,6 +4,8 @@ import { runtimeCommands } from "./runtime.js";
 import { roleCommands } from "./roles.js";
 import { scheduleCommands } from "./scheduling.js";
 import { discussionCommands } from "./discussions.js";
+import { evaluationCommands } from "./evaluation.js";
+export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
 export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionStatus } from "./discussions.js";
@@ -35,6 +37,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...roleCommands,
   ...scheduleCommands,
   ...discussionCommands,
+  ...evaluationCommands,
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type Permission = "read" | "write" | "review";

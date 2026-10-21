@@ -52,8 +52,8 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     readDocumentOriginal: async () => original,
   });
-  const readInput = (runner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<string> }).input.bind(runner);
-  const input = await readInput(principal, run);
+  const readInput = (runner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<{ input: string }> }).input.bind(runner);
+  const input = (await readInput(principal, run)).input;
   assert.match(input, /"format":"html"/);
   assert.match(input, /figure.svg/);
   assert.match(input, /Authorized task input:\nwork/);
@@ -66,5 +66,5 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     trusted: {} as never, principals: [principal], canWrite: () => true,
     allowedCwd: async () => true, hasGrant: () => true, readDocumentOriginal: async () => huge,
   });
-  await assert.rejects((largeRunner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<string> }).input(principal, run), /input limit/);
+  await assert.rejects((largeRunner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<{ input: string }> }).input(principal, run), /input limit/);
 });

@@ -292,6 +292,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     <div className="knowledge-toolbar">
       <div><p className="muted">独立知识空间 · 固定修订与可追溯来源</p></div>
       <div className="actions"><button onClick={refreshAll}>回读当前状态</button>
+        <a className="button-link" href={`#/p/${context.projectId}/evaluations${selectedId ? `?knowledgePageId=${encodeURIComponent(selectedId)}` : ""}`}>关联评价 →</a>
         {canWrite && <button onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</button>}
         <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
     </div>

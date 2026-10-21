@@ -11,6 +11,7 @@ import { validateDispatchBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applySchedule } from "./scheduling/commands.js";
 import { applyDiscussion } from "./discussions.js";
+import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
 export { RuntimeWorkflowService } from "./runtime/service.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
@@ -85,6 +86,8 @@ export class WorkflowService {
     // An explicit stage decision needs review even when replaying an earlier operation.
     if (command.type === "task.update" && command.stageId !== undefined)
       requirePermission(principal, command.projectId, "review");
+    if (command.type === "evaluation.create" || command.type === "evaluation.revise")
+      requirePermission(principal, command.projectId, "write");
     const commandHash = this.deps.hasher.hash(canonicalJson({ actorId: principal.actorId, command }));
     return this.deps.uow.transaction(command.projectId, async (tx) => {
       const project = await tx.getProject();
@@ -130,6 +133,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
+    if (command.type.startsWith("evaluation.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
@@ -487,6 +491,9 @@ export class WorkflowService {
           }
       }
       default:
+        if (command.type === "evaluation.create" || command.type === "evaluation.revise" ||
+          command.type === "evaluation.assessment.record" || command.type === "evaluation.conclusion.record")
+          return applyEvaluation({ tx, command, principal, now });
         if (command.type === "discussion.prepare" || command.type === "discussion.handoff.record" || command.type === "discussion.decision.record" || command.type === "discussion.action.link") {
           return applyDiscussion({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hasher: this.deps.hasher });
         }
@@ -523,6 +530,33 @@ export class WorkflowService {
 
   getProject(principal: Principal, projectId: string): Promise<Project> {
     return this.read(principal, projectId, async (reader) => required(await reader.getProject(), "Project"));
+  }
+  getEvaluation(principal: Principal, projectId: string, id: string, revisionId?: string) {
+    return this.read(principal, projectId, async reader => required(await reader.getEvaluation(id, revisionId), "Evaluation"));
+  }
+  getEvaluationSourceTask(principal: Principal, projectId: string, taskId: string) {
+    return this.read(principal, projectId, async reader => {
+      const task = required(await reader.getTask(taskId), "Task");
+      if (task.state !== "in_progress") throw new DomainError("TASK_NOT_READY", "Evaluation source Task must be in progress");
+      const revision = required(await reader.getTaskRevision(taskId, task.currentRevisionId), "Task revision");
+      if (!revision.basisSetId) throw new DomainError("BASIS_UNAVAILABLE", "Evaluation source Task needs a sealed basis");
+      return { sourceTaskRevisionId: revision.id, sourceSignature: await taskSignature(reader, task) };
+    });
+  }
+  listEvaluations(principal: Principal, projectId: string, limit = 50, cursor?: string, taskId?: string, knowledgePageId?: string) {
+    return this.read(principal, projectId, reader => reader.listEvaluations(pageLimit(limit), cursor, taskId, knowledgePageId));
+  }
+  listEvaluationRevisions(principal: Principal, projectId: string, id: string) {
+    return this.read(principal, projectId, async reader => { required(await reader.getEvaluation(id), "Evaluation"); return reader.listEvaluationRevisions(id); });
+  }
+  listEvaluationAttempts(principal: Principal, projectId: string, id: string, revisionId: string) {
+    return this.read(principal, projectId, async reader => { required(await reader.getEvaluation(id, revisionId), "Evaluation revision"); return reader.listEvaluationAttempts(id, revisionId); });
+  }
+  listEvaluationAssessments(principal: Principal, projectId: string, id: string, revisionId: string) {
+    return this.read(principal, projectId, async reader => { required(await reader.getEvaluation(id, revisionId), "Evaluation revision"); return reader.listEvaluationAssessments(id, revisionId); });
+  }
+  listEvaluationConclusions(principal: Principal, projectId: string, id: string, revisionId: string) {
+    return this.read(principal, projectId, async reader => { required(await reader.getEvaluation(id, revisionId), "Evaluation revision"); return reader.listEvaluationConclusions(id, revisionId); });
   }
   getDocument(principal: Principal, projectId: string, documentId: string): Promise<DocumentDetail> {
     return this.read(principal, projectId, async (reader) => {

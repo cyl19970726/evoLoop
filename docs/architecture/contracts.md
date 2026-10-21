@@ -171,11 +171,11 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 ## 6a. EvaluationRecord：评价证据与条件
 
-评价是有来源的工作记录，`core/evaluation` 使用现有 Task/Run/Delivery/Review 与证据引用组织它；不新增一个独立模型执行系统。`EvaluationRecord` 至少包含 evaluationId、项目、协议/评分规则固定引用、任务族、来源包与可见性边界、候选实现/知识修订、模型/工具/预算条件、条件差异和创建者。被比较的材料组与 Wiki 组保留各自条件，条件变化产生新修订而非覆盖旧成绩。
+首片以 `EvaluationRevision`、`EvaluationAttempt`、`EvaluationAssessment`、`EvaluationConclusion` 四种追加事实实现固定条件评价，沿用现有 Task、Session、Run、Delivery、ConsumerObservation；不新增评价执行器或状态机。定义修订固定一个进行中 Task 的来源修订及业务签名（正文、验收、封存依据与保留决定、外部来源），协议、共同材料、共同指令、判据和两种条件：直接读固定材料、额外读指定 Wiki 修订。两组声明相同模型与环境；若 Task 已强制采用 Wiki，则不能建立声称“直接”的对照。定义改变时追加新修订，旧尝试及判断仍归旧修订。
 
-每个 `EvaluationCase` 关联固定 TaskRevision、实际 Run/消费 session、输入修订、首次产物及重试、追源/人工介入、确定性检查和独立评审。`ConsumerOutcome` 分开记录知识采用、交付合格、真人效果与成本；值可为已观察、未观察或待复核，缺失不折算为零或通过。消费者不能得到尚未开放的答案与评分反馈；权限检查覆盖产物和逐 case 详情。
+每次首次或重试都要以新的受管 Session 预留真实 Run，并在同一事务追加 `EvaluationAttempt`。它分别保存来源 `sourceTaskRevisionId` 与本次派生、实际执行的 `actualTaskRevisionId`；两者不可混写。派生时重新核 Task 签名及外部来源快照，变更则拒绝派发。启动前协调器应从固定协议、共同材料、必需 Task 依据/外部来源及该组 Wiki 修订生成受控 Blob 输入包，记录内容 hash、清单 hash、构建版本和固定来源；Run 绑定包后才可派发，原生执行须读取相同字节。不存在包或来源不可核时不能用摘要代替运行。
 
-PG 保存这些记录、决定和固定引用；大原件按 EvidenceStore/BlobStore 定位，活 Wiki 正文仍外置。页面返回逐 case 证据与局限，汇总须标分母、失败/重试、未知和条件差异。评价结果先形成 ReviewDecision 或维护/补证提议，经授权和 Task 创建、开始规则推进；不能因为自动评分较高就自动采纳知识或关闭阶段目标。评价设计见[产品评价约定](../product/wiki-evaluation.md)。
+评审为每个尝试追加固定 Delivery/Observation、来源忠实、知识采用、交付质量、真人效果、逐项成本与证据；`null` 成本是未知而非零，Agent 使用不等于真人效果。纠正以 `supersedesId` 指向旧判定，不覆盖历史。结论须引用包括失败与重试在内的全部尝试的当前判定，说明可比性、局限、下一步选择及受影响固定引用。首片没有全阶段成本覆盖及技术隔离证明，只能记 `with_limits` 或 `unknown`，即使两组有尝试及局部成本也不能记完全可比。后续行动可固定引用同项目现有 Task 的指定 TaskRevision；核实身份后仍不自动创建、开始或关闭它。PG 保存四种事实及固定身份，原件与输入包由受控 Blob 保存，活 Wiki 正文仍外置。评价结论不自动关闭 Task、发布 Wiki 或代替阶段回看；后续行动仍走既有授权与任务规则。目标方法见[产品评价约定](../product/wiki-evaluation.md)。
 
 ## 7. ScheduleStore 与触发实例
 
