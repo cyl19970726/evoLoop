@@ -1,0 +1,4 @@
+interface:
+  display_name: "开发规范与流程"
+  short_description: "构建和演进开发规范、Git 与 CI/CD，并用真实执行和历史证据评价有效性"
+  default_prompt: "使用 $development-workflow 检查并改进当前项目的开发规范与流程，用适当的实际执行和历史证据验证结果。"
