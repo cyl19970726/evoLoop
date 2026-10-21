@@ -320,7 +320,7 @@ export class WorkflowService {
             status: doc.adoptedRevisionId ? "published" : "draft", title: command.title }, doc.version);
         }
         const basisSetId = prior.basisSetId ? this.deps.ids.next() : null;
-        const revision: TaskRevision = { ...prior, id: revisionId, version: task.version + 1, title: command.title,
+        const revision: TaskRevision = { ...prior, id: revisionId, version: task.version + 1, state: task.state, title: command.title,
           content: command.content, contentRevisionId, kind, acceptance: command.acceptance, owner: command.owner,
           basisSetId, actorId, reason: command.reason, createdAt: now };
         await tx.insertTaskRevision(revision);
@@ -421,7 +421,7 @@ export class WorkflowService {
         const basisId = this.deps.ids.next();
         const decisionId = this.deps.ids.next();
         const revision: TaskRevision = {
-          ...previousRevision, id: revisionId, version: task.version + 1, basisSetId: basisId,
+          ...previousRevision, id: revisionId, version: task.version + 1, state: task.state, basisSetId: basisId,
           acceptance: command.acceptance ?? task.acceptance, actorId, reason: command.reason, createdAt: now,
         };
         const basis: BasisSet = { projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId, id: basisId, members: nextMembers, sealed: true };

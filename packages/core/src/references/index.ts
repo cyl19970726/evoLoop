@@ -160,7 +160,7 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
       throw new DomainError("VERSION_CONFLICT", "External reference slot changed");
     const nextRevisionId = deps.nextId();
     const nextBasisId = revision.basisSetId ? deps.nextId() : null;
-    const nextRevision = { ...revision, id: nextRevisionId, version: task.version + 1,
+    const nextRevision = { ...revision, id: nextRevisionId, version: task.version + 1, state: task.state,
       basisSetId: nextBasisId, actorId: principal.actorId,
       reason: `External reference ${command.decision}: ${command.reason}`, createdAt: deps.now() };
     await tx.insertTaskRevision(nextRevision);

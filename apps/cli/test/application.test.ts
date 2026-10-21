@@ -9,6 +9,7 @@ async function run(args: string[], env: Record<string, string | undefined> = {})
 }
 test("an unauthenticated fresh Agent can discover help, IDs, exact command schemas and named routes", async () => {
   const help = await run(["help"]); assert.equal(help.code, 0); assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("context ")));
+  assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("receipts retry ")));
   const schema = await run(["command", "schema", "task.create"]); assert.equal(schema.code, 0);
   const create = JSON.parse(schema.stdout);
   assert.ok(create.required.includes("content"));

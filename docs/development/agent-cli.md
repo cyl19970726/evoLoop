@@ -41,6 +41,13 @@ CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show I
 
 若回包丢失或状态未知，保留原操作 ID、请求正文和读入基线。先按同一 ID 查询 `operation ID --project PROJECT`；若操作涉及外部知识发布、来源或 Runtime，按对应具名恢复/复核接口核对外部原件及本地记录，不能把普通操作查询当成外部发布证明。404 仅表示该次未查到，不能证明未执行；不能换 ID 盲重派。外部动作的状态仍不明时停止该动作并报告未知和需要的人工核对。
 
+纯事务核心命令有显式恢复入口：`receipts retry RECEIPT_UUID`。它只接收保留的 `/api/commands` 意图，并要求回执记录的原 actor 与当前服务端核实的 actor 一致；缺少 actor 的旧回执只允许核对。先按原 ID 读回；找到结果就返回，不再次提交。若核心明确返回 OPERATION_NOT_FOUND，可按原 actor、项目、操作 ID、正文和 expectedVersion 原样回放一次，依赖服务端项目锁、命令摘要和同事务日志去重；404 仍不证明前次未执行。它不能改变正文、换 ID、自动提高版本或重放上传/知识发布等外部操作，也不删除本机回执。已拒绝的原操作先重读拒绝原因和对象，不强套通过。恢复中的网络错误、权限变化或摘要不符继续保留 pending，不据此宣布原操作失败。
+
+```sh
+npm run --silent cli -- receipts reconcile "$RECEIPT_ID"
+npm run --silent cli -- receipts retry "$RECEIPT_ID"
+```
+
 ## 当前边界
 
 具名读取、固定 context/原件、专用请求 schema、持久回执与服务端核对已实现；当前能力以 `help`、`command types`、`request types`、对应 schema 与实际读回为准。新上下文 Agent 已仅经业务 skill＋CLI 完成一项隔离静态归档任务：上游改版显式保留旧依据，交接引用错误产生的两次失败保留，修正版经另一 Agent 实际读取和字节核验后关闭；普通工作台独立只读 QA 可见相同固定原件、交付、观察和旧历史。整合检查与 C1—C4 状态统一见[阶段路线](../roadmap.md#agent-业务入口-c1c4实施里程碑)。这核验了机器入口与人的观察面能够接续，不能替代真人亲用或证明整体产品效果。外置 Wiki 已有受限写读与候选复核证据，语义索引未验；飞书真实租户延后；生产可靠性与长期效果仍需独立验收。

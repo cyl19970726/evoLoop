@@ -17,6 +17,9 @@ const directory = fileURLToPath(new URL("../migrations/", import.meta.url));
 const client = new pg.Client({ connectionString: url, options: `-c search_path=${schema}` });
 const ids = Array.from({ length: 10 }, () => randomUUID());
 const [projectId, taskId, firstRevisionId, secondRevisionId, basisId, sourceDocumentId, sourceRevisionId, operationId] = ids;
+const deferredTaskId = randomUUID();
+const deferredRevisionId = randomUUID();
+const deferredBasisId = randomUUID();
 const sessionId = randomUUID();
 const runId = randomUUID();
 const now = "2026-10-21T00:00:00.000Z";
@@ -50,6 +53,18 @@ test("012 backfills nonempty legacy history byte-exactly without rewriting seale
     await client.query("UPDATE basis_set SET sealed=true WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3", [projectId, taskId, secondRevisionId]);
     await client.query("INSERT INTO task_document_link(project_id,link_id,task_id,document_id,actor_id,created_at) VALUES($1,$2,$3,$4,'author',$5)",
       [projectId, randomUUID(), taskId, sourceDocumentId, now]);
+    await client.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state) VALUES($1,$2,3,$3,'deferred task','old deferred body','old acceptance','owner','deferred')",
+      [projectId, deferredTaskId, deferredRevisionId]);
+    await client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,3,'deferred task','old deferred body','old acceptance','owner','deferred',$4,'author','historic pause',$5)",
+      [projectId, deferredTaskId, deferredRevisionId, deferredBasisId, now]);
+    await client.query("INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed) VALUES($1,$2,$3,$4,false)",
+      [projectId, deferredTaskId, deferredRevisionId, deferredBasisId]);
+    await client.query("INSERT INTO basis_member(project_id,task_id,task_revision_id,basis_set_id,document_id,document_revision_id) VALUES($1,$2,$3,$4,$5,$6)",
+      [projectId, deferredTaskId, deferredRevisionId, deferredBasisId, sourceDocumentId, sourceRevisionId]);
+    await client.query("UPDATE basis_set SET sealed=true WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3",
+      [projectId, deferredTaskId, deferredRevisionId]);
+    await client.query("INSERT INTO task_document_link(project_id,link_id,task_id,document_id,actor_id,created_at) VALUES($1,$2,$3,$4,'author',$5)",
+      [projectId, randomUUID(), deferredTaskId, sourceDocumentId, now]);
     await client.query("INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at) VALUES($1,$2,'author',$3,'task.accept',$4::jsonb,$5)", [projectId, operationId, "a".repeat(64), JSON.stringify({ status: "applied", operationId, entityId: taskId, revisionId: secondRevisionId }), now]);
     await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
       VALUES($1,$2,'worker','/tmp','fixed',NULL,'workspace-write','on-request','ready',1,'native-thread','native-session',$3,'author',$4,$4)`, [projectId, sessionId, randomUUID(), now]);
@@ -97,6 +112,21 @@ test("012 backfills nonempty legacy history byte-exactly without rewriting seale
   try {
     const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(workflowPool),
       clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash } });
+    const deferredBefore = await workflow.getTask({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] }, projectId!, deferredTaskId);
+    assert.equal(deferredBefore.task.state, "todo");
+    assert.equal(deferredBefore.revision.state, "deferred");
+    const updateOperationId = randomUUID();
+    const updatedDeferred = await workflow.execute({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] },
+      { type: "task.update", projectId: projectId!, operationId: updateOperationId, taskId: deferredTaskId,
+        expectedVersion: 3, title: "reframed task", content: "new body", acceptance: "new check",
+        owner: "owner", reason: "reframe old deferred task" });
+    assert.equal(updatedDeferred.status, "applied");
+    const deferredAfter = await workflow.getTask({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] }, projectId!, deferredTaskId);
+    assert.equal(deferredAfter.task.version, 4);
+    assert.equal(deferredAfter.revision.state, "todo");
+    assert.equal((await workflow.getTaskRevision({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] },
+      projectId!, deferredTaskId, deferredRevisionId)).revision.state, "deferred");
+    assert.equal((await client.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, updateOperationId])).rows[0].n, 1);
     const started = await workflow.execute({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] },
       { type: "task.start", projectId: projectId!, operationId: randomUUID(), taskId: taskId!, expectedVersion: 2,
         reason: "Resume migrated approved work" });

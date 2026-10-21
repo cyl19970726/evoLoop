@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { canonicalJson } from "@evoloop/core";
 import { ApiClient, CliApiError } from "../src/client.js";
-import { dispatchMutation, reconcileReceipt, ReceiptError, ReceiptStore, type Intent, type VerifiedActor } from "../src/receipts.js";
+import { dispatchMutation, reconcileReceipt, retryReceipt, ReceiptError, ReceiptStore, type Intent, type VerifiedActor } from "../src/receipts.js";
 
 const apiUrl = "http://127.0.0.1:55337";
 const token = "private-fixture-token";
@@ -20,6 +21,11 @@ const coreIntent = (): Intent => {
   return { id: randomUUID(), projectId, operationId, kind: "task.revise", path: "/api/commands",
     body: { projectId, operationId, type: "task.revise", taskId: entityId },
     recovery: { kind: "core", path: `/api/projects/${projectId}/operations/${operationId}` }, confirmation: "command" };
+};
+const retryableIntent = (): Intent => {
+  const intent = coreIntent();
+  return { ...intent, kind: "project.create", body: { projectId, operationId: intent.operationId,
+    type: "project.create", title: "Recover the original intent" } };
 };
 async function temporaryStore(t: import("node:test").TestContext): Promise<ReceiptStore> {
   const directory = await mkdtemp(join(tmpdir(), "evoloop-receipts-test-"));
@@ -59,6 +65,122 @@ test("a 404 during readback remains pending and never proves the write failed", 
   assert.equal(prepared.existing, false);
   const transport = client(async () => response({ code: "NOT_FOUND", message: "not indexed yet" }, 404));
   await assert.rejects(() => reconcileReceipt(transport, store, apiUrl, token, intent.id), pendingError);
+  assert.equal((await store.get(intent.id)).state, "pending");
+});
+
+test("explicit core retry reads back first and returns an already committed result without POST", async t => {
+  const store = await temporaryStore(t), intent = retryableIntent();
+  await store.prepare(apiUrl, token, intent, verifiedActor("original-agent"));
+  let gets = 0;
+  const transport = client(async (_url, init) => {
+    assert.equal(init?.method, "GET"); gets++;
+    return response({ id: intent.operationId, projectId, actorId: "original-agent", commandType: intent.kind,
+      commandHash: createHash("sha256").update(canonicalJson({ actorId: "original-agent", command: intent.body })).digest("hex"),
+      result: { status: "applied", operationId: intent.operationId, entityId } });
+  });
+  assert.equal((await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent"))).state, "confirmed");
+  assert.equal((await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent"))).state, "confirmed");
+  assert.equal(gets, 1);
+});
+
+test("explicit core retry after an unconfirmed missing operation sends the same ID and exact saved body once", async t => {
+  const store = await temporaryStore(t), intent = retryableIntent();
+  await store.prepare(apiUrl, token, intent, verifiedActor("original-agent"));
+  const methods: string[] = [];
+  const transport = client(async (url, init) => {
+    methods.push(init!.method!);
+    if (init?.method === "GET") {
+      assert.equal((url as URL).pathname, intent.recovery.path);
+      return response({ code: "OPERATION_NOT_FOUND" }, 404);
+    }
+    assert.equal((url as URL).pathname, "/api/commands");
+    assert.deepEqual(JSON.parse(String(init?.body)), intent.body);
+    return response({ status: "applied", operationId: intent.operationId, entityId });
+  });
+  const result = await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent"));
+  assert.equal(result.state, "confirmed");
+  assert.equal(result.operationId, intent.operationId);
+  assert.equal(result.requestHash, (await store.get(intent.id)).requestHash);
+  assert.deepEqual(methods, ["GET", "POST"]);
+});
+
+test("retry does not POST after unavailable, denied, malformed or unrelated not-found readback", async t => {
+  for (const [body, status] of [[{ code: "UNAVAILABLE" }, 503], [{ code: "FORBIDDEN" }, 403],
+    [{ code: "NOT_FOUND" }, 404], [{ id: randomUUID(), projectId, result: { status: "applied" } }, 200]] as const) {
+    const store = await temporaryStore(t), intent = retryableIntent();
+    await store.prepare(apiUrl, token, intent, verifiedActor("original-agent"));
+    const transport = client(async (_url, init) => {
+      assert.equal(init?.method, "GET"); return response(body, status);
+    });
+    await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent")), pendingError);
+    assert.equal((await store.get(intent.id)).state, "pending");
+  }
+});
+
+test("retry refuses external mutations, altered saved intents and a different authenticated actor", async t => {
+  const store = await temporaryStore(t), intent = retryableIntent();
+  const actor = verifiedActor("original-agent");
+  await store.prepare(apiUrl, token, intent, actor);
+  const transport = client(async () => { throw new Error("no network mutation is permitted"); });
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("other-agent")),
+    error => error instanceof ReceiptError && error.code === "RECEIPT_SCOPE_MISMATCH");
+  const external = { ...retryableIntent(), path: `/api/projects/${projectId}/documents/import` };
+  await store.prepare(apiUrl, token, external);
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, external.id, () => {}),
+    error => error instanceof ReceiptError && error.code === "RETRY_UNSUPPORTED");
+  const receipt = await store.get(intent.id);
+  await writeFile(join(store.directory, `${intent.id}.json`), JSON.stringify({ ...receipt,
+    body: { ...receipt.body as object, title: "Changed after the failure" } }));
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor),
+    error => error instanceof ReceiptError && error.code === "INVALID_RECEIPT");
+});
+
+test("retry requires both a recorded original actor and a matching verified current actor", async t => {
+  const store = await temporaryStore(t), legacy = retryableIntent(), current = retryableIntent();
+  await store.prepare(apiUrl, token, legacy);
+  await store.prepare(apiUrl, token, current, verifiedActor("original-agent"));
+  const transport = client(async () => { throw new Error("unverified actor must not read or replay a receipt"); });
+  for (const [intent, actor] of [[legacy, verifiedActor("remapped-token-actor")], [current, undefined]] as const) {
+    await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor),
+      error => error instanceof ReceiptError && error.code === "RETRY_UNSUPPORTED");
+    assert.equal((await store.get(intent.id)).state, "pending");
+  }
+});
+
+test("a replayed command can reject its original baseline without changing or resubmitting the intent", async t => {
+  const store = await temporaryStore(t), intent = retryableIntent();
+  await store.prepare(apiUrl, token, intent, verifiedActor("original-agent"));
+  let posts = 0;
+  const transport = client(async (_url, init) => {
+    if (init?.method === "GET") return response({ code: "OPERATION_NOT_FOUND" }, 404);
+    posts++; assert.deepEqual(JSON.parse(String(init?.body)), intent.body);
+    return response({ status: "rejected", operationId: intent.operationId, code: "VERSION_CONFLICT", currentVersion: 4 }, 409);
+  });
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent")),
+    error => error instanceof ReceiptError && error.code === "OPERATION_REJECTED");
+  assert.equal((await store.get(intent.id)).state, "rejected");
+  assert.equal((await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent"))).state, "rejected");
+  assert.equal(posts, 1);
+});
+
+test("a retry-time HTTP denial cannot settle an earlier unknown command", async t => {
+  const store = await temporaryStore(t), intent = retryableIntent();
+  await store.prepare(apiUrl, token, intent, verifiedActor("original-agent"));
+  const transport = client(async (_url, init) => init?.method === "GET"
+    ? response({ code: "OPERATION_NOT_FOUND" }, 404) : response({ code: "FORBIDDEN" }, 403));
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, verifiedActor("original-agent")), pendingError);
+  assert.equal((await store.get(intent.id)).state, "pending");
+});
+
+test("a same-ID operation for a different saved command cannot confirm or trigger a retry", async t => {
+  const store = await temporaryStore(t), intent = retryableIntent(), actor = verifiedActor("original-agent");
+  await store.prepare(apiUrl, token, intent, actor);
+  const transport = client(async (_url, init) => {
+    assert.equal(init?.method, "GET");
+    return response({ id: intent.operationId, projectId, actorId: actor.actorId, commandType: intent.kind, commandHash: "0".repeat(64),
+      result: { status: "applied", operationId: intent.operationId, entityId } });
+  });
+  await assert.rejects(() => retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor), pendingError);
   assert.equal((await store.get(intent.id)).state, "pending");
 });
 

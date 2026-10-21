@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { runner } from "node-pg-migrate";
+import { WorkflowService } from "@evoloop/core";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import type { BasisSet, Document, DocumentRevision, Operation, Project, Task, TaskRevision } from "@evoloop/contracts";
 
@@ -65,6 +68,108 @@ test("migration can run twice without changing history", async () => {
   const result = await pool.query("SELECT count(*)::int AS count FROM pgmigrations");
   assert.ok(before.rows[0].count >= 2);
   assert.equal(result.rows[0].count, before.rows[0].count);
+});
+
+test("legacy Task decision projection follows only the current historical revision and disappears after a new revision", async () => {
+  const legacySchema = `el_m1_projection_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const migrations = fileURLToPath(new URL("../migrations/", import.meta.url));
+  const migrateLegacySchema = (count?: number) => runner({ databaseUrl: connectionString!, dir: migrations,
+    migrationsTable: "pgmigrations", schema: legacySchema, createSchema: true, createMigrationsSchema: true,
+    direction: "up", singleTransaction: true, ...(count ? { count } : {}), log: () => {} });
+  const legacyClient = new pg.Client({ connectionString, options: `-c search_path=${legacySchema}` });
+  const legacyPool = new pg.Pool({ connectionString, options: `-c search_path=${legacySchema}` });
+  try {
+    await migrateLegacySchema(11);
+    await legacyClient.connect();
+    const localProjectId = randomUUID(), foreignProjectId = randomUUID();
+    const deferredId = randomUUID(), deferredRevisionId = randomUUID(), deferredBasisId = randomUUID();
+    const proposedId = randomUUID(), proposedRevisionId = randomUUID();
+    const priorOnlyId = randomUUID(), priorRevisionId = randomUUID(), currentRevisionId = randomUUID();
+    const sourceId = randomUUID(), sourceRevisionId = randomUUID();
+    const judgementAt = "2026-10-20T00:00:01.000Z", laterJudgementAt = "2026-10-20T00:00:02.000Z";
+    await legacyClient.query("BEGIN");
+    try {
+      for (const id of [localProjectId, foreignProjectId])
+        await legacyClient.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Legacy projection',$2)", [id, now]);
+      await legacyClient.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id) VALUES($1,$2,'source',1,$3)",
+        [localProjectId, sourceId, sourceRevisionId]);
+      await legacyClient.query("INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,previous_revision_id,reason) VALUES($1,$2,$3,'source','markdown',$4,$5,$6,NULL,'fixture')",
+        [localProjectId, sourceId, sourceRevisionId, sha("source"), actor, now]);
+      const addTask = async (projectId: string, taskId: string, revisionId: string, taskVersion: number,
+        state: "deferred" | "proposed", reason: string, basisId: string | null = null) => {
+        await legacyClient.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state) VALUES($1,$2,$3,$4,'Legacy task','Old content','Check result',$5,$6)",
+          [projectId, taskId, taskVersion, revisionId, actor, state]);
+        await legacyClient.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,$4,'Legacy task','Old content','Check result',$5,$6,$7,$5,$8,$9)",
+          [projectId, taskId, revisionId, taskVersion, actor, state, basisId, reason, now]);
+      };
+      await addTask(localProjectId, deferredId, deferredRevisionId, 1, "deferred", "Paused pending owner review", deferredBasisId);
+      await legacyClient.query("INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed) VALUES($1,$2,$3,$4,false)",
+        [localProjectId, deferredId, deferredRevisionId, deferredBasisId]);
+      await legacyClient.query("INSERT INTO basis_member(project_id,task_id,task_revision_id,basis_set_id,document_id,document_revision_id) VALUES($1,$2,$3,$4,$5,$6)",
+        [localProjectId, deferredId, deferredRevisionId, deferredBasisId, sourceId, sourceRevisionId]);
+      await legacyClient.query("UPDATE basis_set SET sealed=true WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3",
+        [localProjectId, deferredId, deferredRevisionId]);
+      await addTask(localProjectId, proposedId, proposedRevisionId, 1, "proposed", "Initial proposal");
+      await legacyClient.query("INSERT INTO task_judgement(project_id,judgement_id,task_id,task_revision_id,decision,reason,evidence,relook_condition,actor_id,created_at) VALUES($1,$2,$3,$4,'needsEvidence','Need source proof','old',NULL,$5,$6)",
+        [localProjectId, randomUUID(), proposedId, proposedRevisionId, actor, judgementAt]);
+      await legacyClient.query("INSERT INTO task_judgement(project_id,judgement_id,task_id,task_revision_id,decision,reason,evidence,relook_condition,actor_id,created_at) VALUES($1,$2,$3,$4,'reject','Reject this version','checked',NULL,$5,$6)",
+        [localProjectId, randomUUID(), proposedId, proposedRevisionId, actor, laterJudgementAt]);
+      await addTask(foreignProjectId, proposedId, proposedRevisionId, 1, "proposed", "Foreign proposal");
+      await legacyClient.query("INSERT INTO task_judgement(project_id,judgement_id,task_id,task_revision_id,decision,reason,evidence,relook_condition,actor_id,created_at) VALUES($1,$2,$3,$4,'defer','Foreign decision','private',NULL,$5,$6)",
+        [foreignProjectId, randomUUID(), proposedId, proposedRevisionId, actor, laterJudgementAt]);
+      await legacyClient.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,goal,acceptance,owner,state) VALUES($1,$2,2,$3,'Legacy task','Old content','Check result',$4,'proposed')",
+        [localProjectId, priorOnlyId, currentRevisionId, actor]);
+      for (const [id, version, reason] of [[priorRevisionId, 1, "Older proposal"], [currentRevisionId, 2, "Current proposal"]] as const)
+        await legacyClient.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,goal,acceptance,owner,state,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,$4,'Legacy task','Old content','Check result',$5,'proposed',NULL,$5,$6,$7)",
+          [localProjectId, priorOnlyId, id, version, actor, reason, now]);
+      await legacyClient.query("INSERT INTO task_judgement(project_id,judgement_id,task_id,task_revision_id,decision,reason,evidence,relook_condition,actor_id,created_at) VALUES($1,$2,$3,$4,'reject','Reject older revision','old',NULL,$5,$6)",
+        [localProjectId, randomUUID(), priorOnlyId, priorRevisionId, actor, judgementAt]);
+      await legacyClient.query("COMMIT");
+    } catch (error) { await legacyClient.query("ROLLBACK"); throw error; }
+    await migrateLegacySchema();
+
+    const local = new PostgresUnitOfWork(legacyPool);
+    const deferred = await local.read(localProjectId, reader => reader.getTask(deferredId));
+    assert.equal(deferred?.state, "todo");
+    assert.deepEqual(deferred?.legacyDecision, { state: "deferred", decision: null, reason: "Paused pending owner review" });
+    const proposed = await local.read(localProjectId, reader => reader.getTask(proposedId));
+    assert.equal(proposed?.state, "todo");
+    assert.deepEqual(proposed?.legacyDecision, { state: "proposed", decision: "reject", reason: "Reject this version" });
+    const priorOnly = await local.read(localProjectId, reader => reader.getTask(priorOnlyId));
+    assert.deepEqual(priorOnly?.legacyDecision, { state: "proposed", decision: null, reason: "Current proposal" },
+      "judgement on an older revision cannot be presented as the current decision");
+    const listed = await local.read(localProjectId, reader => reader.listTasks(100));
+    assert.equal(listed.items.length, 3);
+    assert.deepEqual(listed.items.find(item => item.id === deferredId)?.legacyDecision, deferred?.legacyDecision);
+    assert.deepEqual(listed.items.find(item => item.id === proposedId)?.legacyDecision, proposed?.legacyDecision);
+    assert.deepEqual(listed.items.find(item => item.id === priorOnlyId)?.legacyDecision, priorOnly?.legacyDecision);
+    assert.equal(listed.items.some(item => item.legacyDecision?.reason === "Foreign decision"), false);
+    const foreign = await local.read(foreignProjectId, reader => reader.getTask(proposedId));
+    assert.deepEqual(foreign?.legacyDecision, { state: "proposed", decision: "defer", reason: "Foreign decision" });
+
+    const workflow = new WorkflowService({ uow: local, clock: { now: () => now }, ids: { next: randomUUID },
+      hasher: { hash: sha } });
+    const principal = { actorId: actor, projectIds: [localProjectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+    const changed = await workflow.execute(principal, { type: "task.update", projectId: localProjectId,
+      operationId: randomUUID(), taskId: proposedId, expectedVersion: 1, title: "Clarified task",
+      content: "Old content", acceptance: "Check result", owner: actor, reason: "Replace the old proposal" });
+    assert.equal(changed.status, "applied");
+    const current = await local.read(localProjectId, reader => reader.getTask(proposedId));
+    assert.equal(current?.state, "todo");
+    assert.equal(current?.legacyDecision, null);
+    const newList = await local.read(localProjectId, reader => reader.listTasks(100));
+    assert.equal(newList.items.find(item => item.id === proposedId)?.legacyDecision, null);
+    const oldHistory = await local.read(localProjectId, reader => reader.getTaskRevision(proposedId, proposedRevisionId));
+    assert.equal(oldHistory?.state, "proposed");
+    const oldJudgements = await local.read(localProjectId, reader => reader.listTaskJudgements(proposedId));
+    assert.deepEqual(oldJudgements.map(item => item.decision), ["needsEvidence", "reject"]);
+  } finally {
+    await legacyPool.end();
+    await legacyClient.end().catch(() => {});
+    const cleanup = new pg.Client({ connectionString });
+    await cleanup.connect();
+    try { await cleanup.query(`DROP SCHEMA IF EXISTS "${legacySchema}" CASCADE`); } finally { await cleanup.end(); }
+  }
 });
 
 test("adopted document pointer requires a decision; revisions and decisions stay immutable", async () => {

@@ -8,6 +8,7 @@ import { ReferencePanel } from "../references/ReferencePanel";
 import { TaskWorkflow } from "./TaskWorkflow";
 import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
+import { legacyDecisionLabel } from "./taskListPresentation";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -181,6 +182,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
       <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<span>责任者：{detail.task.owner}</span><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
     </header>
+    {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => setTab("history")}>查看历史时间线 →</button></Alert>}
     {error && <Alert kind="error">{error}</Alert>}
     <div className="task-tabs" role="tablist" aria-label="任务详情">{taskTabs.map(item => <button key={item.id} type="button" role="tab" id={tabId(item.id)} aria-controls={panelId(item.id)} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => { if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return; event.preventDefault(); const index = taskTabs.findIndex(candidate => candidate.id === item.id); const next = taskTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + taskTabs.length) % taskTabs.length]; setTab(next.id); document.getElementById(tabId(next.id))?.focus(); }}>
       {item.label}{item.id === "basis" && pending.length > 0 && <span className="task-tab-count">{pending.length}</span>}

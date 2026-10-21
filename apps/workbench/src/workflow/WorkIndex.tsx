@@ -6,6 +6,7 @@ import { ActionForm, option, type MutationContext } from "./ActionForm";
 import { UploadDocument } from "../documents/UploadDocument";
 import { Alert, ShortId, href } from "../ui/shared";
 import { Button } from "../components/ui/button";
+import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
@@ -72,7 +73,15 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       </div>
       {loading && <p className="list-message" role="status">正在读取{title}…</p>}
       {error && <div className="list-message"><Alert kind="error">读取失败：{error}</Alert><button onClick={context.onChanged}>重试读取</button></div>}
-      {!loading && !error && <><div className="table-wrap">{view === "documents" ? <table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table> : <table><thead><tr><th>任务名称</th><th>状态</th><th>类型</th><th>责任者</th><th>版本</th></tr></thead><tbody>{visibleTasks.map(t => <tr key={t.id}><td><a href={href(projectId, "task", t.id)}>{t.title}</a><small>{pending.some(i => i.taskId === t.id) && <span className="impact-marker">依据待复核 · </span>}<ShortId value={t.id} /></small></td><td><span className="pill">{states[t.state]}</span></td><td>{t.kind ? taskKinds[t.kind] : "未分类"}</td><td>{t.owner}</td><td>v{t.version}</td></tr>)}</tbody></table>}</div>
+      {!loading && !error && <><div className="table-wrap">{view === "documents" ? <table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table>  : <table className="task-list-table"><thead><tr><th>任务名称</th><th>状态</th><th>下一步</th><th>类型</th><th>责任者</th><th>版本</th></tr></thead><tbody>{visibleTasks.map(t => <tr key={t.id}>
+        <td className="task-list-title"><a href={href(projectId, "task", t.id)}>{t.title}</a><small>{pending.some(i => i.taskId === t.id) && <span className="impact-marker">依据待复核 · </span>}<ShortId value={t.id} /></small></td>
+        <td className="task-list-state"><span className="mobile-field-label">当前状态</span><span className="pill">{states[t.state]}</span></td>
+        <td className="task-list-next"><span className="mobile-field-label">下一步</span>{t.legacyDecision && <strong className="task-list-legacy">{legacyDecisionLabel(t.legacyDecision)}</strong>}{taskNextStep(t.state, t.legacyDecision)}
+          {t.legacyDecision && <details className="task-list-legacy-reason"><summary>查看旧判断理由</summary><p>{t.legacyDecision.reason}</p><a href={href(projectId, "task", t.id)}>打开任务核对历史 →</a></details>}</td>
+        <td className="task-list-kind"><span className="mobile-field-label">类型</span>{t.kind ? taskKinds[t.kind] : "未分类"}</td>
+        <td className="task-list-owner"><span className="mobile-field-label">责任者</span>{t.owner}</td>
+        <td className="task-list-version"><span className="mobile-field-label">版本</span>v{t.version}</td>
+      </tr>)}</tbody></table>}</div>
       {!(view === "documents" ? visibleDocuments : visibleTasks).length && <div className="list-empty"><FileEmpty /><h2>{query || filter !== "all" || kindFilter !== "all" || view === "documents" && documentStatus !== "active" ? "没有匹配项" : view === "inbox" ? "没有待办任务" : `还没有${title}`}</h2><p>可以清除筛选，或创建一项有明确正文与验收条件的工作。</p><button onClick={() => { setQuery(""); setFilter("all"); setKindFilter("all"); setDocumentStatus("active"); }}>清除筛选</button></div>}
       <div className="list-footer"><span>已载入 {view === "documents" ? documents.items.length : tasks.items.length} 项 · 当前显示 {view === "documents" ? visibleDocuments.length : visibleTasks.length} 项</span>{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy} onClick={() => void more()}>{busy ? "加载中…" : "加载更多"}</button>}</div></>}
     </section>

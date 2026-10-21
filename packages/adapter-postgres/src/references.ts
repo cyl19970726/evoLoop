@@ -4,7 +4,8 @@ import type { FormalSourceDecision, TaskExternalReferenceHead, TaskExternalRefer
 const iso = (value: Date | string): string => new Date(value).toISOString();
 const record = (row: any): TaskExternalReferenceRecord => ({
   projectId: row.project_id, id: row.decision_id, taskId: row.task_id,
-  taskRevisionId: row.origin_task_revision_id, slotId: row.slot_id, version: row.slot_version,
+  taskRevisionId: row.snapshot_task_revision_id ?? row.origin_task_revision_id,
+  slotId: row.slot_id, version: row.slot_version,
   decision: row.decision, kind: row.source_kind, referenceId: row.reference_id,
   revision: row.source_revision, contentHash: row.content_hash, reason: row.reason,
   actionImpact: row.action_impact, actorId: row.actor_id, createdAt: iso(row.created_at),
@@ -23,14 +24,16 @@ export class PgReferenceStore {
       version: row.slot_version, decisionId: row.decision_id } : null;
   }
   async getTaskExternalSnapshot(taskId: string, taskRevisionId: string, slotId: string): Promise<TaskExternalReferenceRecord | null> {
-    const result = await this.client.query(`SELECT d.* FROM task_external_ref_snapshot s JOIN task_external_ref_decision d
+    const result = await this.client.query(`SELECT d.*, s.task_revision_id AS snapshot_task_revision_id
+      FROM task_external_ref_snapshot s JOIN task_external_ref_decision d
       ON d.project_id=s.project_id AND d.decision_id=s.decision_id
       WHERE s.project_id=$1 AND s.task_id=$2 AND s.task_revision_id=$3 AND s.slot_id=$4`,
       [this.projectId, taskId, taskRevisionId, slotId]);
     return result.rows[0] ? record(result.rows[0]) : null;
   }
   async listTaskExternalSnapshot(taskId: string, taskRevisionId: string): Promise<TaskExternalReferenceRecord[]> {
-    const result = await this.client.query(`SELECT d.* FROM task_external_ref_snapshot s JOIN task_external_ref_decision d
+    const result = await this.client.query(`SELECT d.*, s.task_revision_id AS snapshot_task_revision_id
+      FROM task_external_ref_snapshot s JOIN task_external_ref_decision d
       ON d.project_id=s.project_id AND d.decision_id=s.decision_id
       WHERE s.project_id=$1 AND s.task_id=$2 AND s.task_revision_id=$3 ORDER BY s.slot_id LIMIT 101`,
       [this.projectId, taskId, taskRevisionId]);
