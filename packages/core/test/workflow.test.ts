@@ -432,6 +432,35 @@ test("omitted basis rejects changed inherited sources; explicit empty basis deli
     revisionId: active.task.contentRevisionId }]);
 });
 
+test("explicit stage reassignment needs review and a complete active-stage proposal", async () => {
+  const f = fixture();
+  await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
+  const goalId = "00000000-0000-4000-8000-000000000081";
+  const stageId = "00000000-0000-4000-8000-000000000082";
+  await f.service.execute(principal, { type: "goal.create", projectId, operationId: f.operation(), goalId,
+    outcome: "Checked result", constraints: "Keep history", consumer: "owner", authority: "local",
+    scope: "project", owner: "owner" });
+  await f.service.execute(principal, { type: "stage.propose", projectId, operationId: f.operation(), stageId,
+    goalId, deliverable: "Result", learningQuestion: "Useful?", reason: "Plan" });
+  await f.service.execute(principal, { type: "stage.accept", projectId, operationId: f.operation(), stageId,
+    expectedVersion: 1, reason: "Approve" });
+  await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(), taskId: taskA,
+    title: "Task", content: "Body", acceptance: "Check", owner: "owner" });
+  const command = { type: "task.update" as const, projectId, operationId: f.operation(), taskId: taskA,
+    expectedVersion: 1, title: "Task", content: "Body", acceptance: "Check", owner: "owner",
+    stageId, reason: "Bind stage" };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
+  await assert.rejects(f.service.execute(writer, command), error =>
+    error instanceof DomainError && error.code === "FORBIDDEN");
+  const incomplete = await f.service.execute(principal, command);
+  assert.equal(incomplete.status === "rejected" ? incomplete.code : null, "INCOMPLETE_PROPOSAL");
+  assert.equal((await f.service.getTask(principal, projectId, taskA)).task.version, 1);
+  const complete = await f.service.execute(principal, { ...command, operationId: f.operation(),
+    consumer: "owner", evidence: "Observed need", stopCondition: "Checked result" });
+  assert.equal(complete.status, "applied");
+  assert.equal((await f.service.getTask(principal, projectId, taskA)).proposal?.stageId, stageId);
+});
+
 test("adoption creates pending impacts; decisions keep sealed old basis and rebuild other pending impacts", async () => {
   const f = fixture();
   await seedTwoTasks(f, [documentId, secondDocumentId]);

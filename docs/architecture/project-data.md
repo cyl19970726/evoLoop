@@ -34,6 +34,8 @@ Task 主正文的唯一权威是 DocumentRevision。Task 与每个 TaskRevision 
 
 任务决定历史读取每个真实 TaskRevision 的状态、理由、操作者、时间与当时封存依据，不从当前状态或操作摘要倒推。已回看阶段的纠正须指定最新同阶段 Review 和当前版本，追加 `supersedesReviewId`、StageRevision 与 Review；旧判断保持不变，也不会顺带改变 Task。
 
+阶段归属随任务修订保存。`task.update.stageId` 省略时沿用原关联，显式 `null` 解除关联，指定 ID 则关联本项目的 active 阶段。显式提供该字段同时要求 write 与 review 权限；实际变更只允许 todo 且无在途或结果未知的 Run。非空关联仍须有 consumer、evidence 和 stopCondition。操作核对 expectedVersion，原子追加 TaskRevision/TaskProposal 及 journal/outbox；旧关联、已回看阶段和已拒绝的启动操作保持原样。`task.start` 继续拒绝当前仍关联非 active 阶段的任务。
+
 负责人讨论沿同一授权 Command/Query API 和 Journal/outbox 提交。准备时固定 Goal/Stage 版本、所选 Task 修订与已采用过程文档；承接观察和讨论决定追加到交接文档修订中，人工登记者与时间单独标明。修改须核对讨论版本与交接文档现行修订，避免覆盖在文档入口另做的修改。后续对象只建立固定链接，执行和亲用仍按各对象记录验证；决定纠正保留旧事件并要求重新核对后续链接。目标会话标签或引用不构成原生会话归属、送达或自动回写证明。
 
 关系至少带项目、两端稳定 ID/类型、相关修订、关系类型、建立者、依据、时间与当前有效性。`specifies`、`implements`、`justified_by`、`validates`、`contradicts`、`supersedes` 等类型需有定义；“implements”表达实现目标，实际符合要求还需验收证据。跨项目关联必须显式授权，不能借关系遍历绕过源对象权限。

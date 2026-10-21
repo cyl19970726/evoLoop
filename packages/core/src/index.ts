@@ -82,6 +82,9 @@ export class WorkflowService {
     const command = parsed.data;
     const permission = this.commandPermission(command);
     requirePermission(principal, command.projectId, permission);
+    // An explicit stage decision needs review even when replaying an earlier operation.
+    if (command.type === "task.update" && command.stageId !== undefined)
+      requirePermission(principal, command.projectId, "review");
     const commandHash = this.deps.hasher.hash(canonicalJson({ actorId: principal.actorId, command }));
     return this.deps.uow.transaction(command.projectId, async (tx) => {
       const project = await tx.getProject();
@@ -293,6 +296,21 @@ export class WorkflowService {
         for (const id of documentIds) required(await tx.getDocument(id), "Linked document");
         const prior = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "Task revision");
         const priorProposal = await tx.getTaskProposal(task.id);
+        const priorStageId = priorProposal?.stageId ?? null;
+        const stageId = command.stageId === undefined ? priorStageId : command.stageId;
+        const stageChanged = stageId !== priorStageId;
+        if (stageChanged && task.state !== "todo")
+          throw new DomainError("REOPEN_REQUIRED", "Return the Task to todo before changing its stage association");
+        if (command.stageId !== undefined && stageId !== null) {
+          const stage = required(await tx.getStage(stageId), "Stage");
+          if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "Only an active stage can receive a Task");
+        }
+        const consumer = command.consumer ?? priorProposal?.consumer ?? "";
+        const evidence = command.evidence ?? priorProposal?.evidence ?? "";
+        const stopCondition = command.stopCondition ?? priorProposal?.stopCondition ?? "";
+        if (command.stageId !== undefined && stageId !== null &&
+          (!consumer.trim() || !evidence.trim() || !stopCondition.trim()))
+          throw new DomainError("INCOMPLETE_PROPOSAL", "Stage task needs consumer, evidence and stop condition");
         const contentChanged = task.content !== command.content;
         const kind = command.kind === undefined ? task.kind : command.kind;
         if (task.state === "in_progress" && (contentChanged || task.acceptance !== command.acceptance ||
@@ -333,12 +351,11 @@ export class WorkflowService {
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
           title: revision.title, content: revision.content, contentRevisionId, kind, acceptance: revision.acceptance,
           owner: revision.owner }, task.version);
-        if (priorProposal || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
+        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
           await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
-            stageId: priorProposal?.stageId ?? null, consumer: command.consumer ?? priorProposal?.consumer ?? "",
+            stageId, consumer,
             useRequired: command.useRequired ?? priorProposal?.useRequired ?? false,
-            evidence: command.evidence ?? priorProposal?.evidence ?? "",
-            stopCondition: command.stopCondition ?? priorProposal?.stopCondition ?? "", createdAt: now });
+            evidence, stopCondition, createdAt: now });
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,
           id: this.deps.ids.next(), taskId: task.id, documentId: id, actorId, createdAt: now });
