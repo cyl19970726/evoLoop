@@ -31,8 +31,8 @@ function Diagram({ source, id }: { source: string; id: string }) {
 }
 
 /** Task and Document bodies share a single non-executing Markdown view. */
-export function MarkdownBody({ source, identity }: { source: string; identity: string }) {
-  const parts = useMemo(() => splitMarkdown(source), [source]);
+export function MarkdownBody({ source, identity, omitLeadingTitle }: { source: string; identity: string; omitLeadingTitle?: string }) {
+  const parts = useMemo(() => splitMarkdown(source, { omitLeadingTitle }), [source, omitLeadingTitle]);
   return <div className="markdown-body">{parts.map((part, index) => part.kind === "diagram"
     ? <Diagram key={`${identity}:${index}`} source={part.value} id={`${identity}-${index}`} />
     : <div key={`${identity}:${index}`} dangerouslySetInnerHTML={{ __html: part.value }} />)}</div>;

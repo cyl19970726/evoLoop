@@ -364,7 +364,8 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
             <span><strong>当前发布</strong> {currentRevision?.slice(0, 8) ?? "尚未核到"}</span></div>
           {visiblePage.validity !== visiblePage.observedValidity && <Notice error>此固定版创建时为{statusText(visiblePage.validity)}；目前标为{statusText(visiblePage.observedValidity)}。使用前请复核来源。</Notice>}
           {fixedRevision && !readingCurrent && <button onClick={() => openPage(visiblePage.knowledgeId)}>阅读当前发布版</button>}
-          <div className="knowledge-fulltext"><MarkdownBody source={visiblePage.body} identity={`knowledge-${visiblePage.knowledgeId}-${visiblePage.revision}`} /></div>
+          <div className="knowledge-fulltext"><MarkdownBody source={visiblePage.body} identity={`knowledge-${visiblePage.knowledgeId}-${visiblePage.revision}`}
+            omitLeadingTitle={visiblePage.title} /></div>
           <details className="knowledge-source-text"><summary>核对 Markdown 原文</summary><pre>{visiblePage.body}</pre></details>
           <p className="muted">正文 SHA-256 <code className="break-anywhere">{visiblePage.contentHash}</code></p>
           {canWrite && <details className="knowledge-maintenance"><summary>基于此页提出修订候选</summary>

@@ -52,3 +52,48 @@ test("structured knowledge Markdown keeps embedded HTML inert", () => {
   assert.ok(!html.includes("<script>"));
   assert.ok(!html.includes('href="javascript:'));
 });
+
+test("reader can omit only a matching first top-level H1 after preserved prelude and code", () => {
+  const source = [
+    "> # 引用中的标题",
+    "> 这不是正文顶层标题。",
+    "",
+    "```md",
+    "# 固定材料可读",
+    "```",
+    "",
+    "正文引言保留。",
+    "",
+    "# **固定材料** [可读](https://example.com) &amp; 核对",
+    "",
+    "## 后续结构",
+    "",
+    "| 项目 | 状态 |",
+    "| --- | --- |",
+    "| 来源 | 保留 |",
+    "",
+    "- 后续列表项",
+  ].join("\n");
+  const html = splitMarkdown(source, { omitLeadingTitle: "固定材料 可读 & 核对" })
+    .map(part => part.kind === "html" ? part.value : "").join("");
+  assert.match(html, /<blockquote>[\s\S]*<h1>引用中的标题<\/h1>/);
+  assert.match(html, /<pre><code class="language-md"># 固定材料可读/);
+  assert.match(html, /<p>正文引言保留。<\/p>/);
+  assert.doesNotMatch(html, /<h1><strong>固定材料<\/strong>/);
+  assert.match(html, /<h2>后续结构<\/h2>/);
+  assert.match(html, /<table>[\s\S]*<td>保留<\/td>[\s\S]*<\/table>/);
+  assert.match(html, /<li>后续列表项<\/li>/);
+  assert.match(source, /# \*\*固定材料\*\*/);
+});
+
+test("a different first top-level H1 prevents removal of later matching headings", () => {
+  const html = splitMarkdown("# 正文自己的首标题\n\n# 外层标题", { omitLeadingTitle: "外层标题" })
+    .map(part => part.kind === "html" ? part.value : "").join("");
+  assert.match(html, /<h1>正文自己的首标题<\/h1>/);
+  assert.match(html, /<h1>外层标题<\/h1>/);
+});
+
+test("default shared Markdown rendering keeps title headings", () => {
+  const html = splitMarkdown("# 外层标题").map(part => part.kind === "html" ? part.value : "").join("");
+  assert.match(html, /<h1>外层标题<\/h1>/);
+});
