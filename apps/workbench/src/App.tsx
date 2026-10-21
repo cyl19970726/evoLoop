@@ -16,6 +16,7 @@ import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableC
 import { addReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 
 import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
+import { clearKnowledgeReturnsOnLogin } from "./ui/returnRoute";
 import { TaskPage } from "./workflow/TaskPage";
 import { DocumentPage } from "./documents/DocumentPage";
 import { WorkbenchShell, sectionNames } from "./ui/WorkbenchShell";
@@ -40,6 +41,9 @@ function useRoute(): Route {
       const oldParts = previousHash.split("?")[0].split("/");
       if (next.section === "document" && next.projectId && oldParts[2] === next.projectId && !(oldParts[3] === "documents" && oldParts[4])) {
         try { sessionStorage.setItem(`evoloop:document-return:${next.projectId}`, previousHash); } catch { /* optional navigation state */ }
+      }
+      if (next.section === "knowledge" && next.projectId && oldParts[2] === next.projectId && oldParts[3] !== "knowledge") {
+        try { sessionStorage.setItem(`evoloop:knowledge-return:${next.projectId}`, previousHash); } catch { /* optional navigation state */ }
       }
       window.dispatchEvent(new Event("evoloop:will-navigate"));
       previousHash = window.location.hash;
@@ -203,7 +207,10 @@ export function App() {
       .catch(cause => { if (active) setProjectError(errorText(cause)); });
     return () => { active = false; };
   }, [client, projectId, session, refresh]);
-  if (!session) return <AuthGate hasReceipts={receipts.length > 0} onSuccess={(value, next) => { setToken(value); setSession(next); }} />;
+  if (!session) return <AuthGate hasReceipts={receipts.length > 0} onSuccess={(value, next) => {
+    clearKnowledgeReturnsOnLogin(next.principal.projectIds);
+    setToken(value); setSession(next);
+  }} />;
   const principal = session.principal;
   const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: () => setRefresh(v => v + 1) };
   function logout() {

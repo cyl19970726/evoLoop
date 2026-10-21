@@ -3,6 +3,7 @@ import type { KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapa
   KnowledgeRevision, KnowledgeSummary, PublishResult } from "@evoloop/contracts/knowledge";
 import { errorText, isUnconfirmed } from "../api";
 import { MarkdownBody } from "../ui/MarkdownBody";
+import { knowledgeReturnHref } from "../ui/returnRoute";
 import { Notice, type MutationContext } from "../workflow/ActionForm";
 import { knowledgeClient, type SourceDocument } from "./client";
 import { findFixedKnowledgeTitle, matchesKnowledgeRevision, readKnowledgeRoute, transitionKnowledgeRoute,
@@ -332,6 +333,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     }
     return () => { active = false; };
   }, [client, relationScope, relationTargetKeyList, graph, relationTitleCache]);
+  const returnHref = knowledgeReturnHref(context.projectId);
   return <div className="knowledge-space">
     <div className="knowledge-toolbar">
       <div><p className="muted">独立知识空间 · 固定修订与可追溯来源</p></div>
@@ -356,7 +358,8 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     </section>}
 
     {view === "read" && <div className="knowledge-reader">
-      <div className="knowledge-reader-main"><button className="knowledge-back" onClick={showList}>← 返回知识列表</button>
+      <div className="knowledge-reader-main">{returnHref && <a className="knowledge-back" href={returnHref}>← 返回来源</a>}
+        <button className="knowledge-back" onClick={showList}>返回知识列表</button>
         {visiblePage ? <article>
           <p className="knowledge-kicker">{statusText(visiblePage.pageType)} · {statusText(visiblePage.epistemicStatus)} · {statusText(visiblePage.observedValidity)}</p>
           <h2>{visiblePage.title}</h2>
@@ -407,7 +410,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         <strong>{item.title}</strong><small>{statusText(item.status)}</small></button>) : <p className="empty">暂无候选。</p>}
         {candidateCursor && <button onClick={async () => { try { const next = await client.candidates(candidateCursor); setCandidates(previous => [...previous, ...next.items]); setCandidateCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多候选</button>}
       </nav><div>{candidate ? <article><h3>{candidate.title} · {statusText(candidate.status)}</h3>
-        <p className="muted">候选 {candidate.candidateId} · 固定基线 {candidate.expectedRevision ?? "新页"} · SHA-256 <code>{candidate.contentHash}</code></p>
+        <p className="muted knowledge-candidate-meta">候选 {candidate.candidateId} · 固定基线 {candidate.expectedRevision ?? "新页"} · SHA-256 <code>{candidate.contentHash}</code></p>
         <div className="knowledge-candidate-preview"><MarkdownBody source={candidate.body}
           identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} /></div>
         <details className="knowledge-candidate-source"><summary>核对 Markdown 原文</summary><pre>{candidate.body}</pre></details>

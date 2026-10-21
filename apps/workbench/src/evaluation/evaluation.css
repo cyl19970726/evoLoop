@@ -19,6 +19,15 @@
 .evaluation-source-picker input { width: 100%; }
 .evaluation-source-confirm { padding: 10px 12px; background: #eef3ff; border-radius: 7px; }
 .evaluation-definition > p { line-height: 1.6; }
+.evaluation-overview .panel-head { align-items: baseline; }
+.evaluation-overview .panel-head h2 { margin-bottom: 0; }
+.evaluation-limit-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; line-height: 1.5; }
+.evaluation-glance { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 14px 0 9px; }
+.evaluation-glance button { min-width: 0; display: grid; gap: 4px; text-align: left; padding: 11px 12px; color: #273856; background: #f8faff; border: 1px solid #dfe6f3; border-radius: 8px; cursor: pointer; }
+.evaluation-glance button:hover { background: #eef3ff; border-color: #acc0ef; }
+.evaluation-glance span { color: #586781; font-size: .86rem; overflow-wrap: anywhere; }
+.evaluation-definition > details > summary { font-weight: 700; }
+.evaluation-definition > details > .evaluation-fixed { margin-top: 14px; }
 .evaluation-fixed { display: grid; gap: 7px; margin: 12px 0; }
 .evaluation-ref { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; padding: 7px 10px; border: 1px solid #e1e7f2; border-radius: 6px; background: #f8faff; }
 .evaluation-ref > span, .evaluation-ref > a { min-width: 0; overflow-wrap: anywhere; }
@@ -36,5 +45,5 @@
 .evaluation-run-form { margin-top: 15px; border-top: 1px solid #e0e6ef; }
 .evaluation-page .command-disclosure { min-width: 0; }
 .evaluation-page .workflow-form textarea { min-height: 84px; }
-@media (max-width: 800px) { .evaluation-conditions { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .evaluation-conditions { grid-template-columns: 1fr; } .evaluation-glance { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .evaluation-heading { flex-wrap: wrap; } .evaluation-page .panel-head { display: flex; flex-wrap: wrap; } .evaluation-attempt, .evaluation-conclusion { padding: 10px; } .evaluation-ref { display: grid; } }

@@ -1,4 +1,4 @@
-import type { Delivery, EvaluationAssessment, EvaluationAttempt, EvaluationCost, EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
+import type { Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationCost, EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
 
 export const evaluationHref = (projectId: string, evaluationId?: string, revisionId?: string) =>
   `#/p/${projectId}/evaluations${evaluationId ? `/${evaluationId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}` : ""}`;
@@ -6,6 +6,22 @@ export const evaluationHref = (projectId: string, evaluationId?: string, revisio
 /** Filtered listings may return a historical matching definition rather than today's head. */
 export const evaluationListHref = (projectId: string, item: Pick<EvaluationRevision, "evaluationId" | "id">) =>
   evaluationHref(projectId, item.evaluationId, item.id);
+
+const routeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function fixedRefHref(projectId: string, value: EvaluationFixedRef): string | null {
+  if (!routeUuid.test(value.id) || !routeUuid.test(value.revision)) return null;
+  if (value.kind === "document") return `#/p/${encodeURIComponent(projectId)}/documents/${value.id}?revision=${value.revision}`;
+  if (value.kind === "wiki") return `#/p/${encodeURIComponent(projectId)}/knowledge?knowledgeId=${value.id}&knowledgeRevision=${value.revision}`;
+  return null;
+}
+
+/** The present document name is a reading aid only after the exact cited revision and hash are authorized and read. */
+export function verifiedFixedDocumentTitle(ref: EvaluationFixedRef, projectId: string, document: Document, revision: DocumentRevision): string | null {
+  if (ref.kind !== "document" || document.projectId !== projectId || revision.projectId !== projectId
+    || document.id !== ref.id || revision.documentId !== ref.id || revision.id !== ref.revision
+    || revision.contentHash.toLowerCase() !== ref.contentHash.toLowerCase()) return null;
+  return document.title.trim() || null;
+}
 
 export type NextActionRef = EvaluationFixedRef | { kind: "task"; taskId: string; taskRevisionId: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

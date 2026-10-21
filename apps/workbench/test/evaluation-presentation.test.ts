@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Delivery, EvaluationAssessment, EvaluationAttempt, EvaluationRevision, RuntimeRunRecord } from "@evoloop/contracts";
-import { attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef } from "../src/evaluation/presentation.ts";
+import type { Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationRevision, RuntimeRunRecord } from "@evoloop/contracts";
+import { attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, fixedRefHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, verifiedFixedDocumentTitle } from "../src/evaluation/presentation.ts";
 import { definitionFromForm } from "../src/evaluation/formData.ts";
 import { attributableRuns } from "../src/workflow/deliveryRun.ts";
 
@@ -96,4 +96,22 @@ test("the registration picker excludes unsettled and foreign Runs", () => {
     { projectId: other, taskId: id, id: "other-project", state: "completed" },
   ] as RuntimeRunRecord[];
   assert.deepEqual(attributableRuns(id, id, runs).map(item => item.id), ["done", "failed", "interrupted"]);
+});
+
+test("fixed Wiki source opens the canonical knowledge reader in this authenticated tab", () => {
+  const wiki = { kind: "wiki", id, revision: other, contentHash: hash } as const;
+  assert.equal(fixedRefHref(id, wiki), `#/p/${id}/knowledge?knowledgeId=${id}&knowledgeRevision=${other}`);
+  assert.equal(fixedRefHref(id, { ...wiki, revision: "bad" }), null);
+  assert.equal(fixedRefHref(id, { ...wiki, kind: "document" }), `#/p/${id}/documents/${id}?revision=${other}`);
+  assert.equal(fixedRefHref(id, { ...wiki, kind: "git" }), null);
+});
+
+test("current Document name is an aid only after same-project exact revision and hash read", () => {
+  const ref = { kind: "document", id, revision: other, contentHash: hash } as const;
+  const document = { projectId: id, id, title: "可读协议名称" } as Document;
+  const revision = { projectId: id, documentId: id, id: other, contentHash: hash } as DocumentRevision;
+  assert.equal(verifiedFixedDocumentTitle(ref, id, document, revision), "可读协议名称");
+  assert.equal(verifiedFixedDocumentTitle(ref, id, { ...document, projectId: other }, revision), null);
+  assert.equal(verifiedFixedDocumentTitle(ref, id, document, { ...revision, id }), null);
+  assert.equal(verifiedFixedDocumentTitle(ref, id, document, { ...revision, contentHash: "b".repeat(64) }), null);
 });
