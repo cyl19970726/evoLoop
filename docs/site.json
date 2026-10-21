@@ -193,6 +193,11 @@
       "group": "研究 · 综合判断"
     },
     {
+      "path": "docs/research/development-workflow-review-20261021.md",
+      "title": "开发流程审阅与改进",
+      "group": "研究 · 综合判断"
+    },
+    {
       "path": "docs/research/codex-app-server-20261019.md",
       "title": "Codex App Server 调查",
       "group": "研究 · 运行时"
