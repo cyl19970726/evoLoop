@@ -23,6 +23,7 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   const service = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash: sha } });
   const directory = await mkdtemp(join(tmpdir(), "evoloop-cli-"));
   const projectId = randomUUID(), documentId = randomUUID(), taskId = randomUUID(), lostOperationId = randomUUID();
+  const retryOperationId = randomUUID(), retryTaskId = randomUUID();
   const token = randomUUID() + randomUUID(), rotatedToken = randomUUID() + randomUUID(), readerToken = randomUUID() + randomUUID();
   const blobs = new LocalBlobStore(join(directory, "blobs"), async () => true,
     async ref => !!await uow.read(ref.projectId, reader => reader.getRegisteredBlob(ref.id)));
@@ -33,7 +34,14 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   ], documents: { uow, blobsForPrincipal: () => blobs },
   references: { uow, gitForPrincipal: () => ({ read: async () => ({ status: "unavailable", reason: "No Git source in this fixture" }) }) as never,
     knowledgeForPrincipal: () => ({}) as never } });
-  let postCount = 0;
+  let postCount = 0, failBeforeApply = true;
+  app.addHook("preHandler", async (request, reply) => {
+    if (request.method === "POST" && request.url === "/api/commands" &&
+      (request.body as { operationId?: string }).operationId === retryOperationId && failBeforeApply) {
+      failBeforeApply = false;
+      return reply.code(503).send({ code: "RESULT_UNCONFIRMED", message: "Injected failure before transaction" });
+    }
+  });
   app.addHook("onSend", async (request, reply, payload) => {
     if (request.method === "POST" && request.url === "/api/commands") {
       postCount++;
@@ -68,6 +76,20 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   }
   const task = () => cli(["task", taskId]);
   await command("project.create", { title: "Isolated CLI integration" });
+  await command("task.create", { taskId: retryTaskId, title: "Recover one saved intent", content: "# Recovery\nApply once.",
+    acceptance: "One Task, one journal record and the original receipt", owner: "cli-test-agent" }, 3, retryOperationId);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, retryOperationId])).rows[0]?.n, 0);
+  assert.equal((await cli(["receipts", "show", retryOperationId])).state, "pending");
+  // Two explicit retries can race after the same 404. The real PG project lock and
+  // operation digest must still apply the exact command only once.
+  const retried = await Promise.all([cli(["receipts", "retry", retryOperationId]), cli(["receipts", "retry", retryOperationId])]);
+  assert.ok(retried.every(receipt => receipt.state === "confirmed" && receipt.operationId === retryOperationId));
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, retryOperationId])).rows[0]?.n, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_revision WHERE project_id=$1 AND task_id=$2", [projectId, retryTaskId])).rows[0]?.n, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM outbox_event WHERE project_id=$1 AND operation_id=$2", [projectId, retryOperationId])).rows[0]?.n, 2);
+  const afterRecovery = postCount;
+  await cli(["receipts", "retry", retryOperationId]);
+  assert.equal(postCount, afterRecovery, "a confirmed receipt returns without another POST");
   const source = "# Fixed acceptance\r\nRead this exact r1 text.\r\n";
   await command("document.create", { documentId, title: "Fixed input", body: source });
   let document = await cli(["document", documentId]);

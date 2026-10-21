@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { commandSchema, idSchema } from "@evoloop/contracts";
 import { ApiClient, CliApiError } from "./client.js";
 import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./materials.js";
-import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, record, type VerifiedActor } from "./receipts.js";
+import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
 
 type Environment = Record<string, string | undefined>;
@@ -60,7 +60,7 @@ const help = {
     `read ${Object.keys(reads).join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
-    "receipts list", "receipts show UUID", "receipts reconcile UUID", "get /api/... (legacy read-only)"],
+    "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID core command replay after readback)", "get /api/... (legacy read-only)"],
   readModes: reads,
   environment: { EVOLOOP_API_URL: "coordinator HTTP(S) origin, default http://127.0.0.1:4318", EVOLOOP_TOKEN: "private bearer credential",
     EVOLOOP_PROJECT: "optional default project UUID", EVOLOOP_STATE_DIR: "private local receipt directory", EVOLOOP_TIMEOUT_MS: "request+body deadline, default 15000; max 300000" },
@@ -85,10 +85,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   if (action === "request" && args.words[1] === "types") { check(args, 2); return { requests: requestTypes() }; }
   if (action === "request" && args.words[1] === "schema") { check(args, 3); return requestSchema(args.words[2]!); }
-  if (action === "receipts" && args.words[1] !== "reconcile") {
+  if (action === "receipts" && !["reconcile", "retry"].includes(args.words[1] ?? "")) {
     if (args.words[1] === "list") { check(args, 2); return { items: await store.list() }; }
     if (args.words[1] === "show") { check(args, 3); return store.get(uuid(args.words[2], "Receipt")); }
-    throw new UsageError("Use receipts list, show UUID, or reconcile UUID.");
+    throw new UsageError("Use receipts list, show UUID, reconcile UUID, or retry UUID.");
   }
   if (!env.EVOLOOP_TOKEN) throw new UsageError("Set EVOLOOP_TOKEN using a private environment; do not pass it as a command argument.");
   const timeoutMs = Number(env.EVOLOOP_TIMEOUT_MS ?? 15000);
@@ -124,8 +124,11 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   if (action === "receipts") {
     check(args, 3);
-    if (args.words[1] !== "reconcile") throw new UsageError("Use receipts reconcile UUID.");
-    const result = await reconcileReceipt(client, store, origin, token, uuid(args.words[2], "Receipt"), await verifiedActor());
+    if (!["reconcile", "retry"].includes(args.words[1] ?? "")) throw new UsageError("Use receipts reconcile UUID or retry UUID.");
+    const id = uuid(args.words[2], "Receipt"), actor = await verifiedActor();
+    const result = args.words[1] === "retry"
+      ? await retryReceipt(client, store, origin, token, id, value => io.stderr(JSON.stringify(value) + "\n"), actor)
+      : await reconcileReceipt(client, store, origin, token, id, actor);
     if (result.state === "rejected") throw new ReceiptError("OPERATION_REJECTED", "The saved intent was rejected.", result.result ?? result.lastError);
     return result;
   }

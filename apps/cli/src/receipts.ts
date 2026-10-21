@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { idSchema } from "@evoloop/contracts";
+import { commandSchema, idSchema } from "@evoloop/contracts";
 import { ApiClient, CliApiError } from "./client.js";
 
 type Json = Record<string, unknown>;
@@ -141,10 +141,20 @@ export async function dispatchMutation(client: ApiClient, store: ReceiptStore, a
     if (receipt.state === "rejected") throw new ReceiptError("OPERATION_REJECTED", "Read the saved rejection and refresh the affected object before changing the intent.", receipt.result ?? receipt.lastError);
     throw pending(receipt);
   }
+  return submitReceipt(client, store, receipt);
+}
+
+async function submitReceipt(client: ApiClient, store: ReceiptStore, receipt: Receipt, replay = false): Promise<unknown> {
   let result: unknown;
-  try { result = await client.post(intent.path, intent.body); }
+  try { result = await client.post(receipt.path, receipt.body); }
   catch (error) {
-    const known = error instanceof CliApiError && !error.unconfirmed;
+    if (replay && error instanceof CliApiError && rejected(receipt, error.data)) {
+      await store.update(receipt, { state: "rejected", result: error.data });
+      throw new ReceiptError("OPERATION_REJECTED", "The service rejected the original intent.", error.data);
+    }
+    // A retry-time HTTP denial says nothing about an older request still finishing.
+    // Only the original operation's result can resolve that pending receipt.
+    const known = !replay && error instanceof CliApiError && !error.unconfirmed;
     const details = error instanceof CliApiError ? { code: error.code, status: error.status, data: error.data } : { code: "REQUEST_UNAVAILABLE" };
     await store.update(receipt, { state: known ? "rejected" : "pending", lastError: details });
     if (known) throw error;
@@ -161,6 +171,40 @@ export async function dispatchMutation(client: ApiClient, store: ReceiptStore, a
   }
   await store.update(receipt, { state: "confirmed", result });
   return result;
+}
+
+/** Explicit replay of one immutable, transactional core command; never an external action retry. */
+export async function retryReceipt(client: ApiClient, store: ReceiptStore, apiUrl: string, token: string, id: string,
+  diagnostic: (value: unknown) => void, actor?: VerifiedActor): Promise<Receipt> {
+  const receipt = await store.get(id);
+  store.checkScope(receipt, apiUrl, token, actor);
+  if (!receipt.actorId || !actor || receipt.actorId !== actor.actorId)
+    throw new ReceiptError("RETRY_UNSUPPORTED", "Replay requires the original server-verified actor. Older receipts can only be reconciled.");
+  const intent: Intent = { id: receipt.id, projectId: receipt.projectId, operationId: receipt.operationId,
+    kind: receipt.kind, path: receipt.path, body: receipt.body, confirmation: receipt.confirmation,
+    recovery: receipt.recovery, ...(receipt.targetId === undefined ? {} : { targetId: receipt.targetId }) };
+  if (sha(canonical(intent)) !== receipt.requestHash)
+    throw new ReceiptError("INVALID_RECEIPT", "Saved intent changed; preserve the original receipt and reconcile it.");
+  const command = commandSchema.safeParse(receipt.body);
+  if (receipt.path !== "/api/commands" || receipt.confirmation !== "command" || receipt.recovery.kind !== "core" ||
+    !receipt.operationId || receipt.recovery.path !== `/api/projects/${receipt.projectId}/operations/${receipt.operationId}` ||
+    !command.success || command.data.projectId !== receipt.projectId || command.data.operationId !== receipt.operationId ||
+    command.data.type !== receipt.kind || canonical(command.data) !== canonical(receipt.body))
+    throw new ReceiptError("RETRY_UNSUPPORTED", "Only a saved /api/commands intent can be replayed. External actions require their own reconciliation.");
+  if (receipt.state !== "pending") return receipt;
+  try { return await reconcileReceipt(client, store, apiUrl, token, id, actor); }
+  catch (error) {
+    const observation = error instanceof ReceiptError ? record(record(error.data)?.observation) : null;
+    if (!(error instanceof ReceiptError) || error.code !== "RESULT_UNCONFIRMED" ||
+      observation?.status !== 404 || observation.code !== "OPERATION_NOT_FOUND") throw error;
+  }
+  // A 404 is not absence proof. The core's project lock and operation digest make
+  // replay of this exact ID/actor/body safe even if the first request is still finishing.
+  const latest = await store.get(id);
+  if (latest.state !== "pending") return latest;
+  diagnostic({ receiptId: id, operationId: receipt.operationId, action: "retry_same_core_intent" });
+  await submitReceipt(client, store, receipt, true);
+  return store.get(id);
 }
 
 export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, apiUrl: string, token: string, id: string, actor?: VerifiedActor): Promise<Receipt> {
@@ -181,6 +225,14 @@ export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, a
   }
   const result = receipt.recovery.kind === "core" ? record(observed)?.result : receipt.recovery.kind === "publish" ? record(observed)?.result : observed;
   if (receipt.recovery.kind === "core" && (record(observed)?.id !== receipt.operationId || record(observed)?.projectId !== receipt.projectId)) throw pending(receipt, observed);
+  const command = receipt.path === "/api/commands" ? commandSchema.safeParse(receipt.body) : null;
+  const expectedActor = receipt.actorId ?? actor?.actorId;
+  if (receipt.recovery.kind === "core" && command?.success && expectedActor) {
+    const operation = record(observed);
+    const expectedHash = sha(canonical({ actorId: expectedActor, command: command.data }));
+    if (operation?.actorId !== expectedActor || operation.commandType !== command.data.type || operation.commandHash !== expectedHash)
+      throw pending(receipt, { code: "OPERATION_INTENT_MISMATCH" });
+  }
   if (rejected(receipt, result)) return store.update(receipt, { state: "rejected", result });
   if (confirmed(receipt, result)) return store.update(receipt, { state: "confirmed", result });
   await store.update(receipt, { result });
