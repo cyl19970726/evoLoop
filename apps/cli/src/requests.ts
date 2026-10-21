@@ -1,13 +1,13 @@
 import { idSchema } from "@evoloop/contracts";
 import { documentImportSchema } from "@evoloop/contracts/process-documents";
-import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowledgeReviewInputSchema } from "@evoloop/contracts/knowledge";
+import { z, knowledgeCandidateInputSchema, knowledgeIngestInputSchema, knowledgeOperationInputSchema, knowledgeReviewInputSchema } from "@evoloop/contracts/knowledge";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { Intent, Recovery } from "./receipts.js";
 
 export type RequestName =
   | "document.import"
-  | "knowledge.propose" | "knowledge.review" | "knowledge.publish" | "knowledge.reconcile" | "knowledge.retract-source"
+  | "knowledge.ingest" | "knowledge.propose" | "knowledge.review" | "knowledge.publish" | "knowledge.reconcile" | "knowledge.retract-source"
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
   | "runtime.reconcile" | "runtime.recover";
 
@@ -25,6 +25,7 @@ interface RequestHelp {
 }
 const help: readonly RequestHelp[] = [
   { name: "document.import", requiredBodyKeys: ["command", "uploads", "command.projectId", "command.operationId", "command.documentId", "command.revisionId", "command.mode", "command.source"], targetId: null, operationId: "body", recovery: "core" },
+  { name: "knowledge.ingest", requiredBodyKeys: ["operationId", "documentId", "revisionId"], targetId: null, operationId: "body", recovery: "ingestion" },
   { name: "knowledge.propose", requiredBodyKeys: ["operationId", "knowledgeId", "candidateId", "candidateRevision", "expectedRevision", "title", "body", "pageType", "epistemicStatus", "sources"], targetId: null, operationId: "body", recovery: "candidate" },
   { name: "knowledge.review", requiredBodyKeys: ["candidateRevision", "contentHash", "expectedRevision", "decision", "reason"], targetId: "candidateId", operationId: "localReceipt", recovery: "candidate" },
   { name: "knowledge.publish", requiredBodyKeys: ["operationId"], targetId: "candidateId", operationId: "body", recovery: "publish" },
@@ -48,6 +49,7 @@ const referenceTaskBody = z.strictObject(referenceTaskShape);
 function bodySchema(name: string) {
   switch (name as RequestName) {
     case "document.import": return documentImportSchema;
+    case "knowledge.ingest": return knowledgeIngestInputSchema;
     case "knowledge.propose": return knowledgeCandidateInputSchema;
     case "knowledge.review": return knowledgeReviewInputSchema;
     case "knowledge.publish":
@@ -141,6 +143,12 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
     case "document.import": {
       if (object(body.command, "command").projectId !== projectId) throw new RequestInputError("Import requires matching command project");
       path = `${base}/documents/import`; recovery = { kind: "core", path: `${base}/operations/${receiptId}` }; confirmation = "command";
+      break;
+    }
+    case "knowledge.ingest": {
+      path = `${base}/knowledge/ingestions`;
+      recovery = { kind: "ingestion", path: `${base}/knowledge/ingestions/${receiptId}` };
+      confirmation = "ingestion";
       break;
     }
     case "knowledge.propose": {

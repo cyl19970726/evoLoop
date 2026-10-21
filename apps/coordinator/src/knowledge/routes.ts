@@ -5,8 +5,9 @@ import { idSchema, type Document, type DocumentDetail, type Principal, type Page
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
 import type { RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { BlobStore } from "@evoloop/contracts/sources";
-import { knowledgeCandidateInputSchema, knowledgeReviewInputSchema, knowledgeOperationInputSchema, type CandidateDecision, type KnowledgeCandidate, type KnowledgeRepository, type KnowledgeSourceRef } from "@evoloop/contracts/knowledge";
+import { knowledgeCandidateInputSchema, knowledgeReviewInputSchema, knowledgeOperationInputSchema, knowledgeIngestInputSchema, knowledgeQueryInputSchema, type CandidateDecision, type KnowledgeCandidate, type KnowledgeRepository, type KnowledgeSourceRef } from "@evoloop/contracts/knowledge";
 import { DomainError } from "@evoloop/contracts/ports";
+import { lintKnowledge, lintKnowledgeCandidate } from "@evoloop/core/knowledge";
 
 const uuid = idSchema;
 const sourceKey = (documentId: string) => `document:${documentId}`;
@@ -95,6 +96,75 @@ export function registerKnowledgeRoutes(app: FastifyInstance, options: Knowledge
       if (!sameSource(actual, source)) throw new DomainError("SOURCE_UNAVAILABLE", "Candidate source changed");
     }
   };
+  app.post("/api/projects/:projectId/knowledge/ingestions", async request => {
+    const projectId = params(request.params).projectId!;
+    const principal = permission(request.principal, projectId, "write");
+    const input = knowledgeIngestInputSchema.parse(request.body);
+    const repo = await repository(principal, projectId);
+    if (!repo.ingestSource) throw new DomainError("KNOWLEDGE_CAPABILITY_UNAVAILABLE", "Native source ingestion is unavailable");
+    const source = await verifySource(principal, projectId, input.documentId, input.revisionId, null);
+    const fixed = await options.workflow.getDocumentPayloadRevision(principal, projectId, input.documentId, input.revisionId);
+    // Native parsers may transform HTML and resolve remote resources. This slice uploads only verified inline Markdown.
+    if (fixed.format !== "markdown" || fixed.body === null || fixed.payloadRef !== null || fixed.assetsManifest.length ||
+      sha(fixed.body) !== source.contentHash)
+      throw new DomainError("UNSUPPORTED_INGEST_SOURCE", "Native ingestion currently requires an adopted inline Markdown original");
+    const detail = await options.workflow.getDocument(principal, projectId, input.documentId);
+    return repo.ingestSource({ projectId, operationId: input.operationId, actorId: principal.actorId,
+      source, title: detail.document.title, body: fixed.body });
+  });
+  app.get("/api/projects/:projectId/knowledge/ingestions/:id", async request => {
+    const p = params(request.params);
+    const principal = permission(request.principal, p.projectId!, "read");
+    const repo = await repository(principal, p.projectId!);
+    if (!repo.getIngestion) throw new DomainError("KNOWLEDGE_CAPABILITY_UNAVAILABLE", "Native source ingestion is unavailable");
+    const result = await repo.getIngestion(p.projectId!, p.id!);
+    if (!result) throw new DomainError("NOT_FOUND", "Ingestion operation was not found; absence does not prove non-execution");
+    return result;
+  });
+  app.get("/api/projects/:projectId/knowledge/query", async request => {
+    const projectId = params(request.params).projectId!;
+    const principal = permission(request.principal, projectId, "read");
+    const input = knowledgeQueryInputSchema.extend({ limit: z.coerce.number().int().min(1).max(20).default(10) }).parse(request.query);
+    const repo = await repository(principal, projectId);
+    if (!repo.query) throw new DomainError("KNOWLEDGE_CAPABILITY_UNAVAILABLE", "Native knowledge retrieval is unavailable");
+    const result = await repo.query(projectId, input);
+    const items = [];
+    let excluded = result.excluded;
+    for (const hit of result.items) {
+      try {
+        if (input.scope === "published" && hit.kind !== "wiki" || input.scope === "sources" && hit.kind !== "document") {
+          excluded++; continue;
+        }
+        if (hit.kind === "document") {
+          const source = await verifySource(principal, projectId, hit.id, hit.revision, null);
+          if (source.contentHash !== hit.contentHash) { excluded++; continue; }
+        } else {
+          const [page, current] = await Promise.all([repo.get(projectId, hit.id, hit.revision), repo.get(projectId, hit.id)]);
+          if (!page || !current || current.revision !== hit.revision || page.contentHash !== hit.contentHash ||
+            page.validity !== "valid" || page.observedValidity !== "valid" || current.observedValidity !== "valid") {
+            excluded++; continue;
+          }
+        }
+        items.push(hit);
+      } catch { excluded++; }
+    }
+    return { ...result, items, excluded };
+  });
+  app.get("/api/projects/:projectId/knowledge/pages/:id/lint", async request => {
+    const p = params(request.params);
+    const principal = permission(request.principal, p.projectId!, "read");
+    const query = z.strictObject({ revision: uuid.optional() }).parse(request.query);
+    const repo = await repository(principal, p.projectId!);
+    return lintKnowledge(repo, p.projectId!, p.id!, query.revision, async source =>
+      sameSource(await verifySource(principal, p.projectId!, sourceId(source.sourceKey), source.originRevision, source.fragment), source));
+  });
+  app.get("/api/projects/:projectId/knowledge/candidates/:id/lint", async request => {
+    const p = params(request.params);
+    const principal = permission(request.principal, p.projectId!, "read");
+    const repo = await repository(principal, p.projectId!);
+    return lintKnowledgeCandidate(repo, p.projectId!, p.id!, async source =>
+      sameSource(await verifySource(principal, p.projectId!, sourceId(source.sourceKey), source.originRevision, source.fragment), source));
+  });
   app.get("/api/projects/:projectId/knowledge/capabilities", async request => {
     const projectId = params(request.params).projectId!;
     const principal = permission(request.principal, projectId, "read");

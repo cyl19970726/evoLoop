@@ -112,7 +112,7 @@ flowchart TB
 
 根 `package.json` 采用 `packages/*`、`apps/*` 工作区；各目录的 `package.json` 实有 **11 个**：8 个 `packages`、3 个 `apps`。下表保留 12 个目标责任，其中 `packages/agent-tools` 只是可选 MCP 扩展、尚未建立；项目本地业务 skill 也不属于 npm 工作区。已建包不表示整行目标均已完成。“可依赖”列给出边界，实际 package 依赖为 `core`→`contracts`、六个边界包→`contracts`、`cli`/`workbench`→`contracts`，coordinator 装配 core、contracts 与所需边界包。平台依赖留在适配器：PG 的 `pg`/迁移工具、coordinator 的 Fastify、浏览器的 React；core 不导入平台包。
 
-当前 `packages/core/src/` 的实际边界是根 `index.ts`/`workflow.ts`/`discussions.ts`，以及 `documents/`、`roles/`、`runtime/`、`scheduling/`、`delivery/`、`references/`。`knowledge/`、`evaluation/`、`queries/`、`cognition/` 等仍是目标责任名称；知识 HTTP 路由现由 coordinator 装配适配器，不能把目标图读成这些目录已实现。运行装配分布在 coordinator 的 `runtime/`、`scheduling/`、`collaboration/`、`knowledge/`、`documents/` 与 `references/` 路由/泵。
+当前 `packages/core/src/` 的实际边界是根 `index.ts`/`workflow.ts`/`discussions.ts`，以及 `documents/`、`roles/`、`runtime/`、`scheduling/`、`delivery/`、`references/`、`evaluation/` 和 `knowledge/`。`knowledge/` 当前只有只读来源/关系 lint，不代表完整认知编纂；`queries/`、`cognition/`、SourceBridge 等仍是目标责任。原生摄入、检索和候选发布由 coordinator 的 `knowledge/` 路由核身份/来源后装配外置适配器，语义综合作业仍由现有 Agent 承接。运行装配另有 `runtime/`、`scheduling/`、`collaboration/`、`evaluation/`、`documents/` 与 `references/` 路由/泵。完整行为及限制见[当前知识路径](knowledge-flow.md#当前怎样使用-ingestquery-和-lint)。
 
 | 工作区／包 | 对外接口与责任 | 可依赖 | 禁止承担 |
 | --- | --- | --- | --- |
@@ -121,7 +121,7 @@ flowchart TB
 | `packages/connector-feishu` | `CollaborationConnector` 实现：Bitable 任务投影、绑定映射、出站与入站编辑观察；候选由协调层审核，分页与结果未知回读已在 fake HTTP 中验证 | `contracts`、HTTP | 持有 Task/Schedule 主数据、绕过 core 写库、以最后写入覆盖冲突；飞书云文档 API 不在首期 Bitable 范围 |
 | `packages/adapter-wiki-openviking` | 当前实现 `KnowledgeRepository`：OpenViking HTTP 映射、外置 manifest、固定修订读取、候选/审核/发布与能力报告；未来更完整的认知维护由目标 `core/knowledge` 用例承接 | `contracts`、HTTP/文件客户端 | 自建第二个认知执行栈、把普通写页当自动 compile、直接认定搜索摘要为原始证据 |
 | `packages/adapter-codex-app-server` | `RuntimePort` 实现；自管 stdio 子进程、握手、Thread/Turn 请求与事件、断线回读和版本能力探测 | `contracts`、局部协议类型 | 任务验收、调度权威、推断 Desktop 聊天已受控 |
-| `packages/adapter-postgres` | 实现 `UnitOfWork`、日程存储和投影/引用读取；保存 Task、过程文档修订、负责人讨论、职责历史、运行、触发、外部绑定、journal/outbox 与水位；包内维护至 011 的 SQL 迁移 | `contracts`、`pg`（node-postgres）、迁移工具 | 复制 Git 正式文档正文，或接管 Wiki 正文/来源/知识内部依赖的权威 |
+| `packages/adapter-postgres` | 实现 `UnitOfWork`、日程存储和投影/引用读取；保存 Task、过程文档修订、负责人讨论、职责历史、运行、触发、外部绑定、journal/outbox、评价与水位；包内维护版本化 SQL 迁移，实际迁移和验证范围见阶段路线 | `contracts`、`pg`（node-postgres）、迁移工具 | 复制 Git 正式文档正文，或接管 Wiki 正文/来源/知识内部依赖的权威 |
 | `packages/adapter-git-documents` | `DocumentSource` 实现：按项目登记仓库、白名单路径和固定 commit 读取原文/hash，报告不可达；引用登记与审核由协调 API/PG 承担 | `contracts`、受控 Git 子进程 | 自动采纳 PR、读取未授权目录、把 HTML 当第二份正式正文、擅自修改源仓库 |
 | `packages/adapter-local-blobs` | 首个本机切片的 `BlobStore`：受控目录、临时写入/hash核验、发布及孤儿对账；后续远程存储另做适配 | `contracts`、受限文件 I/O | 持有知识综合正文、绕过权限暴露路径、假定文件与PG同事务 |
 | `apps/workbench` | 已有任务/过程文档/知识/职责/运行/日程/协作与复核页面，按权限调用共同 API；更完整的导航和独立消费仍待验 | 浏览器安全的 `contracts` 出口、React、Vite；Router/Query 仍为目标 | 导入 core/平台 SDK、持有服务凭据、直接写库、嵌入或假定控制 Desktop 会话 |

@@ -79,6 +79,42 @@ export interface KnowledgeRepository {
   publish(projectId: string, candidateId: string, operationId: string, actorId: string): Promise<PublishResult>;
   reconcile(projectId: string, operationId: string, actorId: string): Promise<PublishResult | null>;
   retractSource(projectId: string, sourceKey: string, operationId: string, actorId: string): Promise<string[]>;
+  /** Optional native processing capabilities. Absence must be reported, never replaced with pretend search. */
+  ingestSource?(input: KnowledgeIngestRequest): Promise<KnowledgeIngestion>;
+  getIngestion?(projectId: string, operationId: string): Promise<KnowledgeIngestion | null>;
+  query?(projectId: string, input: KnowledgeQuery): Promise<KnowledgeQueryResult>;
+}
+
+export interface KnowledgeIngestRequest {
+  projectId: string; operationId: string; actorId: string;
+  source: KnowledgeSourceRef; title: string; body: string;
+}
+export interface KnowledgeIngestion {
+  operationId: string; actorId: string; source: KnowledgeSourceRef; title: string;
+  status: "unknown" | "submitted" | "completed" | "failed";
+  taskId: string | null;
+  /** Processing acceptance/completion is separate from measured retrieval quality. */
+  indexStatus: "unverified";
+}
+export interface KnowledgeQuery { query: string; scope: "published" | "sources"; limit: number }
+export interface KnowledgeQueryHit {
+  kind: "wiki" | "document"; id: string; revision: string; contentHash: string;
+  title: string; score: number;
+}
+export interface KnowledgeQueryResult {
+  items: KnowledgeQueryHit[]; scope: KnowledgeQuery["scope"];
+  coverage: "bounded"; indexStatus: "unverified"; excluded: number;
+}
+export interface KnowledgeLintFinding {
+  code: "NO_SOURCES" | "SOURCE_UNAVAILABLE" | "DUPLICATE_SOURCE" | "RELATION_UNAVAILABLE" | "NEEDS_REVIEW" | "INCOMPLETE";
+  message: string;
+}
+export interface KnowledgeLintReport {
+  target: "published" | "candidate"; candidateId?: string;
+  knowledgeId: string; revision: string; contentHash: string;
+  findings: KnowledgeLintFinding[];
+  structural: "passed" | "findings";
+  semantic: "not_run";
 }
 import { z } from "zod";
 export { z } from "zod";
@@ -97,3 +133,6 @@ export const knowledgeCandidateInputSchema = z.strictObject({
 export const knowledgeReviewInputSchema = z.strictObject({ candidateRevision: uuid, contentHash: z.string().regex(/^[a-f0-9]{64}$/),
   expectedRevision: uuid.nullable(), decision: z.enum(["accept", "reject"]), reason: z.string().trim().min(1).max(4000) });
 export const knowledgeOperationInputSchema = z.strictObject({ operationId: uuid });
+export const knowledgeIngestInputSchema = z.strictObject({ operationId: uuid, documentId: uuid, revisionId: uuid });
+export const knowledgeQueryInputSchema = z.strictObject({ query: z.string().trim().min(1).max(2000),
+  scope: z.enum(["published", "sources"]).default("published"), limit: z.number().int().min(1).max(20).default(10) });

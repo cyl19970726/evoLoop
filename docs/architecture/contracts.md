@@ -82,6 +82,8 @@ HTML 原件保存为数据，不直接执行。默认阅读策略是静态预览
 
 ## 3. EvidenceStore 与 KnowledgeRepository
 
+当前原生处理接入在 `KnowledgeRepository` 上提供可选的 `ingestSource/getIngestion/query` 端口：未实现的后端须明确报告能力不可用，不能用普通列表或词面匹配冒充原生语义查询。摄入按固定来源身份/hash与原操作记外部意图，返回 unknown/submitted/completed/failed 和原生 task ID；这些状态与索引效果、候选生成、审阅发布及实际采用分开。query 只返回有界且重新核验的固定 Document/Wiki 引用，不自动改变 Task 的执行依据。core 的候选/固定页 lint 是只读来源与关系检查，明确返回 semantic:not_run；语义审查继续由现有 Agent 完成。当前接入范围与恢复位置见[知识流](knowledge-flow.md#当前怎样使用-ingestquery-和-lint)。
+
 `EvidenceStore` 登记和定位原始材料：`sourceId`、项目、原件位置、片段定位、内容校验、来源类型、观察时间/记录时间、可见范围和撤回状态。原件可以仍在原始归档或受控材料存储；正文页里的引文和搜索索引都不是原件。取不到原件时返回“依据不可访问/已撤回”，不能从旧摘要补造证据。
 
 `KnowledgeRepository` 面向开发仓库外的 Wiki/知识空间，至少表达：提交材料或候选知识变更；按项目/主题查找；读取当前页及指定修订；标明主张是观察、推断、假设、已采纳决定、争议还是已失效；列出来源与被其支持的知识页／主张及内部依赖；提出修订与发布；导出固定修订的只读视图。跨 Wiki 与 Task／Document 的关系在 PostgreSQL `RelationStore`，不由 Wiki 维护第二份任务关系权威。每个受管项目有独立知识命名空间。底座若只能搜索并生成答案，应如实标记未支持这些维护语义。[方向出处](../references/lineage.md)

@@ -10,7 +10,8 @@
     "./runtime": "./dist/runtime/index.js",
     "./roles": "./dist/roles/index.js",
     "./delivery": "./dist/delivery/index.js",
-    "./references": "./dist/references/index.js"
+    "./references": "./dist/references/index.js",
+    "./knowledge": "./dist/knowledge/index.js"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts"

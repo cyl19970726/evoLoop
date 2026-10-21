@@ -13,7 +13,7 @@ const sha = "a".repeat(64);
 test("registry exposes every bounded named route and target/body requirements", () => {
   const names = (requestTypes() as Array<{ name: string; requiredBodyKeys: string[]; targetId: string | null }>);
   assert.deepEqual(names.map(item => item.name), [
-    "document.import", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
+    "document.import", "knowledge.ingest", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
     "reference.git-register", "reference.formal-decide", "reference.task-decide", "runtime.reconcile", "runtime.recover",
   ]);
   assert.ok(names.find(item => item.name === "document.import")?.requiredBodyKeys.includes("command.operationId"));
@@ -23,6 +23,8 @@ test("registry exposes every bounded named route and target/body requirements", 
 
 test("request schema exposes exact enums and nested required fields from shared contracts", () => {
   const candidate = requestSchema("knowledge.propose") as any;
+  const ingest = requestSchema("knowledge.ingest") as any;
+  assert.deepEqual(ingest.required, ["operationId", "documentId", "revisionId"]);
   assert.ok(candidate.required.includes("sources"));
   assert.deepEqual(candidate.properties.pageType.enum, ["topic", "concept", "analysis", "decision"]);
   assert.deepEqual(candidate.properties.epistemicStatus.enum, ["observation", "inference", "hypothesis", "adopted", "disputed", "superseded"]);
@@ -76,6 +78,12 @@ test("journal-backed requests carry the exact server operation and core recovery
 });
 
 test("knowledge routes distinguish candidate, publish and manual decision recovery", () => {
+  const ingested = prepareRequest("knowledge.ingest", project, { operationId: operation, documentId: target, revisionId: revision });
+  assert.equal(ingested.path, `/api/projects/${project}/knowledge/ingestions`);
+  assert.deepEqual(ingested.recovery, { kind: "ingestion", path: `/api/projects/${project}/knowledge/ingestions/${operation}` });
+  assert.equal(ingested.confirmation, "ingestion");
+  assert.throws(() => prepareRequest("knowledge.ingest", project, { operationId: operation, documentId: target, revisionId: revision, extra: true }), /invalid/);
+  assert.throws(() => prepareRequest("knowledge.ingest", project, { operationId: operation, documentId: target, revisionId: "latest" }), /invalid/);
   const candidateBody = { operationId: operation, knowledgeId: target, candidateId: receipt,
     candidateRevision: revision, expectedRevision: null, title: "Finding", body: "Claim with source",
     pageType: "analysis", epistemicStatus: "inference", sources: [{ documentId: target, revisionId: revision, fragment: null }] };

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { commandSchema, idSchema } from "@evoloop/contracts";
+import { knowledgeQueryInputSchema } from "@evoloop/contracts/knowledge";
 import { ApiClient, CliApiError } from "./client.js";
 import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./materials.js";
 import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
@@ -10,7 +11,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge"]);
+const values = new Set(["project", "revision", "limit", "scope", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -58,7 +59,9 @@ const help = {
     "document UUID --project UUID [--revision UUID]", "original DOCUMENT_UUID --project UUID --revision UUID [--out NEW_DIRECTORY]",
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
-    "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
+    "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "knowledge-query QUESTION --project UUID [--scope published|sources] [--limit 1..20]",
+    "knowledge-lint UUID --project UUID --revision UUID", "candidate-lint UUID --project UUID", "knowledge-ingestion OPERATION_UUID --project UUID",
+    "candidate UUID --project UUID", "operation UUID --project UUID",
     `read ${Object.keys(reads).join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
@@ -180,6 +183,25 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     check(args, 2, ["project", "revision", "history", "graph"]); const selected = mode(args, ["revision", "history", "graph"]);
     const suffix = selected === "revision" ? `?revision=${revision()}` : selected ? `/${selected}` : "";
     return client.get(`${prefix}/knowledge/pages/${uuid(args.words[1], "Knowledge")}${suffix}`);
+  }
+  if (action === "knowledge-query") {
+    check(args, 2, ["project", "scope", "limit"]);
+    const parsed = knowledgeQueryInputSchema.safeParse({ query: args.words[1], scope: option(args, "scope") ?? "published", limit: Number(option(args, "limit") ?? 10) });
+    if (!parsed.success) throw new UsageError(`Invalid knowledge query: ${parsed.error.issues[0]?.message ?? "schema mismatch"}.`);
+    const query = new URLSearchParams({ query: parsed.data.query, scope: parsed.data.scope, limit: String(parsed.data.limit) });
+    return client.get(`${prefix}/knowledge/query?${query}`);
+  }
+  if (action === "knowledge-lint") {
+    check(args, 2, ["project", "revision"]);
+    return client.get(`${prefix}/knowledge/pages/${uuid(args.words[1], "Knowledge")}/lint?revision=${uuid(option(args, "revision"), "Knowledge revision")}`);
+  }
+  if (action === "candidate-lint") {
+    check(args, 2, ["project"]);
+    return client.get(`${prefix}/knowledge/candidates/${uuid(args.words[1], "Candidate")}/lint`);
+  }
+  if (action === "knowledge-ingestion") {
+    check(args, 2, ["project"]);
+    return client.get(`${prefix}/knowledge/ingestions/${uuid(args.words[1], "Ingestion operation")}`);
   }
   if (action === "candidate" || action === "operation") { check(args, 2, ["project"]); return client.get(`${prefix}/${action === "candidate" ? "knowledge/candidates" : "operations"}/${uuid(args.words[1], action)}`); }
   if (action === "read") {

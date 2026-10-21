@@ -75,6 +75,7 @@ const repositoryForPrincipal = (principal: Principal, projectId: string) => {
     maintainerId: knowledge.maintainerId,
     mayRead: async p => p === projectId && allowed("read"),
     mayPropose: async candidate => candidate.projectId === projectId && candidate.actorId === principal.actorId && allowed("write"),
+    mayIngest: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId && allowed("write"),
     mayReview: async (p, actor) => p === projectId && actor === principal.actorId && allowed("review"),
     mayPublish: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId && allowed("review"),
     mayReconcile: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId && allowed("review"),

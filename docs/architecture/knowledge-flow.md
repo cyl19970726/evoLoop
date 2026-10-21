@@ -1,8 +1,24 @@
 # 知识关联：Task、Document、Git 文档怎样进入认知循环
 
-状态：2026-10-20 **目标设计，尚未实现**。本文将 [项目数据边界](project-data.md)落实为资料登记、维护、读取和影响复核流程；[存储设计](storage.md)说明持久结构，[工作台](../product/workbench.md)说明用户怎样操作。示例 ID 都是设计说明，不是已经创建的业务对象。
+状态：**目标流程与受限本机实现并存**。过程文档候选、审阅发布、来源撤回和固定引用读取已有实现；本轮补上原生摄入/检索调用及结构 lint，尚未以真实后端验证新增语义处理与检索效果。完整自动 SourceBridge 和跨对象影响闭环仍是目标。实际运行证据见[阶段路线](../roadmap.md#当前基线)。本文将 [项目数据边界](project-data.md)落实为资料登记、维护、读取和影响复核流程；[存储设计](storage.md)说明持久结构，[工作台](../product/workbench.md)说明用户怎样操作。示例 ID 是设计说明。
 
 本页从任务消费者出发，沿“读依据 → 传递新材料 → 维护与发布 → 影响复核”走一圈；对象归属先见[项目数据](project-data.md)，知识内部怎样综合见[Wiki 维护](wiki-maintenance.md)。
+
+### 当前怎样使用 ingest、query 和 lint
+
+Agent 经业务 skill＋CLI 使用下面的受控路径。当前仍由现有 Agent 综合材料和旧知识、提出候选，由有权维护者审阅发布；没有另启一个可直写正式知识的 Bot 编译者。OpenViking 原生资源处理不等于已经形成可采纳的 Wiki 认识。
+
+原生协议固定核对 OpenViking 0.5.1 的[资源摄入](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/resources.py)、[任务状态](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/tasks.py)和[检索](https://github.com/volcengine/OpenViking/blob/e855796c83f9eb575d9b0f3082926660730f6a63/openviking/server/routers/search.py)入口；源码核对与下面实际测试范围分别记录。
+
+| 工作 | 当前实现与作用 | 必须保留的边界 |
+| --- | --- | --- |
+| 摄入固定材料 | `knowledge.ingest` 只接受本项目已采纳、完整核验的内联 Markdown Document 修订；上传原字节，调用 OpenViking 0.5.1 的临时上传及资源摄入接口，跟踪原生 task ID。 | 不接受任意 URL、服务端文件路径或未经核验正文；原件、派生处理结果与 Wiki 候选分别保存。submitted/completed 不证明检索质量或知识正确。 |
+| 发现相关材料或认识 | `knowledge-query` 使用原生语义 find，只检索本项目已登记且处理完成的来源，或已发布的当前知识修订；命中重新校验来源、权限与有效性，返回固定 ID/修订/hash。 | 当前最多选择 100 个有权目标；返回有界结果，索引效果仍标 unverified。空结果不证明不存在；不能用标题、分数或摘要代替固定全文，也不会自动修改 Task 依据。 |
+| 检查候选或旧知识 | `candidate-lint` / `knowledge-lint` 调用 core 的只读结构检查：来源缺失/重复/变化/撤回、固定关系不可达及待复核状态。 | 返回 semantic:not_run。OpenViking 0.5.1 未提供此处可用的原生 lint HTTP 接口；矛盾、限定条件、遗漏与概念整合仍需现有 Agent 阅读原件后作语义审查，发现不自动发布修订。 |
+
+摄入意图、原生 task ID 和处理观察与 Wiki 发布状态一样保存在仓库外 manifest；正文/派生资源在外置 OpenViking。先持久记录意图再调用上游，回包丢失后按原操作查询；若连 task ID 都未收到，保持 unknown 并人工核对，不换 ID 重建同一来源，也不自动再次调用原生摄入。原生 task 明确 failed/cancelled 时保留失败。当前该来源修订的重摄入需要单独核清旧资源及恢复方案，不提供绕过去重的重试按钮。
+
+普通入口和原操作恢复见[业务 CLI](../development/agent-cli.md)。实现落点是 `packages/contracts/src/knowledge.ts`、`packages/adapter-wiki-openviking/src/index.ts`、`packages/core/src/knowledge/index.ts` 和 `apps/coordinator/src/knowledge/routes.ts`。自动语义 lint、完整跨页编纂和查询答案自动沉淀仍未接通；查询与 lint 产生的修订继续走同一个候选→审阅→发布入口。
 
 ## 1. 连起来的含义
 
