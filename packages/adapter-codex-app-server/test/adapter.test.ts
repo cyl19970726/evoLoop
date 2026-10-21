@@ -11,6 +11,30 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
   await adapter.open(); return adapter;
 };
 
+test("actual App Server child receives only explicit login and transport environment", async t => {
+  const adapter = new CodexAppServerAdapter({ executable: process.execPath,
+    spawnArgs: [fixture, "env-observe"], requestTimeoutMs: 500,
+    environment: {
+      HOME: "/synthetic/home", CODEX_HOME: "/synthetic/codex-auth", PATH: "/usr/bin:/bin",
+      HTTPS_PROXY: "http://synthetic-proxy.invalid:8080", SSL_CERT_FILE: "/synthetic/ca.pem",
+      EVOLOOP_DATABASE_URL: "postgres://synthetic-secret.invalid/private",
+      EVOLOOP_AUTH_FILE: "/synthetic/credentials.json", OPENAI_API_KEY: "sk-synthetic-only",
+      AWS_SECRET_ACCESS_KEY: "synthetic-only", ARBITRARY_SECRET: "synthetic-only",
+      NODE_OPTIONS: "--require=/synthetic/should-never-load.js",
+    },
+  });
+  t.after(() => adapter.close());
+  await adapter.open();
+  const binding = await adapter.create(spec);
+  const read = await adapter.inspect(binding) as { observedEnvironment: Record<string, string | null> };
+  assert.deepEqual(read.observedEnvironment, {
+    HOME: "/synthetic/home", CODEX_HOME: "/synthetic/codex-auth", PATH: "/usr/bin:/bin",
+    HTTPS_PROXY: "http://synthetic-proxy.invalid:8080", SSL_CERT_FILE: "/synthetic/ca.pem",
+    EVOLOOP_DATABASE_URL: null, EVOLOOP_AUTH_FILE: null, OPENAI_API_KEY: null,
+    AWS_SECRET_ACCESS_KEY: null, NODE_OPTIONS: null, ARBITRARY_SECRET: null,
+  });
+});
+
 test("correlates RPCs, filters foreign events, and reads owned history", async t => {
   const adapter = await open(); t.after(() => adapter.close());
   const binding = await adapter.create(spec);

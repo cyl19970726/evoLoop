@@ -36,7 +36,21 @@ for await (const line of lines) {
     send({ id, result: { thread } }); continue;
   }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
-  if (method === "thread/resume" || method === "thread/read") { send({ id, result: { thread: mode === "changed-session" ? { ...thread, sessionId: "different-session" } : thread } }); continue; }
+  if (method === "thread/resume" || method === "thread/read") {
+    const observedEnvironment = mode === "env-observe" && method === "thread/read" ? {
+      HOME: process.env.HOME ?? null, CODEX_HOME: process.env.CODEX_HOME ?? null,
+      PATH: process.env.PATH ?? null, HTTPS_PROXY: process.env.HTTPS_PROXY ?? null,
+      SSL_CERT_FILE: process.env.SSL_CERT_FILE ?? null,
+      EVOLOOP_DATABASE_URL: process.env.EVOLOOP_DATABASE_URL ?? null,
+      EVOLOOP_AUTH_FILE: process.env.EVOLOOP_AUTH_FILE ?? null,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? null,
+      AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY ?? null,
+      NODE_OPTIONS: process.env.NODE_OPTIONS ?? null,
+      ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
+    } : null;
+    send({ id, result: { thread: mode === "changed-session" ? { ...thread, sessionId: "different-session" } : thread,
+      ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
+  }
   if (method === "thread/turns/list") {
     turnListReads++;
     send({ id, result: { data: [{ id: "turn-1",

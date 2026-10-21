@@ -78,6 +78,8 @@ npm run --silent cli -- list tasks --project "$PROJECT_ID"
 
 Codex 适配基于本机核过的 **codex-cli 0.154.0** App Server 协议。受控 `gpt-6-astra` owned Turn 已真实完成，重启后可读回完整答复；当前账号对默认 `gpt-6.1-sol` 请求返回 400，需按实际能力选择。另一次后续运行曾在原生 `completedAt` 为空时过早记为 interrupted，约 89 秒后才报告 completed；终态闸已修复，普通工作台显式复核将同一 Turn 的记录更正为 completed，旧事件保留并追加有署名的 `run.reconciled`，Task/Basis 未改。后续新运行报告实际读到固定 Wiki 和所需源码，但原生 Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对安装版本、授权目录和隔离真实任务；CLI 升级须重新核 schema、审批、终态、断线与恢复。HTML/CSS/SVG 原件的二次重写已在真实浏览器核对背景、SVG 与空 sandbox，脚本仍按静态隔离规则不执行。结果未知时保留原操作并人工核对，审批默认拒绝越权请求。
 
+App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
+
 ## 停写备份与空目标恢复
 
 在保存真实不可重建材料前，先定备份周期、保留和恢复目标。脚本覆盖 **PostgreSQL + evoLoop 外部 Blob + 显式提供的 Wiki 外部快照**，不声称三者有原子快照。先停止 coordinator，并暂停 OpenViking/其他 Wiki 写者；按 Wiki 后端真实存储方式生成包含正文、修订、来源及 evoLoop `manifestRoot` 的完整外部导出。脚本持有与 coordinator 相同的 PostgreSQL advisory lock，拒绝仍在运行的 coordinator，但不能阻止旁路 SQL 或远端 Wiki 写者。`pg_dump` 给数据库自身一致快照；跨存储一致性依赖停写和后续核对。
