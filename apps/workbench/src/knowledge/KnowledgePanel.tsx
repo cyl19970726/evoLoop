@@ -2,8 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapabilities, KnowledgeGraph,
   KnowledgeRevision, KnowledgeSummary, PublishResult } from "@evoloop/contracts/knowledge";
 import { errorText, isUnconfirmed } from "../api";
+import { MarkdownBody } from "../ui/MarkdownBody";
 import { Notice, type MutationContext } from "../workflow/ActionForm";
 import { knowledgeClient, type SourceDocument } from "./client";
+import { matchesKnowledgeRevision, readKnowledgeRoute, transitionKnowledgeRoute } from "./knowledgeRoute";
 import "./knowledge.css";
 
 interface ExternalReceipt { projectId: string; actorId: string; operationId: string; kind: "publish" | "retract"; targetId: string; createdAt: string }
@@ -30,16 +32,6 @@ const knowledgeHash = (projectId: string, selection?: { knowledgeId: string; kno
     if (selection.knowledgeRevision) params.set("knowledgeRevision", selection.knowledgeRevision); }
   return `${path}?${params}`;
 };
-function readKnowledgeHash(projectId: string): { view: "list" | "read" | "review"; id?: string; revision?: string } {
-  const [path, query = ""] = window.location.hash.split("?");
-  if (path !== knowledgeHash(projectId)) return { view: "list" };
-  const params = new URLSearchParams(query);
-  const candidate = params.get("candidateId");
-  if (candidate) return { view: "review", id: candidate };
-  if (params.get("review") === "1") return { view: "review" };
-  const id = params.get("knowledgeId");
-  return id ? { view: "read", id, revision: params.get("knowledgeRevision") || undefined } : { view: "list" };
-}
 const documentLink = (projectId: string, documentId: string, revision: string, returnHash: string) =>
   `#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revision)}&return=${encodeURIComponent(returnHash)}`;
 const statusText = (status: string) => ({ valid: "有效", needs_review: "待复核", withdrawn: "已撤回", pending: "待审",
@@ -84,14 +76,16 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [candidateCursor, setCandidateCursor] = useState<string | null>(null);
   const [sources, setSources] = useState<SourceDocument[]>([]);
   const [capabilities, setCapabilities] = useState<KnowledgeCapabilities | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(() => { const route = readKnowledgeHash(context.projectId); return route.view === "read" ? route.id ?? null : null; });
-  const [fixedRevision, setFixedRevision] = useState<string | undefined>(() => readKnowledgeHash(context.projectId).revision);
+  const [selectedId, setSelectedId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "read" ? route.id : null; });
+  const [fixedRevision, setFixedRevision] = useState<string | undefined>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "read" ? route.revision : undefined; });
   const [page, setPage] = useState<KnowledgeRevision | null>(null);
+  const [currentHead, setCurrentHead] = useState<{ knowledgeId: string; revision: string } | null>(null);
   const [history, setHistory] = useState<KnowledgeSummary[]>([]);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeHash(context.projectId); return route.view === "review" ? route.id ?? null : null; });
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "review" ? route.id ?? null : null; });
   const [candidate, setCandidate] = useState<KnowledgeCandidateRecord | null>(null);
   const [error, setError] = useState("");
+  const [routeError, setRouteError] = useState(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "invalid" ? route.message : ""; });
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -110,15 +104,27 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [externalReceipts, setExternalReceipts] = useState(readReceipts);
   const [busy, setBusy] = useState(false);
   const [localRefresh, setLocalRefresh] = useState(0);
-  const [view, setView] = useState<"list" | "read" | "review" | "compose">(() => readKnowledgeHash(context.projectId).view);
+  const [view, setView] = useState<"list" | "read" | "review" | "compose" | "invalid">(() => {
+    const route = readKnowledgeRoute(window.location.hash, context.projectId);
+    return route.view === "outside" ? "list" : route.view;
+  });
   const canWrite = context.principal.permissions.includes("write");
   const canReview = context.principal.permissions.includes("review");
   useEffect(() => {
     const sync = () => {
-      const route = readKnowledgeHash(context.projectId);
-      if (route.view === "read") { setSelectedId(route.id ?? null); setFixedRevision(route.revision); setView("read"); }
-      else if (route.view === "review") { setSelectedCandidateId(route.id ?? null); setView("review"); }
-      else if (window.location.hash === knowledgeHash(context.projectId)) setView("list");
+      const next = transitionKnowledgeRoute({ route: { view: "list" }, page: null, history: [], graph: null }, window.location.hash, context.projectId);
+      if (next.route.view === "outside") return;
+      setPage(next.page); setCurrentHead(null); setHistory(next.history); setGraph(next.graph);
+      setError(""); setRouteError(""); setCandidate(null);
+      if (next.route.view === "read") {
+        setSelectedId(next.route.id); setFixedRevision(next.route.revision); setSelectedCandidateId(null); setView("read");
+      } else if (next.route.view === "review") {
+        setSelectedId(null); setFixedRevision(undefined); setSelectedCandidateId(next.route.id ?? null); setView("review");
+      } else if (next.route.view === "invalid") {
+        setSelectedId(null); setFixedRevision(undefined); setSelectedCandidateId(null); setView("invalid"); setRouteError(next.route.message);
+      } else {
+        setSelectedId(null); setFixedRevision(undefined); setSelectedCandidateId(null); setView("list");
+      }
     };
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
@@ -134,12 +140,14 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     return () => { active = false; };
   }, [context.token, context.projectId, refresh, localRefresh]);
   useEffect(() => {
-    if (!selectedId) { setPage(null); setHistory([]); setGraph(null); return; }
-    let active = true; setPage(null); setHistory([]); setGraph(null); setError("");
-    Promise.allSettled([client.page(selectedId, fixedRevision), client.history(selectedId), client.graph(selectedId)])
-      .then(([read, past, nearby]) => { if (!active) return;
+    if (!selectedId) { setPage(null); setCurrentHead(null); setHistory([]); setGraph(null); return; }
+    let active = true; setPage(null); setCurrentHead(null); setHistory([]); setGraph(null); setError("");
+    Promise.allSettled([client.page(selectedId, fixedRevision), client.history(selectedId), client.graph(selectedId),
+      fixedRevision ? client.page(selectedId) : Promise.resolve(null)])
+      .then(([read, past, nearby, head]) => { if (!active) return;
         if (read.status === "fulfilled") setPage(read.value);
         else setError(`正文读取失败：${errorText(read.reason)}`);
+        if (head.status === "fulfilled" && head.value?.knowledgeId === selectedId) setCurrentHead(head.value);
         if (past.status === "fulfilled") setHistory(past.value.items);
         if (nearby.status === "fulfilled") setGraph(nearby.value);
         if (read.status === "fulfilled" && (past.status === "rejected" || nearby.status === "rejected"))
@@ -245,7 +253,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     finally { setBusy(false); }
   }
   const openPage = (id: string, revision?: string) => {
-    setPage(null); setHistory([]); setGraph(null);
+    setPage(null); setCurrentHead(null); setHistory([]); setGraph(null);
     setSelectedId(id); setFixedRevision(revision); setView("read");
     window.location.hash = knowledgeHash(context.projectId, { knowledgeId: id, knowledgeRevision: revision });
   };
@@ -276,16 +284,17 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     setSelectedSourceRevision(page.sources[0]?.originRevision ?? "");
     setRelationTarget(""); setRelationRevision(""); setView("compose");
   };
-  const currentSummary = pages.find(item => item.knowledgeId === selectedId);
-  const currentRevision = currentSummary?.revision ?? history[0]?.revision;
-  const readingCurrent = !!page && (!fixedRevision || page.revision === currentRevision);
+  const currentRevision = !fixedRevision && page?.knowledgeId === selectedId ? page.revision
+    : currentHead?.knowledgeId === selectedId ? currentHead.revision : undefined;
+  const visiblePage = matchesKnowledgeRevision(page, selectedId, fixedRevision) ? page : null;
+  const readingCurrent = !!visiblePage && (!fixedRevision || visiblePage.revision === currentRevision);
   const relationName = (id: string, revision: string) =>
     graph?.nodes.find(item => item.knowledgeId === id && item.revision === revision)?.title ??
     pages.find(item => item.knowledgeId === id)?.title ?? id.slice(0, 8);
-  const outgoing = page?.relations.map(item => ({ edge: item, otherId: item.toKnowledgeId,
+  const outgoing = visiblePage?.relations.map(item => ({ edge: item, otherId: item.toKnowledgeId,
     otherRevision: item.toRevision, direction: "指向" })) ?? [];
-  const incoming = readingCurrent ? graph?.edges.filter(item => item.toKnowledgeId === page?.knowledgeId &&
-    item.toRevision === page.revision && item.fromKnowledgeId !== page.knowledgeId).map(item => ({
+  const incoming = readingCurrent ? graph?.edges.filter(item => item.toKnowledgeId === visiblePage?.knowledgeId &&
+    item.toRevision === visiblePage.revision && item.fromKnowledgeId !== visiblePage.knowledgeId).map(item => ({
       edge: item, otherId: item.fromKnowledgeId, otherRevision: item.fromRevision, direction: "来自" })) ?? [] : [];
   const relations = [...outgoing, ...incoming.filter(item => !outgoing.some(other => other.edge.edgeId === item.edge.edgeId))];
   return <div className="knowledge-space">
@@ -296,7 +305,9 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
     </div>
     {capabilities && <p className="muted">后端 {capabilities.backendVersion ?? "不可达"} · 语义索引未验证。页面只显示已登记的固定关系。</p>}
-    {error && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
+    {error && view !== "invalid" && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
+    {view === "invalid" && <section className="knowledge-invalid-route"><Notice error>{routeError || "此知识链接路径或参数不受支持。请从知识列表重新打开固定版本。"}</Notice>
+      <button onClick={showList}>返回知识列表</button></section>}
     {visibleReceipts.map(item => <Notice key={item.operationId} error>外部{item.kind === "publish" ? "发布" : "撤回"}结果待核 · 操作 <code>{item.operationId}</code>
       <button disabled={busy} onClick={() => reconcile(item.operationId)}>按此 ID 对账</button></Notice>)}
 
@@ -310,28 +321,29 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
 
     {view === "read" && <div className="knowledge-reader">
       <div className="knowledge-reader-main"><button className="knowledge-back" onClick={showList}>← 返回知识列表</button>
-        {page ? <article>
-          <p className="knowledge-kicker">{statusText(page.pageType)} · {statusText(page.epistemicStatus)} · {statusText(page.observedValidity)}</p>
-          <h2>{page.title}</h2>
-          <div className="knowledge-version"><span><strong>正在阅读</strong> {page.revision.slice(0, 8)}{readingCurrent ? " · 当前版" : " · 固定历史版"}</span>
+        {visiblePage ? <article>
+          <p className="knowledge-kicker">{statusText(visiblePage.pageType)} · {statusText(visiblePage.epistemicStatus)} · {statusText(visiblePage.observedValidity)}</p>
+          <h2>{visiblePage.title}</h2>
+          <div className="knowledge-version"><span><strong>正在阅读</strong> {visiblePage.revision.slice(0, 8)}{readingCurrent ? " · 当前版" : currentRevision ? " · 固定历史版" : " · 固定版，当前状态待核"}</span>
             <span><strong>当前发布</strong> {currentRevision?.slice(0, 8) ?? "尚未核到"}</span></div>
-          {page.validity !== page.observedValidity && <Notice error>此固定版创建时为{statusText(page.validity)}；目前标为{statusText(page.observedValidity)}。使用前请复核来源。</Notice>}
-          {fixedRevision && !readingCurrent && <button onClick={() => openPage(page.knowledgeId)}>阅读当前发布版</button>}
-          <div className="knowledge-fulltext"><pre>{page.body}</pre></div>
-          <p className="muted">正文 SHA-256 <code className="break-anywhere">{page.contentHash}</code></p>
+          {visiblePage.validity !== visiblePage.observedValidity && <Notice error>此固定版创建时为{statusText(visiblePage.validity)}；目前标为{statusText(visiblePage.observedValidity)}。使用前请复核来源。</Notice>}
+          {fixedRevision && !readingCurrent && <button onClick={() => openPage(visiblePage.knowledgeId)}>阅读当前发布版</button>}
+          <div className="knowledge-fulltext"><MarkdownBody source={visiblePage.body} identity={`knowledge-${visiblePage.knowledgeId}-${visiblePage.revision}`} /></div>
+          <details className="knowledge-source-text"><summary>核对 Markdown 原文</summary><pre>{visiblePage.body}</pre></details>
+          <p className="muted">正文 SHA-256 <code className="break-anywhere">{visiblePage.contentHash}</code></p>
           {canWrite && <details className="knowledge-maintenance"><summary>基于此页提出修订候选</summary>
             {readingCurrent ? <><p className="muted">编辑基线固定为当前所读版；打开编辑区后仍须保存、审阅、发布。</p><button onClick={startRevision}>打开候选编辑区</button></>
               : <p className="muted">正在阅读历史版。请先阅读当前发布版，再明确基于当前版提出修订；历史正文不会自动当作当前基线。</p>}</details>}
         </article> : error ? <p>无法读取此固定修订。</p> : <p>正在读取知识全文…</p>}
       </div>
-      {page && <aside className="knowledge-reader-side" aria-label="来源、关系与版本">
-        <section><h3>固定来源</h3>{page.sources.length ? <ul className="knowledge-source-list">{page.sources.map(source => { const id = sourceId(source.sourceKey);
+      {visiblePage && <aside className="knowledge-reader-side" aria-label="来源、关系与版本">
+        <section><h3>固定来源</h3>{visiblePage.sources.length ? <ul className="knowledge-source-list">{visiblePage.sources.map(source => { const id = sourceId(source.sourceKey);
           return <li key={`${source.sourceKey}:${source.originRevision}`}><strong>{id ? "过程文档" : source.sourceKey}</strong>
             <span>{statusText(source.state)} · 修订 {source.originRevision.slice(0, 8)}</span>
             <code title={source.contentHash}>SHA-256 {source.contentHash.slice(0, 16)}…</code>
             {source.fragment && <span>片段：{source.fragment}</span>}
             {id && <a href={documentLink(context.projectId, id, source.originRevision,
-              knowledgeHash(context.projectId, { knowledgeId: page.knowledgeId, knowledgeRevision: fixedRevision }))}>阅读固定原件 →</a>}</li>; })}</ul> : <p className="muted">此版未登记来源。</p>}</section>
+              knowledgeHash(context.projectId, { knowledgeId: visiblePage.knowledgeId, knowledgeRevision: visiblePage.revision }))}>阅读固定原件 →</a>}</li>; })}</ul> : <p className="muted">此版未登记来源。</p>}</section>
         <section><h3>挑战与反例</h3>{relations.filter(item => item.edge.type === "contradicts").length ?
           <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type === "contradicts").map(item =>
             <li key={item.edge.edgeId}><button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
@@ -344,7 +356,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
               <small>{item.direction}此页 · 固定版 {item.otherRevision.slice(0, 8)} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
           : <p className="muted">此版未登记其他关系。</p>}</section>
         <section><h3>历史版本</h3><div className="knowledge-history">{history.map(item => <button key={item.revision}
-          className={page.revision === item.revision ? "selected" : ""} onClick={() => openPage(item.knowledgeId, item.revision)}>
+          className={visiblePage.revision === item.revision ? "selected" : ""} onClick={() => openPage(item.knowledgeId, item.revision)}>
           {item.revision.slice(0, 8)} · {statusText(item.validity)}</button>)}</div></section>
         {graph && readingCurrent && <details className="knowledge-graph"><summary>关系图（辅助导航）</summary>
           <Graph graph={graph} onOpen={openPage} /></details>}
