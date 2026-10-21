@@ -53,6 +53,22 @@ test("artifact links allow this project's fixed routes and web URLs only", () =>
   assert.equal(safeArtifactHref(`http://localhost:55337/app/${fixed}`, project), fixed);
   assert.equal(safeArtifactHref(`https://example.test/${fixed}`, project), `https://example.test/${fixed}`);
   assert.equal(safeArtifactHref(`http://127.0.0.1:55337/unrelated/${fixed}`, project), `http://127.0.0.1:55337/unrelated/${fixed}`);
+  const knowledge = `#/p/${project}/knowledge?knowledgeId=${task}&knowledgeRevision=${project}`;
+  const evaluation = `#/p/${project}/evaluations/${task}?revision=${project}`;
+  assert.equal(safeArtifactHref(`http://127.0.0.1:55421/${knowledge}`, project), knowledge);
+  assert.equal(safeArtifactHref(evaluation, project), evaluation);
+  assert.equal(safeArtifactHref(`http://localhost:55421/app/${evaluation}`, project), evaluation);
+  for (const invalid of [
+    `#/p/${project}/knowledge?knowledgeId=${task}&knowledgeRevision=${project}&knowledgeId=${task}`,
+    `#/p/${project}/knowledge?knowledgeId=${task}&knowledgeRevision=${project}&review=1`,
+    `#/p/${project}/knowledge?knowledgeId=${task}&knowledgeRevision=bad`,
+    `#/p/${project}/knowledge?knowledgeRevision=${project}`,
+    `#/p/${project}/knowledge?revision=${project}`,
+    `#/p/${project}/evaluations/${task}?revision=${project}&action=run`,
+    `#/p/${project}/evaluations/${task}?revision=${project}&revision=${project}`,
+    `#/p/${task}/knowledge?knowledgeId=${task}&knowledgeRevision=${project}`,
+    `#/p/${task}/evaluations/${task}?revision=${project}`,
+  ]) assert.equal(safeArtifactHref(invalid, project), null, invalid);
   for (const unsafe of ["javascript:alert(1)", "file:///private/report", "data:text/html,hello",
     "//example.test/report", `#/p/${task}/tasks/${task}`, `#/p/${project}/tasks/../knowledge`,
     `#/p/${project}/tasks/${task}?next=javascript:alert(1)`, "https://user:pass@example.test/report"]) {

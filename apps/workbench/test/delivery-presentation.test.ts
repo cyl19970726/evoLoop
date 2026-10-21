@@ -39,3 +39,29 @@ test("an unreadable UUID title is not presented as a human-friendly name", () =>
   if (target.kind !== "document") throw new Error("Expected fixed document");
   assert.equal(verifiedDocumentTitle(input, target, projectId, { ...document, title: `${documentId}.md` }, revision), null);
 });
+
+test("real fixed knowledge delivery opens the actual version while keeping the separate declared build version", () => {
+  const knowledgeId = "2b026d3e-8cfd-4989-9809-1b0f97d0064b";
+  const knowledgeRevision = "66fce895-291e-4940-87c9-3ac31c249c5e";
+  const declared = "knowledge-reader PR21 merge e5732277 + 390px patch PR23 cea2529; deployed isolated 55421";
+  const ref = `#/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${knowledgeRevision}`;
+  assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${ref}`, artifactRevision: declared }, projectId),
+    { kind: "knowledge", revisionId: knowledgeRevision, href: ref, label: "知识固定版本入口" });
+  for (const bad of [
+    `#/p/${otherProject}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${knowledgeRevision}`,
+    `${ref}&review=1`, `${ref}&knowledgeId=${knowledgeId}`, `${ref}&knowledgeRevision=${knowledgeRevision}`,
+    `#/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=bad`,
+  ]) assert.equal(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${bad}` }, projectId).href, null, bad);
+});
+
+test("evaluation delivery opens only this project's exact definition revision", () => {
+  const evaluationId = "2b026d3e-8cfd-4989-9809-1b0f97d0064b";
+  const ref = `#/p/${projectId}/evaluations/${evaluationId}?revision=${oldRevision}`;
+  assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${ref}`, artifactRevision: "deployed build 123" }, projectId),
+    { kind: "evaluation", revisionId: oldRevision, href: ref, label: "评价固定定义入口" });
+  for (const bad of [
+    `#/p/${otherProject}/evaluations/${evaluationId}?revision=${oldRevision}`,
+    `${ref}&revision=${oldRevision}`, `${ref}&action=run`,
+    `#/p/${projectId}/evaluations/${evaluationId}?revision=bad`,
+  ]) assert.equal(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${bad}` }, projectId).href, null, bad);
+});
