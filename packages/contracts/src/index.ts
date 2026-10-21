@@ -60,10 +60,16 @@ export interface DocumentDecision {
 export type TaskState = "todo" | "in_progress" | "done" | "cancelled";
 export type TaskRevisionState = TaskState | "proposed" | "ready" | "active" | "review" | "blocked" | "deferred";
 export type TaskKind = "implementation" | "research" | "validation";
+export interface LegacyTaskDecision {
+  state: Exclude<TaskRevisionState, TaskState>;
+  decision: "approve" | "needsEvidence" | "defer" | "reject" | null;
+  reason: string;
+}
 export interface Task {
   projectId: string; id: string; version: number; currentRevisionId: string;
   title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null;
   acceptance: string; owner: string; state: TaskState;
+  legacyDecision?: LegacyTaskDecision | null;
 }
 export interface TaskRevision {
   projectId: string; taskId: string; id: string; version: number;

@@ -470,6 +470,28 @@ test("adoption creates pending impacts; decisions keep sealed old basis and rebu
   assert.equal((await f.service.getTask(principal, projectId, taskA)).basis?.members.find((item) => item.documentId === secondDocumentId)?.revisionId, second.fromRevisionId);
 });
 
+test("basis review normalizes a legacy active revision without rewriting the old revision", async () => {
+  const f = fixture();
+  await seedTwoTasks(f);
+  const before = await f.service.getTask(principal, projectId, taskA);
+  f.uow.state.taskRevisions[before.revision.id] = { ...before.revision, state: "active" };
+  const source = await f.service.getDocument(principal, projectId, documentId);
+  await f.service.execute(principal, { type: "document.revise", projectId, operationId: f.operation(),
+    documentId, expectedVersion: source.document.version, body: "r2", reason: "New source revision" });
+  const candidate = await f.service.getDocument(principal, projectId, documentId);
+  await f.service.execute(principal, { type: "document.publish", projectId, operationId: f.operation(),
+    documentId, expectedVersion: candidate.document.version, revisionId: candidate.current.id, reason: "Publish source" });
+  const impact = (await f.service.listImpacts(principal, projectId)).find(item => item.taskId === taskA && item.state === "pending");
+  assert.ok(impact);
+  const reviewed = await f.service.execute(principal, { type: "task.reviewBasis", projectId,
+    operationId: f.operation(), taskId: taskA, expectedVersion: 2, impactId: impact.id,
+    decision: "adopt", reason: "Reviewed changed source" });
+  assert.equal(reviewed.status, "applied");
+  const after = await f.service.getTask(principal, projectId, taskA);
+  assert.equal(after.revision.state, "in_progress");
+  assert.equal((await f.service.getTaskRevision(principal, projectId, taskA, before.revision.id)).revision.state, "active");
+});
+
 test("adopting a newer document revision emits supersession for the previous pending impact", async () => {
   const f = fixture();
   await seedTwoTasks(f);

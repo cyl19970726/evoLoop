@@ -29,7 +29,15 @@ const rowDocumentRevision = (r: Row): DocumentRevision => ({ projectId: r.projec
   body: r.body, format: r.format, mediaType: r.media_type, originalName: r.original_name ?? `${r.document_id}.md`,
   payloadRef: r.payload_ref, entrypoint: r.entrypoint, assetsManifest: r.assets_manifest ?? [],
   contentHash: r.content_hash, author: r.author, createdAt: iso(r.created_at), previousRevisionId: r.previous_revision_id, reason: r.reason });
-const rowTask = (r: Row): Task => ({ projectId: r.project_id, id: r.task_id, version: r.version, currentRevisionId: r.current_revision_id, title: r.title, content: r.content, contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, acceptance: r.acceptance, owner: r.owner, state: r.state });
+const legacyTaskStates = new Set(["proposed", "ready", "active", "review", "blocked", "deferred"]);
+const rowTask = (r: Row): Task => ({ projectId: r.project_id, id: r.task_id, version: r.version,
+  currentRevisionId: r.current_revision_id, title: r.title, content: r.content,
+  contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind,
+  acceptance: r.acceptance, owner: r.owner, state: r.state,
+  legacyDecision: legacyTaskStates.has(r.legacy_state)
+    ? { state: r.legacy_state, decision: r.legacy_judgement_decision ?? null,
+      reason: r.legacy_judgement_reason ?? r.legacy_revision_reason }
+    : null });
 const rowTaskRevision = (r: Row): TaskRevision => ({ projectId: r.project_id, taskId: r.task_id, id: r.revision_id, version: r.version, title: r.title, content: r.content, contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, acceptance: r.acceptance, owner: r.owner, state: r.state, basisSetId: r.basis_set_id, actorId: r.actor_id, reason: r.reason, createdAt: iso(r.created_at) });
 const rowLink = (r: Row): TaskDocumentLink => ({ projectId: r.project_id, id: r.link_id, taskId: r.task_id, documentId: r.document_id, actorId: r.actor_id, createdAt: iso(r.created_at) });
 const rowImpact = (r: Row): Impact => ({ projectId: r.project_id, id: r.impact_id, taskId: r.task_id, taskRevisionId: r.task_revision_id, documentId: r.document_id, fromRevisionId: r.from_revision_id, toRevisionId: r.to_revision_id, state: r.state, decisionId: r.decision_id, createdAt: iso(r.created_at) });
@@ -45,6 +53,16 @@ const rowJudgement = (r: Row): TaskJudgement => ({ projectId:r.project_id,id:r.j
 const rowDelivery = (r: Row): Delivery => ({ projectId:r.project_id,id:r.delivery_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,artifactRef:r.artifact_ref,artifactRevision:r.artifact_revision,contentHash:r.content_hash,technicalResult:r.technical_result,technicalEvidence:r.technical_evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowObservation = (r: Row): ConsumerObservation => ({ projectId:r.project_id,id:r.observation_id,taskId:r.task_id,deliveryId:r.delivery_id,observer:r.observer,observerKind:r.observer_kind,result:r.result,evidence:r.evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowClosure = (r: Row): TaskClosure => ({ projectId:r.project_id,id:r.closure_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,deliveryId:r.delivery_id,acceptanceResult:r.acceptance_result,acceptanceEvidence:r.acceptance_evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
+const taskReadProjection = `FROM task t
+  JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id AND tr.revision_id=t.current_revision_id
+  JOIN document_revision dr ON dr.project_id=t.project_id AND dr.document_id=t.content_document_id
+    AND dr.revision_id=t.content_revision_id
+  LEFT JOIN LATERAL (
+    SELECT j.decision,j.reason FROM task_judgement j
+    WHERE j.project_id=t.project_id AND j.task_id=t.task_id AND j.task_revision_id=tr.revision_id
+      AND tr.state IN ('proposed','ready','active','review','blocked','deferred')
+    ORDER BY j.created_at DESC,j.judgement_id DESC LIMIT 1
+  ) legacy_judgement ON true`;
 function pageLimit(limit: number): number {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new RangeError("page limit must be 1..100");
   return limit;
@@ -142,8 +160,9 @@ class PgReader implements Reader {
     return page(r.rows, limit, rowDocument, (x) => x.document_id);
   }
   async getTask(id: string): Promise<Task | null> {
-    const r = await this.client.query(`SELECT t.*,dr.body AS content FROM task t JOIN document_revision dr
-      ON dr.project_id=t.project_id AND dr.document_id=t.content_document_id AND dr.revision_id=t.content_revision_id
+    const r = await this.client.query(`SELECT t.*,dr.body AS content,tr.state AS legacy_state,
+      tr.reason AS legacy_revision_reason,legacy_judgement.decision AS legacy_judgement_decision,
+      legacy_judgement.reason AS legacy_judgement_reason ${taskReadProjection}
       WHERE t.project_id=$1 AND t.task_id=$2`, [this.projectId, id]);
     return r.rows[0] ? rowTask(r.rows[0]) : null;
   }
@@ -167,8 +186,9 @@ class PgReader implements Reader {
   }
   async listTasks(limit: number, cursor?: string): Promise<Page<Task>> {
     pageLimit(limit);
-    const r = await this.client.query(`SELECT t.*,dr.body AS content FROM task t JOIN document_revision dr
-      ON dr.project_id=t.project_id AND dr.document_id=t.content_document_id AND dr.revision_id=t.content_revision_id
+    const r = await this.client.query(`SELECT t.*,dr.body AS content,tr.state AS legacy_state,
+      tr.reason AS legacy_revision_reason,legacy_judgement.decision AS legacy_judgement_decision,
+      legacy_judgement.reason AS legacy_judgement_reason ${taskReadProjection}
       WHERE t.project_id=$1 AND ($2::uuid IS NULL OR t.task_id>$2::uuid) ORDER BY t.task_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1]);
     return page(r.rows, limit, rowTask, (x) => x.task_id);
   }

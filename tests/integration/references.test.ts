@@ -29,7 +29,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
   await writeFile(join(root, "formal.md"), "# Fixed formal source\n");
   git(root, "add", "formal.md"); git(root, "commit", "-qm", "fixed");
   const commit = git(root, "rev-parse", "HEAD");
-  const projectId = randomUUID(), refId = randomUUID(), taskId = randomUUID(), oldRev = randomUUID(), newRev = randomUUID();
+  const projectId = randomUUID(), refId = randomUUID(), taskId = randomUUID(), oldRev = randomUUID(), newRev = randomUUID(), carriedRev = randomUUID();
   const contentDocumentId = randomUUID(), contentRevisionId = randomUUID();
   const documentId = randomUUID(), documentRevisionId = randomUUID(), formalDecisionId = randomUUID();
   const ref = { projectId, repositoryId: "formal", path: "formal.md", commit, contentHash: hash("# Fixed formal source\n") };
@@ -84,6 +84,17 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
     const snapshots = await store.listTaskExternalSnapshot(taskId,newRev);
     assert.equal(snapshots.length,1);
     assert.equal(snapshots[0]!.id,decisionId);
+    assert.equal(snapshots[0]!.taskRevisionId,newRev);
+    assert.equal((await store.getTaskExternalSnapshot(taskId,newRev,slotId))?.taskRevisionId,newRev);
+    assert.equal((await store.listTaskExternalReferences(taskId))[0]?.taskRevisionId,oldRev);
+    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,
+      state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at)
+      VALUES($1,$2,$3,3,'Task','Done','reviewer','todo',null,$4,$5,null,'reviewer','later task change',now())`,
+      [projectId,taskId,carriedRev,contentDocumentId,contentRevisionId]);
+    await client.query("UPDATE task SET version=3,current_revision_id=$3 WHERE project_id=$1 AND task_id=$2", [projectId,taskId,carriedRev]);
+    const carried = await store.listTaskExternalSnapshot(taskId,carriedRev);
+    assert.equal(carried[0]?.id,decisionId);
+    assert.equal(carried[0]?.taskRevisionId,carriedRev);
     assert.deepEqual(await store.listTaskExternalSnapshot(taskId,oldRev),[]);
     await assert.rejects(client.query("DELETE FROM task_external_ref_snapshot WHERE project_id=$1",[projectId]), /immutable/);
     await client.query("ROLLBACK");
