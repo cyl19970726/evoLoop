@@ -79,6 +79,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [selectedId, setSelectedId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "read" ? route.id : null; });
   const [fixedRevision, setFixedRevision] = useState<string | undefined>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "read" ? route.revision : undefined; });
   const [page, setPage] = useState<KnowledgeRevision | null>(null);
+  const [currentHead, setCurrentHead] = useState<{ knowledgeId: string; revision: string } | null>(null);
   const [history, setHistory] = useState<KnowledgeSummary[]>([]);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "review" ? route.id ?? null : null; });
@@ -113,7 +114,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     const sync = () => {
       const next = transitionKnowledgeRoute({ route: { view: "list" }, page: null, history: [], graph: null }, window.location.hash, context.projectId);
       if (next.route.view === "outside") return;
-      setPage(next.page); setHistory(next.history); setGraph(next.graph);
+      setPage(next.page); setCurrentHead(null); setHistory(next.history); setGraph(next.graph);
       setError(""); setRouteError(""); setCandidate(null);
       if (next.route.view === "read") {
         setSelectedId(next.route.id); setFixedRevision(next.route.revision); setSelectedCandidateId(null); setView("read");
@@ -139,12 +140,14 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     return () => { active = false; };
   }, [context.token, context.projectId, refresh, localRefresh]);
   useEffect(() => {
-    if (!selectedId) { setPage(null); setHistory([]); setGraph(null); return; }
-    let active = true; setPage(null); setHistory([]); setGraph(null); setError("");
-    Promise.allSettled([client.page(selectedId, fixedRevision), client.history(selectedId), client.graph(selectedId)])
-      .then(([read, past, nearby]) => { if (!active) return;
+    if (!selectedId) { setPage(null); setCurrentHead(null); setHistory([]); setGraph(null); return; }
+    let active = true; setPage(null); setCurrentHead(null); setHistory([]); setGraph(null); setError("");
+    Promise.allSettled([client.page(selectedId, fixedRevision), client.history(selectedId), client.graph(selectedId),
+      fixedRevision ? client.page(selectedId) : Promise.resolve(null)])
+      .then(([read, past, nearby, head]) => { if (!active) return;
         if (read.status === "fulfilled") setPage(read.value);
         else setError(`正文读取失败：${errorText(read.reason)}`);
+        if (head.status === "fulfilled" && head.value?.knowledgeId === selectedId) setCurrentHead(head.value);
         if (past.status === "fulfilled") setHistory(past.value.items);
         if (nearby.status === "fulfilled") setGraph(nearby.value);
         if (read.status === "fulfilled" && (past.status === "rejected" || nearby.status === "rejected"))
@@ -250,7 +253,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     finally { setBusy(false); }
   }
   const openPage = (id: string, revision?: string) => {
-    setPage(null); setHistory([]); setGraph(null);
+    setPage(null); setCurrentHead(null); setHistory([]); setGraph(null);
     setSelectedId(id); setFixedRevision(revision); setView("read");
     window.location.hash = knowledgeHash(context.projectId, { knowledgeId: id, knowledgeRevision: revision });
   };
@@ -281,8 +284,8 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     setSelectedSourceRevision(page.sources[0]?.originRevision ?? "");
     setRelationTarget(""); setRelationRevision(""); setView("compose");
   };
-  const currentSummary = pages.find(item => item.knowledgeId === selectedId);
-  const currentRevision = !fixedRevision && page?.knowledgeId === selectedId ? page.revision : currentSummary?.revision ?? history[0]?.revision;
+  const currentRevision = !fixedRevision && page?.knowledgeId === selectedId ? page.revision
+    : currentHead?.knowledgeId === selectedId ? currentHead.revision : undefined;
   const visiblePage = matchesKnowledgeRevision(page, selectedId, fixedRevision) ? page : null;
   const readingCurrent = !!visiblePage && (!fixedRevision || visiblePage.revision === currentRevision);
   const relationName = (id: string, revision: string) =>
@@ -321,7 +324,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         {visiblePage ? <article>
           <p className="knowledge-kicker">{statusText(visiblePage.pageType)} · {statusText(visiblePage.epistemicStatus)} · {statusText(visiblePage.observedValidity)}</p>
           <h2>{visiblePage.title}</h2>
-          <div className="knowledge-version"><span><strong>正在阅读</strong> {visiblePage.revision.slice(0, 8)}{readingCurrent ? " · 当前版" : " · 固定历史版"}</span>
+          <div className="knowledge-version"><span><strong>正在阅读</strong> {visiblePage.revision.slice(0, 8)}{readingCurrent ? " · 当前版" : currentRevision ? " · 固定历史版" : " · 固定版，当前状态待核"}</span>
             <span><strong>当前发布</strong> {currentRevision?.slice(0, 8) ?? "尚未核到"}</span></div>
           {visiblePage.validity !== visiblePage.observedValidity && <Notice error>此固定版创建时为{statusText(visiblePage.validity)}；目前标为{statusText(visiblePage.observedValidity)}。使用前请复核来源。</Notice>}
           {fixedRevision && !readingCurrent && <button onClick={() => openPage(visiblePage.knowledgeId)}>阅读当前发布版</button>}
