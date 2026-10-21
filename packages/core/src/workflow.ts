@@ -16,6 +16,7 @@ import type {
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { currentRetentions } from "./runtime/basis.js";
+import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 
 type WorkflowCommand = Extract<
   Command,
@@ -343,9 +344,21 @@ export async function applyWorkflow({
       if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "task must be in progress to deliver");
       if ((await tx.listRuntimeRuns(task.id)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state)))
         throw new DomainError("TASK_BUSY", "resolve the current or uncertain run before recording delivery");
+      if (c.runId) {
+        const run = found(await tx.getRuntimeRun(c.runId), "source Run");
+        if (run.projectId !== c.projectId || run.taskId !== task.id)
+          throw new DomainError("DELIVERY_RUN_MISMATCH", "Source Run does not belong to this project's Task");
+        if (!["completed", "failed", "interrupted"].includes(run.state))
+          throw new DomainError("DELIVERY_RUN_UNSETTLED", "Source Run must have a confirmed terminal state");
+        const executedInput = await taskInputSignature(tx, task, run.taskRevisionId);
+        const currentInput = await taskInputSignature(tx, task);
+        if (canonicalTaskInputJson(executedInput) !== canonicalTaskInputJson(currentInput))
+          throw new DomainError("DELIVERY_INPUT_CHANGED", "Task business input changed since the source Run");
+      }
       const revision = await newTaskRevision(tx, task, actorId, now, nextId, "in_progress", c.reason);
       const delivery: Delivery = { projectId: c.projectId, id: nextId(), taskId: task.id,
-        taskRevisionId: revision.id, artifactRef: c.artifactRef, artifactRevision: c.artifactRevision,
+        taskRevisionId: revision.id, runId: c.runId ?? null,
+        artifactRef: c.artifactRef, artifactRevision: c.artifactRevision,
         contentHash: c.contentHash, technicalResult: c.technicalResult,
         technicalEvidence: c.technicalEvidence, reason: c.reason, actorId, createdAt: now };
       await tx.insertDelivery(delivery);

@@ -1,4 +1,4 @@
-import type { EvaluationAssessment, EvaluationAttempt, EvaluationCost, EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
+import type { Delivery, EvaluationAssessment, EvaluationAttempt, EvaluationCost, EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
 
 export const evaluationHref = (projectId: string, evaluationId?: string, revisionId?: string) =>
   `#/p/${projectId}/evaluations${evaluationId ? `/${evaluationId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}` : ""}`;
@@ -65,6 +65,11 @@ export function attemptsForCondition(revision: EvaluationRevision, attempts: Eva
   return attempts.filter(item => item.evaluationId === revision.evaluationId && item.revisionId === revision.id
     && item.caseId === revision.definition.case.id && item.conditionId === conditionId)
     .sort((a, b) => a.ordinal - b.ordinal || a.createdAt.localeCompare(b.createdAt));
+}
+
+/** A delivery registration creates a new Task revision; only its explicit Run ID attributes it to an attempt. */
+export function deliveriesForAttempt(attempt: EvaluationAttempt, taskId: string, deliveries: Delivery[]): Delivery[] {
+  return deliveries.filter(item => item.runId === attempt.runId && item.taskId === taskId && item.projectId === attempt.projectId);
 }
 
 export function costText(cost: EvaluationCost): string {

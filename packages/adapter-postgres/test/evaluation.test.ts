@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
-import { WorkflowService } from "@evoloop/core";
+import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision } from "@evoloop/contracts";
 import type { EvaluationAssessment, EvaluationConclusion, EvaluationDefinition } from "@evoloop/contracts/evaluation";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -21,6 +21,7 @@ const actor = "evaluation-test", now = "2026-10-21T00:00:00.000Z";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const principal = (projectId: string) => ({ actorId: actor, projectIds: [projectId], permissions: ["read","write","review"] as Array<"read"|"write"|"review"> });
 const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash } });
+const runtime = new RuntimeWorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID } });
 
 before(async () => { await migrate(connectionString, schema); });
 after(async () => {
@@ -183,7 +184,7 @@ test("attempt binds Run and fixed revision; corrections append, missing cost rem
     deliveryId:null,observationId:null,supersedesId:null,values,costs:[{phase:"run",unit:"USD",amount:null,source:"unreported",evidence:null}],
     evidence:[],assessorKind:"human",actorId:actor,reason:"Cost unobserved",createdAt:now};
   await assert.rejects(uow.transaction(fixture.projectId,tx=>tx.insertEvaluationAssessment({...first,id:randomUUID(),deliveryId:wrongDeliveryId})),
-    /actual Run Task revision/);
+    /attempt Run and Task/);
   await uow.transaction(fixture.projectId,tx=>tx.insertEvaluationAssessment(first));
   const second:EvaluationAssessment = {...first,id:randomUUID(),supersedesId:firstId,reason:"Explicit correction"};
   await uow.transaction(fixture.projectId,tx=>tx.insertEvaluationAssessment(second));
@@ -280,7 +281,7 @@ test("changed external head rejects real reserve and leaves source Task, Run and
   assert.equal((await uow.read(fixture.projectId,reader=>reader.getOperation(operationId)))?.result.status,"rejected");
 });
 
-test("014 upgrades a nonempty ordinary Run without changing its identity or requiring evaluation metadata", async () => {
+test("014 and 015 upgrade an ordinary Run and old delivery without changing identity or attribution", async () => {
   const legacySchema=`el_eval_upgrade_${randomUUID().replaceAll("-","").slice(0,12)}`;
   const migrations=fileURLToPath(new URL("../migrations/",import.meta.url));
   const legacyClient=new pg.Client({connectionString,options:`-c search_path=${legacySchema}`});
@@ -289,7 +290,7 @@ test("014 upgrades a nonempty ordinary Run without changing its identity or requ
       createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:12,log:()=>{}});
     await legacyClient.connect();
     const projectId=randomUUID(),taskId=randomUUID(),taskRevisionId=randomUUID(),basisId=randomUUID();
-    const docId=randomUUID(),docRevisionId=randomUUID(),sessionId=randomUUID(),runId=randomUUID();
+    const docId=randomUUID(),docRevisionId=randomUUID(),sessionId=randomUUID(),runId=randomUUID(),deliveryId=randomUUID();
     const input="Ordinary Run before evaluation migration";
     await legacyClient.query("BEGIN");
     try {
@@ -318,6 +319,12 @@ test("014 upgrades a nonempty ordinary Run without changing its identity or requ
         [projectId,runId,taskId,taskRevisionId,basisId,sessionId,randomUUID(),input,hash(input),actor,now]);
       await legacyClient.query("COMMIT");
     } catch(error) { await legacyClient.query("ROLLBACK"); throw error; }
+    await runner({databaseUrl:connectionString!,dir:migrations,migrationsTable:"pgmigrations",schema:legacySchema,
+      createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:2,log:()=>{}});
+    await legacyClient.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,
+      content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+      VALUES($1,$2,$3,$4,'artifact:pre-015','v1',$5,'failed','Preexisting output','Legacy registration',$6,$7)`,
+      [projectId,deliveryId,taskId,taskRevisionId,hash("pre-015"),actor,now]);
     await migrate(connectionString!,legacySchema);
     const legacyPool=new pg.Pool({connectionString,options:`-c search_path=${legacySchema}`});
     try {
@@ -325,6 +332,7 @@ test("014 upgrades a nonempty ordinary Run without changing its identity or requ
       const original=(await migrated.read(projectId,reader=>reader.getRuntimeRun(runId)))!;
       assert.equal(original.id,runId); assert.equal(original.inputHash,hash(input));
       assert.equal(original.evaluationBinding,null); assert.equal(original.evaluationPacket,null);
+      assert.equal((await migrated.read(projectId,reader=>reader.getDelivery(deliveryId)))?.runId,null);
       await migrated.transaction(projectId,tx=>tx.updateRuntimeRun({...original,version:2,state:"failed",resultSummary:"Known failure"},1));
       const updated=(await migrated.read(projectId,reader=>reader.getRuntimeRun(runId)))!;
       assert.equal(updated.state,"failed"); assert.equal(updated.evaluationBinding,null); assert.equal(updated.evaluationPacket,null);
@@ -333,5 +341,208 @@ test("014 upgrades a nonempty ordinary Run without changing its identity or requ
     await legacyClient.end().catch(()=>{});
     const cleanup=new pg.Client({connectionString}); await cleanup.connect();
     try { await cleanup.query(`DROP SCHEMA IF EXISTS "${legacySchema}" CASCADE`); } finally { await cleanup.end(); }
+  }
+});
+
+async function officialCase() {
+  const projectId=randomUUID(), taskId=randomUUID(), sourceId=randomUUID(), evaluationId=randomUUID(), evaluationRevisionId=randomUUID();
+  const p=principal(projectId);
+  const apply=async (command: Parameters<typeof workflow.execute>[1]) => {
+    const result=await workflow.execute(p,command);
+    assert.equal(result.status,"applied",JSON.stringify(result));
+    return result;
+  };
+  await apply({type:"project.create",projectId,operationId:randomUUID(),title:"Official evaluation journey"});
+  const sourceBody="# Fixed evaluation protocol";
+  const source=await apply({type:"document.create",projectId,operationId:randomUUID(),documentId:sourceId,
+    title:"Protocol",body:sourceBody,kind:"spec"});
+  await apply({type:"document.publish",projectId,operationId:randomUUID(),documentId:sourceId,
+    expectedVersion:1,revisionId:source.revisionId!,reason:"Freeze common source"});
+  await apply({type:"task.create",projectId,operationId:randomUUID(),taskId,title:"Compare fixed sources",
+    content:"# Produce a fixed answer",acceptance:"Check answer against protocol",owner:actor,documentIds:[sourceId]});
+  await apply({type:"task.start",projectId,operationId:randomUUID(),taskId,expectedVersion:1,
+    basis:[{documentId:sourceId,revisionId:source.revisionId!}],reason:"Seal comparison inputs"});
+  const frozen=await workflow.getEvaluationSourceTask(p,projectId,taskId);
+  const environment={cwd:"/tmp/evoloop-evaluation-test",authorizationScope:"evaluation-case",
+    sandbox:"read-only" as const,approvalPolicy:"on-request" as const};
+  const directId=randomUUID(),wikiId=randomUUID(),caseId=randomUUID();
+  const protocol={kind:"document" as const,id:sourceId,revision:source.revisionId!,contentHash:hash(sourceBody)};
+  const definition:EvaluationDefinition={ownerTaskId:taskId,question:"Does the fixed Wiki change this answer?",protocol,
+    case:{id:caseId,taskId,sourceTaskRevisionId:frozen.sourceTaskRevisionId,sourceSignature:frozen.sourceSignature,
+      commonInput:"Answer using the fixed protocol",materials:[protocol],criteria:"Compare the two fixed deliveries"},
+    conditions:[{id:directId,kind:"direct",wikiRefs:null,model:"test-model",environment},
+      {id:wikiId,kind:"wiki",wikiRefs:[{kind:"wiki",id:"wiki-fixed",revision:"v1",contentHash:hash("wiki-fixed-v1")}],
+        model:"test-model",environment}],limits:"Technical isolation and downstream effects are unverified"};
+  await apply({type:"evaluation.create",projectId,operationId:randomUUID(),evaluationId,
+    revisionId:evaluationRevisionId,definition});
+  return {projectId,taskId,evaluationId,evaluationRevisionId,definition,apply};
+}
+
+async function officialRun(fixture:Awaited<ReturnType<typeof officialCase>>, conditionIndex:0|1,
+  terminal:"completed"|"failed", markUnknown=false) {
+  const {projectId,taskId,evaluationId,evaluationRevisionId,definition,apply}=fixture;
+  const sessionId=randomUUID(),runId=randomUUID(),turnId=`turn-${randomUUID()}`;
+  const condition=definition.conditions[conditionIndex];
+  await apply({type:"runtime.session.reserve",projectId,operationId:randomUUID(),sessionId,roleId:actor,
+    cwd:condition.environment.cwd,authorizationScope:condition.environment.authorizationScope,
+    model:condition.model,sandbox:condition.environment.sandbox,approvalPolicy:condition.environment.approvalPolicy});
+  await runtime.beginSessionCreate(projectId,sessionId);
+  await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:actor,
+    cwd:condition.environment.cwd,authorizationScope:condition.environment.authorizationScope,
+    nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+  const taskBefore=(await uow.read(projectId,reader=>reader.getTask(taskId)))!;
+  await apply({type:"runtime.run.reserve",projectId,operationId:randomUUID(),runId,taskId,sessionId,
+    expectedVersion:taskBefore.version,input:definition.case.commonInput,
+    evaluation:{evaluationId,revisionId:evaluationRevisionId,caseId:definition.case.id,conditionId:condition.id}});
+  const run=(await uow.read(projectId,reader=>reader.getRuntimeRun(runId)))!;
+  const refs=[definition.protocol,...definition.case.materials,
+    ...definition.case.sourceSignature.basis.map(x=>({kind:"document" as const,id:x.documentId,revision:x.revisionId,contentHash:x.contentHash})),
+    ...(condition.wikiRefs??[])];
+  const sources=[...new Map(refs.map(x=>[`${x.kind}:${x.id}:${x.revision}:${x.contentHash}`,x])).values()];
+  await runtime.attachEvaluationPacket(projectId,runId,run.version,{payloadRef:`blob:${runId}`,
+    contentHash:hash(`packet-${runId}`),manifestHash:hash(`manifest-${runId}`),builderVersion:"test-v1",sources});
+  await runtime.beginDispatch(projectId,runId);
+  if (markUnknown) await runtime.markRunUnknown(projectId,runId,"Test uncertain native start");
+  else await runtime.bindTurn(projectId,runId,{id:turnId},{kind:"startReply",operationId:run.operationId});
+  return {runId,sessionId,turnId,run,finish:async()=>{
+    if (markUnknown) await runtime.bindTurn(projectId,runId,{id:turnId},{kind:"historyMarker",operationId:run.operationId});
+    await runtime.recordTurn(projectId,runId,turnId,terminal,terminal==="failed"?"Fixed provider failure":"Fixed response received");
+  }};
+}
+
+test("official commands attribute two terminal evaluation Runs to later deliveries and complete both assessments", async () => {
+  const fixture=await officialCase();
+  const direct=await officialRun(fixture,0,"completed"); await direct.finish();
+  const wiki=await officialRun(fixture,1,"failed",true);
+  const {projectId,taskId,evaluationId,evaluationRevisionId,apply}=fixture;
+  const attemptedWhileUnknown=await workflow.execute(principal(projectId),{type:"delivery.record",projectId,
+    operationId:randomUUID(),taskId,runId:direct.runId,expectedVersion:4,artifactRef:"artifact:early",
+    artifactRevision:"v1",contentHash:hash("early"),technicalResult:"passed",technicalEvidence:"Fixed check",reason:"Too early"});
+  assert.equal(attemptedWhileUnknown.status,"rejected");
+  if (attemptedWhileUnknown.status==="rejected") assert.equal(attemptedWhileUnknown.code,"TASK_BUSY");
+  await wiki.finish();
+  const attempts=await uow.read(projectId,reader=>reader.listEvaluationAttempts(evaluationId,evaluationRevisionId));
+  assert.equal(attempts.length,2);
+  const directAttempt=attempts.find(x=>x.runId===direct.runId)!;
+  const wikiAttempt=attempts.find(x=>x.runId===wiki.runId)!;
+  const makeDelivery=(runId:string,expectedVersion:number,technicalResult:"passed"|"failed",artifact:string)=>({
+    type:"delivery.record" as const,projectId,operationId:randomUUID(),taskId,runId,expectedVersion,
+    artifactRef:`artifact:${artifact}`,artifactRevision:"v1",contentHash:hash(artifact),technicalResult,
+    technicalEvidence:technicalResult==="failed"?"Failure output retained":"Fixed check passed",reason:"Register fixed Run output"});
+  const firstCommand=makeDelivery(direct.runId,4,"passed","direct-output");
+  const first=await apply(firstCommand);
+  assert.deepEqual(await workflow.execute(principal(projectId),firstCommand),first,"operation replay is idempotent");
+  const second=await apply(makeDelivery(wiki.runId,5,"failed","failed-wiki-output"));
+  const deliveries=await uow.read(projectId,reader=>reader.listDeliveries(taskId));
+  assert.equal(deliveries.length,2);
+  const directDelivery=deliveries.find(x=>x.id===first.revisionId)!;
+  const wikiDelivery=deliveries.find(x=>x.id===second.revisionId)!;
+  assert.equal(directDelivery.runId,direct.runId); assert.equal(wikiDelivery.runId,wiki.runId);
+  assert.notEqual(directDelivery.taskRevisionId,direct.run.taskRevisionId);
+  assert.notEqual(wikiDelivery.taskRevisionId,wiki.run.taskRevisionId);
+  assert.equal(wikiDelivery.technicalResult,"failed");
+  assert.equal((await uow.read(projectId,reader=>reader.getRuntimeRun(wiki.runId)))?.state,"failed");
+  const observations=[];
+  for (const delivery of [directDelivery,wikiDelivery]) {
+    const recorded=await apply({type:"observation.record",projectId,operationId:randomUUID(),taskId,
+      deliveryId:delivery.id,observer:actor,observerKind:"agent",result:"notUsed",
+      evidence:"No downstream use observed",reason:"Record observed non-use"});
+    observations.push(recorded.revisionId!);
+  }
+  const values=(directCondition:boolean)=>({sourceFidelity:"unknown" as const,
+    knowledgeAdoption:directCondition?"not_applicable" as const:"not_observed" as const,
+    deliveryQuality:"unknown" as const,humanEffect:"unknown" as const});
+  const assessmentIds=[];
+  for (const [attempt,delivery,observation,directCondition] of [
+    [directAttempt,directDelivery,observations[0],true],[wikiAttempt,wikiDelivery,observations[1],false]
+  ] as const) {
+    const assessmentId=randomUUID();
+    await apply({type:"evaluation.assessment.record",projectId,operationId:randomUUID(),evaluationId,
+      revisionId:evaluationRevisionId,assessmentId,attemptId:attempt.id,deliveryId:delivery.id,
+      observationId:observation,supersedesId:null,values:values(directCondition),
+      costs:[{phase:"run",unit:"USD",amount:null,source:"not reported",evidence:null}],evidence:[],
+      assessorKind:"agent",reason:"Record actual outcome and unknown cost"});
+    assessmentIds.push(assessmentId);
+  }
+  const wrong=await workflow.execute(principal(projectId),{type:"evaluation.assessment.record",projectId,
+    operationId:randomUUID(),evaluationId,revisionId:evaluationRevisionId,assessmentId:randomUUID(),
+    attemptId:directAttempt.id,deliveryId:wikiDelivery.id,observationId:null,supersedesId:assessmentIds[0],
+    values:values(true),costs:[],evidence:[],assessorKind:"agent",reason:"Wrong Run delivery"});
+  assert.equal(wrong.status,"rejected");
+  if (wrong.status==="rejected") assert.equal(wrong.code,"DELIVERY_MISMATCH");
+  const conclusion=await apply({type:"evaluation.conclusion.record",projectId,operationId:randomUUID(),evaluationId,
+    revisionId:evaluationRevisionId,conclusionId:randomUUID(),assessmentIds,supersedesId:null,
+    finding:"Both fixed outputs recorded; comparative effect remains unknown",limits:"Failed Wiki Run and unknown cost",
+    comparability:"with_limits",comparabilityReason:"Only one completed and one failed Run",
+    nextChoice:"research",affectedRefs:[],nextActionRef:null});
+  assert.equal(conclusion.status,"applied");
+  assert.equal((await uow.read(projectId,reader=>reader.listEvaluationConclusions(evaluationId,evaluationRevisionId))).length,1);
+});
+
+test("official delivery attribution rejects foreign Runs and preserves legacy null attribution", async () => {
+  const fixture=await officialCase();
+  const source=await officialRun(fixture,0,"completed"); await source.finish();
+  const {projectId,taskId,apply}=fixture;
+  const otherTaskId=randomUUID();
+  await apply({type:"task.create",projectId,operationId:randomUUID(),taskId:otherTaskId,title:"Other case",
+    content:"# Other case",acceptance:"Different acceptance",owner:actor});
+  await apply({type:"task.start",projectId,operationId:randomUUID(),taskId:otherTaskId,expectedVersion:1,
+    reason:"Start unrelated case"});
+  const command=(pid:string,tid:string,runId:string|undefined,version:number)=>({type:"delivery.record" as const,
+    projectId:pid,operationId:randomUUID(),taskId:tid,...(runId?{runId}:{}),expectedVersion:version,
+    artifactRef:"artifact:fixed",artifactRevision:"v1",contentHash:hash("fixed"),technicalResult:"passed" as const,
+    technicalEvidence:"Known fixed output",reason:"Attribute source Run"});
+  const otherTask=await workflow.execute(principal(projectId),command(projectId,otherTaskId,source.runId,2));
+  assert.equal(otherTask.status,"rejected");
+  if (otherTask.status==="rejected") assert.equal(otherTask.code,"DELIVERY_RUN_MISMATCH");
+  const otherHead=(await uow.read(projectId,reader=>reader.getTask(otherTaskId)))!;
+  await assert.rejects(pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,run_id,
+    artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,'artifact:invalid','v1',$6,'passed','check','wrong Task',$7,$8)`,
+    [projectId,randomUUID(),otherTaskId,otherHead.currentRevisionId,source.runId,hash("invalid"),actor,now]),/foreign key/);
+  const otherProjectId=randomUUID(),foreignTaskId=randomUUID();
+  const foreign=async(c:Parameters<typeof workflow.execute>[1])=>{
+    const result=await workflow.execute(principal(otherProjectId),c);
+    assert.equal(result.status,"applied",JSON.stringify(result)); return result;
+  };
+  await foreign({type:"project.create",projectId:otherProjectId,operationId:randomUUID(),title:"Other project"});
+  await foreign({type:"task.create",projectId:otherProjectId,operationId:randomUUID(),taskId:foreignTaskId,
+    title:"Foreign task",content:"# Foreign",acceptance:"Foreign check",owner:actor});
+  await foreign({type:"task.start",projectId:otherProjectId,operationId:randomUUID(),taskId:foreignTaskId,
+    expectedVersion:1,reason:"Start foreign task"});
+  const foreignRun=await workflow.execute(principal(otherProjectId),command(otherProjectId,foreignTaskId,source.runId,2));
+  assert.equal(foreignRun.status,"rejected");
+  if (foreignRun.status==="rejected") assert.equal(foreignRun.code,"NOT_FOUND");
+  const old=await apply(command(projectId,taskId,undefined,3));
+  assert.equal((await uow.read(projectId,reader=>reader.getDelivery(old.revisionId!)))?.runId,null);
+  await assert.rejects(pool.query("UPDATE delivery SET run_id=$3 WHERE project_id=$1 AND delivery_id=$2",
+    [projectId,old.revisionId,source.runId]),/append-only/);
+  assert.equal((await uow.read(projectId,reader=>reader.listDeliveries(taskId))).length,1);
+});
+
+test("official delivery attribution rejects body, acceptance and sealed basis drift after terminal Run", async () => {
+  for (const change of ["body","acceptance","basis"] as const) {
+    const fixture=await officialCase();
+    const source=await officialRun(fixture,0,"completed"); await source.finish();
+    const {projectId,taskId,apply}=fixture;
+    const task=(await uow.read(projectId,reader=>reader.getTask(taskId)))!;
+    await apply({type:"task.reopen",projectId,operationId:randomUUID(),taskId,expectedVersion:task.version,
+      reason:`Reopen to change ${change}`});
+    const current=(await uow.read(projectId,reader=>reader.getTask(taskId)))!;
+    await apply({type:"task.update",projectId,operationId:randomUUID(),taskId,expectedVersion:current.version,
+      title:current.title,content:change==="body"?"# Changed answer scope":current.content,
+      acceptance:change==="acceptance"?"Check a different answer":current.acceptance,owner:current.owner,
+      reason:`Change ${change}`});
+    const updated=(await uow.read(projectId,reader=>reader.getTask(taskId)))!;
+    await apply({type:"task.start",projectId,operationId:randomUUID(),taskId,expectedVersion:updated.version,
+      ...(change==="basis"?{basis:[]}:{}),reason:`Reseal after ${change}`});
+    const started=(await uow.read(projectId,reader=>reader.getTask(taskId)))!;
+    const result=await workflow.execute(principal(projectId),{type:"delivery.record",projectId,
+      operationId:randomUUID(),taskId,runId:source.runId,expectedVersion:started.version,
+      artifactRef:"artifact:stale",artifactRevision:"v1",contentHash:hash("stale"),technicalResult:"passed",
+      technicalEvidence:"Original Run output",reason:"Try stale attribution"});
+    assert.equal(result.status,"rejected",`${change}: ${JSON.stringify(result)}`);
+    if (result.status==="rejected") assert.equal(result.code,"DELIVERY_INPUT_CHANGED",change);
+    assert.deepEqual(await uow.read(projectId,reader=>reader.listDeliveries(taskId)),[]);
   }
 });

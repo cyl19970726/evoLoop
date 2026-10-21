@@ -5,7 +5,7 @@ import { date } from "../ui/shared";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import { runtimeClient, type NativeResult } from "../runtime/client";
 import { DefinitionForm } from "./DefinitionForm";
-import { assessmentLabels, attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, evaluationHref, evaluationListHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, type NextActionRef } from "./presentation";
+import { assessmentLabels, attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, type NextActionRef } from "./presentation";
 import "./evaluation.css";
 
 type EvaluationRead = Awaited<ReturnType<ReturnType<typeof api>["evaluation"]>>;
@@ -129,10 +129,11 @@ function AttemptCard({ context, revision, attempt, run, task, assessments, onCha
   const [packet, setPacket] = useState<Packet | null>(null);
   const [native, setNative] = useState<NativeResult | null>(null);
   const [readError, setReadError] = useState("");
-  const deliveries = (task?.deliveries ?? []).filter(item => item.taskRevisionId === attempt.actualTaskRevisionId);
+  const taskId = revision.definition.case.taskId;
+  const deliveries = deliveriesForAttempt(attempt, taskId, task?.deliveries ?? []);
   const observations = (task?.observations ?? []).filter(item => deliveries.some(delivery => delivery.id === item.deliveryId));
   return <article className="evaluation-attempt"><h3>尝试 {attempt.ordinal} · {stateLabel[run?.state ?? ""] ?? "运行记录尚未读到"}</h3>
-    <p>来源 Task 修订 <code>{short(attempt.sourceTaskRevisionId)}</code> → 实际执行修订 <code>{short(attempt.actualTaskRevisionId)}</code> · Run <code>{short(attempt.runId)}</code></p>
+    <p>来源 Task 修订 <code>{short(attempt.sourceTaskRevisionId)}</code> → <a href={`#/p/${context.projectId}/tasks/${taskId}?revision=${encodeURIComponent(attempt.actualTaskRevisionId)}`}>实际执行修订 <code>{short(attempt.actualTaskRevisionId)}</code> ↗</a> · Run <code>{short(attempt.runId)}</code></p>
     <p className="muted">自有会话 {short(attempt.sessionId)} · {date(attempt.createdAt)}；本次尝试不会覆盖此前失败或未知。</p>
     {!run && <Notice error>对应 Run 尚未读到，不能推断执行或成本。</Notice>}
     {run && <><p>{run.state === "unknown" ? "结果未知；先沿同一 Run/会话核对，不能视为失败后自动重试。" : `运行状态：${stateLabel[run.state] ?? run.state}`}</p>
@@ -145,8 +146,9 @@ function AttemptCard({ context, revision, attempt, run, task, assessments, onCha
       {native && <details open><summary>原生输出 · {native.finalPhaseConfirmed ? "最终阶段已确认" : "最终阶段未确认"}</summary>{native.messages.map((message, index) => <pre key={index}>{message}</pre>)}</details>}
     </>}
     {readError && <Notice error>{readError}</Notice>}
-    <div className="evaluation-evidence"><strong>本次实际交付</strong>{!deliveries.length && <p>未读到绑定此执行修订的交付。</p>}{deliveries.map(delivery => { const artifact = safeArtifactHref(delivery.artifactRef, context.projectId); return <div key={delivery.id}>
-        <p>交付 <a href={`#/p/${context.projectId}/tasks/${delivery.taskId}`}>{short(delivery.id)} ↗</a> · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"} · 固定修订 {short(delivery.artifactRevision)}</p>
+    <div className="evaluation-evidence"><strong>本次实际交付</strong>{!deliveries.length && <p>未读到明确归属此 Run 的交付；旧无归属记录不会自动套入。运行终态也不代表产物合格。</p>}{deliveries.map(delivery => { const artifact = safeArtifactHref(delivery.artifactRef, context.projectId); return <div key={delivery.id}>
+        <p>交付 <a href={`#/p/${context.projectId}/tasks/${delivery.taskId}`}>{short(delivery.id)} ↗</a> · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"} · <a href={`#/p/${context.projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}>登记修订 {short(delivery.taskRevisionId)} ↗</a></p>
+        <p className="muted">声明来源 Run {short(delivery.runId!)}；这项归属不证明产物字节由模型生成。</p>
         {artifact ? <a href={artifact} target={artifact.startsWith("#") ? undefined : "_blank"} rel={artifact.startsWith("#") ? undefined : "noopener noreferrer"}>阅读交付引用 ↗</a> : <span>原引用不可安全打开</span>}
         <details><summary>核对原始位置、版本与哈希</summary><p className="evaluation-raw">{delivery.artifactRef}</p><p>固定修订 <code>{delivery.artifactRevision}</code><br />SHA-256 <code>{delivery.contentHash}</code></p></details>
       </div>; })}

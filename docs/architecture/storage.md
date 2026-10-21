@@ -128,7 +128,7 @@ erDiagram
 
 图例：黄＝PG 业务对象；紫＝外部知识引用；青＝跨对象关系及平台绑定。关系图省略两端同样受约束的复合 FK；每条关系两端均须存在且同 project。固定版本绑定不修改导航对象身份。ExternalBinding 首期只接 Task，其他类型启用前加对应有外键的列及测试。
 
-014 评价切片新增 `evaluation_head`、`evaluation_revision`、`evaluation_attempt`、`evaluation_assessment`、`evaluation_conclusion`：head 只指向当前定义，四种事实按项目及评价修订保存并追加。`runtime_run` 另存评价绑定与输入包引用；attempt 以同项目 FK 约束真实 Run、Session、来源 TaskRevision 与执行 TaskRevision，assessment 约束 Delivery/Observation 属于该次执行，conclusion 约束所选判定属于固定修订。业务层还须核对全部尝试、当前更正链、同项目后续 Task/TaskRevision 引用和未知成本；首片结论不能记完全可比。协议、来源与 Wiki 只存固定引用和 hash；输入包及较大产物在仓库外受控 Blob，活 Wiki 正文不进 PG 评价表或正式 Git 文档。014 的定向真实 PG 回归已覆盖派生 Run/Attempt 及外部来源变化拒绝；完整入口集成与真实两组业务运行尚未完成，不能据表定义声称已完成实际评价。
+014 评价切片新增 `evaluation_head`、`evaluation_revision`、`evaluation_attempt`、`evaluation_assessment`、`evaluation_conclusion`：head 只指向当前定义，四种事实按项目及评价修订保存并追加。`runtime_run` 另存评价绑定与输入包引用；attempt 以同项目 FK 约束真实 Run、Session、来源 TaskRevision 与执行 TaskRevision，assessment 约束 Delivery/Observation 属于该次执行，conclusion 约束所选判定属于固定修订。015 新增可空 `delivery.run_id`，同项目、同 Task FK 固定显式 Run 归因；旧行保留 null。assessment 的来源约束按该 Run 关联，而不要求交付登记修订等于执行修订；两者各保留原义。业务层还须核对全部尝试、当前更正链、同项目后续 Task/TaskRevision 引用和未知成本；首片结论不能记完全可比。协议、来源与 Wiki 只存固定引用和 hash；输入包及较大产物在仓库外受控 Blob，活 Wiki 正文不进 PG 评价表或正式 Git 文档。014 的定向真实 PG 回归已覆盖派生 Run/Attempt 及外部来源变化拒绝；完整入口集成与真实两组业务运行尚未完成，不能据表定义声称已完成实际评价。
 
 分工与认知讨论页的其他结果也需要稳定定位，但可在后续切片落地，不先做通用聊天数据库：
 

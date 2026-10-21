@@ -1,37 +1,18 @@
-import type { AppliedResult, BasisSet, Principal, Task } from "@evoloop/contracts";
+import type { AppliedResult, Principal, Task } from "@evoloop/contracts";
 import type { EvaluationAttempt, EvaluationCommand, EvaluationDefinition, EvaluationSourceSignature } from "@evoloop/contracts/evaluation";
 import { DomainError, type Reader, type Transaction } from "@evoloop/contracts/ports";
+import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
+export { canonicalTaskInputJson as canonicalEvaluationJson } from "../task-input.js";
 
 const need = <T>(value: T | null, name: string): T => {
   if (value === null) throw new DomainError("NOT_FOUND", `${name} not found`);
   return value;
 };
-export function canonicalEvaluationJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalEvaluationJson).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalEvaluationJson(item)}`).join(",")}}`;
-  return JSON.stringify(value);
-}
-const same = (a: unknown, b: unknown) => canonicalEvaluationJson(a) === canonicalEvaluationJson(b);
-const fixedOrder = <T>(items: T[], key: (item: T) => string) => [...items].sort((a, b) => key(a).localeCompare(key(b)));
+const same = (a: unknown, b: unknown) => canonicalTaskInputJson(a) === canonicalTaskInputJson(b);
 
 export async function taskSignature(tx: Reader, task: Task, revisionId = task.currentRevisionId): Promise<EvaluationSourceSignature> {
-  const revision = need(await tx.getTaskRevision(task.id, revisionId), "source Task revision");
-  const basis = need(revision.basisSetId ? await tx.getBasisSet(task.id, revision.id, revision.basisSetId) : null, "source sealed basis");
-  const external = await tx.listTaskExternalSnapshot(task.id, revision.id);
-  const members = await Promise.all(basis.members.map(async item => {
-    const source = need(await tx.getDocumentRevision(item.documentId, item.revisionId), "source basis document");
-    return { ...item, contentHash: source.contentHash };
-  }));
-  // Older basis rows have no retention list; new rows preserve explicit old-version decisions.
-  const withRetentions = basis as BasisSet & { retentions?: EvaluationSourceSignature["retentions"] };
-  return { title: revision.title, contentDocumentId: revision.contentDocumentId,
-    contentRevisionId: revision.contentRevisionId, acceptance: revision.acceptance,
-    owner: revision.owner, kind: revision.kind ?? "unclassified",
-    basis: fixedOrder(members, item => item.documentId),
-    retentions: fixedOrder(withRetentions.retentions ?? [], item => item.documentId),
-    external: fixedOrder(external.map(item => ({ slotId: item.slotId, kind: item.kind,
-      referenceId: item.referenceId, revision: item.revision, contentHash: item.contentHash })), item => item.slotId) };
+  const { content: _content, ...signature } = await taskInputSignature(tx, task, revisionId);
+  return signature;
 }
 
 async function validateDefinition(tx: Transaction, definition: EvaluationDefinition, requireCurrentSource: boolean): Promise<void> {
@@ -94,8 +75,8 @@ export async function applyEvaluation({ tx, command, principal, now }: Context):
       run.taskRevisionId !== attempt.actualTaskRevisionId || run.evaluationBinding?.attemptId !== attempt.id)
       throw new DomainError("ATTEMPT_RUN_MISMATCH", "Attempt and Run do not share the frozen execution revision");
     const delivery = command.deliveryId ? need(await tx.getDelivery(command.deliveryId), "delivery") : null;
-    if (delivery && (delivery.projectId !== command.projectId || delivery.taskId !== run.taskId || delivery.taskRevisionId !== run.taskRevisionId))
-      throw new DomainError("DELIVERY_MISMATCH", "Delivery is not from this attempt's Task revision");
+    if (delivery && (delivery.projectId !== command.projectId || delivery.taskId !== run.taskId || delivery.runId !== attempt.runId))
+      throw new DomainError("DELIVERY_MISMATCH", "Delivery does not identify this attempt's Run");
     const observation = command.observationId
       ? need((await tx.listObservations(run.taskId)).find(item => item.id === command.observationId) ?? null, "consumer observation") : null;
     if (observation && (!delivery || observation.deliveryId !== delivery.id || observation.taskId !== run.taskId))

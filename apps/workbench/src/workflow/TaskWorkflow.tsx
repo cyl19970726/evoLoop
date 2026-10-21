@@ -1,7 +1,9 @@
-import { useState } from "react";
-import type { DocumentDetail, TaskDetail, TaskRevision, TaskRevisionState } from "@evoloop/contracts";
+import { useEffect, useState } from "react";
+import type { DocumentDetail, RuntimeRunRecord, TaskDetail, TaskRevision, TaskRevisionState } from "@evoloop/contracts";
 import { api, safeArtifactHref } from "../api";
+import { runtimeClient } from "../runtime/client";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "./ActionForm";
+import { attributableRuns } from "./deliveryRun";
 import { RevisionHistory } from "./RevisionHistory";
 
 export const taskStateLabel: Record<TaskRevisionState, string> = {
@@ -14,6 +16,17 @@ export const taskKindLabel = { implementation: "实施", research: "调研", val
 export function TaskWorkflow({ context, detail, documents, mode = "actions" }: { context: MutationContext; detail: TaskDetail; documents?: Record<string, DocumentDetail>; mode?: "actions" | "delivery" | "history" }) {
   const task = detail.task;
   const [revisions, setRevisions] = useState<TaskRevision[]>([]);
+  const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
+  const [runReadError, setRunReadError] = useState("");
+  useEffect(() => {
+    if (mode !== "actions" || task.state !== "in_progress") return;
+    let active = true;
+    setRuns([]); setRunReadError("");
+    runtimeClient(context.token, context.projectId).runs(task.id)
+      .then(rows => { if (active) setRuns(attributableRuns(context.projectId, task.id, rows)); })
+      .catch(() => { if (active) setRunReadError("暂时无法读取来源 Run；可登记无 Run 归属的交付，不能猜测归属。"); });
+    return () => { active = false; };
+  }, [context.token, context.projectId, task.id, task.version, task.state, mode]);
   const base = { taskId: task.id, expectedVersion: task.version };
   const olderSources = (detail.basis?.members ?? []).flatMap(member => {
     const document = documents?.[member.documentId]?.document;
@@ -38,6 +51,7 @@ export function TaskWorkflow({ context, detail, documents, mode = "actions" }: {
         ? <a href={safeArtifactHref(delivery.artifactRef, context.projectId)!} target={(safeArtifactHref(delivery.artifactRef, context.projectId) ?? "").startsWith("#") ? undefined : "_blank"} rel="noopener noreferrer">{delivery.artifactRef}</a>
         : delivery.artifactRef} · 固定修订 {delivery.artifactRevision}</p><p className="break-anywhere">SHA-256 {delivery.contentHash}</p>
       <p><strong>技术检查证据</strong><br />{delivery.technicalEvidence}</p>
+      <p>登记修订 <a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}>{delivery.taskRevisionId} ↗</a>；{delivery.runId ? <>来源 Run {delivery.runId}（执行修订须从运行记录核对）</> : "无 Run 归属"}</p>
       <p className="muted">产物链接只指向位置；固定修订、哈希与实际内容仍须独立核对。</p>
       <h3>这次交付的使用观察</h3>
       {(detail.observations ?? []).filter(observation => observation.deliveryId === delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
@@ -81,12 +95,14 @@ export function TaskWorkflow({ context, detail, documents, mode = "actions" }: {
       return { ...base, type: "task.start", reason: v.reason, ...(retentions.length ? { retentions } : {}) };
     }} /><Notice>任务正文的固定修订由服务自动加入依据，无需预建独立文档；额外来源可由 Agent 按固定修订提交。已有且仍适用的保留决定会沿用；新的逐项理由与依据一起封存，上游再改版仍需复核。</Notice></>}
     {task.state === "in_progress" && <>
+      {runReadError && <Notice error>{runReadError}</Notice>}
       <details className="workflow-detail" open={!latest}><summary>{latest ? "提交新的交付（旧记录保留）" : "登记本次交付"}</summary><ActionForm context={context} title="登记交付" fields={[
+        { name: "runId", label: "来源 Run（可选，须真实归属）", kind: "select", optional: true, options: runs.map(run => option(run.id, `${run.state} · ${run.id.slice(0, 8)} · 执行修订 ${run.taskRevisionId.slice(0, 8)}`)), hint: "只列同项目本任务的终态 Run；不选择则明确无 Run 归属。服务器还会核对执行时和当前业务输入一致。终态不代表产物合格。" },
         { name: "artifactRef", label: "产物位置", hint: "可追溯的文档、文件或 PR 地址" }, { name: "artifactRevision", label: "产物固定修订" },
         { name: "contentHash", label: "内容 SHA-256", hint: "64 位十六进制摘要" },
         { name: "technicalResult", label: "技术检查结果", kind: "select", options: [option("passed", "检查通过"), option("failed", "检查失败，不能关闭")] },
         { name: "technicalEvidence", label: "实际检查与结果证据", kind: "textarea" }, reasonField,
-      ]} build={v => ({ ...base, type: "delivery.record", ...v })} /></details>
+      ]} build={v => { const { runId, ...fields } = v; return { ...base, type: "delivery.record", ...fields, ...(runId ? { runId } : {}) }; }} /></details>
       {latest && <><ActionForm context={context} title="记录本次交付的使用观察" fields={[
         { name: "observer", label: "实际使用者", value: context.principal.actorId }, { name: "observerKind", label: "使用者类型", kind: "select", options: [option("agent", "Agent 使用"), option("human", "人类使用（需实际证据）")] },
         { name: "result", label: "使用结果", kind: "select", options: [option("used", "实际使用并有结果"), option("failed", "尝试使用但失败"), option("notUsed", "尚未使用")] },

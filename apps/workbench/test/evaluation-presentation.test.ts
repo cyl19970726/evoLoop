@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { EvaluationAssessment, EvaluationAttempt, EvaluationRevision } from "@evoloop/contracts";
-import { attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, evaluationHref, evaluationListHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef } from "../src/evaluation/presentation.ts";
+import type { Delivery, EvaluationAssessment, EvaluationAttempt, EvaluationRevision, RuntimeRunRecord } from "@evoloop/contracts";
+import { attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef } from "../src/evaluation/presentation.ts";
 import { definitionFromForm } from "../src/evaluation/formData.ts";
+import { attributableRuns } from "../src/workflow/deliveryRun.ts";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
@@ -70,4 +71,29 @@ test("a next Task action uses its fixed Task revision without pretending to have
   assert.throws(() => parseNextActionRef(`task | ${id} | invalid`));
   assert.deepEqual(parseNextActionRef(`document | ${id} | ${other} | ${hash}`), { kind: "document", id, revision: other, contentHash: hash });
   assert.equal(parseNextActionRef("  "), null);
+});
+
+test("two terminal Runs can each own later deliveries despite new registration revisions", () => {
+  const attemptOne = { projectId: id, runId: id, actualTaskRevisionId: other } as EvaluationAttempt;
+  const attemptTwo = { projectId: id, runId: other, actualTaskRevisionId: other } as EvaluationAttempt;
+  const deliveries = [
+    { projectId: id, taskId: id, id: "first", runId: id, taskRevisionId: "registration-1" },
+    { projectId: id, taskId: id, id: "second", runId: other, taskRevisionId: "registration-2" },
+    { projectId: id, taskId: id, id: "legacy", runId: null, taskRevisionId: other },
+    { projectId: other, taskId: id, id: "foreign", runId: id },
+  ] as Delivery[];
+  assert.deepEqual(deliveriesForAttempt(attemptOne, id, deliveries).map(item => item.id), ["first"]);
+  assert.deepEqual(deliveriesForAttempt(attemptTwo, id, deliveries).map(item => item.id), ["second"]);
+});
+
+test("the registration picker excludes unsettled and foreign Runs", () => {
+  const runs = [
+    { projectId: id, taskId: id, id: "done", state: "completed" },
+    { projectId: id, taskId: id, id: "failed", state: "failed" },
+    { projectId: id, taskId: id, id: "interrupted", state: "interrupted" },
+    { projectId: id, taskId: id, id: "unknown", state: "unknown" },
+    { projectId: id, taskId: other, id: "other-task", state: "completed" },
+    { projectId: other, taskId: id, id: "other-project", state: "completed" },
+  ] as RuntimeRunRecord[];
+  assert.deepEqual(attributableRuns(id, id, runs).map(item => item.id), ["done", "failed", "interrupted"]);
 });
