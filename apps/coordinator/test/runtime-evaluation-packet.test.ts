@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import type { WorkflowService } from "@evoloop/core";
+import { WorkflowService } from "@evoloop/core";
+import type { Reader, UnitOfWork } from "@evoloop/contracts/ports";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision, BasisSet } from "@evoloop/contracts";
@@ -26,6 +27,9 @@ const attemptId = randomUUID();
 const operationId = randomUUID();
 const primaryBody = "# Fixed task\nDo the bounded work.";
 const primaryHash = sha(primaryBody);
+const olderDocumentId = randomUUID(), olderRevisionId = randomUUID();
+const replacementRevisionId = randomUUID(), laterRevisionId = randomUUID();
+const olderBody = "# Previously adopted source\nKeep the fixed scope.";
 const primaryRef: EvaluationFixedRef = { kind: "document", id: primaryDocumentId, revision: primaryRevisionId, contentHash: primaryHash };
 const protocolRef: EvaluationFixedRef = { kind: "document", id: randomUUID(), revision: randomUUID(), contentHash: "a".repeat(64) };
 const commonRef: EvaluationFixedRef = { kind: "document", id: randomUUID(), revision: randomUUID(), contentHash: "b".repeat(64) };
@@ -79,7 +83,9 @@ class FakeRuntime {
   async registerBinding(_binding: RuntimeBinding) {}
   async resume(binding: RuntimeBinding) { return binding; }
   async inspect(_binding: RuntimeBinding): Promise<unknown> { return {}; }
-  async listTurns(): Promise<RuntimePage<RuntimeTurn>> { return { data: [], nextCursor: null }; }
+  async listTurns(): Promise<RuntimePage<RuntimeTurn>> {
+    return { data: this.starts && !this.throwOnStart ? [{ id: "native-turn", status: "running" }] : [], nextCursor: null };
+  }
   async listItems(): Promise<RuntimePage<unknown>> { return { data: [], nextCursor: null }; }
   async startTurn(_binding: RuntimeBinding, input: string) {
     this.starts++; this.captured.push(input);
@@ -89,7 +95,16 @@ class FakeRuntime {
   async interruptTurn() {}
 }
 
-function createFixture(options: { evaluation?: boolean; failMaterial?: "missing" | "wrong-hash"; unknownStart?: boolean } = {}) {
+function createFixture(options: { evaluation?: boolean; failMaterial?: "missing" | "wrong-hash";
+  unknownStart?: boolean; retainedSource?: "current-observation" | "stale-observation" } = {}) {
+  const fixedBasis: BasisSet = options.retainedSource ? { ...basis,
+    members: [...basis.members, { documentId: olderDocumentId, revisionId: olderRevisionId }],
+    retentions: [{ documentId: olderDocumentId, revisionId: olderRevisionId,
+      observedAdoptedRevisionId: replacementRevisionId, actorId, reason: "Fixed r1 remains the accepted scope",
+      createdAt: new Date().toISOString() }] } : basis;
+  const adoptedSourceRevision = options.retainedSource === "stale-observation" ? laterRevisionId : replacementRevisionId;
+  const olderRevision = { ...documentRevision, documentId: olderDocumentId, id: olderRevisionId,
+    body: olderBody, contentHash: sha(olderBody) };
   const sourceContents = new Map<string, { content: string; contentHash: string }>([
     [`${primaryRef.id}@${primaryRef.revision}`, { content: primaryBody, contentHash: primaryRef.contentHash }],
     [`${protocolRef.id}@${protocolRef.revision}`, { content: "Protocol exact bytes", contentHash: protocolRef.contentHash }],
@@ -121,16 +136,34 @@ function createFixture(options: { evaluation?: boolean; failMaterial?: "missing"
     async inspectOrphans() { return { unregisteredIds: [], temporaryIds: [], unreferencedHashes: [] }; },
   };
   const runtime = new FakeRuntime(); runtime.throwOnStart = !!options.unknownStart;
-  const workflow = {
+  const basisReader = {
+    getProject: async () => ({ id: projectId }),
+    getTask: async (id: string) => id === taskId ? { id: taskId, projectId } : null,
+    getTaskRevision: async (id: string, revisionId: string) => id === taskId && revisionId === taskRevisionId ? revision : null,
+    getBasisSet: async (id: string, revisionId: string, selectedBasisId: string) =>
+      id === taskId && revisionId === taskRevisionId && selectedBasisId === basisId ? fixedBasis : null,
+    getDocument: async (id: string) => id === primaryDocumentId ? { id, projectId, adoptedRevisionId: primaryRevisionId } :
+      id === olderDocumentId && options.retainedSource ? { id, projectId, adoptedRevisionId: adoptedSourceRevision } : null,
+    getDocumentRevision: async (id: string, revisionId: string) =>
+      id === primaryDocumentId && revisionId === primaryRevisionId ? documentRevision :
+      id === olderDocumentId && revisionId === olderRevisionId && options.retainedSource ? olderRevision : null,
+    hasDocumentAdoption: async (id: string, revisionId: string) =>
+      id === olderDocumentId && revisionId === olderRevisionId && !!options.retainedSource,
+    listImpacts: async () => [], listBasisDecisions: async () => [],
+  } as unknown as Reader;
+  const uow = { read: async <T>(_projectId: string, action: (reader: Reader) => Promise<T>) => action(basisReader) } as UnitOfWork;
+  const workflow = Object.assign(new WorkflowService({ uow, clock: { now: () => new Date().toISOString() },
+    ids: { next: randomUUID }, hasher: { hash: sha } }), {
     getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
     listRuntimeRuns: async () => [currentRun], getRuntimeSession: async () => session,
     getRuntimeRun: async () => currentRun,
-    getTaskRevision: async () => ({ revision, basis }),
+    getTaskRevision: async () => ({ revision, basis: fixedBasis }),
     getTask: async () => ({ task: { id: taskId }, impacts: [], decisions: [] }),
-    getDocumentPayloadRevision: async () => documentRevision,
+    getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, id: string) =>
+      id === olderDocumentId && options.retainedSource ? olderRevision : documentRevision,
     getEvaluation: async () => ({ projectId, evaluationId, id: evaluationRevisionId, version: 1, definition,
       actorId, reason: "fixture", createdAt: new Date().toISOString() }),
-  } as unknown as WorkflowService;
+  });
   let attached = 0, rejected: string[] = [], unknowns = 0, dispatches = 0;
   const trusted = {
     recoverDispatching: async () => ({ sessions: [], runs: [] }),
@@ -226,5 +259,28 @@ test("ordinary Run keeps the established Task input string and does not create a
     assert.equal(fixture.run.evaluationPacket, undefined);
     assert.equal(fixture.attached, 0);
     assert.equal(fixture.preparedCount, 0);
+  } finally { await fixture.runner.stop(); }
+});
+
+test("an adopted older source with a sealed no-impact retention reaches native start", async () => {
+  const fixture = createFixture({ retainedSource: "current-observation" });
+  try {
+    await fixture.runner.start();
+    assert.equal(fixture.runtime.starts, 1);
+    assert.equal(fixture.dispatches, 1);
+    assert.equal(fixture.run.state, "running");
+    assert.match(fixture.runtime.captured[0]!, /Previously adopted source/);
+    assert.match(fixture.runtime.captured[0]!, new RegExp(olderRevisionId));
+  } finally { await fixture.runner.stop(); }
+});
+
+test("a newer adoption invalidates the sealed observation before native start", async () => {
+  const fixture = createFixture({ retainedSource: "stale-observation" });
+  try {
+    await fixture.runner.start();
+    assert.equal(fixture.runtime.starts, 0);
+    assert.equal(fixture.dispatches, 0);
+    assert.equal(fixture.rejected.length, 1);
+    assert.match(fixture.rejected[0]!, /Retained source observation is no longer current/);
   } finally { await fixture.runner.stop(); }
 });

@@ -44,6 +44,11 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     basis: { id: run.basisSetId, members: [{ documentId: contentDocumentId, revisionId: contentRevisionId }, { documentId, revisionId }] } };
   const current = { impacts: [], decisions: [] };
   const workflow = { getTaskRevision: async () => fixed, getTask: async () => current,
+    validateTaskRevisionBasis: async (_principal: Principal, selectedProjectId: string,
+      selectedTaskId: string, selectedRevisionId: string, selectedBasisId: string) => {
+      assert.equal(selectedProjectId, projectId); assert.equal(selectedTaskId, run.taskId);
+      assert.equal(selectedRevisionId, run.taskRevisionId); assert.equal(selectedBasisId, run.basisSetId);
+    },
     getDocument: async () => ({ document: { adoptedRevisionId: revisionId } }),
     getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
       requestedDocumentId === contentDocumentId ? primary : revision };

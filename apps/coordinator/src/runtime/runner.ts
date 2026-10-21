@@ -238,6 +238,8 @@ export class RuntimeRunner {
     const fixed = await this.deps.workflow.getTaskRevision(principal, run.projectId, run.taskId, run.taskRevisionId);
     const current = await this.deps.workflow.getTask(principal, run.projectId, run.taskId);
     if (!fixed.basis || fixed.basis.id !== run.basisSetId || current.impacts.some(i => i.state === "pending")) throw new Error("Fixed basis needs review");
+    await this.deps.workflow.validateTaskRevisionBasis(principal, run.projectId, run.taskId,
+      run.taskRevisionId, run.basisSetId);
     const materials: string[] = [];
     const sources: EvaluationFixedRef[] = [];
     const primary = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId,
@@ -249,14 +251,9 @@ export class RuntimeRunner {
     sources.push({ kind: "document", id: primary.documentId, revision: primary.id, contentHash: primary.contentHash });
     for (const member of fixed.basis.members) {
       if (member.documentId === fixed.revision.contentDocumentId && member.revisionId === fixed.revision.contentRevisionId) continue;
-      const document = await this.deps.workflow.getDocument(principal, run.projectId, member.documentId);
       const revision = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId, member.documentId, member.revisionId);
       if (revision.projectId !== run.projectId || revision.documentId !== member.documentId || revision.id !== member.revisionId)
         throw new Error("Fixed document revision scope differs from the accepted basis");
-      if (document.document.adoptedRevisionId !== revision.id) {
-        const retained = current.decisions.some(d => d.decision === "retain" && current.impacts.some(i => i.id === d.impactId && i.documentId === member.documentId && i.fromRevisionId === revision.id && i.toRevisionId === document.document.adoptedRevisionId));
-        if (!retained) throw new Error("Source changed after acceptance; explicit review is required");
-      }
       materials.push(await fixedDocumentMaterial(principal, revision, this.deps.readDocumentOriginal));
       sources.push({ kind: "document", id: revision.documentId, revision: revision.id, contentHash: revision.contentHash });
     }

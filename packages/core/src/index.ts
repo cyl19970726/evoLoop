@@ -598,6 +598,20 @@ export class WorkflowService {
       return { revision, basis };
     });
   }
+  /** Recheck an owned, fixed Task revision with the same source rules used at dispatch. */
+  validateTaskRevisionBasis(principal: Principal, projectId: string, taskId: string,
+    revisionId: string, basisSetId: string): Promise<void> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getTask(taskId), "Task");
+      const revision = required(await reader.getTaskRevision(taskId, revisionId), "Task revision");
+      if (revision.projectId !== projectId || revision.taskId !== taskId || revision.basisSetId !== basisSetId)
+        throw new DomainError("BASIS_UNAVAILABLE", "Fixed basis does not belong to the requested Task revision");
+      const basis = required(await reader.getBasisSet(taskId, revisionId, basisSetId), "Basis set");
+      if (basis.projectId !== projectId || basis.taskId !== taskId || basis.taskRevisionId !== revisionId || basis.id !== basisSetId)
+        throw new DomainError("BASIS_UNAVAILABLE", "Fixed basis does not belong to the requested Task revision");
+      await validateDispatchBasis(reader, taskId, basis);
+    });
+  }
   listTaskRevisions(principal: Principal, projectId: string, taskId: string): Promise<Array<{ revision: TaskRevision; basis: BasisSet | null }>> {
     return this.read(principal, projectId, async reader => {
       required(await reader.getTask(taskId), "Task");
