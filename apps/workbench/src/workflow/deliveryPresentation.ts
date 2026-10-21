@@ -9,10 +9,13 @@ export interface DeliveryArtifactInput {
 
 export type DeliveryTarget =
   | { kind: "document"; documentId: string; revisionId: string; href: string }
+  | { kind: "knowledge" | "evaluation"; revisionId: string; href: string; label: string }
   | { kind: "fallback"; label: string; href: string | null };
 
-const uuid = "[0-9a-f-]{36}";
+const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const documentRoute = new RegExp(`^#/p/([^/?#]+)/documents/(${uuid})\\?revision=(${uuid})$`, "i");
+const knowledgeRoute = new RegExp(`^#/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}&knowledgeRevision=(${uuid})$`, "i");
+const evaluationRoute = new RegExp(`^#/p/([^/?#]+)/evaluations/${uuid}\\?revision=(${uuid})$`, "i");
 
 /** Only a fixed document route in the current project may be given a fetched title. */
 export function deliveryTarget(input: DeliveryArtifactInput, projectId: string): DeliveryTarget {
@@ -22,6 +25,14 @@ export function deliveryTarget(input: DeliveryArtifactInput, projectId: string):
     if (decodeURIComponent(match[1]!) !== projectId || match[3]!.toLowerCase() !== input.artifactRevision.toLowerCase())
       return { kind: "fallback", label: "链接与交付固定修订不一致", href: null };
     return { kind: "document", documentId: match[2]!, revisionId: match[3]!, href: safe! };
+  }
+  if (safe) {
+    const knowledge = knowledgeRoute.exec(safe);
+    if (knowledge && decodeURIComponent(knowledge[1]!) === projectId)
+      return { kind: "knowledge", revisionId: knowledge[2]!, href: safe, label: "知识固定版本入口" };
+    const evaluation = evaluationRoute.exec(safe);
+    if (evaluation && decodeURIComponent(evaluation[1]!) === projectId)
+      return { kind: "evaluation", revisionId: evaluation[2]!, href: safe, label: "评价固定定义入口" };
   }
   if (!safe) return { kind: "fallback", label: "无法安全打开的产物引用", href: null };
   if (safe.startsWith("#/p/")) return { kind: "fallback", label: "项目内产物链接（标题未核实）", href: safe };

@@ -97,9 +97,11 @@ export function api(token: string, timeoutMs = 15000) {
 export function safeArtifactHref(value: string, projectId: string): string | null {
   const reference = value.trim();
   if (reference.startsWith("#/p/")) {
-    const match = /^#\/p\/([^/?#]+)\/(overview|work|knowledge|tasks\/[0-9a-f-]{36}|documents\/[0-9a-f-]{36})(?:\?revision=[0-9a-f-]{36})?$/i.exec(reference);
+    const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+    const knownRoute = new RegExp(`^#/p/([^/?#]+)/(?:overview|work|knowledge|(?:tasks|documents)/${uuid}(?:\\?revision=${uuid})?)$|^#/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}&knowledgeRevision=${uuid}$|^#/p/([^/?#]+)/evaluations/${uuid}\\?revision=${uuid}$`, "i");
+    const match = knownRoute.exec(reference);
     if (!match) return null;
-    try { return decodeURIComponent(match[1]!) === projectId ? reference : null; }
+    try { return decodeURIComponent(match[1] ?? match[2] ?? match[3]!) === projectId ? reference : null; }
     catch { return null; }
   }
   try {
