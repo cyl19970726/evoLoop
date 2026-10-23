@@ -88,6 +88,7 @@ export function setupManagedLoops(options: {
   pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
   canWrite(): boolean; now(): string; apiUrl: string; projectRoot: string; cliMain: string;
+  verifyProposalMaterial(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
 }) {
   const config = options.integrations.orchestration;
   if (!config?.enabled) return null;
@@ -139,7 +140,10 @@ export function setupManagedLoops(options: {
       const identity = await broker.identityForActor(actorId);
       if (!identity || identity.scope.kind !== "cognition") return false;
       return canReadDivisionEvidence(identity, workerGuardFacts(options.pool, identity), documentId, revisionId);
-    }});
+    },
+    getTrialController: async (projectId, actorId) => actorId === controllerPrincipal.actorId &&
+      controllerPrincipal.projectIds.includes(projectId) ? controllerPrincipal : null,
+    verifyProposalMaterial: options.verifyProposalMaterial});
   const dynamicController = async (dispatch: OrchestrationDispatch, historical = false) => {
     if (!dispatch.bindingId || !entry.projectIds.includes(dispatch.projectId)) return null;
     const binding = await orchestration.getBinding(controllerPrincipal, dispatch.projectId, dispatch.bindingId);

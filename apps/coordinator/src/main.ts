@@ -161,6 +161,13 @@ const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: 
 await collaboration.start();
 const managed = setupManagedLoops({pool, workflow: service, runtime: runner, integrations, credentials,
   canWrite: lease.canWrite, now: clock.now, apiUrl: `http://127.0.0.1:${port}`,
+  verifyProposalMaterial: async (principal, projectId, documentId, revisionId, hash) => {
+    try {
+      const revision = await service.getDocumentPayloadRevision(principal,projectId,documentId,revisionId);
+      return revision.contentHash === hash &&
+        (await readDocumentOriginal({uow,blobsForPrincipal},principal,revision)).status === "available";
+    } catch { return false; }
+  },
   projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
