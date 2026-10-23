@@ -447,6 +447,8 @@ export class OrchestrationService {
         // A signed decision fixes the parent's choice. The project transaction lock orders
         // child requests and worker decisions even when their UTC timestamps are identical.
         if (await tx.findDecisionByDispatch(parent.id)) return fail("PARENT_DECIDED", "cognition decision is already signed; no later child dispatch can be attributed to it");
+        if (await tx.findDivisionDecisionForParent(parent.id))
+          return fail("DIVISION_INTENT_PENDING", "cognition parent already fixed a division intent; ordinary child dispatch cannot replace it");
       }
       const auth = await tx.getAuthorizationFact(command.authorizationScopeId);
       if (!auth || auth.projectId !== command.projectId || !auth.active || auth.roleId !== command.recipientRoleId) return fail("SCOPE_NOT_AUTHORIZED", "active scoped worker authorization required");

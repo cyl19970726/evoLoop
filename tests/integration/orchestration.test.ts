@@ -540,7 +540,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const sqlLast=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
   await issue(actor,{type:"loop.enroll",loopId:sqlLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
     allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:sqlLast.created_at.toISOString(),eventId:sqlLast.event_id},
-    maxRuns:1,maxConcurrent:1,reason:"SQL provenance fixture"});
+    maxRuns:2,maxConcurrent:1,reason:"SQL provenance fixture and intent race"});
   const sqlLoop=(await orchestrator.getLoop(principal(actor),projectId,sqlLoopId))!;
   const sqlInbox=await issue(actor,{type:"inbox.accept",loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,
     recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
@@ -718,6 +718,33 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     SELECT project_id,$1,loop_id,version+1,policy_id,allowed_business_role_ids||to_jsonb('forged-role'::text),
       binding_by_role,$2,$3,'forger',now(),'{}'::jsonb FROM loop_policy_revision WHERE project_id=$4 AND policy_id=$5`,
     [randomUUID(),decided.entityId,randomUUID(),projectId,revokedPolicyId]));
+  const raceInbox=await division.execute(principal(actor),{type:"inbox.accept",projectId,operationId:randomUUID(),
+    loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"next_action"});
+  await division.execute(principal(actor),{type:"inbox.ack",projectId,operationId:randomUUID(),
+    inboxId:raceInbox.entityId,expectedVersion:1,reason:"Read the same fixed source"});
+  const methodRace={type:"division.decide",projectId,operationId:randomUUID(),decisionId:randomUUID(),
+    loopId:sqlLoopId,expectedLoopVersion:(await division.getLoop(principal(actor),projectId,sqlLoopId))!.version,
+    sourceEventId:sqlLoop.bootstrapEventId,parentDispatchId:sqlParent.entityId,
+    documentId:materialId,documentRevisionId:material.revisionId,documentContentHash:sha(materialBody),
+    firstTaskId:sqlCognitionTaskId,
+    expectedFirstTaskVersion:(await workflow.getTask(principal(actor),projectId,sqlCognitionTaskId)).task.version,
+    choice:"method",roleId:cognitiveRole,
+    templateId:null,templateRevision:null,templateHash:null,reason:"Keep current method"};
+  const staticRace={type:"dispatch.request",projectId,operationId:randomUUID(),inboxId:raceInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:sqlParent.entityId,
+    taskId:sqlTaskId,expectedTaskVersion:2,recipientRoleId:businessRole,purpose:"Static alternative",
+    authorizationScopeId:scopeId,reason:"Use the prior static grant"};
+  const race=await Promise.allSettled([
+    division.execute(principal(actor),methodRace as never),division.execute(principal(actor),staticRace as never)]);
+  assert.equal(race.filter(value=>value.status==="fulfilled").length,1,
+    "the project transaction lock must serialize the mutually exclusive choices");
+  const winner=race.findIndex(value=>value.status==="fulfilled");
+  assert.equal((race[1-winner] as PromiseRejectedResult).reason?.code,
+    winner===0?"DIVISION_INTENT_PENDING":"ALREADY_EXISTS");
+  const replay=await division.execute(principal(actor),(winner===0?methodRace:staticRace) as never);
+  assert.equal(replay.replayed,true,"the winning original operation still replays from its journal");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2 AND data->>'parentDispatchId'=$3",
+    [projectId,sqlLoopId,sqlParent.entityId])).rows[0].n,winner===1?1:0);
 });
 test("017 upgrades nonempty preexisting project facts without rewriting them",async()=>{
   const oldSchema=`el_orch_upgrade_${randomUUID().replaceAll("-","").slice(0,12)}`;

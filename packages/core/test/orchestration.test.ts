@@ -676,15 +676,29 @@ test("division decision pins material, bounded template and policy without refre
   const revised = f.h.data.policies.get(f.h.data.loops.get(loopId)!.currentPolicyRevisionId!)!;
   assert.equal(revised.bindingByRole[workerRoleId], first.entityId);
   const next = await f.h.accept(); await f.h.ack(next.entityId);
-  const staticDispatch = await f.h.service.execute(cognition, cmd({type:"dispatch.request",inboxId:next.entityId,
+  const staticRequest=cmd({type:"dispatch.request",inboxId:next.entityId,
     expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,taskId,
     expectedTaskVersion:1,recipientRoleId:workerRoleId,purpose:"first trial run",authorizationScopeId:scopeId,
-    reason:"original static authorization"}));
-  assert.equal(f.h.data.dispatches.get(staticDispatch.entityId)?.bindingId,null,
-    "the existing Role can still use its original static authorization");
+    reason:"original static authorization"});
+  await assert.rejects(()=>f.h.service.execute(cognition,staticRequest),failed("DIVISION_INTENT_PENDING"));
+  assert.equal(f.h.data.dispatches.size,1,"a recorded division intent cannot acquire an ordinary static child");
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,initial.dispatchCount);
   assert.equal((await f.h.service.execute(cognition, request)).replayed, true);
   await assert.rejects(() => f.h.service.execute(cognition, {...request,reason:"different intent"}), failed("OPERATION_CONFLICT"));
   assert.equal(f.h.data.bindings.size, 1);
+});
+
+test("an already requested static child prevents a later division intent, while its original operation replays",async()=>{
+  const f=divisionFixture();await f.setup();
+  const next=await f.h.accept();await f.h.ack(next.entityId);
+  const staticRequest=cmd({type:"dispatch.request",inboxId:next.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,taskId,expectedTaskVersion:1,
+    recipientRoleId:workerRoleId,purpose:"first static work",authorizationScopeId:scopeId,reason:"Original choice"});
+  const child=await f.h.service.execute(cognition,staticRequest);
+  assert.equal(child.entityType,"dispatch");
+  await assert.rejects(()=>f.h.service.execute(cognition,f.decision()),failed("ALREADY_EXISTS"));
+  assert.equal((await f.h.service.execute(cognition,staticRequest)).replayed,true);
+  assert.equal(f.h.data.dispatches.size,2);
 });
 
 test("current cognition worker may sign only the exact brokered parent under an explicit template", async () => {
