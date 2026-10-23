@@ -259,15 +259,28 @@ export class ManagedLoopRunner {
     }
     return readback();
   }
-  private async initialTaskBasis(principal: Principal, projectId: string, task: TaskDetail) {
+  private async initialTaskBasis(principal: Principal, projectId: string, task: TaskDetail,
+    sourceIssue?: { documentId: string; revisionId: string; contentHash: string }) {
+    if (sourceIssue && !task.links.some(link => link.documentId === sourceIssue.documentId))
+      throw new Error("SOURCE_ISSUE_NOT_LINKED: fixed source issue is absent from the Task");
     // An existing basis carries explicit retention decisions; let WorkflowService inherit it.
-    if (task.basis) return undefined;
+    if (task.basis) {
+      if (sourceIssue && !task.basis.members.some(member => member.documentId === sourceIssue.documentId &&
+        member.revisionId === sourceIssue.revisionId))
+        throw new Error("SOURCE_ISSUE_BASIS_CHANGED: existing basis does not retain the fixed source issue");
+      return undefined;
+    }
     if (task.links.length > 19) throw new Error("LINKED_BASIS_LIMIT: Task has more than 19 linked documents");
     const basis: { documentId: string; revisionId: string }[] = [];
     for (const link of [...task.links].sort((a, b) => a.documentId.localeCompare(b.documentId))) {
-      const { document } = await this.deps.workflow.getDocument(principal, projectId, link.documentId);
+      const { document, adopted } = await this.deps.workflow.getDocument(principal, projectId, link.documentId);
       if (document.status !== "published" || !document.adoptedRevisionId)
         throw new Error(`LINKED_BASIS_UNPUBLISHED: ${link.documentId} is not a published document`);
+      if (sourceIssue && link.documentId === sourceIssue.documentId &&
+        (document.adoptedRevisionId !== sourceIssue.revisionId ||
+          document.currentRevisionId !== sourceIssue.revisionId ||
+          adopted?.contentHash !== sourceIssue.contentHash))
+        throw new Error("SOURCE_ISSUE_CHANGED: fixed source issue revision is no longer the published head");
       basis.push({ documentId: link.documentId, revisionId: document.adoptedRevisionId });
     }
     return basis;
@@ -310,7 +323,18 @@ export class ManagedLoopRunner {
     const startPrior = await this.deps.workflow.getOperation(profile.principal, loop.projectId, startOperationId);
     if (!startPrior) {
       if (task.task.state !== "todo" || task.task.version !== dispatch.taskVersion) throw new Error("TASK_CHANGED_AFTER_DISPATCH_START");
-      const basis = await this.initialTaskBasis(profile.principal, loop.projectId, task);
+      const source = dispatch.parentDispatchId
+        ? (await this.pages(cursor => this.deps.orchestration.listSourceFacts(profile.principal,
+          loop.projectId, loop.id, 100, cursor))).find(fact => fact.id === dispatch.sourceEventId)
+        : undefined;
+      if (dispatch.parentDispatchId && !source) throw new Error("SOURCE_EVENT_UNAVAILABLE: child source fact is missing");
+      if (source?.kind === "document" && (source.projectId !== loop.projectId || source.subjectVersion !== 1 ||
+        !source.issueRevisionId || !source.issueContentHash))
+        throw new Error("SOURCE_ISSUE_UNVERIFIED: child source is not a fixed issue creation");
+      const sourceIssue = source?.kind === "document" && source.issueRevisionId && source.issueContentHash
+        ? { documentId: source.subjectId, revisionId: source.issueRevisionId, contentHash: source.issueContentHash }
+        : undefined;
+      const basis = await this.initialTaskBasis(profile.principal, loop.projectId, task, sourceIssue);
       applied(await this.deps.workflow.execute(profile.principal, { type: "task.start", projectId: loop.projectId,
         operationId: startOperationId, taskId: task.task.id, expectedVersion: dispatch.taskVersion,
         reason: `Managed dispatch ${dispatch.id}`, ...(basis === undefined ? {} : { basis }) }));

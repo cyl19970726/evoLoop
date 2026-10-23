@@ -139,6 +139,7 @@ test("worker issue provenance is bound to its own Run; cognition reads and adopt
   const sourceFacts: WorkerGuardFacts = { ...facts,
     document: async () => null,
     sourceIssueDocumentRevision: async (doc, revision) => doc === issueId && revision === issueRevisionId,
+    sourceIssueLinkedDocument: async doc => doc === issueId,
   };
   assert.equal(await authorizeWorkerCommand(worker, command("document.create", {
     documentId: issueId, kind: "issue", origin: { taskId, runId }, title: "Problem", body: "Evidence",
@@ -160,4 +161,15 @@ test("worker issue provenance is bound to its own Run; cognition reads and adopt
   assert.equal(await authorizeWorkerCommand(thinker, command("document.publish", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), true);
   assert.equal(await authorizeWorkerCommand(thinker, command("document.adopt", { documentId: issueId, revisionId: laterRevisionId }), sourceFacts), false);
   assert.equal(await authorizeWorkerCommand(worker, command("document.adopt", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), false);
+  const create = command("task.create", { taskId: u(), owner: "builder", stageId, documentIds: [issueId] });
+  const update = command("task.update", { taskId, owner: "builder", documentIds: [issueId] });
+  assert.equal(await authorizeWorkerCommand(thinker, create, sourceFacts), true);
+  assert.equal(await authorizeWorkerCommand(thinker, update, sourceFacts), true);
+  assert.equal(await authorizeWorkerCommand(worker, create, sourceFacts), false);
+  for (const rejected of [u(), documentId]) {
+    assert.equal(await authorizeWorkerCommand(thinker, { ...create, documentIds: [rejected] }, sourceFacts), false);
+    assert.equal(await authorizeWorkerCommand(thinker, { ...update, documentIds: [rejected] }, sourceFacts), false);
+  }
+  assert.equal(await authorizeWorkerCommand(thinker, create,
+    { ...sourceFacts, sourceIssueLinkedDocument: async () => false }), false);
 });

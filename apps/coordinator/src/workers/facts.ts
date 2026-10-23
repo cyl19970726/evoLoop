@@ -162,22 +162,23 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
             AND b.task_revision_id=r.revision_id AND b.document_id=$4 AND b.document_revision_id=$5))
       LIMIT 1`, [gap.taskId, gap.taskRevisionId, documentId, revisionId]);
   };
-  const sourceIssueDocumentRevision = async (documentId: string, revisionId: string) => {
-    if (scope.kind !== "cognition") return false;
+  const sourceIssue = async (documentId: string) => {
+    if (scope.kind !== "cognition") return null;
     const enrolled = await loop();
-    if (!enrolled) return false;
-    return !!await one(`SELECT 1 FROM orchestration_dispatch dispatch
+    if (!enrolled) return null;
+    return await one(`SELECT revision.revision_id FROM orchestration_dispatch dispatch
       JOIN orchestration_inbox inbox ON inbox.project_id=dispatch.project_id AND inbox.inbox_id=dispatch.inbox_id
         AND inbox.loop_id=dispatch.loop_id AND inbox.purpose='cognitive_review'
       JOIN outbox_event event ON event.project_id=inbox.project_id AND event.event_id=inbox.source_event_id
         AND event.kind='document' AND event.version=1
       JOIN operation_journal operation ON operation.project_id=event.project_id AND operation.operation_id=event.operation_id
         AND operation.command_type='document.create' AND operation.result->>'status'='applied'
-        AND operation.result->>'entityId'=event.entity_id::text AND operation.result->>'revisionId'=$3::text
+        AND operation.result->>'entityId'=event.entity_id::text
       JOIN process_document document ON document.project_id=event.project_id AND document.document_id=event.entity_id
         AND document.kind='issue' AND document.origin_task_id IS NOT NULL
       JOIN document_revision revision ON revision.project_id=document.project_id AND revision.document_id=document.document_id
-        AND revision.revision_id=$3::uuid AND revision.previous_revision_id IS NULL AND revision.author=operation.actor_id
+        AND operation.result->>'revisionId'=revision.revision_id::text
+        AND revision.previous_revision_id IS NULL AND revision.author=operation.actor_id
       JOIN task_revision original ON original.project_id=document.project_id AND original.task_id=document.origin_task_id
         AND original.revision_id=document.origin_task_revision_id
       JOIN LATERAL (SELECT proposal.stage_id FROM task_proposal proposal JOIN task_revision proposal_revision
@@ -186,10 +187,16 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         WHERE proposal.project_id=original.project_id AND proposal.task_id=original.task_id
           AND proposal_revision.version<=original.version ORDER BY proposal_revision.version DESC LIMIT 1) fixed_scope ON true
       JOIN project_stage stage ON stage.project_id=original.project_id AND stage.stage_id=fixed_scope.stage_id
-      WHERE dispatch.project_id=$1 AND dispatch.loop_id=$4 AND dispatch.data->>'runtimeRunId'=$5
-        AND dispatch.data->>'recipientRoleId'=$6 AND document.document_id=$2
-        AND stage.goal_id=$7 AND ($8::uuid IS NULL OR stage.stage_id=$8::uuid) LIMIT 1`,
-      [documentId, revisionId, scope.loopId, scope.runId, scope.roleId, enrolled.goalId, enrolled.stageId]);
+      WHERE dispatch.project_id=$1 AND dispatch.loop_id=$3 AND dispatch.task_id=$8
+        AND dispatch.data->>'runtimeRunId'=$4 AND dispatch.data->>'recipientRoleId'=$5
+        AND dispatch.data->>'sourceEventId'=inbox.source_event_id::text AND document.document_id=$2
+        AND stage.goal_id=$6 AND ($7::uuid IS NULL OR stage.stage_id=$7::uuid) LIMIT 1`,
+      [documentId, scope.loopId, scope.runId, scope.roleId, enrolled.goalId, enrolled.stageId, scope.taskId]);
+  };
+  const sourceIssueDocumentRevision = async (documentId: string, revisionId: string) =>
+    (await sourceIssue(documentId))?.revision_id === revisionId;
+  const sourceIssueLinkedDocument = async (documentId: string) => {
+    return !!await sourceIssue(documentId);
   };
   return {
     loop: async id => id === scope.loopId ? loop() : null,
@@ -197,6 +204,7 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
     recoveryGap,
     recoveryDocument,
     sourceIssueDocumentRevision,
+    sourceIssueLinkedDocument,
     taskRevision: async (taskId, revisionId) => !!await task(taskId) && !!await one(
       "SELECT 1 FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [taskId, revisionId]),
     run: async id => {

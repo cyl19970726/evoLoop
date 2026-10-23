@@ -33,7 +33,9 @@ function fixture() {
   const dispatches: OrchestrationDispatch[] = [];
   const tasks = new Map<string, { version: number; state: "todo" | "in_progress";
     links?: { documentId: string }[]; basis?: object }>();
-  const documents = new Map<string, { status: "draft" | "published" | "archived"; adoptedRevisionId: string | null }>();
+  const documents = new Map<string, { status: "draft" | "published" | "archived"; adoptedRevisionId: string | null;
+    currentRevisionId?: string }>();
+  const documentHashes = new Map<string, string>();
   const taskStarts: Record<string, any>[] = [];
   const taskCreates: Record<string, any>[] = [];
   const documentReads: string[] = [];
@@ -110,7 +112,8 @@ function fixture() {
     getDocument: async (_: Principal, _projectId: string, id: string) => {
       documentReads.push(id);
       const document = documents.get(id); if (!document) throw new Error(`missing document ${id}`);
-      return { document: { id, ...document } };
+      return { document: { id, ...document }, adopted: document.adoptedRevisionId
+        ? { id: document.adoptedRevisionId, contentHash: documentHashes.get(id) } : null };
     },
     getOperation: async (_: Principal, _projectId: string, id: string) => operations.get(id) ?? null,
     getRuntimeSession: async (_: Principal, _projectId: string, id: string) => {
@@ -154,7 +157,7 @@ function fixture() {
     sealSubmission: async () => sealStatus,
     now: () => currentTime, canWrite: () => true,
   };
-  return { loop, facts, inbox, dispatches, tasks, documents, taskStarts, taskCreates, documentReads, sessions, runs, commands, deps,
+  return { loop, facts, inbox, dispatches, tasks, documents, documentHashes, taskStarts, taskCreates, documentReads, sessions, runs, commands, deps,
     rejectSource: (id: string) => rejectedSources.add(id),
     advanceTime: (value:string) => { currentTime=value; },
     loseClaimResponse: (kind:"dispatch.claim"|"dispatch.reclaim") => { lostClaimResponse=kind; },
@@ -355,6 +358,79 @@ test("existing Task basis is inherited without reading current linked adoption",
   assert.equal(task.state, "in_progress");
   assert.equal(Object.hasOwn(f.taskStarts[0]!, "basis"), false);
   assert.deepEqual(f.documentReads, []);
+});
+
+async function fixedIssueChild() {
+  const f = fixture(), runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "accepted";
+  parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "completed" });
+  f.setSeal({ status: "decision", decisionId: loopIntentId("source-parent-decision"),
+    outcome: "waiting", reason: "fixed source follow-up" });
+  const childTaskId = loopIntentId("issue-child-task"), childInboxId = loopIntentId("issue-child-inbox");
+  const childId = loopIntentId("issue-child-dispatch");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.inbox.push({ projectId, id: childInboxId, loopId, sourceEventId: sourceId, recipientRoleId: cognition,
+    purpose: "next_action", version: 3, state: "disposed", acknowledgedBy: principal.actorId,
+    disposition: "dispatch", reason: null, evidenceRef: null, dispatchId: childId, createdAtUtc: now, updatedAtUtc: now });
+  const child: OrchestrationDispatch = { projectId, id: childId, version: 1, loopId, inboxId: childInboxId,
+    sourceEventId: sourceId, taskId: childTaskId, taskVersion: 1, parentDispatchId: parent.id,
+    recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId, state: "pending",
+    claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null,
+    evidenceRef: null, reason: "fixed issue child", requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now };
+  f.dispatches.push(child);
+  const sourceIssueId = loopIntentId("fixed-source-issue"), fixedRevisionId = loopIntentId("fixed-source-revision");
+  const contentHash = "b".repeat(64);
+  f.facts[0] = { projectId, id: sourceId, createdAtUtc: now, kind: "document", subjectId: sourceIssueId,
+    subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: loopIntentId("source-operation"),
+    sourceActorId: "business-reporter", issueRevisionId: fixedRevisionId, issueContentHash: contentHash,
+    observationId: null, deliveryId: null, observationResult: null };
+  const task = f.tasks.get(child.taskId)!;
+  task.links = [{ documentId: sourceIssueId }];
+  f.documents.set(sourceIssueId, { status: "published", adoptedRevisionId: fixedRevisionId,
+    currentRevisionId: fixedRevisionId });
+  f.documentHashes.set(sourceIssueId, contentHash);
+  return { f, runner, child, task, sourceIssueId, fixedRevisionId, contentHash };
+}
+
+test("Issue child start pins the original source revision and waits for exact publication", async () => {
+  const { f, runner, child, task, sourceIssueId, fixedRevisionId } = await fixedIssueChild();
+  f.documents.set(sourceIssueId, { status: "draft", adoptedRevisionId: null, currentRevisionId: fixedRevisionId });
+  await runner.pump(); await runner.pump();
+  assert.equal(task.state, "todo");
+  assert.equal(f.taskStarts.length, 0);
+  assert.match(runner.status().faults[0]!.code, /LINKED_BASIS_UNPUBLISHED/);
+  f.documents.set(sourceIssueId, { status: "published", adoptedRevisionId: fixedRevisionId, currentRevisionId: fixedRevisionId });
+  await runner.pump();
+  assert.deepEqual(f.taskStarts[0]!.basis, [{ documentId: sourceIssueId, revisionId: fixedRevisionId }]);
+  assert.equal(f.taskStarts[0]!.taskId, child.taskId);
+});
+
+test("Issue child refuses missing link, later head or adoption, and mismatched existing basis", async () => {
+  for (const change of ["missing", "head", "adopted", "hash", "basis"] as const) {
+    const { f, runner, task, sourceIssueId, fixedRevisionId } = await fixedIssueChild();
+    if (change === "missing") task.links = [];
+    if (change === "head") f.documents.get(sourceIssueId)!.currentRevisionId = loopIntentId("later-head");
+    if (change === "adopted") f.documents.get(sourceIssueId)!.adoptedRevisionId = loopIntentId("later-adoption");
+    if (change === "hash") f.documentHashes.set(sourceIssueId, "c".repeat(64));
+    if (change === "basis") task.basis = { members: [{ documentId: sourceIssueId,
+      revisionId: loopIntentId("later-basis") }], retentions: [] };
+    await runner.pump(); await runner.pump();
+    assert.equal(task.state, "todo", change);
+    assert.equal(f.taskStarts.length, 0, change);
+    assert.match(runner.status().faults[0]!.code, /SOURCE_ISSUE_/, change);
+  }
+});
+
+test("Issue child inherits an existing basis only when it retains the original revision", async () => {
+  const { f, runner, task, sourceIssueId, fixedRevisionId } = await fixedIssueChild();
+  task.basis = { members: [{ documentId: sourceIssueId, revisionId: fixedRevisionId }], retentions: [] };
+  f.documents.get(sourceIssueId)!.adoptedRevisionId = loopIntentId("later-adoption");
+  await runner.pump(); await runner.pump();
+  assert.equal(task.state, "in_progress");
+  assert.equal(Object.hasOwn(f.taskStarts[0]!, "basis"), false);
 });
 
 test("more than 19 linked Documents blocks automatic Task start", async () => {
