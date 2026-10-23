@@ -13,6 +13,7 @@ import { workerGuardFacts } from "../workers/facts.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 import { readWorkStatuses } from "./work-status.js";
+import { readPlanningSources } from "./planning-sources.js";
 
 /** Follow formal Task feedback one dispatch at a time without expanding an entire Loop. */
 export async function readTaskContext(pool: Pool, workflow: Pick<WorkflowService, "getTask">,
@@ -144,6 +145,8 @@ export function setupManagedLoops(options: {
     workers: {authenticate: (header: string | undefined) => broker.authenticate(header),
       facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity)},
     routes: {service: orchestration, status: () => runner.status(),
+      planningSources: (principal: Principal, projectId: string, taskId: string, revisionId: string, loopId?: string) =>
+        readPlanningSources(options.pool, principal, projectId, taskId, revisionId, loopId),
       taskContext: (principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) =>
         readTaskContext(options.pool, options.workflow, principal, projectId, taskId, limit, cursor),
       workStatuses: (principal: Principal, projectId: string, taskIds: string[]) =>

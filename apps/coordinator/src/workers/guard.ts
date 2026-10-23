@@ -61,6 +61,16 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       const inbox = await facts.inbox(parts[2]);
       return same(inbox, scope.projectId) && inbox?.loopId === scope.loopId;
     }
+    if (parts[0] === "orchestration" && parts[1] === "tasks" && id(parts[2]) &&
+        parts[3] === "planning-sources" && parts.length === 4) {
+      if (scope.kind !== "cognition") return false;
+      const query = new URLSearchParams(rawQuery ?? "");
+      if ([...query.keys()].some(key => key !== "taskRevisionId") ||
+          query.getAll("taskRevisionId").length !== 1 || !id(query.get("taskRevisionId"))) return false;
+      const bound = await facts.task(parts[2]);
+      return same(bound, scope.projectId) && bound?.loopId === scope.loopId &&
+        await facts.taskRevision(parts[2], query.get("taskRevisionId")!);
+    }
     if (parts[0] === "references" && parts[1] === "git" && id(parts[2]) && parts.length === 3)
       return facts.fixedReference(scope.taskId, "git", parts[2]);
     if (parts[0] === "knowledge" && parts[1] === "pages" && id(parts[2]) && parts.length === 3) {
