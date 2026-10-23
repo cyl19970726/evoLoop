@@ -20,10 +20,11 @@ export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
 export const taskKindSchema = z.enum(["implementation", "research", "validation"]);
 export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report"]);
+export const documentOriginSchema = z.strictObject({ taskId: idSchema, runId: idSchema.optional() });
 // Only the implemented command surface is exported; a missing integration is not a no-op command.
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("project.create"), title }),
-  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional() }),
+  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional(), origin: documentOriginSchema.optional() }),
   z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text }),
   z.strictObject({ ...common, type: z.literal("document.adopt"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
@@ -47,6 +48,7 @@ export interface Document {
   projectId: string; id: string; title: string; version: number;
   currentRevisionId: string; adoptedRevisionId: string | null; kind: DocumentKind | null; status: DocumentStatus;
   primaryTaskId?: string | null;
+  origin?: { taskId: string; runId: string | null; taskRevisionId: string } | null;
 }
 export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report";
 export type DocumentStatus = "draft" | "published" | "archived";

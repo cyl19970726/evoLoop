@@ -250,6 +250,51 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,foreignLoopId)).items.some(x=>x.id===afterMoveObservation.sourceId),false);
   await fails(issue(actor,{type:"inbox.accept",loopId:foreignLoopId,sourceEventId:afterMoveObservation.sourceId,
     recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const unscopedIssueId=randomUUID(),unscopedOp=randomUUID();
+  assert.equal((await workflow.execute(principal("issue-reporter"),{type:"document.create",projectId,
+    operationId:unscopedOp,documentId:unscopedIssueId,kind:"issue",title:"Unscoped note",body:"# Unscoped issue"})).status,"applied");
+  const unscopedEvent=(await pool.query("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='document'",[projectId,unscopedOp])).rows[0]?.event_id;
+  assert.ok(unscopedEvent);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===unscopedEvent),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:unscopedEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const issueId=randomUUID(),issueOp=randomUUID();
+  const issueCreated=await workflow.execute(principal("issue-reporter"),{type:"document.create",projectId,
+    operationId:issueOp,documentId:issueId,kind:"issue",title:"Failed preflight report",body:"# Original failed preflight",
+    origin:{taskId,runId}});
+  assert.equal(issueCreated.status,"applied",JSON.stringify(issueCreated));
+  const originalIssue=await workflow.getDocument(principal(actor),projectId,issueId);
+  assert.deepEqual(originalIssue.document.origin,{taskId,runId,taskRevisionId:run.revisionId});
+  const issueEvent=(await pool.query("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='document'",[projectId,issueOp])).rows[0]?.event_id;
+  assert.ok(issueEvent);
+  const issueSource=(await store.transaction(projectId,tx=>tx.getSourceFact(issueEvent)))!;
+  assert.equal(issueSource.issueRevisionId,issueCreated.revisionId);
+  assert.equal(issueSource.issueContentHash,sha("# Original failed preflight"));
+  const amendedIssue=await workflow.execute(principal("issue-reporter"),{type:"document.revise",projectId,
+    operationId:randomUUID(),documentId:issueId,expectedVersion:1,body:"# Later detail",reason:"Further detail"});
+  assert.equal(amendedIssue.status,"applied");
+  assert.equal((await store.transaction(projectId,tx=>tx.getIssueFact(issueId,issueCreated.revisionId!)))?.contentHash,
+    sha("# Original failed preflight"),"the first issue revision stays fixed after later edits");
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===issueEvent),true);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,foreignLoopId)).items.some(x=>x.id===issueEvent),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId:foreignLoopId,sourceEventId:issueEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const issueInbox=await issue(actor,{type:"inbox.accept",loopId,sourceEventId:issueEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  assert.equal((await issue(actor,{type:"inbox.accept",loopId,sourceEventId:issueEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"})).entityId,issueInbox.entityId);
+  const reportId=randomUUID(),reportOp=randomUUID();
+  assert.equal((await workflow.execute(principal("issue-reporter"),{type:"document.create",projectId,
+    operationId:reportOp,documentId:reportId,kind:"report",title:"Delivery report",body:"# Report",origin:{taskId,runId}})).status,"applied");
+  const reportEvent=(await pool.query("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='document'",[projectId,reportOp])).rows[0]?.event_id;
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===reportEvent),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:reportEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const mismatchIssue=await workflow.execute(principal("issue-reporter"),{type:"document.create",projectId,
+    operationId:randomUUID(),documentId:randomUUID(),kind:"issue",title:"Wrong Run",body:"# Invalid",
+    origin:{taskId:foreignTaskId,runId}});
+  assert.equal(mismatchIssue.status,"rejected");
+  assert.equal(mismatchIssue.code,"ORIGIN_MISMATCH");
   const budgetInbox=await issue(actor,{type:"inbox.accept",loopId,sourceEventId:feedback.id,recipientRoleId:cognitiveRole,purpose:"next_action"});
   await issue(actor,{type:"inbox.ack",inboxId:budgetInbox.entityId,expectedVersion:1,reason:"Review bounded feedback"});
   await fails(issue(actor,{type:"dispatch.request",inboxId:budgetInbox.entityId,expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:cognition.entityId,taskId,expectedTaskVersion:2,
@@ -333,51 +378,40 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"LOOP_STOPPED");
   assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[projectId,op])).rows[0].n,1);
 });
-test("016 upgrades nonempty preexisting project facts without rewriting them",async()=>{
+test("017 upgrades nonempty preexisting project facts without rewriting them",async()=>{
   const oldSchema=`el_orch_upgrade_${randomUUID().replaceAll("-","").slice(0,12)}`;
   const migrations=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
   const client=new pg.Client({connectionString:url,options:`-c search_path=${oldSchema}`});
   try{
     await runner({databaseUrl:url!,dir:migrations,migrationsTable:"pgmigrations",schema:oldSchema,
-      createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:15,log:()=>{}});
+      createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:16,log:()=>{}});
     await client.connect();
     const oldProject=randomUUID(),oldGoal=randomUUID(),created="2026-10-22T00:00:00.000Z";
     await client.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Existing project',$2)",[oldProject,created]);
     await client.query(`INSERT INTO project_goal(project_id,goal_id,version,outcome,constraints,consumer,authority,scope,owner,actor_id,created_at)
       VALUES($1,$2,1,'Original outcome','Original constraints','owner','reviewer','project','owner','migration-test',$3)`,[oldProject,oldGoal,created]);
-    const oldPool=new pg.Pool({connectionString:url,options:`-c search_path=${oldSchema}`});
-    try{
-      const oldUow=new PostgresUnitOfWork(oldPool);
-      const oldWorkflow=new WorkflowService({uow:oldUow,clock:{now:()=>created},ids:{next:randomUUID},hasher:{hash:sha}});
-      const oldRuntime=new RuntimeWorkflowService({uow:oldUow,clock:{now:()=>created},ids:{next:randomUUID}});
-      const oldPrincipal={actorId:"migration-worker",projectIds:[oldProject],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
-      const stageId=randomUUID(),taskId=randomUUID(),sessionId=randomUUID(),runId=randomUUID();
-      for(const command of [{type:"stage.propose",stageId,goalId:oldGoal,deliverable:"Legacy output",learningQuestion:"What changed?",reason:"Legacy"},
-        {type:"stage.accept",stageId,expectedVersion:1,reason:"Legacy active"},
-        {type:"task.create",taskId,stageId,title:"Legacy Task",content:"# Legacy",acceptance:"Check",owner:"migration-worker",
-          consumer:"owner",evidence:"Pending",stopCondition:"One result"},
-        {type:"task.start",taskId,expectedVersion:1,reason:"Legacy start"},
-        {type:"runtime.session.reserve",sessionId,roleId:"migration-worker",cwd:"/tmp/evoloop-orchestration-test",
-          authorizationScope:"legacy-test",model:"test-model",sandbox:"read-only",approvalPolicy:"on-request"}]) {
-        const result=await oldWorkflow.execute(oldPrincipal,{projectId:oldProject,operationId:randomUUID(),...command} as never);
-        assert.equal(result.status,"applied",JSON.stringify(result));
-      }
-      await oldRuntime.beginSessionCreate(oldProject,sessionId);
-      await oldRuntime.bindSession(oldProject,sessionId,{owner:"evoloop-codex-app-server",projectId:oldProject,
-        sessionId,roleId:"migration-worker",cwd:"/tmp/evoloop-orchestration-test",authorizationScope:"legacy-test",
-        nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});
-      assert.equal((await oldWorkflow.execute(oldPrincipal,{type:"runtime.run.reserve",projectId:oldProject,operationId:randomUUID(),
-        runId,taskId,sessionId,expectedVersion:2,input:"Legacy input"})).status,"applied");
-      await oldRuntime.rejectDispatch(oldProject,runId,"Legacy terminal fixture");
-    }finally{await oldPool.end();}
+    // Seed an actual pre-017 Document using its historical table shape. The
+    // current adapter targets 017 and must not be invoked against old DDL.
+    const oldDoc=randomUUID(),oldRevision=randomUUID(),body="# Preserved original";
+    await client.query("BEGIN");
+    try {
+      await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status)
+        VALUES($1,$2,'Existing report',1,$3,NULL,'report','draft')`,[oldProject,oldDoc,oldRevision]);
+      await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,previous_revision_id,reason)
+        VALUES($1,$2,$3,$4,'markdown',$5,'migration-worker',$6,NULL,'Original report')`,[oldProject,oldDoc,oldRevision,body,sha(body),created]);
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
     const snapshot=async()=>{const rows=[];for(const table of ["project_goal","task","runtime_session","runtime_run"])
       rows.push((await client.query(`SELECT * FROM ${table} WHERE project_id=$1 ORDER BY 1,2`,[oldProject])).rows);
+      rows.push((await client.query("SELECT project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status FROM process_document WHERE project_id=$1 ORDER BY document_id",[oldProject])).rows);
+      rows.push((await client.query("SELECT project_id,document_id,revision_id,body,content_hash,author FROM document_revision WHERE project_id=$1 ORDER BY document_id,revision_id",[oldProject])).rows);
       return rows;};
     const before=await snapshot();
     await migrate(url!,oldSchema);
     const after=await snapshot();
     assert.deepEqual(after,before);
-    assert.equal((await client.query("SELECT count(*)::int n FROM pgmigrations")).rows[0].n,16);
+    assert.equal((await client.query("SELECT count(*)::int n FROM process_document WHERE project_id=$1 AND (origin_task_id IS NOT NULL OR origin_task_revision_id IS NOT NULL OR origin_run_id IS NOT NULL)",[oldProject])).rows[0].n,0);
+    assert.equal((await client.query("SELECT count(*)::int n FROM pgmigrations")).rows[0].n,17);
   }finally{
     await client.end().catch(()=>{});
     const cleanup=new pg.Client({connectionString:url});await cleanup.connect();

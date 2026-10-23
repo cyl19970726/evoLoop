@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Principal, RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact } from "@evoloop/contracts/orchestration";
 import type { WorkflowService } from "@evoloop/core";
+import { OrchestrationError } from "@evoloop/core/orchestration";
 import type { OrchestrationService } from "@evoloop/core/orchestration";
 import type { WorkerScope } from "../workers/types.js";
 import type { RuntimeRunner } from "../runtime/runner.js";
@@ -111,7 +112,7 @@ export class ManagedLoopRunner {
   private async advanceLoop(loop: OrchestrationLoop) {
     const cognitive = await this.deps.controller(loop.projectId, loop.cognitiveRoleId);
     if (!cognitive) { this.faults.push({ loopId: loop.id, code: "COGNITIVE_ROLE_UNAVAILABLE" }); return; }
-    if (loop.state === "active") await this.acceptSources(loop, cognitive);
+    const sourceFacts = loop.state === "active" ? await this.acceptSources(loop, cognitive) : new Map<string, OrchestrationSourceFact>();
     // Settlement continues while paused or stopped. Neither state starts a new worker.
     const dispatches = await this.pages(cursor => this.deps.orchestration.listDispatches(cognitive.principal, loop.projectId, loop.id, 100, cursor));
     for (const dispatch of dispatches) {
@@ -129,7 +130,7 @@ export class ManagedLoopRunner {
     const inbox = await this.pages(cursor => this.deps.orchestration.listInbox(cognitive.principal, loop.projectId, loop.id, 100, cursor));
     for (const item of inbox.filter(item => item.purpose === "cognitive_review" &&
       (item.state === "pending" || item.state === "acknowledged"))) {
-      try { await this.seedCognition(loop, item, cognitive); }
+      try { await this.seedCognition(loop, item, cognitive, sourceFacts.get(item.sourceEventId)); }
       catch (error) { this.faults.push({ loopId: loop.id, code: error instanceof Error ? error.message : String(error) }); }
     }
   }
@@ -154,6 +155,11 @@ export class ManagedLoopRunner {
         !!fact.operationId && !!fact.sourceActorId && !!fact.observationId &&
         !!fact.deliveryId && ["used", "failed", "notUsed"].includes(fact.observationResult ?? "");
     }
+    if (fact.kind === "document") {
+      // Only the scoped creation revision of an issue is a cognitive input; reports return via worker outcome.
+      return fact.sourceLoopId === null && fact.originDispatchId === null && fact.subjectVersion === 1 &&
+        !!fact.operationId && !!fact.sourceActorId && !!fact.issueRevisionId && !!fact.issueContentHash;
+    }
     if (fact.kind === "dispatch.gap" && fact.sourceLoopId === loop.id && fact.originDispatchId && fact.gapRunId) {
       // A missing signed intent is a software recovery source even when the failed worker was cognition itself.
       return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
@@ -170,15 +176,23 @@ export class ManagedLoopRunner {
     const dispatches = await this.pages(cursor => this.deps.orchestration.listDispatches(cognitive.principal, loop.projectId, loop.id, 100, cursor));
     // Always begin at the first page. A durable high-water cursor would lose a late commit.
     const facts = await this.pages(cursor => this.deps.orchestration.listSourceFacts(cognitive.principal, loop.projectId, loop.id, 100, cursor));
+    const byId = new Map(facts.map(fact => [fact.id, fact]));
     for (const fact of facts) {
       if (!this.eligible(loop, fact, dispatches)) continue;
-      await this.deps.orchestration.execute(cognitive.principal, {
-        type: "inbox.accept", projectId: loop.projectId, operationId: loopIntentId(loop.id, fact.id, "inbox.accept"),
-        loopId: loop.id, sourceEventId: fact.id, recipientRoleId: loop.cognitiveRoleId, purpose: "cognitive_review",
-      });
+      try {
+        await this.deps.orchestration.execute(cognitive.principal, {
+          type: "inbox.accept", projectId: loop.projectId, operationId: loopIntentId(loop.id, fact.id, "inbox.accept"),
+          loopId: loop.id, sourceEventId: fact.id, recipientRoleId: loop.cognitiveRoleId, purpose: "cognitive_review",
+        });
+      } catch (error) {
+        // A listed candidate can become stale, or fail independent-worker classification.
+        if (error instanceof OrchestrationError && error.code === "SOURCE_UNAVAILABLE") continue;
+        throw error;
+      }
     }
+    return byId;
   }
-  private async seedCognition(loop: OrchestrationLoop, inbox: OrchestrationInbox, cognitive: ManagedRoleProfile) {
+  private async seedCognition(loop: OrchestrationLoop, inbox: OrchestrationInbox, cognitive: ManagedRoleProfile, sourceFact?: OrchestrationSourceFact) {
     if (inbox.state === "pending") {
       await this.deps.orchestration.execute(cognitive.principal, { type: "inbox.ack", projectId: loop.projectId,
         operationId: loopIntentId(inbox.id, "ack"), inboxId: inbox.id, expectedVersion: inbox.version,
@@ -203,10 +217,12 @@ export class ManagedLoopRunner {
     const existing = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId).catch(() => null);
     if (!existing) {
       const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `verified source event ${inbox.sourceEventId}`;
+      const fixedIssue = sourceFact?.kind === "document" && sourceFact.issueRevisionId && sourceFact.issueContentHash
+        ? ` Read issue original /api/projects/${loop.projectId}/documents/${sourceFact.subjectId}/revisions/${sourceFact.issueRevisionId}/original and verify SHA-256 ${sourceFact.issueContentHash}. Treat it as a report, not verified consumer use or a completed repair.` : "";
       applied(await this.deps.workflow.execute(cognitive.principal, { type: "task.create", projectId: loop.projectId,
         operationId: loopIntentId(taskId, "create"), taskId, stageId: loop.stageId,
         title: `Cognition: ${source}`, owner: loop.cognitiveRoleId, kind: "research",
-        content: `Review the verified ${source} for Goal ${loop.goalId}, Stage ${loop.stageId}. Read actual project state and decide a bounded next action. Inbox ${inbox.id}.`,
+        content: `Review the verified ${source} for Goal ${loop.goalId}, Stage ${loop.stageId}. Read actual project state and decide a bounded next action. Inbox ${inbox.id}.${fixedIssue}`,
         acceptance: "Record a grounded decision: create and dispatch a scoped business Task, wait, take no action, or stop.",
         consumer: loop.cognitiveRoleId, useRequired: false,
         evidence: `Source event ${inbox.sourceEventId}`, stopCondition: "A decision is recorded for this source." }));
