@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { Principal } from "@evoloop/contracts";
-import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
+import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationObservationFact, OrchestrationDeliveryFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
 import { OrchestrationError, OrchestrationService } from "../src/orchestration/index.js";
 
 const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), cognitiveRoleId = randomUUID(), workerRoleId = randomUUID(), taskId = randomUUID(), scopeId = randomUUID();
@@ -15,13 +15,13 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; workflowOp: OrchestrationWorkflowOperationFact | null; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
-  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), workflowOp: null, operations: new Map(), events: [], source: new Map([
-    [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null }],
-    [source1, { projectId, id: source1, createdAtUtc: after, kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: feedbackDispatchId }],
-  ]), taskVersion: 1, taskOwnerRoleId: workerRoleId, taskState: "in_progress", taskStageId: stageId, scopeActive: true, runState: "running", runId: randomUUID(), deliveryId: randomUUID(), taskRevisionId: randomUUID(), runInputHash: "f".repeat(64) };
+  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), workflowOp: null, observationFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
+    [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
+    [source1, { projectId, id: source1, createdAtUtc: after, kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: feedbackDispatchId, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
+  ]), taskVersion: 1, extraTaskId: null, taskOwnerRoleId: workerRoleId, taskState: "in_progress", taskStageId: stageId, scopeActive: true, runState: "running", runId: randomUUID(), deliveryId: randomUUID(), taskRevisionId: randomUUID(), runInputHash: "f".repeat(64) };
   const view = (draft: Data): OrchestrationTransaction & OrchestrationReader => ({
     getOperation: async id => draft.operations.get(id) ?? null, insertOperation: async value => { draft.operations.set(value.id, value); },
     getLoop: async id => draft.loops.get(id) ?? null, insertLoop: async value => { draft.loops.set(value.id, value); }, updateLoop: async (value, expected) => { assert.equal(draft.loops.get(value.id)?.version, expected); draft.loops.set(value.id, value); },
@@ -34,15 +34,19 @@ function harness() {
     getDecision: async id => draft.decisions.get(id) ?? null, findDecisionByDispatch: async id => [...draft.decisions.values()].find(item => item.dispatchId === id) ?? null,
     insertDecision: async value => { draft.decisions.set(value.id, value); },
     getDispatch: async id => draft.dispatches.get(id) ?? (id === feedbackDispatchId ? { projectId, id, version: 5, loopId, inboxId: randomUUID(), sourceEventId: source0, taskId, taskVersion: 1, parentDispatchId: randomUUID(), recipientRoleId: workerRoleId, purpose: "prior business", authorizationScopeId: scopeId, state: "completed", claimToken: randomUUID(), leaseUntilUtc: null, runtimeRunId: randomUUID(), outcome: "failed", deliveryId: null, evidenceRef: null, reason: "prior failure", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: after } : null), insertDispatch: async value => { draft.dispatches.set(value.id, value); }, updateDispatch: async (value, expected) => { assert.equal(draft.dispatches.get(value.id)?.version, expected); draft.dispatches.set(value.id, value); },
-    countCapacityUsed: async id => [...draft.dispatches.values()].filter(item => item.loopId === id && ["claimed", "dispatching", "accepted", "unknown"].includes(item.state)).length,
-    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null }); }, getSourceFact: async id => draft.source.get(id) ?? null,
-    getTaskFact: async id => id === taskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
+    countCapacityUsed: async id => [...draft.dispatches.values()].filter(item => item.loopId === id &&
+      (["claimed", "dispatching", "unknown"].includes(item.state) ||
+        item.state === "accepted" && (item.runtimeRunId !== draft.runId || !["completed", "failed", "interrupted"].includes(draft.runState)))).length,
+    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); }, getSourceFact: async id => draft.source.get(id) ?? null,
+    getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
-    getStageFact: async id => id === stageId ? { projectId, id, goalId, state: "active" } : null,
+    getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? { projectId, id, goalId, state: "active" } : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
     getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : null,
-    getDeliveryFact: async id => id === draft.deliveryId ? { projectId, id, taskId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
+    getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
+    getObservationFact: async id => draft.observationFact?.id === id ? draft.observationFact : null,
     getWorkflowOperationFact: async id => draft.workflowOp?.id === id ? draft.workflowOp : null,
+    wasActorRole: async actorId => draft.cognitiveActors.has(actorId),
     canActAsRole: async (actorId, roleId) => actorId === cognition.actorId && roleId === cognitiveRoleId || actorId === worker.actorId && roleId === workerRoleId,
     listLoops: async () => ({ items: [...draft.loops.values()], nextCursor: null }), listInbox: async () => ({ items: [...draft.inbox.values()], nextCursor: null }), listDispatches: async () => ({ items: [...draft.dispatches.values()], nextCursor: null }), listSubmissions: async () => ({ items: [...draft.submissions.values()], nextCursor: null }), listEvents: async () => ({ items: draft.events, nextCursor: null }), listSourceFacts: async loopId => ({ items: [...draft.source.values()].filter(item => item.id === draft.loops.get(loopId)?.bootstrapEventId || item.createdAtUtc > (draft.loops.get(loopId)?.sourceAfter.createdAtUtc ?? "")), nextCursor: null }),
   });
@@ -120,7 +124,7 @@ test("unknown dispatch is fenced and never automatically claimed or counted as f
   assert.equal(h.data.dispatches.get(requested.entityId)?.state, "unknown");
   assert.equal(h.data.events.filter(event => event.kind === "dispatch.unknown").length, 1);
   const source2 = randomUUID();
-  h.change(value => { const prior = value.dispatches.get(requested.entityId)!; const origin = { ...prior, id: randomUUID(), version: 5, state: "completed" as const, outcome: "failed" as const }; value.dispatches.set(origin.id, origin); value.source.set(source2, { projectId, id: source2, createdAtUtc: "2026-10-23T09:00:02.000Z", kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: origin.id }); });
+  h.change(value => { const prior = value.dispatches.get(requested.entityId)!; const origin = { ...prior, id: randomUUID(), version: 5, state: "completed" as const, outcome: "failed" as const }; value.dispatches.set(origin.id, origin); value.source.set(source2, { projectId, id: source2, createdAtUtc: "2026-10-23T09:00:02.000Z", kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: origin.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); });
   const nextInbox = await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId, sourceEventId: source2, recipientRoleId: cognitiveRoleId, purpose: "next_action" }));
   await h.ack(nextInbox.entityId);
   const nextDispatch = await h.request(nextInbox.entityId);
@@ -144,7 +148,7 @@ test("accepted Run requires real binding and delivered outcome requires terminal
   await h.service.execute(reviewer, cmd({ type: "worker.beginSeal", submissionId, expectedVersion: 1, expectedTaskVersion: 1, sealToken }));
   const workflowCommand = { type: "delivery.record", projectId, operationId: deliveryOperationId, taskId, runId: h.data.runId, expectedVersion: 1, ...deliveryIntent };
   const canonical = (value: unknown) => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
-  h.change(value => { value.workflowOp = { projectId, id: deliveryOperationId, actorId: worker.actorId, commandType: "delivery.record", commandHash: canonical({ actorId: worker.actorId, command: workflowCommand }), status: "applied", resultRefId: value.deliveryId }; });
+  h.change(value => { value.workflowOp = { projectId, id: deliveryOperationId, actorId: worker.actorId, commandType: "delivery.record", commandHash: canonical({ actorId: worker.actorId, command: workflowCommand }), status: "applied", resultRefId: value.deliveryId, resultVersion: 1 }; });
   await h.service.execute(reviewer, cmd({ type: "worker.finishSeal", submissionId, sealToken, result: "sealed", deliveryId: h.data.deliveryId, reason: "confirmed PG Delivery" }));
   await h.service.execute(worker, cmd({ type: "worker.outcome", dispatchId: requested.entityId, outcome: "delivered", deliveryId: h.data.deliveryId, decisionId: null, evidenceRef: null, reason: "delivered" }));
   assert.equal(h.data.dispatches.get(requested.entityId)?.state, "completed");
@@ -204,7 +208,7 @@ test("worker feedback is only from this loop's completed business dispatch", asy
     state: "completed", claimToken: randomUUID(), leaseUntilUtc: null, runtimeRunId: randomUUID(), outcome: "failed", deliveryId: null,
     evidenceRef: null, reason: "signed failure", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: after };
   h.change(data => { data.dispatches.set(dispatchId, base); data.source.set(id, { projectId, id, createdAtUtc: after,
-    kind: "worker.outcome", subjectId: taskId, subjectVersion: 4, sourceLoopId: loopId, originDispatchId: dispatchId }); });
+    kind: "worker.outcome", subjectId: taskId, subjectVersion: 4, sourceLoopId: loopId, originDispatchId: dispatchId, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); });
   const first = await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId, sourceEventId: id, recipientRoleId: cognitiveRoleId, purpose: "cognitive_review" }));
   assert.equal(h.data.inbox.get(first.entityId)?.sourceEventId, id);
   h.change(data => { data.source.set(id, { ...data.source.get(id)!, sourceLoopId: randomUUID() }); });
@@ -261,5 +265,80 @@ test("a preterminal signed submission and decision replay by original operation 
     const replay = await h.service.execute(worker, intent);
     assert.equal(first.replayed, false); assert.equal(replay.replayed, true); assert.equal(first.entityId, replay.entityId);
     assert.equal(h.data.events.filter(event => event.operationId === intent.operationId).length, 1);
+  }
+});
+
+function addIndependentObservation(h: ReturnType<typeof harness>, options: { actorId?: string; stage?: string; goal?: string; createdAtUtc?: string; deliveryActorId?: string; eventId?: string } = {}) {
+  const actorId=options.actorId ?? "candidate-consumer", eventId=options.eventId ?? randomUUID(), operationId=randomUUID(), observationId=randomUUID(), deliveryId=randomUUID();
+  const fixedStageId=options.stage ?? stageId, fixedGoalId=options.goal ?? goalId;
+  h.change(data => {
+    if (fixedStageId !== stageId) data.extraStageFact={projectId,id:fixedStageId,goalId:fixedGoalId,state:"reviewed"};
+    data.extraDeliveryFact={projectId,id:deliveryId,taskId,taskRevisionId:data.taskRevisionId,runId:data.runId,
+      actorId:options.deliveryActorId ?? worker.actorId,artifactRef:"artifact",artifactRevision:"r1",contentHash:"a".repeat(64),technicalResult:"passed",technicalEvidence:"checks"};
+    data.observationFact={projectId,id:observationId,taskId,deliveryId,actorId,result:"used",taskRevisionId:data.taskRevisionId,stageId:fixedStageId};
+    data.workflowOp={projectId,id:operationId,actorId,commandType:"observation.record",commandHash:"fixed-observation",status:"applied",resultRefId:observationId,resultVersion:1};
+    data.source.set(eventId,{projectId,id:eventId,createdAtUtc:options.createdAtUtc ?? "2026-10-23T09:00:02.000Z",kind:"observation.record",
+      subjectId:taskId,subjectVersion:1,sourceLoopId:null,originDispatchId:null,operationId,sourceActorId:actorId,observationId,deliveryId,observationResult:"used"});
+  });
+  return eventId;
+}
+
+test("independent consumer Observation enters cognition once from fixed Delivery scope after a late poll", async () => {
+  const h=harness(); await h.enroll(); h.advanceTime("2026-10-23T09:00:10.000Z");
+  const eventId=addIndependentObservation(h);
+  h.change(data => { data.taskVersion=9; data.taskStageId=null; }); // Later Task head cannot rewrite historical Delivery scope.
+  const command=cmd({type:"inbox.accept",loopId,sourceEventId:eventId,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"});
+  const first=await h.service.execute(cognition,command);
+  const replay=await h.service.execute(cognition,command);
+  const duplicate=await h.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:eventId,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"}));
+  assert.equal(first.entityId,replay.entityId); assert.equal(first.entityId,duplicate.entityId);
+  assert.equal(h.data.inbox.size,1); assert.equal(h.data.events.filter(event=>event.kind==="inbox.accepted").length,1);
+});
+
+test("consumer source rejects own cognition, producer self-report, and a foreign fixed Stage or Goal", async () => {
+  const own=harness(); await own.enroll(); const ownId=addIndependentObservation(own,{actorId:"candidate-consumer"});
+  own.change(data=>{data.cognitiveActors.add("candidate-consumer");});
+  await assert.rejects(()=>own.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:ownId,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("SOURCE_UNAVAILABLE"));
+  const self=harness(); await self.enroll(); const selfId=addIndependentObservation(self,{actorId:worker.actorId,deliveryActorId:worker.actorId});
+  await assert.rejects(()=>self.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:selfId,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("SOURCE_UNAVAILABLE"));
+  const foreign=harness(); await foreign.enroll(); const foreignId=addIndependentObservation(foreign,{stage:randomUUID(),goal:randomUUID()});
+  await assert.rejects(()=>foreign.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:foreignId,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("SOURCE_UNAVAILABLE"));
+  const otherStage=harness(); await otherStage.enroll(); const otherId=addIndependentObservation(otherStage,{stage:randomUUID(),goal:goalId});
+  await assert.rejects(()=>otherStage.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:otherId,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("SOURCE_UNAVAILABLE"));
+});
+
+test("observation must match actual applied operation, actor, Delivery and enrolled event baseline", async () => {
+  const cases=[
+    (h:ReturnType<typeof harness>, id:string)=>h.change(d=>{d.source.set(id,{...d.source.get(id)!,sourceActorId:"forged"});}),
+    (h:ReturnType<typeof harness>)=>h.change(d=>{d.workflowOp={...d.workflowOp!,status:"rejected"};}),
+    (h:ReturnType<typeof harness>)=>h.change(d=>{d.observationFact={...d.observationFact!,deliveryId:randomUUID()};}),
+    (h:ReturnType<typeof harness>, id:string)=>h.change(d=>{d.source.set(id,{...d.source.get(id)!,createdAtUtc:"2026-10-23T08:59:59.000Z"});}),
+  ];
+  for(const mutate of cases){
+    const h=harness(); await h.enroll(); const id=addIndependentObservation(h); mutate(h,id);
+    await assert.rejects(()=>h.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("SOURCE_UNAVAILABLE"));
+  }
+});
+
+test("terminal accepted Run frees concurrency without fabricating a worker outcome; unknown stays fenced", async () => {
+  for (const runState of ["completed", "failed", "interrupted", "unknown"] as const) {
+    const h=harness(); await h.enroll(); const inbox=await h.accept(); await h.ack(inbox.entityId);
+    const first=await h.request(inbox.entityId), firstToken=randomUUID();
+    await h.service.execute(worker,cmd({type:"dispatch.claim",dispatchId:first.entityId,claimToken:firstToken,leaseUntilUtc:after}));
+    await h.service.execute(worker,cmd({type:"dispatch.start",dispatchId:first.entityId,claimToken:firstToken}));
+    await h.service.execute(worker,cmd({type:"dispatch.resolve",dispatchId:first.entityId,claimToken:firstToken,result:"accepted",runtimeRunId:h.data.runId,reason:"bound"}));
+    const secondTaskId=randomUUID(),secondDispatchId=randomUUID();
+    h.change(data=>{
+      data.runState=runState; data.extraTaskId=secondTaskId;
+      const prior=data.dispatches.get(first.entityId)!;
+      data.dispatches.set(secondDispatchId,{...prior,id:secondDispatchId,taskId:secondTaskId,version:1,state:"pending",
+        claimToken:null,leaseUntilUtc:null,runtimeRunId:null,outcome:null,deliveryId:null});
+    });
+    const claim=()=>h.service.execute(worker,cmd({type:"dispatch.claim",dispatchId:secondDispatchId,claimToken:randomUUID(),leaseUntilUtc:after}));
+    if(runState==="unknown") await assert.rejects(claim,failed("CAPACITY_FULL"));
+    else { const result=await claim(); assert.equal(result.entityId,secondDispatchId); }
+    assert.equal(h.data.dispatches.get(first.entityId)?.state,"accepted");
+    assert.equal(h.data.dispatches.get(first.entityId)?.outcome,null);
+    assert.equal(h.data.events.filter(event=>event.kind==="worker.outcome" || event.kind==="worker.decision").length,0);
   }
 });

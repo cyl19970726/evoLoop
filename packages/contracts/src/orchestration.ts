@@ -83,13 +83,18 @@ export interface OrchestrationResult { entityType: "loop" | "inbox" | "dispatch"
 export interface OrchestrationSourceFact {
   projectId: string; id: string; createdAtUtc: string; kind: string;
   subjectId: string; subjectVersion: number; sourceLoopId: string | null; originDispatchId: string | null;
+  /** Populated only for a verified workflow observation.record outbox event. */
+  operationId: string | null; sourceActorId: string | null; observationId: string | null;
+  deliveryId: string | null; observationResult: "used" | "failed" | "notUsed" | null;
 }
 export interface OrchestrationTaskFact { projectId: string; id: string; version: number; state: "todo" | "in_progress" | "done" | "cancelled"; ownerRoleId: string; goalId: string | null; stageId: string | null }
 export interface OrchestrationGoalFact { projectId: string; id: string; state: string }
 export interface OrchestrationStageFact { projectId: string; id: string; goalId: string; state: string }
 export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown" }
-export interface OrchestrationDeliveryFact { projectId: string; id: string; taskId: string; runId: string | null; actorId: string; artifactRef: string; artifactRevision: string; contentHash: string; technicalResult: "passed" | "failed"; technicalEvidence: string }
-export interface OrchestrationWorkflowOperationFact { projectId: string; id: string; actorId: string; commandType: string; commandHash: string; status: "applied" | "rejected"; resultRefId: string | null }
+export interface OrchestrationDeliveryFact { projectId: string; id: string; taskId: string; taskRevisionId: string; runId: string | null; actorId: string; artifactRef: string; artifactRevision: string; contentHash: string; technicalResult: "passed" | "failed"; technicalEvidence: string }
+/** Historical scope is the nearest TaskProposal at or before the Delivery's fixed TaskRevision, never today's Task head. */
+export interface OrchestrationObservationFact { projectId: string; id: string; taskId: string; deliveryId: string; actorId: string; result: "used" | "failed" | "notUsed"; taskRevisionId: string; stageId: string | null }
+export interface OrchestrationWorkflowOperationFact { projectId: string; id: string; actorId: string; commandType: string; commandHash: string; status: "applied" | "rejected"; resultRefId: string | null; resultVersion: number | null }
 export interface OrchestrationAuthorizationFact { projectId: string; scopeId: string; actorId: string; roleId: string; active: boolean }
 
 /** Methods are project-scoped and run on the same database transaction/client. */
@@ -113,6 +118,7 @@ export interface OrchestrationTransaction {
   updateSubmission(value: OrchestrationSubmission, expectedVersion: number): Promise<void>;
   insertDispatch(value: OrchestrationDispatch): Promise<void>;
   updateDispatch(value: OrchestrationDispatch, expectedVersion: number): Promise<void>;
+  /** Project-scoped running capacity: claimed, dispatching, unknown always count; accepted counts only while its bound Run is nonterminal or unknown. A confirmed terminal Run frees capacity even if worker intent/outcome still needs reconciliation. */
   countCapacityUsed(loopId: string): Promise<number>;
   appendEvent(value: OrchestrationEvent): Promise<void>;
   getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
@@ -122,8 +128,11 @@ export interface OrchestrationTransaction {
   getAuthorizationFact(scopeId: string): Promise<OrchestrationAuthorizationFact | null>;
   getRunFact(id: string): Promise<OrchestrationRunFact | null>;
   getDeliveryFact(id: string): Promise<OrchestrationDeliveryFact | null>;
+  getObservationFact(id: string): Promise<OrchestrationObservationFact | null>;
   getWorkflowOperationFact(id: string): Promise<OrchestrationWorkflowOperationFact | null>;
   canActAsRole(actorId: string, roleId: string): Promise<boolean>;
+  /** Historical classification only. Never grants command authority. */
+  wasActorRole(actorId: string, loopId: string, roleId: string): Promise<boolean>;
 }
 export interface OrchestrationReader {
   getOperation(id: string): Promise<OrchestrationOperation | null>;

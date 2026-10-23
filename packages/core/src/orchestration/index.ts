@@ -114,10 +114,35 @@ export class OrchestrationService {
       const source = await tx.getSourceFact(command.sourceEventId);
       const bootstrap = source?.id === loop.bootstrapEventId && source.kind === "loop.enrolled" && source.sourceLoopId === loop.id && source.subjectId === loop.id && source.subjectVersion === 1;
       const feedback = source?.kind === "worker.outcome" && source.sourceLoopId === loop.id && !!source.originDispatchId;
-      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed or own business feedback");
+      const externalObservation = source?.kind === "observation.record" && source.sourceLoopId === null && source.originDispatchId === null;
+      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !externalObservation) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed, own business feedback, or scoped consumer observation");
       if (feedback) {
         const origin = await tx.getDispatch(source.originDispatchId!);
         if (!origin || origin.projectId !== command.projectId || origin.loopId !== loop.id || origin.recipientRoleId === loop.cognitiveRoleId || origin.state !== "completed" || !["delivered", "failed", "waiting", "no_action"].includes(origin.outcome ?? "") || origin.taskId !== source.subjectId || origin.version !== source.subjectVersion) return fail("SOURCE_UNAVAILABLE", "feedback must be a completed business outcome in this loop");
+      }
+      if (externalObservation) {
+        if (!source.operationId || !source.sourceActorId || !source.observationId || !source.deliveryId || !source.observationResult)
+          return fail("SOURCE_UNAVAILABLE", "consumer observation source lacks fixed operation and observation identity");
+        // These reads share one transaction client; keep them serial for pg's single-query connection contract.
+        const operation = await tx.getWorkflowOperationFact(source.operationId);
+        const observation = await tx.getObservationFact(source.observationId);
+        const delivery = await tx.getDeliveryFact(source.deliveryId);
+        if (!operation || operation.projectId !== command.projectId || operation.id !== source.operationId ||
+          operation.commandType !== "observation.record" || operation.status !== "applied" ||
+          operation.actorId !== source.sourceActorId || operation.resultRefId !== source.observationId ||
+          operation.resultVersion !== source.subjectVersion ||
+          !observation || observation.projectId !== command.projectId || observation.id !== source.observationId ||
+          observation.taskId !== source.subjectId || observation.deliveryId !== source.deliveryId ||
+          observation.actorId !== source.sourceActorId || observation.result !== source.observationResult ||
+          !delivery || delivery.projectId !== command.projectId || delivery.id !== observation.deliveryId ||
+          delivery.taskId !== observation.taskId || delivery.taskRevisionId !== observation.taskRevisionId ||
+          delivery.actorId === observation.actorId || !observation.stageId)
+          return fail("SOURCE_UNAVAILABLE", "consumer observation must match its applied operation, fixed Delivery, and independent actor");
+        const stage = await tx.getStageFact(observation.stageId);
+        if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId ||
+          (loop.stageId !== null && stage.id !== loop.stageId) ||
+          await tx.wasActorRole(observation.actorId, loop.id, loop.cognitiveRoleId))
+          return fail("SOURCE_UNAVAILABLE", "consumer observation is outside this loop's fixed scope or authored by its cognition worker");
       }
       const existing = await tx.findInbox(loop.id, source.id, command.recipientRoleId, command.purpose);
       if (existing) return result("inbox", existing.id, existing.version);
@@ -268,7 +293,8 @@ export class OrchestrationService {
     if (!terminalRun || terminalRun.projectId !== command.projectId || terminalRun.taskId !== dispatch.taskId || !["completed", "failed", "interrupted"].includes(terminalRun.state)) return fail("RUN_NOT_TERMINAL", "worker outcome requires the bound terminal Run");
     if (command.outcome === "delivered") {
       if (!command.deliveryId) return fail("DELIVERY_REQUIRED", "delivered outcome requires a recorded Delivery");
-      const [delivery, submission] = await Promise.all([tx.getDeliveryFact(command.deliveryId), tx.findSubmissionByDispatch(dispatch.id)]);
+      const delivery = await tx.getDeliveryFact(command.deliveryId);
+      const submission = await tx.findSubmissionByDispatch(dispatch.id);
       if (!submission || submission.state !== "sealed" || submission.deliveryId !== command.deliveryId) return fail("SUBMISSION_UNSEALED", "delivered outcome requires the fixed sealed worker submission");
       if (!delivery || delivery.projectId !== command.projectId || delivery.taskId !== dispatch.taskId || delivery.runId !== dispatch.runtimeRunId) return fail("DELIVERY_MISMATCH", "Delivery must be recorded for this Task and Run");
     } else {
@@ -297,7 +323,8 @@ export class OrchestrationService {
     if (command.type === "worker.beginSeal") {
       this.version(submission.version, command.expectedVersion);
       if (submission.state !== "submitted" || dispatch.state !== "accepted") return fail("INVALID_STATE", "only submitted intent from an accepted dispatch can begin seal");
-      const [run, task] = await Promise.all([tx.getRunFact(submission.runId), tx.getTaskFact(submission.taskId)]);
+      const run = await tx.getRunFact(submission.runId);
+      const task = await tx.getTaskFact(submission.taskId);
       if (!run || run.projectId !== command.projectId || run.taskId !== submission.taskId || !["completed", "failed", "interrupted"].includes(run.state)) return fail("RUN_NOT_TERMINAL", "source Run must be confirmed terminal before delivery seal");
       if (!task || task.projectId !== command.projectId || task.version !== command.expectedTaskVersion || task.state !== "in_progress") return fail("TASK_CHANGED", "Task current version and state must be observed for delivery seal");
       const next: OrchestrationSubmission = { ...submission, version: submission.version + 1, state: "sealing", sealedBy: principal.actorId, expectedTaskVersion: task.version, sealToken: command.sealToken, updatedAtUtc: now };
@@ -352,7 +379,8 @@ export class OrchestrationService {
   }
 
   private async freshTaskAndScope(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop, actorId: string) {
-    const [task, auth] = await Promise.all([tx.getTaskFact(dispatch.taskId), tx.getAuthorizationFact(dispatch.authorizationScopeId)]);
+    const task = await tx.getTaskFact(dispatch.taskId);
+    const auth = await tx.getAuthorizationFact(dispatch.authorizationScopeId);
     if (!task || task.projectId !== dispatch.projectId || task.version !== dispatch.taskVersion || (task.state !== "todo" && task.state !== "in_progress") || task.ownerRoleId !== dispatch.recipientRoleId || task.goalId !== loop.goalId || !task.stageId || (loop.stageId !== null && task.stageId !== loop.stageId)) return fail("TASK_CHANGED", "Task changed before dispatch; explicit new request required");
     if (!auth || auth.projectId !== dispatch.projectId || !auth.active || auth.roleId !== dispatch.recipientRoleId || auth.actorId !== actorId) return fail("SCOPE_NOT_AUTHORIZED", "worker scope changed before dispatch");
     const stage = await tx.getStageFact(task.stageId);

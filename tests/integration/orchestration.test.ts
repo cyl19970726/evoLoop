@@ -18,7 +18,8 @@ const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
 const runtime=new RuntimeWorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
 const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&scope===scopeId?{projectId,scopeId,actorId:worker,roleId:businessRole,active:true}:project===projectId&&scope===cognitiveScope?{projectId,scopeId:cognitiveScope,actorId:actor,roleId:cognitiveRole,active:true}:null,
-  canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole)});
+  canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole),
+  wasActorRole:async(project,who,loop,role)=>project===projectId&&who===actor&&role===cognitiveRole});
 const orchestrator=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha});
 const issue=(who:string,command:Record<string,unknown>)=>orchestrator.execute(principal(who),{projectId,operationId:randomUUID(),...command} as never);
 const fails=async(p:Promise<unknown>,code:string)=>assert.rejects(p,e=>e instanceof OrchestrationError&&e.code===code);
@@ -88,6 +89,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await orchestrator.execute(principal(actor),{projectId,operationId:cognitiveSubmitOperation,...cognitiveSubmit} as never);
   await runtime.rejectDispatch(projectId,cognitiveRun,"Fixture preflight completed without native turn");
   assert.equal((await orchestrator.execute(principal(actor),{projectId,operationId:cognitiveSubmitOperation,...cognitiveSubmit} as never)).replayed,true);
+  assert.equal(await store.transaction(projectId,tx=>tx.countCapacityUsed(loopId)),0,"terminal accepted Run releases concurrency before outcome");
   await issue(actor,{type:"worker.beginSeal",submissionId:cognitiveSubmission,expectedVersion:1,expectedTaskVersion:3,sealToken:randomUUID()});
   const cognitiveSeal=(await store.read(projectId,r=>r.getSubmission(cognitiveSubmission)))!;
   const cognitiveDelivery=await workflow.execute(principal(actor),{type:"delivery.record",projectId,operationId:cognitiveDeliveryOp,
@@ -149,6 +151,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await orchestrator.execute(principal(worker),{projectId,operationId:businessSubmitOperation,...businessSubmit} as never);
   await runtime.rejectDispatch(projectId,runId,"Native fixture preflight rejected, no external turn attempted");
   assert.equal((await orchestrator.execute(principal(worker),{projectId,operationId:businessSubmitOperation,...businessSubmit} as never)).replayed,true);
+  assert.equal(await store.transaction(projectId,tx=>tx.countCapacityUsed(loopId)),0,"terminal Run frees capacity while seal is pending");
   await issue(actor,{type:"worker.beginSeal",submissionId,expectedVersion:1,expectedTaskVersion:3,sealToken:randomUUID()});
   const submission=(await store.read(projectId,r=>r.getSubmission(submissionId)))!;
   const delivery=await workflow.execute(principal(worker),{type:"delivery.record",projectId,operationId:deliveryOperationId,
@@ -169,6 +172,84 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.ok(firstSourcePage.nextCursor);
   const secondSourcePage=await orchestrator.listSourceFacts(principal(actor),projectId,loopId,1,firstSourcePage.nextCursor);
   assert.deepEqual(secondSourcePage.items.map(x=>x.id),[feedback.id]);
+  const observationSource=async(who:string,result:"used"|"failed"|"notUsed")=>{
+    const operationId=randomUUID();
+    const recorded=await workflow.execute(principal(who),{type:"observation.record",projectId,operationId,taskId,
+      deliveryId:delivery.revisionId,observer:who,observerKind:"agent",result,evidence:"Independent consumer observation",reason:"Observed fixed delivery"});
+    assert.equal(recorded.status,"applied",JSON.stringify(recorded));
+    const sourceId=(await pool.query("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='observation.record'",[projectId,operationId])).rows[0]?.event_id;
+    assert.ok(sourceId);
+    return {operationId,observationId:recorded.revisionId!,sourceId};
+  };
+  const external=await observationSource("consumer-observer","used");
+  const externalFact=(await store.transaction(projectId,tx=>tx.getSourceFact(external.sourceId)))!;
+  assert.equal(externalFact.kind,"observation.record");
+  assert.equal(externalFact.operationId,external.operationId);
+  assert.equal(externalFact.sourceActorId,"consumer-observer");
+  assert.equal(externalFact.observationId,external.observationId);
+  assert.equal(externalFact.deliveryId,delivery.revisionId);
+  assert.equal(externalFact.observationResult,"used");
+  assert.equal((await store.transaction(projectId,tx=>tx.getObservationFact(external.observationId)))?.stageId,stageId);
+  assert.equal((await store.transaction(projectId,tx=>tx.getDeliveryFact(delivery.revisionId!)))?.taskRevisionId,delivery.revisionId ?
+    (await pool.query("SELECT task_revision_id FROM delivery WHERE project_id=$1 AND delivery_id=$2",[projectId,delivery.revisionId])).rows[0].task_revision_id:null);
+  assert.equal((await store.transaction(projectId,tx=>tx.getWorkflowOperationFact(external.operationId)))?.resultVersion,externalFact.subjectVersion);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===external.sourceId),true);
+  const acceptedObservation=await issue(actor,{type:"inbox.accept",loopId,sourceEventId:external.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  assert.ok(acceptedObservation.entityId);
+  const selfObservation=await observationSource(worker,"used");
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===selfObservation.sourceId),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:selfObservation.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const cognitiveObservation=await observationSource(actor,"used");
+  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:cognitiveObservation.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const foreignGoalId=randomUUID(),foreignStageId=randomUUID(),foreignTaskId=randomUUID(),foreignDeliveryOp=randomUUID(),foreignObservationOp=randomUUID();
+  for(const command of [
+    {type:"goal.create",goalId:foreignGoalId,outcome:"Other goal",constraints:"Separate",consumer:"owner",authority:"reviewer",scope:"foreign",owner:actor},
+    {type:"stage.propose",stageId:foreignStageId,goalId:foreignGoalId,deliverable:"Other delivery",learningQuestion:"Separate?",reason:"Other scope"},
+    {type:"stage.accept",stageId:foreignStageId,expectedVersion:1,reason:"Activate other stage"},
+    {type:"task.create",taskId:foreignTaskId,stageId:foreignStageId,title:"Foreign work",content:"# Other work",acceptance:"One artifact",owner:businessRole,consumer:"owner",evidence:"Pending",stopCondition:"One result"},
+    {type:"task.start",taskId:foreignTaskId,expectedVersion:1,reason:"Freeze other task"},
+  ]) assert.equal((await workflow.execute(principal(actor),{projectId,operationId:randomUUID(),...command} as never)).status,"applied");
+  const foreignDelivery=await workflow.execute(principal(worker),{type:"delivery.record",projectId,operationId:foreignDeliveryOp,
+    taskId:foreignTaskId,expectedVersion:2,artifactRef:"artifact:other",artifactRevision:"v1",contentHash:sha("other"),
+    technicalResult:"passed",technicalEvidence:"Separate artifact",reason:"Other delivery"});
+  assert.equal(foreignDelivery.status,"applied");
+  const foreignObservation=await workflow.execute(principal("consumer-observer"),{type:"observation.record",projectId,operationId:foreignObservationOp,
+    taskId:foreignTaskId,deliveryId:foreignDelivery.revisionId,observer:"consumer-observer",observerKind:"agent",result:"used",evidence:"Separate use",reason:"Other goal"});
+  assert.equal(foreignObservation.status,"applied");
+  const foreignSourceId=(await pool.query("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='observation.record'",[projectId,foreignObservationOp])).rows[0]?.event_id;
+  assert.ok(foreignSourceId);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===foreignSourceId),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:foreignSourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const oldDeliveryStage=(await store.transaction(projectId,tx=>tx.getObservationFact(external.observationId)))?.stageId;
+  assert.equal(oldDeliveryStage,stageId);
+  const beforeMove=(await workflow.getTask(principal(actor),projectId,taskId)).task;
+  const reopened=await workflow.execute(principal(actor),{type:"task.reopen",projectId,operationId:randomUUID(),taskId,
+    expectedVersion:beforeMove.version,reason:"Plan a separate goal after the fixed delivery"});
+  assert.equal(reopened.status,"applied");
+  const moved=await workflow.execute(principal(actor),{type:"task.update",projectId,operationId:randomUUID(),taskId,
+    expectedVersion:reopened.version,title:beforeMove.title,content:beforeMove.content,acceptance:beforeMove.acceptance,
+    owner:beforeMove.owner,stageId:foreignStageId,reason:"Explicitly bind current Task to another Goal and Stage"});
+  assert.equal(moved.status,"applied",JSON.stringify(moved));
+  assert.equal((await workflow.getTask(principal(actor),projectId,taskId)).proposal?.stageId,foreignStageId);
+  const restarted=await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),taskId,
+    expectedVersion:moved.version,reason:"Continue current Task under the other Goal"});
+  assert.equal(restarted.status,"applied",JSON.stringify(restarted));
+  const foreignLoopId=randomUUID();
+  const beforeHistoricalObservation=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
+  await issue(actor,{type:"loop.enroll",loopId:foreignLoopId,goalId:foreignGoalId,stageId:foreignStageId,
+    cognitiveRoleId:cognitiveRole,allowedBusinessRoleIds:[businessRole],
+    sourceAfter:{createdAtUtc:beforeHistoricalObservation.created_at.toISOString(),eventId:beforeHistoricalObservation.event_id},
+    maxRuns:1,maxConcurrent:1,reason:"Check historical source stays with original Goal"});
+  const afterMoveObservation=await observationSource("consumer-after-move","notUsed");
+  const fixedAfterMove=await store.transaction(projectId,tx=>tx.getObservationFact(afterMoveObservation.observationId));
+  assert.equal(fixedAfterMove?.taskRevisionId,(await store.transaction(projectId,tx=>tx.getDeliveryFact(delivery.revisionId!)))?.taskRevisionId);
+  assert.equal(fixedAfterMove?.stageId,stageId,"observation follows the Delivery's historical Stage");
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===afterMoveObservation.sourceId),true);
+  assert.ok((await issue(actor,{type:"inbox.accept",loopId,sourceEventId:afterMoveObservation.sourceId,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"})).entityId);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,foreignLoopId)).items.some(x=>x.id===afterMoveObservation.sourceId),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId:foreignLoopId,sourceEventId:afterMoveObservation.sourceId,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
   const budgetInbox=await issue(actor,{type:"inbox.accept",loopId,sourceEventId:feedback.id,recipientRoleId:cognitiveRole,purpose:"next_action"});
   await issue(actor,{type:"inbox.ack",inboxId:budgetInbox.entityId,expectedVersion:1,reason:"Review bounded feedback"});
   await fails(issue(actor,{type:"dispatch.request",inboxId:budgetInbox.entityId,expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:cognition.entityId,taskId,expectedTaskVersion:2,
@@ -184,6 +265,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:lateLast.created_at.toISOString(),eventId:lateLast.event_id},
     maxRuns:1,maxConcurrent:1,reason:"Terminal first-intent rejection"});
   const lateLoop=(await orchestrator.getLoop(principal(actor),projectId,lateLoopId))!;
+  await fails(issue(actor,{type:"inbox.accept",loopId:lateLoopId,sourceEventId:external.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
   const lateInbox=await issue(actor,{type:"inbox.accept",loopId:lateLoopId,sourceEventId:lateLoop.bootstrapEventId,
     recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
   await issue(actor,{type:"inbox.ack",inboxId:lateInbox.entityId,expectedVersion:1,reason:"Read late seed"});
