@@ -7,12 +7,12 @@ export function taskSectionHref(projectId: string, taskId: string, target: {revi
     target.tab ? `${base}?tab=${target.tab}` : base;
 }
 
-/** Keep internal tabs and incoming links on one browser-history path. */
+/** Internal tab changes use the same URL as incoming links, so browser history and later same-Task links agree. */
 export function navigateTaskTab(projectId: string, taskId: string, section: TaskSection,
   location: {hash:string}): boolean {
-  const target = taskSectionHref(projectId,taskId,{tab:section});
-  if (location.hash === target) return false;
-  location.hash = target;
+  const href = taskSectionHref(projectId, taskId, {tab:section});
+  if (location.hash === href) return false;
+  location.hash = href;
   return true;
 }
 

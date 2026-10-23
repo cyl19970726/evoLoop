@@ -137,8 +137,9 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     const onHash = () => {
       const requested = taskSectionFromHash(window.location.hash, projectId, id);
       if (requested) {
-        landingRef.current = requested === "overview" ? null : requested;
-        setTab(requested);
+        const target = requested;
+        landingRef.current = target === "overview" ? null : target;
+        setTab(target);
       }
     };
     window.addEventListener("hashchange", onHash);
@@ -208,7 +209,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const panelId = (value: TaskTab) => `task-panel-${projectId}-${id}-${instanceId}-${value}`;
   function selectTab(value: TaskTab) {
     if (selectedRevision && value === "history") return;
-    if (!navigateTaskTab(projectId,id,value,window.location)) setTab(value);
+    if (!navigateTaskTab(projectId, id, value, window.location)) {
+      landingRef.current = value === "overview" ? null : value;
+      setTab(value);
+    }
   }
   return <div className="content task-page">
     <a className="back" href={taskListHref(projectId)}>← 返回任务列表</a>
