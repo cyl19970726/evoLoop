@@ -60,6 +60,9 @@ test("PG method records a choice, then permits only its original todo Task throu
   for(const [taskId,role] of [[parentTaskId,cognition],[firstTaskId,business],[otherTaskId,other]] as const)
     await wf({type:"task.create",taskId,stageId,title:"Task",content:"# Bounded task",acceptance:"Report",owner:role,
       consumer:owner,evidence:"Fixture",stopCondition:"One result"});
+  await wf({type:"task.update",taskId:firstTaskId,expectedVersion:1,title:"Task",
+    content:"# Use the existing Role for the revised method",acceptance:"Report",owner:business,
+    reason:"Fix the method and consumer before signing its observed Task version"});
   await wf({type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Cognition"});
   const parentFixed=(await workflow.getTask(principal(owner,projectId),projectId,parentTaskId)).revision;
   const documentId=parentFixed.contentDocumentId,documentRevisionId=parentFixed.contentRevisionId;
@@ -100,7 +103,7 @@ test("PG method records a choice, then permits only its original todo Task throu
     expectedLoopVersion:(await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!.version,
     sourceEventId:loop.bootstrapEventId,parentDispatchId:parent.entityId,documentId,
     documentRevisionId,documentContentHash:hash("# Bounded task"),firstTaskId,
-    expectedFirstTaskVersion:1,choice:"method",roleId:business,templateId:null,templateRevision:null,
+    expectedFirstTaskVersion:2,choice:"method",roleId:business,templateId:null,templateRevision:null,
     templateHash:null,reason:"Use the existing business Role differently"};
   const wrongParent=await app.inject({method:"POST",url:"/api/orchestration/commands",
     headers:{authorization:`Bearer ${workerToken}`},payload:{...methodCommand,operationId:randomUUID(),
@@ -121,13 +124,13 @@ test("PG method records a choice, then permits only its original todo Task throu
     recipientRoleId:cognition,purpose:"next_action"});
   await issue(owner,{type:"inbox.ack",inboxId:next.entityId,expectedVersion:1,reason:"Read method"});
   const request={type:"dispatch.request",inboxId:next.entityId,expectedInboxVersion:2,
-    dispatchId:randomUUID(),parentDispatchId:parent.entityId,taskId:firstTaskId,expectedTaskVersion:1,
+    dispatchId:randomUUID(),parentDispatchId:parent.entityId,taskId:firstTaskId,expectedTaskVersion:2,
     recipientRoleId:business,purpose:"Execute",authorizationScopeId:"business-scope",reason:"Method first Task"};
   await denied(issue(worker.principal.actorId,{type:"worker.decision",decisionId:randomUUID(),dispatchId:parent.entityId,
     runId,kind:"waiting",divisionDecisionId:null,reason:"Method alone is not a handoff",evidenceRefs:[]}),"INVALID_CAUSALITY");
   assert.equal(await orchestration.getDecisionForDispatch(principal(owner,projectId),projectId,parent.entityId),null);
   await denied(issue(owner,{...request,taskId:otherTaskId,recipientRoleId:other}),"METHOD_TASK_MISMATCH");
-  await denied(issue(owner,{...request,expectedTaskVersion:2}),"METHOD_TASK_MISMATCH");
+  await denied(issue(owner,{...request,expectedTaskVersion:1}),"METHOD_TASK_MISMATCH");
   await denied(issue(owner,{...request,recipientRoleId:other,authorizationScopeId:"other-scope"}),"TASK_CHANGED");
   const child=await issue(owner,request);
   assert.equal(child.entityType,"dispatch");
@@ -148,7 +151,7 @@ test("PG method records a choice, then permits only its original todo Task throu
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   assert.equal((await orchestration.getDispatch(principal(owner,projectId),projectId,child.entityId))?.state,"claimed");
   await issue(owner,{type:"dispatch.start",dispatchId:child.entityId,claimToken:childToken});
-  await wf({type:"task.start",taskId:firstTaskId,expectedVersion:1,reason:"Start fixed method Task"});
+  await wf({type:"task.start",taskId:firstTaskId,expectedVersion:2,reason:"Start fixed method Task"});
   const childSession=randomUUID(),childRun=randomUUID(),childInput="Execute the fixed method Task";
   await wf({type:"runtime.session.reserve",sessionId:childSession,roleId:business,cwd:join(tmpdir(),"method-fixture"),
     authorizationScope:"business-scope",model:"fixture-model",sandbox:"read-only",approvalPolicy:"on-request"});
@@ -157,7 +160,7 @@ test("PG method records a choice, then permits only its original todo Task throu
     roleId:business,cwd:join(tmpdir(),"method-fixture"),authorizationScope:"business-scope",
     nativeThreadId:`fixture-${childSession}`,nativeSessionId:`fixture-${childSession}`});
   const childReserved=await wf({type:"runtime.run.reserve",runId:childRun,taskId:firstTaskId,sessionId:childSession,
-    expectedVersion:2,input:childInput});
+    expectedVersion:3,input:childInput});
   await issue(owner,{type:"dispatch.resolve",dispatchId:child.entityId,claimToken:childToken,result:"accepted",
     runtimeRunId:childRun,reason:"Bound original-role child Run"});
   const submissionId=randomUUID(),deliveryOperationId=randomUUID();
@@ -179,4 +182,85 @@ test("PG method records a choice, then permits only its original todo Task throu
     decisionId:null,evidenceRef:null,reason:"Bounded fixture result"});
   assert.equal((await orchestration.getDispatch(principal(owner,projectId),projectId,child.entityId))?.outcome,"delivered");
   assert.equal(reserved.status,"applied");
+});
+
+test("PG final cognition decision prevents a late method child before budget or inbox is spent",async t=>{
+  const schema=`el_method_late_${randomUUID().replaceAll("-","").slice(0,16)}`;
+  await migrate(url!,schema);
+  const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+  t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
+    try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
+  const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
+  const parentTaskId=randomUUID(),firstTaskId=randomUUID(),owner="owner",cognition="cognition",business="business";
+  const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
+  const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&
+    (scope==="cognition-scope"||scope==="business-scope")?
+      {projectId,scopeId:scope,actorId:owner,roleId:scope==="cognition-scope"?cognition:business,active:true}:null,
+    canActAsRole:async(project,actor)=>project===projectId&&actor===owner,wasActorRole:async()=>false});
+  const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash});
+  const wf=async(command:Record<string,unknown>)=>{
+    const result=await workflow.execute(principal(owner,projectId),{projectId,operationId:randomUUID(),...command} as never);
+    assert.equal(result.status,"applied",JSON.stringify(result));return result;
+  };
+  const issue=(command:Record<string,unknown>)=>orchestration.execute(principal(owner,projectId),
+    {projectId,operationId:randomUUID(),...command} as never);
+  await wf({type:"project.create",title:"Method late-child boundary"});
+  await wf({type:"goal.create",goalId,outcome:"One bounded result",constraints:"Local",consumer:owner,authority:owner,scope:"fixture",owner});
+  await wf({type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
+  await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
+  for(const [taskId,role] of [[parentTaskId,cognition],[firstTaskId,business]] as const)
+    await wf({type:"task.create",taskId,stageId,title:"Task",content:"# Bounded task",acceptance:"Report",owner:role,
+      consumer:owner,evidence:"Fixture",stopCondition:"One result"});
+  await wf({type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Cognition"});
+  const parentFixed=(await workflow.getTask(principal(owner,projectId),projectId,parentTaskId)).revision;
+  const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
+  await issue({type:"loop.enroll",loopId,goalId,stageId,cognitiveRoleId:cognition,
+    allowedBusinessRoleIds:[business],sourceAfter:{createdAtUtc:last.created_at.toISOString(),eventId:last.event_id},
+    maxRuns:3,maxConcurrent:1,reason:"Leave capacity for the late request"});
+  const loop=(await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!;
+  const cognitiveInbox=await issue({type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,
+    recipientRoleId:cognition,purpose:"cognitive_review"});
+  await issue({type:"inbox.ack",inboxId:cognitiveInbox.entityId,expectedVersion:1,reason:"Read"});
+  const parent=await issue({type:"dispatch.request",inboxId:cognitiveInbox.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:parentTaskId,expectedTaskVersion:2,
+    recipientRoleId:cognition,purpose:"cognition",authorizationScopeId:"cognition-scope",reason:"Review"});
+  const claimToken=randomUUID();
+  await issue({type:"dispatch.claim",dispatchId:parent.entityId,claimToken,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await issue({type:"dispatch.start",dispatchId:parent.entityId,claimToken});
+  const sessionId=randomUUID(),runId=randomUUID(),cwd=join(tmpdir(),"method-late-fixture");
+  await wf({type:"runtime.session.reserve",sessionId,roleId:cognition,cwd,authorizationScope:"cognition-scope",
+    model:"fixture-model",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,sessionId);
+  await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,
+    roleId:cognition,cwd,authorizationScope:"cognition-scope",nativeThreadId:`fixture-${sessionId}`,
+    nativeSessionId:`fixture-${sessionId}`});
+  await wf({type:"runtime.run.reserve",runId,taskId:parentTaskId,sessionId,expectedVersion:2,input:"Review method"});
+  await issue({type:"dispatch.resolve",dispatchId:parent.entityId,claimToken,result:"accepted",runtimeRunId:runId,reason:"Bound"});
+  await issue({type:"division.decide",decisionId:randomUUID(),loopId,expectedLoopVersion:
+    (await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!.version,
+    sourceEventId:loop.bootstrapEventId,parentDispatchId:parent.entityId,
+    documentId:parentFixed.contentDocumentId,documentRevisionId:parentFixed.contentRevisionId,
+    documentContentHash:hash("# Bounded task"),firstTaskId,expectedFirstTaskVersion:1,
+    choice:"method",roleId:business,templateId:null,templateRevision:null,templateHash:null,
+    reason:"Record an existing-role approach"});
+  const next=await issue({type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,
+    recipientRoleId:cognition,purpose:"next_action"});
+  await issue({type:"inbox.ack",inboxId:next.entityId,expectedVersion:1,reason:"Read method"});
+  const lateRequest={type:"dispatch.request",inboxId:next.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:parent.entityId,taskId:firstTaskId,expectedTaskVersion:1,
+    recipientRoleId:business,purpose:"Late method work",authorizationScopeId:"business-scope",
+    reason:"Must reject changed or finally decided work"};
+  await wf({type:"task.update",taskId:firstTaskId,expectedVersion:1,title:"Task",
+    content:"# Revised after method",acceptance:"Report",owner:business,
+    reason:"The signed method must not follow later Task content"});
+  await denied(issue(lateRequest),"TASK_CHANGED");
+  await issue({type:"worker.decision",decisionId:randomUUID(),dispatchId:parent.entityId,runId,
+    kind:"no_action",divisionDecisionId:null,reason:"No child needed",evidenceRefs:[]});
+  const before=(await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!.dispatchCount;
+  await denied(issue(lateRequest),"PARENT_DECIDED");
+  assert.equal((await orchestration.getLoop(principal(owner,projectId),projectId,loopId))?.dispatchCount,before);
+  assert.equal((await orchestration.getInbox(principal(owner,projectId),projectId,next.entityId))?.state,"acknowledged");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2",[projectId,loopId])).rows[0].n,1);
 });

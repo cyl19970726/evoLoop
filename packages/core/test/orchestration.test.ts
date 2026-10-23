@@ -871,6 +871,21 @@ test("method on the current in-progress cognition Task can submit its own work b
   assert.equal(f.h.data.submissions.size,1);
 });
 
+test("method cannot reopen its fixed in-progress first Task as an ordinary child", async () => {
+  const f=divisionFixture();await f.setup();
+  f.h.change(data=>{data.taskState="in_progress";});
+  await f.h.service.execute(cognition,{...f.decision(),choice:"method",roleId:workerRoleId,
+    templateId:null,templateRevision:null,templateHash:null});
+  const next=await f.h.accept();await f.h.ack(next.entityId);
+  const before=f.h.data.loops.get(loopId)!.dispatchCount;
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"dispatch.request",inboxId:next.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,
+    taskId,expectedTaskVersion:1,recipientRoleId:workerRoleId,purpose:"First method work",
+    authorizationScopeId:scopeId,reason:"Must not reopen"})),failed("METHOD_TASK_MISMATCH"));
+  assert.equal(f.h.data.dispatches.size,1);
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,before);
+});
+
 test("division rejects text-only authority, foreign scope, changed material, outsider and revoked template", async () => {
   const f = divisionFixture(); await f.setup();
   const request = f.decision();
