@@ -93,7 +93,9 @@ export const workflowCommands = [
     type: z.literal("task.close"),
     taskId: id,
     expectedVersion: version,
-    deliveryId: id,
+    deliveryId: id.optional(),
+    decisionId: id.optional(),
+    waitingInboxId: id.optional(),
     acceptanceResult: z.enum(["met", "unmet"]),
     acceptanceEvidence: text,
     reason: text,
@@ -236,7 +238,12 @@ export interface TaskClosure {
   id: string;
   taskId: string;
   taskRevisionId: string;
-  deliveryId: string;
+  deliveryId: string | null;
+  decisionId: string | null;
+  sourceInboxId: string | null;
+  sourceEventId: string | null;
+  sourceTaskId: string | null;
+  waitingInboxId: string | null;
   acceptanceResult: "met";
   acceptanceEvidence: string;
   reason: string;

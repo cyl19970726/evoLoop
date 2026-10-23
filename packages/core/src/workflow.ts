@@ -386,19 +386,48 @@ export async function applyWorkflow({
       if ((await tx.listRuntimeRuns(task.id)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state)))
         throw new DomainError("TASK_BUSY", "resolve the current or uncertain run before closing");
       if (c.acceptanceResult !== "met") throw new DomainError("ACCEPTANCE_UNMET", "task acceptance must be met before closure");
-      const deliveries = await tx.listDeliveries(task.id);
-      const latest = deliveries.at(-1);
-      if (!latest || latest.id !== c.deliveryId || latest.taskRevisionId !== task.currentRevisionId)
-        throw new DomainError("STALE_DELIVERY", "close requires latest delivery for the current Task revision");
-      if (latest.technicalResult !== "passed") throw new DomainError("TECHNICAL_CHECK_FAILED", "latest delivery has not passed technical checks");
+      if (!!c.deliveryId === !!c.decisionId) throw new DomainError("CLOSURE_EVIDENCE_REQUIRED", "choose exactly one Delivery or settled cognition Decision");
       const proposal = await tx.getTaskProposal(task.id);
-      if (proposal?.useRequired) {
-        const observations = (await tx.listObservations(task.id)).filter(x => x.deliveryId === latest.id && x.observer === proposal.consumer);
-        if (observations.at(-1)?.result !== "used") throw new DomainError("USE_NOT_OBSERVED", "current delivery lacks declared-consumer use evidence");
+      let closureEvidence: Pick<TaskClosure,"deliveryId"|"decisionId"|"sourceInboxId"|"sourceEventId"|"sourceTaskId"|"waitingInboxId">;
+      if (c.deliveryId) {
+        if (c.waitingInboxId) throw new DomainError("CLOSURE_EVIDENCE_REQUIRED", "Delivery closure cannot cite a waiting Inbox");
+        const deliveries = await tx.listDeliveries(task.id);
+        const latest = deliveries.at(-1);
+        if (!latest || latest.id !== c.deliveryId || latest.taskRevisionId !== task.currentRevisionId)
+          throw new DomainError("STALE_DELIVERY", "close requires latest delivery for the current Task revision");
+        if (latest.technicalResult !== "passed") throw new DomainError("TECHNICAL_CHECK_FAILED", "latest delivery has not passed technical checks");
+        if (proposal?.useRequired) {
+          const observations = (await tx.listObservations(task.id)).filter(x => x.deliveryId === latest.id && x.observer === proposal.consumer);
+          if (observations.at(-1)?.result !== "used") throw new DomainError("USE_NOT_OBSERVED", "current delivery lacks declared-consumer use evidence");
+        }
+        closureEvidence = {deliveryId:latest.id,decisionId:null,sourceInboxId:null,sourceEventId:null,sourceTaskId:null,waitingInboxId:null};
+      } else {
+        if (proposal?.useRequired) throw new DomainError("USE_NOT_OBSERVED", "a cognition decision cannot replace required consumer use");
+        const fact = await tx.getCognitiveClosureFact?.(c.decisionId!);
+        if (!fact || fact.projectId !== c.projectId || fact.taskId !== task.id || fact.taskRevisionId !== task.currentRevisionId ||
+          fact.purpose !== "cognition" || fact.recipientRoleId !== fact.cognitiveRoleId ||
+          !["completed","failed","interrupted"].includes(fact.runState) ||
+          !(fact.kind === "no_action" && fact.outcome === "no_action" ||
+            fact.kind === "stop" && fact.outcome === "no_action" && fact.loopState === "stopped" ||
+            fact.kind === "waiting" && fact.outcome === "waiting"))
+          throw new DomainError("DECISION_UNSETTLED", "close requires a settled, signed cognition Decision for this fixed Task revision");
+        let waitingInboxId: string | null = null;
+        if (fact.kind === "waiting") {
+          if (!c.waitingInboxId || !fact.sourceTaskId || fact.sourceTaskId === task.id || !await tx.getTask(fact.sourceTaskId))
+            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a discoverable source business Task and same-source waiting Inbox");
+          const waiting = await tx.getWaitingHandoffFact?.(c.waitingInboxId);
+          if (!waiting || waiting.projectId !== c.projectId || waiting.loopId !== fact.loopId ||
+            waiting.sourceEventId !== fact.sourceEventId || waiting.recipientRoleId !== fact.cognitiveRoleId ||
+            waiting.disposition !== "waiting" || waiting.actorId !== fact.actorId)
+            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a signed same-source Inbox disposition by the cognition worker");
+          waitingInboxId = waiting.inboxId;
+        } else if (c.waitingInboxId) throw new DomainError("WAITING_HANDOFF_UNEXPECTED", "only waiting decisions may cite a waiting Inbox");
+        closureEvidence = {deliveryId:null,decisionId:fact.decisionId,sourceInboxId:fact.sourceInboxId,
+          sourceEventId:fact.sourceEventId,sourceTaskId:fact.sourceTaskId,waitingInboxId};
       }
       const revision = await newTaskRevision(tx, task, actorId, now, nextId, "done", c.reason);
       const closure: TaskClosure = { projectId: c.projectId, id: nextId(), taskId: task.id,
-        taskRevisionId: revision.id, deliveryId: latest.id, acceptanceResult: "met",
+        taskRevisionId: revision.id, ...closureEvidence, acceptanceResult: "met",
         acceptanceEvidence: c.acceptanceEvidence, reason: c.reason, actorId, createdAt: now };
       await tx.insertTaskClosure(closure);
       return result(c.operationId, task.id, revision.id, revision.version);

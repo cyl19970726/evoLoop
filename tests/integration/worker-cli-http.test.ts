@@ -571,9 +571,26 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal(secondContext.externalReferences.some((item:{body:string})=>item.body===wikiBody),true);
   const decisionId=randomUUID();
   assert.equal((await workerCommand(decisionWorker.wrapperPath,{type:"worker.decision",decisionId,
-    dispatchId:secondDispatch.entityId,runId:secondRunId,kind:"waiting",reason:"No new approved source",evidenceRefs:[]})).entityId,decisionId);
+    dispatchId:secondDispatch.entityId,runId:secondRunId,kind:"no_action",reason:"No new approved source",evidenceRefs:[]})).entityId,decisionId);
   assert.equal((await cli(decisionWorker.wrapperPath,["get",`/api/projects/${projectId}/orchestration/decisions/${decisionId}`])).reason,
     "No new approved source");
+  const decisionTaskVersion=(await workflow.getTask(owner,projectId,secondTaskId)).task.version;
+  const premature=await workflow.execute(owner,{projectId,operationId:randomUUID(),type:"task.close",taskId:secondTaskId,
+    expectedVersion:decisionTaskVersion,decisionId,acceptanceResult:"met",acceptanceEvidence:"Premature",reason:"No settlement yet"});
+  assert.equal(premature.status,"rejected");
+  await runtime.rejectDispatch(projectId,secondRunId,"Fixture terminal; no native Turn");
+  await orchestrate({type:"worker.outcome",dispatchId:secondDispatch.entityId,outcome:"no_action",deliveryId:null,
+    decisionId,evidenceRef:null,reason:"No new approved source"});
+  const closeResponse=await fetch(`${apiUrl}/api/commands`,{method:"POST",headers:{authorization:`Bearer ${ownerToken}`,
+    "content-type":"application/json"},body:JSON.stringify({projectId,operationId:randomUUID(),type:"task.close",
+    taskId:secondTaskId,expectedVersion:decisionTaskVersion,decisionId,acceptanceResult:"met",
+    acceptanceEvidence:"Signed no-action decision and terminal Run were read back",reason:"Bounded cognition accepted"})});
+  assert.equal(closeResponse.status,200,await closeResponse.text());
+  assert.equal((await workflow.getTask(owner,projectId,secondTaskId)).task.state,"done");
+  const decisionClosure=(await workflow.getTask(owner,projectId,secondTaskId)).closures.at(-1)!;
+  assert.equal(decisionClosure.decisionId,decisionId);
+  assert.equal(decisionClosure.deliveryId,null);
+  assert.equal(decisionClosure.sourceInboxId,secondInbox.entityId);
   const unknown=randomUUID();
   assert.equal((await cli(wrapper,["operation",unknown],1)).error?.code,"OPERATION_NOT_FOUND");
   assert.equal((await cli(wrapper,["task",randomUUID()],1)).error?.code,"FORBIDDEN");

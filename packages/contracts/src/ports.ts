@@ -10,6 +10,9 @@ import type { EvaluationReader, EvaluationTransaction } from "./evaluation.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader {
+  /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
+  getCognitiveClosureFact?(decisionId: string): Promise<CognitiveClosureFact | null>;
+  getWaitingHandoffFact?(inboxId: string): Promise<WaitingHandoffFact | null>;
   getDiscussion(id: string): Promise<DiscussionRecord | null>;
   listDiscussions(limit: number, cursor?: string): Promise<Page<DiscussionRecord>>;
   listDiscussionEvents(id: string): Promise<DiscussionEvent[]>;
@@ -49,6 +52,17 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listBasisDecisions(taskId: string): Promise<BasisDecision[]>;
   getOperation(id: string): Promise<Operation | null>;
   findTasksUsingDocument(documentId: string): Promise<Task[]>;
+}
+export interface CognitiveClosureFact {
+  projectId: string; decisionId: string; actorId: string; kind: "no_action" | "waiting" | "stop" | "failed";
+  taskId: string; taskRevisionId: string; runId: string; runState: "completed" | "failed" | "interrupted";
+  dispatchId: string; loopId: string; sourceInboxId: string; sourceEventId: string; sourceTaskId: string | null;
+  outcome: "no_action" | "waiting" | "failed"; purpose: string; recipientRoleId: string; cognitiveRoleId: string;
+  loopState: "active" | "paused" | "stopped";
+}
+export interface WaitingHandoffFact {
+  projectId: string; inboxId: string; loopId: string; sourceEventId: string;
+  recipientRoleId: string; disposition: "waiting"; actorId: string;
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
