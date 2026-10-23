@@ -31,7 +31,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。
 
-若声明 `consumer`，须填精确匹配的消费者标识；Agent 消费者应在启动前通过 `session` 核实实际 `principal.actorId`，并确认它会亲自使用当前 Delivery、签署观察。不要填 roleId、显示名或身份解释；解释写入 `evidence` 或 `reason`。外部 human 消费者继续使用现有 reviewer attestation 合同。只有验收确实要求使用时才设 `useRequired: true`；此时 `task.close` 要求当前 Delivery 最新的声明消费者观察结果为 `used`，worker 完成、仅有 Delivery 或其他 actor 使用都不能替代。`command schema task.create` 和 `command schema task.update` 会显示这些字段说明。
+若声明 `consumer`，须填精确匹配的消费者标识；Agent 消费者应在启动前通过 `session` 核实实际 `principal.actorId`，并确认它会亲自使用当前 Delivery、签署观察。不要填 roleId、显示名或身份解释；解释写入 `evidence` 或 `reason`。外部 human 消费者继续使用现有 reviewer attestation 合同。验收确实要求使用时，应同时声明 `consumer` 并设置 `useRequired: true`；此时 `task.close` 要求当前 Delivery 最新的声明消费者观察结果为 `used`，worker 完成、仅有 Delivery 或其他 actor 使用都不能替代。`command schema task.create` 和 `command schema task.update` 会显示这些字段说明。
 
 `task.start` 校验版本与实际授权，发布主正文并封存本轮依据，进入 in_progress；没有额外规格文档也能工作。省略 `basis` 会继承并校验原有固定来源；显式 `basis: []` 才表示移除其他来源、仅保留主正文。来源已经改版时须记录适用的保留决定，或明确选择所需固定修订，不能自动换成最新版。新写入口不再使用 task.propose/judge/accept/block/defer/resume/revise；以实际 schema 为准。
 
