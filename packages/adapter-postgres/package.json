@@ -9,7 +9,8 @@
     "./documents": "./dist/documents.js",
     "./roles": "./dist/roles.js",
     "./delivery": "./dist/delivery.js",
-    "./references": "./dist/references.js"
+    "./references": "./dist/references.js",
+    "./orchestration": "./dist/orchestration.js"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",
