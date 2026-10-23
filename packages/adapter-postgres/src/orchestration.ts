@@ -1,0 +1,112 @@
+import type { Pool, PoolClient } from "pg";
+import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+
+type Row = Record<string, any>;
+type Authorization = {
+  getAuthorizationFact(projectId: string, scopeId: string): Promise<OrchestrationAuthorizationFact | null>;
+  canActAsRole(projectId: string, actorId: string, roleId: string): Promise<boolean>;
+};
+const iso = (v: unknown) => v instanceof Date ? v.toISOString() : String(v);
+const data = <T>(row: Row | undefined): T | null => row ? row.data as T : null;
+const page = <T>(items: T[], limit: number, id: (item:T)=>string) => ({
+  items: items.slice(0,limit), nextCursor: items.length>limit ? id(items[limit-1]!) : null,
+});
+class Reader implements OrchestrationReader {
+  constructor(protected readonly db:PoolClient, protected readonly projectId:string) {}
+  async getOperation(id:string){const r=await this.db.query("SELECT * FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:x.project_id,id:x.operation_id,actorId:x.actor_id,commandHash:x.command_hash,result:x.result,createdAtUtc:iso(x.created_at_utc)} as OrchestrationOperation:null;}
+  protected async one<T>(table:string,key:string,id:string):Promise<T|null> {
+    const r=await this.db.query(`SELECT data FROM ${table} WHERE project_id=$1 AND ${key}=$2`,[this.projectId,id]);
+    return data<T>(r.rows[0]);
+  }
+  protected async listing<T>(table:string,key:string,limit:number,cursor?:string,loopId?:string) {
+    if (!Number.isInteger(limit)||limit<1||limit>100) throw new Error("limit must be 1..100");
+    const clauses=["project_id=$1",...(loopId?["loop_id=$2"]:[]),...(cursor?[`${key}>$${loopId?3:2}`]:[])];
+    const args=[this.projectId,...(loopId?[loopId]:[]),...(cursor?[cursor]:[]),limit+1];
+    const r=await this.db.query(`SELECT data FROM ${table} WHERE ${clauses.join(" AND ")} ORDER BY ${key} LIMIT $${args.length}`,args);
+    return page<T>(r.rows.map(x=>x.data),limit,x=>String((x as Record<string,string>).id));
+  }
+  getLoop(id:string){return this.one<OrchestrationLoop>("orchestration_loop","loop_id",id);}
+  listLoops(limit:number,cursor?:string){return this.listing<OrchestrationLoop>("orchestration_loop","loop_id",limit,cursor);}
+  getInbox(id:string){return this.one<OrchestrationInbox>("orchestration_inbox","inbox_id",id);}
+  listInbox(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationInbox>("orchestration_inbox","inbox_id",limit,cursor,loopId);}
+  getDispatch(id:string){return this.one<OrchestrationDispatch>("orchestration_dispatch","dispatch_id",id);}
+  listDispatches(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationDispatch>("orchestration_dispatch","dispatch_id",limit,cursor,loopId);}
+  getSubmission(id:string){return this.one<OrchestrationSubmission>("orchestration_submission","submission_id",id);}
+  getDecision(id:string){return this.one<OrchestrationWorkerDecision>("orchestration_decision","decision_id",id);}
+  async findSubmissionByDispatch(dispatchId:string){const r=await this.db.query("SELECT data FROM orchestration_submission WHERE project_id=$1 AND dispatch_id=$2",[this.projectId,dispatchId]);return data<OrchestrationSubmission>(r.rows[0]);}
+  async findDecisionByDispatch(dispatchId:string){const r=await this.db.query("SELECT data FROM orchestration_decision WHERE project_id=$1 AND dispatch_id=$2",[this.projectId,dispatchId]);return data<OrchestrationWorkerDecision>(r.rows[0]);}
+  listSubmissions(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationSubmission>("orchestration_submission","submission_id",limit,cursor,loopId);}
+  async listEvents(loopId:string,limit:number,cursor?:string){
+    if (!Number.isInteger(limit)||limit<1||limit>100) throw new Error("limit must be 1..100");
+    const args=[this.projectId,loopId,...(cursor?[cursor]:[]),limit+1];
+    const r=await this.db.query(`SELECT * FROM orchestration_event WHERE project_id=$1 AND loop_id=$2 ${cursor?"AND event_id>$3":""} ORDER BY event_id LIMIT $${args.length}`,args);
+    const rows=r.rows.map(x=>({projectId:x.project_id,id:x.event_id,loopId:x.loop_id,entityType:x.entity_type,entityId:x.entity_id,operationId:x.operation_id,kind:x.kind,actorId:x.actor_id,detail:x.detail,createdAtUtc:iso(x.created_at_utc)} as OrchestrationEvent));
+    return page(rows,limit,x=>x.id);
+  }
+  async listSourceFacts(loopId:string,limit:number,cursor?:string){
+    if (!Number.isInteger(limit)||limit<1||limit>100) throw new Error("limit must be 1..100");
+    const loop=await this.getLoop(loopId);
+    if(!loop)return {items:[],nextCursor:null};
+    const [cursorTime,cursorId] = cursor ? cursor.split("|") : [undefined,undefined];
+    if(cursor && (!cursorTime||!cursorId))throw new Error("invalid source cursor");
+    const r=await this.db.query(`WITH sources AS (
+      SELECT event_id AS id,created_at_utc,kind,entity_id AS subject_id,1 AS subject_version,
+        loop_id AS source_loop_id,NULL::uuid AS origin_dispatch_id
+        FROM orchestration_event WHERE project_id=$1 AND loop_id=$2 AND event_id=$3::uuid AND kind='loop.enrolled'
+      UNION ALL
+      SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,d.version,e.loop_id,d.dispatch_id
+        FROM orchestration_event e JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
+        JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
+        WHERE e.project_id=$1 AND e.loop_id=$2 AND e.kind='worker.outcome'
+          AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')
+          AND d.data->>'recipientRoleId'<>l.data->>'cognitiveRoleId'
+    ) SELECT * FROM sources WHERE ($4::timestamptz IS NULL OR (created_at_utc,id)>($4::timestamptz,$5::uuid))
+      ORDER BY created_at_utc,id LIMIT $6`,[this.projectId,loopId,loop.bootstrapEventId,cursorTime??null,cursorId??null,limit+1]);
+    const items=r.rows.map(x=>({projectId:this.projectId,id:x.id,createdAtUtc:iso(x.created_at_utc),
+      kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,
+      sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null} as OrchestrationSourceFact));
+    return {items:items.slice(0,limit),nextCursor:items.length>limit?`${items[limit-1]!.createdAtUtc}|${items[limit-1]!.id}`:null};
+  }
+}
+class Tx extends Reader implements OrchestrationTransaction {
+  constructor(db:PoolClient,projectId:string,private readonly authorization:Authorization){super(db,projectId);}
+  async insertOperation(x:OrchestrationOperation){await this.db.query("INSERT INTO orchestration_operation VALUES($1,$2,$3,$4,$5::jsonb,$6)",[this.projectId,x.id,x.actorId,x.commandHash,JSON.stringify(x.result),x.createdAtUtc]);}
+  async insertLoop(x:OrchestrationLoop){await this.db.query("INSERT INTO orchestration_loop VALUES($1,$2,$3,$4,$5::jsonb)",[this.projectId,x.id,x.version,x.state,JSON.stringify(x)]);}
+  async updateLoop(x:OrchestrationLoop,expectedVersion:number){await this.cas("orchestration_loop","loop_id",x.id,expectedVersion,x.version,x.state,x);}
+  async findInbox(loopId:string,sourceEventId:string,recipientRoleId:string,purpose:string){const r=await this.db.query("SELECT data FROM orchestration_inbox WHERE project_id=$1 AND loop_id=$2 AND source_event_id=$3 AND recipient_role_id=$4 AND purpose=$5",[this.projectId,loopId,sourceEventId,recipientRoleId,purpose]);return data<OrchestrationInbox>(r.rows[0]);}
+  async insertInbox(x:OrchestrationInbox){await this.db.query("INSERT INTO orchestration_inbox VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)",[this.projectId,x.id,x.loopId,x.sourceEventId,x.recipientRoleId,x.purpose,x.version,x.state,JSON.stringify(x)]);}
+  async updateInbox(x:OrchestrationInbox,expectedVersion:number){await this.cas("orchestration_inbox","inbox_id",x.id,expectedVersion,x.version,x.state,x);}
+  async insertDispatch(x:OrchestrationDispatch){await this.db.query("INSERT INTO orchestration_dispatch VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)",[this.projectId,x.id,x.loopId,x.inboxId,x.taskId,x.taskVersion,x.version,x.state,JSON.stringify(x)]);}
+  async updateDispatch(x:OrchestrationDispatch,expectedVersion:number){await this.cas("orchestration_dispatch","dispatch_id",x.id,expectedVersion,x.version,x.state,x);}
+  async insertSubmission(x:OrchestrationSubmission){const dispatch=await this.getDispatch(x.dispatchId);if(!dispatch)throw new Error("dispatch unavailable");await this.db.query("INSERT INTO orchestration_submission VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)",[this.projectId,x.id,x.dispatchId,dispatch.loopId,x.version,x.state,JSON.stringify(x)]);}
+  async insertDecision(x:OrchestrationWorkerDecision){await this.db.query("INSERT INTO orchestration_decision VALUES($1,$2,$3,$4::jsonb)",[this.projectId,x.id,x.dispatchId,JSON.stringify(x)]);}
+  async updateSubmission(x:OrchestrationSubmission,expectedVersion:number){await this.cas("orchestration_submission","submission_id",x.id,expectedVersion,x.version,x.state,x);}
+  private async cas(table:string,key:string,id:string,expected:number,next:number,state:string,x:unknown){const r=await this.db.query(`UPDATE ${table} SET version=$4,state=$5,data=$6::jsonb WHERE project_id=$1 AND ${key}=$2 AND version=$3`,[this.projectId,id,expected,next,state,JSON.stringify(x)]);if(r.rowCount!==1)throw new Error("ORCHESTRATION_VERSION_CONFLICT");}
+  async countCapacityUsed(loopId:string){const r=await this.db.query("SELECT count(*)::int AS n FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2 AND state IN ('claimed','dispatching','accepted','unknown')",[this.projectId,loopId]);return r.rows[0].n as number;}
+  async appendEvent(x:OrchestrationEvent){await this.db.query("INSERT INTO orchestration_event VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)",[this.projectId,x.id,x.loopId,x.entityType,x.entityId,x.operationId,x.kind,x.actorId,JSON.stringify(x.detail),x.createdAtUtc]);}
+  async getSourceFact(id:string):Promise<OrchestrationSourceFact|null>{const r=await this.db.query(`SELECT event_id,created_at AS created_at_utc,kind,entity_id AS subject_id,version AS subject_version,
+      NULL::uuid AS source_loop_id,NULL::uuid AS origin_dispatch_id FROM outbox_event WHERE project_id=$1 AND event_id=$2
+    UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,e.entity_id,1,e.loop_id,NULL::uuid
+      FROM orchestration_event e JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
+      WHERE e.project_id=$1 AND e.event_id=$2 AND e.event_id=(l.data->>'bootstrapEventId')::uuid AND e.kind='loop.enrolled'
+    UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,d.version,e.loop_id,d.dispatch_id
+      FROM orchestration_event e JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
+      JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
+      WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='worker.outcome'
+        AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')
+        AND d.data->>'recipientRoleId'<>l.data->>'cognitiveRoleId'`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null}:null;}
+  async getTaskFact(id:string):Promise<OrchestrationTaskFact|null>{const r=await this.db.query(`SELECT t.*,p.stage_id,s.goal_id FROM task t LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true LEFT JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.task_id,version:x.version,state:x.state,ownerRoleId:x.owner,goalId:x.goal_id??null,stageId:x.stage_id??null}:null;}
+  async getGoalFact(id:string){const r=await this.db.query("SELECT goal_id FROM project_goal WHERE project_id=$1 AND goal_id=$2",[this.projectId,id]);return r.rows[0]?{projectId:this.projectId,id,state:"active"}:null;}
+  async getStageFact(id:string){const r=await this.db.query("SELECT stage_id,goal_id,state FROM project_stage WHERE project_id=$1 AND stage_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.stage_id,goalId:x.goal_id,state:x.state}:null;}
+  getAuthorizationFact(scopeId:string){return this.authorization.getAuthorizationFact(this.projectId,scopeId);}
+  canActAsRole(actorId:string,roleId:string){return this.authorization.canActAsRole(this.projectId,actorId,roleId);}
+  async getRunFact(id:string){const r=await this.db.query("SELECT run_id,task_id,task_revision_id,input_hash,state FROM runtime_run WHERE project_id=$1 AND run_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.run_id,taskId:x.task_id,taskRevisionId:x.task_revision_id,inputHash:x.input_hash,state:x.state}:null;}
+  async getDeliveryFact(id:string){const r=await this.db.query("SELECT delivery_id,task_id,run_id,actor_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence FROM delivery WHERE project_id=$1 AND delivery_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.delivery_id,taskId:x.task_id,runId:x.run_id,actorId:x.actor_id,artifactRef:x.artifact_ref,artifactRevision:x.artifact_revision,contentHash:x.content_hash,technicalResult:x.technical_result,technicalEvidence:x.technical_evidence}:null;}
+  async getWorkflowOperationFact(id:string){const r=await this.db.query("SELECT operation_id,actor_id,command_type,command_hash,result FROM operation_journal WHERE project_id=$1 AND operation_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.operation_id,actorId:x.actor_id,commandType:x.command_type,commandHash:x.command_hash,status:x.result.status,resultRefId:x.result.revisionId??null}:null;}
+}
+/** Live grants are injected by the coordinator; this store never turns persisted role names into authority. */
+export class PgOrchestrationStore implements OrchestrationStore {
+  constructor(private readonly pool:Pool,private readonly authorization:Authorization){}
+  async transaction<T>(projectId:string,action:(tx:OrchestrationTransaction)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN");const locked=await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[projectId]);if(!locked.rowCount)throw new Error("PROJECT_NOT_FOUND");const result=await action(new Tx(client,projectId,this.authorization));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
+  async read<T>(projectId:string,action:(reader:OrchestrationReader)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN TRANSACTION READ ONLY");const result=await action(new Reader(client,projectId));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
+}
