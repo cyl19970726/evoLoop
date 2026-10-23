@@ -9,19 +9,21 @@ const common = { projectId: id, operationId: id };
 export const runtimeCommands = [
   z.strictObject({ ...common, type:z.literal("runtime.handoff.record"),runId:id,stage:z.enum(["received","read","adopted","effect"]),evidence:text }),
   z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(), sandbox: z.enum(["read-only", "workspace-write"]), approvalPolicy: z.enum(["on-request", "untrusted"]) }),
+  z.strictObject({ ...common, type: z.literal("runtime.session.close"), sessionId: id, expectedVersion: z.number().int().positive(), reason: text }),
   z.strictObject({ ...common, type: z.literal("runtime.run.reserve"), runId: id, taskId: id, sessionId: id, expectedVersion: z.number().int().positive(), input: text,
     evaluation: z.strictObject({ evaluationId: id, revisionId: id, caseId: id, conditionId: id }).optional() }),
   z.strictObject({ ...common, type: z.literal("runtime.run.abandonReadOnly"), runId: id, expectedVersion: z.number().int().positive(), reason: text, evidence: text }),
   z.strictObject({ ...common, type: z.literal("runtime.run.interrupt"), runId: id, reason: text }),
 ];
 
-export type RuntimeSessionState = "reserved" | "creating" | "ready" | "unknown" | "closed";
+export type RuntimeSessionState = "reserved" | "creating" | "ready" | "closing" | "unknown" | "closed";
 export type RuntimeRunState = "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown";
 export interface RuntimeSessionRecord {
   projectId: string; id: string; roleId: string; cwd: string; authorizationScope: string;
   model: string | null; sandbox: "read-only" | "workspace-write"; approvalPolicy: "on-request" | "untrusted";
   state: RuntimeSessionState; version: number; nativeThreadId: string | null; nativeSessionId: string | null;
   operationId: string; actorId: string; createdAt: string; updatedAt: string;
+  closeOperationId?: string | null; closeAttemptedAt?: string | null; closeVerifiedAt?: string | null;
 }
 export interface RuntimeRunRecord {
   projectId: string; id: string; taskId: string; taskRevisionId: string; basisSetId: string;
@@ -39,7 +41,7 @@ export interface EvaluationPacketBinding {
 }
 export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
-  kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" |
+  kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.preflightRejected" | "run.bound" | "run.status" | "run.unknown" |
     "run.reviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "runtime.approvalDeclined" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
   detail: string; nativeTurnId: string | null; cursor: string | null; itemsDigest: string | null;
@@ -59,6 +61,8 @@ export interface RuntimeBinding {
 }
 
 export interface RuntimeSessionSpec {
+  /** Trusted reservation actor; not sent as user-editable native input. */
+  actorId?: string;
   sessionId: string;
   roleId: string;
   projectId: string;
@@ -115,6 +119,10 @@ export interface RuntimePort {
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
   startTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn>;
   interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void>;
+  /** Optional native archive; an acknowledgement alone never proves archival. */
+  archiveThread?(binding: RuntimeBinding): Promise<void>;
+  /** True only after the exact owned identity appears in native archived history. */
+  isThreadArchived?(binding: RuntimeBinding): Promise<boolean>;
   onEvent(listener: (event: RuntimeEvent) => void): () => void;
   onApprovalRequest(listener: (request: RuntimeApprovalRequest) => void | Promise<void>): () => void;
   close(): Promise<void>;

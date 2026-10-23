@@ -4,6 +4,7 @@ import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from 
 import { ApiError, errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import { runtimeClient, type NativeResult, type RuntimeStatus } from "./client";
+import { OrchestrationPanel } from "../orchestration/OrchestrationPanel";
 
 function readErrorText(cause: unknown): string {
   if (cause instanceof ApiError && (cause.status === 0 || cause.status >= 500))
@@ -42,13 +43,15 @@ export function RuntimePanel({ context, refresh, task }: { context: MutationCont
     catch (cause) { setError(errorText(cause)); }
     finally { setRecovering(false); }
   }
-  const grants = status?.grants ?? [];
+  const grants = (status?.grants ?? []).filter(grant => !task || grant.roleId === task.owner);
+  const visibleSessions = task ? sessions.filter(session => runs.some(run => run.sessionId === session.id)) : sessions;
   return <section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}
     {status && !status.available && context.principal.permissions.includes("review") && <button disabled={recovering} onClick={recover}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</button>}
-    {sessions.length === 0 && <p className="empty">还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。</p>}
-    {sessions.map(session => <details className="workflow-detail" key={session.id}><summary>{session.roleId} · {session.state}</summary>
+    <OrchestrationPanel key={`${context.projectId}:${context.principal.actorId}`} token={context.token} projectId={context.projectId} refresh={refresh + epoch} taskId={task?.id} />
+    {visibleSessions.length === 0 && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
+    {visibleSessions.map(session => <details className="workflow-detail" key={session.id}><summary>{session.roleId} · {session.state}</summary>
       <dl><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>权限</dt><dd>{session.sandbox}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
       {session.state === "unknown" && <Notice error>创建结果未知，不能用新 ID 重复创建来代替核对。</Notice>}
       <SessionHistory context={context} sessionId={session.id} />

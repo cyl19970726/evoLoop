@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { commandSchema, idSchema } from "@evoloop/contracts";
+import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { ApiClient, CliApiError } from "./client.js";
 import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./materials.js";
 import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
@@ -10,7 +11,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge"]);
+const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -45,24 +46,30 @@ function mode(args: Args, names: string[]): string | undefined {
 const readModes = ["events", "history", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
 const listPaths: Record<string, string> = { tasks: "tasks", documents: "documents", goals: "goals", stages: "stages", discussions: "discussions", roles: "roles",
   schedules: "schedules", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
+const orchestrationLists: Record<string, string> = { loops: "loops", inbox: "inbox", dispatches: "dispatches" };
 const reads: Record<string, { path: string; modes: string[]; list?: boolean }> = {
   goal: { path: "goals", modes: ["revisions"] }, stage: { path: "stages", modes: ["revisions", "reviews"] },
   discussion: { path: "discussions", modes: ["events"] }, role: { path: "roles", modes: ["revisions", "reviews", "handoffs", "bindings"], list: true },
-  schedule: { path: "schedules", modes: ["revisions", "occurrences"], list: true }, run: { path: "runtime/runs", modes: ["events", "result"], list: true },
+  schedule: { path: "schedules", modes: ["revisions", "occurrences"], list: true }, run: { path: "runtime/runs", modes: ["events", "result"] },
   session: { path: "runtime/sessions", modes: ["events", "history"], list: true }, git: { path: "references/git", modes: [] }, references: { path: "references/tasks", modes: [] },
 };
+const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
+  loop: { path: "loops", modes: ["events"] }, inbox: { path: "inbox", modes: [] },
+  dispatch: { path: "dispatches", modes: [] }, submission: { path: "submissions", modes: [] },
+};
+const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSchema.options];
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
-  commands: ["id", "session", "project UUID", `list ${Object.keys(listPaths).join("|")} --project UUID [--limit 1..100] [--cursor CURSOR]`,
-    "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID]",
+  commands: ["id", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
+    "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "document UUID --project UUID [--revision UUID]", "original DOCUMENT_UUID --project UUID --revision UUID [--out NEW_DIRECTORY]",
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
-    `read ${Object.keys(reads).join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}]`,
+    `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
-    "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID core command replay after readback)", "get /api/... (legacy read-only)"],
+    "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
   readModes: reads,
   environment: { EVOLOOP_API_URL: "coordinator HTTP(S) origin, default http://127.0.0.1:4318", EVOLOOP_TOKEN: "private bearer credential",
     EVOLOOP_PROJECT: "optional default project UUID", EVOLOOP_STATE_DIR: "private local receipt directory", EVOLOOP_TIMEOUT_MS: "request+body deadline, default 15000; max 300000" },
@@ -78,10 +85,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   const project = () => uuid(option(args, "project") ?? env.EVOLOOP_PROJECT, "Project");
   const revision = () => option(args, "revision") ? uuid(option(args, "revision"), "Revision") : undefined;
   const store = new ReceiptStore(env.EVOLOOP_STATE_DIR);
-  if (action === "command" && args.words[1] === "types") { check(args, 2); return { types: commandSchema.options.map(schema => schema.shape.type.value) }; }
+  if (action === "command" && args.words[1] === "types") { check(args, 2); return { types: allCommandSchemas.map(schema => schema.shape.type.value) }; }
   if (action === "command" && args.words[1] === "schema") {
     check(args, 3);
-    const schema = commandSchema.options.find(schema => schema.shape.type.value === args.words[2]);
+    const schema = allCommandSchemas.find(schema => schema.shape.type.value === args.words[2]);
     if (!schema) throw new UsageError("Unknown command type; use command types.");
     return schema.toJSONSchema();
   }
@@ -113,10 +120,15 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     const file = args.words[1] === "run" ? args.words[2] : args.words[1];
     check(args, args.words[1] === "run" ? 3 : 2);
     if (!file) throw new UsageError("command run requires a JSON file.");
-    const command = commandSchema.parse(JSON.parse(await readFile(file, "utf8")));
+    const source = JSON.parse(await readFile(file, "utf8"));
+    const business = commandSchema.safeParse(source), orchestration = business.success ? null : orchestrationCommandSchema.safeParse(source);
+    if (!business.success && !orchestration?.success) throw new UsageError("Input does not match a business or orchestration command schema; use command schema TYPE.");
+    const command = business.success ? business.data : orchestration?.success ? orchestration.data : null;
+    if (!command) throw new UsageError("Input does not match a command schema.");
+    const orchestrationRoute = !business.success;
     return dispatchMutation(client, store, origin, token, { id: command.operationId, operationId: command.operationId,
-      projectId: command.projectId, kind: command.type, path: "/api/commands", body: command, confirmation: "command",
-      recovery: { kind: "core", path: `/api/projects/${command.projectId}/operations/${command.operationId}` } }, value => io.stderr(JSON.stringify(value) + "\n"), await verifiedActor());
+      projectId: command.projectId, kind: command.type, path: orchestrationRoute ? "/api/orchestration/commands" : "/api/commands", body: command, confirmation: "command",
+      recovery: { kind: orchestrationRoute ? "orchestration" : "core", path: `/api/projects/${command.projectId}/${orchestrationRoute ? "orchestration/" : ""}operations/${command.operationId}` } }, value => io.stderr(JSON.stringify(value) + "\n"), await verifiedActor());
   }
   if (action === "request") {
     check(args, 2, ["project", "file", "id", "receipt"]);
@@ -136,8 +148,16 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "list") {
-    check(args, 2, ["project", "limit", "cursor", "task", "knowledge"]);
-    const entity = args.words[1]!, suffix = listPaths[entity]; if (!suffix) throw new UsageError("Unknown list; use help.");
+    check(args, 2, ["project", "limit", "cursor", "task", "knowledge", "loop"]);
+    const entity = args.words[1]!, orchestrationList = orchestrationLists[entity], suffix = listPaths[entity];
+    if (orchestrationList) {
+      if (args.options.has("task") || args.options.has("knowledge") || args.options.has("limit") || args.options.has("cursor"))
+        throw new UsageError("Orchestration list accepts only --project and --loop for inbox/dispatches.");
+      const loop = option(args, "loop");
+      if (entity === "loops" && loop || entity !== "loops" && !loop) throw new UsageError("Use --loop UUID for inbox/dispatches only.");
+      return client.get(`${prefix}/orchestration/loops${loop ? `/${uuid(loop, "Loop")}/${orchestrationList}` : ""}`);
+    }
+    if (!suffix || args.options.has("loop")) throw new UsageError("Unknown list or unsupported --loop; use help.");
     const query = new URLSearchParams();
     if (args.options.has("limit") || args.options.has("cursor")) {
       if (!["tasks", "documents", "goals", "discussions", "roles", "evaluations", "knowledge", "candidates"].includes(entity)) throw new UsageError("This endpoint is not paginated; omit --limit/--cursor.");
@@ -184,6 +204,11 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   if (action === "candidate" || action === "operation") { check(args, 2, ["project"]); return client.get(`${prefix}/${action === "candidate" ? "knowledge/candidates" : "operations"}/${uuid(args.words[1], action)}`); }
   if (action === "read") {
     check(args, 3, ["project", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
+    const orchestration = orchestrationReads[kind];
+    if (orchestration) {
+      if (selected && !orchestration.modes.includes(selected)) throw new UsageError("Unsupported orchestration read mode.");
+      return client.get(`${prefix}/orchestration/${orchestration.path}/${objectId}${selected ? `/${selected}` : ""}`);
+    }
     const definition = reads[kind]; if (!definition || selected && !definition.modes.includes(selected)) throw new UsageError("Unsupported object or read mode; use help.");
     if (definition.list && !selected) {
       const result = await client.get(`${prefix}/${definition.path}`), entries = Array.isArray(result) ? result : record(result)?.items;

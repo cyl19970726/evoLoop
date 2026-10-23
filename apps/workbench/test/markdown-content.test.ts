@@ -108,3 +108,23 @@ test("candidate Markdown preview keeps sections, tables and lists after title de
   assert.match(rendered, /<table>[\s\S]*<td>固定<\/td>[\s\S]*<\/table>/);
   assert.match(rendered, /<li>保留的候选事实<\/li>/);
 });
+
+test("fixed Wiki links render only in the owning project, including an exact bare canonical reference", () => {
+  const project = "11111111-1111-4111-8111-111111111111";
+  const other = "22222222-2222-4222-8222-222222222222";
+  const knowledge = "33333333-3333-4333-8333-333333333333";
+  const revision = "44444444-4444-4444-8444-444444444444";
+  const target = `#/p/${project}/knowledge?knowledgeId=${knowledge}&knowledgeRevision=${revision}`;
+  const html = (source: string, projectId = project) => splitMarkdown(source, {projectId})
+    .map(part => part.value).join("");
+  assert.match(html(`[固定知识](${target})`), /<a href="#\/p\/11111111[^\"]+knowledgeRevision=44444444[^\"]+">固定知识<\/a>/);
+  assert.match(html(`来源 ${target}`), /<a href="#\/p\/11111111[^\"]+">#\/p\/11111111/);
+  for (const invalid of [target.replace(project, other), `${target}&unexpected=x`,
+    target.replace(`knowledgeRevision=${revision}`, `knowledgeRevision=${revision}&knowledgeRevision=${revision}`),
+    target.replace(revision, "invalid"), target.replace("/knowledge?", `/knowledge/${knowledge}?`),
+    `${target}/extra`]) {
+    assert.doesNotMatch(html(`[不可信](${invalid})`), /<a href=/);
+    assert.doesNotMatch(html(`来源 ${invalid}`), /<a href=/);
+  }
+  assert.doesNotMatch(html(`[无上下文](${target})`, ""), /<a href=/);
+});

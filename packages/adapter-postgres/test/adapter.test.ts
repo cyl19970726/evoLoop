@@ -70,6 +70,39 @@ test("migration can run twice without changing history", async () => {
   assert.equal(result.rows[0].count, before.rows[0].count);
 });
 
+test("session close intent and verification survive PostgreSQL readback without removing history", async () => {
+  const p = project();
+  const sessionId = randomUUID(), closeOperationId = randomUUID();
+  await uow.transaction(p.id, async tx => {
+    await tx.insertProject(p);
+    await tx.insertRuntimeSession({ projectId: p.id, id: sessionId, roleId: "operator", cwd: "/tmp/owned",
+      authorizationScope: "project", model: null, sandbox: "read-only", approvalPolicy: "on-request",
+      state: "ready", version: 1, nativeThreadId: "native-owned", nativeSessionId: "native-session",
+      operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+  });
+  await uow.transaction(p.id, async tx => {
+    const current = (await tx.getRuntimeSession(sessionId))!;
+    await tx.updateRuntimeSession({ ...current, state: "closing", version: 2, closeOperationId, updatedAt: now }, 1);
+  });
+  await uow.transaction(p.id, async tx => {
+    const current = (await tx.getRuntimeSession(sessionId))!;
+    assert.equal(current.closeOperationId, closeOperationId);
+    await tx.updateRuntimeSession({ ...current, version: 3, closeAttemptedAt: now, updatedAt: now }, 2);
+  });
+  await assert.rejects(uow.transaction(p.id, async tx => {
+    const current = (await tx.getRuntimeSession(sessionId))!;
+    await tx.updateRuntimeSession({ ...current, state: "closed", version: 4, updatedAt: now }, 3);
+  }));
+  await uow.transaction(p.id, async tx => {
+    const current = (await tx.getRuntimeSession(sessionId))!;
+    await tx.updateRuntimeSession({ ...current, state: "closed", version: 4, closeVerifiedAt: now, updatedAt: now }, 3);
+    assert.equal((await tx.getRuntimeSession(sessionId))?.nativeThreadId, "native-owned");
+  });
+  const row = await uow.read(p.id, tx => tx.getRuntimeSession(sessionId));
+  assert.equal(row?.state, "closed");
+  assert.equal(row?.closeVerifiedAt, now);
+});
+
 test("legacy Task decision projection follows only the current historical revision and disappears after a new revision", async () => {
   const legacySchema = `el_m1_projection_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   const migrations = fileURLToPath(new URL("../migrations/", import.meta.url));

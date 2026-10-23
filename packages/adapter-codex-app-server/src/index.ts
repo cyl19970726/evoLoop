@@ -108,6 +108,8 @@ export interface CodexAppServerOptions {
   verifyBinding?: (binding: RuntimeBinding) => Promise<boolean>;
   /** Synthetic parent environment for process-boundary tests; all values still pass through the allowlist. */
   environment?: NodeJS.ProcessEnv;
+  /** Trusted local profile configuration, never accepted from a worker's request. */
+  threadConfig?: (spec: RuntimeSessionSpec) => Record<string, unknown> | undefined;
 }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -333,7 +335,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (this.pendingCreate) throw new RuntimeProtocolError("another thread creation is pending");
     this.pendingCreate = { ...spec };
     try {
-      const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop" }));
+      const config = this.options.threadConfig?.(spec);
+      const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}) }));
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");
       const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER };
@@ -356,6 +359,36 @@ export class CodexAppServerAdapter implements RuntimePort {
     const thread = object(result?.thread);
     if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("read thread does not match binding");
     return result;
+  }
+
+  async archiveThread(binding: RuntimeBinding): Promise<void> {
+    this.owned(binding);
+    // 0.154.0 returns an empty acknowledgement. The coordinator must verify archive separately.
+    await this.request("thread/archive", { threadId: binding.nativeThreadId });
+  }
+
+  async isThreadArchived(binding: RuntimeBinding): Promise<boolean> {
+    this.owned(binding);
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
+      const result = object(await this.request("thread/list", { archived: true, cwd: binding.cwd,
+        useStateDbOnly: true, limit: 100, ...(cursor ? { cursor } : {}) }));
+      if (!result || !Array.isArray(result.data)) throw new RuntimeProtocolError("invalid archived thread page");
+      for (const entry of result.data) {
+        const thread = object(entry);
+        if (!thread || !nonempty(thread.id)) throw new RuntimeProtocolError("invalid archived thread identity");
+        if (thread.id === binding.nativeThreadId) {
+          if (thread.sessionId !== binding.nativeSessionId || thread.cwd !== binding.cwd)
+            throw new RuntimeProtocolError("archived thread does not match owned binding");
+          return true;
+        }
+      }
+      if (result.nextCursor == null) return false;
+      if (!nonempty(result.nextCursor) || seen.has(result.nextCursor)) throw new RuntimeProtocolError("invalid archived thread cursor");
+      seen.add(result.nextCursor); cursor = result.nextCursor;
+    }
+    throw new RuntimeProtocolError("archived thread listing exceeds bounded recovery window");
   }
 
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {

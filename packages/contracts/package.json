@@ -17,7 +17,8 @@
     "./delivery": "./dist/delivery.js",
     "./discussions": "./dist/discussions.js",
     "./references": "./dist/references.js",
-    "./evaluation": "./dist/evaluation.js"
+    "./evaluation": "./dist/evaluation.js",
+    "./orchestration": "./dist/orchestration.js"
   },
   "dependencies": {
     "zod": "4.6.7"

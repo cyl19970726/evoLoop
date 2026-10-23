@@ -71,6 +71,9 @@ export class RuntimeRunner {
     runtimeFactory(): ManagedRuntime; workflow: WorkflowService; trusted: RuntimeWorkflowService;
     principals: Principal[]; canWrite(): boolean; allowedCwd(projectId: string, cwd: string): Promise<boolean>;
     hasGrant(scope: RuntimeGrant): boolean;
+    /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
+    mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
+    mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
     readDocumentOriginal?: ReadDocumentOriginal;
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
@@ -170,6 +173,10 @@ export class RuntimeRunner {
         const sessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
         for (const session of sessions) {
           if (session.state === "reserved") await this.create(session);
+          if (session.state === "closing") {
+            try { await this.closeSession(session); }
+            catch { this.currentError = "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。"; }
+          }
         }
         const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
         for (const run of runs) {
@@ -180,11 +187,34 @@ export class RuntimeRunner {
       } catch { this.currentError = "运行服务暂不可读取；新派发须等待恢复。"; }
     }
   }
+  private async closeSession(session: RuntimeSessionRecord): Promise<void> {
+    if (!session.closeOperationId || !this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd))
+      throw new Error("Session close authority or intent is unavailable");
+    if (!this.runtime.isThreadArchived) throw new Error("Native archive verification unsupported");
+    const binding = bindingOf(session);
+    await this.runtime.registerBinding(binding);
+    // Readback comes before any write, including after a restart or lost acknowledgement.
+    if (await this.runtime.isThreadArchived(binding)) {
+      await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
+      return;
+    }
+    if (session.closeAttemptedAt) return;
+    if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
+    // Native source is a UI classification, not proof of who created the thread.
+    // inspect validates the exact persisted thread/session/cwd binding before archive.
+    await this.runtime.inspect(binding);
+    await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
+    try { await this.runtime.archiveThread(binding); }
+    catch { /* Archive may have happened. A subsequent pump only reads archived state. */ }
+    if (await this.runtime.isThreadArchived(binding))
+      await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
+  }
   private async create(session: RuntimeSessionRecord): Promise<void> {
     if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
+    if (this.deps.mayCreateSession && !await this.deps.mayCreateSession(session)) return;
     await this.deps.trusted.beginSessionCreate(session.projectId, session.id);
     try {
-      const spec: RuntimeSessionSpec = { sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
+      const spec: RuntimeSessionSpec = { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
         cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
         approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}) };
       const binding = await this.runtime.create(spec);
@@ -381,6 +411,8 @@ export class RuntimeRunner {
 
   private async process(principal: Principal, original: RuntimeRunRecord): Promise<void> {
     if (!["requested", "running", "unknown"].includes(original.state)) return;
+    if (original.state === "requested" && !original.nativeTurnId && this.deps.mayDispatchRun &&
+      !await this.deps.mayDispatchRun(original)) return;
     const session = await this.deps.workflow.getRuntimeSession(principal, original.projectId, original.sessionId);
     if (session.state !== "ready") return;
     if (!this.authorized(session, original.actorId)) {
@@ -389,7 +421,7 @@ export class RuntimeRunner {
     }
     const binding = await this.restore(session);
     let run = original;
-    if (run.state === "requested") {
+    if (run.state === "requested" && !run.nativeTurnId) {
       let input: string;
       try {
         if (run.evaluationBinding) {
@@ -398,6 +430,8 @@ export class RuntimeRunner {
         } else input = (await this.input(principal, run)).input;
       }
       catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, error instanceof Error ? error.message : "Preflight failed"); return; }
+      // Recheck after preflight, immediately before recording the external-start intent.
+      if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return;
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
       try {
         const turn = await this.runtime.startTurn(binding, input, run.operationId);

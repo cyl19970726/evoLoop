@@ -134,7 +134,7 @@ export class WorkflowService {
 
   private commandPermission(command: Command): "write" | "review" {
     if (command.type.startsWith("evaluation.")) return "review";
-    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
+    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
@@ -155,12 +155,29 @@ export class WorkflowService {
       case "document.create": {
         if (await tx.getDocument(command.documentId)) throw new DomainError("ALREADY_EXISTS", "Document already exists");
         if (command.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task documents are created through task.create");
+        if (command.origin && command.kind !== "issue" && command.kind !== "report")
+          throw new DomainError("INVALID_ORIGIN", "Only issue and report documents may cite a Task or Run origin");
         requireBody(command.body);
+        let origin: Document["origin"] = null;
+        if (command.origin) {
+          const task = await tx.getTask(command.origin.taskId);
+          if (!task || task.projectId !== command.projectId) throw new DomainError("ORIGIN_MISMATCH", "Origin Task is unavailable in this project");
+          let taskRevisionId = task.currentRevisionId;
+          if (command.origin.runId) {
+            const run = await tx.getRuntimeRun(command.origin.runId);
+            if (!run || run.projectId !== command.projectId || run.taskId !== task.id || run.state === "unknown")
+              throw new DomainError("ORIGIN_MISMATCH", "Origin Run must belong to the Task and have a known state");
+            taskRevisionId = run.taskRevisionId;
+          }
+          if (!await tx.getTaskRevision(task.id, taskRevisionId))
+            throw new DomainError("ORIGIN_MISMATCH", "Fixed origin Task revision is unavailable");
+          origin = { taskId: task.id, runId: command.origin.runId ?? null, taskRevisionId };
+        }
         const revisionId = this.deps.ids.next();
         const document: Document = {
           projectId: command.projectId, id: command.documentId, title: command.title,
           version: 1, currentRevisionId: revisionId, adoptedRevisionId: null,
-          kind: command.kind ?? null, status: "draft",
+          kind: command.kind ?? null, status: "draft", origin,
         };
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
@@ -512,7 +529,7 @@ export class WorkflowService {
         if (command.type === "schedule.create" || command.type === "schedule.revise") {
           return applySchedule(tx, principal, command as ScheduleCommand, now);
         }
-        if (command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
+        if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value) });
         }
         return applyWorkflow({ tx, command, principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
@@ -616,10 +633,12 @@ export class WorkflowService {
     return this.read(principal, projectId, async reader => {
       required(await reader.getTask(taskId), "Task");
       const revisions = await reader.listTaskRevisions(taskId);
-      return Promise.all(revisions.map(async revision => ({ revision,
+      const result: Array<{ revision: TaskRevision; basis: BasisSet | null }> = [];
+      for (const revision of revisions) result.push({ revision,
         basis: revision.basisSetId
           ? required(await reader.getBasisSet(taskId, revision.id, revision.basisSetId), "Basis set") : null,
-      })));
+      });
+      return result;
     });
   }
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {

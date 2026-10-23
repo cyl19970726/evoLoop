@@ -44,6 +44,48 @@ test("fixed original verifies exact UTF-8 BOM/CRLF bytes and exports a new compl
   } finally { await rm(parent, { recursive: true, force: true }); }
 });
 
+test("current todo context exposes linked planning pointers separately from read originals", async () => {
+  const root = `/api/projects/${projectId}`;
+  const linked = id(80), linkedRevision = id(81), primary = id(82), primaryRevision = id(83);
+  const primaryBody = "Todo planning task";
+  const task = { projectId, id: taskId, version: 3, currentRevisionId: taskRevisionId,
+    state: "todo", contentDocumentId: primary, contentRevisionId: primaryRevision };
+  const current = { projectId, taskId, id: taskRevisionId, version: 3, state: "todo", basisSetId: null,
+    content: primaryBody, contentDocumentId: primary, contentRevisionId: primaryRevision };
+  const planningPath = `${root}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${taskRevisionId}`;
+  const candidate = {sourceTaskId: taskId, sourceTaskRevisionId: taskRevisionId, documentId: linked,
+    adoptedRevisionId: linkedRevision, contentHash: sha("Linked original"), status: "published",
+    originalPath: `${root}/documents/${linked}/revisions/${linkedRevision}/original`};
+  const responses: Record<string, unknown> = {
+    [`${root}/tasks/${taskId}`]: {task, revision: current, basis: null, links: [{documentId: linked}]},
+    [`${root}/tasks/${taskId}/revisions`]: [{revision: current, basis: null}],
+    [`${root}/references/tasks/${taskId}/revisions/${taskRevisionId}`]: [],
+    [`${root}/documents/${primary}/revisions/${primaryRevision}/original`]: {
+      status: "available", body: primaryBody, assets: [], revision: { projectId, documentId: primary,
+        id: primaryRevision, format: "markdown", mediaType: "text/markdown", originalName: "task.md",
+        body: primaryBody, payloadRef: null, contentHash: sha(primaryBody), assetsManifest: [] } },
+    [planningPath]: {projectId, taskId, observedTaskRevisionId: taskRevisionId, observedAtUtc: "2026-10-24T00:00:00.000Z", sealed: false,
+      observedPlanningCandidates: [candidate], unavailableLinks: []},
+  };
+  const api = client(responses);
+  const result = await readTaskContext(api, projectId, taskId);
+  assert.equal(result.status, "complete");
+  assert.equal(result.task?.state, "todo");
+  assert.equal(result.basis, null);
+  assert.deepEqual(result.observedPlanningCandidates, [candidate]);
+  assert.equal(result.documents.length, 1);
+  assert.equal(api.seen.includes(planningPath), true);
+  assert.equal(api.seen.includes(candidate.originalPath), false);
+  const missing = await readTaskContext(client({...responses, [planningPath]: undefined}), projectId, taskId);
+  assert.equal(missing.status, "partial");
+  assert.match(missing.failures[0]!.reason, /Planning sources/);
+  const historical = await readTaskContext(client({...responses,
+    [`${root}/tasks/${taskId}/revisions/${id(90)}`]: {revision: {...current, id: id(90)}, basis: null},
+    [`${root}/tasks/${taskId}/revisions`]: [{revision: current, basis: null}, {revision: {...current, id: id(90)}, basis: null}],
+  }), projectId, taskId, id(90));
+  assert.deepEqual(historical.observedPlanningCandidates, []);
+});
+
 test("rejects tampered, missing, duplicated and unsafe original resources before export", async () => {
   const variants = [
     { ...originalResponse(), body: "changed" },
@@ -103,6 +145,8 @@ test("context pins Task revision, full basis original, Git and Wiki; stale Wiki 
   assert.equal(complete.status, "complete");
   assert.equal(complete.documents[0]?.body, bytes.toString("utf8"));
   assert.deepEqual(complete.externalReferences.map(x => x.body), [gitBody, wikiBody]);
+  assert.deepEqual(complete.observedPlanningCandidates, []);
+  assert.equal(api.seen.some(path => path.includes("planning-sources")), false);
   assert.equal(api.seen.every(path => path.startsWith("/api/")), true);
   responses[`${root}/knowledge/pages/${wikiId}`] = { ...page, revision: id(16) };
   const partial = await readTaskContext(client(responses), projectId, taskId);
@@ -130,6 +174,7 @@ test("a missing fixed basis original never becomes a complete context", async ()
   assert.equal(context.failures[0]?.kind, "document");
   assert.equal(api.seen.some(path => path.includes(`/documents/${documentId}/revisions/${documentRevisionId}/original`)), true);
   assert.equal(api.seen.some(path => path.includes(`/references/tasks/${taskId}/revisions/${id(20)}`)), false);
+  assert.equal(api.seen.some(path => path.includes("planning-sources")), false);
 });
 
 test("combined basis originals over 16 MiB stay partial with every omitted fixed revision named", async () => {
@@ -167,7 +212,7 @@ test("todo context reads the fixed primary without precreated reference docs and
     content: bytes.toString("utf8"), contentDocumentId: documentId, contentRevisionId: documentRevisionId };
   const task = { projectId, id: taskId, currentRevisionId: taskRevisionId, state: "todo", ...selected };
   const responses: Record<string, unknown> = {
-    [`${root}/tasks/${taskId}`]: { task: { ...task, id: taskId }, revision: selected, basis: null },
+    [`${root}/tasks/${taskId}`]: { task: { ...task, id: taskId }, revision: selected, basis: null, links: [] },
     [`${root}/tasks/${taskId}/revisions`]: [{ revision: selected, basis: null }],
     [`${root}/references/tasks/${taskId}/revisions/${taskRevisionId}`]: [], [originalPath]: originalResponse(),
   };
@@ -175,7 +220,7 @@ test("todo context reads the fixed primary without precreated reference docs and
   assert.equal(result.status, "complete");
   assert.equal(result.documents.length, 1);
   assert.equal(result.documents[0]!.revision.id, documentRevisionId);
-  responses[`${root}/tasks/${taskId}`] = { task: { ...task, id: taskId }, revision: { ...selected, content: "different projection" }, basis: null };
+  responses[`${root}/tasks/${taskId}`] = { task: { ...task, id: taskId }, revision: { ...selected, content: "different projection" }, basis: null, links: [] };
   const partial = await readTaskContext(client(responses), projectId, taskId);
   assert.equal(partial.status, "partial");
   assert.match(partial.failures[0]!.reason, /projection differs/);

@@ -17,8 +17,13 @@ import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
+import { OrchestrationError } from "@evoloop/core/orchestration";
+import { registerOrchestrationRoutes, registerPlanningSourcesRoute, type OrchestrationRouteOptions,
+  type PlanningSourcesReader } from "./orchestration/routes.js";
+import { authorizeWorkerRequest, type WorkerGuardFacts } from "./workers/guard.js";
+import type { WorkerIdentity } from "./workers/types.js";
 
-declare module "fastify" { interface FastifyRequest { principal: Principal | null } }
+declare module "fastify" { interface FastifyRequest { principal: Principal | null; workerIdentity: WorkerIdentity | null } }
 const pageSchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: idSchema.optional() });
 const errorStatus = (code: string) => code === "FORBIDDEN" ? 403 : code === "NOT_FOUND" ? 404 : 409;
 export async function buildServer(options: {
@@ -34,10 +39,15 @@ export async function buildServer(options: {
   documents?: Omit<DocumentRouteOptions, "workflow">;
   knowledge?: Omit<KnowledgeRouteOptions, "workflow">;
   readEvaluationPacket?: ReadEvaluationPacket;
+  orchestration?: OrchestrationRouteOptions;
+  planningSources?: PlanningSourcesReader;
+  workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
+  sourceConfiguration?(principal: Principal | null): {git: boolean; wiki: boolean};
 }) {
   const credentials = authConfigSchema.parse(options.credentials);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   app.decorateRequest("principal", null);
+  app.decorateRequest("workerIdentity", null);
   app.addHook("onRequest", async (request, reply) => {
     reply.header("Cache-Control", "no-store");
     reply.header("X-Content-Type-Options", "nosniff");
@@ -45,16 +55,27 @@ export async function buildServer(options: {
     reply.header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data:; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
     if (!request.url.startsWith("/api/")) return;
     request.principal = authenticate(request.headers.authorization, credentials);
+    if (!request.principal && options.workers) {
+      request.workerIdentity = await options.workers.authenticate(request.headers.authorization);
+      request.principal = request.workerIdentity?.principal ?? null;
+    }
     if (!request.principal) return reply.code(401).send({ code: "UNAUTHENTICATED", message: "需要有效的本机访问令牌。" });
     if (request.method !== "GET" && request.method !== "HEAD" && options.canWrite && !options.canWrite()) {
       return reply.code(503).send({ code: "UNAVAILABLE", message: "协调者资格不可用；请保留操作 ID 并回读。" });
     }
+  });
+  // Body-aware scope authorization applies to every worker API request, including plugin routes.
+  app.addHook("preValidation", async (request, reply) => {
+    if (request.workerIdentity && (!options.workers || !await authorizeWorkerRequest(request.workerIdentity,
+      {method: request.method, path: request.url, body: request.body}, options.workers.facts(request.workerIdentity))))
+      return reply.code(403).send({code: "FORBIDDEN", message: "当前执行身份没有此对象或操作的授权。"});
   });
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.code(400).send({ code: "INVALID_INPUT", message: "输入不符合当前接口合同。", issues: error.issues.map(x => ({ path: x.path, code: x.code })) });
     }
     if (error instanceof DomainError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
+    if (error instanceof OrchestrationError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
     if (typeof error === "object" && error !== null && "statusCode" in error) {
       if (error.statusCode === 413) return reply.code(413).send({ code: "TOO_LARGE", message: "请求超过本片大小限制。" });
       if (error.statusCode === 400) return reply.code(400).send({ code: "INVALID_INPUT", message: "请求格式不合法。" });
@@ -67,9 +88,13 @@ export async function buildServer(options: {
   const callerGrants = (projectId:string,actorId:string) => (options.runtimeGrants?.(projectId,actorId) ?? []).filter(g=>g.projectId===projectId && g.actorId===actorId);
   const callerSchedulingGrants = (projectId: string, actorId: string) =>
     (options.schedulingGrants?.(projectId, actorId) ?? []).filter(g => g.projectId === projectId && g.actorId === actorId);
-  const currentCapabilities = () => ({ ...capabilities, goalWorkflow: true, html: !!options.documents, documentOriginals: !!options.documents, knowledge: !!options.knowledge, runtime: options.runtime?.status().available ?? false });
+  const currentCapabilities = (principal: Principal | null = null) => ({ ...capabilities,
+    ...(options.sourceConfiguration?.(principal) ?? {}), goalWorkflow: true, html: !!options.documents,
+    documentOriginals: !!options.documents, knowledge: !!options.knowledge, runtime: options.runtime?.status().available ?? false,
+    sourceConfiguration: options.sourceConfiguration?.(principal) ?? {git: false, wiki: false},
+  });
   app.get("/health", async () => ({ status: options.canWrite?.() === false ? "unavailable" : "ok", capabilities: currentCapabilities() }));
-  app.get("/api/session", async request => ({ principal: who(request.principal), capabilities: currentCapabilities() }));
+  app.get("/api/session", async request => ({ principal: who(request.principal), capabilities: currentCapabilities(request.principal) }));
   app.post("/api/commands", async (request, reply) => {
     const command = commandSchema.parse(request.body);
     if (command.type.startsWith("runtime.")) {
@@ -85,7 +110,7 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
         }
       }
-      if (command.type === "runtime.run.reserve") {
+      if (command.type === "runtime.run.reserve" || command.type === "runtime.session.close") {
         const session = await options.service.getRuntimeSession(principal, command.projectId, command.sessionId);
         if (!options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
           roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox })) {
@@ -141,6 +166,9 @@ export async function buildServer(options: {
     const projectId = params(request.params).projectId!;
     const query = z.object({ taskId: idSchema.optional() }).parse(request.query);
     return options.service.listRuntimeRuns(who(request.principal), projectId, query.taskId);
+  });
+  app.get("/api/projects/:projectId/runtime/runs/:id", async request => {
+    const p = params(request.params); return options.service.getRuntimeRun(who(request.principal), p.projectId!, p.id!);
   });
   app.get("/api/projects/:projectId/runtime/runs/:id/events", async request => {
     const p = params(request.params); return options.service.listRuntimeEvents(who(request.principal), p.projectId!, p.id!);
@@ -220,6 +248,8 @@ export async function buildServer(options: {
     return operation ?? reply.code(404).send({ code: "OPERATION_NOT_FOUND", message: "尚无已确认记录；这不能证明仍在进行的请求未提交。" });
   });
   if (options.references) registerReferenceRoutes(app, options.references);
+  if (options.orchestration) registerOrchestrationRoutes(app, options.orchestration);
+  if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);

@@ -57,7 +57,16 @@ export function TaskWorkflow({ context, detail, documents, mode = "actions" }: {
       {(detail.observations ?? []).filter(observation => observation.deliveryId === delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
       {(detail.observations ?? []).filter(observation => observation.deliveryId === delivery.id).map(observation => <div className="history" key={observation.id}><strong>{observation.observer}（{observation.observerKind}） · {observation.result}</strong><p>{observation.evidence}</p><p>记录理由：{observation.reason}</p><small>登记者 {observation.actorId} · {observation.createdAt}</small></div>)}
     </article>)}
-    {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}><h3>任务验收决定</h3><p>{closure.acceptanceEvidence}</p><p>{closure.reason}</p><small>审阅者 {closure.actorId} · {closure.createdAt}</small></article>)}
+    {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}><h3>任务验收决定</h3>
+      <p>{closure.decisionId ? "依据：已结算的认知判断（仅完成本轮判断，不代表来源业务任务完成）" : "依据：本任务交付"}</p>
+      <p className="break-anywhere">{closure.decisionId ? `判断 ${closure.decisionId} · 来源入站 ${closure.sourceInboxId} · 来源事件 ${closure.sourceEventId}` : `交付 ${closure.deliveryId}`}</p>
+      {closure.sourceTaskId && <p className="break-anywhere">原业务任务 <a href={`#/p/${context.projectId}/tasks/${closure.sourceTaskId}`}>{closure.sourceTaskId} ↗</a></p>}
+      {closure.waitingInboxId && <p className="break-anywhere">待承接入站 {closure.waitingInboxId}（仍须处理原业务责任）</p>}
+      {closure.handoffDispatchId && <p className="break-anywhere">正式子派发 {closure.handoffDispatchId}；
+        {closure.handoffTaskId && <>待办业务任务 <a href={`#/p/${context.projectId}/tasks/${closure.handoffTaskId}`}>{closure.handoffTaskId} ↗</a></>}
+        （父任务的本轮判断已验收，子任务仍需独立完成）</p>}
+      <p>{closure.acceptanceEvidence}</p><p>{closure.reason}</p><small>审阅者 {closure.actorId} · {closure.createdAt}</small>
+    </article>)}
   </section>;
   if (mode === "history") return <section className="panel"><div className="panel-head"><h2>任务状态与决定</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
     {latestStateDecision ? <article className="decision"><strong>最近状态决定：{taskStateLabel[latestStateDecision.state]}</strong><p>理由：{latestStateDecision.reason}</p><small>{latestStateDecision.actorId} · {latestStateDecision.createdAt} · 固定修订 v{latestStateDecision.version}</small><p><a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(latestStateDecision.id)}`}>打开当次固定正文与依据 →</a></p></article>
