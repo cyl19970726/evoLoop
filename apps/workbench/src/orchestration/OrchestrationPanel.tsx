@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import type { TaskDetail } from "@evoloop/contracts";
-import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import { errorText } from "../api";
 import { Notice } from "../workflow/ActionForm";
 import { mergePage, orchestrationClient, type LoopPart, type LoopPartItem, type OrchestrationStatus, type ResultPage, type TaskLoopContext } from "./client";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "./presentation";
+import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, submissionStateLabel } from "./presentation";
 import { inTaskContext, nextAction, readableOutcome } from "./summary";
 import { taskSectionHref } from "./navigation";
 import "./orchestration.css";
@@ -12,6 +12,7 @@ import "./orchestration.css";
 interface LoopData {
   inbox: ResultPage<OrchestrationInbox>; dispatches: ResultPage<OrchestrationDispatch>;
   submissions: ResultPage<OrchestrationSubmission>; events: ResultPage<OrchestrationEvent>;
+  sources: ResultPage<OrchestrationSourceFact>;
   tasks: ResultPage<TaskDetail>; decisions: Record<string, OrchestrationWorkerDecision>;
   revisionIds: Record<string, Record<number, string>>;
 }
@@ -126,13 +127,13 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
     setData(null); setError(""); setLoading(true);
     const client = orchestrationClient(token, projectId);
     void Promise.all([client.part(loop.id, "inbox"), client.part(loop.id, "dispatches"),
-      client.part(loop.id, "submissions"), client.part(loop.id, "events"), client.tasks(loop.id)]).then(async ([inbox, dispatches, submissions, events, tasks]) => {
+      client.part(loop.id, "submissions"), client.part(loop.id, "events"), client.part(loop.id, "sources"), client.tasks(loop.id)]).then(async ([inbox, dispatches, submissions, events, sources, tasks]) => {
       const decisions: Record<string, OrchestrationWorkerDecision> = {};
       await Promise.all(events.items.filter(item => item.kind === "worker.decision").map(async item => {
         try { decisions[item.entityId] = await client.decision(item.entityId); } catch { /* The summary states when a decision could not be read back. */ }
       }));
       const revisionIds=await revisionIdsFor(client,dispatches.items);
-      if (active) { setData({ inbox, dispatches, submissions, events, tasks, decisions, revisionIds }); setLoading(false); }
+      if (active) { setData({ inbox, dispatches, submissions, events, sources, tasks, decisions, revisionIds }); setLoading(false); }
     }).catch(cause => { if (active) { setError(errorText(cause)); setLoading(false); } });
     return () => { active = false; };
   }, [token, projectId, loop.id]);
@@ -180,12 +181,13 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
     {data && <><section className="orch-readable" aria-label="工作与结果">
       <h3>为什么做、交给谁、现在怎样</h3>
       <p className="muted">以下只依据已读回的任务、决定、派发和交付记录。运行结束不代表交付合格；没有人类使用记录时不推定已使用。</p>
-      {data.dispatches.nextCursor || data.tasks.nextCursor || data.inbox.nextCursor || data.submissions.nextCursor || data.events.nextCursor ?
+      {data.dispatches.nextCursor || data.tasks.nextCursor || data.inbox.nextCursor || data.submissions.nextCursor || data.events.nextCursor || data.sources.nextCursor ?
         <Notice>仍有记录未载入；以下摘要只覆盖已读回的部分，不能据此判断全循环完成。</Notice> : null}
       {data.dispatches.items.filter(related).length === 0 && <p className="empty">当前读取范围还没有相关的已派发工作。{data.inbox.items.some(item => relatedSource(item.sourceEventId) && item.state === "pending") ? "已有入站等待处理。" : "可展开下方记录核对入站情况。"}</p>}
       {data.dispatches.items.filter(related).map(item => {
         const detail = data.tasks.items.find(value => value.task.id === item.taskId);
         const inbox = data.inbox.items.find(value => value.id === item.inboxId);
+        const source = data.sources.items.find(value => value.id === item.sourceEventId);
         const submission = data.submissions.items.find(value => value.dispatchId === item.id);
         const decisionEvent = data.events.items.find(value => value.kind === "worker.decision" && value.detail.dispatchId === item.id);
         const decision = decisionEvent ? data.decisions[decisionEvent.entityId] : undefined;
@@ -193,23 +195,28 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
           value.kind === "dispatch.gap" && value.entityId === item.id);
         return <article className="orch-story" key={item.id}>
           <div className="orch-story-head"><h4><a href={taskHref(projectId,item.taskId)}>{detail?.task.title ?? `任务 ${short(item.taskId)}`}</a>{detail && detail.task.version !== item.taskVersion && <small>现名称；派发时为任务 v{item.taskVersion}</small>}</h4><span>{intentGap ? "运行已结束，缺少提交" : dispatchStateLabel[item.state]}</span></div>
-          <dl><div><dt>为什么做</dt><dd>{item.reason || item.purpose}{detail?.task.content && <details><summary>任务现正文</summary><p>{detail.task.content}</p></details>}</dd></div>
+          <dl><div><dt>为什么做</dt><dd>{sourceTriggerLabel(source)}{item.parentDispatchId && " · 接续上游派发"}</dd></div>
             <div><dt>交给谁</dt><dd>{item.recipientRoleId}{item.requestedBy ? ` · 由 ${item.requestedBy} 发起` : ""}</dd></div>
-            <div><dt>决定依据</dt><dd>{decision ? <>{dispositionLabel(decision.kind)}：{decision.reason} · {decision.actorId}</> :
-              inbox?.reason ? `${inbox.reason} · ${inbox.acknowledgedBy ?? "未见署名"}` : "决定理由尚未读回；可在审计记录中核对。"}</dd></div>
             <div><dt>结果</dt><dd>{intentGap ? "已确认运行结束，尚无署名提交或决定，不能视作交付。" : readableOutcome(item,submission,detail)}</dd></div>
-            <div><dt>下一步</dt><dd>{intentGap ? "缺口已保留；核因与后续处理见关联工作记录。" : nextAction(inbox,item,submission)}</dd></div></dl>
+            <div><dt>下一步</dt><dd>{intentGap ? "缺口已保留；核因与后续处理见关联工作记录。" : nextAction(inbox,item,submission)}</dd></div>
+            <div><dt>署名判断</dt><dd>{decision ? `${dispositionLabel(decision.kind)} · ${decision.actorId}` : inbox?.acknowledgedBy ? `${dispositionLabel(inbox.disposition)} · ${inbox.acknowledgedBy}` : "尚未读回署名决定"}</dd></div></dl>
           <p className="orch-story-links">{data.revisionIds[item.taskId]?.[item.taskVersion] ?
             <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>派发请求时任务修订 v{item.taskVersion}</a> :
             <span>派发请求时任务修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
             {item.runtimeRunId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"runtime"})}>实际运行（{short(item.runtimeRunId)}）</a></>}
             {submission?.deliveryId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"delivery"})}>交付与使用记录</a></>}
             {item.parentDispatchId && <> · 上游派发见下方记录</>}</p>
-          <details><summary>完整固定标识与核对</summary><p>派发 <code>{item.id}</code> · 来源事件 <code>{item.sourceEventId}</code> · 入站 <code>{item.inboxId}</code></p>
+          <details><summary>完整理由、固定标识与核对</summary>
+            <p><strong>派发理由：</strong>{item.reason || item.purpose}</p>
+            {inbox?.reason && <p><strong>入站处理理由：</strong>{inbox.reason}</p>}
+            {decision?.reason && <p><strong>署名决定理由：</strong>{decision.reason}</p>}
+            {detail?.task.content && <details><summary>任务现正文</summary><p>{detail.task.content}</p></details>}
+            <p>派发 <code>{item.id}</code> · 来源事件 <code>{item.sourceEventId}</code> · 入站 <code>{item.inboxId}</code></p>
             {item.parentDispatchId && <p>上游派发 <code>{item.parentDispatchId}</code></p>}
             {submission && <p>提交 <code>{submission.id}</code> · Delivery <code>{submission.deliveryId ?? "尚无"}</code></p>}</details>
         </article>;
       })}
+      {data.sources.nextCursor && moreButton("sources", data.sources.items.length)}
       {data.tasks.nextCursor && <button disabled={more !== null} onClick={() => { void loadMoreTasks(); }}>{more === "tasks" ? "读取中…" : `继续读取任务标题与交付（已载入 ${data.tasks.items.length}，还有更多）`}</button>}
     </section><details className="orch-records"><summary>查看入站、派发、提交与审计原记录</summary><div className="orch-columns">
       <section><h3>入站与决定 <span>{data.inbox.items.length}{data.inbox.nextCursor ? "+" : ""}</span></h3>

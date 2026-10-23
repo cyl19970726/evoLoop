@@ -1,4 +1,15 @@
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+
+export function sourceTriggerLabel(source: OrchestrationSourceFact | undefined): string {
+  if (!source) return "固定来源尚未读回；展开核对派发来源。";
+  switch (source.kind) {
+    case "loop.enrolled": return "职责循环首次规划";
+    case "worker.outcome": return "上一轮工作结果需要接续判断";
+    case "observation.record": return "交付的实际使用反馈需要接续判断";
+    case "dispatch.gap": return "上一轮运行终结后缺少署名结果，需要恢复判断";
+    default: return `已登记来源：${source.kind}`;
+  }
+}
 
 export const inboxStateLabel: Record<OrchestrationInbox["state"], string> = {
   pending: "待处理", acknowledged: "已接收待决定", disposed: "处理完成",

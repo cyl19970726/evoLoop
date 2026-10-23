@@ -10,9 +10,12 @@ export interface OrchestrationRouteOptions {
   status?(): unknown;
   listTasks?(principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string): Promise<{items: TaskDetail[]; nextCursor: string | null}>;
   taskContext?(principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string): Promise<unknown>;
+  workStatuses?(principal: Principal, projectId: string, taskIds: string[]): Promise<unknown>;
 }
 const params = z.record(z.string(), z.uuid());
 const page = z.object({limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(200).optional()});
+const workStatusQuery = z.object({taskIds: z.string().min(36).max(1849).transform(value => value.split(","))
+  .pipe(z.array(z.uuid()).min(1).max(50).refine(ids => new Set(ids).size === ids.length,"duplicate task IDs"))});
 const principal = (value: Principal | null) => {
   if (!value) throw new DomainError("FORBIDDEN", "Authentication required");
   return value;
@@ -59,6 +62,10 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
   if (options.taskContext) app.get("/api/projects/:projectId/orchestration/tasks/:id/context", async request => {
     const p = params.parse(request.params), q = page.parse(request.query);
     return options.taskContext!(principal(request.principal), p.projectId!, p.id!, q.limit, q.cursor);
+  });
+  if (options.workStatuses) app.get("/api/projects/:projectId/orchestration/work-status", async request => {
+    const p = params.parse(request.params), q = workStatusQuery.parse(request.query);
+    return options.workStatuses!(principal(request.principal), p.projectId!, q.taskIds);
   });
   app.get("/api/projects/:projectId/orchestration/decisions/:id", async (request, reply) => {
     const p = params.parse(request.params);

@@ -12,6 +12,7 @@ import { WorkerCredentialBroker } from "../workers/credentials.js";
 import { workerGuardFacts } from "../workers/facts.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
+import { readWorkStatuses } from "./work-status.js";
 
 /** Follow formal Task feedback one dispatch at a time without expanding an entire Loop. */
 export async function readTaskContext(pool: Pool, workflow: Pick<WorkflowService, "getTask">,
@@ -145,6 +146,8 @@ export function setupManagedLoops(options: {
     routes: {service: orchestration, status: () => runner.status(),
       taskContext: (principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) =>
         readTaskContext(options.pool, options.workflow, principal, projectId, taskId, limit, cursor),
+      workStatuses: (principal: Principal, projectId: string, taskIds: string[]) =>
+        readWorkStatuses(options.pool, options.workflow, principal, projectId, taskIds),
       listTasks: async (principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string) => {
         const loop = await orchestration.getLoop(principal, projectId, loopId);
         if (!loop) return {items: [], nextCursor: null};

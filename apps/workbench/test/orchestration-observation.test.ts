@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
+import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
 import { inTaskContext, nextAction, readableOutcome } from "../src/orchestration/summary.ts";
-import { taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import { scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 
 const projectId = "11111111-1111-4111-8111-111111111111", loopId = "22222222-2222-4222-8222-222222222222";
@@ -99,6 +99,27 @@ test("three Task links select fixed history, runtime and delivery without crossi
   assert.equal(taskSectionFromHash(runtime,projectId,"55555555-5555-4555-8555-555555555555"),null);
   assert.equal(taskSectionFromHash(runtime,loopId,taskId),null);
   assert.equal(taskSectionFromHash(`${runtime}&tab=history`,projectId,taskId),"overview");
+});
+
+test("deep-linked delivery lands at its visible panel, while hidden or missing panels cannot claim a landing", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const calls:string[]=[];
+  const deliveryPanel={hidden:false,scrollIntoView:(options:{block:string})=>calls.push(options.block)} as HTMLElement;
+  const getElement=(id:string)=>id === `task-panel-${projectId}-${taskId}-current-delivery` ? deliveryPanel : null;
+  assert.equal(scrollToTaskSection(projectId,taskId,"delivery",undefined,getElement),true);
+  assert.deepEqual(calls,["start"]);
+  assert.equal(scrollToTaskSection(projectId,taskId,"runtime",undefined,getElement),false);
+  assert.equal(scrollToTaskSection(projectId,taskId,"history",loopId,()=>({...deliveryPanel,hidden:true}) as HTMLElement),false);
+  assert.deepEqual(calls,["start"]);
+});
+
+test("story trigger uses formal source kind and leaves complete reasons to expanded evidence", () => {
+  const source=(kind:string)=>({kind} as OrchestrationSourceFact);
+  assert.match(sourceTriggerLabel(source("worker.outcome")),/工作结果/);
+  assert.match(sourceTriggerLabel(source("observation.record")),/实际使用反馈/);
+  assert.match(sourceTriggerLabel(source("dispatch.gap")),/缺少署名结果/);
+  assert.match(sourceTriggerLabel(undefined),/尚未读回/);
+  assert.doesNotMatch(sourceTriggerLabel(source("worker.outcome")),/[0-9a-f]{8}-[0-9a-f]{4}/);
 });
 
 test("task context and decision reads use scoped routes instead of scanning the first loop page", async () => {

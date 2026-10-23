@@ -7,6 +7,8 @@ import { UploadDocument } from "../documents/UploadDocument";
 import { Alert, ShortId, href } from "../ui/shared";
 import { Button } from "../components/ui/button";
 import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
+import { businessNextStep, cognitionSummary, partitionWorkTasks, type WorkTaskStatus } from "./workStatusPresentation";
+import "./work-status.css";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
@@ -18,6 +20,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [tasks, setTasks] = useState<Page<Task>>({ items: [], nextCursor: null });
   const [documents, setDocuments] = useState<Page<Document>>({ items: [], nextCursor: null });
   const [impacts, setImpacts] = useState<Impact[]>([]);
+  const [statuses, setStatuses] = useState<Record<string, WorkTaskStatus>>({});
+  const [statusError, setStatusError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -28,10 +32,15 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [create, setCreate] = useState(false);
   const epoch = useRef(0);
   useEffect(() => {
-    let active = true; ++epoch.current; setLoading(true); setError("");
+    let active = true; ++epoch.current; setLoading(true); setError(""); setStatuses({}); setStatusError("");
     const client = api(token);
-    Promise.all([client.tasks(projectId), client.documents(projectId), client.impacts(projectId)]).then(([t, d, i]) => {
+    Promise.all([client.tasks(projectId), client.documents(projectId), client.impacts(projectId)]).then(async ([t, d, i]) => {
       if (active) { setTasks(t); setDocuments(d); setImpacts(i); }
+      if (t.items.length) try {
+        const work = await client.workStatuses(projectId,t.items.map(item => item.id));
+        if (active) {setStatuses(Object.fromEntries(work.items.map(item => [item.taskId,item])));
+          if (work.items.length !== t.items.length) setStatusError("部分任务的工作状态尚未读回；这些任务保留在待核对组。");}
+      } catch (cause) { if (active) setStatusError(`工作状态暂不可读：${errorText(cause)}。任务保留在待核对组。`); }
     }).catch(cause => { if (active) setError(errorText(cause)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [token, projectId, refresh]);
@@ -45,12 +54,19 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       } else if (tasks.nextCursor) {
         const page = await client.tasks(projectId, tasks.nextCursor);
         if (readEpoch === epoch.current) setTasks(v => ({ items: [...v.items, ...page.items], nextCursor: page.nextCursor }));
+        if (page.items.length) try {
+          const work = await client.workStatuses(projectId,page.items.map(item => item.id));
+          if (readEpoch === epoch.current) {setStatuses(current => ({...current,...Object.fromEntries(work.items.map(item => [item.taskId,item]))}));
+            if (work.items.length !== page.items.length) setStatusError("部分任务的工作状态尚未读回；这些任务保留在待核对组。");}
+        } catch (cause) {if (readEpoch === epoch.current) setStatusError(`工作状态暂不可读：${errorText(cause)}。任务保留在待核对组。`);}
       }
     } catch (cause) { if (readEpoch === epoch.current) setError(errorText(cause)); }
     finally { setBusy(false); }
   }
   const pending = impacts.filter(i => i.state === "pending");
-  const visibleTasks = tasks.items.filter(t => (view !== "inbox" || t.state === "todo") && (filter === "all" || t.state === filter) && (kindFilter === "all" || t.kind === kindFilter) && `${t.title} ${t.owner} ${t.id}`.toLowerCase().includes(query.toLowerCase()));
+  const visibleTasks = tasks.items.filter(t => (view !== "inbox" || t.state === "todo") && (filter === "all" || t.state === filter) && (kindFilter === "all" || t.kind === kindFilter) &&
+    `${t.title} ${t.owner} ${t.id} ${statuses[t.id]?.cognition ? cognitionSummary(statuses[t.id]!).title : ""}`.toLowerCase().includes(query.toLowerCase()));
+  const {business:businessTasks,cognition:cognitionTasks,unknown:unknownTasks}=partitionWorkTasks(visibleTasks,statuses);
   const visibleDocuments = documents.items.filter(d => (documentStatus === "all" || (documentStatus === "active" ? d.status !== "archived" : d.status === documentStatus)) && (kindFilter === "all" || d.kind === kindFilter) && `${d.title} ${d.id}`.toLowerCase().includes(query.toLowerCase()));
   const title = view === "documents" ? "过程文档" : view === "inbox" ? "待判断与复核" : "任务";
   return <div className="content work-index">
@@ -73,20 +89,45 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       </div>
       {loading && <p className="list-message" role="status">正在读取{title}…</p>}
       {error && <div className="list-message"><Alert kind="error">读取失败：{error}</Alert><button onClick={context.onChanged}>重试读取</button></div>}
-      {!loading && !error && <><div className="table-wrap">{view === "documents" ? <table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table>  : <table className="task-list-table"><thead><tr><th>任务名称</th><th>状态</th><th>下一步</th><th>类型</th><th>责任者</th><th>版本</th></tr></thead><tbody>{visibleTasks.map(t => <tr key={t.id}>
-        <td className="task-list-title"><a href={href(projectId, "task", t.id)}>{t.title}</a><small>{pending.some(i => i.taskId === t.id) && <span className="impact-marker">依据待复核 · </span>}<ShortId value={t.id} /></small></td>
-        <td className="task-list-state"><span className="mobile-field-label">当前状态</span><span className="pill">{states[t.state]}</span></td>
-        <td className="task-list-next"><span className="mobile-field-label">下一步</span>{t.legacyDecision && <strong className="task-list-legacy">{legacyDecisionLabel(t.legacyDecision)}</strong>}{taskNextStep(t.state, t.legacyDecision)}
-          {t.legacyDecision && <details className="task-list-legacy-reason"><summary>查看旧判断理由</summary><p>{t.legacyDecision.reason}</p><a href={href(projectId, "task", t.id)}>打开任务核对历史 →</a></details>}</td>
-        <td className="task-list-kind"><span className="mobile-field-label">类型</span>{t.kind ? taskKinds[t.kind] : "未分类"}</td>
-        <td className="task-list-owner"><span className="mobile-field-label">责任者</span>{t.owner}</td>
-        <td className="task-list-version"><span className="mobile-field-label">版本</span>v{t.version}</td>
-      </tr>)}</tbody></table>}</div>
+      {!loading && !error && <>{view === "documents" ? <div className="table-wrap"><table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table></div> : view === "work" ? <>
+        {statusError && <div className="work-status-warning"><Alert>{statusError}</Alert></div>}
+        <div className="work-status-section"><h2>业务工作 <span>{businessTasks.length} 项已载入</span></h2>
+          {businessTasks.length ? <TaskListTable tasks={businessTasks} statuses={statuses} projectId={projectId} pending={pending} /> : <p className="work-status-note">已载入部分暂无可确认的业务任务。{tasks.nextCursor ? "仍有下一页任务可读取。" : ""}</p>}</div>
+        {unknownTasks.length > 0 && <details className="work-status-group" defaultOpen={businessTasks.length === 0}><summary>来源与状态待核对 · {unknownTasks.length} 项</summary><p>状态投影未读全，暂不把这些任务归为业务或系统记录。</p><TaskListTable tasks={unknownTasks} statuses={statuses} projectId={projectId} pending={pending} /></details>}
+        {cognitionTasks.length > 0 && <details className="work-status-group"><summary>判断与接续记录 · {cognitionTasks.length} 项已载入</summary><p>由正式认知派发关联的任务；原任务与历史记录均可打开。这里的本轮结果不改写任务状态。</p><TaskListTable tasks={cognitionTasks} statuses={statuses} projectId={projectId} pending={pending} /></details>}
+      </> : <TaskListTable tasks={visibleTasks} statuses={statuses} projectId={projectId} pending={pending} />}
       {!(view === "documents" ? visibleDocuments : visibleTasks).length && <div className="list-empty"><FileEmpty /><h2>{query || filter !== "all" || kindFilter !== "all" || view === "documents" && documentStatus !== "active" ? "没有匹配项" : view === "inbox" ? "没有待办任务" : `还没有${title}`}</h2><p>可以清除筛选，或创建一项有明确正文与验收条件的工作。</p><button onClick={() => { setQuery(""); setFilter("all"); setKindFilter("all"); setDocumentStatus("active"); }}>清除筛选</button></div>}
-      <div className="list-footer"><span>已载入 {view === "documents" ? documents.items.length : tasks.items.length} 项 · 当前显示 {view === "documents" ? visibleDocuments.length : visibleTasks.length} 项</span>{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy} onClick={() => void more()}>{busy ? "加载中…" : "加载更多"}</button>}</div></>}
+      <div className="list-footer"><span>已载入 {view === "documents" ? documents.items.length : tasks.items.length} 项 · 当前匹配 {view === "documents" ? visibleDocuments.length : visibleTasks.length} 项{view === "work" && `（业务 ${businessTasks.length} · 判断 ${cognitionTasks.length} · 待核 ${unknownTasks.length}）`}</span>{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy} onClick={() => void more()}>{busy ? "加载中…" : "加载更多"}</button>}</div></>}
     </section>
     {view === "work" && <><p className="work-guidance">需要推进或调整工作时，先与已有 Agent 沟通；由 Agent 执行变更后，在这里回读核对。</p><div className="context-links"><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "discussions")}>阅读负责人讨论材料</a><a href={href(projectId, "documents")}>阅读过程文档</a><a href={href(projectId, "inbox")}>依据复核{pending.length ? `（${pending.length}）` : ""}</a></div></>}
   </div>;
 }
 
 function FileEmpty() { return <Search size={27} strokeWidth={1.4} aria-hidden="true" />; }
+
+function TaskListTable({ tasks, statuses, projectId, pending }: { tasks: Task[]; statuses: Record<string, WorkTaskStatus>;
+  projectId: string; pending: Impact[] }) {
+  return <div className="table-wrap"><table className="task-list-table"><thead><tr><th>任务名称</th><th>状态</th><th>下一步</th><th>类型</th><th>责任者</th><th>版本</th></tr></thead><tbody>{tasks.map(t => {
+    const status=statuses[t.id], cognition=status?.cognition ? cognitionSummary(status) : null;
+    return <tr key={t.id}>
+      <td className="task-list-title"><a href={href(projectId,"task",t.id)}>{cognition?.title ?? t.title}</a>
+        <small>{pending.some(i => i.taskId===t.id) && <span className="impact-marker">依据待复核 · </span>}
+          {cognition ? <>认知记录 · 原任务 <ShortId value={t.id} /></> : <ShortId value={t.id} />}</small>
+        {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}</td>
+      <td className="task-list-state"><span className="mobile-field-label">当前状态</span><span className="pill">{cognition?.phase ?? states[t.state]}</span>
+        {cognition && <small>任务台账：{states[t.state]}</small>}</td>
+      <td className="task-list-next"><span className="mobile-field-label">下一步</span>
+        {t.legacyDecision && <strong className="task-list-legacy">{legacyDecisionLabel(t.legacyDecision)}</strong>}
+        {cognition?.next ?? (status && businessNextStep(t,status)) ?? taskNextStep(t.state,t.legacyDecision)}
+        {cognition && <details className="task-list-legacy-reason"><summary>来源与决定理由</summary>
+          <p>{status?.sourceKind === "loop.enrolled" ? "来自工作链首次规划。" : `正式来源：${status?.sourceKind ?? "未读回"}。`}</p>
+          {status?.sourceTaskId && <p>源任务（现名称）：<a href={href(projectId,"task",status.sourceTaskId)}>{status.sourceTaskTitle ?? "打开源任务"}</a></p>}
+          <p>署名决定：{status?.decisionKind ?? "未记录"}；{status?.decisionReason ?? "暂无可读理由"}</p>
+          <a href={href(projectId,"task",t.id)}>打开原任务、运行与完整接续 →</a></details>}
+        {t.legacyDecision && <details className="task-list-legacy-reason"><summary>查看旧判断理由</summary><p>{t.legacyDecision.reason}</p><a href={href(projectId,"task",t.id)}>打开任务核对历史 →</a></details>}</td>
+      <td className="task-list-kind"><span className="mobile-field-label">类型</span>{t.kind ? taskKinds[t.kind] : "未分类"}</td>
+      <td className="task-list-owner"><span className="mobile-field-label">责任者</span>{t.owner}</td>
+      <td className="task-list-version"><span className="mobile-field-label">版本</span>v{t.version}</td>
+    </tr>;
+  })}</tbody></table></div>;
+}
