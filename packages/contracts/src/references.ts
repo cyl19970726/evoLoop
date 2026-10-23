@@ -60,7 +60,7 @@ export interface ReferenceReader {
 }
 export interface ReferenceTransaction extends ReferenceReader {
   resolveStudyReferenceAuthority(provenance: StudyReferenceProvenance, targetTaskId: string,
-    actorId: string): Promise<TaskExternalReferenceRecord | null>;
+    actorId: string): Promise<{source: TaskExternalReferenceRecord; declaringActorId: string} | null>;
   savepoint<T>(action: () => Promise<T>): Promise<T>;
   insertOperation(operation: Operation): Promise<void>;
   appendOutbox(event: OutboxEvent): Promise<void>;

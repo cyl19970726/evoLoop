@@ -16,6 +16,7 @@ export interface ReferenceDependencies {
   observeExternal(principal: Principal, projectId: string, kind: ExternalReferenceKind, referenceId: string,
     revision: string, contentHash: string): Promise<ExternalReferenceObservation>;
   hashText(value: string): string; nextId(): string; now(): string;
+  hasCurrentStudyReviewer?(projectId: string, actorId: string): Promise<boolean>;
 }
 /** A Run reference identifies the frozen input, not a hash of its mutable native transcript. */
 export function fixedRunMatches(projectId: string, run: RuntimeRunRecord | null, session: RuntimeSessionRecord | null,
@@ -158,9 +159,10 @@ async function decideReference(deps: ReferenceDependencies, principal: Principal
   return journal(deps, principal, command, "reference.task", command.taskId, async tx => {
     if (provenance) {
       const source = await tx.resolveStudyReferenceAuthority(provenance, command.taskId, principal.actorId);
-      if (!source || source.kind !== "run" || source.id !== provenance.sourceDecisionId ||
-        source.referenceId !== command.referenceId || source.revision !== command.revision ||
-        source.contentHash !== command.contentHash)
+      if (!source || !await deps.hasCurrentStudyReviewer?.(command.projectId,source.declaringActorId) ||
+        source.source.kind !== "run" || source.source.id !== provenance.sourceDecisionId ||
+        source.source.referenceId !== command.referenceId || source.source.revision !== command.revision ||
+        source.source.contentHash !== command.contentHash)
         throw new DomainError("STUDY_AUTHORITY_DENIED", "Current declaration, source and target Task do not match");
     }
     const task = await tx.getTask(command.taskId);

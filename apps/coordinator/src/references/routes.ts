@@ -21,10 +21,12 @@ export interface ReferenceRouteOptions {
   gitForPrincipal(principal: Principal): DocumentSource | Promise<DocumentSource>;
   knowledgeForPrincipal(principal: Principal, projectId: string): KnowledgeRepository | Promise<KnowledgeRepository>;
   runSessionAvailable?(projectId: string, run: RuntimeRunRecord, session: RuntimeSessionRecord): Promise<boolean>;
+  hasCurrentStudyReviewer?(projectId: string, actorId: string): Promise<boolean>;
 }
 export async function createReferenceDependencies(options: ReferenceRouteOptions, principal: Principal) {
     const git = await options.gitForPrincipal(principal);
     return { uow: options.uow, git, hashText: hash, nextId: randomUUID, now: () => new Date().toISOString(),
+      ...(options.hasCurrentStudyReviewer ? {hasCurrentStudyReviewer:options.hasCurrentStudyReviewer} : {}),
       observeExternal: async (actor: Principal, projectId: string, kind: ExternalReferenceKind, referenceId: string,
         revision: string, contentHash: string): Promise<ExternalReferenceObservation> => {
         if (kind === "run") {

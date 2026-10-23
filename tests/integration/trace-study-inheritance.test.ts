@@ -14,6 +14,7 @@ import {loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
 import {workerGuardFacts} from "../../apps/coordinator/src/workers/facts.js";
 import {WorkerCredentialBroker} from "../../apps/coordinator/src/workers/credentials.js";
 import {buildServer} from "../../apps/coordinator/src/server.js";
+import {hasCurrentStudyReviewer,type AuthConfig} from "../../apps/coordinator/src/auth.js";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("Dedicated test database required");
@@ -21,6 +22,12 @@ const schema=`el_study_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const projectId=randomUUID(),controllerId="study-controller",reviewerId="study-reviewer",role="cognition",sourceRole="business";
+const controllerCredential={token:"c".repeat(40),actorId:controllerId,projectIds:[projectId],
+  permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+const reviewerCredentials:AuthConfig=[{token:"r".repeat(40),actorId:reviewerId,
+  projectIds:[projectId],permissions:["read","write","review"]},controllerCredential];
+const currentReviewer=async(project:string,actor:string)=>
+  hasCurrentStudyReviewer(reviewerCredentials,project,actor);
 const principal=(actorId:string,permissions:Array<"read"|"write"|"review">=["read","write","review"])=>( {actorId,projectIds:[projectId],permissions} );
 const controller=principal(controllerId),reviewer=principal(reviewerId);
 const uow=new PostgresUnitOfWork(pool);
@@ -31,11 +38,12 @@ const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(_project,s
   wasActorRole:async()=>false});
 const orchestration=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash,
   getTrialController:async(_project,actor)=>actor===controllerId?controller:null,
+  hasCurrentStudyReviewer:currentReviewer,
   canReadStudySourceRun:async(_principal,_project,_runId)=>sourceGrant});
 const command=(who:ReturnType<typeof principal>,input:Record<string,unknown>)=>orchestration.execute(who,{projectId,operationId:randomUUID(),...input} as never);
 const business=(input:Record<string,unknown>)=>workflow.execute(controller,{projectId,operationId:randomUUID(),...input} as never);
 const referenceDeps={uow,git:{read:async()=>({status:"unavailable" as const,reason:"unused",observedAt:new Date().toISOString()})},
-  hashText:hash,nextId:randomUUID,now:()=>new Date().toISOString(),
+  hashText:hash,nextId:randomUUID,now:()=>new Date().toISOString(),hasCurrentStudyReviewer:currentReviewer,
   observeExternal:async(_who:unknown,_project:string,_kind:string,runId:string,revision:string,inputHash:string)=>({
     status:sourceGrant?"reachable" as const:"unavailable" as const,revision,contentHash:inputHash,
     currentRevision:revision,currentHash:inputHash,currentValidity:sourceGrant?"valid" as const:"unavailable" as const})};
@@ -186,7 +194,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     state:"accepted",runtimeRunId:readerRunId},dispatch.version));
   const facts=workerGuardFacts(pool,{principal:principal("worker-study",["read"]),scope:{projectId,
     loopId,taskId,runId:readerRunId,sessionId:readerSessionId,roleId:role,kind:"cognition",
-    allowedRoleIds:[role]}});
+    allowedRoleIds:[role]}},currentReviewer);
   assert.equal(await facts.fixedRunTrace!(sourceRunId),true);
   const credentialRoot=await mkdtemp(join(tmpdir(),"evoloop-trace-study-worker-"));
   const broker=new WorkerCredentialBroker({workerRoot:credentialRoot,apiUrl:"http://127.0.0.1:1",
@@ -196,12 +204,25 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const token=await readFile(join(credentialRoot,readerRunId,"credential"),"utf8");
   const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:controllerId,
     projectIds:[projectId],permissions:["read","write","review"]}],
-    workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)},
+    workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity,currentReviewer)},
     runtime:{status:()=>({available:true,error:null}),trace:async (_principal:unknown,_project:string,target:string)=>({runId:target,source:"fixture-owned-trace"})} as never});
   t.after(async()=>{await app.close();await rm(credentialRoot,{recursive:true,force:true});});
   const traceUrl=`/api/projects/${projectId}/runtime/runs/${sourceRunId}/trace`;
   const readTrace=()=>app.inject({method:"GET",url:traceUrl,headers:{authorization:`Bearer ${token}`}});
   assert.equal((await readTrace()).statusCode,200);
+  const originalReviewer={...reviewerCredentials[0]!,permissions:[...reviewerCredentials[0]!.permissions]};
+  for(const withdrawn of [["read","write"],["write","review"],[]] as const){
+    if(withdrawn.length)reviewerCredentials[0]!.permissions=[...withdrawn];
+    else reviewerCredentials.splice(0,1);
+    assert.equal(await currentReviewer(projectId,controllerId),true,
+      "another same-project owner stays credentialed but cannot inherit the declaring actor's authority");
+    assert.equal(await facts.fixedRunTrace!(sourceRunId),false,
+      "current declaring reviewer authority is needed for new trace reads");
+    assert.equal((await readTrace()).statusCode,403);
+    reviewerCredentials.splice(0,reviewerCredentials.length,{...originalReviewer,
+      permissions:[...originalReviewer.permissions]},controllerCredential);
+    assert.equal((await readTrace()).statusCode,200);
+  }
   const sourceNow=await workflow.getTask(controller,projectId,sourceTaskId);
   assert.equal(sourceNow.task.state,"done");
   applied(await business({type:"task.reopen",taskId:sourceTaskId,expectedVersion:sourceNow.task.version,
@@ -250,6 +271,17 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     contentHash:inputHash,reason:"Declared",actionImpact:"Compare"},{
       declarationId:secondDeclarationId,loopId:secondLoopId,inboxId:secondAccepted.entityId,
       sourceDecisionId:replaced.decisionId}));
+  for(const withdrawn of [["read","write"],["write","review"],[]] as const){
+    if(withdrawn.length)reviewerCredentials[0]!.permissions=[...withdrawn];
+    else reviewerCredentials.splice(0,1);
+    await assert.rejects(command(controller,{type:"dispatch.request",inboxId:secondAccepted.entityId,
+      expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:secondTaskId,
+      expectedTaskVersion:2,recipientRoleId:role,purpose:"cognition",
+      authorizationScopeId:"cognitive-scope",reason:"Declaring reviewer withdrawn"}),
+      (error:unknown)=>error instanceof OrchestrationError&&error.code==="STUDY_AUTHORITY_DENIED");
+    reviewerCredentials.splice(0,reviewerCredentials.length,{...originalReviewer,
+      permissions:[...originalReviewer.permissions]},controllerCredential);
+  }
   const secondCurrent=(await orchestration.getLoop(controller,projectId,secondLoopId))!;
   await command(reviewer,{type:"loop.studyMaterial.revoke",loopId:secondLoopId,
     expectedLoopVersion:secondCurrent.version,declarationId:secondDeclarationId,
@@ -261,4 +293,47 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     (error:unknown)=>error instanceof OrchestrationError&&error.code==="STUDY_DECLARATION_CHANGED");
   const secondDispatches=await orchestration.listDispatches(controller,projectId,secondLoopId,10);
   assert.equal(secondDispatches.items.length,0,"revocation after copy cannot start a Run");
+
+  for(const withdrawn of [["read","write"],["write","review"],[]] as const){
+    const copyLoopId=randomUUID(),copyDeclarationId=randomUUID();
+    await command(reviewer,{type:"loop.enroll",loopId:copyLoopId,goalId,stageId,cognitiveRoleId:role,
+      allowedBusinessRoleIds:[sourceRole],sourceAfter:{createdAtUtc:"2020-01-01T00:00:00.000Z",eventId:null},
+      maxRuns:1,maxConcurrent:1,reason:"Reviewer withdrawal during copy"});
+    const copyLoop=(await orchestration.getLoop(controller,projectId,copyLoopId))!;
+    await command(reviewer,{type:"loop.studyMaterial.declare",loopId:copyLoopId,
+      expectedLoopVersion:copyLoop.version,declarationId:copyDeclarationId,
+      controllerActorId:controllerId,sourceTaskId,sourceTaskRevisionId:replaced.revisionId,
+      sourceDecisionIds:[replaced.decisionId],reason:"Current replacement"});
+    const copyInbox=await command(controller,{type:"inbox.accept",loopId:copyLoopId,
+      sourceEventId:copyLoop.bootstrapEventId,recipientRoleId:role,purpose:"cognitive_review"});
+    await command(controller,{type:"inbox.ack",inboxId:copyInbox.entityId,expectedVersion:1,reason:"Ready"});
+    const copyTaskId=loopIntentId(copyLoopId,copyInbox.entityId,"cognition-task");
+    applied(await workflow.execute(controller,{type:"task.create",projectId,
+      operationId:loopIntentId(copyTaskId,"create"),taskId:copyTaskId,stageId,
+      title:"Withdrawal cognition",owner:role,kind:"research",content:"Review",
+      acceptance:"Choose",consumer:role,useRequired:false,evidence:"Current source",
+      stopCondition:"Decision"}));
+    const copyBefore=await workflow.getTask(controller,projectId,copyTaskId);
+    const copyPrefix=[copyDeclarationId,copyInbox.entityId,replaced.decisionId];
+    const copyCommand={projectId,operationId:loopIntentId(...copyPrefix,"reference"),
+      actorId:controllerId,decisionId:loopIntentId(...copyPrefix,"decision"),taskId:copyTaskId,
+      taskRevisionId:copyBefore.task.currentRevisionId,expectedTaskVersion:1,
+      slotId:loopIntentId(...copyPrefix,"slot"),expectedHeadVersion:0,decision:"adopt",
+      kind:"run",referenceId:sourceRunId,revision:source.task.currentRevisionId,
+      contentHash:inputHash,reason:"Declared",actionImpact:"Compare"};
+    const copyProvenance={declarationId:copyDeclarationId,loopId:copyLoopId,
+      inboxId:copyInbox.entityId,sourceDecisionId:replaced.decisionId};
+    if(withdrawn.length)reviewerCredentials[0]!.permissions=[...withdrawn];
+    else reviewerCredentials.splice(0,1);
+    const denied=await applyDeclaredStudyReference(referenceDeps as never,controller,
+      copyCommand,copyProvenance);
+    assert.equal(denied.status,"rejected");
+    assert.equal(denied.code,"STUDY_AUTHORITY_DENIED");
+    assert.equal((await workflow.getTask(controller,projectId,copyTaskId)).task.version,1);
+    reviewerCredentials.splice(0,reviewerCredentials.length,{...originalReviewer,
+      permissions:[...originalReviewer.permissions]},controllerCredential);
+    assert.deepEqual(await applyDeclaredStudyReference(referenceDeps as never,controller,
+      copyCommand,copyProvenance),denied,"historical rejected receipt cannot write after rights change");
+    assert.equal((await workflow.getTask(controller,projectId,copyTaskId)).task.version,1);
+  }
 });

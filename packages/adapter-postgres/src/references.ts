@@ -26,7 +26,7 @@ const intentId=(...parts:string[])=>{
 /** Composable project-scoped queries; the caller owns the connection and transaction. */
 export class PgReferenceStore {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
-  async resolveStudyReferenceAuthority(provenance:StudyReferenceProvenance,targetTaskId:string,actorId:string):Promise<TaskExternalReferenceRecord|null>{
+  async resolveStudyReferenceAuthority(provenance:StudyReferenceProvenance,targetTaskId:string,actorId:string):Promise<{source:TaskExternalReferenceRecord;declaringActorId:string}|null>{
     const declaration=await readStudyDeclaration(this.client,this.projectId,provenance.declarationId);
     const item=declaration?.items.find(candidate=>candidate.sourceDecisionId===provenance.sourceDecisionId);
     if(!declaration || !item || declaration.loopId!==provenance.loopId ||
@@ -78,7 +78,7 @@ export class PgReferenceStore {
       targetTaskId,actorId,declaration.stageId,createOperationId,declaration.sourceTaskId,
       declaration.sourceTaskRevisionId,item.sourceDecisionId,item.sourceSlotId,item.runId,
       item.targetTaskRevisionId,item.inputHash,declaration.goalId]);
-    return r.rows[0]?record(r.rows[0]):null;
+    return r.rows[0]?{source:record(r.rows[0]),declaringActorId:declaration.actorId}:null;
   }
   async getTaskExternalHead(taskId: string, slotId: string): Promise<TaskExternalReferenceHead | null> {
     const result = await this.client.query(`SELECT * FROM task_external_ref_head WHERE project_id=$1 AND task_id=$2 AND slot_id=$3`,

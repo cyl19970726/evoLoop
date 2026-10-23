@@ -5,7 +5,8 @@ import type { WorkerIdentity } from "./types.js";
 import type { WorkerGuardFacts } from "./guard.js";
 
 /** Authorization facts are project-scoped reads of the authoritative records, not caller supplied labels. */
-export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGuardFacts {
+export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
+  hasCurrentStudyReviewer?: (projectId: string, actorId: string) => Promise<boolean>): WorkerGuardFacts {
   const scope = identity.scope;
   // Only the public read contract is used here. No grant is supplied by this worker path.
   const trustedSources = new PgOrchestrationStore(pool, {
@@ -351,7 +352,8 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         const item=declaration?.items.find(value=>value.sourceDecisionId===provenance.sourceDecisionId);
         if(!item || current?.currentStudyDeclarationId!==declaration?.id ||
           declaration?.loopId!==scope.loopId || declaration.controllerActorId!==row.requested_by ||
-          item.runId!==targetRunId)continue;
+          item.runId!==targetRunId ||
+          !await hasCurrentStudyReviewer?.(scope.projectId,declaration.actorId))continue;
         const head=await one(`SELECT 1 FROM task_external_ref_head WHERE project_id=$1 AND task_id=$2
           AND decision_id=$3 AND slot_id=$4 LIMIT 1`,
           [declaration.sourceTaskId,item.sourceDecisionId,item.sourceSlotId]);

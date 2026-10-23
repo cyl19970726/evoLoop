@@ -80,7 +80,7 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 真实执行轨迹的认知研究先由有项目 read/write/review 权限的非 worker 在当前 active Loop 上调用 `loop.studyMaterial.declare`。以 `command schema loop.studyMaterial.declare` 查看字段：声明一个来源 Task 的固定修订和最多十个已正式采纳的 Run decision ID，指定配置中的 controller actor，并用当前 Loop version 做 CAS。来源 Run 必须终态、Session ready，且当前执行 grant 仍允许读取；来源 Task 与被研究业务 Task 已正式完成并不妨碍声明。`read study DECLARATION_ID` 回读服务端解析出的 Run ID、目标 Task 修订和输入 hash，`read loop LOOP_ID --events` 回读声明与撤销。每个 Loop 同时只有一个当前声明；`loop.studyMaterial.revoke` 使用当前 version 撤销新读取权，保留历史 operation、decision 与固定引用。声明不重置执行预算。
 
-controller 为新的认知 inbox 自动创建 Task 后，把声明中的每项 Run 作为正式外部引用复制到该 Task 的精确修订，再按更新后的 Task version 请求派发。复制中断以同一 operation ID 恢复，不提前开 Run；复制不全、来源 slot 被替换、Session 关闭或 grant 撤销都会阻断新派发和新 trace 读取。未声明时仍按普通认知流程推进，但不会自动得到轨迹权限。普通 reviewer 直接执行 `reference.task` 正式采纳 Run 的既有语义保留；受管 worker 只能读自己 Run 固定 Task 修订实际包含、且仍有当前来源与自身执行权限的轨迹。新 slot、正文里的 UUID 和事后给自动 Task 补普通引用都不能扩大自动研究范围。
+controller 为新的认知 inbox 自动创建 Task 后，把声明中的每项 Run 作为正式外部引用复制到该 Task 的精确修订，再按更新后的 Task version 请求派发。复制中断以同一 operation ID 恢复，不提前开 Run；复制不全、来源 slot 被替换、Session 关闭、grant 撤销，或原声明者失去当前项目 read/write/review 凭据，都会阻断新复制、派发和 trace 读取。未声明时仍按普通认知流程推进，但不会自动得到轨迹权限。普通 reviewer 直接执行 `reference.task` 正式采纳 Run 的既有语义保留；受管 worker 只能读自己 Run 固定 Task 修订实际包含、且仍有当前来源与自身执行权限的轨迹。新 slot、正文里的 UUID 和事后给自动 Task 补普通引用都不能扩大自动研究范围。
 
 自动执行中，Task 的 `documentIds` 选择所需过程输入。首次开始会显式封存这些文档的 published/adopted 修订；已有关联但未发布或归档的输入会阻断，不被静默忽略。已有 basis 沿用固定来源及保留决定。过程报告交付使用 `#/p/PROJECT_ID/documents/DOCUMENT_ID?revision=REVISION_ID` 固定入口，`artifactRevision` 与 `contentHash` 要和保存后回读的原文一致，供后续认知精确读取。
 

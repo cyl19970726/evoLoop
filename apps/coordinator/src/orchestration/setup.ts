@@ -9,6 +9,7 @@ import { applyDeclaredStudyReference, type ReferenceDependencies } from "@evoloo
 import type { StudyReferenceProvenance, TaskExternalReferenceCommand } from "@evoloop/contracts/references";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { AuthConfig } from "../auth.js";
+import { hasCurrentStudyReviewer } from "../auth.js";
 import type { loadIntegrations } from "../configuration.js";
 import type { RuntimeRunner } from "../runtime/runner.js";
 import { WorkerCredentialBroker } from "../workers/credentials.js";
@@ -104,6 +105,8 @@ export function setupManagedLoops(options: {
   if (!entry || !["read", "write", "review"].every(permission => entry.permissions.includes(permission as "read" | "write" | "review")))
     throw new Error("Managed loop controller requires one configured reviewer identity");
   const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions]};
+  const currentStudyReviewer = async (projectId: string, actorId: string) =>
+    hasCurrentStudyReviewer(options.credentials,projectId,actorId);
   const grants = options.integrations.runtime.grants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId));
   const broker = new WorkerCredentialBroker({workerRoot: root, apiUrl: options.apiUrl,
     cliMain: options.cliMain, nodeExecutable: process.execPath, ttlMs: config.credentialTtlMs,
@@ -137,6 +140,7 @@ export function setupManagedLoops(options: {
     },
   });
   const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
+    hasCurrentStudyReviewer: currentStudyReviewer,
     hash: value => createHash("sha256").update(value).digest("hex"),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
     getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
@@ -196,7 +200,7 @@ export function setupManagedLoops(options: {
   return {runner, broker, service: orchestration,
     start: () => runner.start(config.pollIntervalMs), stop: () => runner.stop(),
     workers: {authenticate: (header: string | undefined) => broker.authenticate(header),
-      facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity)},
+      facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity,currentStudyReviewer)},
     routes: {service: orchestration, status: () => runner.status(),
       delegationChoices: async (principal: Principal, projectId: string, loopId: string) => {
         const loop = await orchestration.getLoop(principal,projectId,loopId);

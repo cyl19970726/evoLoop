@@ -14,6 +14,7 @@ export interface OrchestrationDependencies { store: OrchestrationStore; now(): s
   verifyProposalMaterial?(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
   canReadDivisionMaterial?(actorId: string, documentId: string, revisionId: string): Promise<boolean>;
   canReadStudySourceRun?(principal: Principal, projectId: string, runId: string): Promise<boolean>;
+  hasCurrentStudyReviewer?(projectId: string, actorId: string): Promise<boolean>;
 }
 const fail = (code: string, message: string, currentVersion?: number): never => { throw new OrchestrationError(code, message, currentVersion); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
@@ -187,7 +188,8 @@ export class OrchestrationService {
     if (command.type === "loop.studyMaterial.declare") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       this.active(loop); this.version(loop.version, command.expectedLoopVersion);
-      if (!principal.permissions.includes("read") || !loop.stageId ||
+      if (!principal.permissions.includes("read") ||
+        !await this.deps.hasCurrentStudyReviewer?.(loop.projectId, principal.actorId) || !loop.stageId ||
         new Set(command.sourceDecisionIds).size !== command.sourceDecisionIds.length ||
         loop.currentStudyDeclarationId || await tx.getStudyDeclaration(command.declarationId))
         return fail("STUDY_DECLARATION_DENIED", "one new bounded declaration and project read authority are required");
@@ -695,7 +697,8 @@ export class OrchestrationService {
       }
       if (cognitionRequest && loop.currentStudyDeclarationId) {
         const declaration = await tx.getStudyDeclaration(loop.currentStudyDeclarationId);
-        if (!declaration || declaration.loopId !== loop.id || declaration.stageId !== task.stageId ||
+        if (!declaration || !await this.deps.hasCurrentStudyReviewer?.(loop.projectId,declaration.actorId) ||
+          declaration.loopId !== loop.id || declaration.stageId !== task.stageId ||
           declaration.controllerActorId !== principal.actorId ||
           !await tx.isAutoCognitionTask(loop.id, inbox.id, task.id, principal.actorId, task.stageId))
           return fail("STUDY_AUTHORITY_DENIED", "Cognition Task must be the verified software-created study receiver");
