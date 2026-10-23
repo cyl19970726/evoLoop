@@ -7,7 +7,7 @@ import { Notice } from "../workflow/ActionForm";
 import { date } from "../ui/shared";
 import { mergePage, orchestrationClient, type LoopPart, type LoopPartItem, type OrchestrationStatus, type ResultPage, type TaskLoopContext } from "./client";
 import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "./presentation";
-import { currentChainSummary, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome } from "./summary";
+import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, orderDispatches, readableOutcome, storyNextAction } from "./summary";
 import { taskSectionHref } from "./navigation";
 import "./orchestration.css";
 
@@ -213,7 +213,8 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
       <div className="orch-current-summary"><strong>当前已读回结论</strong>{chainSummary.map((line,index) => <p key={index}>{line}</p>)}</div>
       {workStatusError && <Notice>人类工作状态暂未读回：{workStatusError}。卡片仅展示正式来源和原任务记录。</Notice>}
       {partial ?
-        <Notice>仍有记录未载入；以下摘要只覆盖已读回的部分，不能据此判断全循环完成。</Notice> : null}
+        <Notice>仍有记录未载入；以下摘要与次序只覆盖已读回的部分，不能据此判断全循环完成或旧等待至今仍有效。</Notice> : null}
+      <p className="muted">下列卡片记录各次派发当时的结果与下一步；当前责任请先看上方已读回结论。</p>
       {ordered?.ordered.length === 0 && <p className="empty">当前读取范围还没有相关的已派发工作。{data.inbox.items.some(item => relatedSource(item.sourceEventId) && item.state === "pending") ? "已有入站等待处理。" : "可展开下方记录核对入站情况。"}</p>}
       {ordered?.ordered.map(item => {
         const detail = data.tasks.items.find(value => value.task.id === item.taskId);
@@ -225,8 +226,7 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
         const submission = data.submissions.items.find(value => value.dispatchId === item.id);
         const decisionEvent = data.events.items.find(value => value.kind === "worker.decision" && value.detail.dispatchId === item.id);
         const decision = decisionEvent ? data.decisions[decisionEvent.entityId] : undefined;
-        const intentGap = !submission && !decision && data.events.items.some(value =>
-          value.kind === "dispatch.gap" && value.entityId === item.id);
+        const intentGap = hasTerminalIntentGap(item.id,data.events.items,submission,decision);
         const later = ordered.hasLater.has(item.id);
         return <article className="orch-story" key={item.id}>
           <div className="orch-story-head"><h4><a href={taskHref(projectId,item.taskId)}>{storyTitle(item,detail?.task.title,source,matchedStatus,sourceStatus,title)}</a>{detail && detail.task.version !== item.taskVersion && <small>派发时为任务 v{item.taskVersion}；原任务现名称可展开核对</small>}</h4><span>{later && item.outcome === "waiting" ? "当时等待 · 已有接续" : intentGap ? "运行已结束，缺少提交" : dispatchStateLabel[item.state]}</span></div>
@@ -234,15 +234,14 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
           <dl><div><dt>为什么做</dt><dd>{sourceTriggerLabel(source)}{item.parentDispatchId && " · 接续上游派发"}</dd></div>
             <div><dt>交给谁</dt><dd>{item.recipientRoleId}{item.requestedBy ? ` · 由 ${item.requestedBy} 发起` : ""}</dd></div>
             <div><dt>结果</dt><dd>{intentGap ? "已确认运行结束，尚无署名提交或决定，不能视作交付。" : readableOutcome(item,submission,detail)}</dd></div>
-            <div><dt>{later ? "当时的下一步" : "下一步"}</dt><dd>{later ? "已有正式来源或父子派发接续；继续读下方记录，勿把当时等待当作当前责任。" :
-              item.outcome === "waiting" ? "当时记录为等待；当前条件请核对上方结论与完整署名理由。" :
-              intentGap ? "缺口已保留；核因与后续处理见关联工作记录。" : nextAction(inbox,item,submission)}</dd></div>
+            <div><dt>当时的下一步</dt><dd>{later ? storyNextAction(inbox,item,submission,true) :
+              intentGap ? "缺口已保留；核因与后续处理见关联工作记录。" : storyNextAction(inbox,item,submission,false)}</dd></div>
             <div><dt>{decisionHeading(!!decision)}</dt><dd>{decision ? `${dispositionLabel(decision.kind)} · ${decision.actorId}` : inbox?.acknowledgedBy ? `${dispositionLabel(inbox.disposition)} · ${inbox.acknowledgedBy}` : "尚未读回派发决定"}</dd></div></dl>
           <p className="orch-story-links">{data.revisionIds[item.taskId]?.[item.taskVersion] ?
             <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>派发请求时任务修订 v{item.taskVersion}</a> :
             <span>派发请求时任务修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
-            {item.runtimeRunId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"runtime"})}>实际运行（{short(item.runtimeRunId)}）</a></>}
-            {submission?.deliveryId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"delivery"})}>交付与使用记录</a></>}
+            {item.runtimeRunId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"runtime"})}>所属任务的运行页（Run {short(item.runtimeRunId)}）</a></>}
+            {submission?.deliveryId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"delivery"})}>所属任务的交付与使用页（Delivery {short(submission.deliveryId)}）</a></>}
             {item.parentDispatchId && <> · 上游派发见下方记录</>}</p>
           <details><summary>完整理由、固定标识与核对</summary>
             <p><strong>派发理由：</strong>{item.reason || item.purpose}</p>

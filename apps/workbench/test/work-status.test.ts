@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Task } from "@evoloop/contracts";
-import { businessNextStep, cognitionSummary, partitionWorkTasks, type WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
+import { businessNextStep, cognitionSummary, partitionWorkTasks, visibleWorkGroups, type WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
 const task={id:"task",kind:"research",state:"in_progress"} as Task;
 const base:WorkTaskStatus={taskId:"task",cognition:true,dispatchId:"dispatch",dispatchState:"accepted",outcome:null,
@@ -48,4 +48,37 @@ test("only a formal cognition projection is folded; ordinary research and missin
   assert.deepEqual(groups.business.map(item=>item.id),["research"]);
   assert.deepEqual(groups.cognition.map(item=>item.id),["cognition"]);
   assert.deepEqual(groups.unknown.map(item=>item.id),["unknown"]);
+});
+
+test("the work list keeps loaded tasks in its primary view when status classification is unavailable",()=>{
+  const tasks=[{...task,id:"business",title:"Deliver report"},{...task,id:"system",title:"Event record"}];
+  const unavailable=visibleWorkGroups(tasks,{},true);
+  assert.equal(unavailable.primaryKind,"unclassified");
+  assert.deepEqual(unavailable.primary.map(item=>item.id),["business","system"]);
+  assert.deepEqual(unavailable.cognition,[]);
+  assert.deepEqual(unavailable.unknown,[]);
+});
+
+test("complete status classification keeps only business tasks in the primary view",()=>{
+  const tasks=[{...task,id:"business"},{...task,id:"system"}];
+  const complete=visibleWorkGroups(tasks,{
+    business:{...base,taskId:"business",cognition:false},
+    system:{...base,taskId:"system"},
+  },false);
+  assert.equal(complete.primaryKind,"business");
+  assert.deepEqual(complete.primary.map(item=>item.id),["business"]);
+  assert.deepEqual(complete.cognition.map(item=>item.id),["system"]);
+  assert.deepEqual(complete.unknown,[]);
+});
+
+test("partial work status keeps missing tasks visible without folding them with formal cognition records",()=>{
+  const tasks=[{...task,id:"business"},{...task,id:"system"},{...task,id:"missing"}];
+  const partial=visibleWorkGroups(tasks,{
+    business:{...base,taskId:"business",cognition:false},
+    system:{...base,taskId:"system"},
+  },false);
+  assert.equal(partial.primaryKind,"business");
+  assert.deepEqual(partial.primary.map(item=>item.id),["business"]);
+  assert.deepEqual(partial.cognition.map(item=>item.id),["system"]);
+  assert.deepEqual(partial.unknown.map(item=>item.id),["missing"]);
 });

@@ -3,9 +3,9 @@ import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
 import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { currentChainSummary, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome } from "../src/orchestration/summary.ts";
+import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/orchestration/summary.ts";
 import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
@@ -157,6 +157,18 @@ test("loaded chain uses formal parent, outcome and sealed observation edges befo
   assert.deepEqual([...ordered.hasLater].sort(),["business","feedback","first"]);
   assert.equal(hasUnreadChainPages([{nextCursor:null},{nextCursor:"next"}]),true);
   assert.equal(hasUnreadChainPages([{nextCursor:null},{nextCursor:null}]),false);
+});
+
+test("terminal intent gap requires its formal event; an old waiting instruction is never current", () => {
+  const gap={kind:"dispatch.gap",entityId:"dispatch-1"} as OrchestrationEvent;
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],undefined,undefined),true);
+  assert.equal(hasTerminalIntentGap("other",[gap],undefined,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[],undefined,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],{id:"submission"} as OrchestrationSubmission,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],undefined,{id:"decision"} as OrchestrationWorkerDecision),false);
+  const waiting={outcome:"waiting",state:"completed"} as OrchestrationDispatch;
+  assert.match(storyNextAction(undefined,waiting,undefined,false),/当时记录为等待/);
+  assert.match(storyNextAction(undefined,waiting,undefined,true),/已有正式来源或父子派发接续/);
 });
 
 test("human cognition title requires this dispatch's exact projection and never promotes an event UUID", () => {
