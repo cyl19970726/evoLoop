@@ -659,13 +659,12 @@ export class OrchestrationService {
         binding.documentRevisionId !== command.documentRevisionId ||
         binding.documentContentHash !== command.documentContentHash || !run ||
         run.projectId !== command.projectId || run.taskId !== dispatch.taskId ||
-        run.taskRevisionId !== command.taskRevisionId ||
-        !["requested","dispatching","running"].includes(run.state))
-        return fail("HANDOFF_MISMATCH", "receipt must cite the fixed material and receiving Run's Task revision");
+        run.taskRevisionId !== command.taskRevisionId || run.state !== "running" || !run.nativeTurnId)
+        return fail("HANDOFF_MISMATCH", "receipt requires the fixed material and a bound, running receiving Turn");
       await event(loop.id,"dispatch",dispatch.id,"division.handoffAcknowledged",{
         runId:command.runId,documentRevisionId:command.documentRevisionId,
         documentContentHash:command.documentContentHash,taskRevisionId:command.taskRevisionId,
-        declaration:command.reason});
+        nativeTurnId:run.nativeTurnId,declaration:command.reason});
       return result("dispatch",dispatch.id,dispatch.version);
     }
     if (command.type === "worker.decision") {
