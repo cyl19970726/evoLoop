@@ -407,7 +407,8 @@ export class ManagedLoopRunner {
     await this.deps.runtime.pump();
   }
   private async reconcilePausedDispatch(loop: OrchestrationLoop, dispatch: OrchestrationDispatch) {
-    const profile = await this.deps.controller(loop.projectId, dispatch.recipientRoleId);
+    const profile = dispatch.bindingId ? await this.deps.dynamicController?.(dispatch, true) :
+      await this.deps.controller(loop.projectId, dispatch.recipientRoleId);
     if (!profile) throw new Error("ROLE_SCOPE_UNAVAILABLE");
     const runId = loopIntentId(dispatch.id, "run");
     const existingRun = await this.deps.workflow.getRuntimeRun(profile.principal, loop.projectId, runId).catch(() => null);

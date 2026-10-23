@@ -109,7 +109,7 @@ export interface CodexAppServerOptions {
   /** Synthetic parent environment for process-boundary tests; all values still pass through the allowlist. */
   environment?: NodeJS.ProcessEnv;
   /** Trusted local profile configuration, never accepted from a worker's request. */
-  threadConfig?: (spec: RuntimeSessionSpec) => Record<string, unknown> | undefined;
+  threadConfig?: (spec: RuntimeSessionSpec) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -335,7 +335,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (this.pendingCreate) throw new RuntimeProtocolError("another thread creation is pending");
     this.pendingCreate = { ...spec };
     try {
-      const config = this.options.threadConfig?.(spec);
+      const config = await this.options.threadConfig?.(spec);
       const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}) }));
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");

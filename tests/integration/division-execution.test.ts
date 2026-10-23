@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +16,9 @@ import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/crede
 import { dynamicRuntimeAdmission } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
 import { loopIntentId } from "../../apps/coordinator/src/orchestration/runner.js";
 import { ManagedLoopRunner } from "../../apps/coordinator/src/orchestration/runner.js";
+import { buildServer } from "../../apps/coordinator/src/server.js";
+import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
+import { runtimeThreadConfigForSession } from "../../apps/coordinator/src/configuration.js";
 
 const url=process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop.*test/.test(new URL(url).pathname))
@@ -22,7 +27,7 @@ const hash=(s:string)=>createHash("sha256").update(s).digest("hex");
 const pid=randomUUID(),owner="controller",cognition="cognition-actor",cognitiveRole="cognition";
 const roleId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
-const scope="m3-exact",cwd="/tmp/evoloop-m3-execution-fixture";
+const scope="m3-exact",cwd=join(tmpdir(),`evoloop-m3-execution-${randomUUID()}`);
 const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 
 test("PG bounded division reserves, transfers by Task CAS, starts once, and receives a brokered handoff",async t=>{
@@ -30,13 +35,13 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   await migrate(url!,schema);
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
   const workerRoot=await mkdtemp(join(tmpdir(),"evoloop-m3-receiver-"));
-  t.after(async()=>{await pool.end();await rm(workerRoot,{recursive:true,force:true});
+  await mkdir(cwd,{recursive:true});
+  t.after(async()=>{await pool.end();await rm(workerRoot,{recursive:true,force:true});await rm(cwd,{recursive:true,force:true});
     const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
-  const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:4318",cliMain:"/fixture/cli.js",
-    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
+  let broker:WorkerCredentialBroker;
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,id)=>p===pid&&id==="cognitive-scope"?
     {projectId:pid,scopeId:id,actorId:cognition,roleId:cognitiveRole,active:true}:null,
     canActAsRole:async(_p,actor,role)=>actor===cognition&&role===cognitiveRole ||
@@ -45,7 +50,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   const template:DelegationTemplate={id:randomUUID(),revision:1,projectId:pid,goalId,loopId,
     existingRoleIds:[roleId],cognitionRoleIds:[],newRoleAllocation:null,firstTaskId,
     actorId:owner,authorizationScopeId:scope,decisionActorIds:[cognition],
-    allowedChoices:["temporary-assignment"],cwd,model:"fixture-model",sandbox:"read-only",
+    allowedChoices:["temporary-assignment"],cwd,model:"fixture-model",sandbox:"workspace-write",
     networkAccess:false,approvalPolicy:"on-request",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
   const templateHash=hash(JSON.stringify(template));let templateCurrent=true;
   const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash,
@@ -172,6 +177,12 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   assert.equal(await admission.canReserveSession({projectId:pid,sessionId,actorId:owner,roleId,
     authorizationScope:scope,cwd,model:template.model,sandbox:template.sandbox,
     approvalPolicy:template.approvalPolicy}),true);
+  const collidingStatic=[{projectId:pid,actorId:owner,roleId,authorizationScope:scope,cwd,
+    sandbox:"workspace-write" as const,networkAccess:true}];
+  assert.equal(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
+    roleId,authorizationScope:scope,cwd,sandbox:template.sandbox,model:template.model,
+    approvalPolicy:template.approvalPolicy},admission),undefined,
+    "the binding's networkAccess=false overrides a colliding static true grant");
   await wf(owner,{type:"task.start",taskId:firstTaskId,expectedVersion:taskVersion,reason:"Start child"});
   await wf(owner,{type:"runtime.session.reserve",sessionId,roleId,cwd,authorizationScope:scope,
     model:template.model,sandbox:template.sandbox,approvalPolicy:template.approvalPolicy});
@@ -183,9 +194,34 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     expectedVersion:(await workflow.getTask(principal(owner),pid,firstTaskId)).task.version,input:"Fixed child handoff"});
   await issue(owner,{type:"dispatch.resolve",dispatchId:childId,claimToken:childToken,result:"accepted",
     runtimeRunId:runId,reason:"Durable child Run"});
+  const app=await buildServer({service:workflow,credentials:[{token:"c".repeat(40),actorId:owner,
+    projectIds:[pid],permissions:["read","write","review"]}] as never,
+    orchestration:{service:orchestration,delegationChoices:async()=>({items:[{template,hash:templateHash}]})},
+    documents:{uow,blobsForPrincipal:async()=>({read:async()=>({status:"unavailable",reason:"fixture"})}) as never},
+    workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)}});
+  const apiUrl=await app.listen({host:"127.0.0.1",port:0});
+  t.after(async()=>app.close());
+  broker=new WorkerCredentialBroker({workerRoot,apiUrl,
+    cliMain:fileURLToPath(new URL("../../apps/cli/dist/main.js",import.meta.url)),
+    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
   const receiptWorker=await broker.issue({projectId:pid,loopId,taskId:firstTaskId,runId,sessionId,roleId,
     kind:"business",allowedRoleIds:[roleId]});
   const receiver=receiptWorker.principal;
+  const cli=async(args:string[],expected=0)=>{
+    const result=await new Promise<{code:number|null;out:string;err:string}>((resolve,reject)=>{
+      const child=spawn(process.execPath,[receiptWorker.wrapperPath,...args],{stdio:["ignore","pipe","pipe"]});
+      let out="",err="";child.stdout.on("data",chunk=>out+=String(chunk));child.stderr.on("data",chunk=>err+=String(chunk));
+      child.once("error",reject);child.once("close",code=>resolve({code,out,err}));
+    });
+    assert.equal(result.code,expected,`worker CLI ${args.join(" ")}: ${result.err}`);
+    return JSON.parse(expected===0?result.out:result.err.trim().split("\n").at(-1)??"{}") as Record<string,unknown>;
+  };
+  const bindingRead=await cli(["get",`/api/projects/${pid}/orchestration/bindings/${binding.entityId}`]);
+  assert.equal(bindingRead.id,binding.entityId);
+  const originalRead=await cli(["get",`/api/projects/${pid}/documents/${documentId}/revisions/${document.revisionId}/original`]);
+  assert.equal(originalRead.status,"available");
+  assert.equal(originalRead.body,"# Fixed handoff");
+  await cli(["get",`/api/projects/${pid}/orchestration/bindings/${randomUUID()}`],1);
   await denied(orchestration.execute(receiver,{projectId:pid,operationId:randomUUID(),type:"worker.decision",
     decisionId:randomUUID(),dispatchId:childId,runId,kind:"failed",reason:"Pre-ack",evidenceRefs:[]}),
     "HANDOFF_UNACKNOWLEDGED");
@@ -193,7 +229,9 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     documentRevisionId:document.revisionId,documentContentHash:hash("# Fixed handoff"),
     taskRevisionId:run.revisionId,reason:"I read the fixed original"};
   await denied(orchestration.execute(principal(owner),ack as never),"FORBIDDEN");
-  assert.equal((await orchestration.execute(receiver,ack as never)).entityId,childId);
+  const ackFile=join(cwd,`${ack.operationId}.json`);
+  await writeFile(ackFile,JSON.stringify(ack),{mode:0o600});
+  assert.equal((await cli(["command","run",ackFile])).entityId,childId);
   assert.equal((await orchestration.execute(receiver,ack as never)).replayed,true);
   const decision=await orchestration.execute(receiver,{projectId:pid,operationId:randomUUID(),type:"worker.decision",
     decisionId:randomUUID(),dispatchId:childId,runId,kind:"failed",reason:"Fixture delivery failed",
@@ -207,4 +245,8 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   assert.equal(await admission.canCreateSession(session),false);
   assert.equal(await admission.canStartRun((await workflow.getRuntimeRun(principal(owner),pid,runId)),session),false);
   assert.equal(await admission.canSettleOwned(session,(await workflow.getRuntimeRun(principal(owner),pid,runId))),true);
+  assert.equal(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
+    roleId,authorizationScope:scope,cwd,sandbox:template.sandbox,model:template.model,
+    approvalPolicy:template.approvalPolicy},admission),undefined,
+    "revocation cannot switch the same bound Session to static network permission");
 });

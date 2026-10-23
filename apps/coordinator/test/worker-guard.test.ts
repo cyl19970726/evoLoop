@@ -53,6 +53,30 @@ test("worker route guard denies foreign reads and every unlisted write", async (
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages/${wikiId}?revision=${revisionId}&revision=${u()}` }, facts), false);
 });
 
+test("dynamic handoff reads stay on the worker's own binding and fixed material",async()=>{
+  const bindingId=u(),foreignBinding=u();
+  const bounded:WorkerGuardFacts={...facts,
+    divisionBinding:async id=>id===bindingId,
+    divisionMaterial:async(doc,revision)=>doc===documentId&&revision===revisionId,
+    fixedDocument:async()=>false,document:async()=>null};
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/orchestration/bindings/${bindingId}`},bounded),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/orchestration/bindings/${foreignBinding}`},bounded),false);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/original`},bounded),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/documents/${documentId}/revisions/${u()}/original`},bounded),false);
+  const thinker:WorkerIdentity={principal:worker.principal,scope:{...worker.scope,kind:"cognition",roleId:"planner",allowedRoleIds:["planner"]}};
+  assert.equal(await authorizeWorkerRequest(thinker,{method:"GET",path:`/api/projects/${projectId}/orchestration/loops/${loopId}/delegation-choices`},bounded),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/orchestration/loops/${loopId}/delegation-choices`},bounded),false);
+  const parent={projectId,id:parentDispatchId,loopId,taskId,sourceEventId:revisionId,runtimeRunId:runId};
+  const cognitionFacts={...bounded,dispatchForRun:async()=>parent,
+    run:async()=>({projectId,taskId,sessionId,state:"running" as const})};
+  const intention=command("division.decide",{loopId,parentDispatchId,sourceEventId:revisionId,
+    firstTaskId:taskId,documentId,documentRevisionId:revisionId});
+  assert.equal(await authorizeWorkerRequest(thinker,{method:"POST",path:"/api/orchestration/commands",body:intention},cognitionFacts),false,
+    "a future binding must not bootstrap access to its own evidence");
+  assert.equal(await authorizeWorkerRequest(thinker,{method:"POST",path:"/api/orchestration/commands",body:intention},
+    {...cognitionFacts,fixedDocument:async()=>true}),true);
+});
+
 test("cognitive worker owner, loop and dispatch boundaries", async () => {
   const thinker: WorkerIdentity = { principal: { ...worker.principal }, scope: { ...worker.scope, kind: "cognition", roleId: "planner", allowedRoleIds: ["planner", "builder"] } };
   assert.equal(await authorizeWorkerCommand(thinker, command("task.create", { taskId: u(), owner: "builder", stageId }), facts), true);

@@ -11,6 +11,7 @@ import type { loadIntegrations } from "../configuration.js";
 import type { RuntimeRunner } from "../runtime/runner.js";
 import { WorkerCredentialBroker } from "../workers/credentials.js";
 import { workerGuardFacts } from "../workers/facts.js";
+import { canReadDivisionEvidence } from "../workers/guard.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 import { readWorkStatuses } from "./work-status.js";
@@ -133,7 +134,12 @@ export function setupManagedLoops(options: {
   const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
     hash: value => createHash("sha256").update(value).digest("hex"),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
-    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null});
+    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
+    canReadDivisionMaterial: async (actorId, documentId, revisionId) => {
+      const identity = await broker.identityForActor(actorId);
+      if (!identity || identity.scope.kind !== "cognition") return false;
+      return canReadDivisionEvidence(identity, workerGuardFacts(options.pool, identity), documentId, revisionId);
+    }});
   const dynamicController = async (dispatch: OrchestrationDispatch, historical = false) => {
     if (!dispatch.bindingId || !entry.projectIds.includes(dispatch.projectId)) return null;
     const binding = await orchestration.getBinding(controllerPrincipal, dispatch.projectId, dispatch.bindingId);

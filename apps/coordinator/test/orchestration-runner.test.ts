@@ -668,6 +668,28 @@ test("stopped dispatching intent without a Run becomes a durable unknown gap", a
   assert.equal(f.runs.size, 0);
 });
 
+test("paused dynamic dispatch reconciles only its historical exact Run without a static profile", async () => {
+  const f=fixture();await new ManagedLoopRunner(f.deps).pump();
+  const dispatch=f.dispatches[0]!;
+  Object.assign(dispatch,{bindingId:loopIntentId("binding"),recipientRoleId:"dynamic-role",state:"dispatching",
+    claimToken:loopIntentId(dispatch.id,"claim-token")});
+  const runId=loopIntentId(dispatch.id,"run");
+  f.runs.set(runId,{id:runId,taskId:dispatch.taskId,state:"requested"});
+  f.loop.state="paused";
+  const historicalCalls:boolean[]=[];
+  const deps:ManagedLoopDependencies={...f.deps,controller:async(_project,role)=>
+      role===cognition?{principal,authorizationScopeId:scopeId,cwd:"/tmp/evoloop-test",
+        sandbox:"workspace-write",approvalPolicy:"on-request"}:null,
+    dynamicController:async(_dispatch,historical)=>{historicalCalls.push(historical===true);
+      return historical?{principal,authorizationScopeId:scopeId,cwd:"/tmp/evoloop-test",
+        sandbox:"workspace-write",approvalPolicy:"on-request"}:null;}};
+  await new ManagedLoopRunner(deps).pump();
+  assert.equal(dispatch.state,"accepted");
+  assert.deepEqual(historicalCalls,[true]);
+  assert.equal(f.sessions.size,0);
+  assert.equal(f.runs.size,1);
+});
+
 test("claim commit plus lost response and readback recovers next tick without another native Run", async () => {
   const f=fixture(), runner=new ManagedLoopRunner(f.deps);
   await runner.pump();

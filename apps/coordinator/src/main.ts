@@ -23,7 +23,7 @@ import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { loadIntegrations, runtimeThreadConfig } from "./configuration.js";
+import { loadIntegrations, runtimeThreadConfigForSession } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
@@ -99,15 +99,12 @@ const runtimeConfig = integrations.runtime;
 const mayStartManaged = integrations.orchestration?.enabled ? managedRuntimeAdmission(pool) : async () => true;
 const dynamicAdmission = integrations.orchestration?.enabled && runtimeConfig?.enabled
   ? dynamicRuntimeAdmission(pool, integrations.getDelegationTemplate, clock.now) : null;
-const dynamicNetworkGrants = runtimeConfig?.delegationTemplates.flatMap(t => t.existingRoleIds.map(roleId => ({projectId:t.projectId,
-  actorId:t.actorId,roleId,authorizationScope:t.authorizationScopeId,
-  cwd:t.cwd,sandbox:t.sandbox,networkAccess:t.networkAccess}))) ?? [];
 const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
-  threadConfig: spec => runtimeThreadConfig([...runtimeConfig.grants,...dynamicNetworkGrants], spec),
+  threadConfig: spec => runtimeThreadConfigForSession(runtimeConfig.grants,spec,dynamicAdmission),
 }) : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal}),

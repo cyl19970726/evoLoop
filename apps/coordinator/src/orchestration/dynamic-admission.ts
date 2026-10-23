@@ -31,7 +31,7 @@ export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: 
     const d = row.dispatch as OrchestrationDispatch, l = row.loop as OrchestrationLoop;
     const b = row.binding as {id:string; projectId:string; loopId:string; roleId:string; actorId:string;
       firstTaskId:string; parentDispatchId:string; authorizationScopeId:string;
-      template:{id:string;revision:number;hash:string}; runtime:{cwd:string;model:string;sandbox:string;
+      template:{id:string;revision:number;hash:string}; runtime:{cwd:string;model:string;sandbox:string;networkAccess:boolean;
         approvalPolicy:string;expiresAtUtc:string}};
     const p = row.policy as {bindingByRole:Record<string,string>} | null;
     if (d.projectId !== spec.projectId || d.bindingId !== b.id || d.loopId !== b.loopId ||
@@ -48,6 +48,7 @@ export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: 
       template.template.authorizationScopeId !== spec.authorizationScope ||
       template.template.cwd !== spec.cwd || template.template.model !== spec.model ||
       template.template.sandbox !== spec.sandbox || template.template.approvalPolicy !== spec.approvalPolicy ||
+      template.template.networkAccess !== b.runtime.networkAccess ||
       Date.parse(template.template.expiresAtUtc) <= Date.parse(now())) return null;
     return {dispatch:d,binding:b};
   };
@@ -63,6 +64,10 @@ export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: 
       return result.rows.some(row => loopIntentId(row.dispatch_id as string,"session") === sessionId);
     },
     canReserveSession: async (value: Spec) => (await match(value))?.dispatch.state === "dispatching",
+    networkAccessForSession: async (value: Spec) => {
+      const found=await match(value);
+      return found?.dispatch.state==="dispatching" ? found.binding.runtime.networkAccess : null;
+    },
     canReserveRun: async (session: RuntimeSessionRecord, runId: string, taskId: string) => {
       const found = await match(spec(session));
       return !!found && found.dispatch.state === "dispatching" &&
