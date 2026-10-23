@@ -132,7 +132,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
     assert.deepEqual(consumer.map(item=>item.kind).sort(),["git","run","wiki"]);
     assert.equal(consumer.find(item=>item.kind==="run")?.contentHash,inputHash);
     const readerSessionId=randomUUID(), readerRunId=randomUUID(), readerBasisId=randomUUID();
-    const loopId=randomUUID(), inboxId=randomUUID(), dispatchId=randomUUID();
+    const loopId=randomUUID(), policyId=randomUUID(), inboxId=randomUUID(), dispatchId=randomUUID();
     await client.query("INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed) VALUES($1,$2,$3,$4,true)",
       [projectId,taskId,consumerRev,readerBasisId]);
     await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
@@ -143,19 +143,38 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
       input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,'consumer input',$8,'running',1,$9,'reviewer',now(),now())`,
       [projectId,readerRunId,taskId,consumerRev,readerBasisId,readerSessionId,randomUUID(),hash("consumer input"),randomUUID()]);
-    await client.query("INSERT INTO orchestration_loop(project_id,loop_id,version,state,data) VALUES($1,$2,1,'active','{}')",[projectId,loopId]);
+    await client.query("INSERT INTO orchestration_loop(project_id,loop_id,version,state,data,current_policy_revision_id) VALUES($1,$2,1,'active','{}',$3)",[projectId,loopId,policyId]);
+    await client.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
+      allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
+      VALUES($1,$2,$3,1,null,'["researcher"]','{}',null,null,'reviewer',now(),'{}')`,[projectId,policyId,loopId]);
     await client.query(`INSERT INTO orchestration_inbox(project_id,inbox_id,loop_id,source_event_id,recipient_role_id,purpose,
       version,state,data) VALUES($1,$2,$3,$4,'researcher','next_action',1,'acknowledged','{}')`,
       [projectId,inboxId,loopId,randomUUID()]);
     await client.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,
-      version,state,data) VALUES($1,$2,$3,$4,$5,4,1,'accepted',$6)`,
-      [projectId,dispatchId,loopId,inboxId,taskId,JSON.stringify({runtimeRunId:readerRunId,recipientRoleId:"researcher"})]);
+      version,state,data,policy_revision_id) VALUES($1,$2,$3,$4,$5,4,1,'accepted',$6,$7)`,
+      [projectId,dispatchId,loopId,inboxId,taskId,JSON.stringify({runtimeRunId:readerRunId,recipientRoleId:"researcher",policyRevisionId:policyId,bindingId:null}),policyId]);
     const facts=workerGuardFacts({query:(sql:string,args:unknown[])=>client.query(sql,args)} as never,
       {principal:{actorId:"worker-fixture",projectIds:[projectId],permissions:["read"]},
         scope:{projectId,loopId,taskId,runId:readerRunId,sessionId:readerSessionId,roleId:"researcher",
           kind:"business",allowedRoleIds:["researcher"]}});
     assert.equal(await facts.fixedRunTrace!(runId),true);
     assert.equal(await facts.fixedRunTrace!(randomUUID()),false);
+    const foreignFacts=workerGuardFacts({query:(sql:string,args:unknown[])=>client.query(sql,args)} as never,
+      {principal:{actorId:"worker-fixture",projectIds:[randomUUID()],permissions:["read"]},
+        scope:{projectId:randomUUID(),loopId,taskId,runId:readerRunId,sessionId:readerSessionId,
+          roleId:"researcher",kind:"business",allowedRoleIds:["researcher"]}});
+    assert.equal(await foreignFacts.fixedRunTrace!(runId),false);
+    await client.query("SAVEPOINT closed_source");
+    await client.query("UPDATE runtime_session SET state='closed',version=version+1,close_operation_id=$3,close_verified_at=now() WHERE project_id=$1 AND session_id=$2",
+      [projectId,sessionId,randomUUID()]);
+    assert.equal(await facts.fixedRunTrace!(runId),false);
+    await client.query("ROLLBACK TO SAVEPOINT closed_source");
+    await client.query("SAVEPOINT closed_reader");
+    await client.query("UPDATE runtime_session SET state='closed',version=version+1,close_operation_id=$3,close_verified_at=now() WHERE project_id=$1 AND session_id=$2",
+      [projectId,readerSessionId,randomUUID()]);
+    assert.equal(await facts.fixedRunTrace!(runId),false);
+    await client.query("ROLLBACK TO SAVEPOINT closed_reader");
+    assert.equal(await facts.fixedRunTrace!(runId),true);
     const oldFacts=workerGuardFacts({query:(sql:string,args:unknown[])=>client.query(sql,args)} as never,
       {principal:{actorId:"worker-fixture",projectIds:[projectId],permissions:["read"]},
         scope:{projectId,loopId,taskId,runId:readerRunId,sessionId:readerSessionId,roleId:"wrong",

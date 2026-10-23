@@ -460,7 +460,7 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
     assert.equal(trace.completeness, "partial");
     assert.equal(runtime.starts, 0);
     originalGrant = false;
-    await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权或工作目录已失效/);
+    await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权已失效/);
     originalGrant = true;
     ownedSession = { ...session, nativeThreadId: null };
     await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /原生读取或归属校验失败/);
@@ -477,15 +477,19 @@ test("managed worker trace checks its own bound Run, exact fixed authority, and 
   const runtime=new FakeRuntime() as FakeRuntime & Pick<RuntimePort,"readWorkPage">;
   runtime.listTurns=async()=>({data:[{id:"turn-1",status:"completed",completedAtUtc:"2026-10-20T12:14:44.000Z"}],nextCursor:null});
   runtime.readWorkPage=async()=>({data:[],nextCursor:null,unsupportedCount:0,truncated:false});
-  let fixed=true,sourceGrant=true,readerState=readerSession.state,readerTurn=reader.nativeTurnId;
+  let fixed=true,sourceGrant=true,readerGrant=true,readerState=readerSession.state,
+    sourceState=session.state,readerTurn=reader.nativeTurnId;
   const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],listRuntimeRuns:async()=>[],
     getRuntimeRun:async(_p:unknown,_project:string,id:string)=>id===reader.id?{...reader,nativeTurnId:readerTurn}:target,
-    getRuntimeSession:async(_p:unknown,_project:string,id:string)=>id===readerSession.id?{...readerSession,state:readerState}:session} as unknown as WorkflowService;
+    getRuntimeSession:async(_p:unknown,_project:string,id:string)=>id===readerSession.id?
+      {...readerSession,state:readerState}:{...session,state:sourceState}} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as RuntimePort & FakeRuntime,workflow,trusted,
     principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
     canWrite:()=>true,allowedCwd:async()=>true,
-    hasGrant:scope=>scope.roleId===readerSession.roleId || sourceGrant,
+    hasGrant:async(scope,boundSession)=>scope.roleId===readerSession.roleId
+      ? boundSession?.id===readerSession.id && readerGrant
+      : boundSession?.id===session.id && sourceGrant,
     workerTraceAuthority:async(_identity,targetId)=>fixed && targetId===target.id});
   try {
     await runner.start();
@@ -497,6 +501,10 @@ test("managed worker trace checks its own bound Run, exact fixed authority, and 
     readerTurn=reader.nativeTurnId;readerState="closed" as typeof readerSession.state;
     await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/固定依据/);
     readerState=readerSession.state;sourceGrant=false;
+    await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/授权已失效/);
+    sourceGrant=true;readerGrant=false;
+    await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/固定依据/);
+    readerGrant=true;sourceState="closed" as typeof session.state;
     await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/授权已失效/);
     await assert.rejects(runner.trace(worker,projectId,target.id),/读取和复核权限/);
   } finally {await runner.stop();}

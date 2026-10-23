@@ -77,6 +77,8 @@ test("fixed Run material carries only input identity and a scoped read instructi
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
   live=true; currentRun={...run,inputHash:hash("changed")};
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
+  currentRun={...run,taskRevisionId:randomUUID()};
+  await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
   currentRun=run;currentSession={...session,state:"closed"};
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
 });

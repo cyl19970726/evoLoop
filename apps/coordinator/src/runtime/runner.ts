@@ -563,7 +563,7 @@ export class RuntimeRunner {
       const readerSession = await this.deps.workflow.getRuntimeSession(principal, projectId, scope.sessionId);
       if (reader.taskId !== scope.taskId || reader.sessionId !== scope.sessionId || !reader.nativeTurnId ||
           readerSession.roleId !== scope.roleId || readerSession.state !== "ready" ||
-          !this.authorized(readerSession, reader.actorId) || !await this.deps.workerTraceAuthority(workerIdentity, runId))
+          !await this.authorized(readerSession, reader.actorId) || !await this.deps.workerTraceAuthority(workerIdentity, runId))
         throw new DomainError("FORBIDDEN", "目标运行未被本次受管运行的固定依据采纳。");
     } else if (!reviewer) throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
     if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
@@ -572,7 +572,7 @@ export class RuntimeRunner {
       throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚无可核对的受管原生 Turn。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
     if (session.projectId !== projectId || session.id !== run.sessionId || session.state !== "ready" ||
-      !this.authorized(session, run.actorId))
+      !await this.authorized(session, run.actorId))
       throw new DomainError("FORBIDDEN", "此运行所属会话的授权已失效。");
     try {
       const binding = await this.readBinding(session);

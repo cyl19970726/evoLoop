@@ -113,11 +113,14 @@ test("worker trace requires its fixed adopted Run and authenticated identity, no
     const allowed=await f.inject(f.businessAuth,"GET",url);
     assert.equal(allowed.statusCode,200,allowed.body);
     assert.equal(allowed.json().runId,target);
+    assert.equal((await f.inject(f.businessAuth,"GET",`${url}?cursor=page-2`)).statusCode,200);
     assert.ok(f.reached.includes(`trace:${target}:worker`));
     for (const denied of [
       `/api/projects/${P}/runtime/runs/${id(71)}/trace`,
       `/api/projects/${OTHER}/runtime/runs/${target}/trace`,
       `${url}?readerTaskId=${TASK}`,
+      `${url}?cursor=page-2&cursor=page-3`,
+      `${url}?cursor=page-2&scope=all`,
     ]) assert.equal((await f.inject(f.businessAuth,"GET",denied)).statusCode,403,denied);
     f.setAdoptedRun(false);
     assert.equal((await f.inject(f.businessAuth,"GET",url)).statusCode,403);
