@@ -117,6 +117,18 @@ export class PgSchedulingStore implements ScheduleStore {
       if (existing && existing.revisionId !== current.currentRevisionId) throw new ScheduleStoreConflict("queued occurrence needs revision review");
       if (!existing && (Date.parse(plannedAtUtc) <= Date.parse(current.watermarkUtc) || Date.parse(plannedAtUtc) > Date.parse(observedAtUtc))) throw new ScheduleStoreConflict("occurrence is outside current due window");
       if (current.revision.authorization.expiresAtUtc && Date.parse(observedAtUtc) >= Date.parse(current.revision.authorization.expiresAtUtc)) throw new ScheduleStoreConflict("schedule authorization expired");
+      const target = current.revision.template.managedTarget;
+      if (target) {
+        const authority = await client.query(`SELECT l.data AS loop,s.goal_id,s.state AS stage_state
+          FROM orchestration_loop l JOIN project_stage s ON s.project_id=l.project_id AND s.stage_id=$3
+          WHERE l.project_id=$1 AND l.loop_id=$2 FOR SHARE OF l,s`, [definition.projectId, target.loopId, target.stageId]);
+        const fact = authority.rows[0];
+        if (!fact || fact.loop.state === "stopped" || fact.loop.stageId !== target.stageId ||
+          fact.loop.goalId !== fact.goal_id || fact.stage_state !== "active" ||
+          current.revision.template.owner !== current.revision.authorization.roleId ||
+          !fact.loop.allowedBusinessRoleIds.includes(current.revision.template.owner))
+          throw new ScheduleStoreConflict("managed schedule target is no longer eligible");
+      }
       const roleIds = [current.revision.authorization.roleId, current.revision.template.owner].filter(value => uuid.test(value));
       if (roleIds.length) {
         const roles = await client.query("SELECT role_id,state FROM role_definition WHERE project_id=$1 AND role_id=ANY($2::uuid[]) FOR SHARE", [definition.projectId, roleIds]);
@@ -154,7 +166,7 @@ export class PgSchedulingStore implements ScheduleStore {
         await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at)
           VALUES($1,$2,$3,1,$4,$5,$6,'todo',NULL,$7,$8,NULL,$9,$10,$11)`, [definition.projectId, taskId, revisionId, template.title, template.acceptance, template.owner, documentId, documentRevisionId, actorId, `schedule ${definition.id} at ${plannedAtUtc}`, observedAtUtc]);
         await client.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,evidence,stop_condition,created_at)
-          VALUES($1,$2,$3,NULL,$4,false,$5,'',$6)`, [definition.projectId, taskId, revisionId, template.owner, `schedule ${definition.id} revision ${definition.currentRevisionId}`, observedAtUtc]);
+          VALUES($1,$2,$3,$4,$5,false,$6,'',$7)`, [definition.projectId, taskId, revisionId, target?.stageId ?? null, template.owner, `schedule ${definition.id} revision ${definition.currentRevisionId}`, observedAtUtc]);
         const receipt = { status: "applied", operationId, entityId: taskId, version: 1 };
         const hash = createHash("sha256").update(key).digest("hex");
         await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)

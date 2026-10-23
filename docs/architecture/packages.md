@@ -78,6 +78,8 @@ Wiki 候选和不可变修订正文存于**开发仓库外的 OpenViking 服务*
 
 调度采用确定性状态表：从 PostgreSQL 当前 `ScheduleStore` 计算到期 UTC 实例，以稳定触发键记意图，按错过/重叠策略创建或关联独立 Task；重启先对账 `unknown`、outbox 和水位，周期对账补外部事件遗漏。PG 事务可原子提交本库 Task 与 outbox，不能把飞书、Wiki 或 App Server 副作用变成跨系统原子操作。定时器响起本身不接受新需求，也不证明任务完成。首期保持一个活动协调者，不额外引入 Redis 或 Temporal；工作台是该协调服务的客户端；多协调者仍需独立验证资格和副作用恢复。
 
+受管日程接续复用 `ScheduleStore` 与现有 Loop：日程新修订可选固定 Loop/Stage，物化时保存同一业务 Task 的 Stage；PG 来源查询与 core 共同核验 occurrence、原操作和固定修订，再交认知选择现有 child 派发。旧无目标日程维持只产 todo；不向所有同范围 Loop 广播，也不新增调度服务。暂停、未知和旧排队边界见[日程合同](contracts.md#可选的受管目标)。
+
 前端组件与 Query/Command 读写分工见[前端架构](frontend.md)。目标中的 `core/knowledge` SourceBridge 将组合各来源端口，`core/queries` 将装配有限上下文与页面读取模型；目前这些目录尚未建立，现有读取由协调 API 授权后装配来源和知识端口。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
 
 工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记过程文档来源、仓库目标基线、差异/PR 和核实的合入结果；目标是独立 Git 来源而非 Document 行，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#6-工作文档怎样沉淀为仓库正式文档)。
@@ -162,7 +164,7 @@ Wiki 前端代码按[集成方案](wiki-integration.md)拆为组件、数据 hoo
 | 文档、Git 与原件 | 固定 Git commit/hash 只读，过程 Markdown/HTML 元数据和本机 Blob 原件由各边界包处理；HTML/Blob 上传、静态阅读和下载仍在独立消费者核验 | 任意 HTML 脚本安全、外部资源长期可用或整理结果已经合入正式文档 |
 | 飞书协作 | connector、PG 投影/回读/候选复核在 fake HTTP + 真实 PG 下验证，未知结果不盲目重发 | 真实飞书租户的权限、字段、限流、事件和双向协作已验；目前尚未实连 |
 | Codex 运行 | 自管 App Server 0.154.0 的 owned Thread/Turn 已用可见模型 `gpt-6-astra` 实际完成，重启后回读完整答复；运行记录与交付、消费分开 | 默认 `gpt-6.1-sol` 可用（当前账号返回 400）；Turn 完成等于 Task 验收；Desktop 既有聊天受控。结果展示的 CSS 重写缺陷仍在修复 |
-| 日程与职责 | PG 到期实例、单活 pump、职责试行/交接/退役约束已有本机和集成测试；到期只产生 proposed Task | 自动接受、执行或人的长期分工效果 |
+| 日程与职责 | PG 到期实例、单活 pump、职责试行/交接/退役约束已有本机和集成测试；未配置受管目标时到期只产生 todo Task；显式目标的自动接续另按固定来源验收 | 自动接受、执行或人的长期分工效果 |
 | 外置 Wiki | OpenViking 0.5.1 的外置写读、重启回读、候选→审阅→发布产品路径已实跑；适配器保持正文在 repo 外 | 语义索引、生产多写者、长期恢复、独立认知消费和效益；这些仍未验 |
 
 包边界验证基于各 `package.json` 与当前源码目录；本轮不修改目标图。局部检查、真实外置服务试验和人类亲用应分别记录。具体失败语义见[领域合同](contracts.md)，启动、测试及停写恢复见[本机运行](../development/local-run.md)。
