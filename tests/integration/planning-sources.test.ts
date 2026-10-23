@@ -3,7 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
+import { OrchestrationService } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
+import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { Principal } from "@evoloop/contracts";
 import { readTaskContext, readOriginal } from "../../apps/cli/src/materials.js";
 import { buildServer } from "../../apps/coordinator/src/server.js";
@@ -27,6 +29,9 @@ const worker: WorkerIdentity = {principal: {actorId: `worker-${randomUUID()}`, p
     roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", "builder"]}};
 const workflow = new WorkflowService({uow, clock: {now: () => "2026-10-24T00:00:00.000Z"},
   ids: {next: randomUUID}, hasher: {hash}});
+const orchestration = new OrchestrationService({store: new PgOrchestrationStore(pool, {
+  getAuthorizationFact: async () => null, canActAsRole: async () => false, wasActorRole: async () => false,
+}), now: () => "2026-10-24T00:00:00.000Z", nextId: randomUUID, hash});
 let app: Awaited<ReturnType<typeof buildServer>>;
 const execute = async (command: Record<string, unknown>) => {
   const result = await workflow.execute(owner, {projectId, operationId: randomUUID(), ...command} as Parameters<WorkflowService["execute"]>[1]);
@@ -53,8 +58,11 @@ before(async () => {
     acceptance: "Decide", owner: "planner", kind: "research", consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
   await execute({type: "task.create", taskId: otherTaskId, stageId: otherStageId, title: "Other Stage", content: "Other",
     acceptance: "Decide", owner: "builder", kind: "research", documentIds: [documentId], consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
-  await pool.query("INSERT INTO orchestration_loop(project_id,loop_id,version,state,data) VALUES($1,$2,1,'active',$3)",
-    [projectId, loopId, {projectId, id: loopId, state: "active", goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"]}]);
+  const enrolled = await orchestration.execute(owner, {type: "loop.enroll", projectId, operationId: randomUUID(), loopId,
+    goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
+    sourceAfter: {createdAtUtc: "2026-10-24T00:00:00.000Z", eventId: null},
+    maxRuns: 1, maxConcurrent: 1, reason: "Planning source scope fixture"});
+  assert.equal(enrolled.entityId, loopId);
   app = await buildServer({service: workflow, credentials: [{token: "o".repeat(40), actorId: owner.actorId,
     projectIds: [projectId], permissions: owner.permissions}],
     planningSources: (principal, project, task, revision, loop) =>
@@ -205,12 +213,16 @@ test("more than 19 linked sources fails at the bounded query", async () => {
 });
 
 test("Goal-only Loop keeps the same Goal boundary across Stage tasks", async () => {
-  await pool.query("UPDATE orchestration_loop SET data=jsonb_set(data,'{stageId}','null'::jsonb) WHERE project_id=$1 AND loop_id=$2",
-    [projectId, loopId]);
+  const goalOnlyLoopId = randomUUID();
+  const enrolled = await orchestration.execute(owner, {type: "loop.enroll", projectId, operationId: randomUUID(), loopId: goalOnlyLoopId,
+    goalId, stageId: null, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
+    sourceAfter: {createdAtUtc: "2026-10-24T00:00:00.000Z", eventId: null},
+    maxRuns: 1, maxConcurrent: 1, reason: "Goal-only planning scope fixture"});
+  assert.equal(enrolled.entityId, goalOnlyLoopId);
   const current = await workflow.getTask(owner, projectId, taskId);
-  const accepted = await readPlanningSources(pool, worker.principal, projectId, taskId, current.revision.id, loopId);
+  const accepted = await readPlanningSources(pool, worker.principal, projectId, taskId, current.revision.id, goalOnlyLoopId);
   assert.equal(accepted.observedPlanningCandidates.length, 1);
   const other = await workflow.getTask(owner, projectId, otherTaskId);
-  await assert.rejects(readPlanningSources(pool, worker.principal, projectId, otherTaskId, other.revision.id, loopId),
+  await assert.rejects(readPlanningSources(pool, worker.principal, projectId, otherTaskId, other.revision.id, goalOnlyLoopId),
     /authorized Stage/);
 });
