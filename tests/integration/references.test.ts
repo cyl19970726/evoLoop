@@ -98,7 +98,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
     const carried = await store.listTaskExternalSnapshot(taskId,carriedRev);
     assert.equal(carried[0]?.id,decisionId);
     assert.equal(carried[0]?.taskRevisionId,carriedRev);
-    // Migration 020 must preserve nonempty Git and Wiki decisions as a Run joins another slot.
+    // Migration 024 must preserve nonempty Git and Wiki decisions as a Run joins another slot.
     const wikiSlotId=randomUUID(),wikiDecisionId=randomUUID(),wikiHash=hash("fixed wiki body");
     await store.insertTaskExternalDecision({projectId,id:wikiDecisionId,taskId,taskRevisionId:carriedRev,
       slotId:wikiSlotId,version:1,decision:"adopt",kind:"wiki",referenceId:randomUUID(),revision:"wiki-v1",
@@ -313,10 +313,11 @@ test("CLI Run-reference request crosses HTTP review and persists a fixed consume
   const uow=new PostgresUnitOfWork(pool);
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
   const token="r".repeat(40),readOnlyToken="w".repeat(40);
+  let sourceGrant=true;
   const app=await buildServer({service:workflow,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]},
     {token:readOnlyToken,actorId:"writer",projectIds:[projectId],permissions:["read","write"]}],
     references:{uow,gitForPrincipal:async()=>({read:async()=>({status:"unavailable"})}) as never,
-      knowledgeForPrincipal:async()=>({}) as never,runSessionAvailable:async()=>true}});
+      knowledgeForPrincipal:async()=>({}) as never,runSessionAvailable:async()=>sourceGrant}});
   t.after(()=>app.close());
   const body={operationId:randomUUID(),decisionId:randomUUID(),taskRevisionId:consumerRev,expectedTaskVersion:1,
     slotId:randomUUID(),expectedHeadVersion:0,decision:"adopt",kind:"run",referenceId:runId,revision:sourceRev,
@@ -332,4 +333,14 @@ test("CLI Run-reference request crosses HTTP review and persists a fixed consume
   assert.equal(denied.json().status,"rejected");assert.equal(denied.json().code,"BASIS_UNAVAILABLE");
   const mismatch=await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${token}`},payload:{...body,operationId:randomUUID(),decisionId:randomUUID(),contentHash:"0".repeat(64)}});
   assert.equal(mismatch.json().status,"rejected");assert.equal(mismatch.json().code,"BASIS_UNAVAILABLE");
+  const wrongRevision=await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${token}`},payload:{...body,operationId:randomUUID(),decisionId:randomUUID(),revision:randomUUID()}});
+  assert.equal(wrongRevision.json().status,"rejected");assert.equal(wrongRevision.json().code,"BASIS_UNAVAILABLE");
+  sourceGrant=false;
+  const revoked=await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${token}`},payload:{...body,operationId:randomUUID(),decisionId:randomUUID()}});
+  assert.equal(revoked.json().status,"rejected");assert.equal(revoked.json().code,"BASIS_UNAVAILABLE");
+  sourceGrant=true;
+  await pool.query("UPDATE runtime_session SET state='closed',version=version+1,close_operation_id=$3,close_verified_at=now() WHERE project_id=$1 AND session_id=$2",
+    [projectId,sessionId,randomUUID()]);
+  const closed=await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${token}`},payload:{...body,operationId:randomUUID(),decisionId:randomUUID()}});
+  assert.equal(closed.json().status,"rejected");assert.equal(closed.json().code,"BASIS_UNAVAILABLE");
 });
