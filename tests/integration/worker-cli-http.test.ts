@@ -60,7 +60,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     wasActorRole:async (project,actor,loop,role)=>project===projectId &&
       (await broker.identityForActor(actor))?.scope.loopId===loop && (await broker.identityForActor(actor))?.scope.roleId===role,
   });
-  const orchestration=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash});
+  let orchestrationClock: string | null=null;
+  const orchestration=new OrchestrationService({store,now:()=>orchestrationClock ?? new Date().toISOString(),nextId:randomUUID,hash});
   const app=await buildServer({service:workflow,credentials:[{token:ownerToken,actorId:controller,projectIds:[projectId],permissions:["read","write","review"]}],
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)},
     orchestration:{service:orchestration},documents:{uow,blobsForPrincipal:async()=>({} as never)},
@@ -283,7 +284,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     ORDER BY created_at DESC,event_id DESC LIMIT 1`,[projectId])).rows[0];
   await orchestrate({type:"loop.enroll",loopId:observationLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
     allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:observationCursor.created_at.toISOString(),
-      eventId:observationCursor.event_id},maxRuns:3,maxConcurrent:1,reason:"Independent feedback fixture"});
+      eventId:observationCursor.event_id},maxRuns:4,maxConcurrent:1,reason:"Independent feedback fixture"});
   const observationOperationId=randomUUID();
   await issue({type:"observation.record",operationId:observationOperationId,taskId:childTaskId,
     deliveryId:businessSealed.deliveryId,observer:controller,observerKind:"agent",result:"notUsed",
@@ -575,6 +576,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     sourceEventId:secondLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"next_action"});
   await workerCommand(decisionWorker.wrapperPath,{type:"inbox.ack",inboxId:waitingNextInbox.entityId,
     expectedVersion:1,reason:"Read source for business handoff"});
+  orchestrationClock=new Date().toISOString();
+  const positiveSameTick=orchestrationClock;
   const waitingChild=await workerCommand(decisionWorker.wrapperPath,{type:"dispatch.request",inboxId:waitingNextInbox.entityId,
     expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:secondDispatch.entityId,
     taskId:waitingChildTaskId,expectedTaskVersion:2,recipientRoleId:businessRole,
@@ -587,6 +590,12 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     dispatchId:secondDispatch.entityId,runId:secondRunId,kind:"waiting",reason:"Child business work now awaits execution",evidenceRefs:[]})).entityId,decisionId);
   assert.equal((await cli(decisionWorker.wrapperPath,["get",`/api/projects/${projectId}/orchestration/decisions/${decisionId}`])).reason,
     "Child business work now awaits execution");
+  const fixedOrder=(await pool.query(`SELECT kind,created_at_utc FROM orchestration_event WHERE project_id=$1
+    AND (entity_id=$2 OR entity_id=$3) AND kind IN ('dispatch.requested','worker.decision')`,
+    [projectId,waitingChild.entityId,decisionId])).rows;
+  assert.deepEqual(fixedOrder.map(row=>row.kind).sort(),["dispatch.requested","worker.decision"]);
+  assert.ok(fixedOrder.every(row=>row.created_at_utc.toISOString()===positiveSameTick),"formal request and decision share exact UTC tick");
+  orchestrationClock=null;
   const decisionTaskVersion=(await workflow.getTask(owner,projectId,secondTaskId)).task.version;
   const premature=await workflow.execute(owner,{projectId,operationId:randomUUID(),type:"task.close",taskId:secondTaskId,
     expectedVersion:decisionTaskVersion,decisionId,acceptanceResult:"met",acceptanceEvidence:"Premature",reason:"No settlement yet"});
@@ -698,8 +707,23 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const cognitionSourceWorker=await broker.issue({projectId,loopId:observationLoopId,taskId:unrelatedTaskId,
     runId:cognitionSourceRunId,sessionId:cognitionSourceSessionId,roleId:cognitiveRole,kind:"cognition",
     allowedRoleIds:[cognitiveRole,businessRole]});
+  const lateNextInbox=await orchestrate({type:"inbox.accept",loopId:observationLoopId,
+    sourceEventId:unrelatedObservation.event_id,recipientRoleId:cognitiveRole,purpose:"next_action"});
+  await orchestrate({type:"inbox.ack",inboxId:lateNextInbox.entityId,
+    expectedVersion:1,reason:"Read source before decision"});
+  orchestrationClock=new Date().toISOString();
+  const negativeSameTick=orchestrationClock;
   await workerCommand(cognitionSourceWorker.wrapperPath,{type:"worker.decision",decisionId:cognitionSourceDecisionId,
     dispatchId:unrelatedDispatch.entityId,runId:cognitionSourceRunId,kind:"waiting",reason:"No business owner in source",evidenceRefs:[]});
+  await assert.rejects(orchestrate({type:"dispatch.request",inboxId:lateNextInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:unrelatedDispatch.entityId,
+    taskId:waitingChildTaskId,expectedTaskVersion:2,recipientRoleId:businessRole,
+    purpose:"Too late after signed decision",authorizationScopeId:businessScope,reason:"Invalid late child"}),
+  (error:{code?:string})=>error.code==="PARENT_DECIDED");
+  const decisionEventTime=(await pool.query(`SELECT created_at_utc FROM orchestration_event WHERE project_id=$1
+    AND entity_id=$2 AND kind='worker.decision'`,[projectId,cognitionSourceDecisionId])).rows[0].created_at_utc.toISOString();
+  assert.equal(decisionEventTime,negativeSameTick);
+  orchestrationClock=null;
   await runtime.rejectDispatch(projectId,cognitionSourceRunId,"Fixture terminal; no native Turn");
   await orchestrate({type:"worker.outcome",dispatchId:unrelatedDispatch.entityId,outcome:"waiting",deliveryId:null,
     decisionId:cognitionSourceDecisionId,evidenceRef:null,reason:"No business owner in source"});

@@ -308,6 +308,39 @@ test("preterminal worker stop decision settles only after Run terminal and close
   assert.equal(h.data.events.filter(event => event.kind === "loop.stopped").length, 1);
 });
 
+test("same-clock child request is valid before a signed cognition decision, but no new child follows it", async () => {
+  const setup = async () => {
+    const h=harness(); await h.enroll(); const inbox=await h.accept(); await h.ack(inbox.entityId);
+    const parentId=randomUUID();
+    h.change(data => data.dispatches.set(parentId,{projectId,id:parentId,version:4,loopId,
+      inboxId:randomUUID(),sourceEventId:source1,taskId,taskVersion:1,parentDispatchId:null,
+      recipientRoleId:cognitiveRoleId,purpose:"cognition",authorizationScopeId:scopeId,
+      state:"accepted",claimToken:randomUUID(),leaseUntilUtc:null,runtimeRunId:data.runId,
+      outcome:null,deliveryId:null,evidenceRef:null,reason:"bound",requestedBy:cognition.actorId,
+      createdAtUtc:at,updatedAtUtc:at}));
+    const request=cmd({type:"dispatch.request",inboxId:inbox.entityId,expectedInboxVersion:2,
+      dispatchId:randomUUID(),parentDispatchId:parentId,taskId,expectedTaskVersion:1,
+      recipientRoleId:workerRoleId,purpose:"perform bounded work",authorizationScopeId:scopeId,reason:"explicit handoff"});
+    const decision=cmd({type:"worker.decision",decisionId:randomUUID(),dispatchId:parentId,
+      runId:h.data.runId,kind:"waiting",reason:"business child owns next action",evidenceRefs:[]});
+    return {h,parentId,request,decision};
+  };
+  const before=await setup();
+  const child=await before.h.service.execute(cognition,before.request);
+  await before.h.service.execute(cognition,before.decision);
+  assert.equal((await before.h.service.execute(cognition,before.request)).replayed,true,
+    "the exact signed child request remains idempotently readable after the decision");
+  assert.equal(before.h.data.dispatches.get(child.entityId)?.parentDispatchId,before.parentId);
+  assert.equal(before.h.data.events.filter(event=>event.kind==="dispatch.requested").length,1);
+
+  const afterDecision=await setup();
+  await afterDecision.h.service.execute(cognition,afterDecision.decision);
+  await assert.rejects(() => afterDecision.h.service.execute(cognition,afterDecision.request),failed("PARENT_DECIDED"));
+  assert.equal(afterDecision.h.data.dispatches.has(afterDecision.request.dispatchId),false);
+  assert.equal(afterDecision.h.data.events.filter(event=>event.kind==="dispatch.requested").length,0);
+  assert.equal(afterDecision.h.data.inbox.get(afterDecision.request.inboxId)?.state,"acknowledged");
+});
+
 test("operation replay rechecks actor binding and retains one immutable audit decision", async () => {
   const h = harness(); const command = cmd<Extract<OrchestrationCommand, { type: "loop.enroll" }>>({ type: "loop.enroll", loopId, goalId, stageId, cognitiveRoleId, allowedBusinessRoleIds: [workerRoleId], sourceAfter: { createdAtUtc: at, eventId: source0 }, maxRuns: 2, maxConcurrent: 1, reason: "bounded pilot" });
   const first = await h.service.execute(reviewer, command), replay = await h.service.execute(reviewer, command);
