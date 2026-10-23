@@ -95,8 +95,7 @@ test("closing session archives once, verifies identity, and restart only reads a
 
   closing.state = "closing"; closing.closeAttemptedAt = null;
   class ForeignRuntime extends ArchiveRuntime {
-    override async inspect(_binding: RuntimeBinding) { return { thread: { id: closing.nativeThreadId,
-      sessionId: closing.nativeSessionId, cwd: closing.cwd, source: "cli" } }; }
+    override async inspect(_binding: RuntimeBinding): Promise<unknown> { throw Error("native binding mismatch"); }
   }
   const foreign = new ForeignRuntime();
   const reject = new RuntimeRunner({ runtimeFactory: () => foreign as unknown as RuntimePort & ForeignRuntime,

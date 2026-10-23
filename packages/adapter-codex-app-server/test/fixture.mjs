@@ -44,12 +44,15 @@ for await (const line of lines) {
     send({ id, result: {} }); continue;
   }
   if (method === "thread/list") {
-    if (params.archived !== true || params.cwd !== thread.cwd || params.sourceKinds?.length !== 1 ||
-      params.sourceKinds[0] !== "appServer" || params.useStateDbOnly !== true || params.limit !== 100) {
+    if (params.archived !== true || params.cwd !== thread.cwd || params.sourceKinds !== undefined ||
+      params.useStateDbOnly !== true || params.limit !== 100) {
       send({ id, error: { code: -32602, message: "unsafe listing" } }); continue;
     }
-    send({ id, result: { data: archived ? [{ ...thread, source: mode === "foreign-archive" ? "cli" : "appServer",
-      ...(mode === "changed-session" ? { sessionId: "different-session" } : {}) }] : [], nextCursor: null } }); continue;
+    const foreign = { id: "other-thread", sessionId: "other-session", cwd: thread.cwd, source: "vscode" };
+    const owned = { ...thread, source: mode === "vscode-archive" ? "vscode" : "appServer",
+      ...(mode === "foreign-archive" ? { sessionId: "different-session" } : {}) };
+    send({ id, result: { data: archived ? mode === "foreign-only" ? [foreign] :
+      mode === "foreign-samecwd" ? [foreign, owned] : [owned] : [], nextCursor: null } }); continue;
   }
   if (method === "thread/resume" || method === "thread/read") {
     const observedEnvironment = mode === "env-observe" && method === "thread/read" ? {

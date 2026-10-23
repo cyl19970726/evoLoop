@@ -123,7 +123,7 @@ worker 文档路由仅接受显式修订及原件读取，拒绝无版本详情�
 
 本机 `codex-cli 0.154.0` 的 v2 schema 显示：`TurnStartParams` 必需 `threadId` 和 `input`，`TurnSteerParams` 必需 `threadId`、`expectedTurnId`、`input`，`TurnInterruptParams` 必需 `threadId` 与 `turnId`。`thread/start` 的 `cwd`、`model`、`sandbox`、`approvalPolicy` 可选；选择时遵守项目授权与运行环境，而不是用固定高权限配置求方便。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是实现时的外部合同；每次 CLI 升级重生 schema 并检查实验字段门控。
 
-正常结束已有 owned Session 时，`runtime.session.close` 只接受已绑定且空闲的 `ready` Session；同项目事务把它改为 `closing`，立即阻止新 Run。受管执行器先保存关闭操作 ID 和归档尝试时间，再对固定 0.154.0 `thread/archive` 发一次请求；空回包不是结束证据。只有受限分页的 `thread/list` 在 `archived:true`、原目录、`appServer` 来源下核到相同 thread/session 身份才记为 `closed`。丢回包、重启、查询不完整或身份不符时保留 `closing` 和原 ID，只读对账，不自动重发归档。原 Session、Run、事件及 Task/Knowledge 历史不删改；旧未知只读 Run 放弃仍是独立特例。适配器的 `close()` 仅关闭共享 App Server 子进程，不代表逐 Session 关闭。关闭后原生 trace 的历史读取尚未开放，须在关闭前固定需要的实际证据；真实原生归档仍待指定样本联测。
+正常结束已有 owned Session 时，`runtime.session.close` 只接受已绑定且空闲的 `ready` Session；同项目事务把它改为 `closing`，立即阻止新 Run。受管执行器先保存关闭操作 ID 和归档尝试时间，再对固定 0.154.0 `thread/archive` 发一次请求；空回包不是结束证据。只有受限分页的 `thread/list` 在 `archived:true`、原目录下核到相同 thread/session 身份才记为 `closed`。原生 `source` 是宿主分类，不是 owned 创建权威；本系统保存的 `thread/start` 回执与不可变绑定才是归属依据。丢回包、重启、查询不完整或身份不符时保留 `closing` 和原 ID，只读对账，不自动重发归档。原 Session、Run、事件及 Task/Knowledge 历史不删改；旧未知只读 Run 放弃仍是独立特例。适配器的 `close()` 仅关闭共享 App Server 子进程，不代表逐 Session 关闭。关闭后原生 trace 的历史读取尚未开放，须在关闭前固定需要的实际证据；真实原生归档仍待指定样本联测。
 
 ## 隔离实测与生产能力分开
 
