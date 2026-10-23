@@ -6,6 +6,9 @@ export interface WorkerGuardFacts {
     cognitiveRoleId: string; allowedBusinessRoleIds: string[] }) | null>;
   task(taskId: string): Promise<(Fact & { ownerRoleId: string; loopId: string }) | null>;
   taskRevision(taskId: string, revisionId: string): Promise<boolean>;
+  recoveryGap?(): Promise<(Fact & {loopId: string; dispatchId: string; eventId: string; runId: string;
+    taskId: string; taskRevisionId: string}) | null>;
+  recoveryDocument?(documentId: string, revisionId: string): Promise<boolean>;
   run(runId: string): Promise<(Fact & { taskId: string; sessionId: string }) | null>;
   delivery(deliveryId: string): Promise<(Fact & { taskId: string; runId: string | null }) | null>;
   inbox(inboxId: string): Promise<(Fact & { loopId: string; state: "pending" | "acknowledged" | "disposed" }) | null>;
@@ -40,6 +43,9 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
     const rest = path.slice(prefix.length), parts = rest.split("/");
     if (parts[0] === "references" && parts[1] === "tasks" && id(parts[2]) &&
         parts[3] === "revisions" && id(parts[4]) && parts.length === 5) {
+      const gap = scope.kind === "cognition" ? await facts.recoveryGap?.() : null;
+      if (gap && same(gap, scope.projectId) && gap.loopId === scope.loopId &&
+          gap.taskId === parts[2] && gap.taskRevisionId === parts[4]) return true;
       const bound = await facts.task(parts[2]);
       return !!bound && same(bound, scope.projectId) && bound.loopId === scope.loopId &&
         (scope.kind === "cognition" || parts[2] === scope.taskId) && facts.taskRevision(parts[2], parts[4]);
@@ -64,6 +70,11 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
     }
     if (parts[0] === "tasks" && id(parts[1]) && (parts.length === 2 || parts.length === 3 && parts[2] === "revisions" ||
         parts.length === 4 && parts[2] === "revisions" && id(parts[3]))) {
+      if (parts.length === 4 && scope.kind === "cognition") {
+        const gap = await facts.recoveryGap?.();
+        if (gap && same(gap, scope.projectId) && gap.loopId === scope.loopId &&
+            gap.taskId === parts[1] && gap.taskRevisionId === parts[3]) return true;
+      }
       const task = await facts.task(parts[1]);
       return same(task, scope.projectId) && task?.loopId === scope.loopId &&
         (scope.kind === "cognition" || parts[1] === scope.taskId && task.ownerRoleId === scope.roleId) &&
@@ -74,8 +85,16 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       const run = await facts.run(scope.runId);
       return same(run, scope.projectId) && run?.taskId === scope.taskId && run.sessionId === scope.sessionId;
     }
+    if (scope.kind === "cognition" && parts[0] === "runtime" && parts[1] === "runs" && id(parts[2]) &&
+        (parts.length === 3 || parts.length === 4 && ["events", "result"].includes(parts[3] ?? ""))) {
+      const gap = await facts.recoveryGap?.();
+      return !!gap && same(gap, scope.projectId) && gap.loopId === scope.loopId && gap.runId === parts[2];
+    }
     if (parts[0] === "documents" && id(parts[1]) &&
         (parts.length === 2 || parts[2] === "revisions" && parts.length <= 5)) {
+      if (scope.kind === "cognition" && parts.length >= 4 && id(parts[3]) &&
+          (parts.length === 4 || parts.length === 5 && parts[4] === "original") &&
+          await facts.recoveryDocument?.(parts[1], parts[3])) return true;
       const document = await facts.document(parts[1]);
       if (!same(document, scope.projectId)) return false;
       if (parts.length >= 4 && id(parts[3])) return parts.length === 4 || parts[4] === "original" ?

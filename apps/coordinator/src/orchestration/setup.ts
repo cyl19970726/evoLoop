@@ -13,11 +13,11 @@ import { workerGuardFacts } from "../workers/facts.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 
-/** Keep Task context to exact dispatches and their immediate source/feedback chain. */
+/** Follow formal Task feedback one dispatch at a time without expanding an entire Loop. */
 export async function readTaskContext(pool: Pool, workflow: Pick<WorkflowService, "getTask">,
   principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) {
   await workflow.getTask(principal, projectId, taskId);
-  const result = await pool.query(`WITH direct AS (
+  const result = await pool.query(`WITH RECURSIVE direct AS (
       SELECT loop_id,dispatch_id,data->>'sourceEventId' AS source_id,data->>'parentDispatchId' AS parent_id
       FROM orchestration_dispatch WHERE project_id=$1 AND task_id=$2
     ), observed AS (
@@ -29,30 +29,51 @@ export async function readTaskContext(pool: Pool, workflow: Pick<WorkflowService
       JOIN delivery delivery ON delivery.project_id=o.project_id AND delivery.delivery_id=o.delivery_id
         AND delivery.task_id=o.task_id
       WHERE e.project_id=$1 AND e.entity_id=$2 AND e.kind='observation.record'
-    ), seeds AS (
-      SELECT loop_id,source_id FROM direct
-      UNION SELECT e.loop_id,e.event_id::text FROM orchestration_event e
-        JOIN direct d ON d.loop_id=e.loop_id AND d.dispatch_id=e.entity_id
-        WHERE e.project_id=$1 AND (e.kind='dispatch.gap' OR
-          (e.kind='worker.outcome' AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')))
-      UNION SELECT x.loop_id,o.event_id::text FROM observed o
-        JOIN orchestration_dispatch x ON x.project_id=$1 AND x.data->>'sourceEventId'=o.event_id::text
+    ), roots_raw AS (
+      SELECT d.loop_id,d.dispatch_id,d.source_id,d.parent_id FROM direct d
+      UNION SELECT x.loop_id,x.dispatch_id,x.data->>'sourceEventId',x.data->>'parentDispatchId'
+        FROM observed o JOIN orchestration_dispatch x ON x.project_id=$1
+          AND x.data->>'sourceEventId'=o.event_id::text
     ), loop_page AS (
-      SELECT DISTINCT loop_id FROM seeds WHERE ($3::uuid IS NULL OR loop_id>$3)
+      SELECT DISTINCT loop_id FROM roots_raw WHERE ($3::uuid IS NULL OR loop_id>$3)
       ORDER BY loop_id LIMIT $4
-    ), related AS (
-      SELECT DISTINCT x.loop_id,x.dispatch_id,x.data->>'parentDispatchId' AS parent_id
-      FROM orchestration_dispatch x JOIN loop_page page ON page.loop_id=x.loop_id
-      WHERE x.project_id=$1 AND (EXISTS (SELECT 1 FROM seeds s
-        WHERE s.loop_id=x.loop_id AND s.source_id=x.data->>'sourceEventId')
-        OR EXISTS (SELECT 1 FROM direct d WHERE d.loop_id=x.loop_id AND
-          (d.parent_id=x.dispatch_id::text OR x.data->>'parentDispatchId'=d.dispatch_id::text)))
+    ), roots AS (
+      SELECT r.* FROM roots_raw r JOIN loop_page p ON p.loop_id=r.loop_id
+    ), chain AS (
+      SELECT r.loop_id,r.dispatch_id FROM roots r
+      UNION
+      SELECT x.loop_id,x.dispatch_id FROM chain c
+      JOIN orchestration_dispatch x ON x.project_id=$1 AND x.loop_id=c.loop_id
+        AND (x.data->>'parentDispatchId'=c.dispatch_id::text OR EXISTS (
+          SELECT 1 FROM orchestration_event e WHERE e.project_id=$1 AND e.loop_id=c.loop_id
+            AND e.entity_id=c.dispatch_id AND e.event_id::text=x.data->>'sourceEventId'
+            AND (e.kind='dispatch.gap' OR (e.kind='worker.outcome'
+              AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')))))
+    ), upstream AS (
+      SELECT p.loop_id,p.dispatch_id,p.data->>'sourceEventId' AS source_id,
+        NULL::text AS parent_id
+      FROM roots r JOIN orchestration_dispatch p ON p.project_id=$1 AND p.loop_id=r.loop_id
+        AND p.dispatch_id::text=r.parent_id
+    ), visible AS (
+      SELECT c.loop_id,c.dispatch_id,d.data->>'sourceEventId' AS source_id,
+        d.data->>'parentDispatchId' AS parent_id
+      FROM chain c JOIN orchestration_dispatch d ON d.project_id=$1 AND d.loop_id=c.loop_id
+        AND d.dispatch_id=c.dispatch_id
+      UNION SELECT loop_id,dispatch_id,source_id,parent_id FROM upstream
+    ), sources AS (
+      SELECT c.loop_id,d.data->>'sourceEventId' AS source_id
+      FROM chain c JOIN orchestration_dispatch d ON d.project_id=$1 AND d.loop_id=c.loop_id
+        AND d.dispatch_id=c.dispatch_id
+      UNION SELECT e.loop_id,e.event_id::text FROM chain c
+        JOIN orchestration_event e ON e.project_id=$1 AND e.loop_id=c.loop_id
+          AND e.entity_id=c.dispatch_id AND (e.kind='dispatch.gap' OR
+            (e.kind='worker.outcome' AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')))
     )
-    SELECT page.loop_id,array_remove(array_agg(DISTINCT seeds.source_id),NULL) AS sources,
-      array_remove(array_agg(DISTINCT related.dispatch_id::text),NULL) AS dispatches,
-      array_remove(array_agg(DISTINCT related.parent_id),NULL) AS parents
-    FROM loop_page page LEFT JOIN seeds ON seeds.loop_id=page.loop_id
-      LEFT JOIN related ON related.loop_id=page.loop_id
+    SELECT page.loop_id,array_remove(array_agg(DISTINCT sources.source_id),NULL) AS sources,
+      array_remove(array_agg(DISTINCT visible.dispatch_id::text),NULL) AS dispatches,
+      array_remove(array_agg(DISTINCT visible.parent_id),NULL) AS parents
+    FROM loop_page page LEFT JOIN sources ON sources.loop_id=page.loop_id
+      LEFT JOIN visible ON visible.loop_id=page.loop_id
     GROUP BY page.loop_id ORDER BY page.loop_id`, [projectId, taskId, cursor ?? null, limit + 1]);
   const items = result.rows.slice(0, limit).map(row => ({loopId: row.loop_id as string,
     sourceEventIds: row.sources as string[], dispatchIds: row.dispatches as string[],

@@ -114,8 +114,27 @@ export class OrchestrationService {
       const source = await tx.getSourceFact(command.sourceEventId);
       const bootstrap = source?.id === loop.bootstrapEventId && source.kind === "loop.enrolled" && source.sourceLoopId === loop.id && source.subjectId === loop.id && source.subjectVersion === 1;
       const feedback = source?.kind === "worker.outcome" && source.sourceLoopId === loop.id && !!source.originDispatchId;
+      const recoveryGap = source?.kind === "dispatch.gap" && source.sourceLoopId === loop.id && !!source.originDispatchId;
       const externalObservation = source?.kind === "observation.record" && source.sourceLoopId === null && source.originDispatchId === null;
-      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !externalObservation) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed, own business feedback, or scoped consumer observation");
+      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed, own business feedback, terminal intent gap, or scoped consumer observation");
+      if (recoveryGap) {
+        const origin = await tx.getDispatch(source.originDispatchId!);
+        if (!origin || origin.projectId !== command.projectId || origin.loopId !== loop.id ||
+          origin.state !== "accepted" || origin.outcome !== null || !origin.runtimeRunId ||
+          origin.runtimeRunId !== source.gapRunId || origin.taskId !== source.subjectId ||
+          origin.taskVersion !== source.gapTaskVersion ||
+          origin.version < source.subjectVersion)
+          return fail("SOURCE_UNAVAILABLE", "recovery requires the original accepted dispatch and fixed gap Run");
+        const run = await tx.getRunFact(origin.runtimeRunId);
+        if (!run || run.projectId !== command.projectId || run.taskId !== origin.taskId ||
+          !["completed", "failed", "interrupted"].includes(run.state) ||
+          await tx.findSubmissionByDispatch(origin.id) || await tx.findDecisionByDispatch(origin.id))
+          return fail("SOURCE_UNAVAILABLE", "recovery requires a confirmed terminal Run with no signed worker intent");
+        const fixed = await tx.getTaskScopeAtVersion(origin.taskId, origin.taskVersion);
+        if (!fixed || fixed.projectId !== command.projectId || fixed.taskVersion !== origin.taskVersion ||
+          !fixed.stageId || fixed.goalId !== loop.goalId || (loop.stageId !== null && fixed.stageId !== loop.stageId))
+          return fail("SOURCE_UNAVAILABLE", "the original Task revision is outside this loop's fixed Goal and Stage");
+      }
       if (feedback) {
         const origin = await tx.getDispatch(source.originDispatchId!);
         if (!origin || origin.projectId !== command.projectId || origin.loopId !== loop.id || origin.recipientRoleId === loop.cognitiveRoleId || origin.state !== "completed" || !["delivered", "failed", "waiting", "no_action"].includes(origin.outcome ?? "") || origin.taskId !== source.subjectId || origin.version !== source.subjectVersion) return fail("SOURCE_UNAVAILABLE", "feedback must be a completed business outcome in this loop");
@@ -284,8 +303,9 @@ export class OrchestrationService {
       if (dispatch.state !== "accepted" || !dispatch.runtimeRunId) return fail("INVALID_STATE", "only a terminal accepted Run can carry a worker intent gap");
       const run = await tx.getRunFact(dispatch.runtimeRunId);
       if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId || !["completed", "failed", "interrupted"].includes(run.state)) return fail("RUN_NOT_TERMINAL", "worker intent gap requires terminal bound Run");
+      if (dispatch.reason.startsWith("Worker intent gap:")) return fail("GAP_RECORDED", "worker intent gap is already recorded for this dispatch");
       const next = { ...dispatch, version: dispatch.version + 1, reason: command.reason, evidenceRef: command.evidenceRef, updatedAtUtc: now };
-      await tx.updateDispatch(next, dispatch.version); await event(loop.id, "dispatch", dispatch.id, "dispatch.gap", { reason: command.reason, evidenceRef: command.evidenceRef });
+      await tx.updateDispatch(next, dispatch.version); await event(loop.id, "dispatch", dispatch.id, "dispatch.gap", { reason: command.reason, evidenceRef: command.evidenceRef, runId: run.id, taskId: dispatch.taskId, taskVersion: dispatch.taskVersion, dispatchVersion: next.version });
       return result("dispatch", dispatch.id, next.version);
     }
     if (dispatch.state !== "accepted") return fail("INVALID_STATE", "worker outcome requires an accepted dispatch");

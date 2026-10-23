@@ -5,7 +5,7 @@ import { errorText } from "../api";
 import { Notice } from "../workflow/ActionForm";
 import { mergePage, orchestrationClient, type LoopPart, type LoopPartItem, type OrchestrationStatus, type ResultPage, type TaskLoopContext } from "./client";
 import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "./presentation";
-import { inTaskContext, orderDispatches, readableOutcome, storyNextAction } from "./summary";
+import { hasTerminalIntentGap, inTaskContext, orderDispatches, readableOutcome, storyNextAction } from "./summary";
 import { taskSectionHref } from "./navigation";
 import "./orchestration.css";
 
@@ -191,19 +191,21 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
         const submission = data.submissions.items.find(value => value.dispatchId === item.id);
         const decisionEvent = data.events.items.find(value => value.kind === "worker.decision" && value.detail.dispatchId === item.id);
         const decision = decisionEvent ? data.decisions[decisionEvent.entityId] : undefined;
+        const intentGap = hasTerminalIntentGap(item.id,data.events.items,submission,decision);
         const later = ordered.hasLater.has(item.id);
         return <article className="orch-story" key={item.id}>
-          <div className="orch-story-head"><h4><a href={taskHref(projectId,item.taskId)}>{detail?.task.title ?? `任务 ${short(item.taskId)}`}</a>{detail && detail.task.version !== item.taskVersion && <small>现名称；派发时为任务 v{item.taskVersion}</small>}</h4><span>{dispatchStateLabel[item.state]}</span></div>
+          <div className="orch-story-head"><h4><a href={taskHref(projectId,item.taskId)}>{detail?.task.title ?? `任务 ${short(item.taskId)}`}</a>{detail && detail.task.version !== item.taskVersion && <small>现名称；派发时为任务 v{item.taskVersion}</small>}</h4><span>{intentGap ? "运行已结束，缺少提交" : dispatchStateLabel[item.state]}</span></div>
           <p className="muted">当次派发 {item.createdAtUtc}{later ? " · 已读回正式后续派发" : " · 后续是否完整取决于已载入记录"}</p>
           <dl><div><dt>为什么做</dt><dd>{item.reason || item.purpose}{detail?.task.content && <details><summary>任务现正文</summary><p>{detail.task.content}</p></details>}</dd></div>
             <div><dt>交给谁</dt><dd>{item.recipientRoleId}{item.requestedBy ? ` · 由 ${item.requestedBy} 发起` : ""}</dd></div>
             <div><dt>决定依据</dt><dd>{decision ? <>{dispositionLabel(decision.kind)}：{decision.reason} · {decision.actorId}</> :
               inbox?.reason ? `${inbox.reason} · ${inbox.acknowledgedBy ?? "未见署名"}` : "决定理由尚未读回；可在审计记录中核对。"}</dd></div>
-            <div><dt>结果</dt><dd>{readableOutcome(item,submission,detail)}</dd></div>
-            <div><dt>当时的下一步</dt><dd>{storyNextAction(inbox,item,submission,later)}</dd></div></dl>
+            <div><dt>结果</dt><dd>{intentGap ? "已确认运行结束，尚无署名提交或决定，不能视作交付。" : readableOutcome(item,submission,detail)}</dd></div>
+            <div><dt>当时的下一步</dt><dd>{later ? storyNextAction(inbox,item,submission,true) :
+              intentGap ? "缺口已保留；核因与后续处理见关联工作记录。" : storyNextAction(inbox,item,submission,false)}</dd></div></dl>
           <p className="orch-story-links">{data.revisionIds[item.taskId]?.[item.taskVersion] ?
-            <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>原任务固定修订 v{item.taskVersion}</a> :
-            <span>原任务固定修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
+            <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>派发请求时任务修订 v{item.taskVersion}</a> :
+            <span>派发请求时任务修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
             {item.runtimeRunId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"runtime"})}>所属任务的运行页（Run {short(item.runtimeRunId)}）</a></>}
             {submission?.deliveryId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"delivery"})}>所属任务的交付与使用页（Delivery {short(submission.deliveryId)}）</a></>}
             {item.parentDispatchId && <> · 上游派发见下方记录</>}</p>

@@ -3,9 +3,9 @@ import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
 import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { inTaskContext, nextAction, orderDispatches, readableOutcome, relatedDispatches, storyNextAction } from "../src/orchestration/summary.ts";
+import { hasTerminalIntentGap, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/orchestration/summary.ts";
 import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 
 const projectId = "11111111-1111-4111-8111-111111111111", loopId = "22222222-2222-4222-8222-222222222222";
@@ -74,19 +74,20 @@ test("human summary distinguishes signed intent, actual delivery and human use",
   assert.match(nextAction({state:"pending"} as OrchestrationInbox,undefined,undefined),/核对入站来源/);
 });
 
-test("task chain relation includes same source and direct parent, but excludes unrelated loop tasks", () => {
+test("task story follows server-verified dispatch IDs and an explicit upstream parent, never a shared source alone", () => {
   const direct={id:"a",taskId:"task",sourceEventId:"source",parentDispatchId:null} as OrchestrationDispatch;
   const sameSource={id:"b",taskId:"other",sourceEventId:"source",parentDispatchId:null} as OrchestrationDispatch;
   const child={id:"c",taskId:"third",sourceEventId:"later",parentDispatchId:"a"} as OrchestrationDispatch;
   const unrelated={id:"d",taskId:"unrelated",sourceEventId:"unrelated",parentDispatchId:null} as OrchestrationDispatch;
-  assert.deepEqual(relatedDispatches([direct,sameSource,child,unrelated],"task").map(item=>item.id),["a","b","c"]);
   const context={loopId,sourceEventIds:["source"],dispatchIds:["a"],parentDispatchIds:[]};
   assert.equal(inTaskContext(direct,context),true);
   assert.equal(inTaskContext(sameSource,context),false,"a shared source alone does not prove this Task's dispatch relation");
+  assert.equal(inTaskContext(child,{...context,dispatchIds:["a","c"]}),true);
   assert.equal(inTaskContext(unrelated,context),false);
   const feedback={...unrelated,id:"next-cognition",sourceEventId:"outcome-event",parentDispatchId:null};
   assert.equal(inTaskContext(feedback,{...context,sourceEventIds:["source","outcome-event"]}),false);
   assert.equal(inTaskContext(feedback,{...context,dispatchIds:["a","next-cognition"]}),true);
+  assert.equal(inTaskContext(sameSource,{...context,parentDispatchIds:["b"]}),true);
 });
 
 test("story order follows recorded time and exact parent/outcome cause, never UUID or a shared source", () => {
@@ -103,6 +104,19 @@ test("story order follows recorded time and exact parent/outcome cause, never UU
     "an unread source cannot fabricate an edge; the UI must flag the partial page");
   const child=at("c","2026-10-23T09:58:00Z","other","b");
   assert.deepEqual(orderDispatches([child,next,sibling,first],[source],[]).ordered.map(item=>item.id),["z","b","c","a"]);
+  const recovery=at("d","2026-10-23T09:57:00Z","gap");
+  const gap={id:"gap",kind:"dispatch.gap",originDispatchId:"c"} as OrchestrationSourceFact;
+  assert.deepEqual(orderDispatches([recovery,child,next,sibling,first],[source,gap],[]).ordered.map(item=>item.id),["z","b","c","d","a"]);
+  assert.deepEqual([...orderDispatches([recovery,child,next,sibling,first],[source,gap],[]).hasLater].sort(),["b","c","z"]);
+});
+
+test("terminal gap requires a formal event and no signed submission or decision", () => {
+  const gap={kind:"dispatch.gap",entityId:"dispatch-1"} as OrchestrationEvent;
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],undefined,undefined),true);
+  assert.equal(hasTerminalIntentGap("dispatch-2",[gap],undefined,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[],undefined,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],{id:"submission"} as OrchestrationSubmission,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],undefined,{id:"decision"} as OrchestrationWorkerDecision),false);
 });
 
 test("an old waiting card cannot present its past instruction as today's next action", () => {

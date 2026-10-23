@@ -1,14 +1,6 @@
 import type { TaskDetail } from "@evoloop/contracts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskLoopContext } from "./client";
-
-export function relatedDispatches(dispatches: OrchestrationDispatch[], taskId: string): OrchestrationDispatch[] {
-  const direct = dispatches.filter(item => item.taskId === taskId);
-  const sources = new Set(direct.map(item => item.sourceEventId));
-  const ids = new Set(direct.map(item => item.id));
-  return dispatches.filter(item => ids.has(item.id) || sources.has(item.sourceEventId) ||
-    item.parentDispatchId !== null && ids.has(item.parentDispatchId));
-}
 
 export function inTaskContext(dispatch: OrchestrationDispatch, context: TaskLoopContext): boolean {
   return context.dispatchIds.includes(dispatch.id) || context.parentDispatchIds.includes(dispatch.id);
@@ -39,6 +31,12 @@ export function orderDispatches(dispatches: OrchestrationDispatch[], sources: Or
     ordered.push(next); remaining.delete(next.id);
   }
   return {ordered,hasLater};
+}
+
+/** A terminal gap is an observed event, never inferred merely from an absent submission page. */
+export function hasTerminalIntentGap(dispatchId: string, events: OrchestrationEvent[],
+  submission: OrchestrationSubmission | undefined, decision: OrchestrationWorkerDecision | undefined): boolean {
+  return !submission && !decision && events.some(value => value.kind === "dispatch.gap" && value.entityId === dispatchId);
 }
 
 export function readableOutcome(dispatch: OrchestrationDispatch, submission: OrchestrationSubmission | undefined,

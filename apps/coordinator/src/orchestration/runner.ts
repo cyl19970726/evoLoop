@@ -154,6 +154,13 @@ export class ManagedLoopRunner {
         !!fact.operationId && !!fact.sourceActorId && !!fact.observationId &&
         !!fact.deliveryId && ["used", "failed", "notUsed"].includes(fact.observationResult ?? "");
     }
+    if (fact.kind === "dispatch.gap" && fact.sourceLoopId === loop.id && fact.originDispatchId && fact.gapRunId) {
+      // A missing signed intent is a software recovery source even when the failed worker was cognition itself.
+      return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
+        d.runtimeRunId === fact.gapRunId && d.taskVersion === fact.gapTaskVersion &&
+        d.state === "accepted" && d.outcome === null &&
+        d.version >= fact.subjectVersion);
+    }
     if (fact.kind !== "worker.outcome" || fact.sourceLoopId !== loop.id || !fact.originDispatchId) return false;
     return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
       d.version === fact.subjectVersion && d.recipientRoleId !== loop.cognitiveRoleId &&
@@ -195,7 +202,7 @@ export class ManagedLoopRunner {
     const taskId = loopIntentId(loop.id, inbox.id, "cognition-task");
     const existing = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId).catch(() => null);
     if (!existing) {
-      const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `business result event ${inbox.sourceEventId}`;
+      const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `verified source event ${inbox.sourceEventId}`;
       applied(await this.deps.workflow.execute(cognitive.principal, { type: "task.create", projectId: loop.projectId,
         operationId: loopIntentId(taskId, "create"), taskId, stageId: loop.stageId,
         title: `Cognition: ${source}`, owner: loop.cognitiveRoleId, kind: "research",
@@ -341,6 +348,12 @@ export class ManagedLoopRunner {
   private async workerInput(loop: OrchestrationLoop, dispatch: OrchestrationDispatch, runId: string,
     wrapperPath: string, profile: ManagedRoleProfile): Promise<string> {
     const kind = dispatch.recipientRoleId === loop.cognitiveRoleId ? "cognition" : "business";
+    const source = kind === "cognition" ? (await this.pages(cursor =>
+      this.deps.orchestration.listSourceFacts(profile.principal, loop.projectId, loop.id, 100, cursor)))
+      .find(fact => fact.id === dispatch.sourceEventId) : null;
+    const gapContext = source?.kind === "dispatch.gap" && source.sourceLoopId === loop.id &&
+      source.originDispatchId && source.gapRunId && source.gapTaskVersion
+      ? ` Recovery source is dispatch.gap ${source.id} from original Dispatch ${source.originDispatchId}, terminal Run ${source.gapRunId}, Task ${source.subjectId} at version ${source.gapTaskVersion}. Read the original Dispatch at get /api/projects/${loop.projectId}/orchestration/dispatches/${source.originDispatchId} and original Run at get /api/projects/${loop.projectId}/runtime/runs/${source.gapRunId}; its taskRevisionId identifies the exact readable Task revision at get /api/projects/${loop.projectId}/tasks/${source.subjectId}/revisions/REVISION_ID and fixed basis originals at get /api/projects/${loop.projectId}/documents/DOCUMENT_ID/revisions/REVISION_ID/original. Do not use the Task's current detail or revision list to reconstruct this gap.` : "";
     const businessScopes = kind === "cognition" ? (await Promise.all(loop.allowedBusinessRoleIds.map(async roleId => {
       const target = await this.deps.controller(loop.projectId, roleId);
       return target ? `${roleId}=${target.authorizationScopeId}` : `${roleId}=unavailable`;
@@ -349,7 +362,7 @@ export class ManagedLoopRunner {
       ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, fixed Documents, Git/Wiki and feedback with the scoped CLI. Decide a bounded next action. To delegate, create a Stage-linked business Task, accept the SAME source event as a next_action inbox, acknowledge it, then request its dispatch with parentDispatchId=${dispatch.id} and the business role/scope mapping: ${businessScopes}. Record a signed worker submission or decision before this Turn ends.`
       : `Execute Task ${dispatch.taskId} from its fixed basis. Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
-    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
+    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
     if (input.length > 4000) throw new Error("WORKER_INPUT_TOO_LONG");
     return input;
   }

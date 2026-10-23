@@ -37,8 +37,9 @@ function harness() {
     countCapacityUsed: async id => [...draft.dispatches.values()].filter(item => item.loopId === id &&
       (["claimed", "dispatching", "unknown"].includes(item.state) ||
         item.state === "accepted" && (item.runtimeRunId !== draft.runId || !["completed", "failed", "interrupted"].includes(draft.runState)))).length,
-    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); }, getSourceFact: async id => draft.source.get(id) ?? null,
+    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } }, getSourceFact: async id => draft.source.get(id) ?? null,
     getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
+    getTaskScopeAtVersion: async (id, taskVersion) => id === taskId && taskVersion === 1 ? { projectId, taskId: id, taskVersion, goalId, stageId } : null,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? { projectId, id, goalId, state: "active" } : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
@@ -77,6 +78,41 @@ test("enrollment starts after a verified event, duplicate source is one inbox, a
   const first = await h.accept(), second = await h.accept();
   assert.equal(first.entityId, second.entityId); assert.equal(h.data.inbox.size, 2);
   assert.equal(h.data.events.filter(event => event.kind === "inbox.accepted").length, 2);
+});
+
+test("terminal missing-intent gap from cognition becomes one recovery inbox, while unknown and stale intent do not", async () => {
+  const h = harness(); await h.enroll(); h.advanceTime(after);
+  const gapDispatchId = randomUUID();
+  h.change(value => {
+    value.runState = "completed";
+    value.dispatches.set(gapDispatchId, { projectId, id: gapDispatchId, version: 4, loopId,
+      inboxId: randomUUID(), sourceEventId: source0, taskId, taskVersion: 1,
+      parentDispatchId: null, recipientRoleId: cognitiveRoleId, purpose: "cognition",
+      authorizationScopeId: scopeId, state: "accepted", claimToken: randomUUID(), leaseUntilUtc: null,
+      runtimeRunId: value.runId, outcome: null, deliveryId: null, evidenceRef: null,
+      reason: "native Run ended", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: at });
+  });
+  // The old source projection had no dispatch.gap, so there could be no recovery inbox.
+  assert.equal((await h.service.listSourceFacts({ ...reviewer, permissions: ["read", "write", "review"] }, projectId, loopId)).items.some(x => x.kind === "dispatch.gap"), false);
+  await h.service.execute(reviewer, cmd({ type: "dispatch.gap", dispatchId: gapDispatchId,
+    expectedVersion: 4, reason: "Worker intent gap: absent", evidenceRef: null }));
+  const gap = h.data.events.find(e => e.kind === "dispatch.gap")!;
+  assert.equal(gap.detail.runId, h.data.runId);
+  assert.equal(gap.detail.dispatchVersion, 5);
+  const first = await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: gap.id, recipientRoleId: cognitiveRoleId, purpose: "cognitive_review" }));
+  const again = await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: gap.id, recipientRoleId: cognitiveRoleId, purpose: "cognitive_review" }));
+  assert.equal(first.entityId, again.entityId);
+  assert.equal(h.data.inbox.get(first.entityId)?.state, "pending");
+  h.change(value => { value.runState = "unknown"; });
+  await assert.rejects(() => h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: gap.id, recipientRoleId: cognitiveRoleId, purpose: "next_action" })), failed("SOURCE_UNAVAILABLE"));
+  h.change(value => { value.runState = "completed"; value.decisions.set(randomUUID(), {
+    projectId, id: randomUUID(), dispatchId: gapDispatchId, runId: value.runId, taskId,
+    kind: "waiting", reason: "late forged decision", evidenceRefs: [], actorId: cognition.actorId, createdAtUtc: after }); });
+  await assert.rejects(() => h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: gap.id, recipientRoleId: cognitiveRoleId, purpose: "next_action" })), failed("SOURCE_UNAVAILABLE"));
 });
 
 test("fixed Task and scope are checked at request and again before external dispatch", async () => {
