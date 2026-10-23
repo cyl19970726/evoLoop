@@ -58,6 +58,9 @@ test("cognitive worker owner, loop and dispatch boundaries", async () => {
   assert.equal(await authorizeWorkerCommand(thinker, command("task.create", { taskId: u(), owner: "builder", stageId }), facts), true);
   assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/goals/${goalId}` }, facts), true);
   assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/stages/${stageId}/reviews` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/orchestration/loops/${loopId}/sources` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/orchestration/loops/${loopId}/sources` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/orchestration/loops/${u()}/sources` }, facts), false);
   assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/goals/${u()}` }, facts), false);
   assert.equal(await authorizeWorkerCommand(thinker, command("task.create", { taskId: u(), owner: "outside" }), facts), false);
   assert.equal(await authorizeWorkerCommand(thinker, command("dispatch.request", { taskId, inboxId, parentDispatchId, recipientRoleId: "builder" }), facts), true);

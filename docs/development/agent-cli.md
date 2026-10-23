@@ -58,6 +58,12 @@ npm run --silent cli -- receipts reconcile "$RECEIPT_ID"
 npm run --silent cli -- receipts retry "$RECEIPT_ID"
 ```
 
+## 配置周期工作的接续
+
+先用 `command schema schedule.create` / `schedule.revise` 核对当前输入。需要自动承接时，在新修订模板显式设置 `managedTarget: {loopId, stageId}`，指向同项目、已授权且已限定该 Stage 的 Loop 和 active Stage，并核模板责任者、日程 grant 与该业务职责的 runtime profile。缺省仍只创建普通 todo，不借下一次 tick 偷改旧日程范围。
+
+创建/修订后读回日程修订与 occurrence；到期产生的 Task、其固定 Stage、源事件、认知及实际 Run 分别核对。认知复用这项 todo，不另外创建同工作 Task。暂停日程停止后续物化，暂停 Loop 停止新执行，两者都不代替中断在途 Run。结果未知保留原操作/UTC 实例键，不凭下次触发重复启动；旧修订 queued 的处理仍须明确核对。完整状态边界见[日程合同](../architecture/contracts.md#可选的受管目标)。
+
 ## 受管执行与自动接续
 
 自动循环使用同一 CLI、业务 core 和 App Server，另有独立的编排命令与回执。`command types/schema/run` 同时发现两类命令；编排命令发往 `/api/orchestration/commands`，原业务命令仍发往 `/api/commands`。用 `list loops`、`list inbox --loop ID`、`list dispatches --loop ID`、`read loop ID --events`、`read dispatch ID` 和 `read submission ID` 回读。编排操作在 `/api/projects/PROJECT_ID/orchestration/operations/OPERATION_ID` 核对原 actor 与命令摘要；CLI 不自动重发。显式 `receipts retry` 只支持其纯事务白名单，原生启动和封存等阶段先对账。

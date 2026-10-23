@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import type { Occurrence, ScheduleDefinition, ScheduleRevision, SchedulingTransaction } from "@evoloop/contracts/scheduling";
 import { DomainError } from "@evoloop/contracts/ports";
 import { rowDefinition, rowOccurrence, rowRevision } from "./scheduling-rows.js";
+import type { Stage } from "@evoloop/contracts";
 
 const maxRows = 1000;
 const bounded = <T>(rows: T[], label: string): T[] => {
@@ -12,6 +13,19 @@ const bounded = <T>(rows: T[], label: string): T[] => {
 /** Same client and project transaction as the common operation journal. */
 export class PgSchedulingQueries implements SchedulingTransaction {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
+
+  async getStage(id: string): Promise<Stage | null> {
+    const result = await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND stage_id=$2", [this.projectId, id]);
+    const row = result.rows[0];
+    return row ? { projectId: this.projectId, id: row.stage_id, goalId: row.goal_id, version: row.version,
+      deliverable: row.deliverable, learningQuestion: row.learning_question, state: row.state,
+      actorId: row.actor_id, createdAt: new Date(row.created_at).toISOString() } as Stage : null;
+  }
+
+  async getManagedScheduleLoop(id: string) {
+    const result = await this.client.query("SELECT data FROM orchestration_loop WHERE project_id=$1 AND loop_id=$2", [this.projectId, id]);
+    return result.rows[0]?.data ?? null;
+  }
 
   async getSchedule(id: string): Promise<ScheduleDefinition | null> {
     const result = await this.client.query(`SELECT d.version AS head_version,d.state,d.watermark_utc,d.current_revision_id,r.*

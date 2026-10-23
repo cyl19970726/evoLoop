@@ -90,6 +90,9 @@ export interface OrchestrationSourceFact {
   gapRunId?: string | null; gapTaskVersion?: number | null;
   /** Creation revision of a scoped issue; report and unscoped Document events are not sources. */
   issueRevisionId?: string | null; issueContentHash?: string | null;
+  /** Fixed managed Schedule occurrence and creation Task revision. */
+  scheduleId?: string | null; scheduleRevisionId?: string | null; plannedAtUtc?: string | null;
+  scheduleTargetLoopId?: string | null; scheduleTargetStageId?: string | null; scheduleTaskRevisionId?: string | null;
 }
 export interface OrchestrationIssueFact {
   projectId: string; documentId: string; revisionId: string; contentHash: string; author: string;
