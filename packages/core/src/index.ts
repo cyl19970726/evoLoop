@@ -134,7 +134,7 @@ export class WorkflowService {
 
   private commandPermission(command: Command): "write" | "review" {
     if (command.type.startsWith("evaluation.")) return "review";
-    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
+    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
@@ -529,7 +529,7 @@ export class WorkflowService {
         if (command.type === "schedule.create" || command.type === "schedule.revise") {
           return applySchedule(tx, principal, command as ScheduleCommand, now);
         }
-        if (command.type === "runtime.session.reserve" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
+        if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value) });
         }
         return applyWorkflow({ tx, command, principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));

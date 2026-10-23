@@ -41,11 +41,74 @@ class FakeRuntime {
     cwd: session.cwd, authorizationScope: session.authorizationScope, nativeThreadId: "owned-thread",
     nativeSessionId: "owned-session", owner: "evoloop-codex-app-server" as const }; }
   async resume(binding: RuntimeBinding) { return binding; }
-  async inspect(_binding: RuntimeBinding): Promise<unknown> { return { thread: { id: session.nativeThreadId, sessionId: session.nativeSessionId, cwd: session.cwd } }; }
+  async inspect(_binding: RuntimeBinding): Promise<unknown> { return { thread: { id: session.nativeThreadId, sessionId: session.nativeSessionId, cwd: session.cwd, source: "appServer" } }; }
   async listTurns(): Promise<RuntimePage<RuntimeTurn>> { return { data: [], nextCursor: null }; }
   async listItems(): Promise<RuntimePage<unknown>> { return { data: [], nextCursor: null }; }
   async startTurn() { this.starts++; throw Error("unknown start must not replay"); }
 }
+
+test("closing session archives once, verifies identity, and restart only reads after uncertain acknowledgement", async () => {
+  const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
+  class ArchiveRuntime extends FakeRuntime {
+    archives = 0;
+    archived = false;
+    loseAck = false;
+    async isThreadArchived(binding: RuntimeBinding) {
+      assert.equal(binding.nativeThreadId, closing.nativeThreadId);
+      return this.archived;
+    }
+    async archiveThread(_binding: RuntimeBinding) {
+      this.archives++;
+      if (this.loseAck) throw Error("ack lost");
+      this.archived = true;
+    }
+  }
+  const runtime = new ArchiveRuntime();
+  let confirms = 0;
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+    listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    markSessionArchiveAttempt: async () => { closing.closeAttemptedAt = new Date().toISOString(); },
+    confirmSessionClosed: async () => { confirms++; closing.state = "closed"; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & ArchiveRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    assert.equal(runtime.archives, 1); assert.equal(confirms, 1); assert.equal(closing.state, "closed");
+  } finally { await runner.stop(); }
+
+  closing.state = "closing"; closing.closeAttemptedAt = null;
+  const lost = new ArchiveRuntime(); lost.loseAck = true;
+  const again = new RuntimeRunner({ runtimeFactory: () => lost as unknown as RuntimePort & ArchiveRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await again.start();
+    assert.equal(lost.archives, 1); assert.equal(closing.state, "closing");
+    await again.pump();
+    assert.equal(lost.archives, 1);
+    lost.archived = true;
+    await again.pump();
+    assert.equal(confirms, 2); assert.equal(closing.state, "closed");
+  } finally { await again.stop(); }
+
+  closing.state = "closing"; closing.closeAttemptedAt = null;
+  class ForeignRuntime extends ArchiveRuntime {
+    override async inspect(_binding: RuntimeBinding) { return { thread: { id: closing.nativeThreadId,
+      sessionId: closing.nativeSessionId, cwd: closing.cwd, source: "cli" } }; }
+  }
+  const foreign = new ForeignRuntime();
+  const reject = new RuntimeRunner({ runtimeFactory: () => foreign as unknown as RuntimePort & ForeignRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await reject.start();
+    assert.equal(foreign.archives, 0);
+    assert.equal(closing.closeAttemptedAt, null);
+    assert.equal(closing.state, "closing");
+  } finally { await reject.stop(); }
+});
 
 test("reserved session waits at admission and creates one native thread after resume", async () => {
   const reserved: RuntimeSessionRecord = { ...session, state: "reserved", nativeThreadId: null, nativeSessionId: null };

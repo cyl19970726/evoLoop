@@ -1,6 +1,6 @@
 # 本机运行与恢复
 
-当前是可运行的本机试用切片：11 个工作区，受管自动循环候选包含 PostgreSQL 迁移 016；旧试用环境的迁移和运行版本须分别核对，不随候选自动升级。目标、阶段、过程 Document、Task、负责人讨论、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
+当前是可运行的本机试用切片：11 个工作区，会话正常关闭候选包含 PostgreSQL 迁移 018；旧试用环境的迁移和运行版本须分别核对，不随候选自动升级。目标、阶段、过程 Document、Task、负责人讨论、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
 
 ## 环境与启动
 
@@ -83,6 +83,14 @@ npm run --silent cli -- help
 npm run --silent cli -- command run .local/command.json
 npm run --silent cli -- list tasks --project "$PROJECT_ID"
 ```
+
+结束一个已绑定且没有在途或未知 Run 的受管 Session，可先 `read session SESSION_ID --project "$PROJECT_ID"` 取得版本，再提交 `runtime.session.close`；CLI 的 `command run` 使用同一命令合同：
+
+```json
+{"type":"runtime.session.close","projectId":"PROJECT_UUID","operationId":"NEW_OPERATION_UUID","sessionId":"OWNED_SESSION_UUID","expectedVersion":3,"reason":"该会话工作已完成"}
+```
+
+请求成功仅表示关闭意图已保存。回读 Session，只有状态 `closed` 才表示原生归档身份已核验；`closing` 要保留原操作 ID 等待只读对账，不能换 ID 重发归档或新建 Session。该操作不取消 Task、Role 或 Schedule；关闭前保存需要的实际 trace 证据。
 
 命令需稳定的 `operationId`、`projectId`；修改已有对象还需读入的 `expectedVersion`。同一 ID、身份和内容返回原回执；不同内容复用 ID 被拒绝。结果未知时先查 `/api/projects/PROJECT_ID/operations/OPERATION_ID`；404 只表示当次未查到，不能证明外部动作没发生。未知 Turn 必须按已有原生 thread 和 operation 标记对账，不能换 ID 盲目重派。工作台临时恢复索引在当前标签页 `sessionStorage`，不存令牌或正文；关闭标签页可能失去索引，重要操作应另存 ID。
 

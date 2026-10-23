@@ -173,6 +173,10 @@ export class RuntimeRunner {
         const sessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
         for (const session of sessions) {
           if (session.state === "reserved") await this.create(session);
+          if (session.state === "closing") {
+            try { await this.closeSession(session); }
+            catch { this.currentError = "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。"; }
+          }
         }
         const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
         for (const run of runs) {
@@ -182,6 +186,27 @@ export class RuntimeRunner {
         await this.flushApprovals();
       } catch { this.currentError = "运行服务暂不可读取；新派发须等待恢复。"; }
     }
+  }
+  private async closeSession(session: RuntimeSessionRecord): Promise<void> {
+    if (!session.closeOperationId || !this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd))
+      throw new Error("Session close authority or intent is unavailable");
+    if (!this.runtime.isThreadArchived) throw new Error("Native archive verification unsupported");
+    const binding = bindingOf(session);
+    await this.runtime.registerBinding(binding);
+    // Readback comes before any write, including after a restart or lost acknowledgement.
+    if (await this.runtime.isThreadArchived(binding)) {
+      await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
+      return;
+    }
+    if (session.closeAttemptedAt) return;
+    if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
+    const inspected = object(await this.runtime.inspect(binding));
+    if (object(inspected?.thread)?.source !== "appServer") throw new Error("Native archive target is not an owned App Server thread");
+    await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
+    try { await this.runtime.archiveThread(binding); }
+    catch { /* Archive may have happened. A subsequent pump only reads archived state. */ }
+    if (await this.runtime.isThreadArchived(binding))
+      await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
   }
   private async create(session: RuntimeSessionRecord): Promise<void> {
     if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
