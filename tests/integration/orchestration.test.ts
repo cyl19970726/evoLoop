@@ -452,7 +452,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
   const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:4318",
     cliMain:fileURLToPath(new URL("../../apps/cli/dist/main.js",import.meta.url)),
-    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
+    nodeExecutable:process.execPath,ttlMs:60_000});
   brokerForRole=broker;
   const issued=await broker.issue({projectId,loopId:lateLoopId,taskId:recoveryTaskId,
     runId:recoveryRunId,sessionId:cognitiveSession,roleId:cognitiveRole,kind:"cognition",
