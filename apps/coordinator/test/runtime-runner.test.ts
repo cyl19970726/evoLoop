@@ -460,7 +460,7 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
     assert.equal(trace.completeness, "partial");
     assert.equal(runtime.starts, 0);
     originalGrant = false;
-    await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权已失效/);
+    await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权或工作目录已失效/);
     originalGrant = true;
     ownedSession = { ...session, nativeThreadId: null };
     await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /原生读取或归属校验失败/);
