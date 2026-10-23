@@ -8,6 +8,22 @@ type TemplateReader = (projectId: string, templateId: string) => Promise<{templa
 type Spec = {projectId: string; sessionId: string; actorId: string; roleId: string;
   authorizationScope: string; cwd: string; sandbox: string; model: string | null; approvalPolicy: string};
 
+/** The persisted Dispatch binding, rather than a current policy decision, classifies a Session's origin. */
+export async function isBoundDynamicSession(pool: Pick<Pool, "query">, projectId: string, sessionId: string): Promise<boolean> {
+  const result = await pool.query(`SELECT dispatch_id FROM orchestration_dispatch
+    WHERE project_id=$1 AND binding_id IS NOT NULL`, [projectId]);
+  return result.rows.some(row => loopIntentId(row.dispatch_id as string,"session") === sessionId);
+}
+
+/** Current start/read authority never falls back to static grants for a persisted dynamic origin. */
+export async function currentSessionGrant(pool: Pick<Pool, "query">,
+  session: Pick<RuntimeSessionRecord,"projectId"|"id">,
+  staticGrant: () => boolean, dynamicGrant?: () => Promise<boolean>): Promise<boolean> {
+  if (await isBoundDynamicSession(pool,session.projectId,session.id))
+    return !!dynamicGrant && await dynamicGrant() === true;
+  return staticGrant() || !!dynamicGrant && await dynamicGrant() === true;
+}
+
 /** Project-owned dynamic authority must resolve to one consumed, transfer-confirmed Dispatch. */
 export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: TemplateReader, now: () => string) {
   const match = async (spec: Spec, historical = false) => {
@@ -58,11 +74,7 @@ export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: 
     model:session.model,approvalPolicy:session.approvalPolicy,
   });
   return {
-    isDynamicSession: async (projectId: string, sessionId: string) => {
-      const result = await pool.query(`SELECT dispatch_id FROM orchestration_dispatch
-        WHERE project_id=$1 AND binding_id IS NOT NULL`, [projectId]);
-      return result.rows.some(row => loopIntentId(row.dispatch_id as string,"session") === sessionId);
-    },
+    isDynamicSession: (projectId: string, sessionId: string) => isBoundDynamicSession(pool,projectId,sessionId),
     canReserveSession: async (value: Spec) => (await match(value))?.dispatch.state === "dispatching",
     networkAccessForSession: async (value: Spec) => {
       const found=await match(value);

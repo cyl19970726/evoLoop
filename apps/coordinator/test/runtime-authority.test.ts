@@ -8,6 +8,8 @@ import type { WorkflowService } from "@evoloop/core";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
 import { delegationTemplateHash, loadIntegrations, runtimeThreadConfigForSession } from "../src/configuration.js";
+import { currentSessionGrant, isBoundDynamicSession } from "../src/orchestration/dynamic-admission.js";
+import { loopIntentId } from "../src/orchestration/runner.js";
 
 const projectId = randomUUID();
 const sessionId = randomUUID();
@@ -85,6 +87,37 @@ test("a bound dynamic Session cannot fall back to the same Role's static grant a
     assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,200);
     assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,200);
     assert.equal(calls,2);
+  } finally { await app.close(); }
+});
+
+test("orchestration disabled still classifies a persisted dynamic Session before static reserve and current grants",async()=>{
+  const dispatchId=randomUUID(),boundSessionId=loopIntentId(dispatchId,"session");
+  const persisted={query:async()=>({rows:[{dispatch_id:dispatchId}]})} as never;
+  const bound={projectId,id:boundSessionId},ordinary={projectId,id:randomUUID()};
+  assert.equal(await currentSessionGrant(persisted,bound,()=>true),false,
+    "a colliding static grant cannot authorize the bound Session without dynamic admission");
+  assert.equal(await currentSessionGrant(persisted,ordinary,()=>true),true);
+  assert.equal(await currentSessionGrant(persisted,bound,()=>true,async()=>true),true,
+    "an enabled exact dynamic admission remains available");
+  assert.equal(await currentSessionGrant(persisted,bound,()=>true,async()=>false),false);
+  assert.equal(await runtimeThreadConfigForSession([{...grant,sandbox:"workspace-write",networkAccess:true}],
+    {...command,sessionId:boundSessionId,actorId:grant.actorId,model:null,sandbox:"workspace-write"},
+    {isDynamicSession:(project,session)=>isBoundDynamicSession(persisted,project,session),
+      networkAccessForSession:async()=>null}),undefined,
+    "a disabled dynamic authorizer cannot inherit static native network settings");
+  const app=await buildServer({service:{...workManagementQueries,
+    getRuntimeSession:async()=>({projectId,id:boundSessionId,actorId:grant.actorId,roleId:grant.roleId,
+      authorizationScope:grant.authorizationScope,cwd:grant.cwd,sandbox:grant.sandbox}),
+    execute:async()=>{throw Error("a bound dynamic command reached core");}} as unknown as WorkflowService,
+    credentials:credentials as never,runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,
+    hasRuntimeGrant:()=>true,allowedRuntimeCwd:async()=>true,
+    isDynamicSession:(project,session)=>isBoundDynamicSession(persisted,project,session)});
+  try {
+    const reserveSession={...command,sessionId:boundSessionId};
+    const reserveRun={type:"runtime.run.reserve",projectId,operationId:randomUUID(),sessionId:boundSessionId,
+      runId:randomUUID(),taskId:randomUUID(),expectedVersion:1,input:"Bounded task"};
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveSession})).statusCode,403);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,403);
   } finally { await app.close(); }
 });
 

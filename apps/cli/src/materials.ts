@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { ApiClient } from "./client.js";
-import type { BasisSet, DocumentRevision, TaskDetail, TaskRevision } from "@evoloop/contracts";
+import type { BasisSet, DocumentRevision, RuntimeRunRecord, TaskDetail, TaskRevision } from "@evoloop/contracts";
 import type { TaskExternalReferenceRecord } from "@evoloop/contracts/references";
 
 const MAX_BUNDLE = 16 * 1024 * 1024;
@@ -20,7 +20,7 @@ export class MaterialError extends Error {
 export type ReadClient = Pick<ApiClient, "get">;
 export interface VerifiedAsset { path: string; mediaType: string; contentHash: string; size: number; base64: string }
 export interface VerifiedOriginal { status: "complete"; revision: DocumentRevision; body: string; assets: VerifiedAsset[]; totalBytes: number }
-export interface MaterialFailure { kind: "task" | "document" | "git" | "wiki"; id: string; revisionId: string | null; reason: string }
+export interface MaterialFailure { kind: "task" | "document" | "git" | "wiki" | "run"; id: string; revisionId: string | null; reason: string }
 export interface ExternalOriginal { reference: TaskExternalReferenceRecord; body: string }
 export interface TaskContext {
   status: "complete" | "partial"; projectId: string; taskId: string; taskRevisionId: string;
@@ -318,7 +318,8 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
               fixed.observedCurrentValidity !== "valid" || !SHA.test(fixed.contentHash)) throw new MaterialError("Fixed external reference scope or baseline is invalid");
           if (budgetExhausted) throw new MaterialError("Fixed original was not read because complete Task context exceeds 16 MiB; read this reference separately");
           const body = fixed.kind === "git" ? await readGit(client, projectId, fixed) :
-            fixed.kind === "wiki" ? await readWiki(client, projectId, fixed) : (() => { throw new MaterialError("Unknown external reference kind"); })();
+            fixed.kind === "wiki" ? await readWiki(client, projectId, fixed) :
+              fixed.kind === "run" ? await readRun(client, projectId, fixed) : (() => { throw new MaterialError("Unknown external reference kind"); })();
           const size = utf8(body).length;
           if (contextBytes + size > MAX_BUNDLE) {
             budgetExhausted = true;
@@ -326,7 +327,7 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
           }
           contextBytes += size;
           externalReferences.push({ reference: fixed, body });
-        } catch (error) { failures.push({ kind: fixed.kind === "wiki" ? "wiki" : "git", id: fixed.referenceId,
+        } catch (error) { failures.push({ kind: fixed.kind, id: fixed.referenceId,
           revisionId: fixed.revision, reason: reason(error) }); }
       }
     } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: `External snapshot: ${reason(error)}` }); }
@@ -334,6 +335,15 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
   return { status: failures.length ? "partial" : "complete", projectId, taskId, taskRevisionId: selectedId,
     task: detail.task, revision, basis, history, documents, externalReferences,
     observedPlanningCandidates, planningUnavailableLinks, planningObservedAtUtc, failures };
+}
+async function readRun(client: ReadClient, projectId: string, fixed: TaskExternalReferenceRecord): Promise<string> {
+  const run = obj(await client.get(`${fixedPath(projectId)}/runtime/runs/${uuid(fixed.referenceId, "Run ID")}`), "Fixed Run") as unknown as RuntimeRunRecord;
+  if (run.projectId !== projectId || run.id !== fixed.referenceId || run.taskRevisionId !== fixed.revision ||
+      run.inputHash !== fixed.contentHash || !["completed", "failed", "interrupted"].includes(run.state) || !run.nativeTurnId)
+    throw new MaterialError("Fixed Run input identity or terminal binding differs from the adopted reference");
+  return JSON.stringify({runId: run.id, sourceTaskId: run.taskId, sourceTaskRevisionId: run.taskRevisionId,
+    inputHash: run.inputHash, state: run.state, evidenceRead: `read run ${run.id} --project ${projectId} --trace`,
+    note: "The inputHash identifies fixed input, not transcript content. Check trace completeness before drawing conclusions."});
 }
 async function readGit(client: ReadClient, projectId: string, fixed: TaskExternalReferenceRecord): Promise<string> {
   if (fixed.observedCurrentRevision !== fixed.revision || fixed.observedCurrentHash !== fixed.contentHash)

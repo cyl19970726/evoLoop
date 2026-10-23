@@ -31,7 +31,9 @@ import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
-import { dynamicRuntimeAdmission } from "./orchestration/dynamic-admission.js";
+import { workerGuardFacts } from "./workers/facts.js";
+import { currentSessionGrant, dynamicRuntimeAdmission, isBoundDynamicSession } from "./orchestration/dynamic-admission.js";
+import { staticRunSessionAvailable } from "./references/source-run.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -96,18 +98,30 @@ const repositoryForPrincipal = (principal: Principal, projectId: string) => {
   });
 };
 const runtimeConfig = integrations.runtime;
+const runSessionAvailable = async (projectId: string, run: import("@evoloop/contracts").RuntimeRunRecord,
+  session: import("@evoloop/contracts").RuntimeSessionRecord) => staticRunSessionAvailable(projectId,run,session,{
+    runtimeEnabled:!!runtimeConfig?.enabled,
+    isBoundDynamicSession:(projectId,sessionId)=>isBoundDynamicSession(pool,projectId,sessionId),
+    hasRuntimeGrant:integrations.hasRuntimeGrant,allowedRuntimeCwd:integrations.allowedRuntimeCwd,
+  });
 const mayStartManaged = integrations.orchestration?.enabled ? managedRuntimeAdmission(pool) : async () => true;
 const dynamicAdmission = integrations.orchestration?.enabled && runtimeConfig?.enabled
   ? dynamicRuntimeAdmission(pool, integrations.getDelegationTemplate, clock.now) : null;
+const sessionOrigin = {
+  isDynamicSession:(projectId:string,sessionId:string)=>isBoundDynamicSession(pool,projectId,sessionId),
+  networkAccessForSession:(spec:Parameters<NonNullable<typeof dynamicAdmission>["networkAccessForSession"]>[0]) =>
+    dynamicAdmission?.networkAccessForSession(spec) ?? Promise.resolve(null),
+};
 const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
-  threadConfig: spec => runtimeThreadConfigForSession(runtimeConfig.grants,spec,dynamicAdmission),
+  threadConfig: spec => runtimeThreadConfigForSession(runtimeConfig.grants,spec,sessionOrigin),
 }) : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
-  readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal}),
+  workerTraceAuthority: (identity, targetRunId) => workerGuardFacts(pool, identity).fixedRunTrace!(targetRunId),
+  readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),
   readDocumentOriginal: (principal, revision) => readDocumentOriginal({ uow, blobsForPrincipal }, principal, revision),
   readEvaluationMaterial: (principal, projectId, source) => readEvaluationMaterial(principal, projectId, source, {
     workflow: service, gitForPrincipal, knowledgeForPrincipal: repositoryForPrincipal,
@@ -116,25 +130,24 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   blobsForPrincipal,
   principals: credentials, canWrite: lease.canWrite, allowedCwd: integrations.allowedRuntimeCwd,
   mayCreateSession: async session => await mayStartManaged(session.projectId, "session", session.id) &&
-    (await dynamicAdmission?.isDynamicSession(session.projectId,session.id)
-      ? await dynamicAdmission!.canCreateSession(session)
-      : integrations.hasRuntimeGrant({projectId:session.projectId,actorId:session.actorId,roleId:session.roleId,
-      authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}) ||
-      await dynamicAdmission?.canCreateSession(session) === true),
+    await currentSessionGrant(pool,session,
+      () => integrations.hasRuntimeGrant({projectId:session.projectId,actorId:session.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}),
+      dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined),
   mayDispatchRun: async run => {
     if (!await mayStartManaged(run.projectId, "run", run.id)) return false;
     const reader = credentials.find(p => p.projectIds.includes(run.projectId) && p.permissions.includes("read"));
     if (!reader) return false;
     const session = await service.getRuntimeSession(reader, run.projectId, run.sessionId);
-    if (await dynamicAdmission?.isDynamicSession(session.projectId,session.id))
-      return dynamicAdmission!.canStartRun(run,session);
-    return integrations.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
-      authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}) ||
-      await dynamicAdmission?.canStartRun(run,session) === true;
+    return currentSessionGrant(pool,session,
+      () => integrations.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}),
+      dynamicAdmission ? () => dynamicAdmission.canStartRun(run,session) : undefined);
   },
-  hasGrant: async (scope,session) => session && await dynamicAdmission?.isDynamicSession(session.projectId,session.id)
-    ? dynamicAdmission!.canCreateSession(session)
-    : integrations.hasRuntimeGrant(scope) || !!session && await dynamicAdmission?.canCreateSession(session) === true,
+  hasGrant: async (scope,session) => session
+    ? currentSessionGrant(pool,session,() => integrations.hasRuntimeGrant(scope),
+      dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined)
+    : integrations.hasRuntimeGrant(scope),
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
@@ -181,7 +194,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
     runner.readEvaluationPacket(principal, projectId, runId) } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
   allowedRuntimeCwds: integrations.allowedRuntimeCwds, hasRuntimeGrant: integrations.hasRuntimeGrant,
-  isDynamicSession: (projectId,sessionId) => dynamicAdmission?.isDynamicSession(projectId,sessionId) ?? Promise.resolve(false),
+  isDynamicSession: sessionOrigin.isDynamicSession,
   authorizeDynamicSession: async (principal,command) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canReserveSession({projectId:command.projectId,sessionId:command.sessionId,
       actorId:principal.actorId,roleId:command.roleId,authorizationScope:command.authorizationScope,
@@ -190,7 +203,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
-  references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId)},
+  references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId), runSessionAvailable},
   scheduling,
   schedulingGrants: (projectId, actorId) => integrations.scheduling?.enabled
     ? integrations.scheduling.grants.filter(g => g.projectId === projectId && g.actorId === actorId)

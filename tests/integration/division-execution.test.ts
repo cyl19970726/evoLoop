@@ -13,7 +13,8 @@ import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { DelegationTemplate } from "@evoloop/contracts/division";
 import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
-import { dynamicRuntimeAdmission } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
+import { currentSessionGrant, dynamicRuntimeAdmission, isBoundDynamicSession } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
+import { staticRunSessionAvailable } from "../../apps/coordinator/src/references/source-run.js";
 import { loopIntentId } from "../../apps/coordinator/src/orchestration/runner.js";
 import { ManagedLoopRunner } from "../../apps/coordinator/src/orchestration/runner.js";
 import { buildServer } from "../../apps/coordinator/src/server.js";
@@ -210,6 +211,25 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     nativeSessionId:`fixture-${sessionId}`});
   const run=await wf(owner,{type:"runtime.run.reserve",runId,taskId:firstTaskId,sessionId,
     expectedVersion:(await workflow.getTask(principal(owner),pid,firstTaskId)).task.version,input:"Fixed child handoff"});
+  const sourceAuthority={runtimeEnabled:true,isBoundDynamicSession:(p:string,s:string)=>isBoundDynamicSession(pool,p,s),
+    hasRuntimeGrant:(grant:{actorId:string;roleId:string;cwd:string;authorizationScope:string;sandbox:string})=>
+      grant.cwd===cwd && ((grant.roleId===roleId && grant.actorId===owner &&
+      grant.authorizationScope===scope && grant.sandbox===template.sandbox) ||
+      (grant.roleId===cognitiveRole && grant.actorId===cognition)),
+    allowedRuntimeCwd:async()=>true};
+  assert.equal(await currentSessionGrant(pool,{projectId:pid,id:sessionId},()=>true),false,
+    "orchestration disabled cannot turn a persisted dynamic Session into a static start grant");
+  assert.equal(await currentSessionGrant(pool,{projectId:pid,id:cognitiveSession},()=>true),true,
+    "ordinary static Sessions remain available without orchestration");
+  assert.equal(await currentSessionGrant(pool,{projectId:pid,id:sessionId},()=>true,
+    async () => admission.canCreateSession(await workflow.getRuntimeSession(principal(owner),pid,sessionId))),true,
+    "enabled exact dynamic admission still permits its current binding");
+  assert.equal(await staticRunSessionAvailable(pid,await workflow.getRuntimeRun(principal(owner),pid,runId),
+    await workflow.getRuntimeSession(principal(owner),pid,sessionId),sourceAuthority),false,
+    "a real persisted dynamic binding overrides an otherwise matching static source grant");
+  assert.equal(await staticRunSessionAvailable(pid,await workflow.getRuntimeRun(principal(owner),pid,cognitiveRun),
+    await workflow.getRuntimeSession(principal(owner),pid,cognitiveSession),sourceAuthority),true,
+    "a separately owned static Session remains eligible");
   await issue(owner,{type:"dispatch.resolve",dispatchId:childId,claimToken:childToken,result:"accepted",
     runtimeRunId:runId,reason:"Durable child Run"});
   const app=await buildServer({service:workflow,credentials:[{token:"c".repeat(40),actorId:owner,
@@ -268,8 +288,12 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   templateCurrent=false;
   const session=(await workflow.getRuntimeSession(principal(owner),pid,sessionId));
   assert.equal(await admission.canCreateSession(session),false);
+  assert.equal(await currentSessionGrant(pool,session,()=>true,()=>admission.canCreateSession(session)),false,
+    "revoked dynamic binding does not fall back to the colliding static grant");
   assert.equal(await admission.canStartRun((await workflow.getRuntimeRun(principal(owner),pid,runId)),session),false);
   assert.equal(await admission.canSettleOwned(session,(await workflow.getRuntimeRun(principal(owner),pid,runId))),true);
+  assert.equal(await staticRunSessionAvailable(pid,await workflow.getRuntimeRun(principal(owner),pid,runId),
+    session,sourceAuthority),false,"revocation cannot reclassify a historical dynamic Session as static");
   assert.equal(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
     roleId,authorizationScope:scope,cwd,sandbox:template.sandbox,model:template.model,
     approvalPolicy:template.approvalPolicy},admission),undefined,

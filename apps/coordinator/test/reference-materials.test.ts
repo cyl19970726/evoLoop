@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Principal } from "@evoloop/contracts";
 import type { TaskExternalReferenceRecord } from "@evoloop/contracts/references";
 import { readExternalMaterials } from "../src/references/materials.js";
+import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const projectId = randomUUID(), taskId = randomUUID(), taskRevisionId = randomUUID();
@@ -51,4 +52,33 @@ test("Git material requires the registered immutable commit, current permission 
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,make(Buffer.from("tampered"))), /hash mismatched/);
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,make(Buffer.from(text),false)), /unavailable/);
   await assert.rejects(readExternalMaterials({ ...principal, permissions: [] },projectId,taskId,taskRevisionId,make(Buffer.from(text))), /permission/);
+});
+
+test("fixed Run material carries only input identity and a scoped read instruction; closed or changed source fails", async () => {
+  const sourceTaskRevisionId=randomUUID(), sourceRunId=randomUUID(), sourceSessionId=randomUUID();
+  const run: RuntimeRunRecord={projectId,id:sourceRunId,taskId:randomUUID(),taskRevisionId:sourceTaskRevisionId,
+    basisSetId:randomUUID(),sessionId:sourceSessionId,operationId:randomUUID(),input:"private input",inputHash:hash("private input"),
+    state:"completed",version:3,nativeTurnId:"native-turn",interruptRequested:false,resultSummary:"private summary",actorId:"executor",
+    createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const session: RuntimeSessionRecord={projectId,id:sourceSessionId,roleId:"researcher",cwd:"/work",authorizationScope:"task",
+    model:null,sandbox:"read-only",approvalPolicy:"on-request",state:"ready",version:2,nativeThreadId:"owned-thread",
+    nativeSessionId:"owned-session",operationId:randomUUID(),actorId:"executor",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const reference: TaskExternalReferenceRecord={...fixed,kind:"run",decision:"adopt",referenceId:run.id,
+    revision:run.taskRevisionId,contentHash:run.inputHash,observedCurrentRevision:run.taskRevisionId,
+    observedCurrentHash:run.inputHash};
+  let live=true, currentRun=run, currentSession=session;
+  const source=()=>({uow:{read:async (_projectId:string,action:(reader:unknown)=>Promise<unknown>)=>action({
+    listTaskExternalSnapshot:async()=>[reference],getRuntimeRun:async()=>currentRun,getRuntimeSession:async()=>currentSession})},
+    gitForPrincipal:async()=>({}),knowledgeForPrincipal:async()=>({}),runSessionAvailable:async()=>live}) as never;
+  const text=await readExternalMaterials(principal,projectId,taskId,taskRevisionId,source());
+  assert.match(text,new RegExp(`read run ${run.id}`));
+  assert.doesNotMatch(text,/private input|private summary|owned-thread/);
+  live=false;
+  await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
+  live=true; currentRun={...run,inputHash:hash("changed")};
+  await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
+  currentRun={...run,taskRevisionId:randomUUID()};
+  await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
+  currentRun=run;currentSession={...session,state:"closed"};
+  await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,source()),/no longer/);
 });

@@ -1,9 +1,9 @@
-import type { AppliedResult, CommandResult, Operation, OutboxEvent, Principal } from "@evoloop/contracts";
+import type { AppliedResult, CommandResult, Operation, OutboxEvent, Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { DocumentSource, GitSourceRef } from "@evoloop/contracts/sources";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { FormalSourceDecisionCommand, ReferenceTransaction, ReferenceUnitOfWork, RegisterGitReference,
-  TaskExternalReferenceCommand, TaskExternalReferenceRecord } from "@evoloop/contracts/references";
+  TaskExternalReferenceCommand, TaskExternalReferenceRecord, ExternalReferenceKind } from "@evoloop/contracts/references";
 import { currentRetentions } from "../runtime/basis.js";
 
 export interface ExternalReferenceObservation {
@@ -13,9 +13,17 @@ export interface ExternalReferenceObservation {
 }
 export interface ReferenceDependencies {
   uow: ReferenceUnitOfWork; git: DocumentSource;
-  observeExternal(principal: Principal, projectId: string, kind: "git" | "wiki", referenceId: string,
+  observeExternal(principal: Principal, projectId: string, kind: ExternalReferenceKind, referenceId: string,
     revision: string, contentHash: string): Promise<ExternalReferenceObservation>;
   hashText(value: string): string; nextId(): string; now(): string;
+}
+/** A Run reference identifies the frozen input, not a hash of its mutable native transcript. */
+export function fixedRunMatches(projectId: string, run: RuntimeRunRecord | null, session: RuntimeSessionRecord | null,
+  referenceId: string, revision: string, contentHash: string): boolean {
+  return !!run && !!session && run.projectId === projectId && session.projectId === projectId &&
+    run.id === referenceId && run.taskRevisionId === revision && run.inputHash === contentHash &&
+    ["completed", "failed", "interrupted"].includes(run.state) && !!run.nativeTurnId &&
+    run.sessionId === session.id && session.state === "ready" && !!session.nativeThreadId && !!session.nativeSessionId;
 }
 type ReferenceCommand = RegisterGitReference | FormalSourceDecisionCommand | TaskExternalReferenceCommand;
 const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` :
@@ -135,6 +143,12 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
       const git = await tx.getGitSourceRef(command.referenceId);
       if (!git || git.state !== "reachable" || git.ref.commit !== command.revision || git.ref.contentHash !== command.contentHash)
         throw new DomainError("BASIS_UNAVAILABLE", "Git reference is not the registered fixed original");
+    }
+    if (command.kind === "run") {
+      const run = await tx.getRuntimeRun(command.referenceId);
+      const session = run ? await tx.getRuntimeSession(run.sessionId) : null;
+      if (!fixedRunMatches(command.projectId, run, session, command.referenceId, command.revision, command.contentHash))
+        throw new DomainError("BASIS_UNAVAILABLE", "Run no longer has a bound terminal owned input");
     }
     const head = await tx.getTaskExternalHead(command.taskId, command.slotId);
     if ((head?.version ?? 0) !== command.expectedHeadVersion)
