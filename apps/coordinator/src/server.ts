@@ -176,6 +176,20 @@ export async function buildServer(options: {
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用；已保存的运行状态仍可读取。");
     return options.runtime.result(who(request.principal), p.projectId!, p.id!);
   });
+  app.get("/api/projects/:projectId/runtime/runs/:id/trace", async request => {
+    const p = params(request.params);
+    const principal = who(request.principal);
+    if (!principal.projectIds.includes(p.projectId!) || !principal.permissions.includes("read") || !principal.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+    if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法读取原生工作轨迹。");
+    const query = z.object({ cursor: z.string().min(1).max(2048).optional() }).parse(request.query);
+    const run = await options.service.getRuntimeRun(principal, p.projectId!, p.id!);
+    const session = await options.service.getRuntimeSession(principal, p.projectId!, run.sessionId);
+    if (!callerGrants(p.projectId!, principal.actorId).some(grant => grant.roleId === session.roleId &&
+      grant.authorizationScope === session.authorizationScope && grant.cwd === session.cwd && grant.sandbox === session.sandbox))
+      throw new DomainError("FORBIDDEN", "当前身份没有此运行所属会话的执行授权。");
+    return options.runtime.trace(principal, p.projectId!, p.id!, query.cursor);
+  });
   app.post("/api/projects/:projectId/runtime/runs/:id/reconcile", async request => {
     const p = params(request.params);
     const principal = who(request.principal);

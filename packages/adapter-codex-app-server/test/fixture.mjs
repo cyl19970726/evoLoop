@@ -77,7 +77,21 @@ for await (const line of lines) {
       ...(mode === "failed-turn" ? { error: { message: JSON.stringify({ status: 400, error: { type: "invalid_request_error", message: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account. Private fixture detail" } }) } } : {})
     }], nextCursor: null } }); continue;
   }
-  if (method === "thread/items/list") { send({ id, result: { data: [{ turnId: mode === "wrong-turn-items" ? "foreign-turn" : params.turnId, item: { id: "item-1", type: "agentMessage", text: "fixture final answer" } }], nextCursor: null } }); continue; }
+  if (method === "thread/items/list") {
+    if (mode === "work-trace") {
+      const items = params.cursor ? [
+        { id: "mcp-1", type: "mcpToolCall", server: "files", tool: "read", status: "completed", result: { content: [{ type: "text", text: "read output" }] }, error: null, durationMs: 7 },
+        { id: "file-1", type: "fileChange", status: "completed", changes: [{ path: "/tmp/output.txt", diff: "private diff", kind: "add" }] },
+        { id: "answer-1", type: "agentMessage", phase: "final_answer", text: "finished" },
+      ] : [
+        { id: "reason-1", type: "reasoning", content: ["private thought"] },
+        { id: "cmd-1", type: "commandExecution", command: "echo hello", cwd: "/tmp", status: "completed", exitCode: 0, aggregatedOutput: "hello", durationMs: 12 },
+        { id: "unknown-1", type: "newType", text: "private future content" },
+      ];
+      send({ id, result: { data: items.map(item => ({ turnId: params.turnId, item })), nextCursor: params.cursor ? null : "page-2" } }); continue;
+    }
+    send({ id, result: { data: [{ turnId: mode === "wrong-turn-items" ? "foreign-turn" : params.turnId, item: { id: "item-1", type: "agentMessage", text: "fixture final answer" } }], nextCursor: null } }); continue;
+  }
   if (method === "turn/interrupt") { send({ id, result: {} }); send({ method: "turn/completed", params: { threadId: thread.id, turn: { id: params.turnId, status: "interrupted" } } }); continue; }
   if (method === "turn/start") {
     send({ id, result: { turn: { id: "turn-1", status: "inProgress" } } });

@@ -368,6 +368,35 @@ test("read-only history and result page owned data without native resume or turn
   } finally { await runner.stop(); }
 });
 
+test("work trace requires reviewer authority and keeps unsupported and page limits explicit", async () => {
+  const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
+  const runtime = new FakeRuntime() as FakeRuntime & Pick<RuntimePort, "readWorkPage">;
+  runtime.listTurns = async () => ({ data: [{ id: "turn-1", status: "completed", completedAtUtc: "2026-10-20T12:14:44.000Z" }], nextCursor: null });
+  runtime.readWorkPage = async (_binding, _turnId, cursor) => ({
+    data: [{ id: cursor ? "cmd-2" : "cmd-1", kind: "command", name: "echo", status: "completed", exitCode: 0,
+      text: null, output: "ok", error: null, artifactRefs: [], startedAtUtc: null, completedAtUtc: null, durationMs: 5, truncated: false }],
+    nextCursor: cursor ? "page-3" : "page-2", unsupportedCount: cursor ? 0 : 1, truncated: false,
+  });
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [observed], getRuntimeSession: async () => session,
+    getRuntimeRun: async () => observed } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
+  const reviewer = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [reviewer], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    await assert.rejects(() => runner.trace({ ...reviewer, permissions: ["read"] }, projectId, observed.id), /读取和复核权限/);
+    const trace = await runner.trace(reviewer, projectId, observed.id);
+    assert.equal(trace.source, "owned-native-history");
+    assert.equal(trace.unsupportedCount, 1);
+    assert.equal(trace.nextCursor, "page-3");
+    assert.equal(trace.truncated, true);
+    assert.equal(trace.completeness, "partial");
+    assert.equal(runtime.starts, 0);
+  } finally { await runner.stop(); }
+});
+
 test("native read rejection reports a read-specific error without private protocol text", async () => {
   const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
   const runtime = new FakeRuntime();
