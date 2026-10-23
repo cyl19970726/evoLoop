@@ -28,6 +28,11 @@
       "group": "产品与阶段"
     },
     {
+      "path": "docs/product/functional-scenarios.md",
+      "title": "功能场景与协作闭环",
+      "group": "产品与阶段"
+    },
+    {
       "path": "docs/product/daily-loop.md",
       "title": "Dogfood 与日常工作",
       "group": "产品与阶段"
