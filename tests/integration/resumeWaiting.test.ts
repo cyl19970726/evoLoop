@@ -138,4 +138,46 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
       JSON.stringify({...resumed[0]!.detail,issueContentHash:"0".repeat(64)})]);
   assert.equal(await store.transaction(projectId,tx=>tx.getSourceFact(forgedId)),null,"a forged same-operation event cannot become a source");
   assert.equal((await orchestration.listSourceFacts(principal(reviewer),projectId,loopId)).items.some(x=>x.id===forgedId),false);
+  const pauseOperationId=randomUUID(),afterResume=(await orchestration.getLoop(principal(reviewer),projectId,loopId))!;
+  const paused=await managed(reviewer,{type:"loop.state",loopId,expectedVersion:afterResume.version,state:"paused",reason:"Hash binding fixture"},pauseOperationId);
+  const crossTypeEventId=randomUUID();
+  await pool.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc)
+    VALUES($1,$2,$3,'decision',$4,$5,'waiting.resumed',$6,$7::jsonb,now())`,
+    [projectId,crossTypeEventId,loopId,decisionId,pauseOperationId,reviewer,
+      JSON.stringify({...resumed[0]!.detail,resumedAtLoopVersion:paused.version})]);
+  assert.equal(await store.transaction(projectId,tx=>tx.getSourceFact(crossTypeEventId)),null,
+    "a real applied loop.state operation cannot authorize a fabricated waiting resume");
+  assert.equal((await orchestration.listSourceFacts(principal(reviewer),projectId,loopId)).items.some(x=>x.id===crossTypeEventId),false);
+  await managed(reviewer,{type:"loop.state",loopId,expectedVersion:paused.version,state:"active",reason:"Check Stage boundary"});
+  const currentLoop=(await orchestration.getLoop(principal(reviewer),projectId,loopId))!;
+  for(const changed of [{...currentLoop,stageId:null},{...currentLoop,stageId:randomUUID()},
+    {...currentLoop,goalId:randomUUID()}]){
+    await pool.query("UPDATE orchestration_loop SET data=$3::jsonb WHERE project_id=$1 AND loop_id=$2",
+      [projectId,loopId,JSON.stringify(changed)]);
+    await fails(managed(reviewer,{...command,expectedLoopVersion:currentLoop.version}),"STAGE_NOT_ACTIVE");
+    await pool.query("UPDATE orchestration_loop SET data=$3::jsonb WHERE project_id=$1 AND loop_id=$2",
+      [projectId,loopId,JSON.stringify(currentLoop)]);
+  }
+  let releaseStage!:()=>void,stageLocked!:()=>void;
+  const hold=new Promise<void>(resolve=>{releaseStage=resolve;});
+  const acquired=new Promise<void>(resolve=>{stageLocked=resolve;});
+  const reader=store.transaction(projectId,async tx=>{
+    assert.equal((await tx.getStageFact(stageId))?.state,"active");stageLocked();await hold;
+  });
+  await acquired;
+  const competing=await pool.connect();
+  try{
+    await competing.query("BEGIN");
+    await assert.rejects(competing.query("SELECT stage_id FROM project_stage WHERE project_id=$1 AND stage_id=$2 FOR UPDATE NOWAIT",[projectId,stageId]),
+      error=>!!error && typeof error==="object" && "code" in error && error.code==="55P03",
+      "the transaction's Stage read locks out a concurrent Stage status update");
+    await competing.query("ROLLBACK");
+  }finally{competing.release();releaseStage();await reader;}
+  await official(reviewer,{type:"stage.review",stageId,expectedVersion:2,adopted:"Fixed Issue remains",rejected:"Further dispatch",
+    gap:"No new work in reviewed Stage",nextChoice:"stop",evidence:"Fixture decision",reason:"End bounded Stage"});
+  assert.equal((await store.transaction(projectId,tx=>tx.getSourceFact(resumed[0]!.id)))?.kind,"waiting.resumed",
+    "reviewing a Stage does not erase the signed historical source");
+  await fails(managed(reviewer,{...command,expectedLoopVersion:paused.version+1}),"STAGE_NOT_ACTIVE");
+  await fails(managed(cognition,{type:"inbox.accept",loopId,sourceEventId:resumed[0]!.id,
+    recipientRoleId:cognitiveRole,purpose:"next_action"}),"STAGE_NOT_ACTIVE");
 });

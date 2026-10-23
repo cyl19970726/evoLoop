@@ -15,7 +15,7 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; enrolledStageFact?: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
   let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
@@ -44,7 +44,7 @@ function harness() {
     getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
     getTaskScopeAtVersion: async (id, taskVersion) => id === taskId && taskVersion === 1 ? { projectId, taskId: id, taskVersion, goalId, stageId } : null,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
-    getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? { projectId, id, goalId, state: "active" } : null,
+    getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
     getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)! } : null,
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
@@ -595,4 +595,25 @@ test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted 
     await assert.rejects(()=>f.h.service.execute(principal,command),failed(code),mutation);
     assert.equal(f.h.data.events.filter(x=>x.kind==="waiting.resumed").length,0);
   }
+});
+
+test("waiting resume requires the enrolled Stage to remain active, including at resumed-source admission",async()=>{
+  for(const state of ["reviewed","missing","foreignGoal","noStage"] as const){
+    const f=waitingIssueFixture();await f.make();
+    f.h.change(value=>{
+      if(state==="reviewed")value.enrolledStageFact={projectId,id:stageId,goalId,state:"reviewed"};
+      if(state==="missing")value.enrolledStageFact=null;
+      if(state==="foreignGoal")value.enrolledStageFact={projectId,id:stageId,goalId:randomUUID(),state:"active"};
+      if(state==="noStage")value.loops.set(loopId,{...value.loops.get(loopId)!,stageId:null});
+    });
+    await assert.rejects(()=>f.h.service.execute(reviewer,f.command()),failed("STAGE_NOT_ACTIVE"),state);
+    assert.equal(f.h.data.events.some(x=>x.kind==="waiting.resumed"),false);
+  }
+  const f=waitingIssueFixture();await f.make();
+  await f.h.service.execute(reviewer,f.command());
+  const resumed=f.h.data.events.find(x=>x.kind==="waiting.resumed")!;
+  f.h.change(value=>{value.enrolledStageFact={projectId,id:stageId,goalId,state:"reviewed"};});
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
+    sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("STAGE_NOT_ACTIVE"));
+  assert.equal(f.h.data.source.get(resumed.id)?.kind,"waiting.resumed","historical source remains readable");
 });

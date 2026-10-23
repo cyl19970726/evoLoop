@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { createHash } from "node:crypto";
 import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import { scheduledSourceFacts } from "./schedule-source.js";
 
@@ -9,6 +10,7 @@ type Authorization = {
   wasActorRole(projectId: string, actorId: string, loopId: string, roleId: string): Promise<boolean>;
 };
 const iso = (v: unknown) => v instanceof Date ? v.toISOString() : String(v);
+const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const data = <T>(row: Row | undefined): T | null => row ? row.data as T : null;
 const page = <T>(items: T[], limit: number, id: (item:T)=>string) => ({
   items: items.slice(0,limit), nextCursor: items.length>limit ? id(items[limit-1]!) : null,
@@ -16,7 +18,7 @@ const page = <T>(items: T[], limit: number, id: (item:T)=>string) => ({
 class Reader implements OrchestrationReader {
   constructor(protected readonly db:PoolClient, protected readonly projectId:string) {}
   private async waitingResumeFact(id:string,seen:Set<string>):Promise<OrchestrationSourceFact|null>{
-    const r=await this.db.query(`SELECT e.*,op.actor_id AS operation_actor,op.result AS operation_result,
+    const r=await this.db.query(`SELECT e.*,op.actor_id AS operation_actor,op.result AS operation_result,op.command_hash,
       d.data AS dispatch_data,w.data AS decision_data,l.data AS loop_data,
       run.task_id AS run_task_id,run.state AS run_state
       FROM orchestration_event e
@@ -43,6 +45,10 @@ class Reader implements OrchestrationReader {
       typeof detail.previousSourceEventId!=="string" || detail.previousSourceEventId!==dispatch.sourceEventId ||
       typeof detail.originalSourceEventId!=="string" || typeof detail.issueDocumentId!=="string" ||
       typeof detail.issueRevisionId!=="string" || typeof detail.issueContentHash!=="string")return null;
+    const command={projectId:this.projectId,operationId:x.operation_id,type:"loop.resumeWaiting",loopId:loop.id,
+      expectedLoopVersion:Number(op.version)-1,decisionId:decision.id,dispatchId:dispatch.id,
+      evidenceRef:detail.evidenceRef,reason:detail.reason};
+    if(createHash("sha256").update(canonical(command)).digest("hex")!==x.command_hash)return null;
     const previous=await this.getSourceFactInternal(detail.previousSourceEventId,seen);
     const root=detail.originalSourceEventId===detail.previousSourceEventId?previous:
       await this.getSourceFactInternal(detail.originalSourceEventId,seen);
@@ -323,7 +329,7 @@ class Tx extends Reader implements OrchestrationTransaction {
     WHERE tr.project_id=$1 AND tr.task_id=$2 AND tr.version=$3`,[this.projectId,taskId,taskVersion]);
     const x=r.rows[0];return x?{projectId:this.projectId,taskId,taskVersion:x.version,stageId:x.stage_id??null,goalId:x.goal_id??null}:null;}
   async getGoalFact(id:string){const r=await this.db.query("SELECT goal_id FROM project_goal WHERE project_id=$1 AND goal_id=$2",[this.projectId,id]);return r.rows[0]?{projectId:this.projectId,id,state:"active"}:null;}
-  async getStageFact(id:string){const r=await this.db.query("SELECT stage_id,goal_id,state FROM project_stage WHERE project_id=$1 AND stage_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.stage_id,goalId:x.goal_id,state:x.state}:null;}
+  async getStageFact(id:string){const r=await this.db.query("SELECT stage_id,goal_id,state FROM project_stage WHERE project_id=$1 AND stage_id=$2 FOR SHARE",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.stage_id,goalId:x.goal_id,state:x.state}:null;}
   getAuthorizationFact(scopeId:string){return this.authorization.getAuthorizationFact(this.projectId,scopeId);}
   canActAsRole(actorId:string,roleId:string){return this.authorization.canActAsRole(this.projectId,actorId,roleId);}
   wasActorRole(actorId:string,loopId:string,roleId:string){return this.authorization.wasActorRole(this.projectId,actorId,loopId,roleId);}
