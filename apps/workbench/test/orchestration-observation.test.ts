@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
+import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
 import { currentChainSummary, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome } from "../src/orchestration/summary.ts";
-import { scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
@@ -114,6 +114,22 @@ test("deep-linked delivery lands at its visible panel, while hidden or missing p
   assert.deepEqual(calls,["start"]);
 });
 
+test("internal Task tab updates the URL so a later same-Task delivery link changes route and Back restores runtime", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const delivery=taskSectionHref(projectId,taskId,{tab:"delivery"});
+  const runtime=taskSectionHref(projectId,taskId,{tab:"runtime"});
+  const location={hash:delivery};
+  assert.equal(navigateTaskTab(projectId,taskId,"runtime",location),true);
+  assert.equal(location.hash,runtime);
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
+  assert.notEqual(location.hash,delivery,"the story link is now a real hash navigation");
+  location.hash=delivery;
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"delivery");
+  assert.equal(navigateTaskTab(projectId,taskId,"delivery",location),false);
+  location.hash=runtime;
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
+});
+
 test("story trigger uses formal source kind and leaves complete reasons to expanded evidence", () => {
   const source=(kind:string)=>({kind} as OrchestrationSourceFact);
   assert.match(sourceTriggerLabel(source("worker.outcome")),/工作结果/);
@@ -151,6 +167,12 @@ test("human cognition title requires this dispatch's exact projection and never 
   assert.doesNotMatch(storyTitle(dispatch,"Cognition: event 1234",source,stale,sourceBusiness,"固定报告目标"),/Business report|Cognition: event/);
   assert.match(storyTitle(dispatch,"Cognition: event 1234",source,{...stale,dispatchId:"current"},sourceBusiness,"固定报告目标"),/Business report/);
   assert.equal(storyTitle({...dispatch,purpose:"business"},"普通调研任务",source,undefined,undefined,"固定报告目标"),"普通调研任务");
+  const longGoal="固定目标".repeat(30);
+  const compact=storyTitle(dispatch,"Cognition: event 1234",source,undefined,undefined,longGoal);
+  assert.ok(compact.length < longGoal.length);
+  assert.ok(compact.endsWith("…"));
+  assert.equal(decisionHeading(false),"派发决定");
+  assert.equal(decisionHeading(true),"Worker 署名判定");
 });
 
 test("current chain summary separates signed stop, Agent use and unclosed business Task", () => {

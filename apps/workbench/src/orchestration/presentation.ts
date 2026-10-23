@@ -1,6 +1,15 @@
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { WorkTaskStatus } from "../workflow/workStatusPresentation";
 
+function compactContext(value: string): string {
+  const chars = [...value.replace(/\s+/g," ").trim()];
+  return chars.length > 44 ? `${chars.slice(0,44).join("")}…` : chars.join("");
+}
+
+export function decisionHeading(hasWorkerDecision: boolean): string {
+  return hasWorkerDecision ? "Worker 署名判定" : "派发决定";
+}
+
 export function sourceTriggerLabel(source: OrchestrationSourceFact | undefined): string {
   if (!source) return "固定来源尚未读回；展开核对派发来源。";
   switch (source.kind) {
@@ -20,7 +29,7 @@ export function storyTitle(dispatch: OrchestrationDispatch, currentTaskTitle: st
   const matched = status?.dispatchId === dispatch.id ? status : undefined;
   const businessSource = matched?.sourceTaskTitle && sourceTaskStatus?.cognition === false ?
     `${matched.sourceTaskTitle}（源任务现名称）` : null;
-  return `${trigger} · ${businessSource ?? scopeTitle ?? "上轮判断"}`;
+  return `${trigger} · ${compactContext(businessSource ?? scopeTitle ?? "上轮判断")}`;
 }
 
 export const inboxStateLabel: Record<OrchestrationInbox["state"], string> = {
