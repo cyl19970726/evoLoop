@@ -1,9 +1,42 @@
 import type { TaskDetail } from "@evoloop/contracts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskLoopContext } from "./client";
 
 export function inTaskContext(dispatch: OrchestrationDispatch, context: TaskLoopContext): boolean {
   return context.dispatchIds.includes(dispatch.id) || context.parentDispatchIds.includes(dispatch.id);
+}
+
+/** Use recorded time for peers and explicit loaded cause edges for successors. */
+export function orderDispatches(dispatches: OrchestrationDispatch[], sources: OrchestrationSourceFact[],
+  submissions: OrchestrationSubmission[]) {
+  const byId = new Map(dispatches.map(item => [item.id,item]));
+  const bySource = new Map(sources.map(item => [item.id,item]));
+  const byDelivery = new Map(submissions.filter(item => item.state === "sealed" && item.deliveryId)
+    .map(item => [item.deliveryId!,item.dispatchId]));
+  const parents = new Map(dispatches.map(item => {
+    const source = bySource.get(item.sourceEventId);
+    const candidates = [item.parentDispatchId,
+      source?.kind === "worker.outcome" || source?.kind === "dispatch.gap" ? source.originDispatchId : null,
+      source?.kind === "observation.record" && source.deliveryId ? byDelivery.get(source.deliveryId) : null];
+    return [item.id,new Set(candidates.filter((id): id is string => !!id && id !== item.id && byId.has(id)))] as const;
+  }));
+  const hasLater = new Set([...parents.values()].flatMap(ids => [...ids]));
+  const compare = (a: OrchestrationDispatch,b: OrchestrationDispatch) =>
+    a.createdAtUtc.localeCompare(b.createdAtUtc) || a.id.localeCompare(b.id);
+  const remaining = new Map(byId), ordered: OrchestrationDispatch[] = [];
+  while (remaining.size) {
+    const available = [...remaining.values()].filter(item => [...parents.get(item.id)!].every(id => !remaining.has(id))).sort(compare);
+    if (!available.length) { ordered.push(...[...remaining.values()].sort(compare)); break; }
+    const next = available[0]!;
+    ordered.push(next); remaining.delete(next.id);
+  }
+  return {ordered,hasLater};
+}
+
+/** A terminal gap is an observed event, never inferred merely from an absent submission page. */
+export function hasTerminalIntentGap(dispatchId: string, events: OrchestrationEvent[],
+  submission: OrchestrationSubmission | undefined, decision: OrchestrationWorkerDecision | undefined): boolean {
+  return !submission && !decision && events.some(value => value.kind === "dispatch.gap" && value.entityId === dispatchId);
 }
 
 export function readableOutcome(dispatch: OrchestrationDispatch, submission: OrchestrationSubmission | undefined,
@@ -38,4 +71,12 @@ export function nextAction(inbox: OrchestrationInbox | undefined, dispatch: Orch
   if (dispatch.outcome === "failed") return "核对失败证据并决定是否重试。";
   if (dispatch.outcome === "no_action") return "核对无动作的理由与适用范围。";
   return "跟进运行与署名结果，不以运行结束代替交付。";
+}
+
+/** A card records its own past next step; a loaded successor does not make that old step current. */
+export function storyNextAction(inbox: OrchestrationInbox | undefined, dispatch: OrchestrationDispatch,
+  submission: OrchestrationSubmission | undefined, hasLoadedSuccessor: boolean): string {
+  if (hasLoadedSuccessor) return "已有正式来源或父子派发接续；继续读后续记录，不把当时等待当作当前责任。";
+  if (dispatch.outcome === "waiting") return "当时记录为等待；当前条件须核对完整来源与署名理由。";
+  return nextAction(inbox,dispatch,submission);
 }

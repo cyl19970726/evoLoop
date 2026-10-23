@@ -112,7 +112,7 @@ function ScheduleCard({ definition, context, refresh, grants }: { definition: Sc
     <dl><div><dt>规则</dt><dd>{ruleText(revision.rule)} · {revision.timezone}</dd></div>
       <div><dt>错过</dt><dd>{revision.misfire.kind === "bounded" ? `最多补做 ${revision.misfire.maxCatchUp} 次` : revision.misfire.kind === "latest" ? "只取最近一次" : "跳过"}</dd></div>
       <div><dt>重叠</dt><dd>{revision.overlap === "queue" ? "排队" : "跳过"}</dd></div>
-      <div><dt>新任务正文</dt><dd><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}</p></dd></div>
+      <div><dt>新任务正文</dt><dd><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}</p></dd></div>
       <div><dt>授权</dt><dd>{revision.authorization.scopeId} · 职责 {revision.authorization.roleId} · 授权人 {revision.authorization.authorizedBy} · 到期 {revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"}</dd></div>
       <div><dt>已检查至</dt><dd>{stamp(definition.watermarkUtc)}</dd></div></dl>
     {definition.state !== "stopped" && <details className="workflow-detail"><summary>修订规则、暂停或恢复</summary>
