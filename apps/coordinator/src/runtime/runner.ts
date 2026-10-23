@@ -70,7 +70,10 @@ export class RuntimeRunner {
     readExternalMaterials?(principal:Principal,projectId:string,taskId:string,taskRevisionId:string):Promise<string>;
     runtimeFactory(): ManagedRuntime; workflow: WorkflowService; trusted: RuntimeWorkflowService;
     principals: Principal[]; canWrite(): boolean; allowedCwd(projectId: string, cwd: string): Promise<boolean>;
-    hasGrant(scope: RuntimeGrant): boolean;
+    hasGrant(scope: RuntimeGrant, session?: RuntimeSessionRecord): boolean | Promise<boolean>;
+    /** Exact persisted dynamic Session/Run ownership for read-only reconciliation and one-shot settlement. */
+    canSettleOwned?(session: RuntimeSessionRecord, run?: RuntimeRunRecord): Promise<boolean>;
+    ownedCwd?(projectId: string, cwd: string): Promise<boolean>;
     /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
     mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
     mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
@@ -84,11 +87,15 @@ export class RuntimeRunner {
     if (!principal) throw new Error("Project authority is unavailable");
     return principal;
   }
-  private authorized(session: RuntimeSessionRecord, actorId = session.actorId): boolean {
+  private async authorized(session: RuntimeSessionRecord, actorId = session.actorId): Promise<boolean> {
     return this.deps.principals.some(p => p.actorId === actorId && p.projectIds.includes(session.projectId) &&
       p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")) &&
-      this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
-        authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox });
+      await this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
+        authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox }, session);
+  }
+  private async owned(session: RuntimeSessionRecord, run?: RuntimeRunRecord): Promise<boolean> {
+    return !!this.deps.canSettleOwned && !!await this.deps.canSettleOwned(session, run) &&
+      !!await this.deps.ownedCwd?.(session.projectId, session.cwd);
   }
   async start(): Promise<void> {
     if (this.stopped) throw new Error("Runner has stopped");
@@ -188,7 +195,7 @@ export class RuntimeRunner {
     }
   }
   private async closeSession(session: RuntimeSessionRecord): Promise<void> {
-    if (!session.closeOperationId || !this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd))
+    if (!session.closeOperationId || !(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
       throw new Error("Session close authority or intent is unavailable");
     if (!this.runtime.isThreadArchived) throw new Error("Native archive verification unsupported");
     const binding = bindingOf(session);
@@ -210,7 +217,7 @@ export class RuntimeRunner {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
   }
   private async create(session: RuntimeSessionRecord): Promise<void> {
-    if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
+    if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
     if (this.deps.mayCreateSession && !await this.deps.mayCreateSession(session)) return;
     await this.deps.trusted.beginSessionCreate(session.projectId, session.id);
     try {
@@ -225,7 +232,7 @@ export class RuntimeRunner {
     }
   }
   private async restore(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
-    if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) throw new Error("Session authority is no longer available");
+    if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) throw new Error("Session authority is no longer available");
     const binding = bindingOf(session);
     if (!this.registered.has(session.id)) {
       await this.runtime.registerBinding(binding);
@@ -236,7 +243,7 @@ export class RuntimeRunner {
   }
   /** Register provenance and inspect metadata for reads without opening another native writer. */
   private async readBinding(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
-    if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd))
+    if (!(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
       throw new DomainError("FORBIDDEN", "当前会话授权或工作目录已失效，无法读取原生历史。");
     const binding = bindingOf(session);
     await this.runtime.registerBinding(binding);
@@ -400,7 +407,7 @@ export class RuntimeRunner {
     if (run.projectId !== projectId || !run.evaluationBinding || !run.evaluationPacket)
       throw new Error("Run has no attached evaluation packet");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
-    if (!this.authorized(session, run.actorId) || !await this.deps.allowedCwd(projectId, session.cwd))
+    if (!(await this.authorized(session, run.actorId) && await this.deps.allowedCwd(projectId, session.cwd) || await this.owned(session, run)))
       throw new Error("Runtime session authority is no longer available");
     const taskInput = await this.input(principal, run);
     const { sources } = await this.evaluationSources(principal, session, run, taskInput);
@@ -415,11 +422,17 @@ export class RuntimeRunner {
       !await this.deps.mayDispatchRun(original)) return;
     const session = await this.deps.workflow.getRuntimeSession(principal, original.projectId, original.sessionId);
     if (session.state !== "ready") return;
-    if (!this.authorized(session, original.actorId)) {
+    const currentAuthority = await this.authorized(session, original.actorId);
+    if (!currentAuthority && !await this.owned(session, original)) {
       if (original.state === "requested") await this.deps.trusted.rejectDispatch(original.projectId, original.id, "Run requester authority is no longer configured");
       return;
     }
-    const binding = await this.restore(session);
+    if (!currentAuthority && original.state === "requested" && !original.nativeTurnId) {
+      await this.deps.trusted.rejectDispatch(original.projectId, original.id, "Current authorization is unavailable for a new Turn");
+      return;
+    }
+    const binding = original.state === "requested" && !original.nativeTurnId ?
+      await this.restore(session) : await this.readBinding(session);
     let run = original;
     if (run.state === "requested" && !run.nativeTurnId) {
       let input: string;
@@ -543,7 +556,8 @@ export class RuntimeRunner {
     if (run.version !== expectedVersion || !run.nativeTurnId || !["completed", "failed", "interrupted"].includes(run.state))
       throw new Error("Bound terminal run version is required for readback");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
-    if (session.state !== "ready" || !this.authorized(session, run.actorId) || !this.authorized(session, principal.actorId))
+    if (session.state !== "ready" || !(await this.authorized(session, run.actorId) && await this.authorized(session, principal.actorId) ||
+      await this.owned(session, run)))
       throw new Error("Session authority is no longer available");
     const binding = await this.readBinding(session);
     const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);

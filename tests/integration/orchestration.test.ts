@@ -15,6 +15,8 @@ import type { DelegationTemplate } from "@evoloop/contracts/division";
 import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
 import { authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard.js";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
+import { dynamicRuntimeAdmission } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
+import { loopIntentId } from "../../apps/coordinator/src/orchestration/runner.js";
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -412,15 +414,15 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[projectId,op])).rows[0].n,1);
   // A new trial Role is proposed through the existing Role contract. The separate
   // delegation template grants only one bounded allocation for this Goal/Loop/Task.
-  const newRoleId=randomUUID(),divisionTaskId=randomUUID(),materialId=randomUUID(),materialBody="# Observed division gap";
+  const recoveryDetail=await workflow.getTask(principal(actor),projectId,recoveryTaskId);
+  const newRoleId=randomUUID(),divisionTaskId=randomUUID(),materialId=recoveryDetail.task.contentDocumentId,
+    materialBody=recoveryDetail.task.content;
   assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
     taskId:divisionTaskId,stageId,title:"Trial first Task",content:"# One bounded trial",acceptance:"Record one result",
     owner:cognitiveRole,consumer:"owner",evidence:"Observed division gap",stopCondition:"One trial"})).status,"applied");
   assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
     taskId:divisionTaskId,expectedVersion:1,reason:"Freeze trial input"})).status,"applied");
-  const material=await workflow.execute(principal(actor),{type:"document.create",projectId,operationId:randomUUID(),
-    documentId:materialId,kind:"report",title:"Fixed division diagnosis",body:materialBody});
-  assert.equal(material.status,"applied");
+  const material={revisionId:recoveryDetail.task.contentRevisionId};
   const observedAtUtc=new Date().toISOString();
   const proposal={title:"Bounded diagnosis role",goal:"Resolve one observed gap",independentResponsibility:"Diagnose one recurring error",
     ownerScope:"One trial Task",inputs:["Fixed source"],writableAssets:[],deliverables:["Trial result"],
@@ -450,7 +452,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
   const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:4318",
     cliMain:fileURLToPath(new URL("../../apps/cli/dist/main.js",import.meta.url)),
-    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
+    nodeExecutable:process.execPath,ttlMs:60_000});
   brokerForRole=broker;
   const issued=await broker.issue({projectId,loopId:lateLoopId,taskId:recoveryTaskId,
     runId:recoveryRunId,sessionId:cognitiveSession,roleId:cognitiveRole,kind:"cognition",
@@ -459,6 +461,13 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.ok(identity);
   const division=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha,
     getWorkerScope:async actorId=>(await broker.identityForActor(actorId))?.scope ?? null,
+    canReadDivisionMaterial:async(actorId,documentId,revisionId)=>{
+      const workerIdentity=await broker.identityForActor(actorId);
+      if(!workerIdentity)return false;
+      const facts=workerGuardFacts(pool,workerIdentity);
+      return await facts.fixedDocument(workerIdentity.scope.taskId,documentId,revisionId) ||
+        await facts.sourceIssueDocumentRevision?.(documentId,revisionId)===true;
+    },
     getDelegationTemplate:async(project,id)=>templateCurrent&&project===projectId&&id===template.id?{template,hash:templateHash}:null});
   const beforeDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
   const decisionOperationId=randomUUID(),decision={type:"division.decide",projectId,operationId:decisionOperationId,
@@ -469,6 +478,15 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     templateId:template.id,templateRevision:template.revision,templateHash,reason:"One explicitly bounded trial"};
   const request={method:"POST",path:"/api/orchestration/commands",body:decision};
   assert.equal(await authorizeWorkerRequest(identity,request,workerGuardFacts(pool,identity)),true);
+  const privateBody="# Same-project private diagnosis",privateId=randomUUID();
+  const privateRevision=await workflow.execute(principal(actor),{type:"document.create",projectId,operationId:randomUUID(),
+    documentId:privateId,kind:"report",title:"Private diagnosis",body:privateBody});
+  assert.equal(privateRevision.status,"applied");
+  const privateIntent={...decision,operationId:randomUUID(),decisionId:randomUUID(),
+    documentId:privateId,documentRevisionId:privateRevision.revisionId,documentContentHash:sha(privateBody)};
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:privateIntent},workerGuardFacts(pool,identity)),false);
+  await fails(division.execute(issued.principal,privateIntent as never),"MATERIAL_FORBIDDEN");
+  assert.equal((await division.getLoop(principal(actor),projectId,lateLoopId))?.currentPolicyRevisionId,beforeDivision.currentPolicyRevisionId);
   assert.equal(await authorizeWorkerRequest(identity,{...request,path:"/api/commands",
     body:{type:"role.decide",projectId,operationId:randomUUID(),roleId:newRoleId}},workerGuardFacts(pool,identity)),false);
   const wrongRunIdentity={...identity,scope:{...identity.scope,runId:randomUUID()}};
@@ -693,6 +711,14 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   finally { fixtureClient.release(); }
   const uow = new PostgresUnitOfWork(pool);
   assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)));
+  const admission=dynamicRuntimeAdmission(pool,async(project,id)=>project===projectId&&id===template.id?
+    {template,hash:templateHash}:null,()=>new Date().toISOString());
+  const historicalSession={projectId,id:loopIntentId(historicalChildId,"session"),actorId:template.actorId,
+    roleId:newRoleId,authorizationScope:template.authorizationScopeId,cwd:template.cwd,model:template.model,
+    sandbox:template.sandbox,approvalPolicy:template.approvalPolicy};
+  assert.equal(await admission.isDynamicSession(projectId,historicalSession.id),true);
+  assert.equal(await admission.canCreateSession(historicalSession as never),false,
+    "a pinned dynamic child without a confirmed transfer cannot become a native Session");
   await division.execute(principal(actor),{type:"division.revoke",projectId,operationId:randomUUID(),loopId:lateLoopId,
     expectedLoopVersion:afterDivision.version,bindingId:decided.entityId,reason:"Withdraw trial authority"});
   assert.equal((await division.getPolicy(principal(actor),projectId,divisionPolicy.id))?.bindingByRole[newRoleId],decided.entityId);

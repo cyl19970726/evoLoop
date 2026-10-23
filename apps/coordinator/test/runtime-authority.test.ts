@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
-import { delegationTemplateHash, loadIntegrations } from "../src/configuration.js";
+import { delegationTemplateHash, loadIntegrations, runtimeThreadConfigForSession } from "../src/configuration.js";
 
 const projectId = randomUUID();
 const sessionId = randomUUID();
@@ -60,6 +60,46 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
       assert.equal(calls, 1);
     } finally { await app.close(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a bound dynamic Session cannot fall back to the same Role's static grant after revocation", async () => {
+  let calls = 0, current = false;
+  const service = { ...workManagementQueries,
+    getRuntimeSession: async () => ({ projectId,id:sessionId,actorId:grant.actorId,roleId:grant.roleId,
+      authorizationScope:grant.authorizationScope,cwd:grant.cwd,sandbox:grant.sandbox }),
+    execute: async () => { calls++; return {status:"applied",operationId,entityId:sessionId,version:1}; },
+  } as unknown as WorkflowService;
+  const app = await buildServer({service,credentials:credentials as never,
+    runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,
+    hasRuntimeGrant:()=>true,allowedRuntimeCwd:async()=>true,
+    isDynamicSession:async()=>true,
+    authorizeDynamicSession:async()=>current,
+    authorizeDynamicRun:async()=>current});
+  try {
+    const reserveRun={type:"runtime.run.reserve",projectId,operationId:randomUUID(),sessionId,
+      runId:randomUUID(),taskId:randomUUID(),expectedVersion:1,input:"Bounded task"};
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,403);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,403);
+    assert.equal(calls,0);
+    current=true;
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,200);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,200);
+    assert.equal(calls,2);
+  } finally { await app.close(); }
+});
+
+test("dynamic network access follows the exact Session binding despite a colliding static or expired template",async()=>{
+  const spec={...grant,sessionId,model:"model",approvalPolicy:"on-request" as const};
+  const staticTrue=[{...grant,sandbox:"workspace-write" as const,networkAccess:true}];
+  assert.deepEqual(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},null),
+    {"sandbox_workspace_write.network_access":true});
+  const dynamic={isDynamicSession:async()=>true,networkAccessForSession:async()=>false};
+  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},dynamic),undefined);
+  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},
+    {...dynamic,networkAccessForSession:async()=>null}),undefined,
+    "an expired other template or revoked binding cannot supply network permission");
+  assert.deepEqual(await runtimeThreadConfigForSession([], {...spec,sandbox:"workspace-write"},
+    {...dynamic,networkAccessForSession:async()=>true}),{"sandbox_workspace_write.network_access":true});
 });
 
 test("session close requires project review but no requester execution grant", async () => {

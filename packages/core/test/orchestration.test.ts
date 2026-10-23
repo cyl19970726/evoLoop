@@ -21,6 +21,7 @@ function harness() {
   let currentTime = at;
   let delegation: {template: DelegationTemplate; hash: string} | null = null;
   let delegatedWorkerScope: {projectId:string;loopId:string;taskId:string;runId:string;roleId:string;kind:string}|null=null;
+  let delegatedMaterialReadable = true;
   const roleStates = new Map<string, {state:string;firstTaskId:string;accepted:boolean}>();
   let data: Data = { loops: new Map(), policies: new Map(), bindings: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
     [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
@@ -46,6 +47,9 @@ function harness() {
     getDecision: async id => draft.decisions.get(id) ?? null, findDecisionByDispatch: async id => [...draft.decisions.values()].find(item => item.dispatchId === id) ?? null,
     hasChildDispatch: async id => [...draft.dispatches.values()].some(item => item.parentDispatchId === id),
     hasWaitingResume: async id => draft.events.some(item => item.kind === "waiting.resumed" && item.entityId === id),
+    hasDivisionTransferConfirmed: async id => draft.events.some(item => item.kind === "division.transferConfirmed" && item.entityId === id),
+    hasDivisionHandoffAck: async id => draft.events.some(item => item.kind === "division.handoffAcknowledged" && item.entityId === id),
+    hasInFlightRunForTask: async () => false,
     hasUnsettledDispatchForSource: async (loop, source, except) => [...draft.dispatches.values()].some(item => item.loopId === loop && item.sourceEventId === source && item.id !== except && ["pending", "claimed", "dispatching", "accepted", "unknown"].includes(item.state)),
     insertDecision: async value => { draft.decisions.set(value.id, value); },
     getDispatch: async id => draft.dispatches.get(id) ?? (id === feedbackDispatchId ? { projectId, id, version: 5, loopId, inboxId: randomUUID(), sourceEventId: source0, taskId, taskVersion: 1, parentDispatchId: randomUUID(), recipientRoleId: workerRoleId, purpose: "prior business", authorizationScopeId: scopeId, state: "completed", claimToken: randomUUID(), leaseUntilUtc: null, runtimeRunId: randomUUID(), outcome: "failed", deliveryId: null, evidenceRef: null, reason: "prior failure", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: after } : null), insertDispatch: async value => { draft.dispatches.set(value.id, value); }, updateDispatch: async (value, expected) => { assert.equal(draft.dispatches.get(value.id)?.version, expected); draft.dispatches.set(value.id, value); },
@@ -55,6 +59,12 @@ function harness() {
     appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } if (value.kind === "waiting.resumed") { const detail=value.detail; draft.source.set(value.id,{projectId,id:value.id,createdAtUtc:value.createdAtUtc,kind:value.kind,subjectId:detail.issueDocumentId as string,subjectVersion:1,sourceLoopId:value.loopId,originDispatchId:detail.dispatchId as string,operationId:value.operationId,sourceActorId:value.actorId,observationId:null,deliveryId:null,observationResult:null,issueRevisionId:detail.issueRevisionId as string,issueContentHash:detail.issueContentHash as string,waitingDecisionId:detail.decisionId as string,previousSourceEventId:detail.previousSourceEventId as string,originalSourceEventId:detail.originalSourceEventId as string,waitingRunId:detail.runId as string}); } }, getSourceFact: async id => draft.source.get(id) ?? null,
     getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
     getTaskScopeAtVersion: async (id, taskVersion) => id === taskId && taskVersion === 1 ? { projectId, taskId: id, taskVersion, goalId, stageId } : null,
+    getTaskRevisionFact: async (id, taskVersion) => id === taskId && taskVersion === 1 && draft.taskVersion === 2 ? {
+      projectId, taskId: id, revisionId: taskId, version: 1, ownerRoleId: "prior-role",
+      actorId: cognition.actorId, reason: "baseline" } : id === taskId && taskVersion === draft.taskVersion ? {
+      projectId, taskId: id, revisionId: draft.taskRevisionId, version: taskVersion,
+      ownerRoleId: draft.taskOwnerRoleId, actorId: reviewer.actorId,
+      reason: draft.taskVersion === 2 && draft.bindings.size ? `division-transfer:${[...draft.bindings.keys()][0]}` : "fixture" } : null,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
@@ -70,6 +80,7 @@ function harness() {
   const store: OrchestrationStore = { transaction: async (_project, action) => { const draft = structuredClone(data); const result = await action(view(draft)); data = draft; return result; }, read: async (_project, action) => action(view(data)) };
   const service = new OrchestrationService({ store, now: () => currentTime, nextId: randomUUID, hash: value => value,
     getWorkerScope:async()=>delegatedWorkerScope,
+    canReadDivisionMaterial:async()=>delegatedMaterialReadable,
     getDelegationTemplate: async (_project, id) => delegation?.template.id === id ? delegation : null });
   const enroll = () => service.execute(reviewer, cmd({ type: "loop.enroll", loopId, goalId, stageId, cognitiveRoleId, allowedBusinessRoleIds: [workerRoleId], sourceAfter: { createdAtUtc: at, eventId: source0 }, maxRuns: 2, maxConcurrent: 1, reason: "bounded pilot" }));
   const accept = () => service.execute(cognition, cmd({ type: "inbox.accept", loopId, sourceEventId: source1, recipientRoleId: cognitiveRoleId, purpose: "next_action" }));
@@ -87,6 +98,7 @@ function harness() {
   return { service, enroll, accept, ack, request, get data() { return data; }, advanceTime(value: string) { currentTime = value; },
     change(fn: (value: Data) => void) { fn(data); }, setDelegation(value: {template: DelegationTemplate; hash: string} | null) { delegation = value; },
     setDelegatedWorkerScope(value: typeof delegatedWorkerScope) {delegatedWorkerScope=value;},
+    setDelegatedMaterialReadable(value: boolean) {delegatedMaterialReadable=value;},
     setRoleState(id: string, value: {state:string;firstTaskId:string;accepted:boolean}) { roleStates.set(id,value); } };
 }
 
@@ -585,12 +597,13 @@ test("review control resumes one terminal waiting cognition from fixed Issue wit
 });
 
 test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted budget and non-Issue sources",async()=>{
-  for(const mutation of ["worker","noReview","noWrite","stale","child","unknown","budget","paused","stopped","foreign","notIssue","wrongDecision","unsettled"] as const){
+  for(const mutation of ["worker","noReview","noWrite","stale","child","divisionIntent","unknown","budget","paused","stopped","foreign","notIssue","wrongDecision","unsettled"] as const){
     const f=waitingIssueFixture();await f.make();let principal=reviewer;
     const command=f.command();
     f.h.change(value=>{
       if(mutation==="stale")value.loops.set(loopId,{...value.loops.get(loopId)!,version:2});
       if(mutation==="child")value.dispatches.set(randomUUID(),{...value.dispatches.get(f.dispatchId)!,id:randomUUID(),parentDispatchId:f.dispatchId});
+      if(mutation==="divisionIntent")value.decisions.set(f.decisionId,{...value.decisions.get(f.decisionId)!,divisionDecisionId:randomUUID()});
       if(mutation==="unknown")value.runState="unknown";
       if(mutation==="budget")value.loops.set(loopId,{...value.loops.get(loopId)!,maxRuns:1});
       if(mutation==="paused")value.loops.set(loopId,{...value.loops.get(loopId)!,state:"paused"});
@@ -606,7 +619,7 @@ test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted 
     if(mutation==="noReview")principal={...reviewer,permissions:["read","write"]};
     if(mutation==="noWrite")principal={...reviewer,permissions:["read","review"]};
     const code={worker:"FORBIDDEN",noReview:"FORBIDDEN",noWrite:"FORBIDDEN",stale:"VERSION_CONFLICT",
-      child:"WAITING_UNAVAILABLE",unknown:"RUN_NOT_TERMINAL",budget:"BUDGET_EXHAUSTED",paused:"LOOP_PAUSED",
+      child:"WAITING_UNAVAILABLE",divisionIntent:"WAITING_UNAVAILABLE",unknown:"RUN_NOT_TERMINAL",budget:"BUDGET_EXHAUSTED",paused:"LOOP_PAUSED",
       stopped:"LOOP_STOPPED",foreign:"WAITING_UNAVAILABLE",notIssue:"SOURCE_UNAVAILABLE",
       wrongDecision:"WAITING_UNAVAILABLE",unsettled:"WAITING_UNAVAILABLE"}[mutation];
     await assert.rejects(()=>f.h.service.execute(principal,command),failed(code),mutation);
@@ -688,6 +701,61 @@ test("division decision pins material, bounded template and policy without refre
   assert.equal(f.h.data.bindings.size, 1);
 });
 
+test("controller reserves budget before Task transfer and confirms only its journalled version bridge", async () => {
+  const f=divisionFixture();await f.setup();
+  f.h.change(value=>{value.taskOwnerRoleId="prior-role";value.taskState="todo";});
+  f.h.setDelegation({template:{...f.template,actorId:reviewer.actorId},hash:f.templateHash});
+  const binding=await f.h.service.execute(cognition,f.decision());
+  const waiting=await f.h.service.execute(cognition,cmd({type:"worker.decision",decisionId:randomUUID(),
+    dispatchId:f.parentDispatchId,runId:f.parentRunId,kind:"waiting",divisionDecisionId:binding.entityId,
+    reason:"Follow fixed division",evidenceRefs:[]}));
+  const transferOperationId=randomUUID(),dispatchId=randomUUID();
+  const consume=()=>cmd({type:"division.consume",loopId,expectedLoopVersion:f.h.data.loops.get(loopId)!.version,
+    bindingId:binding.entityId,waitingDecisionId:waiting.entityId,parentDispatchId:f.parentDispatchId,
+    dispatchId,reason:"Bounded first Task"});
+  await assert.rejects(()=>f.h.service.execute(reviewer,consume()),failed("CAPACITY_UNAVAILABLE"));
+  f.h.change(value=>{value.parentRunStates.set(f.parentRunId,"completed");
+    value.dispatches.set(f.parentDispatchId,{...value.dispatches.get(f.parentDispatchId)!,state:"completed",outcome:"waiting"});});
+  const command=consume(),beforeBudget=f.h.data.loops.get(loopId)!.dispatchCount;
+  const child=await f.h.service.execute(reviewer,command);
+  assert.equal(child.entityType,"dispatch");
+  assert.equal(f.h.data.dispatches.get(dispatchId)?.bindingId,binding.entityId);
+  assert.equal(f.h.data.dispatches.get(dispatchId)?.taskVersion,1);
+  assert.equal(f.h.data.taskOwnerRoleId,"prior-role");
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,beforeBudget+1);
+  assert.equal((await f.h.service.execute(reviewer,command)).replayed,true);
+  await assert.rejects(()=>f.h.service.execute(reviewer,cmd({type:"dispatch.claim",dispatchId,
+    claimToken:randomUUID(),leaseUntilUtc:"2026-10-23T09:04:00.000Z"})),failed("HANDOFF_NOT_CONFIRMED"));
+  const confirm=cmd({type:"division.confirmTransfer",dispatchId,transferOperationId,
+    transferredTaskVersion:2,reason:"Normal Task owner update confirmed"});
+  await assert.rejects(()=>f.h.service.execute(reviewer,confirm),failed("TASK_TRANSFER_UNCONFIRMED"));
+  f.h.change(value=>{value.taskVersion=2;value.taskOwnerRoleId=workerRoleId;
+    value.workflowOp={projectId,id:transferOperationId,actorId:reviewer.actorId,commandType:"task.update",
+      commandHash:"transfer",status:"applied",resultRefId:value.taskRevisionId,resultVersion:2};});
+  assert.equal((await f.h.service.execute(reviewer,confirm)).version,2);
+  assert.equal(f.h.data.dispatches.get(dispatchId)?.taskVersion,2);
+  assert.equal((await f.h.service.execute(reviewer,confirm)).replayed,true);
+  await assert.rejects(()=>f.h.service.execute(reviewer,consume()),failed("INVALID_CAUSALITY"));
+  f.h.change(value=>{value.dispatches.set(dispatchId,{...value.dispatches.get(dispatchId)!,state:"accepted",
+    runtimeRunId:value.runId});value.runState="running";});
+  const receiver:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["read","write"]};
+  f.h.setDelegatedWorkerScope({projectId,loopId,taskId,runId:f.h.data.runId,roleId:workerRoleId,kind:"business"});
+  const deliveryDecision=cmd({type:"worker.decision",decisionId:randomUUID(),dispatchId,
+    runId:f.h.data.runId,kind:"failed",reason:"Cannot complete",evidenceRefs:[]});
+  await assert.rejects(()=>f.h.service.execute(receiver,deliveryDecision),failed("HANDOFF_UNACKNOWLEDGED"));
+  await assert.rejects(()=>f.h.service.execute(reviewer,cmd({type:"division.ackHandoff",dispatchId,
+    runId:f.h.data.runId,documentRevisionId:f.decision().documentRevisionId,
+    documentContentHash:"a".repeat(64),taskRevisionId:f.h.data.taskRevisionId,reason:"Read"})),failed("FORBIDDEN"));
+  const bindingFact=f.h.data.bindings.get(binding.entityId)!;
+  const receipt=cmd({type:"division.ackHandoff",dispatchId,runId:f.h.data.runId,
+    documentRevisionId:bindingFact.documentRevisionId,documentContentHash:bindingFact.documentContentHash,
+    taskRevisionId:f.h.data.taskRevisionId,reason:"I read the fixed handoff original"});
+  await assert.rejects(()=>f.h.service.execute(receiver,{...receipt,documentContentHash:"0".repeat(64)}),failed("HANDOFF_MISMATCH"));
+  assert.equal((await f.h.service.execute(receiver,receipt)).entityType,"dispatch");
+  assert.equal((await f.h.service.execute(receiver,receipt)).replayed,true);
+  assert.equal((await f.h.service.execute(receiver,deliveryDecision)).entityType,"decision");
+});
+
 test("an already requested static child prevents a later division intent, while its original operation replays",async()=>{
   const f=divisionFixture();await f.setup();
   const next=await f.h.accept();await f.h.ack(next.entityId);
@@ -717,6 +785,10 @@ test("current cognition worker may sign only the exact brokered parent under an 
   }
   f.h.setDelegatedWorkerScope(scope);
   await assert.rejects(()=>f.h.service.execute(runtimeWorker,{...request,operationId:op(),parentDispatchId:randomUUID()}),failed("INVALID_CAUSALITY"));
+  f.h.setDelegatedMaterialReadable(false);
+  await assert.rejects(()=>f.h.service.execute(runtimeWorker,{...request,operationId:op()}),failed("MATERIAL_FORBIDDEN"));
+  assert.equal(f.h.data.bindings.size,0);
+  f.h.setDelegatedMaterialReadable(true);
   const chosen=await f.h.service.execute(runtimeWorker,{...request,operationId:op()});
   assert.equal(chosen.entityType,"binding");
   await assert.rejects(()=>f.h.service.execute(runtimeWorker,{...request,operationId:op(),
