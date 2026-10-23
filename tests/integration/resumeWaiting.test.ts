@@ -180,4 +180,14 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   await fails(managed(reviewer,{...command,expectedLoopVersion:paused.version+1}),"STAGE_NOT_ACTIVE");
   await fails(managed(cognition,{type:"inbox.accept",loopId,sourceEventId:resumed[0]!.id,
     recipientRoleId:cognitiveRole,purpose:"next_action"}),"STAGE_NOT_ACTIVE");
+  const duplicateEventId=randomUUID();
+  await pool.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc)
+    SELECT project_id,$3,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc
+    FROM orchestration_event WHERE project_id=$1 AND event_id=$2`,[projectId,resumed[0]!.id,duplicateEventId]);
+  for(const eventId of [resumed[0]!.id,duplicateEventId])
+    assert.equal(await store.read(projectId,reader=>reader.getSourceFact(eventId)),null,
+      "copied operation or Decision makes the stored source ambiguous; neither copy is eligible");
+  const remaining=(await orchestration.listSourceFacts(principal(reviewer),projectId,loopId)).items;
+  assert.equal(remaining.some(item=>item.id===duplicateEventId||item.id===resumed[0]!.id),false);
+
 });

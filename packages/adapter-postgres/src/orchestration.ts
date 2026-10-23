@@ -26,7 +26,12 @@ class Reader implements OrchestrationReader {
       JOIN orchestration_decision w ON w.project_id=e.project_id AND w.decision_id=e.entity_id
       JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=w.dispatch_id
       JOIN runtime_run run ON run.project_id=e.project_id AND run.run_id=(d.data->>'runtimeRunId')::uuid
-      WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='waiting.resumed' AND e.entity_type='decision'`,[this.projectId,id]);
+      WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='waiting.resumed' AND e.entity_type='decision'
+        AND NOT EXISTS (SELECT 1 FROM orchestration_event duplicate WHERE duplicate.project_id=e.project_id
+          AND duplicate.kind='waiting.resumed' AND duplicate.event_id<>e.event_id
+          AND duplicate.operation_id=e.operation_id AND duplicate.actor_id=e.actor_id
+          AND duplicate.entity_type=e.entity_type AND duplicate.entity_id=e.entity_id
+          AND duplicate.detail=e.detail)`,[this.projectId,id]);
     const x=r.rows[0];if(!x)return null;
     const detail=x.detail as Record<string,unknown>,op=x.operation_result as Record<string,unknown>;
     const loop=x.loop_data as OrchestrationLoop,dispatch=x.dispatch_data as OrchestrationDispatch,decision=x.decision_data as OrchestrationWorkerDecision;
