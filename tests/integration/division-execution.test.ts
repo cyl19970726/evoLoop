@@ -74,6 +74,24 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   await wf(owner,{type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Freeze"});
   await wf(owner,{type:"task.create",taskId:firstTaskId,stageId,title:"First trial work",content:"# Execute",acceptance:"One check",
     owner:"prior-role",consumer:"owner",evidence:"Fixture",stopCondition:"One result"});
+  // Workflow Task CAS takes this project advisory key. Division must not inspect
+  // the first Task under a separate project-row lock while that CAS is in flight.
+  let releaseTaskLock!:()=>void,signalTaskLock!:()=>void;
+  const taskLockHeld=new Promise<void>(resolve=>{signalTaskLock=resolve;});
+  const taskLockRelease=new Promise<void>(resolve=>{releaseTaskLock=resolve;});
+  const holdingTaskTransaction=uow.transaction(pid,async()=>{signalTaskLock();await taskLockRelease;});
+  await taskLockHeld;
+  let divisionEntered=false;
+  const divisionTransaction=store.transaction(pid,async tx=>{divisionEntered=true;return tx.getTaskFact(firstTaskId);});
+  try {
+    await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(divisionEntered,false,"division must wait for the Workflow Task project lock before observing version");
+  } finally {
+    releaseTaskLock();
+    await holdingTaskTransaction;
+    await divisionTransaction;
+  }
+  assert.equal(divisionEntered,true);
   const document=await wf(owner,{type:"document.create",documentId,kind:"report",title:"Fixed diagnosis",body:"# Fixed handoff"});
   const proposal={title:"Bounded specialist",goal:"One task",independentResponsibility:"Own first trial Task",
     ownerScope:"One task",inputs:["Fixed document"],writableAssets:[],deliverables:["One result"],
