@@ -111,6 +111,10 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   const source = (await orchestration.listSourceFacts(principal(), projectId, loopId)).items.find(item => item.id === event);
   assert.equal(source?.kind, "schedule.task.todo");
   assert.equal(source?.scheduleTaskRevisionId, (await workflow.getTask(principal(), projectId, taskId)).task.currentRevisionId);
+  // Listing is only discovery: acceptance must re-read the same fixed occurrence inside its transaction.
+  const acceptedSource = await issue({ type: "inbox.accept", loopId, sourceEventId: event,
+    recipientRoleId: cognition, purpose: "cognitive_review" });
+  assert.equal(acceptedSource.entityType, "inbox");
   assert.equal((await orchestration.listSourceFacts(principal(), projectId, otherLoopId)).items.some(item => item.id === event), false);
   await assert.rejects(issue({ type: "inbox.accept", loopId: otherLoopId, sourceEventId: event,
     recipientRoleId: cognition, purpose: "cognitive_review" }), (error: unknown) => error instanceof OrchestrationError && error.code === "SOURCE_UNAVAILABLE");

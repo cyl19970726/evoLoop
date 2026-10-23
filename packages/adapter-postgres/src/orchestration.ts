@@ -274,7 +274,7 @@ class Reader implements OrchestrationReader {
       LEFT JOIN document_revision issue_revision ON issue_revision.project_id=issue.project_id
         AND issue_revision.document_id=issue.document_id AND issue_revision.revision_id::text=j.result->>'revisionId'
         AND issue_revision.previous_revision_id IS NULL AND issue_revision.author=j.actor_id
-      WHERE e.project_id=$1 AND e.event_id=$2
+      WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind <> 'schedule.task.todo'
     UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,e.entity_id,1,e.loop_id,NULL::uuid,
       NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer,NULL::uuid,NULL::text
       FROM orchestration_event e JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
