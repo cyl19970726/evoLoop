@@ -110,6 +110,9 @@ export interface OrchestrationSourceFact {
   /** A verified waiting.resumed chain back to the fixed original Issue. */
   waitingDecisionId?: string | null; previousSourceEventId?: string | null;
   originalSourceEventId?: string | null; waitingRunId?: string | null;
+  /** Fixed managed Schedule occurrence and creation Task revision. */
+  scheduleId?: string | null; scheduleRevisionId?: string | null; plannedAtUtc?: string | null;
+  scheduleTargetLoopId?: string | null; scheduleTargetStageId?: string | null; scheduleTaskRevisionId?: string | null;
 }
 export interface OrchestrationIssueFact {
   projectId: string; documentId: string; revisionId: string; contentHash: string; author: string;

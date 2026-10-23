@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Stage } from "./workflow.js";
 
 const scheduleText = z.string().trim().min(1).max(4000);
 const scheduleRuleSchema = z.discriminatedUnion("kind", [
@@ -10,7 +11,8 @@ const scheduleFields = {
   projectId: z.uuid(), operationId: z.uuid(), scheduleId: z.uuid(), revisionId: z.uuid(), timezone: z.string().min(1).max(80),
   rule: scheduleRuleSchema,
   misfire: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("skip") }), z.strictObject({ kind: z.literal("latest") }), z.strictObject({ kind: z.literal("bounded"), maxCatchUp: z.number().int().min(1).max(100) })]),
-  overlap: z.enum(["skip", "queue"]), template: z.strictObject({ title: scheduleText, content: z.string().min(1).max(65536), acceptance: scheduleText, owner: scheduleText }),
+  overlap: z.enum(["skip", "queue"]), template: z.strictObject({ title: scheduleText, content: z.string().min(1).max(65536), acceptance: scheduleText, owner: scheduleText,
+    managedTarget: z.strictObject({ loopId: z.uuid(), stageId: z.uuid() }).optional() }),
   authorization: z.strictObject({ scopeId: scheduleText, roleId: scheduleText, authorizedBy: scheduleText, expiresAtUtc: z.iso.datetime().nullable() }),
   reason: scheduleText,
 };
@@ -27,7 +29,7 @@ export type ScheduleRule =
 
 export type MisfirePolicy = { kind: "skip" } | { kind: "latest" } | { kind: "bounded"; maxCatchUp: number };
 export type OverlapPolicy = "skip" | "queue";
-export interface ScheduledTaskTemplate { title: string; content: string; acceptance: string; owner: string }
+export interface ScheduledTaskTemplate { title: string; content: string; acceptance: string; owner: string; managedTarget?: { loopId: string; stageId: string } | undefined }
 export interface ScheduleAuthorization {
   scopeId: string;
   roleId: string;
@@ -100,6 +102,8 @@ export interface SchedulingReader {
   listOccurrences(id: string): Promise<Occurrence[]>;
 }
 export interface SchedulingTransaction extends SchedulingReader {
+  getStage(id: string): Promise<Stage | null>;
+  getManagedScheduleLoop(id: string): Promise<{ projectId: string; id: string; goalId: string; stageId: string | null; state: string; allowedBusinessRoleIds: string[] } | null>;
   insertSchedule(definition: ScheduleDefinition): Promise<void>;
   updateSchedule(definition: ScheduleDefinition, expectedVersion: number): Promise<void>;
 }

@@ -110,7 +110,8 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
         }
       }
-      if (command.type === "runtime.run.reserve" || command.type === "runtime.session.close") {
+      // Closing is a reviewer request; the runner archives under the original Session grant.
+      if (command.type === "runtime.run.reserve") {
         const session = await options.service.getRuntimeSession(principal, command.projectId, command.sessionId);
         if (!options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
           roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox })) {
