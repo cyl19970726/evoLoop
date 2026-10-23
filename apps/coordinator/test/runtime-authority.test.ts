@@ -168,12 +168,17 @@ test("reviewer recovery endpoint is explicit and checks project authority", asyn
 test("runtime status hides another actor cwd and healthy recovery cannot restart the global process",async()=>{
   let recovered=0;
   const service={...workManagementQueries,getProject:async()=>({id:projectId})} as unknown as WorkflowService;
-  const runtime={status:()=>({available:true,error:null}),recover:async()=>{recovered++;}} as unknown as RuntimeRunner;
+  const foreignProject=randomUUID(),foreignRun=randomUUID(),ownRun=randomUUID();
+  const runtime={status:(scope?:string)=>({available:true,error:null,
+    faults:[{projectId:scope===projectId?projectId:foreignProject,runId:scope===projectId?ownRun:foreignRun}]}),
+    recover:async()=>{recovered++;}} as unknown as RuntimeRunner;
   const app=await buildServer({service,credentials:credentials as never,runtime,runtimeGrants:()=>[grant],allowedRuntimeCwds:()=>[cwd,"/private/another-actor"]});
   try{
     const writerHeaders={authorization:`Bearer ${"w".repeat(40)}`};
     const status=await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime`,headers:writerHeaders});
     assert.deepEqual(status.json().allowedCwds,[]);assert.deepEqual(status.json().grants,[]);
+    assert.deepEqual(status.json().faults,[{projectId,runId:ownRun}]);
+    assert.doesNotMatch(status.body,new RegExp(foreignRun));
     assert.equal((await app.inject({method:"POST",url:`/api/projects/${projectId}/runtime/recover`,headers:writerHeaders})).statusCode,403);
     assert.equal((await app.inject({method:"POST",url:`/api/projects/${projectId}/runtime/recover`,headers})).statusCode,200);
     assert.equal(recovered,0);
