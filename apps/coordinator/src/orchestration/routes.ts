@@ -10,10 +10,10 @@ export interface OrchestrationRouteOptions {
   status?(): unknown;
   listTasks?(principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string): Promise<{items: TaskDetail[]; nextCursor: string | null}>;
   taskContext?(principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string): Promise<unknown>;
-  planningSources?(principal: Principal, projectId: string, taskId: string, taskRevisionId: string,
-    loopId?: string): Promise<unknown>;
   workStatuses?(principal: Principal, projectId: string, taskIds: string[]): Promise<unknown>;
 }
+export type PlanningSourcesReader = (principal: Principal, projectId: string, taskId: string,
+  taskRevisionId: string, loopId?: string) => Promise<unknown>;
 const params = z.record(z.string(), z.uuid());
 const page = z.object({limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(200).optional()});
 const workStatusQuery = z.object({taskIds: z.string().min(36).max(1849).transform(value => value.split(","))
@@ -65,12 +65,6 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
     const p = params.parse(request.params), q = page.parse(request.query);
     return options.taskContext!(principal(request.principal), p.projectId!, p.id!, q.limit, q.cursor);
   });
-  if (options.planningSources) app.get("/api/projects/:projectId/orchestration/tasks/:id/planning-sources", async request => {
-    const p = params.parse(request.params);
-    const q = z.strictObject({taskRevisionId: z.uuid()}).parse(request.query);
-    return options.planningSources!(principal(request.principal), p.projectId!, p.id!, q.taskRevisionId,
-      request.workerIdentity?.scope.loopId);
-  });
   if (options.workStatuses) app.get("/api/projects/:projectId/orchestration/work-status", async request => {
     const p = params.parse(request.params), q = workStatusQuery.parse(request.query);
     return options.workStatuses!(principal(request.principal), p.projectId!, q.taskIds);
@@ -92,5 +86,14 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
     const operation = await service.getOperation(who, p.projectId!, p.id!);
     if (!operation) return reply.code(404).send({code: "OPERATION_NOT_FOUND", message: "No confirmed record yet; preserve the original intent."});
     return {...operation, result: orchestrationApplied(operation.id, operation.result)};
+  });
+}
+
+export function registerPlanningSourcesRoute(app: FastifyInstance, read: PlanningSourcesReader): void {
+  app.get("/api/projects/:projectId/orchestration/tasks/:id/planning-sources", async request => {
+    const p = params.parse(request.params);
+    const q = z.strictObject({taskRevisionId: z.uuid()}).parse(request.query);
+    return read(principal(request.principal), p.projectId!, p.id!, q.taskRevisionId,
+      request.workerIdentity?.scope.loopId);
   });
 }

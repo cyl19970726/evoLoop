@@ -57,8 +57,8 @@ before(async () => {
     [projectId, loopId, {projectId, id: loopId, state: "active", goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"]}]);
   app = await buildServer({service: workflow, credentials: [{token: "o".repeat(40), actorId: owner.actorId,
     projectIds: [projectId], permissions: owner.permissions}],
-    orchestration: {service: {} as never, planningSources: (principal, project, task, revision, loop) =>
-      readPlanningSources(pool, principal, project, task, revision, loop)},
+    planningSources: (principal, project, task, revision, loop) =>
+      readPlanningSources(pool, principal, project, task, revision, loop),
     workers: {authenticate: async header => header === "Bearer worker-test" ? worker : null,
       facts: identity => workerGuardFacts(pool, identity)},
     documents: {uow, blobsForPrincipal: async () => ({}) as never},
@@ -96,6 +96,14 @@ test("scoped HTTP and CLI context discover adopted todo candidate without sealin
   assert.equal(context.documents.length, 1, JSON.stringify(context.failures));
   assert.equal(context.observedPlanningCandidates[0]?.documentId, documentId);
   assert.equal(context.failures.some(failure => failure.id === draftId), true);
+  const ownerGet = async (url: string) => {
+    const read = await app.inject({method: "GET", url, headers: {authorization: `Bearer ${"o".repeat(40)}`}});
+    if (read.statusCode !== 200) throw new Error(`${read.statusCode}: ${read.body}`);
+    return read.json();
+  };
+  const ownerContext = await readTaskContext({get: ownerGet}, projectId, taskId);
+  assert.equal(ownerContext.observedPlanningCandidates[0]?.adoptedRevisionId,
+    planning.observedPlanningCandidates[0].adoptedRevisionId);
   const original = await readOriginal({get}, projectId, documentId,
     planning.observedPlanningCandidates[0].adoptedRevisionId);
   assert.equal(original.body, "Exact source");
@@ -132,6 +140,9 @@ test("archive and new adoption withdraw old planning pointer without exposing a 
   const draft = await workflow.getDocument(owner, projectId, draftId);
   await execute({type: "document.adopt", documentId: draftId, expectedVersion: 1, revisionId: draft.current.id, reason: "Test"});
   await execute({type: "document.archive", documentId: draftId, expectedVersion: 2, reason: "Test"});
+  assert.equal((await app.inject({method: "GET",
+    url: `/api/projects/${projectId}/documents/${draftId}/revisions/${draft.current.id}/original`,
+    headers: {authorization: "Bearer worker-test"}})).statusCode, 403);
   const archived = await readPlanningSources(pool, owner, projectId, taskId, task.revision.id, loopId);
   assert.deepEqual(archived.unavailableLinks, [{documentId: draftId, reason: "archived"}]);
   assert.equal(archived.observedPlanningCandidates.some(item => item.documentId === draftId), false);
@@ -146,6 +157,24 @@ test("archive and new adoption withdraw old planning pointer without exposing a 
     headers: {authorization: "Bearer worker-test"}})).statusCode, 403);
   assert.equal((await app.inject({method: "GET", url: next.observedPlanningCandidates[0]!.originalPath,
     headers: {authorization: "Bearer worker-test"}})).statusCode, 200);
+});
+
+test("archiving a source preserves an already sealed Task basis original", async () => {
+  const sealedDocumentId = randomUUID(), sealedTaskId = randomUUID();
+  await execute({type: "document.create", documentId: sealedDocumentId, title: "Sealed source", body: "Fixed evidence", kind: "spec"});
+  const source = await workflow.getDocument(owner, projectId, sealedDocumentId);
+  await execute({type: "document.adopt", documentId: sealedDocumentId, expectedVersion: 1,
+    revisionId: source.current.id, reason: "Test"});
+  await execute({type: "task.create", taskId: sealedTaskId, stageId, title: "Started Task", content: "Use fixed evidence",
+    acceptance: "Check", owner: "builder", kind: "research", documentIds: [sealedDocumentId],
+    consumer: "Reviewer", evidence: "Test", stopCondition: "Check"});
+  await execute({type: "task.start", taskId: sealedTaskId, expectedVersion: 1,
+    basis: [{documentId: sealedDocumentId, revisionId: source.current.id}], reason: "Test"});
+  await execute({type: "document.archive", documentId: sealedDocumentId, expectedVersion: 2, reason: "Test"});
+  const response = await app.inject({method: "GET",
+    url: `/api/projects/${projectId}/documents/${sealedDocumentId}/revisions/${source.current.id}/original`,
+    headers: {authorization: "Bearer worker-test"}});
+  assert.equal(response.statusCode, 200, response.body);
 });
 
 test("a changed todo Task revision invalidates its earlier planning query", async () => {

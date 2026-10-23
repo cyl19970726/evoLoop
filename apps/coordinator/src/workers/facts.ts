@@ -69,6 +69,7 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       JOIN task t ON t.project_id=l.project_id AND t.task_id=l.task_id
       JOIN process_document p ON p.project_id=l.project_id AND p.document_id=l.document_id
       WHERE l.project_id=$1 AND l.document_id=$2 AND p.adopted_revision_id=$3
+        AND p.status='published'
       LIMIT 21`, [scope.projectId, documentId, revisionId]);
     if (rows.rows.length > 20) return false;
     for (const row of rows.rows) if (await task(row.task_id)) return true;
