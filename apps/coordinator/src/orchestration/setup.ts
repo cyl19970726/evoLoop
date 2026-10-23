@@ -13,6 +13,53 @@ import { workerGuardFacts } from "../workers/facts.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 
+/** Keep Task context to exact dispatches and their immediate source/feedback chain. */
+export async function readTaskContext(pool: Pool, workflow: Pick<WorkflowService, "getTask">,
+  principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) {
+  await workflow.getTask(principal, projectId, taskId);
+  const result = await pool.query(`WITH direct AS (
+      SELECT loop_id,dispatch_id,data->>'sourceEventId' AS source_id,data->>'parentDispatchId' AS parent_id
+      FROM orchestration_dispatch WHERE project_id=$1 AND task_id=$2
+    ), observed AS (
+      SELECT e.event_id FROM outbox_event e
+      JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id
+        AND j.command_type='observation.record' AND j.result->>'status'='applied'
+      JOIN consumer_observation o ON o.project_id=e.project_id AND o.task_id=e.entity_id
+        AND o.observation_id::text=j.result->>'revisionId' AND o.actor_id=j.actor_id
+      JOIN delivery delivery ON delivery.project_id=o.project_id AND delivery.delivery_id=o.delivery_id
+        AND delivery.task_id=o.task_id
+      WHERE e.project_id=$1 AND e.entity_id=$2 AND e.kind='observation.record'
+    ), seeds AS (
+      SELECT loop_id,source_id FROM direct
+      UNION SELECT e.loop_id,e.event_id::text FROM orchestration_event e
+        JOIN direct d ON d.loop_id=e.loop_id AND d.dispatch_id=e.entity_id
+        WHERE e.project_id=$1 AND (e.kind='dispatch.gap' OR
+          (e.kind='worker.outcome' AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')))
+      UNION SELECT x.loop_id,o.event_id::text FROM observed o
+        JOIN orchestration_dispatch x ON x.project_id=$1 AND x.data->>'sourceEventId'=o.event_id::text
+    ), loop_page AS (
+      SELECT DISTINCT loop_id FROM seeds WHERE ($3::uuid IS NULL OR loop_id>$3)
+      ORDER BY loop_id LIMIT $4
+    ), related AS (
+      SELECT DISTINCT x.loop_id,x.dispatch_id,x.data->>'parentDispatchId' AS parent_id
+      FROM orchestration_dispatch x JOIN loop_page page ON page.loop_id=x.loop_id
+      WHERE x.project_id=$1 AND (EXISTS (SELECT 1 FROM seeds s
+        WHERE s.loop_id=x.loop_id AND s.source_id=x.data->>'sourceEventId')
+        OR EXISTS (SELECT 1 FROM direct d WHERE d.loop_id=x.loop_id AND
+          (d.parent_id=x.dispatch_id::text OR x.data->>'parentDispatchId'=d.dispatch_id::text)))
+    )
+    SELECT page.loop_id,array_remove(array_agg(DISTINCT seeds.source_id),NULL) AS sources,
+      array_remove(array_agg(DISTINCT related.dispatch_id::text),NULL) AS dispatches,
+      array_remove(array_agg(DISTINCT related.parent_id),NULL) AS parents
+    FROM loop_page page LEFT JOIN seeds ON seeds.loop_id=page.loop_id
+      LEFT JOIN related ON related.loop_id=page.loop_id
+    GROUP BY page.loop_id ORDER BY page.loop_id`, [projectId, taskId, cursor ?? null, limit + 1]);
+  const items = result.rows.slice(0, limit).map(row => ({loopId: row.loop_id as string,
+    sourceEventIds: row.sources as string[], dispatchIds: row.dispatches as string[],
+    parentDispatchIds: row.parents as string[]}));
+  return {items,nextCursor:result.rows.length>limit ? items.at(-1)!.loopId : null};
+}
+
 export function setupManagedLoops(options: {
   pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
@@ -75,16 +122,8 @@ export function setupManagedLoops(options: {
     workers: {authenticate: (header: string | undefined) => broker.authenticate(header),
       facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity)},
     routes: {service: orchestration, status: () => runner.status(),
-      taskContext: async (principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) => {
-        await options.workflow.getTask(principal, projectId, taskId);
-        const result = await options.pool.query(`SELECT loop_id,array_agg(DISTINCT data->>'sourceEventId') AS sources,
-          array_agg(dispatch_id::text) AS dispatches,array_remove(array_agg(DISTINCT data->>'parentDispatchId'),NULL) AS parents
-          FROM orchestration_dispatch WHERE project_id=$1 AND task_id=$2 AND ($3::uuid IS NULL OR loop_id>$3)
-          GROUP BY loop_id ORDER BY loop_id LIMIT $4`, [projectId, taskId, cursor ?? null, limit + 1]);
-        const items = result.rows.slice(0, limit).map(row => ({loopId: row.loop_id as string, sourceEventIds: row.sources as string[],
-          dispatchIds: row.dispatches as string[], parentDispatchIds: row.parents as string[]}));
-        return {items, nextCursor: result.rows.length > limit ? items.at(-1)!.loopId : null};
-      },
+      taskContext: (principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) =>
+        readTaskContext(options.pool, options.workflow, principal, projectId, taskId, limit, cursor),
       listTasks: async (principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string) => {
         const loop = await orchestration.getLoop(principal, projectId, loopId);
         if (!loop) return {items: [], nextCursor: null};

@@ -16,3 +16,7 @@ export function deliveryMeaning(submission: OrchestrationSubmission): string {
   if (submission.state === "unknown") return "封存结果未知；须按原操作 ID 核对，不可推定交付失败或重发。";
   return "这是一份有署名的提交意图；尚不能视为正式 Delivery 或验收。";
 }
+export function sealReasonLabel(reason: string): string {
+  return ({AUTHORITATIVE_DELIVERY:"已按原交付操作读回并封存正式记录",
+    ALREADY_SEALED:"正式交付已封存，重复核对未再次登记"} as Record<string,string>)[reason] ?? reason;
+}

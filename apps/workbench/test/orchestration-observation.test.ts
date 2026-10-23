@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
+import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
 import { inTaskContext, nextAction, readableOutcome, relatedDispatches } from "../src/orchestration/summary.ts";
+import { taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 
@@ -53,6 +54,7 @@ test("presentation keeps Run, submission, sealed Delivery and use separate", () 
   assert.match(deliveryMeaning(submission), /尚不能视为正式 Delivery/);
   assert.match(deliveryMeaning({ ...submission, state: "unknown" }), /不可推定交付失败/);
   assert.match(deliveryMeaning({ ...submission, state: "sealed", deliveryId: loopId }), /仍须另行观察使用与 Task 验收/);
+  assert.match(sealReasonLabel("AUTHORITATIVE_DELIVERY"), /原交付操作读回/);
 });
 
 test("human summary distinguishes signed intent, actual delivery and human use", () => {
@@ -79,6 +81,22 @@ test("task chain relation includes same source and direct parent, but excludes u
   assert.equal(inTaskContext(direct,context),true);
   assert.equal(inTaskContext(sameSource,context),true);
   assert.equal(inTaskContext(unrelated,context),false);
+  const feedback={...unrelated,id:"next-cognition",sourceEventId:"outcome-event",parentDispatchId:null};
+  assert.equal(inTaskContext(feedback,{...context,sourceEventIds:["source","outcome-event"]}),true);
+});
+
+test("three Task links select fixed history, runtime and delivery without crossing Task scope", () => {
+  const taskId="33333333-3333-4333-8333-333333333333", revisionId="44444444-4444-4444-8444-444444444444";
+  const fixed=taskSectionHref(projectId,taskId,{revisionId});
+  const runtime=taskSectionHref(projectId,taskId,{tab:"runtime"});
+  const delivery=taskSectionHref(projectId,taskId,{tab:"delivery"});
+  assert.equal(taskSectionFromHash(fixed,projectId,taskId),"history");
+  assert.equal(taskSectionFromHash(runtime,projectId,taskId),"runtime");
+  assert.equal(taskSectionFromHash(delivery,projectId,taskId),"delivery");
+  assert.equal(new Set([fixed,runtime,delivery]).size,3);
+  assert.equal(taskSectionFromHash(runtime,projectId,"55555555-5555-4555-8555-555555555555"),null);
+  assert.equal(taskSectionFromHash(runtime,loopId,taskId),null);
+  assert.equal(taskSectionFromHash(`${runtime}&tab=history`,projectId,taskId),"overview");
 });
 
 test("task context and decision reads use scoped routes instead of scanning the first loop page", async () => {
@@ -93,5 +111,19 @@ test("task context and decision reads use scoped routes instead of scanning the 
     assert.equal((await client.decision("decision")).reason,"signed decision");
     assert.deepEqual(paths,[`/api/projects/${projectId}/orchestration/tasks/task/context?limit=50`,
       `/api/projects/${projectId}/orchestration/decisions/decision`]);
+  } finally {fetch.mock.restore();}
+});
+
+test("loop labels read exact Goal and Stage rather than guessing from UUIDs", async () => {
+  const paths:string[]=[];
+  const fetch=mock.method(globalThis,"fetch",async(input:RequestInfo|URL)=>{
+    const url=new URL(String(input),"http://localhost");paths.push(url.pathname);
+    return response(url.pathname.includes("/goals/") ? {id:loopId,outcome:"Readable Goal"} : {id:loopId,deliverable:"Readable Stage"});
+  });
+  try {
+    const client=orchestrationClient("private",projectId);
+    assert.equal((await client.goal(loopId)).outcome,"Readable Goal");
+    assert.equal((await client.stage(loopId)).deliverable,"Readable Stage");
+    assert.deepEqual(paths,[`/api/projects/${projectId}/goals/${loopId}`,`/api/projects/${projectId}/stages/${loopId}`]);
   } finally {fetch.mock.restore();}
 });

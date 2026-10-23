@@ -129,7 +129,7 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
     {original.revision.format === "html" ? <><p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
       <iframe title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
         style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /></>
-      : <MarkdownBody source={original.body} identity={original.revision.id} />}
+      : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>
     {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => <li key={asset.path}>
       <span className="break-anywhere">{asset.path}<small>{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
