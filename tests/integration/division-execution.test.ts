@@ -249,6 +249,11 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     documentRevisionId:document.revisionId,documentContentHash:hash("# Fixed handoff"),
     taskRevisionId:run.revisionId,reason:"I read the fixed original"};
   await denied(orchestration.execute(principal(owner),ack as never),"FORBIDDEN");
+  await denied(orchestration.execute(receiver,{...ack,operationId:randomUUID()} as never),"HANDOFF_MISMATCH");
+  await runtime.beginDispatch(pid,runId);
+  const receiverTurn=`fixture-owned-turn-${runId}`;
+  await runtime.bindTurn(pid,runId,{id:receiverTurn,status:"running"} as never,
+    {kind:"startReply",operationId:(await workflow.getRuntimeRun(principal(owner),pid,runId)).operationId});
   const ackFile=join(cwd,`${ack.operationId}.json`);
   await writeFile(ackFile,JSON.stringify(ack),{mode:0o600});
   assert.equal((await cli(["command","run",ackFile])).entityId,childId);

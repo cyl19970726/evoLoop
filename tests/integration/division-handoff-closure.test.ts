@@ -105,6 +105,18 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
   await runtime.recordTurn(pid,cognitiveRun,turn,"completed","Fixture terminal");
   await issue(controller,{type:"worker.outcome",dispatchId:parent.entityId,outcome:"waiting",deliveryId:null,
     decisionId:waiting.entityId,evidenceRef:null,reason:"Hand over"});
+  const rowCounts=()=>pool.query(`SELECT
+    (SELECT count(*)::int FROM task WHERE project_id=$1) AS tasks,
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs,
+    (SELECT count(*)::int FROM orchestration_operation WHERE project_id=$1) AS orchestration_operations,
+    (SELECT count(*)::int FROM operation_journal WHERE project_id=$1) AS workflow_operations`,[pid]);
+  const beforeMigration=(await rowCounts()).rows[0];
+  await assert.rejects(uow.read(pid,reader=>reader.getChildHandoffFact!(randomUUID())),
+    error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="MIGRATION_REQUIRED"),
+    "the new Division closure reader requires 023 before it can evaluate a handoff");
+  await migrate(url!,schema);
+  await migrate(url!,schema);
+  assert.deepEqual((await rowCounts()).rows[0],beforeMigration,"023 and its rerun add no business facts");
   const childId=randomUUID();
   for(const [label,changes] of [
     ["binding",{bindingId:randomUUID()}],
@@ -147,6 +159,18 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
   const receivingRun=await applied(controller,{type:"runtime.run.reserve",runId,taskId:firstTaskId,sessionId,expectedVersion:3,input:"Receive"});
   await issue(controller,{type:"dispatch.resolve",dispatchId:childId,claimToken:childToken,result:"accepted",runtimeRunId:runId,reason:"Child Run"});
   scope={projectId:pid,loopId,taskId:firstTaskId,runId,roleId,kind:"business"};
+  await assert.rejects(issue(receiver,{type:"division.ackHandoff",dispatchId:childId,runId,
+    documentRevisionId:doc.revisionId,documentContentHash:hash("# Fixed diagnosis"),
+    taskRevisionId:receivingRun.revisionId,reason:"Reserved Run cannot attest actual receipt"}),
+  error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="HANDOFF_MISMATCH"));
+  await runtime.beginDispatch(pid,runId);
+  await assert.rejects(issue(receiver,{type:"division.ackHandoff",dispatchId:childId,runId,
+    documentRevisionId:doc.revisionId,documentContentHash:hash("# Fixed diagnosis"),
+    taskRevisionId:receivingRun.revisionId,reason:"Unbound Run cannot attest actual receipt"}),
+  error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="HANDOFF_MISMATCH"));
+  const receiverTurn=`fixture-turn-${runId}`;
+  await runtime.bindTurn(pid,runId,{id:receiverTurn,status:"running"} as never,
+    {kind:"startReply",operationId:(await workflow.getRuntimeRun(principal(controller),pid,runId)).operationId});
   for(const [label,changes] of [
     ["run",{runId:randomUUID()}],
     ["document",{documentRevisionId:randomUUID()}],
@@ -161,25 +185,20 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
   }
   await issue(receiver,{type:"division.ackHandoff",dispatchId:childId,runId,documentRevisionId:doc.revisionId,
     documentContentHash:hash("# Fixed diagnosis"),taskRevisionId:receivingRun.revisionId,reason:"已读固定原件"});
-  assert.equal((await workflow.getRuntimeRun(principal(controller),pid,runId)).state,"requested",
-    "receiver receipt is bound to the known, reserved receiving Run before its own terminal outcome");
+  assert.equal((await workflow.getRuntimeRun(principal(controller),pid,runId)).state,"running",
+    "fixture receiver receipt is bound to a trusted started Turn before its own terminal outcome");
   await issue(controller,{type:"division.revoke",loopId,expectedLoopVersion:(await orchestration.getLoop(principal(controller),pid,loopId))!.version,
     bindingId:binding.entityId,reason:"No new starts"});
+  await runtime.markRunUnknown(pid,runId,"Owned Turn status requires reconciliation");
+  assert.equal(await handoffFact(),null,"an unknown receiving Turn cannot close its parent");
+  assert.equal((await close(childId)).status,"rejected");
+  await runtime.bindTurn(pid,runId,{id:receiverTurn,status:"running"} as never,
+    {kind:"historyMarker",operationId:(await workflow.getRuntimeRun(principal(controller),pid,runId)).operationId});
+  await runtime.recordTurn(pid,runId,receiverTurn,"completed","Fake owned Turn reconciliation");
   const handoff=await uow.read(pid,reader=>reader.getChildHandoffFact!(childId));
   assert.equal(handoff?.division?.waitingDecisionId,waiting.entityId);
   assert.equal((await close(randomUUID())).status,"rejected","another child cannot borrow the handoff");
   assert.equal((await close(childId,randomUUID())).status,"rejected","another decision cannot borrow the handoff");
-  await assert.rejects(close(childId),error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="23514"),
-    "the existing 022 trigger rejects the legitimate later Division continuation");
-  const rowCounts=()=>pool.query(`SELECT
-    (SELECT count(*)::int FROM task WHERE project_id=$1) AS tasks,
-    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs,
-    (SELECT count(*)::int FROM orchestration_operation WHERE project_id=$1) AS orchestration_operations,
-    (SELECT count(*)::int FROM operation_journal WHERE project_id=$1) AS workflow_operations`,[pid]);
-  const beforeMigration=(await rowCounts()).rows[0];
-  await migrate(url!,schema);
-  await migrate(url!,schema);
-  assert.deepEqual((await rowCounts()).rows[0],beforeMigration,"023 and its rerun add no business facts");
   const intact=await pool.query("SELECT verified_division_closure_handoff($1,$2,$3) AS valid",[pid,childId,waiting.entityId]);
   assert.equal(intact.rows[0].valid,true);
   const unrelated=await pool.query("SELECT verified_division_closure_handoff($1,$2,$3) AS valid",[pid,childId,randomUUID()]);

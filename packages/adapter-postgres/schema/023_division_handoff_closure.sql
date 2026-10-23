@@ -86,7 +86,12 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
       AND task_op.result->>'version'=after_transfer.version::text
     JOIN runtime_run receiving ON receiving.project_id=child.project_id
       AND receiving.run_id=(child.data->>'runtimeRunId')::uuid
-      AND receiving.task_id=child.task_id AND receiving.state<>'unknown'
+      AND receiving.task_id=child.task_id
+      AND receiving.state IN ('running','completed','failed','interrupted')
+      AND receiving.native_turn_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM runtime_record_event bound_turn
+        WHERE bound_turn.project_id=receiving.project_id AND bound_turn.run_id=receiving.run_id
+          AND bound_turn.kind='run.bound' AND bound_turn.native_turn_id=receiving.native_turn_id)
     JOIN document_revision material ON material.project_id=b.project_id
       AND material.document_id=b.document_id AND material.revision_id=b.document_revision_id
       AND material.content_hash=b.document_content_hash
