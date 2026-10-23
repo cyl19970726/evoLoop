@@ -116,7 +116,32 @@ export class OrchestrationService {
       const feedback = source?.kind === "worker.outcome" && source.sourceLoopId === loop.id && !!source.originDispatchId;
       const recoveryGap = source?.kind === "dispatch.gap" && source.sourceLoopId === loop.id && !!source.originDispatchId;
       const externalObservation = source?.kind === "observation.record" && source.sourceLoopId === null && source.originDispatchId === null;
-      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed, own business feedback, terminal intent gap, or scoped consumer observation");
+      const scopedIssue = source?.kind === "document" && source.sourceLoopId === null && source.originDispatchId === null && !!source.issueRevisionId;
+      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation && !scopedIssue) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed, own business feedback, terminal intent gap, scoped consumer observation, or fixed issue");
+      if (scopedIssue) {
+        if (!source.operationId || !source.sourceActorId || !source.issueRevisionId || !source.issueContentHash || source.subjectVersion !== 1)
+          return fail("SOURCE_UNAVAILABLE", "issue source lacks creation operation or fixed revision");
+        const operation = await tx.getWorkflowOperationFact(source.operationId);
+        const issue = await tx.getIssueFact(source.subjectId, source.issueRevisionId);
+        if (!operation || operation.projectId !== command.projectId || operation.commandType !== "document.create" ||
+          operation.status !== "applied" || operation.actorId !== source.sourceActorId ||
+          operation.resultRefId !== source.issueRevisionId || operation.resultVersion !== 1 ||
+          !issue || issue.projectId !== command.projectId || issue.documentId !== source.subjectId ||
+          issue.revisionId !== source.issueRevisionId || issue.contentHash !== source.issueContentHash ||
+          issue.author !== source.sourceActorId || !issue.originTaskId || !issue.originTaskRevisionId ||
+          await tx.wasActorRole(issue.author, loop.id, loop.cognitiveRoleId))
+          return fail("SOURCE_UNAVAILABLE", "issue must be an applied, fixed, independently authored creation in this project");
+        if (issue.originRunId) {
+          const run = await tx.getRunFact(issue.originRunId);
+          if (!run || run.projectId !== command.projectId || run.taskId !== issue.originTaskId ||
+            run.taskRevisionId !== issue.originTaskRevisionId || run.state === "unknown")
+            return fail("SOURCE_UNAVAILABLE", "issue Run must match the fixed Task input and have a known state");
+        }
+        const fixed = await tx.getTaskScopeAtVersion(issue.originTaskId, issue.originTaskVersion);
+        if (!fixed || fixed.projectId !== command.projectId || fixed.taskVersion !== issue.originTaskVersion ||
+          !fixed.stageId || fixed.goalId !== loop.goalId || (loop.stageId !== null && fixed.stageId !== loop.stageId))
+          return fail("SOURCE_UNAVAILABLE", "issue origin Task revision is outside this loop's fixed Goal and Stage");
+      }
       if (recoveryGap) {
         const origin = await tx.getDispatch(source.originDispatchId!);
         if (!origin || origin.projectId !== command.projectId || origin.loopId !== loop.id ||

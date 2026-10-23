@@ -25,7 +25,8 @@ const maxDetailRows = 10_000;
 type Row = QueryResultRow;
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
 const rowProject = (r: Row): Project => ({ id: r.project_id, title: r.title, createdAt: iso(r.created_at) });
-const rowDocument = (r: Row): Document => ({ projectId: r.project_id, id: r.document_id, title: r.title, version: r.version, currentRevisionId: r.current_revision_id, adoptedRevisionId: r.adopted_revision_id, kind: r.kind, status: r.status, primaryTaskId: r.primary_task_id ?? null });
+const rowDocument = (r: Row): Document => ({ projectId: r.project_id, id: r.document_id, title: r.title, version: r.version, currentRevisionId: r.current_revision_id, adoptedRevisionId: r.adopted_revision_id, kind: r.kind, status: r.status, primaryTaskId: r.primary_task_id ?? null,
+  origin: r.origin_task_id ? { taskId: r.origin_task_id, taskRevisionId: r.origin_task_revision_id, runId: r.origin_run_id ?? null } : null });
 const rowDocumentRevision = (r: Row): DocumentRevision => ({ projectId: r.project_id, documentId: r.document_id, id: r.revision_id,
   body: r.body, format: r.format, mediaType: r.media_type, originalName: r.original_name ?? `${r.document_id}.md`,
   payloadRef: r.payload_ref, entrypoint: r.entrypoint, assetsManifest: r.assets_manifest ?? [],
@@ -311,7 +312,7 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async insertDocument(d: Document): Promise<void> {
     this.assertScope(d.projectId);
-    await this.client.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [this.projectId, d.id, d.title, d.version, d.currentRevisionId, d.adoptedRevisionId, d.kind, d.status]);
+    await this.client.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status,origin_task_id,origin_task_revision_id,origin_run_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [this.projectId, d.id, d.title, d.version, d.currentRevisionId, d.adoptedRevisionId, d.kind, d.status, d.origin?.taskId ?? null, d.origin?.taskRevisionId ?? null, d.origin?.runId ?? null]);
   }
   async insertDocumentRevision(r: DocumentRevision): Promise<void> {
     this.assertScope(r.projectId);

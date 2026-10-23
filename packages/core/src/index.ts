@@ -155,12 +155,29 @@ export class WorkflowService {
       case "document.create": {
         if (await tx.getDocument(command.documentId)) throw new DomainError("ALREADY_EXISTS", "Document already exists");
         if (command.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task documents are created through task.create");
+        if (command.origin && command.kind !== "issue" && command.kind !== "report")
+          throw new DomainError("INVALID_ORIGIN", "Only issue and report documents may cite a Task or Run origin");
         requireBody(command.body);
+        let origin: Document["origin"] = null;
+        if (command.origin) {
+          const task = await tx.getTask(command.origin.taskId);
+          if (!task || task.projectId !== command.projectId) throw new DomainError("ORIGIN_MISMATCH", "Origin Task is unavailable in this project");
+          let taskRevisionId = task.currentRevisionId;
+          if (command.origin.runId) {
+            const run = await tx.getRuntimeRun(command.origin.runId);
+            if (!run || run.projectId !== command.projectId || run.taskId !== task.id || run.state === "unknown")
+              throw new DomainError("ORIGIN_MISMATCH", "Origin Run must belong to the Task and have a known state");
+            taskRevisionId = run.taskRevisionId;
+          }
+          if (!await tx.getTaskRevision(task.id, taskRevisionId))
+            throw new DomainError("ORIGIN_MISMATCH", "Fixed origin Task revision is unavailable");
+          origin = { taskId: task.id, runId: command.origin.runId ?? null, taskRevisionId };
+        }
         const revisionId = this.deps.ids.next();
         const document: Document = {
           projectId: command.projectId, id: command.documentId, title: command.title,
           version: 1, currentRevisionId: revisionId, adoptedRevisionId: null,
-          kind: command.kind ?? null, status: "draft",
+          kind: command.kind ?? null, status: "draft", origin,
         };
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,

@@ -173,7 +173,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(wrapper,["original",outsideDocumentId,"--revision",outsideDocument.revisionId!],1)).error?.code,
     "FORBIDDEN");
   const reportId=randomUUID();
-  const reportCreated=await workerCommand(wrapper,{type:"document.create",documentId:reportId,kind:"report",title:"Worker report",body:"# Worker evidence"});
+  const reportCreated=await workerCommand(wrapper,{type:"document.create",documentId:reportId,kind:"report",title:"Worker report",body:"# Worker evidence",origin:{taskId:cognitiveTaskId,runId}});
   const reportRevisionId=reportCreated.revisionId as string;
   assert.ok(reportRevisionId);
   assert.equal((await cli(wrapper,["document",reportId,"--revision",reportRevisionId])).body,"# Worker evidence");
@@ -256,7 +256,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     content:"# No",acceptance:"No",owner:businessRole},1)).error?.code,"FORBIDDEN");
   const businessReportId=randomUUID(),businessReportBody="# Business delivery report\nFixed facts.";
   const businessReportCreated=await workerCommand(businessWrapper,{type:"document.create",documentId:businessReportId,kind:"report",
-    title:"Business delivery report",body:businessReportBody});
+    title:"Business delivery report",body:businessReportBody,origin:{taskId:childTaskId,runId:businessRunId}});
   const businessReportRevisionId=businessReportCreated.revisionId as string;
   assert.ok(businessReportRevisionId);
   assert.equal((await cli(businessWrapper,["document",businessReportId,"--revision",businessReportRevisionId])).body,
