@@ -664,7 +664,7 @@ export class OrchestrationService {
       await event(loop.id,"dispatch",dispatch.id,"division.handoffAcknowledged",{
         runId:command.runId,documentRevisionId:command.documentRevisionId,
         documentContentHash:command.documentContentHash,taskRevisionId:command.taskRevisionId,
-        declaration:command.reason});
+        nativeTurnId:run.nativeTurnId,declaration:command.reason});
       return result("dispatch",dispatch.id,dispatch.version);
     }
     if (command.type === "worker.decision") {

@@ -14,12 +14,15 @@ import type { DelegationTemplate } from "@evoloop/contracts/division";
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated PostgreSQL test DB required");
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
+const canonical=(value:unknown)=>JSON.stringify(value,(_key,item:unknown)=>item&&typeof item==="object"&&!Array.isArray(item)?
+  Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item);
 const pid=randomUUID(),controller="controller",researcher="researcher",cognitiveRole="cognition-role";
 const receiver=`worker-${randomUUID()}`,roleId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
 const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 
- test("a real acknowledged Division handoff closes its original waiting cognition Task",async t=>{
+for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] as const) test(
+  `Division waiting closure uses a bound receiver Turn (${mode})`,async t=>{
   const schema=`el_divclosure_${randomUUID().replaceAll("-","").slice(0,16)}`;
   const migrationsDir=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
   const beforeClosureCount=readdirSync(migrationsDir).filter(name=>name.endsWith(".mjs") && name<"023_").length;
@@ -29,7 +32,8 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
-  const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
+  let frozenNow:string|null=null;
+  const uow=new PostgresUnitOfWork(pool),clock={now:()=>frozenNow??new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,id)=>p===pid&&id==="cognition-scope"?
     {projectId:pid,scopeId:id,actorId:researcher,roleId:cognitiveRole,active:true}:null,
@@ -163,14 +167,61 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
     documentRevisionId:doc.revisionId,documentContentHash:hash("# Fixed diagnosis"),
     taskRevisionId:receivingRun.revisionId,reason:"Reserved Run cannot attest actual receipt"}),
   error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="HANDOFF_MISMATCH"));
+  const legacyReceipt=async()=>{
+    const legacy={projectId:pid,operationId:randomUUID(),type:"division.ackHandoff" as const,
+      dispatchId:childId,runId,documentRevisionId:doc.revisionId,
+      documentContentHash:hash("# Fixed diagnosis"),taskRevisionId:receivingRun.revisionId,
+      reason:"Historical fixed-material declaration"};
+    const legacyAt=clock.now();
+    // Historical b4 core allowed a broker-scoped receiver to sign a requested Run.
+    // Recreate only its immutable operation/event through the same store port;
+    // this compatibility fixture is not a claim that old native work ran here.
+    await store.transaction(pid,async tx=>{
+      const dispatch=await tx.getDispatch(childId),run=await tx.getRunFact(runId);
+      assert.equal(dispatch?.state,"accepted");
+      assert.equal(run?.state,mode==="legacy-postbound"?"running":"requested");
+      assert.equal(scope?.runId,runId);assert.equal(scope?.roleId,roleId);
+      assert.equal(dispatch?.bindingId,binding.entityId);
+      await tx.insertOperation({projectId:pid,id:legacy.operationId,actorId:receiver,
+        commandHash:hash(canonical(legacy)),result:{entityType:"dispatch",entityId:childId,
+          version:dispatch!.version,replayed:false},createdAtUtc:legacyAt});
+      await tx.appendEvent({projectId:pid,id:randomUUID(),loopId,entityType:"dispatch",entityId:childId,
+        operationId:legacy.operationId,kind:"division.handoffAcknowledged",actorId:receiver,
+        detail:{runId,documentRevisionId:legacy.documentRevisionId,
+          documentContentHash:legacy.documentContentHash,taskRevisionId:legacy.taskRevisionId,
+          declaration:legacy.reason},createdAtUtc:legacyAt});
+    });
+  };
+  if(mode==="legacy-later"||mode==="legacy-equal"){
+    if(mode==="legacy-equal")frozenNow=new Date().toISOString();
+    await legacyReceipt();
+    if(mode==="legacy-later")await new Promise(resolve=>setTimeout(resolve,15));
+  }
   await runtime.beginDispatch(pid,runId);
-  await assert.rejects(issue(receiver,{type:"division.ackHandoff",dispatchId:childId,runId,
+  if(mode==="current")await assert.rejects(issue(receiver,{type:"division.ackHandoff",dispatchId:childId,runId,
     documentRevisionId:doc.revisionId,documentContentHash:hash("# Fixed diagnosis"),
     taskRevisionId:receivingRun.revisionId,reason:"Unbound Run cannot attest actual receipt"}),
   error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="HANDOFF_MISMATCH"));
   const receiverTurn=`fixture-turn-${runId}`;
   await runtime.bindTurn(pid,runId,{id:receiverTurn,status:"running"} as never,
     {kind:"startReply",operationId:(await workflow.getRuntimeRun(principal(controller),pid,runId)).operationId});
+  if(mode==="legacy-postbound"){
+    await new Promise(resolve=>setTimeout(resolve,15));
+    await legacyReceipt();
+  }
+  if(mode!=="current"){
+    const order=await pool.query(`SELECT ack.created_at_utc AS acknowledged_at,bound.created_at AS bound_at
+      FROM orchestration_event ack JOIN runtime_record_event bound ON bound.project_id=ack.project_id
+        AND bound.run_id=$3 AND bound.kind='run.bound' AND bound.native_turn_id=$4
+      WHERE ack.project_id=$1 AND ack.entity_id=$2 AND ack.kind='division.handoffAcknowledged'
+      ORDER BY bound.sequence LIMIT 1`,[pid,childId,runId,receiverTurn]);
+    const acknowledgedAt=(order.rows[0].acknowledged_at as Date).getTime();
+    const boundAt=(order.rows[0].bound_at as Date).getTime();
+    assert.equal(mode==="legacy-equal"?boundAt===acknowledgedAt:
+      mode==="legacy-postbound"?boundAt<acknowledgedAt:boundAt>acknowledgedAt,true);
+  }
+  frozenNow=null;
+  if(mode==="current"){
   for(const [label,changes] of [
     ["run",{runId:randomUUID()}],
     ["document",{documentRevisionId:randomUUID()}],
@@ -185,6 +236,14 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
   }
   await issue(receiver,{type:"division.ackHandoff",dispatchId:childId,runId,documentRevisionId:doc.revisionId,
     documentContentHash:hash("# Fixed diagnosis"),taskRevisionId:receivingRun.revisionId,reason:"已读固定原件"});
+  const signed=await pool.query(`SELECT ack.detail->>'nativeTurnId' AS native_turn_id,
+    ack.created_at_utc=op.created_at_utc AS operation_time_matches
+    FROM orchestration_event ack JOIN orchestration_operation op ON op.project_id=ack.project_id
+      AND op.operation_id=ack.operation_id WHERE ack.project_id=$1 AND ack.entity_id=$2
+      AND ack.kind='division.handoffAcknowledged'`,[pid,childId]);
+  assert.equal(signed.rows[0].native_turn_id,receiverTurn);
+  assert.equal(signed.rows[0].operation_time_matches,true);
+  }
   assert.equal((await workflow.getRuntimeRun(principal(controller),pid,runId)).state,"running",
     "fixture receiver receipt is bound to a trusted started Turn before its own terminal outcome");
   await issue(controller,{type:"division.revoke",loopId,expectedLoopVersion:(await orchestration.getLoop(principal(controller),pid,loopId))!.version,
@@ -196,6 +255,13 @@ const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read"
     {kind:"historyMarker",operationId:(await workflow.getRuntimeRun(principal(controller),pid,runId)).operationId});
   await runtime.recordTurn(pid,runId,receiverTurn,"completed","Fake owned Turn reconciliation");
   const handoff=await uow.read(pid,reader=>reader.getChildHandoffFact!(childId));
+  if(mode==="legacy-later"||mode==="legacy-equal"){
+    assert.equal(handoff,null,"a prebound historical declaration stays unproven after the Turn becomes known");
+    const historical=await pool.query("SELECT verified_division_closure_handoff($1,$2,$3) AS valid",[pid,childId,waiting.entityId]);
+    assert.equal(historical.rows[0].valid,false);
+    assert.equal((await close(childId)).status,"rejected");
+    return;
+  }
   assert.equal(handoff?.division?.waitingDecisionId,waiting.entityId);
   assert.equal((await close(randomUUID())).status,"rejected","another child cannot borrow the handoff");
   assert.equal((await close(childId,randomUUID())).status,"rejected","another decision cannot borrow the handoff");

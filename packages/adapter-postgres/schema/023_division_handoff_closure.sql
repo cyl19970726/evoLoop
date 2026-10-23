@@ -89,9 +89,6 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
       AND receiving.task_id=child.task_id
       AND receiving.state IN ('running','completed','failed','interrupted')
       AND receiving.native_turn_id IS NOT NULL
-      AND EXISTS (SELECT 1 FROM runtime_record_event bound_turn
-        WHERE bound_turn.project_id=receiving.project_id AND bound_turn.run_id=receiving.run_id
-          AND bound_turn.kind='run.bound' AND bound_turn.native_turn_id=receiving.native_turn_id)
     JOIN document_revision material ON material.project_id=b.project_id
       AND material.document_id=b.document_id AND material.revision_id=b.document_revision_id
       AND material.content_hash=b.document_content_hash
@@ -102,8 +99,15 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
       AND ack.detail->>'taskRevisionId'=receiving.task_revision_id::text
       AND ack.detail->>'documentRevisionId'=material.revision_id::text
       AND ack.detail->>'documentContentHash'=material.content_hash
+      AND EXISTS (SELECT 1 FROM runtime_record_event bound_turn
+        WHERE bound_turn.project_id=receiving.project_id AND bound_turn.run_id=receiving.run_id
+          AND bound_turn.kind='run.bound' AND bound_turn.native_turn_id=receiving.native_turn_id
+          AND ((ack.detail->>'nativeTurnId'=receiving.native_turn_id
+                AND bound_turn.created_at<=ack.created_at_utc)
+            OR (NOT (ack.detail ? 'nativeTurnId') AND bound_turn.created_at<ack.created_at_utc)))
     JOIN orchestration_operation ack_op ON ack_op.project_id=ack.project_id
       AND ack_op.operation_id=ack.operation_id AND ack_op.actor_id=ack.actor_id
+      AND ack_op.created_at_utc=ack.created_at_utc
       AND ack_op.result->>'entityType'='dispatch' AND ack_op.result->>'entityId'=child.dispatch_id::text
       AND ack_op.command_hash=encode(sha256(convert_to(
         '{"dispatchId":'||to_json(ack.entity_id::text)::text||
