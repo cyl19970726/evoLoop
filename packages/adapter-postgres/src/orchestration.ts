@@ -400,7 +400,7 @@ class Tx extends Reader implements OrchestrationTransaction {
         runId:row.run_id,targetTaskRevisionId:row.task_revision_id,inputHash:row.input_hash};}) : null;
   }
   async getStudyTaskSnapshot(taskId:string,revisionId:string):Promise<StudyCopiedReference[]>{
-    // Existing dispatches can run while the database is still at 022, before 025 adds this column.
+    // Historical dispatch fixtures may read during a staged migration before 025 adds this column.
     const r=await this.db.query(`SELECT d.source_kind,d.decision_id,d.slot_id,d.reference_id,d.source_revision,
       d.content_hash,to_jsonb(d)->'study_provenance' AS study_provenance
       FROM task_external_ref_snapshot snapshot JOIN task_external_ref_decision d
