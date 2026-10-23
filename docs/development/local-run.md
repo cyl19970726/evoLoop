@@ -22,6 +22,16 @@ export EVOLOOP_BLOB_ROOT="$HOME/.local/share/evoloop-pilot/blobs"
 mkdir -p .local "$EVOLOOP_BLOB_ROOT"
 ```
 
+安装依赖并配置连接后、切换本机真实试用前，运行只读预检：当前系统用户须拥有数据目录，数据库账号须有读取 `SHOW data_directory` 的权限。`--expected-data-directory` 应来自部署计划中的预期持久目录；证据目标的父目录须已存在、位于仓库外且由当前用户私有管理，目标文件须尚不存在：
+
+```bash
+npm run pilot:storage:check -- \
+  --expected-data-directory /absolute/persistent/evoloop-pg \
+  --evidence-out /absolute/private-evidence/storage-preflight.json
+```
+
+脚本从 `EVOLOOP_DATABASE_URL` 读取数值回环地址与显式端口，核实际 PostgreSQL 18 的目录、本机规范路径、属主、权限及 postmaster 启动绑定，拒绝临时、缓存或仓库内目录。它以新 0600 JSON 保存当前核验事实，不输出连接凭据；权限不足、路径错配或连接/查询超时会失败，不能当作通过。该检查用于本机持续试用，不约束一次性测试集群，也不替代备份与恢复演练。
+
 `.local` 只放本机私有配置，不放外部正文和备份。下面生成身份文件时拒绝覆盖旧文件，只输出项目 ID：
 
 ```bash
