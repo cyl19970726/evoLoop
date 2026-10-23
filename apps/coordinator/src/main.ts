@@ -32,7 +32,8 @@ import { setupManagedLoops } from "./orchestration/setup.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
 import { workerGuardFacts } from "./workers/facts.js";
-import { dynamicRuntimeAdmission } from "./orchestration/dynamic-admission.js";
+import { dynamicRuntimeAdmission, isBoundDynamicSession } from "./orchestration/dynamic-admission.js";
+import { staticRunSessionAvailable } from "./references/source-run.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -98,11 +99,11 @@ const repositoryForPrincipal = (principal: Principal, projectId: string) => {
 };
 const runtimeConfig = integrations.runtime;
 const runSessionAvailable = async (projectId: string, run: import("@evoloop/contracts").RuntimeRunRecord,
-  session: import("@evoloop/contracts").RuntimeSessionRecord) =>
-  !!runtimeConfig?.enabled && run.projectId === projectId && session.projectId === projectId && session.state === "ready" &&
-  integrations.hasRuntimeGrant({projectId, actorId: run.actorId, roleId: session.roleId,
-    authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox}) &&
-  await integrations.allowedRuntimeCwd(projectId, session.cwd);
+  session: import("@evoloop/contracts").RuntimeSessionRecord) => staticRunSessionAvailable(projectId,run,session,{
+    runtimeEnabled:!!runtimeConfig?.enabled,
+    isBoundDynamicSession:(projectId,sessionId)=>isBoundDynamicSession(pool,projectId,sessionId),
+    hasRuntimeGrant:integrations.hasRuntimeGrant,allowedRuntimeCwd:integrations.allowedRuntimeCwd,
+  });
 const mayStartManaged = integrations.orchestration?.enabled ? managedRuntimeAdmission(pool) : async () => true;
 const dynamicAdmission = integrations.orchestration?.enabled && runtimeConfig?.enabled
   ? dynamicRuntimeAdmission(pool, integrations.getDelegationTemplate, clock.now) : null;
