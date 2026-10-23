@@ -588,6 +588,28 @@ test("trusted waiting resume opens a new cognition Run with the unchanged fixed 
   assert.match(f.lastInput()!, new RegExp(`${issueId} revision ${revisionId}`));
 });
 
+test("targeted scheduled todo enters cognition once with its existing Task identity", async () => {
+  const f = fixture();
+  const taskId = loopIntentId("scheduled-business-task"), eventId = loopIntentId("scheduled-source");
+  const scheduleId = loopIntentId("schedule"), revisionId = loopIntentId("schedule-revision");
+  f.tasks.set(taskId, { version: 1, state: "todo" });
+  f.facts.push({ projectId, id: eventId, createdAtUtc: "2026-10-23T00:01:00.000Z",
+    kind: "schedule.task.todo", subjectId: taskId, subjectVersion: 1,
+    sourceLoopId: loopId, originDispatchId: null, operationId: loopIntentId("schedule-operation"),
+    sourceActorId: "schedule:builder", observationId: null, deliveryId: null, observationResult: null,
+    scheduleId, scheduleRevisionId: revisionId, plannedAtUtc: "2026-10-23T00:01:00.000Z",
+    scheduleTargetLoopId: loopId, scheduleTargetStageId: stageId,
+    scheduleTaskRevisionId: loopIntentId("scheduled-task-revision") });
+  const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump(); await new ManagedLoopRunner(f.deps).pump();
+  assert.equal(f.inbox.filter(item => item.sourceEventId === eventId).length, 1);
+  const cognitionTask = f.taskCreates.find(command => String(command.content).includes(scheduleId));
+  assert.ok(cognitionTask);
+  assert.match(cognitionTask.content, new RegExp(taskId));
+  assert.match(cognitionTask.content, /reuse it for the next_action child dispatch/);
+  assert.equal(f.taskCreates.some(command => command.taskId === taskId), false);
+});
+
 test("missing Stage and exhausted budget become durable waiting inbox dispositions", async () => {
   const noStage = fixture(); noStage.loop.stageId = null;
   await new ManagedLoopRunner(noStage.deps).pump();

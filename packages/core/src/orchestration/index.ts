@@ -10,6 +10,10 @@ const fail = (code: string, message: string, currentVersion?: number): never => 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const cursorAfter = (a: { createdAtUtc: string; eventId: string }, b: { createdAtUtc: string; eventId: string | null }): boolean => Date.parse(a.createdAtUtc) > Date.parse(b.createdAtUtc) || (Date.parse(a.createdAtUtc) === Date.parse(b.createdAtUtc) && a.eventId > (b.eventId ?? ""));
 const activeCapacity = new Set(["claimed", "dispatching", "accepted", "unknown"]);
+const scheduleIdFor = (hash: (value: string) => string, value: string): string => {
+  const hex = hash(value);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
 
 /** Only persists orchestration decisions. WorkflowService remains the sole Task/Run/Delivery writer. */
 export class OrchestrationService {
@@ -163,7 +167,8 @@ export class OrchestrationService {
       const externalObservation = source?.kind === "observation.record" && source.sourceLoopId === null && source.originDispatchId === null;
       const scopedIssue = source?.kind === "document" && source.sourceLoopId === null && source.originDispatchId === null && !!source.issueRevisionId;
       const resumedWaiting = source?.kind === "waiting.resumed" && source.sourceLoopId === loop.id && !!source.originalSourceEventId;
-      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation && !scopedIssue && !resumedWaiting) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be an enrolled or verified source in this loop");
+      const scheduled = source?.kind === "schedule.task.todo" && source.sourceLoopId === loop.id && source.scheduleTargetLoopId === loop.id && source.originDispatchId === null;
+      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation && !scopedIssue && !resumedWaiting && !scheduled) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be an enrolled or verified source in this loop");
       if (resumedWaiting) {
         if (!loop.stageId) return fail("STAGE_NOT_ACTIVE", "resumed waiting source requires an active enrolled Stage");
         const stage = await tx.getStageFact(loop.stageId);
@@ -175,6 +180,27 @@ export class OrchestrationService {
           !source.waitingDecisionId || !source.originDispatchId || !source.waitingRunId || !source.previousSourceEventId)
           return fail("SOURCE_UNAVAILABLE", "resumed waiting source has no fixed Issue chain");
         await this.fixedIssue(tx, loop, root, command.projectId);
+      }
+      if (scheduled) {
+        if (!source.scheduleId || !source.scheduleRevisionId || !source.plannedAtUtc ||
+          !source.scheduleTargetStageId || !source.scheduleTaskRevisionId || !source.operationId || !source.sourceActorId || source.subjectVersion !== 1 ||
+          source.scheduleTargetStageId !== loop.stageId ||
+          source.operationId !== scheduleIdFor(this.deps.hash, `schedule-operation:${command.projectId}:${source.scheduleId}:${source.plannedAtUtc}`) ||
+          source.subjectId !== scheduleIdFor(this.deps.hash, `schedule-task:${command.projectId}:${source.scheduleId}:${source.plannedAtUtc}`) ||
+          source.id !== scheduleIdFor(this.deps.hash, `schedule-outbox:${command.projectId}:${source.scheduleId}:${source.plannedAtUtc}`) ||
+          source.scheduleTaskRevisionId !== scheduleIdFor(this.deps.hash, `schedule-task-revision:${command.projectId}:${source.scheduleId}:${source.plannedAtUtc}`))
+          return fail("SOURCE_UNAVAILABLE", "Schedule source must match its stable UTC occurrence and creation Task");
+        const operation = await tx.getWorkflowOperationFact(source.operationId);
+        const fixed = await tx.getTaskScopeAtVersion(source.subjectId, 1);
+        const stage = await tx.getStageFact(source.scheduleTargetStageId);
+        if (!operation || operation.projectId !== command.projectId || operation.commandType !== "schedule.occurrence" ||
+          operation.status !== "applied" || operation.actorId !== source.sourceActorId ||
+          operation.commandHash !== this.deps.hash(`${command.projectId}:${source.scheduleId}:${source.plannedAtUtc}`) ||
+          operation.resultRefId !== source.subjectId || operation.resultVersion !== 1 ||
+          !fixed || fixed.projectId !== command.projectId || fixed.taskVersion !== 1 ||
+          fixed.stageId !== source.scheduleTargetStageId || fixed.goalId !== loop.goalId ||
+          !stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
+          return fail("SOURCE_UNAVAILABLE", "Schedule source has no matching applied operation or fixed active Stage");
       }
       if (scopedIssue) {
         await this.fixedIssue(tx, loop, source, command.projectId);
