@@ -160,6 +160,19 @@ export class ManagedLoopRunner {
       return fact.sourceLoopId === null && fact.originDispatchId === null && fact.subjectVersion === 1 &&
         !!fact.operationId && !!fact.sourceActorId && !!fact.issueRevisionId && !!fact.issueContentHash;
     }
+    if (fact.kind === "waiting.resumed") {
+      // The repository projects this fact only after verifying the applied resume operation,
+      // formal waiting Decision and its original Issue chain. Match the local predecessor too.
+      const resumed = fact as OrchestrationSourceFact & { waitingDecisionId?: string | null;
+        waitingRunId?: string | null; previousSourceEventId?: string | null;
+        originalSourceEventId?: string | null };
+      return fact.sourceLoopId === loop.id && fact.subjectVersion === 1 && !!fact.originDispatchId &&
+        !!fact.operationId && !!fact.sourceActorId && !!fact.issueRevisionId && !!fact.issueContentHash &&
+        !!resumed.waitingDecisionId && !!resumed.waitingRunId && !!resumed.previousSourceEventId &&
+        !!resumed.originalSourceEventId && dispatches.some(d => d.id === fact.originDispatchId &&
+          d.sourceEventId === resumed.previousSourceEventId && d.runtimeRunId === resumed.waitingRunId &&
+          d.state === "completed" && d.outcome === "waiting");
+    }
     if (fact.kind === "dispatch.gap" && fact.sourceLoopId === loop.id && fact.originDispatchId && fact.gapRunId) {
       // A missing signed intent is a software recovery source even when the failed worker was cognition itself.
       return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
@@ -217,12 +230,19 @@ export class ManagedLoopRunner {
     const existing = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId).catch(() => null);
     if (!existing) {
       const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `verified source event ${inbox.sourceEventId}`;
-      const fixedIssue = sourceFact?.kind === "document" && sourceFact.issueRevisionId && sourceFact.issueContentHash
+      const fixedIssue = (sourceFact?.kind === "document" || sourceFact?.kind === "waiting.resumed") &&
+        sourceFact.issueRevisionId && sourceFact.issueContentHash
         ? ` Read issue original /api/projects/${loop.projectId}/documents/${sourceFact.subjectId}/revisions/${sourceFact.issueRevisionId}/original and verify SHA-256 ${sourceFact.issueContentHash}. Treat it as a report, not verified consumer use or a completed repair.` : "";
+      const resume = sourceFact?.kind === "waiting.resumed" ? sourceFact as OrchestrationSourceFact &
+        { waitingDecisionId?: string | null; originalSourceEventId?: string | null;
+          previousSourceEventId?: string | null } : null;
+      const resumedFrom = resume ? ` This is a new review after waiting Decision ${resume.waitingDecisionId};
+        original Issue source ${resume.originalSourceEventId}, previous review source ${resume.previousSourceEventId}.
+        Preserve the old Decision and rejected operations; do not replay their Run.` : "";
       applied(await this.deps.workflow.execute(cognitive.principal, { type: "task.create", projectId: loop.projectId,
         operationId: loopIntentId(taskId, "create"), taskId, stageId: loop.stageId,
         title: `Cognition: ${source}`, owner: loop.cognitiveRoleId, kind: "research",
-        content: `Review the verified ${source} for Goal ${loop.goalId}, Stage ${loop.stageId}. Read actual project state and decide a bounded next action. Inbox ${inbox.id}.${fixedIssue}`,
+        content: `Review the verified ${source} for Goal ${loop.goalId}, Stage ${loop.stageId}. Read actual project state and decide a bounded next action. Inbox ${inbox.id}.${fixedIssue}${resumedFrom}`,
         acceptance: "Record a grounded decision: create and dispatch a scoped business Task, wait, take no action, or stop.",
         consumer: loop.cognitiveRoleId, useRequired: false,
         evidence: `Source event ${inbox.sourceEventId}`, stopCondition: "A decision is recorded for this source." }));
@@ -259,15 +279,28 @@ export class ManagedLoopRunner {
     }
     return readback();
   }
-  private async initialTaskBasis(principal: Principal, projectId: string, task: TaskDetail) {
+  private async initialTaskBasis(principal: Principal, projectId: string, task: TaskDetail,
+    sourceIssue?: { documentId: string; revisionId: string; contentHash: string }) {
+    if (sourceIssue && !task.links.some(link => link.documentId === sourceIssue.documentId))
+      throw new Error("SOURCE_ISSUE_NOT_LINKED: fixed source issue is absent from the Task");
     // An existing basis carries explicit retention decisions; let WorkflowService inherit it.
-    if (task.basis) return undefined;
+    if (task.basis) {
+      if (sourceIssue && !task.basis.members.some(member => member.documentId === sourceIssue.documentId &&
+        member.revisionId === sourceIssue.revisionId))
+        throw new Error("SOURCE_ISSUE_BASIS_CHANGED: existing basis does not retain the fixed source issue");
+      return undefined;
+    }
     if (task.links.length > 19) throw new Error("LINKED_BASIS_LIMIT: Task has more than 19 linked documents");
     const basis: { documentId: string; revisionId: string }[] = [];
     for (const link of [...task.links].sort((a, b) => a.documentId.localeCompare(b.documentId))) {
-      const { document } = await this.deps.workflow.getDocument(principal, projectId, link.documentId);
+      const { document, adopted } = await this.deps.workflow.getDocument(principal, projectId, link.documentId);
       if (document.status !== "published" || !document.adoptedRevisionId)
         throw new Error(`LINKED_BASIS_UNPUBLISHED: ${link.documentId} is not a published document`);
+      if (sourceIssue && link.documentId === sourceIssue.documentId &&
+        (document.adoptedRevisionId !== sourceIssue.revisionId ||
+          document.currentRevisionId !== sourceIssue.revisionId ||
+          adopted?.contentHash !== sourceIssue.contentHash))
+        throw new Error("SOURCE_ISSUE_CHANGED: fixed source issue revision is no longer the published head");
       basis.push({ documentId: link.documentId, revisionId: document.adoptedRevisionId });
     }
     return basis;
@@ -310,7 +343,20 @@ export class ManagedLoopRunner {
     const startPrior = await this.deps.workflow.getOperation(profile.principal, loop.projectId, startOperationId);
     if (!startPrior) {
       if (task.task.state !== "todo" || task.task.version !== dispatch.taskVersion) throw new Error("TASK_CHANGED_AFTER_DISPATCH_START");
-      const basis = await this.initialTaskBasis(profile.principal, loop.projectId, task);
+      const source = dispatch.parentDispatchId
+        ? (await this.pages(cursor => this.deps.orchestration.listSourceFacts(profile.principal,
+          loop.projectId, loop.id, 100, cursor))).find(fact => fact.id === dispatch.sourceEventId)
+        : undefined;
+      if (dispatch.parentDispatchId && !source) throw new Error("SOURCE_EVENT_UNAVAILABLE: child source fact is missing");
+      if ((source?.kind === "document" || source?.kind === "waiting.resumed") &&
+        (source.projectId !== loop.projectId || source.subjectVersion !== 1 ||
+        !source.issueRevisionId || !source.issueContentHash))
+        throw new Error("SOURCE_ISSUE_UNVERIFIED: child source is not a fixed issue creation");
+      const sourceIssue = (source?.kind === "document" || source?.kind === "waiting.resumed") &&
+        source.issueRevisionId && source.issueContentHash
+        ? { documentId: source.subjectId, revisionId: source.issueRevisionId, contentHash: source.issueContentHash }
+        : undefined;
+      const basis = await this.initialTaskBasis(profile.principal, loop.projectId, task, sourceIssue);
       applied(await this.deps.workflow.execute(profile.principal, { type: "task.start", projectId: loop.projectId,
         operationId: startOperationId, taskId: task.task.id, expectedVersion: dispatch.taskVersion,
         reason: `Managed dispatch ${dispatch.id}`, ...(basis === undefined ? {} : { basis }) }));
@@ -375,6 +421,11 @@ export class ManagedLoopRunner {
     const gapContext = source?.kind === "dispatch.gap" && source.sourceLoopId === loop.id &&
       source.originDispatchId && source.gapRunId && source.gapTaskVersion
       ? ` Recovery source is dispatch.gap ${source.id} from original Dispatch ${source.originDispatchId}, terminal Run ${source.gapRunId}, Task ${source.subjectId} at version ${source.gapTaskVersion}. Read the original Dispatch at get /api/projects/${loop.projectId}/orchestration/dispatches/${source.originDispatchId} and original Run at get /api/projects/${loop.projectId}/runtime/runs/${source.gapRunId}; its taskRevisionId identifies the exact readable Task revision at get /api/projects/${loop.projectId}/tasks/${source.subjectId}/revisions/REVISION_ID and fixed basis originals at get /api/projects/${loop.projectId}/documents/DOCUMENT_ID/revisions/REVISION_ID/original. Check existing same-parent/source child dispatches before requesting more business work; a prior signed child request is an execution commitment, while the parent's final declaration may still be absent. Do not use the Task's current detail or revision list to reconstruct this gap.` : "";
+    const resumed = source?.kind === "waiting.resumed" ? source as OrchestrationSourceFact &
+      { waitingDecisionId?: string | null; originalSourceEventId?: string | null;
+        previousSourceEventId?: string | null } : null;
+    const resumeContext = resumed?.issueRevisionId && resumed.issueContentHash
+      ? ` New waiting-resume review from Decision ${resumed.waitingDecisionId}; original source ${resumed.originalSourceEventId}, previous source ${resumed.previousSourceEventId}. Read fixed Issue ${resumed.subjectId} revision ${resumed.issueRevisionId} at get /api/projects/${loop.projectId}/documents/${resumed.subjectId}/revisions/${resumed.issueRevisionId}/original and verify SHA-256 ${resumed.issueContentHash}. The old Run, Decision and rejected operations remain historical; use only this new Run's identity.` : "";
     const businessScopes = kind === "cognition" ? (await Promise.all(loop.allowedBusinessRoleIds.map(async roleId => {
       const target = await this.deps.controller(loop.projectId, roleId);
       return target ? `${roleId}=${target.authorizationScopeId}` : `${roleId}=unavailable`;
@@ -383,7 +434,7 @@ export class ManagedLoopRunner {
       ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. To delegate, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
       : `Execute Task ${dispatch.taskId} from its fixed basis. Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
-    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
+    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
     if (input.length > 4000) throw new Error("WORKER_INPUT_TOO_LONG");
     return input;
   }

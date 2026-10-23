@@ -41,6 +41,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 任务类型可选实施、调研、验证，四态为 todo/in_progress/done/cancelled。交付与约定检查默认留在进行中的原任务内，标准通过后才 close；只有明确要求的消费者或真人使用才等待对应证据。受阻或暂缓说明原因、责任与下一步，不另开状态或默认验收子 Task。需要改变执行中的正文或验收时先核清在途，再 reopen→update→start；旧交付不可自动算新一轮通过。Task 主正文不能从通用 Document 编辑入口旁路改变。Document 用途、格式、发布/归档及正文写作见[任务与过程文档](../product/tasks-and-documents.md)。
 
+受管认知已对固定 Issue 签署 waiting 且运行确认终态后，仅恢复 Loop 不会重新消费已处置来源。阻塞确已解除时，有项目 write＋review 的控制者可先查看 `command schema loop.resumeWaiting`，以当前 `expectedLoopVersion`、原 `decisionId`/`dispatchId`、解除证据 `evidenceRef` 和理由提交新意图。首版仅支持可信的原 Issue 固定来源链，要求 active Loop/Stage、有剩余预算、没有既有 child 或同源未知/在途派发；不支持其他来源类型的 waiting，也不允许 worker 自行解除。一个 Decision 只能解除一次；原 operationId 的同身份同正文回读沿用既有操作账。成功只追加 `waiting.resumed` 因果事件并递增 Loop 版本，不改旧 Decision、拒绝记录或预算；后续认知由软件按正常入口创建并消耗原剩余额度，重新核对当前任务与原 Issue 修订。它不直接创建功能修复任务，也不证明修复完成。
+
 专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../roadmap.md#c5-taskdocument-模型简化)。
 
 负责人讨论的决定使用 `discussion.decision.record`，由核心同事务追加讨论事件和所属 Document 正文；通用 `document.revise` 不会同步讨论指针。若另行编辑后返回 `DOCUMENT_CHANGED`，先核对原操作的确定拒绝，再完整回读讨论登记版与文档当前版、哈希及最新决定。经实际判断后，以新意图/新操作 ID、当前 Discussion `expectedVersion`、真实当前 `documentRevisionId` 及最新决定的 supersede 引用提交，并显式增加 `documentRecovery: { expectedDocumentVersion, reason }`。核心仅在确有失配、版本匹配且原件可核时，从当前正文追加恢复依据和本次决定；旧修订、拒绝记录及冻结输入不变。不失配时不提供恢复字段，不能直接改数据库指针。操作未知仍先按原 ID 对账，讨论及文档权威见[项目数据](../architecture/project-data.md#3-关系与认知读取)；实际操作也应读取项目内业务技能的讨论指引。

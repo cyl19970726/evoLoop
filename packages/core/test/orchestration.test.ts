@@ -15,7 +15,7 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; enrolledStageFact?: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
   let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
@@ -32,16 +32,19 @@ function harness() {
     findSubmissionByDispatch: async id => [...draft.submissions.values()].find(item => item.dispatchId === id) ?? null,
     insertSubmission: async value => { draft.submissions.set(value.id, value); }, updateSubmission: async (value, expected) => { assert.equal(draft.submissions.get(value.id)?.version, expected); draft.submissions.set(value.id, value); },
     getDecision: async id => draft.decisions.get(id) ?? null, findDecisionByDispatch: async id => [...draft.decisions.values()].find(item => item.dispatchId === id) ?? null,
+    hasChildDispatch: async id => [...draft.dispatches.values()].some(item => item.parentDispatchId === id),
+    hasWaitingResume: async id => draft.events.some(item => item.kind === "waiting.resumed" && item.entityId === id),
+    hasUnsettledDispatchForSource: async (loop, source, except) => [...draft.dispatches.values()].some(item => item.loopId === loop && item.sourceEventId === source && item.id !== except && ["pending", "claimed", "dispatching", "accepted", "unknown"].includes(item.state)),
     insertDecision: async value => { draft.decisions.set(value.id, value); },
     getDispatch: async id => draft.dispatches.get(id) ?? (id === feedbackDispatchId ? { projectId, id, version: 5, loopId, inboxId: randomUUID(), sourceEventId: source0, taskId, taskVersion: 1, parentDispatchId: randomUUID(), recipientRoleId: workerRoleId, purpose: "prior business", authorizationScopeId: scopeId, state: "completed", claimToken: randomUUID(), leaseUntilUtc: null, runtimeRunId: randomUUID(), outcome: "failed", deliveryId: null, evidenceRef: null, reason: "prior failure", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: after } : null), insertDispatch: async value => { draft.dispatches.set(value.id, value); }, updateDispatch: async (value, expected) => { assert.equal(draft.dispatches.get(value.id)?.version, expected); draft.dispatches.set(value.id, value); },
     countCapacityUsed: async id => [...draft.dispatches.values()].filter(item => item.loopId === id &&
       (["claimed", "dispatching", "unknown"].includes(item.state) ||
         item.state === "accepted" && !["completed", "failed", "interrupted"].includes(item.runtimeRunId === draft.runId ? draft.runState : draft.parentRunStates.get(item.runtimeRunId ?? "") ?? "unknown"))).length,
-    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } }, getSourceFact: async id => draft.source.get(id) ?? null,
+    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } if (value.kind === "waiting.resumed") { const detail=value.detail; draft.source.set(value.id,{projectId,id:value.id,createdAtUtc:value.createdAtUtc,kind:value.kind,subjectId:detail.issueDocumentId as string,subjectVersion:1,sourceLoopId:value.loopId,originDispatchId:detail.dispatchId as string,operationId:value.operationId,sourceActorId:value.actorId,observationId:null,deliveryId:null,observationResult:null,issueRevisionId:detail.issueRevisionId as string,issueContentHash:detail.issueContentHash as string,waitingDecisionId:detail.decisionId as string,previousSourceEventId:detail.previousSourceEventId as string,originalSourceEventId:detail.originalSourceEventId as string,waitingRunId:detail.runId as string}); } }, getSourceFact: async id => draft.source.get(id) ?? null,
     getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
     getTaskScopeAtVersion: async (id, taskVersion) => id === taskId && taskVersion === 1 ? { projectId, taskId: id, taskVersion, goalId, stageId } : null,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
-    getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? { projectId, id, goalId, state: "active" } : null,
+    getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
     getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)! } : null,
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
@@ -512,4 +515,105 @@ test("a fabricated child is rejected even when another accepted Run is terminal"
     assert.equal(h.data.dispatches.get(first.entityId)?.outcome,null);
     assert.equal(h.data.events.filter(event=>event.kind==="worker.outcome" || event.kind==="worker.decision").length,0);
   }
+});
+
+function waitingIssueFixture() {
+  const h=harness();
+  const eventId=randomUUID(),documentId=randomUUID(),revisionId=randomUUID(),operationId=randomUUID();
+  const decisionId=randomUUID(),dispatchId=randomUUID(),writer="independent-issue-writer",contentHash="b".repeat(64);
+  const make=async()=>{
+    await h.enroll();
+    h.advanceTime("2026-10-23T09:00:10.000Z");
+    h.change(value=>{
+      value.source.set(eventId,{projectId,id:eventId,createdAtUtc:after,kind:"document",subjectId:documentId,subjectVersion:1,
+        sourceLoopId:null,originDispatchId:null,operationId,sourceActorId:writer,observationId:null,deliveryId:null,
+        observationResult:null,issueRevisionId:revisionId,issueContentHash:contentHash});
+      value.workflowOp={projectId,id:operationId,actorId:writer,commandType:"document.create",commandHash:"fixed",status:"applied",resultRefId:revisionId,resultVersion:1};
+      value.issueFact={projectId,documentId,revisionId,contentHash,author:writer,kind:"issue",originTaskId:taskId,
+        originTaskRevisionId:value.taskRevisionId,originTaskVersion:1,originRunId:null};
+      const dispatch:OrchestrationDispatch={projectId,id:dispatchId,version:5,loopId,inboxId:randomUUID(),sourceEventId:eventId,
+        taskId,taskVersion:1,parentDispatchId:null,recipientRoleId:cognitiveRoleId,purpose:"cognition",authorizationScopeId:scopeId,
+        state:"completed",claimToken:null,leaseUntilUtc:null,runtimeRunId:value.runId,outcome:"waiting",deliveryId:null,
+        evidenceRef:null,reason:"Waiting for evidence",requestedBy:cognition.actorId,createdAtUtc:after,updatedAtUtc:after};
+      value.dispatches.set(dispatchId,dispatch);
+      value.decisions.set(decisionId,{projectId,id:decisionId,dispatchId,runId:value.runId,taskId,kind:"waiting",
+        reason:"Waiting for evidence",evidenceRefs:[],actorId:cognition.actorId,createdAtUtc:after});
+      value.runState="completed";
+      const loop=value.loops.get(loopId)!;value.loops.set(loopId,{...loop,dispatchCount:1});
+    });
+  };
+  const command=()=>cmd({type:"loop.resumeWaiting",loopId,expectedLoopVersion:h.data.loops.get(loopId)!.version,
+    decisionId,dispatchId,evidenceRef:"review:evidence",reason:"Resume fixed Issue review"});
+  return {h,make,command,eventId,documentId,revisionId,decisionId,dispatchId};
+}
+
+test("review control resumes one terminal waiting cognition from fixed Issue without changing its history",async()=>{
+  const f=waitingIssueFixture();await f.make();const before=structuredClone(f.h.data.decisions.get(f.decisionId));
+  const initial=f.h.data.loops.get(loopId)!;const command=f.command();
+  const first=await f.h.service.execute(reviewer,command);
+  assert.deepEqual(first,{entityType:"loop",entityId:loopId,version:initial.version+1,replayed:false});
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,initial.dispatchCount);
+  assert.equal(f.h.data.loops.get(loopId)?.state,"active");
+  assert.deepEqual(f.h.data.decisions.get(f.decisionId),before);
+  const event=f.h.data.events.find(x=>x.kind==="waiting.resumed")!;
+  assert.equal(event.detail.originalSourceEventId,f.eventId);
+  assert.equal(event.detail.issueRevisionId,f.revisionId);
+  assert.equal(f.h.data.source.get(event.id)?.issueContentHash,"b".repeat(64));
+  const accepted=await f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,sourceEventId:event.id,
+    recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"}));
+  assert.equal(accepted.entityType,"inbox");
+  assert.equal((await f.h.service.execute(reviewer,command)).replayed,true);
+  assert.equal(f.h.data.events.filter(x=>x.kind==="waiting.resumed").length,1);
+  await assert.rejects(()=>f.h.service.execute(reviewer,f.command()),failed("ALREADY_RESUMED"));
+});
+
+test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted budget and non-Issue sources",async()=>{
+  for(const mutation of ["worker","noReview","noWrite","stale","child","unknown","budget","paused","stopped","foreign","notIssue","wrongDecision","unsettled"] as const){
+    const f=waitingIssueFixture();await f.make();let principal=reviewer;
+    const command=f.command();
+    f.h.change(value=>{
+      if(mutation==="stale")value.loops.set(loopId,{...value.loops.get(loopId)!,version:2});
+      if(mutation==="child")value.dispatches.set(randomUUID(),{...value.dispatches.get(f.dispatchId)!,id:randomUUID(),parentDispatchId:f.dispatchId});
+      if(mutation==="unknown")value.runState="unknown";
+      if(mutation==="budget")value.loops.set(loopId,{...value.loops.get(loopId)!,maxRuns:1});
+      if(mutation==="paused")value.loops.set(loopId,{...value.loops.get(loopId)!,state:"paused"});
+      if(mutation==="stopped")value.loops.set(loopId,{...value.loops.get(loopId)!,state:"stopped"});
+      if(mutation==="foreign")value.dispatches.set(f.dispatchId,{...value.dispatches.get(f.dispatchId)!,loopId:randomUUID()});
+      if(mutation==="notIssue")value.dispatches.set(f.dispatchId,{...value.dispatches.get(f.dispatchId)!,sourceEventId:source0});
+      if(mutation==="wrongDecision")value.decisions.set(f.decisionId,{...value.decisions.get(f.decisionId)!,dispatchId:randomUUID()});
+      if(mutation==="unsettled"){
+        const id=randomUUID();value.dispatches.set(id,{...value.dispatches.get(f.dispatchId)!,id,state:"unknown"});
+      }
+    });
+    if(mutation==="worker")principal={...reviewer,actorId:"worker-test"};
+    if(mutation==="noReview")principal={...reviewer,permissions:["read","write"]};
+    if(mutation==="noWrite")principal={...reviewer,permissions:["read","review"]};
+    const code={worker:"FORBIDDEN",noReview:"FORBIDDEN",noWrite:"FORBIDDEN",stale:"VERSION_CONFLICT",
+      child:"WAITING_UNAVAILABLE",unknown:"RUN_NOT_TERMINAL",budget:"BUDGET_EXHAUSTED",paused:"LOOP_PAUSED",
+      stopped:"LOOP_STOPPED",foreign:"WAITING_UNAVAILABLE",notIssue:"SOURCE_UNAVAILABLE",
+      wrongDecision:"WAITING_UNAVAILABLE",unsettled:"WAITING_UNAVAILABLE"}[mutation];
+    await assert.rejects(()=>f.h.service.execute(principal,command),failed(code),mutation);
+    assert.equal(f.h.data.events.filter(x=>x.kind==="waiting.resumed").length,0);
+  }
+});
+
+test("waiting resume requires the enrolled Stage to remain active, including at resumed-source admission",async()=>{
+  for(const state of ["reviewed","missing","foreignGoal","noStage"] as const){
+    const f=waitingIssueFixture();await f.make();
+    f.h.change(value=>{
+      if(state==="reviewed")value.enrolledStageFact={projectId,id:stageId,goalId,state:"reviewed"};
+      if(state==="missing")value.enrolledStageFact=null;
+      if(state==="foreignGoal")value.enrolledStageFact={projectId,id:stageId,goalId:randomUUID(),state:"active"};
+      if(state==="noStage")value.loops.set(loopId,{...value.loops.get(loopId)!,stageId:null});
+    });
+    await assert.rejects(()=>f.h.service.execute(reviewer,f.command()),failed("STAGE_NOT_ACTIVE"),state);
+    assert.equal(f.h.data.events.some(x=>x.kind==="waiting.resumed"),false);
+  }
+  const f=waitingIssueFixture();await f.make();
+  await f.h.service.execute(reviewer,f.command());
+  const resumed=f.h.data.events.find(x=>x.kind==="waiting.resumed")!;
+  f.h.change(value=>{value.enrolledStageFact={projectId,id:stageId,goalId,state:"reviewed"};});
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
+    sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("STAGE_NOT_ACTIVE"));
+  assert.equal(f.h.data.source.get(resumed.id)?.kind,"waiting.resumed","historical source remains readable");
 });
