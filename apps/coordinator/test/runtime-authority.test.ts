@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
-import type { RuntimeRunner } from "../src/runtime/runner.js";
+import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
 import { delegationTemplateHash, loadIntegrations, runtimeThreadConfigForSession } from "../src/configuration.js";
 
@@ -249,5 +249,31 @@ test("project read reviewer can inspect a bound trace without execution grant wh
     assert.equal(reconcile.statusCode, 403);
     assert.equal(reads, 1);
     assert.equal(mutations, 0);
+  } finally { await app.close(); }
+});
+
+test("closed Session keeps its Run metadata readable but denies trace through HTTP", async () => {
+  const runId = randomUUID();
+  let nativeReads = 0;
+  const closedRun = { id: runId, projectId, sessionId, actorId: "reviewer", nativeTurnId: "owned-turn", state: "completed" };
+  const closedSession = { id: sessionId, projectId, actorId: "reviewer", roleId: grant.roleId,
+    authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox, state: "closed" };
+  const service = { ...workManagementQueries, getRuntimeRun: async () => closedRun,
+    getRuntimeSession: async () => closedSession } as unknown as WorkflowService;
+  const reader = new RuntimeRunner({ runtimeFactory: () => ({
+    readWorkPage: async () => { nativeReads++; throw new Error("Closed native history must not be read"); },
+  }) as never, workflow: service, trusted: {} as never, principals: credentials as never,
+  canWrite: () => false, allowedCwd: async () => true, hasGrant: () => true });
+  const runtime = { status: () => ({ available: true, error: null }),
+    trace: reader.trace.bind(reader) } as unknown as RuntimeRunner;
+  const app = await buildServer({ service, credentials: credentials as never, runtime });
+  try {
+    const base = `/api/projects/${projectId}/runtime/runs/${runId}`;
+    const metadata = await app.inject({ method: "GET", url: base, headers });
+    assert.equal(metadata.statusCode, 200, metadata.body);
+    assert.equal(metadata.json().state, "completed");
+    const trace = await app.inject({ method: "GET", url: `${base}/trace`, headers });
+    assert.equal(trace.statusCode, 403, trace.body);
+    assert.equal(nativeReads, 0);
   } finally { await app.close(); }
 });
