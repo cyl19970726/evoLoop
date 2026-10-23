@@ -7,6 +7,8 @@ import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, 
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import { RuntimeRunner } from "../src/runtime/runner.js";
+import { currentSessionGrant } from "../src/orchestration/dynamic-admission.js";
+import { loopIntentId } from "../src/orchestration/runner.js";
 
 const projectId = randomUUID();
 const actorId = "reviewer";
@@ -473,6 +475,34 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
     originalGrant = true;
     ownedSession = { ...session, nativeThreadId: null };
     await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /原生读取或归属校验失败/);
+  } finally { await runner.stop(); }
+});
+
+test("disabled orchestration cannot start or trace a bound dynamic Session through a colliding static grant",async()=>{
+  const dispatchId=randomUUID();
+  const boundSession={...session,id:loopIntentId(dispatchId,"session")};
+  const pending={...run,id:randomUUID(),sessionId:boundSession.id,state:"requested" as const};
+  const terminal={...run,id:randomUUID(),sessionId:boundSession.id,state:"completed" as const,nativeTurnId:"turn-1"};
+  const persisted={query:async()=>({rows:[{dispatch_id:dispatchId}]})} as never;
+  const runtime=new FakeRuntime() as FakeRuntime & Pick<RuntimePort,"readWorkPage">;
+  let nativeReads=0,rejected=0;
+  runtime.registerBinding=async()=>{nativeReads++;};
+  runtime.listTurns=async()=>{nativeReads++;return {data:[],nextCursor:null};};
+  runtime.readWorkPage=async()=>{nativeReads++;return {data:[],nextCursor:null,unsupportedCount:0,truncated:false};};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[boundSession],
+    listRuntimeRuns:async()=>[pending,terminal],getRuntimeSession:async()=>boundSession,
+    getRuntimeRun:async()=>terminal} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),rejectDispatch:async()=>{rejected++;}} as unknown as RuntimeWorkflowService;
+  const reviewer={actorId,projectIds:[projectId],permissions:["read","write","review"] as ("read"|"write"|"review")[]};
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
+    workflow,trusted,principals:[reviewer],canWrite:()=>true,allowedCwd:async()=>true,
+    hasGrant:(_scope,source)=>source ? currentSessionGrant(persisted,source,()=>true) : true});
+  try {
+    await runner.start();
+    assert.equal(rejected,1,"new Run remains rejected despite a colliding static grant");
+    assert.equal(runtime.starts,0);
+    await assert.rejects(()=>runner.trace(reviewer,projectId,terminal.id),/授权已失效/);
+    assert.equal(nativeReads,0,"trace cannot inspect or page native history after origin denial");
   } finally { await runner.stop(); }
 });
 

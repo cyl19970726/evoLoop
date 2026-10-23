@@ -13,7 +13,7 @@ import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { DelegationTemplate } from "@evoloop/contracts/division";
 import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
-import { dynamicRuntimeAdmission, isBoundDynamicSession } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
+import { currentSessionGrant, dynamicRuntimeAdmission, isBoundDynamicSession } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
 import { staticRunSessionAvailable } from "../../apps/coordinator/src/references/source-run.js";
 import { loopIntentId } from "../../apps/coordinator/src/orchestration/runner.js";
 import { ManagedLoopRunner } from "../../apps/coordinator/src/orchestration/runner.js";
@@ -217,6 +217,13 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
       grant.authorizationScope===scope && grant.sandbox===template.sandbox) ||
       (grant.roleId===cognitiveRole && grant.actorId===cognition)),
     allowedRuntimeCwd:async()=>true};
+  assert.equal(await currentSessionGrant(pool,{projectId:pid,id:sessionId},()=>true),false,
+    "orchestration disabled cannot turn a persisted dynamic Session into a static start grant");
+  assert.equal(await currentSessionGrant(pool,{projectId:pid,id:cognitiveSession},()=>true),true,
+    "ordinary static Sessions remain available without orchestration");
+  assert.equal(await currentSessionGrant(pool,{projectId:pid,id:sessionId},()=>true,
+    async () => admission.canCreateSession(await workflow.getRuntimeSession(principal(owner),pid,sessionId))),true,
+    "enabled exact dynamic admission still permits its current binding");
   assert.equal(await staticRunSessionAvailable(pid,await workflow.getRuntimeRun(principal(owner),pid,runId),
     await workflow.getRuntimeSession(principal(owner),pid,sessionId),sourceAuthority),false,
     "a real persisted dynamic binding overrides an otherwise matching static source grant");
@@ -276,6 +283,8 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   templateCurrent=false;
   const session=(await workflow.getRuntimeSession(principal(owner),pid,sessionId));
   assert.equal(await admission.canCreateSession(session),false);
+  assert.equal(await currentSessionGrant(pool,session,()=>true,()=>admission.canCreateSession(session)),false,
+    "revoked dynamic binding does not fall back to the colliding static grant");
   assert.equal(await admission.canStartRun((await workflow.getRuntimeRun(principal(owner),pid,runId)),session),false);
   assert.equal(await admission.canSettleOwned(session,(await workflow.getRuntimeRun(principal(owner),pid,runId))),true);
   assert.equal(await staticRunSessionAvailable(pid,await workflow.getRuntimeRun(principal(owner),pid,runId),

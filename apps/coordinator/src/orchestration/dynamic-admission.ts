@@ -15,6 +15,15 @@ export async function isBoundDynamicSession(pool: Pick<Pool, "query">, projectId
   return result.rows.some(row => loopIntentId(row.dispatch_id as string,"session") === sessionId);
 }
 
+/** Current start/read authority never falls back to static grants for a persisted dynamic origin. */
+export async function currentSessionGrant(pool: Pick<Pool, "query">,
+  session: Pick<RuntimeSessionRecord,"projectId"|"id">,
+  staticGrant: () => boolean, dynamicGrant?: () => Promise<boolean>): Promise<boolean> {
+  if (await isBoundDynamicSession(pool,session.projectId,session.id))
+    return !!dynamicGrant && await dynamicGrant() === true;
+  return staticGrant() || !!dynamicGrant && await dynamicGrant() === true;
+}
+
 /** Project-owned dynamic authority must resolve to one consumed, transfer-confirmed Dispatch. */
 export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: TemplateReader, now: () => string) {
   const match = async (spec: Spec, historical = false) => {
