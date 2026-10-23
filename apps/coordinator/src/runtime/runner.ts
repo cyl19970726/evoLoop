@@ -541,6 +541,12 @@ export class RuntimeRunner {
     }
     // The native history list can transiently project an active turn as "interrupted".
     // Only a settled native timestamp proves a terminal observation.
+    if (original.state === "running" && run.state === "running" && run.nativeTurnId === original.nativeTurnId &&
+        !run.interruptRequested && turn.status === "inProgress") {
+      // Exact readback heals a transient history failure, but does not settle a durable unknown Run.
+      this.clearFault(run.projectId,run.sessionId,run.id,"run_reconcile");
+      return false;
+    }
     if (!["completed", "failed", "interrupted"].includes(turn.status) || !turn.completedAtUtc) return false;
     const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
     const messages = finalMessages(items);

@@ -202,6 +202,39 @@ test("an admission skip cannot erase an earlier Run fault; its persisted termina
   }finally{await runner.stop();}
 });
 
+test("only an exact running Turn readback clears a transient reconcile fault before terminal",async()=>{
+  const active={...run,id:randomUUID(),state:"running" as RuntimeRunRecord["state"],nativeTurnId:"owned-turn"};
+  const native=new FakeRuntime();
+  let failRead=true,turnStatus="inProgress",completedAtUtc:string|null=null,settled=0;
+  native.listTurns=async()=>{
+    if(failRead)throw new Error("private list failure");
+    return {data:[{id:"owned-turn",status:turnStatus,completedAtUtc}],nextCursor:null};
+  };
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+    listRuntimeRuns:async()=>[active],getRuntimeSession:async()=>session} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+    recordTurn:async()=>{settled++;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[active.id]);
+    failRead=false;await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults,[],"the same persisted running Turn is readable again");
+    assert.equal(settled,0);
+    active.state="unknown";failRead=true;await runner.pump();
+    failRead=false;await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[active.id],"durable unknown is not healed by an active Turn");
+    turnStatus="interrupted";await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[active.id],"interrupted without completion time is not terminal");
+    turnStatus="completed";completedAtUtc=new Date().toISOString();await runner.pump();
+    assert.equal(settled,1);
+    assert.deepEqual(runner.status(projectId).faults,[]);
+    assert.equal(native.starts,0);
+  }finally{await runner.stop();}
+});
+
 test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
   const originalGrant = { projectId, actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
     cwd: session.cwd, sandbox: session.sandbox };
