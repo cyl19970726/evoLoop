@@ -18,7 +18,10 @@ test("paged work status uses exact project facts and separates formal cognition 
   await migrate(database!,schema);
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
   const uow=new PostgresUnitOfWork(pool),hash=(value:string)=>createHash("sha256").update(value).digest("hex");
-  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
+  const fixedTime="2026-10-23T12:00:00.000Z";
+  let idSequence=0xfffffffffffen;
+  const nextId=()=>`00000000-0000-4000-8000-${(idSequence--).toString(16).padStart(12,"0")}`;
+  const workflow=new WorkflowService({uow,clock:{now:()=>fixedTime},ids:{next:nextId},hasher:{hash}});
   const projectId=randomUUID(),otherProjectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID();
   const cognitionId=randomUUID(),researchId=randomUUID(),loopId=randomUUID(),ownerId="work-status-owner";
   const principal={actorId:ownerId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
@@ -60,16 +63,20 @@ test("paged work status uses exact project facts and separates formal cognition 
   await managed({type:"dispatch.request",inboxId:inbox.entityId,expectedInboxVersion:2,dispatchId:randomUUID(),
     parentDispatchId:null,taskId:cognitionId,expectedTaskVersion:2,recipientRoleId:"planner",purpose:"cognition",
     authorizationScopeId:"fixture-scope",reason:"Plan"});
-  const delivery=await issue({type:"delivery.record",taskId:researchId,expectedVersion:2,artifactRef:"fixture:report",
-    artifactRevision:"v1",contentHash:hash("report"),technicalResult:"passed",technicalEvidence:"Fixture",
-    reason:"Fixed research report"});
+  const oldDelivery=await issue({type:"delivery.record",taskId:researchId,expectedVersion:2,artifactRef:"fixture:old-report",
+    artifactRevision:"v1",contentHash:hash("old report"),technicalResult:"failed",technicalEvidence:"Superseded fixture",
+    reason:"Older delivery with the same timestamp"});
+  const delivery=await issue({type:"delivery.record",taskId:researchId,expectedVersion:3,artifactRef:"fixture:report",
+    artifactRevision:"v2",contentHash:hash("report"),technicalResult:"passed",technicalEvidence:"Fixture",
+    reason:"Latest fixed research report"});
+  assert.ok(oldDelivery.revisionId > delivery.revisionId,"older delivery ID sorts after the newer one at the same timestamp");
   await issue({type:"observation.record",taskId:researchId,deliveryId:delivery.revisionId,observer:"声明消费者",
     observerKind:"human",result:"used",evidence:"Actual fixture use",reason:"Observed use"});
   const endpoint=`/api/projects/${projectId}/orchestration/work-status?taskIds=${cognitionId},${researchId}`;
   const request=(auth:string,path=endpoint)=>app.inject({method:"GET",url:path,headers:{authorization:`Bearer ${auth}`}});
   const response=await request(token);
   assert.equal(response.statusCode,200,response.body);
-  const rows=response.json<{items:Array<{taskId:string;cognition:boolean;sourceKind:string|null;goalOutcome:string|null;
+  const rows=response.json<{items:Array<{taskId:string;cognition:boolean;sourceKind:string|null;goalOutcome:string|null;deliveryId:string|null;
     stageDeliverable:string|null;readyForAcceptance:boolean}>}>().items;
   assert.equal(rows.length,2);
   assert.deepEqual(rows.find(row=>row.taskId===cognitionId) && {
@@ -79,10 +86,35 @@ test("paged work status uses exact project facts and separates formal cognition 
     stageDeliverable:rows.find(row=>row.taskId===cognitionId)!.stageDeliverable},
   {cognition:true,sourceKind:"loop.enrolled",goalOutcome:"交付可核对报告",stageDeliverable:"固定报告"});
   assert.equal(rows.find(row=>row.taskId===researchId)?.cognition,false,"ordinary research stays in business work");
+  assert.equal(rows.find(row=>row.taskId===researchId)?.deliveryId,delivery.revisionId,
+    "latest Delivery follows fixed TaskRevision.version rather than timestamp and ID");
   assert.equal(rows.find(row=>row.taskId===researchId)?.readyForAcceptance,true);
+  const sessionId=randomUUID(),runId=randomUUID();
+  const basis=(await pool.query(`SELECT t.current_revision_id,b.basis_set_id FROM task t
+    JOIN basis_set b ON b.project_id=t.project_id AND b.task_id=t.task_id AND b.task_revision_id=t.current_revision_id
+    WHERE t.project_id=$1 AND t.task_id=$2`,[projectId,researchId])).rows[0];
+  assert.ok(basis,"current Task has a fixed basis for the isolated Run fixture");
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,'researcher','/isolated-fixture','fixture','read-only','on-request','reserved',1,$3,$4,$5,$5)`,
+    [projectId,sessionId,randomUUID(),ownerId,fixedTime]);
+  await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
+    operation_id,input,input_hash,state,version,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'isolated read-projection fixture',$8,'requested',1,$9,$10,$10)`,
+    [projectId,runId,researchId,basis.current_revision_id,basis.basis_set_id,sessionId,randomUUID(),hash("fixture"),ownerId,fixedTime]);
+  for (const state of ["requested","unknown"] as const) {
+    if (state === "unknown") await pool.query("UPDATE runtime_run SET state='unknown',version=2 WHERE project_id=$1 AND run_id=$2",[projectId,runId]);
+    const during=(await request(token)).json<{items:Array<{taskId:string;unsettledRunState:string|null;readyForAcceptance:boolean}>}>().items;
+    assert.equal(during.find(row=>row.taskId===researchId)?.unsettledRunState,state);
+    assert.equal(during.find(row=>row.taskId===researchId)?.readyForAcceptance,false,
+      `a ${state} Run blocks readiness even though the old Delivery and use remain`);
+  }
+  await pool.query("UPDATE runtime_run SET state='completed',version=3,native_turn_id='isolated-fixture-turn' WHERE project_id=$1 AND run_id=$2",[projectId,runId]);
+  assert.equal((await request(token)).json<{items:Array<{taskId:string;readyForAcceptance:boolean}>}>().items
+    .find(row=>row.taskId===researchId)?.readyForAcceptance,true);
   assert.equal((await request(otherToken)).statusCode,403,"another project cannot read the projection");
   assert.equal((await request(token,`${endpoint},${researchId}`)).statusCode,400,"duplicate IDs are rejected");
-  await issue({type:"task.close",taskId:researchId,expectedVersion:3,deliveryId:delivery.revisionId,
+  await issue({type:"task.close",taskId:researchId,expectedVersion:4,deliveryId:delivery.revisionId,
     acceptanceResult:"met",acceptanceEvidence:"Fixture acceptance",reason:"Accepted"});
   const after=(await request(token)).json<{items:Array<{taskId:string;hasClosure:boolean;readyForAcceptance:boolean}>}>().items;
   assert.equal(after.find(row=>row.taskId===researchId)?.hasClosure,true);

@@ -13,13 +13,15 @@ export async function readWorkStatuses(pool: Pool, workflow: Pick<WorkflowServic
       l.state AS loop_state,g.outcome AS goal_outcome,s.deliverable AS stage_deliverable,
       COALESCE(oe.kind,ob.kind) AS source_kind,
       COALESCE(origin.task_id,ob.entity_id) AS source_task_id,source_task.title AS source_task_title,
-      r.state AS run_state,wd.data->>'kind' AS decision_kind,wd.data->>'reason' AS decision_reason,
+      r.state AS run_state,active_run.state AS unsettled_run_state,
+      wd.data->>'kind' AS decision_kind,wd.data->>'reason' AS decision_reason,
       p.use_required,delivery.delivery_id,delivery.technical_result,
       observation.result AS observation_result,observation.observer_kind,
       closure.closure_id IS NOT NULL AS has_closure,
       (t.state='in_progress' AND delivery.task_revision_id=t.current_revision_id
         AND delivery.technical_result='passed' AND p.use_required
-        AND consumer_use.result='used' AND closure.closure_id IS NULL) AS ready_for_acceptance
+        AND consumer_use.result='used' AND closure.closure_id IS NULL
+        AND active_run.run_id IS NULL) AS ready_for_acceptance
     FROM task t
     LEFT JOIN LATERAL (SELECT x.* FROM orchestration_dispatch x
       WHERE x.project_id=t.project_id AND x.task_id=t.task_id
@@ -37,6 +39,10 @@ export async function readWorkStatuses(pool: Pool, workflow: Pick<WorkflowServic
       AND source_task.task_id=COALESCE(origin.task_id,ob.entity_id)
     LEFT JOIN runtime_run r ON r.project_id=t.project_id
       AND r.run_id=(d.data->>'runtimeRunId')::uuid
+    LEFT JOIN LATERAL (SELECT x.run_id,x.state FROM runtime_run x
+      WHERE x.project_id=t.project_id AND x.task_id=t.task_id
+        AND x.state IN ('requested','dispatching','running','unknown')
+      LIMIT 1) active_run ON true
     LEFT JOIN orchestration_decision wd ON wd.project_id=t.project_id AND wd.dispatch_id=d.dispatch_id
     LEFT JOIN LATERAL (SELECT proposal.use_required,proposal.consumer FROM task_proposal proposal
       JOIN task_revision revision ON revision.project_id=proposal.project_id
@@ -44,8 +50,10 @@ export async function readWorkStatuses(pool: Pool, workflow: Pick<WorkflowServic
       WHERE proposal.project_id=t.project_id AND proposal.task_id=t.task_id
       ORDER BY revision.version DESC LIMIT 1) p ON true
     LEFT JOIN LATERAL (SELECT x.delivery_id,x.task_revision_id,x.technical_result FROM delivery x
+      JOIN task_revision revision ON revision.project_id=x.project_id AND revision.task_id=x.task_id
+        AND revision.revision_id=x.task_revision_id
       WHERE x.project_id=t.project_id AND x.task_id=t.task_id
-      ORDER BY x.created_at DESC,x.delivery_id DESC LIMIT 1) delivery ON true
+      ORDER BY revision.version DESC LIMIT 1) delivery ON true
     LEFT JOIN LATERAL (SELECT x.result,x.observer_kind FROM consumer_observation x
       WHERE x.project_id=t.project_id AND x.delivery_id=delivery.delivery_id
       ORDER BY x.sequence DESC LIMIT 1) observation ON true
@@ -59,6 +67,7 @@ export async function readWorkStatuses(pool: Pool, workflow: Pick<WorkflowServic
     cognition:row.purpose === "cognition",dispatchId:row.dispatch_id as string | null,
     dispatchState:row.dispatch_state as string | null,outcome:row.outcome as string | null,
     runId:row.run_id as string | null,runState:row.run_state as string | null,
+    unsettledRunState:row.unsettled_run_state as string | null,
     loopState:row.loop_state as string | null,goalOutcome:row.goal_outcome as string | null,
     stageDeliverable:row.stage_deliverable as string | null,sourceKind:row.source_kind as string | null,
     sourceTaskId:row.source_task_id as string | null,sourceTaskTitle:row.source_task_title as string | null,
