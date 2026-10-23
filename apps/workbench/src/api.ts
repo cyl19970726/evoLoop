@@ -4,6 +4,7 @@ import type {
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
 } from "@evoloop/contracts";
+import type { WorkTaskStatus } from "./workflow/workStatusPresentation";
 
 export interface Session {
   principal: Principal;
@@ -80,6 +81,8 @@ export function api(token: string, timeoutMs = 15000) {
     document: (p: string, id: string) => call<DocumentDetail>(`${projectPath(p)}/documents/${key(id)}`),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
+      `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),

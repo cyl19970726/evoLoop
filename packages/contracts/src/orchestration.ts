@@ -1,4 +1,7 @@
 import { z } from "zod";
+import type { LoopPolicyRevision, RuntimeRoleBinding } from "./division.js";
+import { roleProposalSchema, type RoleTransaction } from "./roles.js";
+import type { Operation, OutboxEvent } from "./index.js";
 
 const id = z.uuid();
 const short = z.string().trim().min(1).max(240);
@@ -14,6 +17,26 @@ const common = { projectId: id, operationId: id };
 export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
+  z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason }),
+  z.strictObject({ ...common, type: z.literal("division.decide"), decisionId: id, loopId: id, expectedLoopVersion: version,
+    sourceEventId: id, parentDispatchId: id, documentId: id, documentRevisionId: id,
+    documentContentHash: z.string().regex(/^[a-f0-9]{64}$/), firstTaskId: id, expectedFirstTaskVersion: version,
+    expectedFirstTaskOwner: role.optional(),
+    choice: z.enum(["method", "same-role-instance", "temporary-assignment", "new-role"]),
+    roleId: role, proposedRole: roleProposalSchema.optional(), templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    reason }),
+  z.strictObject({ ...common, type: z.literal("division.revoke"), loopId: id, expectedLoopVersion: version,
+    bindingId: id, reason }),
+  /** Controller-only budget reservation for a completed, signed waiting decision. Task remains with its prior owner. */
+  z.strictObject({ ...common, type: z.literal("division.consume"), loopId: id, expectedLoopVersion: version,
+    bindingId: id, waitingDecisionId: id, parentDispatchId: id, dispatchId: id, reason }),
+  /** A separate journalled Task update bridges the observed version to the first child version. */
+  z.strictObject({ ...common, type: z.literal("division.confirmTransfer"), dispatchId: id,
+    transferOperationId: id, transferredTaskVersion: version, reason }),
+  /** The receiving worker attests to reading the fixed handoff after its own Run exists. */
+  z.strictObject({ ...common, type: z.literal("division.ackHandoff"), dispatchId: id, runId: id,
+    documentRevisionId: id, documentContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    taskRevisionId: id, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.accept"), loopId: id, sourceEventId: id, recipientRoleId: role, purpose: z.enum(["cognitive_review", "next_action"]) }),
   z.strictObject({ ...common, type: z.literal("inbox.ack"), inboxId: id, expectedVersion: version, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.dispose"), inboxId: id, expectedVersion: version, disposition: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRef: short.nullable() }),
@@ -23,7 +46,7 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("dispatch.start"), dispatchId: id, claimToken: id }),
   z.strictObject({ ...common, type: z.literal("dispatch.resolve"), dispatchId: id, claimToken: id, result: z.enum(["accepted", "unknown", "rejected"]), runtimeRunId: id.nullable(), reason }),
   z.strictObject({ ...common, type: z.literal("dispatch.reconcile"), dispatchId: id, expectedVersion: version, resolution: z.enum(["accepted", "rejected"]), runtimeRunId: id.nullable(), evidenceRef: short, reason }),
-  z.strictObject({ ...common, type: z.literal("worker.decision"), decisionId: id, dispatchId: id, runId: id, kind: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRefs: z.array(short).max(20) }),
+  z.strictObject({ ...common, type: z.literal("worker.decision"), decisionId: id, dispatchId: id, runId: id, kind: z.enum(["no_action", "waiting", "failed", "stop"]), divisionDecisionId: id.nullable().optional(), reason, evidenceRefs: z.array(short).max(20) }),
   z.strictObject({ ...common, type: z.literal("worker.submit"), submissionId: id, dispatchId: id, runId: id, taskRevisionId: id, runInputHash: short, deliveryOperationId: id, deliveryIntent, agentObservation: reason.nullable(), evidenceRefs: z.array(short).max(20) }),
   z.strictObject({ ...common, type: z.literal("worker.beginSeal"), submissionId: id, expectedVersion: version, expectedTaskVersion: version, sealToken: id }),
   z.strictObject({ ...common, type: z.literal("worker.finishSeal"), submissionId: id, sealToken: id, result: z.enum(["sealed", "unknown", "rejected"]), deliveryId: id.nullable(), reason }),
@@ -44,6 +67,7 @@ export interface OrchestrationLoop {
   cognitiveRoleId: string; allowedBusinessRoleIds: string[]; sourceAfter: EventCursor;
   maxRuns: number; maxConcurrent: number; dispatchCount: number; state: LoopState;
   enrolledBy: string; createdAtUtc: string; updatedAtUtc: string;
+  currentPolicyRevisionId?: string;
 }
 export interface OrchestrationInbox {
   projectId: string; id: string; version: number; loopId: string; sourceEventId: string;
@@ -58,11 +82,17 @@ export interface OrchestrationDispatch {
   state: DispatchState; claimToken: string | null; leaseUntilUtc: string | null;
   runtimeRunId: string | null; outcome: WorkerOutcome | null; deliveryId: string | null;
   evidenceRef: string | null; reason: string; requestedBy: string; createdAtUtc: string; updatedAtUtc: string;
+  policyRevisionId?: string; bindingId?: string | null;
 }
 export interface OrchestrationWorkerDecision {
   projectId: string; id: string; dispatchId: string; runId: string; taskId: string;
   kind: "no_action" | "waiting" | "failed" | "stop";
+  divisionDecisionId: string | null;
   reason: string; evidenceRefs: string[]; actorId: string; createdAtUtc: string;
+}
+export interface OrchestrationDivisionDecisionFact {
+  id: string; loopId: string; parentDispatchId: string; sourceEventId: string;
+  firstTaskId: string; firstTaskVersion: number; choice: string;
 }
 export interface OrchestrationSubmission {
   projectId: string; id: string; version: number; dispatchId: string; runId: string; taskId: string;
@@ -73,13 +103,13 @@ export interface OrchestrationSubmission {
   reason: string | null; createdAtUtc: string; updatedAtUtc: string;
 }
 export interface OrchestrationEvent {
-  projectId: string; id: string; loopId: string; entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision";
+  projectId: string; id: string; loopId: string; entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision" | "binding";
   entityId: string; operationId: string; kind: string; actorId: string; detail: Record<string, unknown>; createdAtUtc: string;
 }
 export interface OrchestrationOperation {
   projectId: string; id: string; actorId: string; commandHash: string; result: OrchestrationResult; createdAtUtc: string;
 }
-export interface OrchestrationResult { entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision"; entityId: string; version: number; replayed: boolean }
+export interface OrchestrationResult { entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision" | "binding"; entityId: string; version: number; replayed: boolean }
 export interface OrchestrationSourceFact {
   projectId: string; id: string; createdAtUtc: string; kind: string;
   subjectId: string; subjectVersion: number; sourceLoopId: string | null; originDispatchId: string | null;
@@ -90,6 +120,12 @@ export interface OrchestrationSourceFact {
   gapRunId?: string | null; gapTaskVersion?: number | null;
   /** Creation revision of a scoped issue; report and unscoped Document events are not sources. */
   issueRevisionId?: string | null; issueContentHash?: string | null;
+  /** A verified waiting.resumed chain back to the fixed original Issue. */
+  waitingDecisionId?: string | null; previousSourceEventId?: string | null;
+  originalSourceEventId?: string | null; waitingRunId?: string | null;
+  /** Fixed managed Schedule occurrence and creation Task revision. */
+  scheduleId?: string | null; scheduleRevisionId?: string | null; plannedAtUtc?: string | null;
+  scheduleTargetLoopId?: string | null; scheduleTargetStageId?: string | null; scheduleTaskRevisionId?: string | null;
 }
 export interface OrchestrationIssueFact {
   projectId: string; documentId: string; revisionId: string; contentHash: string; author: string;
@@ -98,6 +134,7 @@ export interface OrchestrationIssueFact {
 }
 export interface OrchestrationTaskFact { projectId: string; id: string; version: number; state: "todo" | "in_progress" | "done" | "cancelled"; ownerRoleId: string; goalId: string | null; stageId: string | null }
 export interface OrchestrationTaskScopeFact { projectId: string; taskId: string; taskVersion: number; goalId: string | null; stageId: string | null }
+export interface OrchestrationTaskRevisionFact { projectId: string; taskId: string; revisionId: string; version: number; ownerRoleId: string; actorId: string; reason: string }
 export interface OrchestrationGoalFact { projectId: string; id: string; state: string }
 export interface OrchestrationStageFact { projectId: string; id: string; goalId: string; state: string }
 export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown" }
@@ -114,6 +151,16 @@ export interface OrchestrationTransaction {
   getLoop(id: string): Promise<OrchestrationLoop | null>;
   insertLoop(value: OrchestrationLoop): Promise<void>;
   updateLoop(value: OrchestrationLoop, expectedVersion: number): Promise<void>;
+  getPolicy(id: string): Promise<LoopPolicyRevision | null>;
+  insertPolicy(value: LoopPolicyRevision): Promise<void>;
+  getBinding(id: string): Promise<RuntimeRoleBinding | null>;
+  insertBinding(value: RuntimeRoleBinding): Promise<void>;
+  hasDivisionDecision(loopId: string, sourceEventId: string, firstTaskId: string): Promise<boolean>;
+  countNewRoleAllocations(templateId: string, templateRevision: number): Promise<number>;
+  getDocumentRevisionFact(documentId: string, revisionId: string): Promise<{contentHash: string} | null>;
+  getRoleState(roleId: string): Promise<{state: string; firstTaskId: string; accepted: boolean} | null>;
+  roleTransaction(): RoleTransaction;
+  insertWorkflowRoleOperation(operation: Operation, effect: OutboxEvent): Promise<void>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   findInbox(loopId: string, sourceEventId: string, recipientRoleId: string, purpose: string): Promise<OrchestrationInbox | null>;
   insertInbox(value: OrchestrationInbox): Promise<void>;
@@ -121,8 +168,16 @@ export interface OrchestrationTransaction {
   getDispatch(id: string): Promise<OrchestrationDispatch | null>;
   getSubmission(id: string): Promise<OrchestrationSubmission | null>;
   getDecision(id: string): Promise<OrchestrationWorkerDecision | null>;
+  getDivisionDecisionFact(id: string): Promise<OrchestrationDivisionDecisionFact | null>;
+  findDivisionDecisionForParent(dispatchId: string): Promise<OrchestrationDivisionDecisionFact | null>;
   findSubmissionByDispatch(dispatchId: string): Promise<OrchestrationSubmission | null>;
   findDecisionByDispatch(dispatchId: string): Promise<OrchestrationWorkerDecision | null>;
+  hasChildDispatch(parentDispatchId: string): Promise<boolean>;
+  hasWaitingResume(decisionId: string): Promise<boolean>;
+  hasDivisionTransferConfirmed(dispatchId: string): Promise<boolean>;
+  hasDivisionHandoffAck(dispatchId: string): Promise<boolean>;
+  hasInFlightRunForTask(taskId: string): Promise<boolean>;
+  hasUnsettledDispatchForSource(loopId: string, sourceEventId: string, exceptDispatchId: string): Promise<boolean>;
   insertDecision(value: OrchestrationWorkerDecision): Promise<void>;
   insertSubmission(value: OrchestrationSubmission): Promise<void>;
   updateSubmission(value: OrchestrationSubmission, expectedVersion: number): Promise<void>;
@@ -135,6 +190,7 @@ export interface OrchestrationTransaction {
   getTaskFact(id: string): Promise<OrchestrationTaskFact | null>;
   /** Scope at the dispatch's fixed Task revision, never the current Task head. */
   getTaskScopeAtVersion(taskId: string, taskVersion: number): Promise<OrchestrationTaskScopeFact | null>;
+  getTaskRevisionFact(taskId: string, taskVersion: number): Promise<OrchestrationTaskRevisionFact | null>;
   getGoalFact(id: string): Promise<OrchestrationGoalFact | null>;
   getStageFact(id: string): Promise<OrchestrationStageFact | null>;
   getAuthorizationFact(scopeId: string): Promise<OrchestrationAuthorizationFact | null>;
@@ -149,7 +205,10 @@ export interface OrchestrationTransaction {
 }
 export interface OrchestrationReader {
   getOperation(id: string): Promise<OrchestrationOperation | null>;
+  getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
   getLoop(id: string): Promise<OrchestrationLoop | null>;
+  getPolicy(id: string): Promise<LoopPolicyRevision | null>;
+  getBinding(id: string): Promise<RuntimeRoleBinding | null>;
   listLoops(limit: number, cursor?: string): Promise<{ items: OrchestrationLoop[]; nextCursor: string | null }>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   listInbox(loopId: string, limit: number, cursor?: string): Promise<{ items: OrchestrationInbox[]; nextCursor: string | null }>;

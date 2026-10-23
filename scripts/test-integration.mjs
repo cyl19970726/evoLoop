@@ -25,6 +25,9 @@ const requiredDatabase = new Map([
   ["runtime-abandon.test.ts", "evoloop_runtime_abandon_test"],
   ["runtime-handoff.test.ts", "evoloop_runtime_handoff_test"],
   ["worker-cli-http.test.ts", "evoloop_journey_eval_test"],
+  ["work-status.test.ts", "evoloop_journey_eval_test"],
+  ["planning-sources.test.ts", "evoloop_journey_eval_test"],
+  ["schedule-managed-bridge.test.ts", "evoloop_schedule_bridge_test"],
 ]);
 // Older integration fixtures allow only letters/underscores in their dedicated
 // database name; the caller's base may contain digits (for example, v1).

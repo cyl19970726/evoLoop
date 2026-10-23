@@ -149,6 +149,12 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 分工管理者能读取任务负荷、结果、使用反馈和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 session 可提出，分工管理者不控制全部业务任务。[方向出处](../references/lineage.md)
 
+受限分工先持久化意图、执行绑定和不可变 Loop 策略修订。认知在自己的活跃 Run、最终决定之前签署意图，固定来源、诊断 Document 修订与首项 Task 的已观察版本；worker 对诊断原件的读取权必须在签意图前独立存在，不能靠新 binding 反过来授权该原件。同一父派发的意图与普通 child 请求互斥。外置模板必须精确授权本 Loop 的认知 Role 或指定决定者、既有 Role 或一个有界的新 Role 名额，以及 actor、目录、模型、沙箱、网络、审批和期限；原单 Role 执行 grant 不隐含委托权。认知 worker 可在自己 Loop 的窄入口读取当前未过期模板及所列既有 Role 的状态，随后读取自己父派发的 binding 和固定诊断原件；这些读取权限不能扩成全项目 Role/模板浏览。`waiting` 必须显式引用此前唯一意图，其他最终决定不执行它。
+
+父 Run 确认完成且派发结算为 `waiting` 后，controller 在同 project 锁下仅消费该绑定一次：先核当前策略、模板、正式 Role、预算/并发、父子因果与首项 Task 原版本，持久预留 child 并累计预算；再按普通 `task.update` CAS 转移 todo Task，固定操作与 Task 修订桥接由 `division.confirmTransfer` 核实。首项 Task 若已 `in_progress`，返回 `TASK_HANDOFF_REQUIRES_REOPEN`，不能直写、默默 reopen 或复制 Task。未确认转移的 child 在 claim、恢复与启动入口都被拒绝。转移后若撤权/过期，可凭原操作确认已发生的交接并保留历史收束权，但新 Session/Run/Turn 仍须当前 policy 与模板；动态绑定失效不可回退到同 Role 的静态 grant。接收 worker 在自己的 Run 已建立后读取固定交接包、核 Document hash，并以真实 broker 身份签 `division.ackHandoff`；controller 不能代签。签收前不得提交或签最终决定，签收也不证明交付、独立使用或试行收益。旧派发以派发时政策证明历史，撤回不改旧记录、不返预算。隔离代码的自动执行路径覆盖已合法接受的 trial/active Role；自动新 Role 提案/接受已有隔离工程验证，真实 native 试行及其成效仍未验收。
+
+显式新职责试行许可在 `newRoleAllocation.creation`，缺省无创建权。只有精确模板授权 `allowProposeAndAcceptTrial: true`、限定最多 90 天的 `maxTrialDays` 时，研究者才能随 `division.decide` 提交完整 Role 提案及首 Task 当前 owner；首 Task 须为同 Goal／Stage 下观察版本一致的 todo、无在途或未知执行，固定诊断 Document 原文须由研究者实际有权读回。原 Role 提案与接受规则在同一项目锁和 PostgreSQL 事务内运行，两次正式 Role 操作及 role effect 与一次 binding 名额、策略、分工事件和操作一起提交；失败整体回滚，成功后撤回不返名额。同一操作重试回读，异正文拒绝。研究者的提案署名、控制者按模板接受的署名分别保留；创建许可不代表永久激活、延长期限、增额或扩大运行目录。真正接收、执行、独立使用和成本回看仍分别取证，未知成本保持未知。
+
 每个新 Session 引用当前职责说明或临时任务约定，补充实例目标、输入修订、首项任务、操作范围和交接/退出条件。新 Role 另附缺口证据、替代办法、独立责任与工作流程、试行基线和回看条件；换窗口仅更新实例关联。撤回 Role 时交接未完任务与知识、停止相应触发并核对在途实例，不能仅更改登记状态。流程见[动态多 session](../product/agent-loop.md)。
 
 ## 5. Coordinator：派发、交接与恢复
@@ -183,7 +189,7 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 ## 7. ScheduleStore 与触发实例
 
-这是定时任务的拟议合同；不表示已创建任何真实定时器。`ScheduleStore` 的日程定义及触发实例以 PostgreSQL 为权威，飞书日程视图若提供则只是 connector 投影。日程定义回答“何时、为何检查或做事”，具体工作仍进入同一 TaskStore；实现前验证时间计算、权限和外部映射。
+`ScheduleStore` 的日程定义及触发实例以 PostgreSQL 为权威，飞书日程视图若提供则只是 connector 投影。到期计算、实例去重和普通 todo 创建已有本机实现；可选受管接续使用下述固定目标合同，实际验证范围见[路线图](../roadmap.md#当前自动接续切片2026-10-23)。日程回答“何时、为何检查或做事”，具体工作仍进入同一 TaskStore，不由定时器另建一套执行权威。
 
 | 对象 | 身份与语义 |
 | --- | --- |
@@ -192,6 +198,22 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 | 运行记录 | 到期水位、创建任务意图及回执、是否跳过/汇总、关联 Run、unknown 与对账结果；保存在 PostgreSQL Journal，仅用于恢复，不替代 Task／Schedule 主数据。 |
 
 触发流程为：读现行有效日程 → 按时区计算到期 → 核定义修订、授权、积压和在途实例 → 记录稳定触发意图 → 创建/关联独立任务 → 按同一接受和派发规则推进。已授权的重复常规工作可沿用模板判据；运行中发现的新功能需求仍走提议判断。周期完成不能反复覆盖同一任务行，历史每次产物/成本可查。定时器响起不会直接等价于 `SessionRuntime.run`。
+
+### 可选的受管目标
+
+新日程修订的 `template.managedTarget` 可显式指定 `{loopId, stageId}`。不设置时仍只产生普通 todo；已有日程和修订不被自动绑定或回填。目标必须是同项目的既有 Loop 和 active Stage；Stage 须属于 Loop 的 Goal，且 Loop 已明确限定同一个 Stage；当前受管 runner 不执行未限定 Stage 的 Goal 级 Loop，本切片不扩展其范围。模板责任者须匹配已授权的业务职责。显式 Loop 避免同一 Goal/Stage 的多个循环重复消费。目标引用不授予新的运行权限。
+
+物化事务重新核对目标，将该修订的 Stage 写入所创建 Task 的提议记录，保留原 UTC 实例键、Task、操作和事件身份。失效不能退化为无 Stage 待办或换一个 Loop；原因须可查。`schedule.task.todo` 只有在 created occurrence、不可变日程修订、applied occurrence 操作、固定 Task 修订及目标范围一致时才成为该 Loop 的认知来源。裸 outbox 标签或同范围另一 Loop 不能获得派发权。
+
+认知先核当前状态，需要执行时复用该业务 todo，沿现有同源 next_action、child 请求、预算、版本和 runtime grant 推进。周期来源不属于独立消费者观察，无须伪造另一作者；来源可信来自实例与操作证明，实际使用仍单独观察。
+
+| 变化 | 既有工作与后续触发 |
+| --- | --- |
+| Schedule pause/stop | 不再物化新实例；已创建 Task、在途 Run 和原操作保留，不自动取消。 |
+| Loop paused | Schedule 可继续产生 todo，持久来源待恢复后处理；不启动新的 child。 |
+| Loop stopped、Stage 不再 active 或授权失效 | 不自动换目标或放宽职责；保留任务及可核原因，修订配置后按原身份核对。 |
+| 同修订排队、随后修订日程 | 同修订在前次结束后按原 UTC 键处理；旧 queued 不自动套用新目标，仍保留待复核限制。 |
+| 重复 tick、重启或结果未知 | 复用原 occurrence/操作并去重；unknown 先按原 Run/Dispatch 对账，下一次到期不是重跑许可。 |
 
 错过规则明确选择跳过、只补最近一次、汇总或有上限地补跑；禁止停机很久后无限补发。重叠规则明确选择等待、合并或已验证可并行，默认同一逻辑任务串行。没有新事实时，轻量检查只记录检查水位和“无需动作”；真正派发了检查工作就保留相应任务与运行记录，不能删掉无发现或失败运行来美化成本。
 

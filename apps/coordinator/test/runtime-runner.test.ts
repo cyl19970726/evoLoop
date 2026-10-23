@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeTurn } from "@evoloop/contracts/runtime";
-import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 
@@ -107,6 +107,66 @@ test("closing session archives once, verifies identity, and restart only reads a
     assert.equal(closing.closeAttemptedAt, null);
     assert.equal(closing.state, "closing");
   } finally { await reject.stop(); }
+});
+
+test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
+  const originalGrant = { projectId, actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
+    cwd: session.cwd, sandbox: session.sandbox };
+  const cases = [
+    { name: "original grant", grant: originalGrant, archive: true },
+    { name: "missing grant", grant: null },
+    { name: "requester grant only", grant: { ...originalGrant, actorId: "close-requester" } },
+    { name: "foreign project grant", grant: { ...originalGrant, projectId: randomUUID() } },
+    { name: "different role", grant: { ...originalGrant, roleId: "another-role" } },
+    { name: "different scope", grant: { ...originalGrant, authorizationScope: "all" } },
+    { name: "different cwd", grant: { ...originalGrant, cwd: "/other" } },
+    { name: "different sandbox", grant: { ...originalGrant, sandbox: "workspace-write" } },
+    { name: "missing original principal", grant: originalGrant, missingPrincipal: true },
+    { name: "cwd denied", grant: originalGrant, denyCwd: true },
+  ];
+  for (const sample of cases) await t.test(sample.name, async () => {
+    const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
+    const binding: RuntimeBinding = { owner: "evoloop-codex-app-server", projectId, sessionId: session.id,
+      roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd,
+      nativeThreadId: session.nativeThreadId!, nativeSessionId: session.nativeSessionId! };
+    const calls: string[] = [];
+    class ArchiveRuntime extends FakeRuntime {
+      archived = false;
+      override async registerBinding(actual: RuntimeBinding) { assert.deepEqual(actual, binding); calls.push("register"); }
+      override async inspect(actual: RuntimeBinding) { assert.deepEqual(actual, binding); calls.push("inspect"); return {}; }
+      async isThreadArchived(actual: RuntimeBinding) { assert.deepEqual(actual, binding); calls.push("read"); return this.archived; }
+      async archiveThread(actual: RuntimeBinding) { assert.deepEqual(actual, binding); calls.push("archive"); this.archived = true; }
+    }
+    const runtime = new ArchiveRuntime();
+    const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+      listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+    const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+      markSessionArchiveAttempt: async () => { calls.push("mark"); closing.closeAttemptedAt = new Date().toISOString(); },
+      confirmSessionClosed: async () => { calls.push("confirm"); closing.state = "closed"; } } as unknown as RuntimeWorkflowService;
+    const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & ArchiveRuntime,
+      workflow, trusted, principals: [
+        { actorId: "close-requester", projectIds: [projectId], permissions: ["read", "write", "review"] },
+        ...("missingPrincipal" in sample ? [] : [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as Principal["permissions"] }]),
+      ], canWrite: () => true, allowedCwd: async () => !("denyCwd" in sample),
+      hasGrant: actual => {
+        assert.deepEqual(actual, originalGrant, "never substitute the close requester for the Session actor");
+        return sample.grant !== null && Object.entries(originalGrant).every(([key, value]) =>
+          sample.grant![key as keyof typeof originalGrant] === value);
+      } });
+    try {
+      await runner.start();
+      await runner.pump();
+      assert.equal(closing.actorId, actorId);
+      if ("archive" in sample) {
+        assert.deepEqual(calls, ["register", "read", "inspect", "mark", "archive", "read", "confirm"]);
+        assert.equal(closing.state, "closed");
+      } else {
+        assert.deepEqual(calls, []);
+        assert.equal(closing.state, "closing");
+        assert.equal(closing.closeAttemptedAt, null);
+      }
+    } finally { await runner.stop(); }
+  });
 });
 
 test("reserved session waits at admission and creates one native thread after resume", async () => {
@@ -400,7 +460,7 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
     assert.equal(trace.completeness, "partial");
     assert.equal(runtime.starts, 0);
     originalGrant = false;
-    await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权已失效/);
+    await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权或工作目录已失效/);
     originalGrant = true;
     ownedSession = { ...session, nativeThreadId: null };
     await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /原生读取或归属校验失败/);

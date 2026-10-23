@@ -7,12 +7,18 @@ import type { OrchestrationService } from "@evoloop/core/orchestration";
 
 export interface OrchestrationRouteOptions {
   service: OrchestrationService;
+  delegationChoices?(principal: Principal, projectId: string, loopId: string): Promise<unknown>;
   status?(): unknown;
   listTasks?(principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string): Promise<{items: TaskDetail[]; nextCursor: string | null}>;
   taskContext?(principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string): Promise<unknown>;
+  workStatuses?(principal: Principal, projectId: string, taskIds: string[]): Promise<unknown>;
 }
+export type PlanningSourcesReader = (principal: Principal, projectId: string, taskId: string,
+  taskRevisionId: string, loopId?: string) => Promise<unknown>;
 const params = z.record(z.string(), z.uuid());
 const page = z.object({limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(200).optional()});
+const workStatusQuery = z.object({taskIds: z.string().min(36).max(1849).transform(value => value.split(","))
+  .pipe(z.array(z.uuid()).min(1).max(50).refine(ids => new Set(ids).size === ids.length,"duplicate task IDs"))});
 const principal = (value: Principal | null) => {
   if (!value) throw new DomainError("FORBIDDEN", "Authentication required");
   return value;
@@ -39,6 +45,18 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
     const p = params.parse(request.params);
     return await service.getLoop(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
   });
+  if (options.delegationChoices) app.get("/api/projects/:projectId/orchestration/loops/:id/delegation-choices", async request => {
+    const p = params.parse(request.params);
+    return options.delegationChoices!(principal(request.principal),p.projectId!,p.id!);
+  });
+  app.get("/api/projects/:projectId/orchestration/policies/:id", async (request, reply) => {
+    const p = params.parse(request.params);
+    return await service.getPolicy(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
+  });
+  app.get("/api/projects/:projectId/orchestration/bindings/:id", async (request, reply) => {
+    const p = params.parse(request.params);
+    return await service.getBinding(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
+  });
   for (const kind of ["inbox", "dispatches", "submissions", "events", "sources"] as const) {
     app.get(`/api/projects/:projectId/orchestration/loops/:id/${kind}`, async request => {
       const p = params.parse(request.params), q = page.parse(request.query), who = principal(request.principal);
@@ -60,6 +78,10 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
     const p = params.parse(request.params), q = page.parse(request.query);
     return options.taskContext!(principal(request.principal), p.projectId!, p.id!, q.limit, q.cursor);
   });
+  if (options.workStatuses) app.get("/api/projects/:projectId/orchestration/work-status", async request => {
+    const p = params.parse(request.params), q = workStatusQuery.parse(request.query);
+    return options.workStatuses!(principal(request.principal), p.projectId!, q.taskIds);
+  });
   app.get("/api/projects/:projectId/orchestration/decisions/:id", async (request, reply) => {
     const p = params.parse(request.params);
     return await service.getDecision(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
@@ -77,5 +99,14 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
     const operation = await service.getOperation(who, p.projectId!, p.id!);
     if (!operation) return reply.code(404).send({code: "OPERATION_NOT_FOUND", message: "No confirmed record yet; preserve the original intent."});
     return {...operation, result: orchestrationApplied(operation.id, operation.result)};
+  });
+}
+
+export function registerPlanningSourcesRoute(app: FastifyInstance, read: PlanningSourcesReader): void {
+  app.get("/api/projects/:projectId/orchestration/tasks/:id/planning-sources", async request => {
+    const p = params.parse(request.params);
+    const q = z.strictObject({taskRevisionId: z.uuid()}).parse(request.query);
+    return read(principal(request.principal), p.projectId!, p.id!, q.taskRevisionId,
+      request.workerIdentity?.scope.loopId);
   });
 }

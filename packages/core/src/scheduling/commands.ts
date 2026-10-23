@@ -13,12 +13,22 @@ function sameMisfire(a: ScheduleRevision["misfire"], b: ScheduleRevision["misfir
   return a.kind === b.kind && (a.kind !== "bounded" || (b.kind === "bounded" && a.maxCatchUp === b.maxCatchUp));
 }
 const sameTemplate = (a: ScheduleRevision["template"], b: ScheduleRevision["template"]): boolean =>
-  a.title === b.title && a.content === b.content && a.acceptance === b.acceptance && a.owner === b.owner;
+  a.title === b.title && a.content === b.content && a.acceptance === b.acceptance && a.owner === b.owner &&
+  a.managedTarget?.loopId === b.managedTarget?.loopId && a.managedTarget?.stageId === b.managedTarget?.stageId;
 
 /** Called by the shared command journal inside the project transaction. */
 export async function applySchedule(tx: SchedulingTransaction, principal: Principal, command: ScheduleCommand, now: string) {
   if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "Schedule authorization requires project review permission");
   if (command.authorization.authorizedBy !== principal.actorId) throw new DomainError("FORBIDDEN", "Schedule authorization must identify the authenticated reviewer");
+  if (command.state === "active" && command.template.managedTarget) {
+    const target = command.template.managedTarget;
+    const stage = await tx.getStage(target.stageId);
+    const loop = await tx.getManagedScheduleLoop(target.loopId);
+    if (!stage || !loop || stage.projectId !== command.projectId || loop.projectId !== command.projectId ||
+      stage.state !== "active" || loop.state === "stopped" || loop.stageId !== stage.id || loop.goalId !== stage.goalId ||
+      command.template.owner !== command.authorization.roleId || !loop.allowedBusinessRoleIds.includes(command.template.owner))
+      throw new DomainError("INVALID_SCHEDULE_TARGET", "Schedule target must be an active Stage in the selected Loop with its authorized business role");
+  }
   const current = await tx.getSchedule(command.scheduleId);
   if (command.type === "schedule.create" && current) throw new DomainError("ALREADY_EXISTS", "Schedule already exists");
   if (command.type === "schedule.revise" && (!current || current.version !== command.expectedVersion)) throw new DomainError("VERSION_CONFLICT", "Schedule version changed", current?.version);

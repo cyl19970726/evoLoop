@@ -1,13 +1,13 @@
 import type { Goal, Stage, TaskDetail } from "@evoloop/contracts";
-import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import { ApiError, request } from "../api";
 
 export interface OrchestrationStatus { state?: string; running?: boolean; busy?: boolean; faults?: Array<string | {loopId: string; dispatchId?: string; code: string}>; lastError?: string | null }
 export interface TaskLoopContext { loopId: string; sourceEventIds: string[]; dispatchIds: string[]; parentDispatchIds: string[] }
 export interface ResultPage<T> { items: T[]; nextCursor: string | null }
-export type LoopPart = "inbox" | "dispatches" | "submissions" | "events";
+export type LoopPart = "inbox" | "dispatches" | "submissions" | "events" | "sources";
 export type LoopPartItem = {
-  inbox: OrchestrationInbox; dispatches: OrchestrationDispatch; submissions: OrchestrationSubmission; events: OrchestrationEvent;
+  inbox: OrchestrationInbox; dispatches: OrchestrationDispatch; submissions: OrchestrationSubmission; events: OrchestrationEvent; sources: OrchestrationSourceFact;
 };
 
 function checkedPage<T>(value: unknown): ResultPage<T> {

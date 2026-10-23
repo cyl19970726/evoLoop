@@ -61,7 +61,16 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
       (await broker.identityForActor(actor))?.scope.loopId===loop && (await broker.identityForActor(actor))?.scope.roleId===role,
   });
   let orchestrationClock: string | null=null;
-  const orchestration=new OrchestrationService({store,now:()=>orchestrationClock ?? new Date().toISOString(),nextId:randomUUID,hash});
+  const orchestration=new OrchestrationService({store,now:()=>orchestrationClock ?? new Date().toISOString(),nextId:randomUUID,hash,
+    getWorkerScope:async actor=>(await broker.identityForActor(actor))?.scope ?? null,
+    canReadDivisionMaterial:async(actor,documentId,revisionId)=>{
+      const identity=await broker.identityForActor(actor);
+      if(!identity)return false;
+      const facts=workerGuardFacts(pool,identity);
+      return await facts.fixedDocument(identity.scope.taskId,documentId,revisionId) ||
+        await facts.sourceIssueDocumentRevision?.(documentId,revisionId)===true ||
+        await facts.recoveryDocument?.(documentId,revisionId)===true;
+    }});
   const app=await buildServer({service:workflow,credentials:[{token:ownerToken,actorId:controller,projectIds:[projectId],permissions:["read","write","review"]}],
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)},
     orchestration:{service:orchestration},documents:{uow,blobsForPrincipal:async()=>({} as never)},
@@ -856,6 +865,23 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     result:"accepted",runtimeRunId:recoveryRunId,reason:"Recovery Run bound"});
   const recoveryWorker=await broker.issue({projectId,loopId:gapLoopId,taskId:recoveryTaskId,runId:recoveryRunId,
     sessionId:recoverySessionId,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
+  const diagnosisHash=(await pool.query("SELECT content_hash FROM document_revision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3",
+    [projectId,oldContent.content_document_id,oldContent.content_revision_id])).rows[0].content_hash as string;
+  const methodIntent={type:"division.decide",decisionId:randomUUID(),loopId:gapLoopId,
+    expectedLoopVersion:(await orchestration.getLoop(owner,projectId,gapLoopId))!.version,
+    sourceEventId:recoveryGapEvent,parentDispatchId:recoveryDispatch.entityId,
+    documentId:oldContent.content_document_id,documentRevisionId:oldContent.content_revision_id,
+    documentContentHash:diagnosisHash,firstTaskId:recoveryTaskId,
+    expectedFirstTaskVersion:(await workflow.getTask(owner,projectId,recoveryTaskId)).task.version,
+    choice:"method",roleId:cognitiveRole,templateId:null,templateRevision:null,templateHash:null,
+    reason:"Keep the existing cognition method"};
+  assert.equal((await workerCommand(recoveryWorker.wrapperPath,{...methodIntent,parentDispatchId:original.entityId},1)).error?.code,"FORBIDDEN");
+  const recordedMethod=await workerCommand(recoveryWorker.wrapperPath,methodIntent);
+  assert.equal(recordedMethod.entityId,methodIntent.decisionId);
+  const waitingMethod=await workerCommand(recoveryWorker.wrapperPath,{type:"worker.decision",decisionId:randomUUID(),
+    dispatchId:recoveryDispatch.entityId,runId:recoveryRunId,kind:"waiting",
+    divisionDecisionId:recordedMethod.entityId,reason:"Wait on the fixed method intent",evidenceRefs:[]});
+  assert.equal((await orchestration.getDecision(owner,projectId,waitingMethod.entityId))?.divisionDecisionId,recordedMethod.entityId);
   const recoveryGet=(path:string,expected=0)=>cli(recoveryWorker.wrapperPath,["get",`/api/projects/${projectId}/${path}`],expected);
   assert.equal((await recoveryGet(`runtime/runs/${gapRunId}`)).id,gapRunId);
   assert.equal((await recoveryGet(`tasks/${gapTaskId}/revisions/${oldRevision}`)).revision.id,oldRevision);

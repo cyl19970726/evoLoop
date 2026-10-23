@@ -4,7 +4,11 @@
 
 ## 环境与启动
 
-使用 Node.js **24.x**、npm、PostgreSQL **18** 的独立数据库；备份工具 `pg_dump`/`pg_restore` 也须是 18.x。连接串、身份文件、外部 Blob 和 Wiki 正文均留在仓库外。先在 PostgreSQL 中建立专用空库及有建表权限的用户，然后安装、构建：
+使用 Node.js **24.x**、npm、PostgreSQL **18** 的独立数据库；备份工具 `pg_dump`/`pg_restore` 也须是 18.x。连接串、身份文件、外部 Blob 和 Wiki 正文均留在仓库外。
+
+**承载真实试用的 PostgreSQL 数据目录必须位于持久位置**，例如仓库外的专用应用数据目录；不要沿用 `mktemp`、`/tmp` 或 macOS `$TMPDIR` 中的一次性测试集群。开始保存真实材料前，由数据库管理者核对实际 `data_directory`（具权限时可执行 `SHOW data_directory`）、备份位置及隔离恢复结果；连接串和进程仍在并不能保证底层目录持久。临时实验转为连续试用前，先停写，备份并恢复到新的持久目录，再核数据与未决运行后切换。
+
+先在 PostgreSQL 中建立专用空库及有建表权限的用户，然后安装、构建：
 
 ```bash
 node --version
@@ -17,6 +21,16 @@ export EVOLOOP_INTEGRATIONS_FILE="$PWD/.local/integrations.json"
 export EVOLOOP_BLOB_ROOT="$HOME/.local/share/evoloop-pilot/blobs"
 mkdir -p .local "$EVOLOOP_BLOB_ROOT"
 ```
+
+安装依赖并配置连接后、切换本机真实试用前，运行只读预检：当前系统用户须拥有数据目录，数据库账号须有读取 `SHOW data_directory` 的权限。`--expected-data-directory` 应来自部署计划中的预期持久目录；证据目标的父目录须已存在、位于仓库外且由当前用户私有管理，目标文件须尚不存在：
+
+```bash
+npm run pilot:storage:check -- \
+  --expected-data-directory /absolute/persistent/evoloop-pg \
+  --evidence-out /absolute/private-evidence/storage-preflight.json
+```
+
+脚本从 `EVOLOOP_DATABASE_URL` 读取数值回环地址与显式端口，核实际 PostgreSQL 18 的目录、本机规范路径、属主、权限及 postmaster 启动绑定，拒绝临时、缓存或仓库内目录。它以新 0600 JSON 保存当前核验事实，不输出连接凭据；权限不足、路径错配或连接/查询超时会失败，不能当作通过。该检查用于本机持续试用，不约束一次性测试集群，也不替代备份与恢复演练。
 
 `.local` 只放本机私有配置，不放外部正文和备份。下面生成身份文件时拒绝覆盖旧文件，只输出项目 ID：
 
@@ -42,7 +56,7 @@ JS
 }
 ```
 
-日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。tick 只创建 `todo` Task 及其固定主正文，不自动开始或运行。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope`、绝对路径 `cwd` 和 `sandbox`（`read-only` 或 `workspace-write`）；确认实际项目目录和授权后才启用。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份和集成配置在启动时读取，修改后重启。
+日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope`、绝对路径 `cwd` 和 `sandbox`（`read-only` 或 `workspace-write`）；确认实际项目目录和授权后才启用。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份和集成配置在启动时读取，修改后重启。
 
 如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。`maintainerId` 必须与实际发布/对账身份的 `actorId` 一致，且该身份具有对应项目的 review 权限；任意标签或另一个未配置的身份不会取得维护权。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
 
@@ -114,7 +128,7 @@ node scripts/backup.mjs --out /absolute/private-backups/evoloop-20261020 \
 
 成功后得到 `db.dump`、`blobs/`、可选 `wiki/` 与含逐文件 SHA-256 和大小的 `manifest.json`。失败清理临时目录，不覆盖旧备份。备份含敏感正文，须限权并留在仓库外。停写时若仍有旁路写入或 Wiki 导出不完整，哈希清单不能补出缺失历史。
 
-恢复前建立**新的空 PostgreSQL 18 数据库**，不要先运行迁移；选不存在的 Blob 目标目录。脚本先校验清单和全部文件，再确认目标数据库没有用户对象、目标目录不存在，并以单事务运行 `pg_restore`。有 Wiki 快照时给不存在的仓库外导出目标；脚本只解包快照，**不会替 OpenViking 服务导入**：
+恢复前先核 PostgreSQL 18 实例的持久 `data_directory`，必要时在新的持久目录启动独立实例，再建立**新的空数据库**；恢复脚本不会创建或迁移 PostgreSQL 实例的数据目录。不要先运行迁移；选不存在的 Blob 目标目录。脚本先校验清单和全部文件，再确认目标数据库没有用户对象、目标目录不存在，并以单事务运行 `pg_restore`。有 Wiki 快照时给不存在的仓库外导出目标；脚本只解包快照，**不会替 OpenViking 服务导入**：
 
 ```bash
 export EVOLOOP_DATABASE_URL='postgres://USER:PASSWORD@127.0.0.1:5432/evoloop_restored_empty'
@@ -122,6 +136,8 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
   --blob-root /absolute/restored/evoloop-blobs
 # 含 Wiki 快照时还需 --wiki-snapshot-out /absolute/restored/wiki-export。
 ```
+
+若源数据库丢失或损坏，先保全残余文件、日志、原生运行与 CLI 回执，再在独立端口的新空库恢复；初次恢复不连接 coordinator、调度或 runner。备份仅覆盖其一致快照：备份后发生的成功响应、请求或原生结束记录须单独列出，不自动补成恢复库中的 Run、Decision 或操作历史。**恢复快照查不到某操作，不能按普通“未查到”路径重新提交**，因为提交记录本身可能已经丢失。预算也不能退回备份值后直接续跑；须核已消耗和未决派发，明确事故分界及接续范围。无法证明连续性时，记录本轮因存储丢失中断，不宣称无损恢复。
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 

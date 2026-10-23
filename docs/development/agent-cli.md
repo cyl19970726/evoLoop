@@ -17,6 +17,8 @@ npm run --silent cli -- command schema task.create
 
 `task UUID --history` 展示已保存的真实修订及当时状态；`document UUID --revision UUID`、`original DOCUMENT_UUID --revision UUID [--out NEW_DIRECTORY]` 指向固定原件。`context` 应带回 Task 的封存依据及可读来源，并明确 `complete` 或逐项 `partial`；总读取预算为 16 MiB，超限时列出未读固定 ID，可按其修订逐项调用 `original`。来源失败时不可把最近版本猜作任务依据。HTML 与资源包导出只进入调用者指定的私有**新目录**，其父目录须已存在；可放在仓库外，或明确被 Git 忽略的本机目录，不公开原件。对于知识页、候选、运行、负责人讨论、日程等，按 `list`/`read` 的实际帮助读取；固定来源、未采纳候选和已发布认识不得混同。普通 `get /api/...` 保留为同源只读兼容入口。
 
+当前 todo Task 尚无 basis 时，`context` 另列 `observedPlanningCandidates`：关联过程文档当时已发布、已采纳的修订、hash、来源 Task 修订与固定原件路径。`planningObservedAtUtc` 记录观察时间；这些指针尚未封存，也不表示本次命令读过候选正文。按指针读取精确 `original`；采纳版改变后旧候选可能失效，应重新观察并说明变化。未发布、归档、超限或不可发现的关联材料会明确列为 partial。历史 `--revision` 与已封存 context 沿用自己的依据，不混入当前候选。此只读发现不启动 Task，也不要求启用自动执行；受管 worker 中仅认知职责可在已授权 Goal/Stage 范围查询。
+
 ## 提交与核对
 
 拿到当前版本、真实依据和权限后，用 schema 制作 JSON 文件。通用命令经 `command run JSON_FILE`（旧式 `command JSON_FILE` 兼容）提交；同一 `operationId`、行为者及同一内容可重读原回执，不同内容复用 ID 会被拒绝。修改已有对象时使用刚读到的 `expectedVersion`，遇版本冲突重读并重新判断，不能把旧意图直接改个版本重发。专用操作先看 `request types` 和 `request schema NAME`，再用 `request NAME --project UUID --file JSON_FILE [--id TARGET_UUID] [--receipt LOCAL_UUID]`；目标 ID 和是否另需本地回执 ID 由该类型帮助说明。它只分派已实现的具名 API，不是任意 POST 通道。
@@ -29,11 +31,17 @@ npm run --silent cli -- command run "$PRIVATE_REQUEST_FILE"
 npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 ```
 
-工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。`task.start` 校验版本与实际授权，发布主正文并封存本轮依据，进入 in_progress；没有额外规格文档也能工作。省略 `basis` 会继承并校验原有固定来源；显式 `basis: []` 才表示移除其他来源、仅保留主正文。来源已经改版时须记录适用的保留决定，或明确选择所需固定修订，不能自动换成最新版。新写入口不再使用 task.propose/judge/accept/block/defer/resume/revise；以实际 schema 为准。
+工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。
+
+若声明 `consumer`，须填精确匹配的消费者标识；Agent 消费者应在启动前通过 `session` 核实实际 `principal.actorId`，并确认它会亲自使用当前 Delivery、签署观察。不要填 roleId、显示名或身份解释；解释写入 `evidence` 或 `reason`。外部 human 消费者继续使用现有 reviewer attestation 合同。验收确实要求使用时，应同时声明 `consumer` 并设置 `useRequired: true`；此时 `task.close` 要求当前 Delivery 最新的声明消费者观察结果为 `used`，worker 完成、仅有 Delivery 或其他 actor 使用都不能替代。`command schema task.create` 和 `command schema task.update` 会显示这些字段说明。
+
+`task.start` 校验版本与实际授权，发布主正文并封存本轮依据，进入 in_progress；没有额外规格文档也能工作。省略 `basis` 会继承并校验原有固定来源；显式 `basis: []` 才表示移除其他来源、仅保留主正文。来源已经改版时须记录适用的保留决定，或明确选择所需固定修订，不能自动换成最新版。新写入口不再使用 task.propose/judge/accept/block/defer/resume/revise；以实际 schema 为准。
 
 原 Task 关联的阶段已经回看时，`task.start` 会明确拒绝。需要同一任务承接新一轮工作，先读取 Task/阶段与 `command schema task.update`，核对正文、验收和权限，再以当前 expectedVersion、完整任务字段和理由提交 `task.update`：省略 `stageId` 保留原关联，显式 `stageId: null` 解除关联，或指定本项目的 active 阶段。显式调整要求 write＋review；实际变更限 todo，无在途或结果未知运行，新非空关联须有 consumer/evidence/stopCondition。旧阶段与旧关联保留。已确认 rejected 的启动记录不改写；范围或关联调整后的新启动是新意图，使用新 operationId，不能把它当作未知结果重试。
 
 任务类型可选实施、调研、验证，四态为 todo/in_progress/done/cancelled。交付与约定检查默认留在进行中的原任务内，标准通过后才 close；只有明确要求的消费者或真人使用才等待对应证据。受阻或暂缓说明原因、责任与下一步，不另开状态或默认验收子 Task。需要改变执行中的正文或验收时先核清在途，再 reopen→update→start；旧交付不可自动算新一轮通过。Task 主正文不能从通用 Document 编辑入口旁路改变。Document 用途、格式、发布/归档及正文写作见[任务与过程文档](../product/tasks-and-documents.md)。
+
+受管认知已对固定 Issue 签署 waiting 且运行确认终态后，仅恢复 Loop 不会重新消费已处置来源。阻塞确已解除时，有项目 write＋review 的控制者可先查看 `command schema loop.resumeWaiting`，以当前 `expectedLoopVersion`、原 `decisionId`/`dispatchId`、解除证据 `evidenceRef` 和理由提交新意图。首版仅支持可信的原 Issue 固定来源链，要求 active Loop/Stage、有剩余预算、没有既有 child 或同源未知/在途派发；不支持其他来源类型的 waiting，也不允许 worker 自行解除。一个 Decision 只能解除一次；原 operationId 的同身份同正文回读沿用既有操作账。成功只追加 `waiting.resumed` 因果事件并递增 Loop 版本，不改旧 Decision、拒绝记录或预算；后续认知由软件按正常入口创建并消耗原剩余额度，重新核对当前任务与原 Issue 修订。它不直接创建功能修复任务，也不证明修复完成。
 
 专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../roadmap.md#c5-taskdocument-模型简化)。
 
@@ -56,11 +64,19 @@ npm run --silent cli -- receipts reconcile "$RECEIPT_ID"
 npm run --silent cli -- receipts retry "$RECEIPT_ID"
 ```
 
+## 配置周期工作的接续
+
+先用 `command schema schedule.create` / `schedule.revise` 核对当前输入。需要自动承接时，在新修订模板显式设置 `managedTarget: {loopId, stageId}`，指向同项目、已授权且已限定该 Stage 的 Loop 和 active Stage，并核模板责任者、日程 grant 与该业务职责的 runtime profile。缺省仍只创建普通 todo，不借下一次 tick 偷改旧日程范围。
+
+创建/修订后读回日程修订与 occurrence；到期产生的 Task、其固定 Stage、源事件、认知及实际 Run 分别核对。认知复用这项 todo，不另外创建同工作 Task。暂停日程停止后续物化，暂停 Loop 停止新执行，两者都不代替中断在途 Run。结果未知保留原操作/UTC 实例键，不凭下次触发重复启动；旧修订 queued 的处理仍须明确核对。完整状态边界见[日程合同](../architecture/contracts.md#可选的受管目标)。
+
 ## 受管执行与自动接续
 
 自动循环使用同一 CLI、业务 core 和 App Server，另有独立的编排命令与回执。`command types/schema/run` 同时发现两类命令；编排命令发往 `/api/orchestration/commands`，原业务命令仍发往 `/api/commands`。用 `list loops`、`list inbox --loop ID`、`list dispatches --loop ID`、`read loop ID --events`、`read dispatch ID` 和 `read submission ID` 回读。编排操作在 `/api/projects/PROJECT_ID/orchestration/operations/OPERATION_ID` 核对原 actor 与命令摘要；CLI 不自动重发。显式 `receipts retry` 只支持其纯事务白名单，原生启动和封存等阶段先对账。
 
-管理员一次配置项目职责、目录、scope 与预算，再 `loop.enroll` 固定 Goal/Stage、起始事件基线、认知职责及允许的业务职责。循环不扫描并启动历史 todo。认知先读取真实依据，再通过 CLI 创建有界 Task 和子派发；每项 Task 不需要人重新开始或预留。`cognitive_review` 与 `next_action` 分别承载同一来源的认知与后续动作，子派发引用父认知 Dispatch，等父运行有署名封存交付后才执行。业务结果经独立来源订阅去重回到认知，不消费飞书投影的回执。
+动态职责的首包可用 `command schema division.decide` / `division.revoke` / `worker.decision` 查看受限命令，以 `read policy UUID`、`read binding UUID`、`read loop UUID --events` 和原 operation 回读固定选择、授权及历史。`division.decide` 只能在认知父 Dispatch 已接受、其 Run 仍活跃且尚未签最终 worker Decision 时记录一个持久意图；它固定来源事件、父 Dispatch、Document 修订/hash、首 Task/version 与现有或试行 Role。非方法分支必须命中外置 `runtime.delegationTemplates` 的精确 project/Goal/Loop/首 Task、资源、期限及版本/hash。模板可通过 `decisionActorIds` 明示控制者，或通过默认空的 `cognitionRoleIds` 明示本 Loop 认知 Role；后者还要由服务端核真实 broker 的 parent/Run/Task/Loop 身份，不能仅凭角色文字。`waiting` 的 `worker.decision` 须引用同一父 Run 之前记录的唯一 `divisionDecisionId`；`no_action`、`stop`、`failed` 不消费意图。新增 Role 必须经原有 `role.propose` / `role.decide accept-trial` 正式规则，既可使用此前已接受的试行 Role，也可在明确创建许可下与分工决定原子提交；模板至多允许一次新职责分配，撤回不归还名额。旧单 Role runtime grant 不代表可委托。要在同一次 `division.decide` 内新提出并接受试行 Role，模板另须显式设置 `newRoleAllocation.creation: {allowProposeAndAcceptTrial: true, maxTrialDays: 1..90}` 并更新 revision/hash；命令携完整 `proposedRole` 与 `expectedFirstTaskOwner`。首 Task 必须仍为精确版本的 todo、同 Goal／Stage 且无在途或未知执行；试行回看不越模板到期。研究者需有权读回固定诊断 Document 原文，服务端按其身份核读；控制者以自身 reviewer 身份在同一项目事务内依正式 Role 规则接受试行，留下两条 Role 操作/效果记录并累计占用名额。原 operation 可回查和原样重放，异载荷拒绝。创建决定先固定 Role、binding 与不可变 Loop policy，不直接转移 Task 或启动 Session/Run。父 Run 已知完成且最终决定为 waiting 后，controller 才能在原预算内预留 child，经普通 Task 更新和 `division.confirmTransfer` 确认交接；目标 worker 之后需按自己的 Run 与固定原件签 `division.ackHandoff`。隔离测试覆盖该接续路径，真实 native 试行和实际收益尚未验证。既有静态 Loop 的预算、来源与历史派发保持原值，历史 child 按派发时 policy 核验，当前新启动仍需现行授权。
+
+管理员一次配置项目职责、目录、scope 与预算，再 `loop.enroll` 固定 Goal/Stage、起始事件基线、认知职责及允许的业务职责。循环不扫描并启动历史 todo。认知先读取真实依据，核对可复用的 Stage 待办；合适且无在途或 unknown Run 的 todo Task 可按观察到的版本申请子派发，不同工作才新建 Task。`cognitive_review` 与 `next_action` 分别承载同一来源的认知与后续动作，正式子派发在父最终决定前提出，引用父认知 Dispatch；父 Run 已知终态且封存副作用已知后即可执行，无需父报告或 Delivery。每项 Task 不需要人重新开始或预留。业务结果经独立来源订阅去重回到认知，不消费飞书投影的回执。
 
 自动执行中，Task 的 `documentIds` 选择所需过程输入。首次开始会显式封存这些文档的 published/adopted 修订；已有关联但未发布或归档的输入会阻断，不被静默忽略。已有 basis 沿用固定来源及保留决定。过程报告交付使用 `#/p/PROJECT_ID/documents/DOCUMENT_ID?revision=REVISION_ID` 固定入口，`artifactRevision` 与 `contentHash` 要和保存后回读的原文一致，供后续认知精确读取。
 

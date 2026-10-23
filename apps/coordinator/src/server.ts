@@ -1,7 +1,7 @@
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
-import { commandSchema, capabilities, idSchema, type Principal } from "@evoloop/contracts";
+import { commandSchema, capabilities, idSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
@@ -18,7 +18,8 @@ import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
-import { registerOrchestrationRoutes, type OrchestrationRouteOptions } from "./orchestration/routes.js";
+import { registerOrchestrationRoutes, registerPlanningSourcesRoute, type OrchestrationRouteOptions,
+  type PlanningSourcesReader } from "./orchestration/routes.js";
 import { authorizeWorkerRequest, type WorkerGuardFacts } from "./workers/guard.js";
 import type { WorkerIdentity } from "./workers/types.js";
 
@@ -30,6 +31,9 @@ export async function buildServer(options: {
   runtime?: RuntimeRunner; allowedRuntimeCwds?: (projectId: string) => string[];
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
   hasRuntimeGrant?: (scope: RuntimeGrant) => boolean;
+  isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
+  authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
+  authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
   references?: ReferenceRouteOptions;
   scheduling?: SchedulingPump;
@@ -39,6 +43,7 @@ export async function buildServer(options: {
   knowledge?: Omit<KnowledgeRouteOptions, "workflow">;
   readEvaluationPacket?: ReadEvaluationPacket;
   orchestration?: OrchestrationRouteOptions;
+  planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
   sourceConfiguration?(principal: Principal | null): {git: boolean; wiki: boolean};
 }) {
@@ -102,16 +107,23 @@ export async function buildServer(options: {
         throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
       }
       if (command.type === "runtime.session.reserve") {
-        if (!options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
+        const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
+        if (dynamic ? !await options.authorizeDynamicSession?.(principal,command) :
+          !options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
           roleId: command.roleId, authorizationScope: command.authorizationScope, cwd: command.cwd, sandbox: command.sandbox }) ||
           !await options.allowedRuntimeCwd?.(command.projectId, command.cwd)) {
+          if (!await options.authorizeDynamicSession?.(principal, command))
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
         }
       }
-      if (command.type === "runtime.run.reserve" || command.type === "runtime.session.close") {
+      // Closing is a reviewer request; the runner archives under the original Session grant.
+      if (command.type === "runtime.run.reserve") {
         const session = await options.service.getRuntimeSession(principal, command.projectId, command.sessionId);
-        if (!options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
+        const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
+        if (dynamic ? !await options.authorizeDynamicRun?.(principal,command,session) :
+          !options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
           roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox })) {
+          if (!await options.authorizeDynamicRun?.(principal, command, session))
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
       }
@@ -257,6 +269,7 @@ export async function buildServer(options: {
   });
   if (options.references) registerReferenceRoutes(app, options.references);
   if (options.orchestration) registerOrchestrationRoutes(app, options.orchestration);
+  if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
