@@ -493,7 +493,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     change(binding,operation,detail);
     const bindingData=structuredClone(binding);changeData(bindingData);
     await client.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
-      [projectId,operationId,actor,sha(operationId),JSON.stringify(operation),createdAtUtc]);
+      [projectId,operationId,binding.decidedBy,sha(operationId),JSON.stringify(operation),createdAtUtc]);
     await client.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,
       template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,
       first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
@@ -504,7 +504,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
         binding.documentRevisionId,binding.documentContentHash,JSON.stringify(bindingData)]);
     await client.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
       kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'binding',$4,$5,'division.decided',$6,$7::jsonb,$8)`,
-      [projectId,randomUUID(),binding.loopId,binding.id,operationId,actor,JSON.stringify(detail),createdAtUtc]);
+      [projectId,randomUUID(),binding.loopId,binding.id,operationId,binding.decidedBy,JSON.stringify(detail),createdAtUtc]);
   };
   const allowsSql=async(run:(client:pg.PoolClient)=>Promise<unknown>)=>{
     const client=await pool.connect();await client.query("BEGIN");
@@ -513,6 +513,14 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   };
   await allowsSql(client=>insertSignedFixture(client));
   await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{data.roleId=businessRole;}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    data.grant.actorId="123";Object.assign(data,{actorId:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    data.grant.authorizationScopeId="123";Object.assign(data,{authorizationScopeId:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,(b)=>{Object.assign(b,{decidedBy:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:"2026-12-31T24:00:00Z"});
+    Object.assign(data.runtime,{expiresAtUtc:"2026-12-31T24:00:00Z"});}));
   await rejectsSql(client=>insertSignedFixture(client,b=>{b.runtime.cwd="/tmp/wider";}));
   await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{Reflect.deleteProperty(data.grant,"actorId");}));
   await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{

@@ -117,7 +117,7 @@ CREATE TRIGGER loop_policy_binding_validate BEFORE INSERT ON loop_policy_revisio
 CREATE FUNCTION finite_utc_instant(value jsonb) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
 BEGIN
   IF jsonb_typeof(value) IS DISTINCT FROM 'string' OR
-    value #>> '{}' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$' THEN
+    value #>> '{}' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?Z$' THEN
     RETURN false; END IF;
   RETURN isfinite((value #>> '{}')::timestamptz);
 EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN RETURN false;
@@ -160,14 +160,60 @@ BEGIN
     NOT finite_utc_instant(g->'expiresAtUtc') OR NOT finite_utc_instant(decided_at) THEN RETURN false; END IF;
   RETURN (g->>'expiresAtUtc')::timestamptz > (decided_at #>> '{}')::timestamptz;
 END $$;
+CREATE FUNCTION valid_runtime_role_binding_snapshot(d jsonb) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+DECLARE t jsonb := d->'template'; g jsonb := d->'grant'; r jsonb := d->'runtime';
+BEGIN
+  IF jsonb_typeof(d) IS DISTINCT FROM 'object' OR NOT coalesce(d ?& ARRAY[
+      'projectId','id','loopId','goalId','roleId','choice','actorId','authorizationScopeId',
+      'decisionOperationId','sourceEventId','parentDispatchId','firstTaskId','firstTaskVersion',
+      'documentId','documentRevisionId','documentContentHash','template','grant','runtime',
+      'decidedBy','createdAtUtc'],false) OR d - ARRAY[
+      'projectId','id','loopId','goalId','roleId','choice','actorId','authorizationScopeId',
+      'decisionOperationId','sourceEventId','parentDispatchId','firstTaskId','firstTaskVersion',
+      'documentId','documentRevisionId','documentContentHash','template','grant','runtime',
+      'decidedBy','createdAtUtc'] <> '{}'::jsonb THEN RETURN false; END IF;
+  IF NOT valid_delegation_snapshot(g,d->'createdAtUtc') OR
+    jsonb_typeof(t) IS DISTINCT FROM 'object' OR t - ARRAY['id','revision','hash'] <> '{}'::jsonb OR
+    NOT coalesce(t ?& ARRAY['id','revision','hash'],false) OR
+    jsonb_typeof(r) IS DISTINCT FROM 'object' OR r - ARRAY[
+      'cwd','model','sandbox','networkAccess','approvalPolicy','expiresAtUtc'] <> '{}'::jsonb OR
+    NOT coalesce(r ?& ARRAY['cwd','model','sandbox','networkAccess','approvalPolicy','expiresAtUtc'],false) THEN RETURN false; END IF;
+  IF jsonb_typeof(t->'id') IS DISTINCT FROM 'string' OR
+    jsonb_typeof(t->'revision') IS DISTINCT FROM 'number' OR
+    jsonb_typeof(t->'hash') IS DISTINCT FROM 'string' OR t->>'hash' !~ '^[a-f0-9]{64}$' OR
+    jsonb_typeof(d->'firstTaskVersion') IS DISTINCT FROM 'number' OR
+    d->>'firstTaskVersion' !~ '^[1-9][0-9]*$' OR
+    jsonb_typeof(d->'choice') IS DISTINCT FROM 'string' OR
+    d->>'choice' NOT IN ('same-role-instance','temporary-assignment','new-role') OR
+    jsonb_typeof(d->'actorId') IS DISTINCT FROM 'string' OR
+    jsonb_typeof(d->'authorizationScopeId') IS DISTINCT FROM 'string' OR
+    jsonb_typeof(d->'decidedBy') IS DISTINCT FROM 'string' OR
+    length(d->>'decidedBy') NOT BETWEEN 1 AND 100 OR
+    jsonb_typeof(d->'documentContentHash') IS DISTINCT FROM 'string' OR
+    d->>'documentContentHash' !~ '^[a-f0-9]{64}$' OR
+    d->'actorId' IS DISTINCT FROM g->'actorId' OR
+    d->'authorizationScopeId' IS DISTINCT FROM g->'authorizationScopeId' OR
+    r IS DISTINCT FROM jsonb_build_object(
+      'cwd',g->'cwd','model',g->'model','sandbox',g->'sandbox',
+      'networkAccess',g->'networkAccess','approvalPolicy',g->'approvalPolicy',
+      'expiresAtUtc',g->'expiresAtUtc') THEN RETURN false; END IF;
+  IF EXISTS(SELECT 1 FROM jsonb_each(d) AS x(key,value) WHERE key IN (
+      'projectId','id','loopId','goalId','roleId','decisionOperationId','sourceEventId',
+      'parentDispatchId','firstTaskId','documentId','documentRevisionId')
+      AND (jsonb_typeof(value)<>'string' OR value #>> '{}' !~
+        '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')) THEN RETURN false; END IF;
+  RETURN true;
+END;
+$$;
 CREATE FUNCTION verify_division_binding() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE delegated_grant jsonb := NEW.data->'grant'; parent orchestration_dispatch%ROWTYPE;
   owner_loop orchestration_loop%ROWTYPE; observed_stage uuid; observed_goal uuid;
 BEGIN
-  IF NEW.data IS DISTINCT FROM jsonb_build_object(
+  IF NOT coalesce(valid_runtime_role_binding_snapshot(NEW.data),false) OR
+    NEW.data IS DISTINCT FROM jsonb_build_object(
     'projectId',NEW.project_id,'id',NEW.binding_id,'loopId',NEW.loop_id,'goalId',NEW.goal_id,
-    'roleId',NEW.role_id,'choice',NEW.choice,'actorId',NEW.data->'actorId',
-    'authorizationScopeId',NEW.data->'authorizationScopeId','decisionOperationId',NEW.decision_operation_id,
+    'roleId',NEW.role_id,'choice',NEW.choice,'actorId',delegated_grant->'actorId',
+    'authorizationScopeId',delegated_grant->'authorizationScopeId','decisionOperationId',NEW.decision_operation_id,
     'sourceEventId',NEW.source_event_id,'parentDispatchId',NEW.parent_dispatch_id,
     'firstTaskId',NEW.first_task_id,'firstTaskVersion',NEW.first_task_version,
     'documentId',NEW.document_id,'documentRevisionId',NEW.document_revision_id,
