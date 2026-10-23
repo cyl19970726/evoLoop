@@ -15,7 +15,7 @@ const cursor = z.strictObject({ createdAtUtc: utc, eventId: id.nullable() });
 const common = { projectId: id, operationId: id };
 
 export const orchestrationCommandSchema = z.discriminatedUnion("type", [
-  z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), reason }),
+  z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), initialState: z.enum(["active", "paused"]).optional(), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
   z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason }),
   z.strictObject({ ...common, type: z.literal("loop.studyMaterial.declare"), loopId: id,

@@ -10,7 +10,7 @@ import {PgOrchestrationStore} from "@evoloop/adapter-postgres/orchestration";
 import {WorkflowService} from "@evoloop/core";
 import {OrchestrationService,OrchestrationError} from "@evoloop/core/orchestration";
 import {applyDeclaredStudyReference,decideTaskExternalReference} from "@evoloop/core/references";
-import {loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
+import {ManagedLoopRunner,loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
 import {workerGuardFacts} from "../../apps/coordinator/src/workers/facts.js";
 import {WorkerCredentialBroker} from "../../apps/coordinator/src/workers/credentials.js";
 import {buildServer} from "../../apps/coordinator/src/server.js";
@@ -336,4 +336,66 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
       copyCommand,copyProvenance),denied,"historical rejected receipt cannot write after rights change");
     assert.equal((await workflow.getTask(controller,projectId,copyTaskId)).task.version,1);
   }
+
+  const pausedLoopId=randomUUID(),pausedDeclarationId=randomUUID();
+  const managedRunner=new ManagedLoopRunner({projects:[projectId],reader:()=>controller,
+    orchestration,workflow,
+    applyStudyReference:(who,reference,proof)=>applyDeclaredStudyReference(
+      referenceDeps as never,who,reference,proof),
+    runtime:{pump:async()=>{}},
+    controller:async(_project,roleId)=>roleId===role?{principal:controller,
+      authorizationScopeId:"cognitive-scope",cwd:"/fixture",sandbox:"read-only",
+      approvalPolicy:"on-request"}:null,
+    credential:{lookup:async()=>null,issue:async()=>({principal:controller,wrapperPath:"/fixture/worker"})},
+    sealSubmission:async()=>({status:"absent"}),now:()=>new Date().toISOString(),
+    canWrite:()=>true} as never);
+  await command(reviewer,{type:"loop.enroll",loopId:pausedLoopId,goalId,stageId,
+    cognitiveRoleId:role,allowedBusinessRoleIds:[sourceRole],initialState:"paused",
+    sourceAfter:{createdAtUtc:"2020-01-01T00:00:00.000Z",eventId:null},
+    maxRuns:1,maxConcurrent:1,reason:"Stage declared study before first cognition"});
+  const paused=(await orchestration.getLoop(controller,projectId,pausedLoopId))!;
+  assert.equal(paused.state,"paused");
+  await managedRunner.pump();
+  assert.equal((await orchestration.listInbox(controller,projectId,pausedLoopId,10)).items.length,0);
+  assert.equal((await orchestration.listDispatches(controller,projectId,pausedLoopId,10)).items.length,0);
+  await command(reviewer,{type:"loop.studyMaterial.declare",loopId:pausedLoopId,
+    expectedLoopVersion:paused.version,declarationId:pausedDeclarationId,
+    controllerActorId:controllerId,sourceTaskId,sourceTaskRevisionId:replaced.revisionId,
+    sourceDecisionIds:[replaced.decisionId],reason:"Fixed real Run study"});
+  await managedRunner.pump();
+  assert.equal((await orchestration.listInbox(controller,projectId,pausedLoopId,10)).items.length,0);
+  assert.equal((await orchestration.listDispatches(controller,projectId,pausedLoopId,10)).items.length,0);
+  const ready=(await orchestration.getLoop(controller,projectId,pausedLoopId))!;
+  assert.equal(ready.dispatchCount,0,"declaration did not reset or consume Loop budget");
+  await command(reviewer,{type:"loop.state",loopId:pausedLoopId,
+    expectedVersion:ready.version,state:"active",reason:"Fixed material is ready"});
+  await managedRunner.pump();
+  const seeded=(await orchestration.listInbox(controller,projectId,pausedLoopId,10)).items
+    .find(item=>item.sourceEventId===paused.bootstrapEventId);
+  assert.ok(seeded,"background pump accepts bootstrap only after activation");
+  const seededTaskId=loopIntentId(pausedLoopId,seeded.id,"cognition-task");
+  const sealed=await workflow.getTask(controller,projectId,seededTaskId);
+  assert.equal(sealed.task.version,2);
+  const sealedRefs=await uow.read(projectId,reader=>reader.listTaskExternalSnapshot(
+    seededTaskId,sealed.task.currentRevisionId));
+  assert.deepEqual(sealedRefs.map(ref=>ref.studyProvenance?.declarationId),[pausedDeclarationId]);
+  const seededDispatches=(await orchestration.listDispatches(controller,projectId,pausedLoopId,10)).items;
+  assert.equal(seededDispatches.length,1);
+  assert.equal(seededDispatches[0]!.taskVersion,2);
+  const runCount=await pool.query(`SELECT count(*)::int AS n FROM runtime_run WHERE project_id=$1 AND task_id=$2`,
+    [projectId,seededTaskId]);
+  assert.equal(runCount.rows[0].n,0,"no native Run starts before the sealed Task dispatch");
+  const taskRead=await app.inject({method:"GET",url:`/api/projects/${projectId}/tasks/${seededTaskId}`,
+    headers:{authorization:`Bearer ${"o".repeat(40)}`}});
+  assert.equal(taskRead.statusCode,200);
+  assert.equal(taskRead.json().task.version,2);
+  const activeLoop=(await orchestration.getLoop(controller,projectId,pausedLoopId))!;
+  await command(reviewer,{type:"loop.state",loopId:pausedLoopId,
+    expectedVersion:activeLoop.version,state:"stopped",reason:"End study trial"});
+  const stoppedLoop=(await orchestration.getLoop(controller,projectId,pausedLoopId))!;
+  await assert.rejects(command(reviewer,{type:"loop.studyMaterial.declare",loopId:pausedLoopId,
+    expectedLoopVersion:stoppedLoop.version,declarationId:randomUUID(),
+    controllerActorId:controllerId,sourceTaskId,sourceTaskRevisionId:replaced.revisionId,
+    sourceDecisionIds:[replaced.decisionId],reason:"Stopped loop cannot receive material"}),
+    (error:unknown)=>error instanceof OrchestrationError&&error.code==="LOOP_STOPPED");
 });

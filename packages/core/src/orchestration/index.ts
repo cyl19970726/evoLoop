@@ -179,15 +179,17 @@ export class OrchestrationService {
       if (await tx.getLoop(command.loopId)) return fail("ALREADY_EXISTS", "loop ID already enrolled");
       const bootstrapEventId = this.deps.nextId();
       const policyId = this.deps.nextId();
-      const loop: OrchestrationLoop = { projectId: command.projectId, id: command.loopId, version: 1, goalId: goal.id, stageId: command.stageId, bootstrapEventId, cognitiveRoleId: command.cognitiveRoleId, allowedBusinessRoleIds: command.allowedBusinessRoleIds, sourceAfter: command.sourceAfter, maxRuns: command.maxRuns, maxConcurrent: command.maxConcurrent, dispatchCount: 0, state: "active", enrolledBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, currentPolicyRevisionId: policyId, currentStudyDeclarationId: null };
+      const loop: OrchestrationLoop = { projectId: command.projectId, id: command.loopId, version: 1, goalId: goal.id, stageId: command.stageId, bootstrapEventId, cognitiveRoleId: command.cognitiveRoleId, allowedBusinessRoleIds: command.allowedBusinessRoleIds, sourceAfter: command.sourceAfter, maxRuns: command.maxRuns, maxConcurrent: command.maxConcurrent, dispatchCount: 0, state: command.initialState ?? "active", enrolledBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, currentPolicyRevisionId: policyId, currentStudyDeclarationId: null };
       await tx.insertLoop(loop);
       await tx.insertPolicy({ projectId: command.projectId, id: policyId, loopId: loop.id, version: 1, previousId: null, allowedBusinessRoleIds: [...command.allowedBusinessRoleIds], bindingByRole: {}, changedBindingId: null, decisionOperationId: null, actorId: principal.actorId, createdAtUtc: now });
-      await event(loop.id, "loop", loop.id, "loop.enrolled", { goalId: loop.goalId, stageId: loop.stageId, sourceAfter: loop.sourceAfter, policyRevisionId: policyId }, bootstrapEventId);
+      await event(loop.id, "loop", loop.id, "loop.enrolled", { goalId: loop.goalId, stageId: loop.stageId, sourceAfter: loop.sourceAfter, policyRevisionId: policyId,
+        ...(command.initialState ? { initialState: command.initialState } : {}) }, bootstrapEventId);
       return result("loop", loop.id, 1);
     }
     if (command.type === "loop.studyMaterial.declare") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
-      this.active(loop); this.version(loop.version, command.expectedLoopVersion);
+      if (loop.state === "stopped") return fail("LOOP_STOPPED", "stopped loop cannot accept study material");
+      this.version(loop.version, command.expectedLoopVersion);
       if (!principal.permissions.includes("read") ||
         !await this.deps.hasCurrentStudyReviewer?.(loop.projectId, principal.actorId) || !loop.stageId ||
         new Set(command.sourceDecisionIds).size !== command.sourceDecisionIds.length ||

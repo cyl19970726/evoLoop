@@ -149,6 +149,8 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 分工管理者能读取任务负荷、结果、使用反馈和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 session 可提出，分工管理者不控制全部业务任务。[方向出处](../references/lineage.md)
 
+要在后台 runner 已运行时给首次认知固定 trace，`loop.enroll` 可选以 paused 状态登记，再由原有声明命令以 Loop CAS 固定材料，最后通过原有 `loop.state active` 开始。旧 enroll 省略初态仍为 active，历史操作摘要与预算不变；暂停中的 runner 不建立新的 Task/Dispatch/Run。
+
 受管认知研究的 trace 材料由非 worker reviewer 显式声明在当前 active Loop：单个来源 Task 的固定修订、最多十个当前正式 Run decision。服务端解析终态 Run 的固定输入、Task 修订与 slot，核当前来源 grant；Loop 只持有当前声明指针，事件和操作记录保持不可变。controller 创建真实认知 Task 后，以软件创建回执和确定 ID 证明目标来源，在同一 PostgreSQL 引用事务内经窄权限 resolver 把逐项 Run 复制成正式引用，并随 Task 修订递进；完整快照、当前声明及原声明者的实时项目 read/write/review 凭据在派发时重验，复制与 worker 新 trace GET 同样重验；同项目其他 owner 不代替原声明者。worker 的新 trace GET 再核其自身 Run 的固定 Task 修订、声明当前性、来源 slot、Session/grant；直接由 reviewer 正式采纳而无自动继承 provenance 的既有 Run 引用维持原权限语义。撤销仅去掉未来读取/派发权，不删历史引用或恢复预算。`025_trace_study_provenance` 为正式 reference decision 增可空结构化出处；旧行保持 NULL，无回填，因为原固定列及不可变触发器不能安全承载后来软件继承的授权依据。
 
 受限分工先持久化意图、执行绑定和不可变 Loop 策略修订。认知在自己的活跃 Run、最终决定之前签署意图，固定来源、诊断 Document 修订与首项 Task 的已观察版本；worker 对诊断原件的读取权必须在签意图前独立存在，不能靠新 binding 反过来授权该原件。同一父派发的意图与普通 child 请求互斥。外置模板必须精确授权本 Loop 的认知 Role 或指定决定者、既有 Role 或一个有界的新 Role 名额，以及 actor、目录、模型、沙箱、网络、审批和期限；原单 Role 执行 grant 不隐含委托权。认知 worker 可在自己 Loop 的窄入口读取当前未过期模板及所列既有 Role 的状态，随后读取自己父派发的 binding 和固定诊断原件；这些读取权限不能扩成全项目 Role/模板浏览。`waiting` 必须显式引用此前唯一意图，其他最终决定不执行它。
