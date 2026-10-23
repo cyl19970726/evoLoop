@@ -555,7 +555,7 @@ export class RuntimeRunner {
       throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚无可核对的受管原生 Turn。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
     if (session.projectId !== projectId || session.id !== run.sessionId || session.state !== "ready" ||
-      !this.authorized(session, run.actorId))
+      !await this.authorized(session, run.actorId))
       throw new DomainError("FORBIDDEN", "此运行所属会话的授权已失效。");
     try {
       const binding = await this.readBinding(session);
