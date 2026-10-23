@@ -39,7 +39,8 @@ const store = new PgOrchestrationStore(pool, {
   wasActorRole: async (_project, actor, loop, role) =>
     (await broker?.identityForActor(actor))?.scope.loopId === loop && (await broker?.identityForActor(actor))?.scope.roleId === role,
 });
-const orchestration = new OrchestrationService({ store, now: () => now, nextId: randomUUID, hash: sha });
+const orchestration = new OrchestrationService({ store, now: () => now, nextId: randomUUID, hash: sha,
+  getWorkerScope: async actorId => (await broker?.identityForActor(actorId))?.scope ?? null });
 const issue = async (command: Record<string, unknown>) => orchestration.execute(principal(), { projectId, operationId: randomUUID(), ...command } as never);
 const write = async (command: Record<string, unknown>) => {
   const result = await workflow.execute(principal(), { projectId, operationId: randomUUID(), ...command } as never);

@@ -129,7 +129,9 @@ export function setupManagedLoops(options: {
     },
   });
   const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
-    hash: value => createHash("sha256").update(value).digest("hex")});
+    hash: value => createHash("sha256").update(value).digest("hex"),
+    getDelegationTemplate: options.integrations.getDelegationTemplate,
+    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null});
   const seal = createWorkerSealer({workflow: options.workflow, orchestration, credential: broker,
     controller: async (projectId, roleId) => (await controller(projectId, roleId))?.principal ?? null, now: options.now});
   const runner = new ManagedLoopRunner({projects: entry.projectIds, reader: projectId => entry.projectIds.includes(projectId) ? controllerPrincipal : null,

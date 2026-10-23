@@ -228,8 +228,8 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
     taskRevision: async (taskId, revisionId) => !!await task(taskId) && !!await one(
       "SELECT 1 FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [taskId, revisionId]),
     run: async id => {
-      const row = await one("SELECT task_id,session_id FROM runtime_run WHERE project_id=$1 AND run_id=$2", [id]);
-      return row ? {projectId: scope.projectId, taskId: row.task_id, sessionId: row.session_id} : null;
+      const row = await one("SELECT task_id,session_id,state FROM runtime_run WHERE project_id=$1 AND run_id=$2", [id]);
+      return row ? {projectId: scope.projectId, taskId: row.task_id, sessionId: row.session_id,state:row.state} : null;
     },
     delivery: async id => {
       const row = await one("SELECT task_id,run_id FROM delivery WHERE project_id=$1 AND delivery_id=$2", [id]);

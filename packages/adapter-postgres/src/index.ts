@@ -234,7 +234,7 @@ class PgReader implements Reader {
       requested.created_at_utc AS requested_at_utc,inbox.inbox_id AS source_inbox_id
       FROM orchestration_dispatch child
       JOIN orchestration_loop loop ON loop.project_id=child.project_id AND loop.loop_id=child.loop_id
-        AND (loop.data->'allowedBusinessRoleIds') ? (child.data->>'recipientRoleId')
+        AND division_historical_role_allowed(child.project_id,child.dispatch_id,child.data->>'recipientRoleId')
         AND child.data->>'recipientRoleId'<>loop.data->>'cognitiveRoleId'
       JOIN orchestration_inbox inbox ON inbox.project_id=child.project_id AND inbox.inbox_id=child.inbox_id
         AND inbox.loop_id=child.loop_id AND inbox.source_event_id=(child.data->>'sourceEventId')::uuid

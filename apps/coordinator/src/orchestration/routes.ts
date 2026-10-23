@@ -44,6 +44,14 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
     const p = params.parse(request.params);
     return await service.getLoop(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
   });
+  app.get("/api/projects/:projectId/orchestration/policies/:id", async (request, reply) => {
+    const p = params.parse(request.params);
+    return await service.getPolicy(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
+  });
+  app.get("/api/projects/:projectId/orchestration/bindings/:id", async (request, reply) => {
+    const p = params.parse(request.params);
+    return await service.getBinding(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
+  });
   for (const kind of ["inbox", "dispatches", "submissions", "events", "sources"] as const) {
     app.get(`/api/projects/:projectId/orchestration/loops/:id/${kind}`, async request => {
       const p = params.parse(request.params), q = page.parse(request.query), who = principal(request.principal);

@@ -1,6 +1,11 @@
 import { readFile, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeSessionSpec } from "@evoloop/contracts/runtime";
+import { delegationTemplateSchema, type DelegationTemplate } from "@evoloop/contracts/division";
+
+const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
 
 const absolute = z.string().min(1).max(1024).regex(/^\//);
 const grant = z.strictObject({
@@ -35,6 +40,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
+    delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>
+      new Set(values.map(value => value.id)).size === values.length, "Delegation template IDs must be unique" ).default([]),
     grants: z.array(grant).max(200).refine(values => new Set(values.map(value => JSON.stringify([
       value.projectId, value.actorId, value.roleId, value.authorizationScope, value.cwd, value.sandbox,
     ]))).size === values.length, "Runtime authorization profiles must be unique"),
@@ -59,5 +66,11 @@ export async function loadIntegrations(path?: string) {
     if (!allowedRuntimeCwds(projectId).includes(cwd)) return false;
     try { return await realpath(cwd) === cwd; } catch { return false; }
   };
-  return { runtime, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant };
+  const getDelegationTemplate = async (projectId: string, templateId: string) => {
+    const template = runtime?.enabled ? runtime.delegationTemplates.find(value => value.projectId === projectId && value.id === templateId) : undefined;
+    if (!template) return null;
+    try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
+    return { template, hash: delegationTemplateHash(template) };
+  };
+  return { runtime, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
 }

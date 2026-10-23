@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
@@ -8,18 +11,24 @@ import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
+import type { DelegationTemplate } from "@evoloop/contracts/division";
+import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
+import { authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard.js";
+import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
-const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole="cognitive-role",businessRole="business-role",scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
+const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole="cognition",businessRole="business-role",scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
 const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
 const runtime=new RuntimeWorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
 let businessGrantActive=true;
+let brokerForRole:WorkerCredentialBroker|null=null;
 const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&scope===scopeId?{projectId,scopeId,actorId:worker,roleId:businessRole,active:businessGrantActive}:project===projectId&&scope===cognitiveScope?{projectId,scopeId:cognitiveScope,actorId:actor,roleId:cognitiveRole,active:true}:null,
-  canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole),
+  canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole||
+    (await brokerForRole?.identityForActor(who))?.scope.roleId===role),
   wasActorRole:async(project,who,loop,role)=>project===projectId&&who===actor&&role===cognitiveRole});
 const orchestrator=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha});
 const issue=(who:string,command:Record<string,unknown>)=>orchestrator.execute(principal(who),{projectId,operationId:randomUUID(),...command} as never);
@@ -381,15 +390,361 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     acceptance:"Record an evidenced next decision",owner:cognitiveRole,consumer:"owner",evidence:`Gap ${gapEvent.event_id}`,
     stopCondition:"A decision is recorded"});
   assert.equal(recoveryTask.status,"applied",JSON.stringify(recoveryTask));
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:recoveryTaskId,expectedVersion:1,reason:"Freeze healthy cognition input"})).status,"applied");
   const recoveryDispatch=await issue(actor,{type:"dispatch.request",inboxId:recoveryInbox.entityId,expectedInboxVersion:2,
-    dispatchId:randomUUID(),parentDispatchId:null,taskId:recoveryTaskId,expectedTaskVersion:1,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:recoveryTaskId,expectedTaskVersion:2,
     recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Review fixed terminal gap"});
-  assert.equal((await orchestrator.getDispatch(principal(actor),projectId,recoveryDispatch.entityId))?.state,"pending");
+  const recoveryClaim=randomUUID(),recoveryRunId=randomUUID();
+  await issue(actor,{type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await issue(actor,{type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
+  const recoveryRun=await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),
+    runId:recoveryRunId,taskId:recoveryTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Record bounded division intent"});
+  assert.equal(recoveryRun.status,"applied",JSON.stringify(recoveryRun));
+  await issue(actor,{type:"dispatch.resolve",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
+    result:"accepted",runtimeRunId:recoveryRunId,reason:"Bound active cognition Run"});
+  assert.equal((await orchestrator.getDispatch(principal(actor),projectId,recoveryDispatch.entityId))?.state,"accepted");
   assert.equal((await orchestrator.getDispatch(principal(actor),projectId,lateDispatch.entityId))?.state,"accepted");
   assert.equal((await orchestrator.listDispatches(principal(actor),projectId,loopId)).items.find(x=>x.id===requested.entityId)?.runtimeRunId,runId);
   await issue(actor,{type:"loop.state",loopId,expectedVersion:5,state:"stopped",reason:"Stop bounded work"});
   await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"LOOP_STOPPED");
   assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[projectId,op])).rows[0].n,1);
+  // A new trial Role is proposed through the existing Role contract. The separate
+  // delegation template grants only one bounded allocation for this Goal/Loop/Task.
+  const newRoleId=randomUUID(),divisionTaskId=randomUUID(),materialId=randomUUID(),materialBody="# Observed division gap";
+  assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:divisionTaskId,stageId,title:"Trial first Task",content:"# One bounded trial",acceptance:"Record one result",
+    owner:cognitiveRole,consumer:"owner",evidence:"Observed division gap",stopCondition:"One trial"})).status,"applied");
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:divisionTaskId,expectedVersion:1,reason:"Freeze trial input"})).status,"applied");
+  const material=await workflow.execute(principal(actor),{type:"document.create",projectId,operationId:randomUUID(),
+    documentId:materialId,kind:"report",title:"Fixed division diagnosis",body:materialBody});
+  assert.equal(material.status,"applied");
+  const observedAtUtc=new Date().toISOString();
+  const proposal={title:"Bounded diagnosis role",goal:"Resolve one observed gap",independentResponsibility:"Diagnose one recurring error",
+    ownerScope:"One trial Task",inputs:["Fixed source"],writableAssets:[],deliverables:["Trial result"],
+    triggers:["Observed repeat"],workflow:"Inspect fixed materials, then deliver",handoffBoundary:"Return to existing owner",
+    evidence:[{kind:"backlog",observation:"One unhandled gap",sourceRef:`task:${divisionTaskId}`,observedAtUtc},
+      {kind:"effect",observation:"Current path delayed",sourceRef:`task:${divisionTaskId}`,observedAtUtc},
+      {kind:"cost",observation:"One review and handoff",sourceRef:`task:${divisionTaskId}`,observedAtUtc}],
+    alternatives:[{kind:"method",assessment:"Could adjust current method",estimatedCost:"One change"},
+      {kind:"knowledge",assessment:"Could revise guide",estimatedCost:"One revision"},
+      {kind:"another-instance",assessment:"Could add capacity",estimatedCost:"One instance"},
+      {kind:"temporary-assignment",assessment:"Could assign a specialist",estimatedCost:"One trial"}],
+    firstTaskId:divisionTaskId,baseline:"Current task delayed",expectedEffect:"One bounded result",costLimit:"One trial",
+    trialDays:7,reviewAtUtc:new Date(Date.now()+86_400_000).toISOString(),exitCriteria:"Review first result"};
+  const proposed=await workflow.execute(principal(actor),{type:"role.propose",projectId,operationId:randomUUID(),roleId:newRoleId,proposal});
+  assert.equal(proposed.status,"applied",JSON.stringify(proposed));
+  const acceptedRole=await workflow.execute(principal(actor),{type:"role.decide",projectId,operationId:randomUUID(),
+    roleId:newRoleId,expectedVersion:1,decision:"accept-trial",reason:"Bounded Role trial"});
+  assert.equal(acceptedRole.status,"applied",JSON.stringify(acceptedRole));
+  const template:DelegationTemplate={id:randomUUID(),revision:1,projectId,goalId,loopId:lateLoopId,
+    existingRoleIds:[],cognitionRoleIds:[cognitiveRole],newRoleAllocation:{maxTotal:1,requiredState:"trial"},firstTaskId:divisionTaskId,
+    actorId:"trial-worker",authorizationScopeId:"trial-scope",decisionActorIds:[],allowedChoices:["new-role"],
+    cwd:"/tmp",model:"test-model",sandbox:"read-only",networkAccess:false,approvalPolicy:"on-request",
+    expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
+  const templateHash=sha(JSON.stringify(template));
+  let templateCurrent=true;
+  const workerRoot=await mkdtemp(join(tmpdir(),"evoloop-m3-worker-"));
+  t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
+  const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:4318",
+    cliMain:fileURLToPath(new URL("../../apps/cli/dist/main.js",import.meta.url)),
+    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
+  brokerForRole=broker;
+  const issued=await broker.issue({projectId,loopId:lateLoopId,taskId:recoveryTaskId,
+    runId:recoveryRunId,sessionId:cognitiveSession,roleId:cognitiveRole,kind:"cognition",
+    allowedRoleIds:[cognitiveRole,newRoleId]});
+  const identity=await broker.identityForActor(issued.principal.actorId);
+  assert.ok(identity);
+  const division=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha,
+    getWorkerScope:async actorId=>(await broker.identityForActor(actorId))?.scope ?? null,
+    getDelegationTemplate:async(project,id)=>templateCurrent&&project===projectId&&id===template.id?{template,hash:templateHash}:null});
+  const beforeDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
+  const decisionOperationId=randomUUID(),decision={type:"division.decide",projectId,operationId:decisionOperationId,
+    decisionId:randomUUID(),loopId:lateLoopId,expectedLoopVersion:beforeDivision.version,
+    sourceEventId:gapEvent.event_id,parentDispatchId:recoveryDispatch.entityId,
+    documentId:materialId,documentRevisionId:material.revisionId,documentContentHash:sha(materialBody),
+    firstTaskId:divisionTaskId,expectedFirstTaskVersion:2,choice:"new-role",roleId:newRoleId,
+    templateId:template.id,templateRevision:template.revision,templateHash,reason:"One explicitly bounded trial"};
+  const request={method:"POST",path:"/api/orchestration/commands",body:decision};
+  assert.equal(await authorizeWorkerRequest(identity,request,workerGuardFacts(pool,identity)),true);
+  assert.equal(await authorizeWorkerRequest(identity,{...request,path:"/api/commands",
+    body:{type:"role.decide",projectId,operationId:randomUUID(),roleId:newRoleId}},workerGuardFacts(pool,identity)),false);
+  const wrongRunIdentity={...identity,scope:{...identity.scope,runId:randomUUID()}};
+  assert.equal(await authorizeWorkerRequest(wrongRunIdentity,request,workerGuardFacts(pool,wrongRunIdentity)),false);
+  const wrongRoleIdentity={...identity,scope:{...identity.scope,roleId:businessRole}};
+  assert.equal(await authorizeWorkerRequest(wrongRoleIdentity,request,workerGuardFacts(pool,wrongRoleIdentity)),false);
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:{...decision,parentDispatchId:lateDispatch.entityId}},workerGuardFacts(pool,identity)),false);
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:{...decision,firstTaskId:randomUUID()}},workerGuardFacts(pool,identity)),false);
+  const noCognitionDelegation={...template,cognitionRoleIds:[]};
+  const deniedDivision=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha,
+    getWorkerScope:async actorId=>(await broker.identityForActor(actorId))?.scope ?? null,
+    getDelegationTemplate:async()=>({template:noCognitionDelegation,hash:sha(JSON.stringify(noCognitionDelegation))})});
+  await fails(deniedDivision.execute(issued.principal,{...decision,operationId:randomUUID(),
+    templateHash:sha(JSON.stringify(noCognitionDelegation))} as never),"DELEGATION_DENIED");
+  await fails(division.execute(principal(actor),{...decision,operationId:randomUUID()} as never),"DELEGATION_DENIED");
+  const decided=await division.execute(issued.principal,decision as never);
+  assert.equal(decided.entityType,"binding");
+  assert.equal((await division.execute(issued.principal,decision as never)).replayed,true);
+  await fails(division.execute(issued.principal,{...decision,reason:"changed"} as never),"OPERATION_CONFLICT");
+  const afterDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
+  assert.equal(afterDivision.dispatchCount,beforeDivision.dispatchCount);
+  assert.equal(afterDivision.maxRuns,beforeDivision.maxRuns);
+  assert.equal((await division.getBinding(principal(actor),projectId,decided.entityId))?.grant.newRoleAllocation?.maxTotal,1);
+  const divisionPolicy=(await division.getPolicy(principal(actor),projectId,afterDivision.currentPolicyRevisionId!))!;
+  assert.equal(divisionPolicy.bindingByRole[newRoleId],decided.entityId);
+  const rejectsSql=async(run:(client:pg.PoolClient)=>Promise<unknown>)=>assert.rejects(async()=>{
+    const client=await pool.connect();await client.query("BEGIN");
+    try { await run(client);await client.query("SET CONSTRAINTS ALL IMMEDIATE"); }
+    finally { await client.query("ROLLBACK");client.release(); }
+  });
+  const unrelatedOperation=(await pool.query("SELECT operation_id FROM orchestration_operation WHERE project_id=$1 AND result->>'entityType'='dispatch' LIMIT 1",[projectId])).rows[0].operation_id;
+  const forgedMethodId=randomUUID();
+  await pool.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
+    kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'decision',$4,$5,'division.decided',$6,$7::jsonb,$8)`,
+    [projectId,randomUUID(),lateLoopId,forgedMethodId,unrelatedOperation,actor,
+      JSON.stringify({choice:"method",parentDispatchId:lateDispatch.entityId,sourceEventId:lateLoop.bootstrapEventId,
+        firstTaskId:lateTaskId,firstTaskVersion:2}),new Date().toISOString()]);
+  assert.equal(await store.read(projectId,r=>r.getDivisionDecisionFact(forgedMethodId)),null,
+    "an unrelated operation cannot make an inserted method event a signed intent");
+  await rejectsSql(client=>client.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,
+    template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,
+    first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
+    SELECT project_id,$1,loop_id,goal_id,role_id,choice,template_id,template_revision,template_hash,$2,
+      source_event_id,parent_dispatch_id,first_task_id,first_task_version,document_id,document_revision_id,
+      document_content_hash,jsonb_set(data,'{id}',to_jsonb($1::text))
+    FROM runtime_role_binding WHERE project_id=$3 AND binding_id=$4`,[randomUUID(),unrelatedOperation,projectId,decided.entityId]));
+  await rejectsSql(client=>client.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,
+    previous_policy_id,allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,
+    actor_id,created_at_utc,data) SELECT project_id,$1,loop_id,version+1,policy_id,
+    (SELECT coalesce(jsonb_agg(value),'[]'::jsonb) FROM jsonb_array_elements(allowed_business_role_ids) value WHERE value #>> '{}'<>$2),
+    binding_by_role-$2,$3,$4,$5,now(),jsonb_build_object('allowedBusinessRoleIds',to_jsonb(ARRAY[$2]))
+    FROM loop_policy_revision WHERE project_id=$6 AND policy_id=$7`,
+    [randomUUID(),newRoleId,decided.entityId,decisionOperationId,actor,projectId,divisionPolicy.id]));
+  const sqlTaskId=randomUUID();
+  assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:sqlTaskId,stageId,title:"SQL provenance fixture",content:"# Bounded",acceptance:"Check",owner:businessRole,
+    consumer:"owner",evidence:"Fixture",stopCondition:"One check"})).status,"applied");
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:sqlTaskId,expectedVersion:1,reason:"Fix observed version"})).status,"applied");
+  const otherGoalId=randomUUID();
+  assert.equal((await workflow.execute(principal(actor),{type:"goal.create",projectId,operationId:randomUUID(),
+    goalId:otherGoalId,outcome:"Unrelated",constraints:"Local",consumer:"owner",authority:"reviewer",scope:"pilot",owner:actor})).status,"applied");
+  const sqlLoopId=randomUUID(),sqlCognitionTaskId=randomUUID(),sqlRunId=randomUUID(),sqlSessionId=randomUUID();
+  assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:sqlCognitionTaskId,stageId,title:"SQL cognition parent",content:"# Inspect",acceptance:"Decision",owner:cognitiveRole,
+    consumer:"owner",evidence:"Fixture",stopCondition:"One intent"})).status,"applied");
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:sqlCognitionTaskId,expectedVersion:1,reason:"Freeze SQL parent"})).status,"applied");
+  const sqlLast=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
+  await issue(actor,{type:"loop.enroll",loopId:sqlLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
+    allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:sqlLast.created_at.toISOString(),eventId:sqlLast.event_id},
+    maxRuns:2,maxConcurrent:1,reason:"SQL provenance fixture and intent race"});
+  const sqlLoop=(await orchestrator.getLoop(principal(actor),projectId,sqlLoopId))!;
+  const sqlInbox=await issue(actor,{type:"inbox.accept",loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await issue(actor,{type:"inbox.ack",inboxId:sqlInbox.entityId,expectedVersion:1,reason:"Fixture"});
+  const sqlParent=await issue(actor,{type:"dispatch.request",inboxId:sqlInbox.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:sqlCognitionTaskId,expectedTaskVersion:2,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Fixture"});
+  const sqlClaim=randomUUID();
+  await issue(actor,{type:"dispatch.claim",dispatchId:sqlParent.entityId,claimToken:sqlClaim,leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await issue(actor,{type:"dispatch.start",dispatchId:sqlParent.entityId,claimToken:sqlClaim});
+  assert.equal((await workflow.execute(principal(actor),{type:"runtime.session.reserve",projectId,operationId:randomUUID(),
+    sessionId:sqlSessionId,roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
+    model:"test-model",sandbox:"read-only",approvalPolicy:"on-request"})).status,"applied");
+  await runtime.beginSessionCreate(projectId,sqlSessionId);
+  await runtime.bindSession(projectId,sqlSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:sqlSessionId,
+    roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${sqlSessionId}`,nativeSessionId:`fixture-${sqlSessionId}`});
+  assert.equal((await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),
+    runId:sqlRunId,taskId:sqlCognitionTaskId,sessionId:sqlSessionId,expectedVersion:2,input:"Fixture"})).status,"applied");
+  await issue(actor,{type:"dispatch.resolve",dispatchId:sqlParent.entityId,claimToken:sqlClaim,result:"accepted",
+    runtimeRunId:sqlRunId,reason:"Bound SQL fixture"});
+  const originalBinding=(await division.getBinding(principal(actor),projectId,decided.entityId))!;
+  const insertSignedFixture=async(client:pg.PoolClient,
+    change:(b:typeof originalBinding,op:Record<string,unknown>,event:Record<string,unknown>)=>void=()=>{},
+    changeData:(data:typeof originalBinding)=>void=()=>{})=>{
+    const id=randomUUID(),operationId=randomUUID(),templateId=randomUUID(),createdAtUtc=new Date().toISOString();
+    const binding={...structuredClone(originalBinding),id,loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,
+      parentDispatchId:sqlParent.entityId,choice:"same-role-instance" as const,decisionOperationId:operationId,
+      firstTaskId:sqlTaskId,firstTaskVersion:2,template:{...originalBinding.template,id:templateId},
+      grant:{...originalBinding.grant,id:templateId,loopId:sqlLoopId,firstTaskId:sqlTaskId,existingRoleIds:[newRoleId],
+        newRoleAllocation:null,allowedChoices:["same-role-instance"]},createdAtUtc};
+    const operation:Record<string,unknown>={entityType:"binding",entityId:id,version:1,replayed:false};
+    const detail:Record<string,unknown>={choice:binding.choice,sourceEventId:binding.sourceEventId,
+      parentDispatchId:binding.parentDispatchId,firstTaskId:binding.firstTaskId,firstTaskVersion:binding.firstTaskVersion,
+      documentId:binding.documentId,documentRevisionId:binding.documentRevisionId,
+      documentContentHash:binding.documentContentHash,roleId:binding.roleId,template:binding.template,
+      policyRevisionId:randomUUID()};
+    change(binding,operation,detail);
+    const bindingData=structuredClone(binding);changeData(bindingData);
+    await client.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+      [projectId,operationId,binding.decidedBy,sha(operationId),JSON.stringify(operation),createdAtUtc]);
+    await client.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,
+      template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,
+      first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`,
+      [projectId,binding.id,binding.loopId,binding.goalId,binding.roleId,binding.choice,binding.template.id,
+        binding.template.revision,binding.template.hash,binding.decisionOperationId,binding.sourceEventId,
+        binding.parentDispatchId,binding.firstTaskId,binding.firstTaskVersion,binding.documentId,
+        binding.documentRevisionId,binding.documentContentHash,JSON.stringify(bindingData)]);
+    await client.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
+      kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'binding',$4,$5,'division.decided',$6,$7::jsonb,$8)`,
+      [projectId,randomUUID(),binding.loopId,binding.id,operationId,binding.decidedBy,JSON.stringify(detail),createdAtUtc]);
+  };
+  const allowsSql=async(run:(client:pg.PoolClient)=>Promise<unknown>)=>{
+    const client=await pool.connect();await client.query("BEGIN");
+    try {await run(client);await client.query("SET CONSTRAINTS ALL IMMEDIATE");}
+    finally {await client.query("ROLLBACK");client.release();}
+  };
+  await allowsSql(client=>insertSignedFixture(client));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{data.roleId=businessRole;}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    data.grant.actorId="123";Object.assign(data,{actorId:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    data.grant.authorizationScopeId="123";Object.assign(data,{authorizationScopeId:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,(b)=>{Object.assign(b,{decidedBy:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:"2026-12-31T24:00:00Z"});
+    Object.assign(data.runtime,{expiresAtUtc:"2026-12-31T24:00:00Z"});}));
+  await rejectsSql(client=>insertSignedFixture(client,b=>{b.runtime.cwd="/tmp/wider";}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{Reflect.deleteProperty(data.grant,"actorId");}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data,{actorId:null});Object.assign(data.grant,{actorId:null});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data,{authorizationScopeId:null});Object.assign(data.grant,{authorizationScopeId:null});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{model:123});Object.assign(data.runtime,{model:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:null});Object.assign(data.runtime,{expiresAtUtc:null});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:"2026-99-99T00:00:00Z"});
+    Object.assign(data.runtime,{expiresAtUtc:"2026-99-99T00:00:00Z"});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:"2020-01-01T00:00:00Z"});
+    Object.assign(data.runtime,{expiresAtUtc:"2020-01-01T00:00:00Z"});}));
+  await rejectsSql(client=>insertSignedFixture(client,(_b,op)=>{op.entityType="dispatch";}));
+  await rejectsSql(client=>insertSignedFixture(client,(b)=>{b.decidedBy="forged-actor";}));
+  await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.parentDispatchId=cognition.entityId;event.parentDispatchId=b.parentDispatchId;}));
+  await rejectsSql(client=>insertSignedFixture(client,(b)=>{b.goalId=otherGoalId;b.grant.goalId=b.goalId;}));
+  await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.firstTaskVersion=99;event.firstTaskVersion=99;}));
+  await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.documentContentHash="0".repeat(64);event.documentContentHash=b.documentContentHash;}));
+  const insertRevokeFixture=async(client:pg.PoolClient,resultType="binding")=>{
+    const policyId=randomUUID(),operationId=randomUUID(),createdAtUtc=new Date().toISOString();
+    const policy={...divisionPolicy,id:policyId,version:divisionPolicy.version+1,previousId:divisionPolicy.id,
+      allowedBusinessRoleIds:divisionPolicy.allowedBusinessRoleIds.filter(role=>role!==newRoleId),
+      bindingByRole:{},changedBindingId:decided.entityId,decisionOperationId:operationId,actorId:actor,createdAtUtc};
+    await client.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+      [projectId,operationId,actor,sha(operationId),JSON.stringify({entityType:resultType,entityId:decided.entityId,version:2,replayed:false}),createdAtUtc]);
+    await client.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
+      allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb)`,
+      [projectId,policy.id,policy.loopId,policy.version,policy.previousId,JSON.stringify(policy.allowedBusinessRoleIds),
+        JSON.stringify(policy.bindingByRole),policy.changedBindingId,policy.decisionOperationId,policy.actorId,createdAtUtc,JSON.stringify(policy)]);
+    await client.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
+      kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'binding',$4,$5,'division.revoked',$6,$7::jsonb,$8)`,
+      [projectId,randomUUID(),lateLoopId,decided.entityId,operationId,actor,
+        JSON.stringify({policyRevisionId:policyId,reason:"Fixture"}),createdAtUtc]);
+  };
+  await allowsSql(client=>insertRevokeFixture(client));
+  await rejectsSql(client=>insertRevokeFixture(client,"dispatch"));
+  const waitingCommand={type:"worker.decision",projectId,operationId:randomUUID(),
+    decisionId:randomUUID(),dispatchId:recoveryDispatch.entityId,runId:recoveryRunId,kind:"waiting",
+    divisionDecisionId:decided.entityId,reason:"Wait for controlled continuation",evidenceRefs:[]};
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:waitingCommand},workerGuardFacts(pool,identity)),true);
+  await fails(division.execute(issued.principal,{...waitingCommand,operationId:randomUUID(),divisionDecisionId:randomUUID()} as never),"INVALID_CAUSALITY");
+  const waitingIntent=await division.execute(issued.principal,waitingCommand as never);
+  assert.equal((await division.getDecision(principal(actor),projectId,waitingIntent.entityId))?.divisionDecisionId,decided.entityId);
+  const pendingInbox=await division.execute(principal(actor),{type:"inbox.accept",projectId,operationId:randomUUID(),
+    loopId:lateLoopId,sourceEventId:gapEvent.event_id,recipientRoleId:cognitiveRole,purpose:"next_action"});
+  await division.execute(principal(actor),{type:"inbox.ack",projectId,operationId:randomUUID(),
+    inboxId:pendingInbox.entityId,expectedVersion:1,reason:"Inspect decision"});
+  const dynamicRequest={type:"dispatch.request",projectId,operationId:randomUUID(),inboxId:pendingInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:recoveryDispatch.entityId,taskId:divisionTaskId,
+    expectedTaskVersion:2,recipientRoleId:newRoleId,purpose:"trial first Task",authorizationScopeId:"trial-scope",reason:"Pending continuation"};
+  await fails(division.execute(principal(actor),dynamicRequest as never),"RUN_LIMIT");
+  // This sealed SQL fixture models a future controlled child dispatch solely to
+  // verify the historical query; this first slice still refuses dynamic dispatch.
+  const historicalChildId=randomUUID(),historicalOperationId=randomUUID(),historicalEventId=randomUUID();
+  const fixtureClient=await pool.connect();
+  await fixtureClient.query("BEGIN");
+  try {
+    const inboxRow=(await fixtureClient.query("SELECT data FROM orchestration_inbox WHERE project_id=$1 AND inbox_id=$2",
+      [projectId,pendingInbox.entityId])).rows[0];
+    await fixtureClient.query("UPDATE orchestration_inbox SET version=3,state='disposed',data=$3::jsonb WHERE project_id=$1 AND inbox_id=$2",
+      [projectId,pendingInbox.entityId,JSON.stringify({...inboxRow.data,version:3,state:"disposed",disposition:"dispatch",dispatchId:historicalChildId})]);
+    const childData={projectId,id:historicalChildId,loopId:lateLoopId,inboxId:pendingInbox.entityId,
+      sourceEventId:gapEvent.event_id,taskId:divisionTaskId,taskVersion:2,
+      parentDispatchId:recoveryDispatch.entityId,recipientRoleId:newRoleId,purpose:"bounded trial",
+      authorizationScopeId:"trial-scope",state:"pending",requestedBy:actor,
+      policyRevisionId:divisionPolicy.id,bindingId:decided.entityId};
+    await fixtureClient.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data,policy_revision_id,binding_id)
+      VALUES($1,$2,$3,$4,$5,2,1,'pending',$6::jsonb,$7,$8)`,
+      [projectId,historicalChildId,lateLoopId,pendingInbox.entityId,divisionTaskId,JSON.stringify(childData),divisionPolicy.id,decided.entityId]);
+    await fixtureClient.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,now())",
+      [projectId,historicalOperationId,actor,sha("historical-fixture"),JSON.stringify({entityType:"dispatch",entityId:historicalChildId,version:1,replayed:false})]);
+    await fixtureClient.query("INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'dispatch',$4,$5,'dispatch.requested',$6,$7::jsonb,now())",
+      [projectId,historicalEventId,lateLoopId,historicalChildId,historicalOperationId,actor,
+        JSON.stringify({sourceEventId:gapEvent.event_id,taskId:divisionTaskId,recipientRoleId:newRoleId})]);
+    await fixtureClient.query("COMMIT");
+  } catch(error) { await fixtureClient.query("ROLLBACK"); throw error; }
+  finally { fixtureClient.release(); }
+  const uow = new PostgresUnitOfWork(pool);
+  assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)));
+  await division.execute(principal(actor),{type:"division.revoke",projectId,operationId:randomUUID(),loopId:lateLoopId,
+    expectedLoopVersion:afterDivision.version,bindingId:decided.entityId,reason:"Withdraw trial authority"});
+  assert.equal((await division.getPolicy(principal(actor),projectId,divisionPolicy.id))?.bindingByRole[newRoleId],decided.entityId);
+  assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)),
+    "withdrawal cannot erase proof under the dispatch's pinned policy");
+  const revokedPolicyId=(await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!;
+  await assert.rejects(pool.query(`UPDATE orchestration_dispatch SET policy_revision_id=$3,
+    data=jsonb_set(data,'{policyRevisionId}',to_jsonb($3::text)) WHERE project_id=$1 AND dispatch_id=$2`,
+    [projectId,historicalChildId,revokedPolicyId]));
+  await assert.rejects(pool.query(`UPDATE orchestration_dispatch SET data=jsonb_set(data,'{policyRevisionId}',
+    to_jsonb($3::text)) WHERE project_id=$1 AND dispatch_id=$2`,[projectId,historicalChildId,revokedPolicyId]));
+  assert.equal((await division.getPolicy(principal(actor),projectId,
+    (await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!))?.allowedBusinessRoleIds.includes(newRoleId),false);
+  await fails(division.execute(principal(actor),{...dynamicRequest,operationId:randomUUID()} as never),"VERSION_CONFLICT");
+  templateCurrent=false;
+  await fails(division.execute(principal(actor),{...decision,operationId:randomUUID()} as never),"DELEGATION_DENIED");
+  assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(requested.entityId)));
+  const historicalPolicyId = (await orchestrator.getDispatch(principal(actor),projectId,requested.entityId))!.policyRevisionId!;
+  assert.equal((await pool.query("SELECT division_historical_role_allowed($1,$2,$3) AS yes",[projectId,requested.entityId,"unlisted-role"])).rows[0].yes,false);
+  await assert.rejects(pool.query("UPDATE loop_policy_revision SET allowed_business_role_ids='[]'::jsonb WHERE project_id=$1 AND policy_id=$2",[projectId,historicalPolicyId]));
+  await assert.rejects(pool.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
+    allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
+    SELECT project_id,$1,loop_id,version+1,policy_id,allowed_business_role_ids||to_jsonb('forged-role'::text),
+      binding_by_role,$2,$3,'forger',now(),'{}'::jsonb FROM loop_policy_revision WHERE project_id=$4 AND policy_id=$5`,
+    [randomUUID(),decided.entityId,randomUUID(),projectId,revokedPolicyId]));
+  const raceInbox=await division.execute(principal(actor),{type:"inbox.accept",projectId,operationId:randomUUID(),
+    loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"next_action"});
+  await division.execute(principal(actor),{type:"inbox.ack",projectId,operationId:randomUUID(),
+    inboxId:raceInbox.entityId,expectedVersion:1,reason:"Read the same fixed source"});
+  const methodRace={type:"division.decide",projectId,operationId:randomUUID(),decisionId:randomUUID(),
+    loopId:sqlLoopId,expectedLoopVersion:(await division.getLoop(principal(actor),projectId,sqlLoopId))!.version,
+    sourceEventId:sqlLoop.bootstrapEventId,parentDispatchId:sqlParent.entityId,
+    documentId:materialId,documentRevisionId:material.revisionId,documentContentHash:sha(materialBody),
+    firstTaskId:sqlCognitionTaskId,
+    expectedFirstTaskVersion:(await workflow.getTask(principal(actor),projectId,sqlCognitionTaskId)).task.version,
+    choice:"method",roleId:cognitiveRole,
+    templateId:null,templateRevision:null,templateHash:null,reason:"Keep current method"};
+  const staticRace={type:"dispatch.request",projectId,operationId:randomUUID(),inboxId:raceInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:sqlParent.entityId,
+    taskId:sqlTaskId,expectedTaskVersion:2,recipientRoleId:businessRole,purpose:"Static alternative",
+    authorizationScopeId:scopeId,reason:"Use the prior static grant"};
+  const race=await Promise.allSettled([
+    division.execute(principal(actor),methodRace as never),division.execute(principal(actor),staticRace as never)]);
+  assert.equal(race.filter(value=>value.status==="fulfilled").length,1,
+    "the project transaction lock must serialize the mutually exclusive choices");
+  const winner=race.findIndex(value=>value.status==="fulfilled");
+  assert.equal((race[1-winner] as PromiseRejectedResult).reason?.code,
+    winner===0?"DIVISION_INTENT_PENDING":"ALREADY_EXISTS");
+  const replay=await division.execute(principal(actor),(winner===0?methodRace:staticRace) as never);
+  assert.equal(replay.replayed,true,"the winning original operation still replays from its journal");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2 AND data->>'parentDispatchId'=$3",
+    [projectId,sqlLoopId,sqlParent.entityId])).rows[0].n,winner===1?1:0);
 });
 test("017 upgrades nonempty preexisting project facts without rewriting them",async()=>{
   const oldSchema=`el_orch_upgrade_${randomUUID().replaceAll("-","").slice(0,12)}`;

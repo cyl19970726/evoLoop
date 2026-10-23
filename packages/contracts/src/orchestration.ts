@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { LoopPolicyRevision, RuntimeRoleBinding } from "./division.js";
 
 const id = z.uuid();
 const short = z.string().trim().min(1).max(240);
@@ -15,6 +16,14 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
   z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason }),
+  z.strictObject({ ...common, type: z.literal("division.decide"), decisionId: id, loopId: id, expectedLoopVersion: version,
+    sourceEventId: id, parentDispatchId: id, documentId: id, documentRevisionId: id,
+    documentContentHash: z.string().regex(/^[a-f0-9]{64}$/), firstTaskId: id, expectedFirstTaskVersion: version,
+    choice: z.enum(["method", "same-role-instance", "temporary-assignment", "new-role"]),
+    roleId: role, templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    reason }),
+  z.strictObject({ ...common, type: z.literal("division.revoke"), loopId: id, expectedLoopVersion: version,
+    bindingId: id, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.accept"), loopId: id, sourceEventId: id, recipientRoleId: role, purpose: z.enum(["cognitive_review", "next_action"]) }),
   z.strictObject({ ...common, type: z.literal("inbox.ack"), inboxId: id, expectedVersion: version, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.dispose"), inboxId: id, expectedVersion: version, disposition: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRef: short.nullable() }),
@@ -24,7 +33,7 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("dispatch.start"), dispatchId: id, claimToken: id }),
   z.strictObject({ ...common, type: z.literal("dispatch.resolve"), dispatchId: id, claimToken: id, result: z.enum(["accepted", "unknown", "rejected"]), runtimeRunId: id.nullable(), reason }),
   z.strictObject({ ...common, type: z.literal("dispatch.reconcile"), dispatchId: id, expectedVersion: version, resolution: z.enum(["accepted", "rejected"]), runtimeRunId: id.nullable(), evidenceRef: short, reason }),
-  z.strictObject({ ...common, type: z.literal("worker.decision"), decisionId: id, dispatchId: id, runId: id, kind: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRefs: z.array(short).max(20) }),
+  z.strictObject({ ...common, type: z.literal("worker.decision"), decisionId: id, dispatchId: id, runId: id, kind: z.enum(["no_action", "waiting", "failed", "stop"]), divisionDecisionId: id.nullable().optional(), reason, evidenceRefs: z.array(short).max(20) }),
   z.strictObject({ ...common, type: z.literal("worker.submit"), submissionId: id, dispatchId: id, runId: id, taskRevisionId: id, runInputHash: short, deliveryOperationId: id, deliveryIntent, agentObservation: reason.nullable(), evidenceRefs: z.array(short).max(20) }),
   z.strictObject({ ...common, type: z.literal("worker.beginSeal"), submissionId: id, expectedVersion: version, expectedTaskVersion: version, sealToken: id }),
   z.strictObject({ ...common, type: z.literal("worker.finishSeal"), submissionId: id, sealToken: id, result: z.enum(["sealed", "unknown", "rejected"]), deliveryId: id.nullable(), reason }),
@@ -45,6 +54,7 @@ export interface OrchestrationLoop {
   cognitiveRoleId: string; allowedBusinessRoleIds: string[]; sourceAfter: EventCursor;
   maxRuns: number; maxConcurrent: number; dispatchCount: number; state: LoopState;
   enrolledBy: string; createdAtUtc: string; updatedAtUtc: string;
+  currentPolicyRevisionId?: string;
 }
 export interface OrchestrationInbox {
   projectId: string; id: string; version: number; loopId: string; sourceEventId: string;
@@ -59,11 +69,17 @@ export interface OrchestrationDispatch {
   state: DispatchState; claimToken: string | null; leaseUntilUtc: string | null;
   runtimeRunId: string | null; outcome: WorkerOutcome | null; deliveryId: string | null;
   evidenceRef: string | null; reason: string; requestedBy: string; createdAtUtc: string; updatedAtUtc: string;
+  policyRevisionId?: string; bindingId?: string | null;
 }
 export interface OrchestrationWorkerDecision {
   projectId: string; id: string; dispatchId: string; runId: string; taskId: string;
   kind: "no_action" | "waiting" | "failed" | "stop";
+  divisionDecisionId: string | null;
   reason: string; evidenceRefs: string[]; actorId: string; createdAtUtc: string;
+}
+export interface OrchestrationDivisionDecisionFact {
+  id: string; loopId: string; parentDispatchId: string; sourceEventId: string;
+  firstTaskId: string; firstTaskVersion: number; choice: string;
 }
 export interface OrchestrationSubmission {
   projectId: string; id: string; version: number; dispatchId: string; runId: string; taskId: string;
@@ -74,13 +90,13 @@ export interface OrchestrationSubmission {
   reason: string | null; createdAtUtc: string; updatedAtUtc: string;
 }
 export interface OrchestrationEvent {
-  projectId: string; id: string; loopId: string; entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision";
+  projectId: string; id: string; loopId: string; entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision" | "binding";
   entityId: string; operationId: string; kind: string; actorId: string; detail: Record<string, unknown>; createdAtUtc: string;
 }
 export interface OrchestrationOperation {
   projectId: string; id: string; actorId: string; commandHash: string; result: OrchestrationResult; createdAtUtc: string;
 }
-export interface OrchestrationResult { entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision"; entityId: string; version: number; replayed: boolean }
+export interface OrchestrationResult { entityType: "loop" | "inbox" | "dispatch" | "submission" | "decision" | "binding"; entityId: string; version: number; replayed: boolean }
 export interface OrchestrationSourceFact {
   projectId: string; id: string; createdAtUtc: string; kind: string;
   subjectId: string; subjectVersion: number; sourceLoopId: string | null; originDispatchId: string | null;
@@ -121,6 +137,14 @@ export interface OrchestrationTransaction {
   getLoop(id: string): Promise<OrchestrationLoop | null>;
   insertLoop(value: OrchestrationLoop): Promise<void>;
   updateLoop(value: OrchestrationLoop, expectedVersion: number): Promise<void>;
+  getPolicy(id: string): Promise<LoopPolicyRevision | null>;
+  insertPolicy(value: LoopPolicyRevision): Promise<void>;
+  getBinding(id: string): Promise<RuntimeRoleBinding | null>;
+  insertBinding(value: RuntimeRoleBinding): Promise<void>;
+  hasDivisionDecision(loopId: string, sourceEventId: string, firstTaskId: string): Promise<boolean>;
+  countNewRoleAllocations(templateId: string, templateRevision: number): Promise<number>;
+  getDocumentRevisionFact(documentId: string, revisionId: string): Promise<{contentHash: string} | null>;
+  getRoleState(roleId: string): Promise<{state: string; firstTaskId: string; accepted: boolean} | null>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   findInbox(loopId: string, sourceEventId: string, recipientRoleId: string, purpose: string): Promise<OrchestrationInbox | null>;
   insertInbox(value: OrchestrationInbox): Promise<void>;
@@ -128,6 +152,8 @@ export interface OrchestrationTransaction {
   getDispatch(id: string): Promise<OrchestrationDispatch | null>;
   getSubmission(id: string): Promise<OrchestrationSubmission | null>;
   getDecision(id: string): Promise<OrchestrationWorkerDecision | null>;
+  getDivisionDecisionFact(id: string): Promise<OrchestrationDivisionDecisionFact | null>;
+  findDivisionDecisionForParent(dispatchId: string): Promise<OrchestrationDivisionDecisionFact | null>;
   findSubmissionByDispatch(dispatchId: string): Promise<OrchestrationSubmission | null>;
   findDecisionByDispatch(dispatchId: string): Promise<OrchestrationWorkerDecision | null>;
   hasChildDispatch(parentDispatchId: string): Promise<boolean>;
@@ -161,6 +187,8 @@ export interface OrchestrationReader {
   getOperation(id: string): Promise<OrchestrationOperation | null>;
   getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
   getLoop(id: string): Promise<OrchestrationLoop | null>;
+  getPolicy(id: string): Promise<LoopPolicyRevision | null>;
+  getBinding(id: string): Promise<RuntimeRoleBinding | null>;
   listLoops(limit: number, cursor?: string): Promise<{ items: OrchestrationLoop[]; nextCursor: string | null }>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   listInbox(loopId: string, limit: number, cursor?: string): Promise<{ items: OrchestrationInbox[]; nextCursor: string | null }>;

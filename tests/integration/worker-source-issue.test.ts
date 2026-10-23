@@ -3,7 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
+import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import { WorkflowService } from "@evoloop/core";
+import { OrchestrationService } from "@evoloop/core/orchestration";
 import { buildServer } from "../../apps/coordinator/src/server.ts";
 import { authorizeWorkerCommand } from "../../apps/coordinator/src/workers/guard.ts";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.ts";
@@ -56,17 +58,37 @@ before(async () => {
       JSON.stringify({ status: "applied", entityId: issueId, revisionId: issueRevisionId, version: 1 }), now]);
     await client.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
       VALUES($1,$2,$3,'document','document',$4,1,$5)`, [projectId, sourceEventId, operationId, issueId, now]);
-    await client.query(`INSERT INTO orchestration_loop(project_id,loop_id,version,state,data) VALUES($1,$2,1,'active',$3)`,
-      [projectId, loopId, JSON.stringify({ projectId, id: loopId, state: "active", goalId, stageId,
-        cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"] })]);
-    await client.query(`INSERT INTO orchestration_inbox(project_id,inbox_id,loop_id,source_event_id,recipient_role_id,purpose,version,state,data)
-      VALUES($1,$2,$3,$4,'planner','cognitive_review',1,'acknowledged','{}')`, [projectId, inboxId, loopId, sourceEventId]);
-    await client.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data)
-      VALUES($1,$2,$3,$4,$5,1,1,'accepted',$6)`, [projectId, dispatchId, loopId, inboxId, taskId,
-      JSON.stringify({ runtimeRunId: runId, recipientRoleId: "planner", sourceEventId })]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
+
+  const orchestration = new OrchestrationService({store: new PgOrchestrationStore(pool, {
+    getAuthorizationFact: async () => null, canActAsRole: async () => false, wasActorRole: async () => false,
+  }), now: () => new Date(now).toISOString(), nextId: id,
+    hash: value => createHash("sha256").update(value).digest("hex")});
+  const reviewer = {actorId: "fixture", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review">};
+  const enrolled = await orchestration.execute(reviewer, {type: "loop.enroll", projectId, operationId: id(), loopId,
+    goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
+    sourceAfter: {createdAtUtc: "2026-10-22T23:59:59.000Z", eventId: null},
+    maxRuns: 1, maxConcurrent: 1, reason: "Fixed source Issue fixture"});
+  assert.equal(enrolled.entityId, loopId);
+  const loop = await orchestration.getLoop(reviewer, projectId, loopId);
+  const policyRevisionId = loop?.currentPolicyRevisionId;
+  assert.ok(policyRevisionId);
+
+  const dispatchClient = await pool.connect();
+  try {
+    await dispatchClient.query("BEGIN");
+    await dispatchClient.query("SET CONSTRAINTS ALL DEFERRED");
+    await dispatchClient.query(`INSERT INTO orchestration_inbox(project_id,inbox_id,loop_id,source_event_id,recipient_role_id,purpose,version,state,data)
+      VALUES($1,$2,$3,$4,'planner','cognitive_review',1,'acknowledged','{}')`, [projectId, inboxId, loopId, sourceEventId]);
+    await dispatchClient.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data,policy_revision_id,binding_id)
+      VALUES($1,$2,$3,$4,$5,1,1,'accepted',$6,$7,NULL)`, [projectId, dispatchId, loopId, inboxId, taskId,
+      JSON.stringify({ runtimeRunId: runId, recipientRoleId: "planner", sourceEventId,
+        policyRevisionId, bindingId: null }), policyRevisionId]);
+    await dispatchClient.query("COMMIT");
+  } catch (error) { await dispatchClient.query("ROLLBACK"); throw error; }
+  finally { dispatchClient.release(); }
 });
 after(async () => {
   await pool.end();
