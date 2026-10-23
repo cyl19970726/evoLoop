@@ -117,6 +117,7 @@ class PgReader implements Reader {
   listHandoffs(id: string) { return this.roles.listHandoffs(id); }
   listSessionBindings(id: string) { return this.roles.listSessionBindings(id); }
   getSchedule(id: string) { return this.scheduling.getSchedule(id); }
+  getManagedScheduleLoop(id: string) { return this.scheduling.getManagedScheduleLoop(id); }
   listSchedules() { return this.scheduling.listSchedules(); }
   listScheduleRevisions(id: string) { return this.scheduling.listScheduleRevisions(id); }
   listOccurrences(id: string) { return this.scheduling.listOccurrences(id); }

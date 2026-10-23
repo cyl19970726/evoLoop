@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import { scheduledSourceFacts } from "./schedule-source.js";
 
 type Row = Record<string, any>;
 type Authorization = {
@@ -147,7 +148,11 @@ class Reader implements OrchestrationReader {
       deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,
       gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,
       issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null} as OrchestrationSourceFact));
-    return {items:items.slice(0,limit),nextCursor:items.length>limit?`${items[limit-1]!.createdAtUtc}|${items[limit-1]!.id}`:null};
+    const scheduled = await scheduledSourceFacts(this.db, this.projectId, { loopId,
+      afterUtc: loop.sourceAfter.createdAtUtc, afterId: loop.sourceAfter.eventId,
+      cursorUtc: cursorTime, cursorId, limit: limit + 1 });
+    const merged = [...items, ...scheduled].sort((a,b) => a.createdAtUtc.localeCompare(b.createdAtUtc) || a.id.localeCompare(b.id));
+    return {items:merged.slice(0,limit),nextCursor:merged.length>limit?`${merged[limit-1]!.createdAtUtc}|${merged[limit-1]!.id}`:null};
   }
 }
 class Tx extends Reader implements OrchestrationTransaction {
@@ -216,7 +221,9 @@ class Tx extends Reader implements OrchestrationTransaction {
         AND NOT EXISTS (SELECT 1 FROM orchestration_decision w WHERE w.project_id=d.project_id AND w.dispatch_id=d.dispatch_id)
         AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
           AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
-        AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null}:null;}
+        AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))`,[this.projectId,id]);const x=r.rows[0];
+    if (x?.kind === "schedule.task.todo") return (await scheduledSourceFacts(this.db,this.projectId,{eventId:id}))[0] ?? null;
+    return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null}:null;}
   async getTaskFact(id:string):Promise<OrchestrationTaskFact|null>{const r=await this.db.query(`SELECT t.*,p.stage_id,s.goal_id FROM task t LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true LEFT JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.task_id,version:x.version,state:x.state,ownerRoleId:x.owner,goalId:x.goal_id??null,stageId:x.stage_id??null}:null;}
   async getTaskScopeAtVersion(taskId:string,taskVersion:number){const r=await this.db.query(`SELECT tr.version,p.stage_id,s.goal_id FROM task_revision tr
     LEFT JOIN LATERAL (SELECT proposal.stage_id FROM task_proposal proposal
@@ -241,7 +248,7 @@ class Tx extends Reader implements OrchestrationTransaction {
       WHERE proposal.project_id=d.project_id AND proposal.task_id=d.task_id AND pr.version<=dr.version
       ORDER BY pr.version DESC LIMIT 1) p ON true
     WHERE o.project_id=$1 AND o.observation_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.observation_id,taskId:x.task_id,deliveryId:x.delivery_id,actorId:x.actor_id,result:x.result,taskRevisionId:x.task_revision_id,stageId:x.stage_id??null}:null;}
-  async getWorkflowOperationFact(id:string){const r=await this.db.query("SELECT operation_id,actor_id,command_type,command_hash,result FROM operation_journal WHERE project_id=$1 AND operation_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.operation_id,actorId:x.actor_id,commandType:x.command_type,commandHash:x.command_hash,status:x.result.status,resultRefId:x.result.revisionId??null,resultVersion:x.result.version??null}:null;}
+  async getWorkflowOperationFact(id:string){const r=await this.db.query("SELECT operation_id,actor_id,command_type,command_hash,result FROM operation_journal WHERE project_id=$1 AND operation_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.operation_id,actorId:x.actor_id,commandType:x.command_type,commandHash:x.command_hash,status:x.result.status,resultRefId:x.result.revisionId??x.result.entityId??null,resultVersion:x.result.version??null}:null;}
   async getIssueFact(documentId:string,revisionId:string){const r=await this.db.query(`SELECT d.document_id,d.origin_task_id,d.origin_task_revision_id,d.origin_run_id,
       r.revision_id,r.content_hash,r.author,tr.version AS origin_task_version
     FROM process_document d JOIN document_revision r ON r.project_id=d.project_id AND r.document_id=d.document_id

@@ -56,7 +56,7 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
     if (scope.kind === "cognition" && loop.stageId && parts[0] === "stages" && parts[1] === loop.stageId &&
         (parts.length === 2 || parts.length === 3 && ["revisions", "reviews"].includes(parts[2]!))) return true;
     if (scope.kind === "cognition" && parts[0] === "orchestration" && parts[1] === "loops" && parts[2] === scope.loopId &&
-        (parts.length === 3 || parts.length === 4 && ["inbox", "dispatches", "events", "tasks", "submissions"].includes(parts[3]!))) return true;
+        (parts.length === 3 || parts.length === 4 && ["inbox", "dispatches", "events", "sources", "tasks", "submissions"].includes(parts[3]!))) return true;
     if (scope.kind === "cognition" && parts[0] === "orchestration" && parts[1] === "inbox" && id(parts[2]) && parts.length === 3) {
       const inbox = await facts.inbox(parts[2]);
       return same(inbox, scope.projectId) && inbox?.loopId === scope.loopId;
