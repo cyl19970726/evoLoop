@@ -17,6 +17,8 @@ npm run --silent cli -- command schema task.create
 
 `task UUID --history` 展示已保存的真实修订及当时状态；`document UUID --revision UUID`、`original DOCUMENT_UUID --revision UUID [--out NEW_DIRECTORY]` 指向固定原件。`context` 应带回 Task 的封存依据及可读来源，并明确 `complete` 或逐项 `partial`；总读取预算为 16 MiB，超限时列出未读固定 ID，可按其修订逐项调用 `original`。来源失败时不可把最近版本猜作任务依据。HTML 与资源包导出只进入调用者指定的私有**新目录**，其父目录须已存在；可放在仓库外，或明确被 Git 忽略的本机目录，不公开原件。对于知识页、候选、运行、负责人讨论、日程等，按 `list`/`read` 的实际帮助读取；固定来源、未采纳候选和已发布认识不得混同。普通 `get /api/...` 保留为同源只读兼容入口。
 
+当前 todo Task 尚无 basis 时，`context` 另列 `observedPlanningCandidates`：关联过程文档当时已发布、已采纳的修订、hash、来源 Task 修订与固定原件路径。`planningObservedAtUtc` 记录观察时间；这些指针尚未封存，也不表示本次命令读过候选正文。按指针读取精确 `original`；采纳版改变后旧候选可能失效，应重新观察并说明变化。未发布、归档、超限或不可发现的关联材料会明确列为 partial。历史 `--revision` 与已封存 context 沿用自己的依据，不混入当前候选。此只读发现不启动 Task，也不要求启用自动执行；受管 worker 中仅认知职责可在已授权 Goal/Stage 范围查询。
+
 ## 提交与核对
 
 拿到当前版本、真实依据和权限后，用 schema 制作 JSON 文件。通用命令经 `command run JSON_FILE`（旧式 `command JSON_FILE` 兼容）提交；同一 `operationId`、行为者及同一内容可重读原回执，不同内容复用 ID 会被拒绝。修改已有对象时使用刚读到的 `expectedVersion`，遇版本冲突重读并重新判断，不能把旧意图直接改个版本重发。专用操作先看 `request types` 和 `request schema NAME`，再用 `request NAME --project UUID --file JSON_FILE [--id TARGET_UUID] [--receipt LOCAL_UUID]`；目标 ID 和是否另需本地回执 ID 由该类型帮助说明。它只分派已实现的具名 API，不是任意 POST 通道。
@@ -64,7 +66,7 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 自动循环使用同一 CLI、业务 core 和 App Server，另有独立的编排命令与回执。`command types/schema/run` 同时发现两类命令；编排命令发往 `/api/orchestration/commands`，原业务命令仍发往 `/api/commands`。用 `list loops`、`list inbox --loop ID`、`list dispatches --loop ID`、`read loop ID --events`、`read dispatch ID` 和 `read submission ID` 回读。编排操作在 `/api/projects/PROJECT_ID/orchestration/operations/OPERATION_ID` 核对原 actor 与命令摘要；CLI 不自动重发。显式 `receipts retry` 只支持其纯事务白名单，原生启动和封存等阶段先对账。
 
-管理员一次配置项目职责、目录、scope 与预算，再 `loop.enroll` 固定 Goal/Stage、起始事件基线、认知职责及允许的业务职责。循环不扫描并启动历史 todo。认知先读取真实依据，再通过 CLI 创建有界 Task 和子派发；每项 Task 不需要人重新开始或预留。`cognitive_review` 与 `next_action` 分别承载同一来源的认知与后续动作，子派发引用父认知 Dispatch，等父运行有署名封存交付后才执行。业务结果经独立来源订阅去重回到认知，不消费飞书投影的回执。
+管理员一次配置项目职责、目录、scope 与预算，再 `loop.enroll` 固定 Goal/Stage、起始事件基线、认知职责及允许的业务职责。循环不扫描并启动历史 todo。认知先读取真实依据，核对可复用的 Stage 待办；合适且无在途或 unknown Run 的 todo Task 可按观察到的版本申请子派发，不同工作才新建 Task。`cognitive_review` 与 `next_action` 分别承载同一来源的认知与后续动作，正式子派发在父最终决定前提出，引用父认知 Dispatch；父 Run 已知终态且封存副作用已知后即可执行，无需父报告或 Delivery。每项 Task 不需要人重新开始或预留。业务结果经独立来源订阅去重回到认知，不消费飞书投影的回执。
 
 自动执行中，Task 的 `documentIds` 选择所需过程输入。首次开始会显式封存这些文档的 published/adopted 修订；已有关联但未发布或归档的输入会阻断，不被静默忽略。已有 basis 沿用固定来源及保留决定。过程报告交付使用 `#/p/PROJECT_ID/documents/DOCUMENT_ID?revision=REVISION_ID` 固定入口，`artifactRevision` 与 `contentHash` 要和保存后回读的原文一致，供后续认知精确读取。
 
