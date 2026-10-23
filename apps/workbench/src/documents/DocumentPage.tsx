@@ -4,6 +4,7 @@ import { api, errorText } from "../api";
 import { Alert, ShortId, RevisionBody, documentReturnHref, href } from "../ui/shared";
 import { ActionForm, type MutationContext } from "../workflow/ActionForm";
 import { UploadDocument } from "./UploadDocument";
+import { DocumentOrigin } from "./DocumentOrigin";
 import "./document.css";
 const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告" } as const;
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
@@ -38,6 +39,7 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     {loading && <Alert>正在核对当前修订；保存与采纳暂不可用。</Alert>}
     {error && <Alert kind="error">回读未完成：{error}。草稿仍留在本页。</Alert>}
     <div className="eyebrow">{detail.document.kind ? kindLabel[detail.document.kind] : "过程文档"} · {statusLabel[detail.document.status]}</div><h1>{detail.document.title}</h1>
+    {detail.document.origin && <DocumentOrigin token={token} projectId={projectId} origin={detail.document.origin} />}
     {taskOwned && <Alert>这是任务主文档。此处只阅读固定修订；请从{detail.document.primaryTaskId
       ? <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a> : "所属任务页"}修改正文。</Alert>}
     <div className="doc-version-status" aria-label="文档修订状态">
