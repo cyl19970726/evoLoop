@@ -62,7 +62,15 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   });
   let orchestrationClock: string | null=null;
   const orchestration=new OrchestrationService({store,now:()=>orchestrationClock ?? new Date().toISOString(),nextId:randomUUID,hash,
-    getWorkerScope:async actor=>(await broker.identityForActor(actor))?.scope ?? null});
+    getWorkerScope:async actor=>(await broker.identityForActor(actor))?.scope ?? null,
+    canReadDivisionMaterial:async(actor,documentId,revisionId)=>{
+      const identity=await broker.identityForActor(actor);
+      if(!identity)return false;
+      const facts=workerGuardFacts(pool,identity);
+      return await facts.fixedDocument(identity.scope.taskId,documentId,revisionId) ||
+        await facts.sourceIssueDocumentRevision?.(documentId,revisionId)===true ||
+        await facts.recoveryDocument?.(documentId,revisionId)===true;
+    }});
   const app=await buildServer({service:workflow,credentials:[{token:ownerToken,actorId:controller,projectIds:[projectId],permissions:["read","write","review"]}],
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)},
     orchestration:{service:orchestration},documents:{uow,blobsForPrincipal:async()=>({} as never)},

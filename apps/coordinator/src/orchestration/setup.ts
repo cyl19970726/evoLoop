@@ -11,7 +11,7 @@ import type { loadIntegrations } from "../configuration.js";
 import type { RuntimeRunner } from "../runtime/runner.js";
 import { WorkerCredentialBroker } from "../workers/credentials.js";
 import { workerGuardFacts } from "../workers/facts.js";
-import { authorizeWorkerRequest } from "../workers/guard.js";
+import { canReadDivisionEvidence } from "../workers/guard.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 import { readWorkStatuses } from "./work-status.js";
@@ -136,17 +136,14 @@ export function setupManagedLoops(options: {
     hash: value => createHash("sha256").update(value).digest("hex"),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
     getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
+    canReadDivisionMaterial: async (actorId, documentId, revisionId) => {
+      const identity = await broker.identityForActor(actorId);
+      if (!identity || identity.scope.kind !== "cognition") return false;
+      return canReadDivisionEvidence(identity, workerGuardFacts(options.pool, identity), documentId, revisionId);
+    },
     getTrialController: async (projectId, actorId) => actorId === controllerPrincipal.actorId &&
       controllerPrincipal.projectIds.includes(projectId) ? controllerPrincipal : null,
-    verifyProposalMaterial: async (principal, projectId, documentId, revisionId, hash) => {
-      if (principal.actorId.startsWith("worker-")) {
-        const identity = await broker.identityForActor(principal.actorId);
-        if (!identity || !await authorizeWorkerRequest(identity, {method:"GET",
-          path:`/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/original`},
-          workerGuardFacts(options.pool,identity))) return false;
-      }
-      return options.verifyProposalMaterial(principal,projectId,documentId,revisionId,hash);
-    }});
+    verifyProposalMaterial: options.verifyProposalMaterial});
   const dynamicController = async (dispatch: OrchestrationDispatch, historical = false) => {
     if (!dispatch.bindingId || !entry.projectIds.includes(dispatch.projectId)) return null;
     const binding = await orchestration.getBinding(controllerPrincipal, dispatch.projectId, dispatch.bindingId);

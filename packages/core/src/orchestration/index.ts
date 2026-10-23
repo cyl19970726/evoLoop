@@ -11,7 +11,9 @@ export interface OrchestrationDependencies { store: OrchestrationStore; now(): s
   getDelegationTemplate?(projectId: string, templateId: string): Promise<{template: DelegationTemplate; hash: string} | null>;
   getWorkerScope?(actorId: string): Promise<{projectId: string; loopId: string; taskId: string; runId: string; roleId: string; kind: string} | null>;
   getTrialController?(projectId: string, actorId: string): Promise<Principal | null>;
-  verifyProposalMaterial?(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean> }
+  verifyProposalMaterial?(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
+  canReadDivisionMaterial?(actorId: string, documentId: string, revisionId: string): Promise<boolean>;
+}
 const fail = (code: string, message: string, currentVersion?: number): never => { throw new OrchestrationError(code, message, currentVersion); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const cursorAfter = (a: { createdAtUtc: string; eventId: string }, b: { createdAtUtc: string; eventId: string | null }): boolean => Date.parse(a.createdAtUtc) > Date.parse(b.createdAtUtc) || (Date.parse(a.createdAtUtc) === Date.parse(b.createdAtUtc) && a.eventId > (b.eventId ?? ""));
@@ -200,6 +202,9 @@ export class OrchestrationService {
       if (!source || source.projectId !== loop.projectId) return fail("SOURCE_UNAVAILABLE", "fixed source unavailable");
       const material = await tx.getDocumentRevisionFact(command.documentId, command.documentRevisionId);
       if (!material || material.contentHash !== command.documentContentHash) return fail("MATERIAL_CHANGED", "fixed Document revision/hash required");
+      // A new division binding cannot authorize the material used to justify its own creation.
+      if (workerScope && !await this.deps.canReadDivisionMaterial?.(principal.actorId, command.documentId, command.documentRevisionId))
+        return fail("MATERIAL_FORBIDDEN", "cognition worker must already be able to read the fixed material");
       const task = await tx.getTaskFact(command.firstTaskId);
       if (!task || task.projectId !== loop.projectId || task.version !== command.expectedFirstTaskVersion ||
         !["todo", "in_progress"].includes(task.state) || task.goalId !== loop.goalId ||

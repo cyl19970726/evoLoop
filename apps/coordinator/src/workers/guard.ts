@@ -26,6 +26,15 @@ export interface WorkerGuardFacts {
   submission?(submissionId: string): Promise<(Fact & {runId: string; taskId: string}) | null>;
   decision?(decisionId: string): Promise<(Fact & {loopId: string; runId: string; taskId: string; actorId: string}) | null>;
 }
+
+/** Evaluate only rights that existed before a division binding was written. */
+export async function canReadDivisionEvidence(identity: WorkerIdentity, facts: WorkerGuardFacts,
+  documentId: string, revisionId: string): Promise<boolean> {
+  return identity.scope.kind === "cognition" &&
+    (await facts.fixedDocument(identity.scope.taskId, documentId, revisionId) ||
+      await facts.sourceIssueDocumentRevision?.(documentId, revisionId) === true ||
+      await facts.recoveryDocument?.(documentId, revisionId) === true);
+}
 export interface WorkerRequest { method: string; path: string; body?: unknown }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const obj = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -195,7 +204,9 @@ export async function authorizeWorkerCommand(identity: WorkerIdentity, value: un
       await facts.sourceIssueDocumentRevision?.(command.documentId, command.revisionId) === true;
   if (command.type === "division.decide") {
     if (scope.kind !== "cognition" || loop.state !== "active" || command.loopId !== scope.loopId ||
-        !id(command.firstTaskId) || !await task(command.firstTaskId)) return false;
+        !id(command.firstTaskId) || !await task(command.firstTaskId) ||
+        !id(command.documentId) || !id(command.documentRevisionId) ||
+        !await canReadDivisionEvidence(identity,facts,command.documentId,command.documentRevisionId)) return false;
     const parent = await facts.dispatchForRun?.(scope.runId), run = await facts.run(scope.runId);
     return !!parent && same(parent,scope.projectId) && parent.id === command.parentDispatchId &&
       parent.loopId === scope.loopId && parent.taskId === scope.taskId && parent.runtimeRunId === scope.runId &&

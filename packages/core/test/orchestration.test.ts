@@ -23,6 +23,7 @@ function harness() {
   let delegation: {template: DelegationTemplate; hash: string} | null = null;
   let failBinding = false;
   let delegatedWorkerScope: {projectId:string;loopId:string;taskId:string;runId:string;roleId:string;kind:string}|null=null;
+  let delegatedMaterialReadable = true;
   const roleStates = new Map<string, {state:string;firstTaskId:string;accepted:boolean}>();
   let data: Data = { roles: new Map(), roleOperationActors: [], loops: new Map(), policies: new Map(), bindings: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
     [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
@@ -90,6 +91,7 @@ function harness() {
   const service = new OrchestrationService({ store, now: () => currentTime, nextId: randomUUID,
     hash: value => value.endsWith(":role.propose") || value.endsWith(":role.decide") ? createHash("sha256").update(value).digest("hex") : value,
     getWorkerScope:async()=>delegatedWorkerScope,
+    canReadDivisionMaterial:async()=>delegatedMaterialReadable,
     getDelegationTemplate: async (_project, id) => delegation?.template.id === id ? delegation : null,
     getTrialController: async (_project, actorId) => actorId === reviewer.actorId ? reviewer : null,
     verifyProposalMaterial: async () => true });
@@ -110,6 +112,7 @@ function harness() {
     change(fn: (value: Data) => void) { fn(data); }, setDelegation(value: {template: DelegationTemplate; hash: string} | null) { delegation = value; },
     setDelegatedWorkerScope(value: typeof delegatedWorkerScope) {delegatedWorkerScope=value;},
     failNextBinding(value: boolean) { failBinding = value; },
+    setDelegatedMaterialReadable(value: boolean) {delegatedMaterialReadable=value;},
     setRoleState(id: string, value: {state:string;firstTaskId:string;accepted:boolean}) { roleStates.set(id,value); } };
 }
 
@@ -796,6 +799,10 @@ test("current cognition worker may sign only the exact brokered parent under an 
   }
   f.h.setDelegatedWorkerScope(scope);
   await assert.rejects(()=>f.h.service.execute(runtimeWorker,{...request,operationId:op(),parentDispatchId:randomUUID()}),failed("INVALID_CAUSALITY"));
+  f.h.setDelegatedMaterialReadable(false);
+  await assert.rejects(()=>f.h.service.execute(runtimeWorker,{...request,operationId:op()}),failed("MATERIAL_FORBIDDEN"));
+  assert.equal(f.h.data.bindings.size,0);
+  f.h.setDelegatedMaterialReadable(true);
   const chosen=await f.h.service.execute(runtimeWorker,{...request,operationId:op()});
   assert.equal(chosen.entityType,"binding");
   await assert.rejects(()=>f.h.service.execute(runtimeWorker,{...request,operationId:op(),
