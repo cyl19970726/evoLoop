@@ -5,6 +5,7 @@ import type { KnowledgeRevision, KnowledgeSummary, KnowledgeSourceRef } from "@e
 import { errorText, isUnconfirmed, request } from "../api";
 import { knowledgeClient } from "../knowledge/client";
 import { Notice, type MutationContext } from "../workflow/ActionForm";
+import { FixedGitOriginalReader } from "./FixedGitOriginalReader";
 
 const key = encodeURIComponent;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -22,6 +23,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   const [busy, setBusy] = useState(false);
   const [unknown, setUnknown] = useState(false);
   const [history, setHistory] = useState<TaskExternalReferenceRecord[]>([]);
+  const [openGitDecisionId, setOpenGitDecisionId] = useState<string | null>(null);
   const [historyTick, setHistoryTick] = useState(0);
   const [referenceId, setReferenceId] = useState("");
   const [referenceRevision, setReferenceRevision] = useState("");
@@ -60,7 +62,8 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
     setMessage("已载入该槽位的最新固定依据和版本；保留原版请选择「保留」，改用新来源请选择「替换」。");
   }
   useEffect(() => {
-    if (!taskId) { setHistory([]); return; }
+    setHistory([]); setOpenGitDecisionId(null);
+    if (!taskId) return;
     let active = true;
     void request<TaskExternalReferenceRecord[]>(context.token, `${root}/tasks/${key(taskId)}`, 30000)
       .then(items => { if (active) setHistory(items); })
@@ -224,6 +227,10 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
     {message && <Notice error={/失败|不可|错误|冲突|缺少|无法/.test(message)}>{message}</Notice>}
     {history.length > 0 && <div><h3>已记录的采用历史</h3><ul>{history.map(item =>
       <li key={item.id} className="reference-history-item">{item.decision} · {item.kind} · {item.referenceId} @ {item.revision} · {item.actionImpact}
+        {item.kind === "git" && <><button type="button" aria-expanded={openGitDecisionId === item.id}
+          onClick={() => setOpenGitDecisionId(current => current === item.id ? null : item.id)}>
+          {openGitDecisionId === item.id ? "收起固定 Git 原文" : "阅读固定 Git 原文"}
+        </button>{openGitDecisionId === item.id && <FixedGitOriginalReader key={`${item.id}:${context.principal.actorId}`} token={context.token} record={item} />}</>}
         {heads.get(item.slotId)?.id === item.id && <button type="button" disabled={busy || unknown || context.blocked || !context.principal.permissions.includes("review")} onClick={() => reviewHead(item)}>复核此依据（槽位 v{item.version}）</button>}
       </li>)}</ul></div>}
   </section>;

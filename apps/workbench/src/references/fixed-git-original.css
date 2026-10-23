@@ -1,0 +1,7 @@
+.fixed-git-original{min-width:0;max-width:100%;margin:12px 0;padding:16px;border:1px solid #dbe3ef;border-radius:8px;background:#f8faff;overflow-wrap:anywhere}
+.fixed-git-original h4{margin:0 0 7px;color:#25334b}.fixed-git-original p{margin:8px 0;line-height:1.5}
+.fixed-git-identity{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:9px;margin:14px 0;min-width:0}
+.fixed-git-identity div{min-width:0}.fixed-git-identity dt{font-size:.8rem;color:#596983}.fixed-git-identity dd{min-width:0;margin:2px 0 0}
+.fixed-git-original code{white-space:normal;overflow-wrap:anywhere}.fixed-git-problem{color:#8a3e42}
+.fixed-git-original-text{box-sizing:border-box;width:100%;max-height:75vh;overflow:auto;margin:14px 0 0;padding:14px;border:1px solid #e2e7ef;border-radius:6px;background:#fff;color:#263144;font-size:.84rem;line-height:1.5;white-space:pre;tab-size:2}
+@media(max-width:600px){.fixed-git-original{padding:12px}.fixed-git-original button{max-width:100%}.fixed-git-original-text{font-size:.78rem}}
