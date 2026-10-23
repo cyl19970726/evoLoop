@@ -13,7 +13,7 @@ export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionSta
 export const idSchema = z.uuid();
 const text = z.string().trim().min(1).max(4000);
 const declaredConsumer = text.optional().describe("Exact-match declared consumer identifier. For an Agent, use the actual principal.actorId that will personally sign the observation; do not use a roleId, display name, or explanation. Put explanation in evidence or reason.");
-const consumerUseRequired = z.boolean().optional().describe("When true, task.close requires the latest observation by the declared consumer for the current Delivery to have result=used. Worker completion, a Delivery alone, or use by another actor does not satisfy this.");
+const consumerUseRequired = z.boolean().optional().describe("When true, also declare consumer. Task.close requires the latest observation by the declared consumer for the current Delivery to have result=used. Worker completion, a Delivery alone, or use by another actor does not satisfy this.");
 const title = z.string().trim().min(1).max(240);
 const version = z.number().int().positive();
 const common = { projectId: idSchema, operationId: idSchema };
