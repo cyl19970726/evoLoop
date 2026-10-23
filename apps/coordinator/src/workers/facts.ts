@@ -221,7 +221,6 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         {projectId: scope.projectId, taskId: null, loopId: scope.loopId} : null;
     },
     fixedDocument,
-    sourceIssueDocumentRevision,
     ownedDocumentRevision: async (documentId, revisionId) => !!await one(`SELECT 1 FROM document_revision r
       JOIN process_document d ON d.project_id=r.project_id AND d.document_id=r.document_id
       WHERE r.project_id=$1 AND r.document_id=$2 AND r.revision_id=$3 AND r.author=$4 AND d.kind IN ('report','issue')`,

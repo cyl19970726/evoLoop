@@ -1,5 +1,10 @@
 -- An issue/report can cite the Task revision observed when it was written.
 -- Existing Documents remain unscoped; no historical provenance is inferred.
+-- A full legacy upgrade runs 012's Task primary-Document backfill and this
+-- migration in one transaction. Drain its deferred FK/constraint events before
+-- changing process_document's shape, then restore deferred migration checks.
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;
 ALTER TABLE process_document ADD COLUMN origin_task_id uuid;
 ALTER TABLE process_document ADD COLUMN origin_task_revision_id uuid;
 ALTER TABLE process_document ADD COLUMN origin_run_id uuid;
