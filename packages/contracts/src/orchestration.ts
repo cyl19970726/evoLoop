@@ -88,6 +88,13 @@ export interface OrchestrationSourceFact {
   deliveryId: string | null; observationResult: "used" | "failed" | "notUsed" | null;
   /** Fixed Run of a formal dispatch.gap; absent for other source kinds. */
   gapRunId?: string | null; gapTaskVersion?: number | null;
+  /** Creation revision of a scoped issue; report and unscoped Document events are not sources. */
+  issueRevisionId?: string | null; issueContentHash?: string | null;
+}
+export interface OrchestrationIssueFact {
+  projectId: string; documentId: string; revisionId: string; contentHash: string; author: string;
+  kind: "issue"; originTaskId: string; originTaskRevisionId: string;
+  originTaskVersion: number; originRunId: string | null;
 }
 export interface OrchestrationTaskFact { projectId: string; id: string; version: number; state: "todo" | "in_progress" | "done" | "cancelled"; ownerRoleId: string; goalId: string | null; stageId: string | null }
 export interface OrchestrationTaskScopeFact { projectId: string; taskId: string; taskVersion: number; goalId: string | null; stageId: string | null }
@@ -135,6 +142,7 @@ export interface OrchestrationTransaction {
   getDeliveryFact(id: string): Promise<OrchestrationDeliveryFact | null>;
   getObservationFact(id: string): Promise<OrchestrationObservationFact | null>;
   getWorkflowOperationFact(id: string): Promise<OrchestrationWorkflowOperationFact | null>;
+  getIssueFact(documentId: string, revisionId: string): Promise<OrchestrationIssueFact | null>;
   canActAsRole(actorId: string, roleId: string): Promise<boolean>;
   /** Historical classification only. Never grants command authority. */
   wasActorRole(actorId: string, loopId: string, roleId: string): Promise<boolean>;

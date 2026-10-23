@@ -7,6 +7,15 @@ export function taskSectionHref(projectId: string, taskId: string, target: {revi
     target.tab ? `${base}?tab=${target.tab}` : base;
 }
 
+/** Internal tab changes use the same URL as incoming links, so browser history and later same-Task links agree. */
+export function navigateTaskTab(projectId: string, taskId: string, section: TaskSection,
+  location: {hash:string}): boolean {
+  const href = taskSectionHref(projectId, taskId, {tab:section});
+  if (location.hash === href) return false;
+  location.hash = href;
+  return true;
+}
+
 /** A Task tab hint is read only for this exact project and Task; a fixed revision always opens history. */
 export function taskSectionFromHash(hash: string, projectId: string, taskId: string): TaskSection | null {
   const [path, query, extra] = hash.split("?");
