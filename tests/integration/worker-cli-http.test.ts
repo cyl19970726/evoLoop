@@ -878,10 +878,15 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await workerCommand(recoveryWorker.wrapperPath,{...methodIntent,parentDispatchId:original.entityId},1)).error?.code,"FORBIDDEN");
   const recordedMethod=await workerCommand(recoveryWorker.wrapperPath,methodIntent);
   assert.equal(recordedMethod.entityId,methodIntent.decisionId);
-  const waitingMethod=await workerCommand(recoveryWorker.wrapperPath,{type:"worker.decision",decisionId:randomUUID(),
+  const invalidWaiting=await workerCommand(recoveryWorker.wrapperPath,{type:"worker.decision",decisionId:randomUUID(),
     dispatchId:recoveryDispatch.entityId,runId:recoveryRunId,kind:"waiting",
-    divisionDecisionId:recordedMethod.entityId,reason:"Wait on the fixed method intent",evidenceRefs:[]});
-  assert.equal((await orchestration.getDecision(owner,projectId,waitingMethod.entityId))?.divisionDecisionId,recordedMethod.entityId);
+    divisionDecisionId:recordedMethod.entityId,reason:"Method is not a handoff binding",evidenceRefs:[]},1);
+  assert.equal(invalidWaiting.error?.code,"INVALID_CAUSALITY");
+  assert.equal(await orchestration.getDecisionForDispatch(owner,projectId,recoveryDispatch.entityId),null);
+  const noAction=await workerCommand(recoveryWorker.wrapperPath,{type:"worker.decision",decisionId:randomUUID(),
+    dispatchId:recoveryDispatch.entityId,runId:recoveryRunId,kind:"no_action",
+    divisionDecisionId:null,reason:"Reviewed the fixed gap without a child",evidenceRefs:[]});
+  assert.equal((await orchestration.getDecision(owner,projectId,noAction.entityId))?.divisionDecisionId,null);
   const recoveryGet=(path:string,expected=0)=>cli(recoveryWorker.wrapperPath,["get",`/api/projects/${projectId}/${path}`],expected);
   assert.equal((await recoveryGet(`runtime/runs/${gapRunId}`)).id,gapRunId);
   assert.equal((await recoveryGet(`tasks/${gapTaskId}/revisions/${oldRevision}`)).revision.id,oldRevision);

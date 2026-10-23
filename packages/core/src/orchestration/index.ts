@@ -67,6 +67,7 @@ export class OrchestrationService {
   async getStudyDeclaration(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getStudyDeclaration(id)); }
   async getPolicy(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getPolicy(id)); }
   async getBinding(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getBinding(id)); }
+  async getDivisionDecisionFact(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getDivisionDecisionFact(id)); }
   async listLoops(principal: Principal, projectId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listLoops(this.limit(limit), cursor)); }
   async listInbox(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listInbox(loopId, this.limit(limit), cursor)); }
   async listDispatches(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listDispatches(loopId, this.limit(limit), cursor)); }
@@ -671,6 +672,7 @@ export class OrchestrationService {
       if (inbox.state !== "acknowledged") return fail("ACK_REQUIRED", "acknowledged inbox item required");
       if (loop.dispatchCount >= loop.maxRuns) return fail("RUN_LIMIT", "loop run budget exhausted");
       const cognitionRequest = command.recipientRoleId === loop.cognitiveRoleId;
+      let methodIntent = false;
       if (cognitionRequest) {
         if (command.purpose !== "cognition" || inbox.purpose !== "cognitive_review" || command.parentDispatchId !== null) return fail("INVALID_CAUSALITY", "cognition requires cognitive_review inbox without a parent dispatch");
       } else {
@@ -683,13 +685,21 @@ export class OrchestrationService {
         // A signed decision fixes the parent's choice. The project transaction lock orders
         // child requests and worker decisions even when their UTC timestamps are identical.
         if (await tx.findDecisionByDispatch(parent.id)) return fail("PARENT_DECIDED", "cognition decision is already signed; no later child dispatch can be attributed to it");
-        if (await tx.findDivisionDecisionForParent(parent.id))
-          return fail("DIVISION_INTENT_PENDING", "cognition parent already fixed a division intent; ordinary child dispatch cannot replace it");
+        const intent = await tx.findDivisionDecisionForParent(parent.id);
+        if (intent && intent.choice !== "method")
+          return fail("DIVISION_INTENT_PENDING", "cognition parent already fixed a binding intent; ordinary child dispatch cannot replace it");
+        methodIntent = !!intent;
+        if (intent && (intent.loopId !== loop.id || intent.parentDispatchId !== parent.id ||
+          intent.sourceEventId !== inbox.sourceEventId || intent.firstTaskId !== command.taskId ||
+          intent.firstTaskVersion !== command.expectedTaskVersion))
+          return fail("METHOD_TASK_MISMATCH", "method permits only its fixed first Task and source");
       }
       const auth = await tx.getAuthorizationFact(command.authorizationScopeId);
       if (!auth || auth.projectId !== command.projectId || !auth.active || auth.roleId !== command.recipientRoleId) return fail("SCOPE_NOT_AUTHORIZED", "active scoped worker authorization required");
       const task = await tx.getTaskFact(command.taskId);
       if (!task || task.projectId !== command.projectId || task.version !== command.expectedTaskVersion || (task.state !== "todo" && task.state !== "in_progress") || task.ownerRoleId !== command.recipientRoleId || task.goalId !== loop.goalId || !task.stageId || (loop.stageId !== null && task.stageId !== loop.stageId)) return fail("TASK_CHANGED", "Task current version, state, owner, and loop scope must match");
+      if (methodIntent && task.state !== "todo")
+        return fail("METHOD_TASK_MISMATCH", "method cannot reopen an in-progress first Task as an ordinary child");
       const stage = await tx.getStageFact(task.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage must be active under the loop goal");
       if (cognitionRequest && !loop.currentStudyDeclarationId) {
@@ -764,7 +774,10 @@ export class OrchestrationService {
       if (await tx.findDecisionByDispatch(dispatch.id) || await tx.getDecision(command.decisionId) || await tx.findSubmissionByDispatch(dispatch.id)) return fail("ALREADY_EXISTS", "dispatch already has a worker intent or decision ID is used");
       const intent = await tx.findDivisionDecisionForParent(dispatch.id);
       if (command.divisionDecisionId && command.kind !== "waiting") return fail("INVALID_CAUSALITY", "only waiting may cite a division intent");
-      if (command.kind === "waiting" && (intent || command.divisionDecisionId)) {
+      if (command.kind === "waiting" && intent?.choice === "method") {
+        if (command.divisionDecisionId || !await tx.hasChildDispatch(dispatch.id))
+          return fail("INVALID_CAUSALITY", "method has no binding; waiting needs an ordinary child and no divisionDecisionId");
+      } else if (command.kind === "waiting" && (intent || command.divisionDecisionId)) {
         if (command.kind !== "waiting" || !intent || command.divisionDecisionId !== intent.id ||
           dispatch.recipientRoleId !== loop.cognitiveRoleId || intent.loopId !== loop.id ||
           intent.parentDispatchId !== dispatch.id || intent.sourceEventId !== dispatch.sourceEventId ||

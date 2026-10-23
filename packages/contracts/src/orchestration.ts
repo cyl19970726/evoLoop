@@ -236,6 +236,7 @@ export interface OrchestrationReader {
   getStudyDeclaration(id: string): Promise<StudyMaterialDeclaration | null>;
   getPolicy(id: string): Promise<LoopPolicyRevision | null>;
   getBinding(id: string): Promise<RuntimeRoleBinding | null>;
+  getDivisionDecisionFact(id: string): Promise<OrchestrationDivisionDecisionFact | null>;
   listLoops(limit: number, cursor?: string): Promise<{ items: OrchestrationLoop[]; nextCursor: string | null }>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   listInbox(loopId: string, limit: number, cursor?: string): Promise<{ items: OrchestrationInbox[]; nextCursor: string | null }>;
