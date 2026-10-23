@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
-import type { RuntimeRunner } from "../src/runtime/runner.js";
+import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
 import { delegationTemplateHash, loadIntegrations, runtimeThreadConfigForSession } from "../src/configuration.js";
 
@@ -168,12 +168,17 @@ test("reviewer recovery endpoint is explicit and checks project authority", asyn
 test("runtime status hides another actor cwd and healthy recovery cannot restart the global process",async()=>{
   let recovered=0;
   const service={...workManagementQueries,getProject:async()=>({id:projectId})} as unknown as WorkflowService;
-  const runtime={status:()=>({available:true,error:null}),recover:async()=>{recovered++;}} as unknown as RuntimeRunner;
+  const foreignProject=randomUUID(),foreignRun=randomUUID(),ownRun=randomUUID();
+  const runtime={status:(scope?:string)=>({available:true,error:null,
+    faults:[{projectId:scope===projectId?projectId:foreignProject,runId:scope===projectId?ownRun:foreignRun}]}),
+    recover:async()=>{recovered++;}} as unknown as RuntimeRunner;
   const app=await buildServer({service,credentials:credentials as never,runtime,runtimeGrants:()=>[grant],allowedRuntimeCwds:()=>[cwd,"/private/another-actor"]});
   try{
     const writerHeaders={authorization:`Bearer ${"w".repeat(40)}`};
     const status=await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime`,headers:writerHeaders});
     assert.deepEqual(status.json().allowedCwds,[]);assert.deepEqual(status.json().grants,[]);
+    assert.deepEqual(status.json().faults,[{projectId,runId:ownRun}]);
+    assert.doesNotMatch(status.body,new RegExp(foreignRun));
     assert.equal((await app.inject({method:"POST",url:`/api/projects/${projectId}/runtime/recover`,headers:writerHeaders})).statusCode,403);
     assert.equal((await app.inject({method:"POST",url:`/api/projects/${projectId}/runtime/recover`,headers})).statusCode,200);
     assert.equal(recovered,0);
@@ -214,5 +219,66 @@ test("explicit terminal reconciliation requires review and the exact current ses
     const accepted = await app.inject({ method: "POST", url, headers, payload });
     assert.equal(accepted.statusCode, 200, accepted.body);
     assert.deepEqual(calls, [{ actorId: "reviewer", version: 4, reason: payload.reason }]);
+  } finally { await app.close(); }
+});
+
+test("project read reviewer can inspect a bound trace without execution grant while reserve and reconcile stay denied", async () => {
+  const runId = randomUUID();
+  let reads = 0, mutations = 0;
+  const traceToken = "q".repeat(40);
+  const traceHeaders = { authorization: `Bearer ${traceToken}` };
+  const service = { ...workManagementQueries,
+    execute: async () => { mutations++; return { status: "applied" }; },
+    getRuntimeRun: async () => ({ id: runId, sessionId }),
+    getRuntimeSession: async () => ({ id: sessionId, roleId: grant.roleId, authorizationScope: grant.authorizationScope,
+      cwd: grant.cwd, sandbox: grant.sandbox }) } as unknown as WorkflowService;
+  const runtime = { status: () => ({ available: true, error: null }),
+    trace: async (_principal: unknown, _projectId: string, _runId: string, cursor?: string) => {
+      reads++; return { runId, cursor: cursor ?? null, source: "owned-native-history" };
+    } } as unknown as RuntimeRunner;
+  const app = await buildServer({ service, credentials: [...credentials,
+    { token: traceToken, actorId: "trace-reviewer", projectIds: [projectId], permissions: ["read", "review"] }] as never,
+    runtime, runtimeGrants: (_project, actor) => actor === "reviewer" ? [grant] : [], hasRuntimeGrant: scope => scope.actorId === "reviewer",
+    allowedRuntimeCwd: async () => true });
+  try {
+    const url = `/api/projects/${projectId}/runtime/runs/${runId}/trace`;
+    assert.equal((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${"w".repeat(40)}` } })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/api/projects/${randomUUID()}/runtime/runs/${runId}/trace`, headers: traceHeaders })).statusCode, 403);
+    const accepted = await app.inject({ method: "GET", url: `${url}?cursor=page-2`, headers: traceHeaders });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal(accepted.json().cursor, "page-2");
+    const reserve = await app.inject({ method: "POST", url: "/api/commands", headers: traceHeaders, payload: { ...command, operationId: randomUUID() } });
+    assert.equal(reserve.statusCode, 403);
+    const reconcile = await app.inject({ method: "POST", url: `/api/projects/${projectId}/runtime/runs/${runId}/reconcile`, headers: traceHeaders,
+      payload: { expectedVersion: 3, reason: "readback" } });
+    assert.equal(reconcile.statusCode, 403);
+    assert.equal(reads, 1);
+    assert.equal(mutations, 0);
+  } finally { await app.close(); }
+});
+
+test("closed Session keeps its Run metadata readable but denies trace through HTTP", async () => {
+  const runId = randomUUID();
+  let nativeReads = 0;
+  const closedRun = { id: runId, projectId, sessionId, actorId: "reviewer", nativeTurnId: "owned-turn", state: "completed" };
+  const closedSession = { id: sessionId, projectId, actorId: "reviewer", roleId: grant.roleId,
+    authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox, state: "closed" };
+  const service = { ...workManagementQueries, getRuntimeRun: async () => closedRun,
+    getRuntimeSession: async () => closedSession } as unknown as WorkflowService;
+  const reader = new RuntimeRunner({ runtimeFactory: () => ({
+    readWorkPage: async () => { nativeReads++; throw new Error("Closed native history must not be read"); },
+  }) as never, workflow: service, trusted: {} as never, principals: credentials as never,
+  canWrite: () => false, allowedCwd: async () => true, hasGrant: () => true });
+  const runtime = { status: () => ({ available: true, error: null }),
+    trace: reader.trace.bind(reader) } as unknown as RuntimeRunner;
+  const app = await buildServer({ service, credentials: credentials as never, runtime });
+  try {
+    const base = `/api/projects/${projectId}/runtime/runs/${runId}`;
+    const metadata = await app.inject({ method: "GET", url: base, headers });
+    assert.equal(metadata.statusCode, 200, metadata.body);
+    assert.equal(metadata.json().state, "completed");
+    const trace = await app.inject({ method: "GET", url: `${base}/trace`, headers });
+    assert.equal(trace.statusCode, 403, trace.body);
+    assert.equal(nativeReads, 0);
   } finally { await app.close(); }
 });

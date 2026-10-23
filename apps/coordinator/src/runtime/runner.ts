@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace } from "@evoloop/contracts/runtime";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
@@ -13,6 +13,22 @@ import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId,
   uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
 
 interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
+type RuntimeFaultPhase = "project_scan" | "session_create" | "session_close" | "run_preflight" | "run_start" | "run_reconcile" | "approval_receipt";
+type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
+export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
+  phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string }
+const faultMessage: Record<RuntimeFaultPhase, string> = {
+  project_scan: "项目运行状态暂不可读取；新派发须等待恢复。",
+  session_create: "会话创建结果尚未核实；保留原会话 ID，不自动重试。",
+  session_close: "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。",
+  run_preflight: "运行前置校验未通过；请核对原 Run 的持久状态。",
+  run_start: "原生启动结果尚未核实；保留原 Run ID，不自动重试。",
+  run_reconcile: "运行暂不可对账；保留原 Run ID 与未知状态。",
+  approval_receipt: "审批拒绝回执尚未保存；请核对原会话或运行。",
+};
+const faultCategory = (error: unknown): RuntimeFaultCategory => error instanceof RuntimeServerError ?
+  error.category === "permission_denied" ? "authorization" : "native_rejected" :
+  error instanceof DomainError ? error.code === "FORBIDDEN" ? "authorization" : "verification" : "unavailable";
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void };
@@ -59,7 +75,8 @@ export class RuntimeRunner {
   private interruptAttempted = new Set<string>();
   private approvalQueue: { id: string | number; projectId?: string; sessionId?: string; threadId?: string; turnId?: string; method: string }[] = [];
   private approvalFlush: Promise<void> | null = null;
-  private currentError: string | null = null;
+  private serviceError: string | null = null;
+  private faults = new Map<string, RuntimeFault>();
   private available = false;
   private runtime: ManagedRuntime;
   private recovering: Promise<void> | null = null;
@@ -81,7 +98,27 @@ export class RuntimeRunner {
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
-  status() { return { available: this.available && this.runtime.isReady(), error: this.currentError }; }
+  status(projectId?: string) {
+    const faults = projectId ? [...this.faults.values()].filter(fault => fault.projectId === projectId) : [];
+    return { available: this.available && this.runtime.isReady(),
+      error: this.serviceError ?? faults.at(-1)?.message ?? null, faults };
+  }
+  private faultKey(projectId: string, phase: RuntimeFaultPhase, sessionId?: string, runId?: string) {
+    return `${projectId}:${runId ? `run:${runId}` : sessionId ? `session:${sessionId}` : "project"}:${phase}`;
+  }
+  private recordFault(projectId: string, phase: RuntimeFaultPhase, error: unknown,
+    sessionId?: string, runId?: string, category = faultCategory(error)) {
+    const fault: RuntimeFault = {projectId,sessionId:sessionId??null,runId:runId??null,
+      phase,category,message:faultMessage[phase],observedAtUtc:new Date().toISOString()};
+    const key=this.faultKey(projectId,phase,sessionId,runId);
+    this.faults.delete(key);this.faults.set(key,fault);
+  }
+  private clearFault(projectId: string, sessionId?: string, runId?: string, phase?: RuntimeFaultPhase) {
+    for (const [key,fault] of this.faults) {
+      if (fault.projectId === projectId && fault.sessionId === (sessionId ?? null) && fault.runId === (runId ?? null) &&
+          (phase ? fault.phase === phase : fault.phase !== "approval_receipt")) this.faults.delete(key);
+    }
+  }
   private principal(projectId: string): Principal {
     const principal = this.deps.principals.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("write"));
     if (!principal) throw new Error("Project authority is unavailable");
@@ -112,10 +149,10 @@ export class RuntimeRunner {
     this.timer.unref();
   }
   private attachRuntime(): void {
-    this.unsubscribeDisconnect = this.runtime.onDisconnect(reason => {
+    this.unsubscribeDisconnect = this.runtime.onDisconnect(_reason => {
       if (this.stopped) return;
       this.available = false;
-      this.currentError = `Codex transport disconnected: ${reason}. Explicit recovery is required.`;
+      this.serviceError = "Codex 执行连接已断开；需要显式恢复。";
     });
     this.unsubscribeApproval = this.runtime.onApprovalRequest(async request => {
       const approval = { id: request.id, method: request.method,
@@ -128,9 +165,10 @@ export class RuntimeRunner {
         await this.flushApprovals(approval);
         if (this.approvalQueue.includes(approval)) throw new Error("Owned approval could not be correlated");
       }
-      catch {
+      catch (error) {
+        if (approval.projectId) this.recordFault(approval.projectId,"approval_receipt",error,approval.sessionId);
         this.available = false;
-        this.currentError = "Approval denial evidence could not be saved; explicit recovery is required.";
+        this.serviceError = "审批拒绝回执未能保存；需要显式恢复。";
         throw new Error("Approval evidence unavailable");
       }
     });
@@ -153,13 +191,13 @@ export class RuntimeRunner {
     try {
       await this.runtime.open();
       for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
-      this.currentError = null;
+      this.serviceError = null;
       this.available = true;
       await this.pump();
       this.ensureTimer();
     } catch (error) {
       this.available = false;
-      this.currentError = error instanceof Error ? error.message : "Runtime recovery failed";
+      this.serviceError = "执行连接恢复失败；需要检查原运行状态。";
       throw error;
     }
   }
@@ -176,25 +214,36 @@ export class RuntimeRunner {
       try {
         const principal = this.principal(projectId);
         // Uncreated authorized project scopes are normal, and have no runtime work.
-        try { await this.deps.workflow.getProject(principal, projectId); } catch { continue; }
+        try { await this.deps.workflow.getProject(principal, projectId); }
+        catch (error) {
+          if (error instanceof DomainError && error.code === "NOT_FOUND") continue;
+          this.recordFault(projectId,"project_scan",error);
+          continue;
+        }
         const sessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
         for (const session of sessions) {
-          if (session.state === "reserved") await this.create(session);
+          if (session.state === "ready" || session.state === "closed") this.clearFault(projectId, session.id);
+          if (session.state === "reserved") {
+            try { await this.create(session); }
+            catch (error) { this.recordFault(projectId,"session_create",error,session.id); }
+          }
           if (session.state === "closing") {
-            try { await this.closeSession(session); }
-            catch { this.currentError = "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。"; }
+            try { if (await this.closeSession(session)) this.clearFault(projectId,session.id); }
+            catch (error) { this.recordFault(projectId,"session_close",error,session.id); }
           }
         }
         const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
         for (const run of runs) {
-          try { await this.process(principal, run); }
-          catch { this.currentError = "某项运行暂不可对账，保留原运行 ID 与未知状态。"; }
+          if (["completed","failed","interrupted"].includes(run.state)) { this.clearFault(projectId,run.sessionId,run.id);continue; }
+          try { if (await this.process(principal, run)) this.clearFault(projectId,run.sessionId,run.id); }
+          catch (error) { this.recordFault(projectId,"run_reconcile",error,run.sessionId,run.id); }
         }
         await this.flushApprovals();
-      } catch { this.currentError = "运行服务暂不可读取；新派发须等待恢复。"; }
+        this.clearFault(projectId);
+      } catch (error) { this.recordFault(projectId,"project_scan",error); }
     }
   }
-  private async closeSession(session: RuntimeSessionRecord): Promise<void> {
+  private async closeSession(session: RuntimeSessionRecord): Promise<boolean> {
     if (!session.closeOperationId || !(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
       throw new Error("Session close authority or intent is unavailable");
     if (!this.runtime.isThreadArchived) throw new Error("Native archive verification unsupported");
@@ -203,18 +252,21 @@ export class RuntimeRunner {
     // Readback comes before any write, including after a restart or lost acknowledgement.
     if (await this.runtime.isThreadArchived(binding)) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
-      return;
+      return true;
     }
-    if (session.closeAttemptedAt) return;
+    if (session.closeAttemptedAt) return false;
     if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
     // Native source is a UI classification, not proof of who created the thread.
     // inspect validates the exact persisted thread/session/cwd binding before archive.
     await this.runtime.inspect(binding);
     await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
     try { await this.runtime.archiveThread(binding); }
-    catch { /* Archive may have happened. A subsequent pump only reads archived state. */ }
-    if (await this.runtime.isThreadArchived(binding))
+    catch (error) { this.recordFault(session.projectId,"session_close",error,session.id,undefined,"unknown_outcome"); }
+    if (await this.runtime.isThreadArchived(binding)) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
+      return true;
+    }
+    return false;
   }
   private async create(session: RuntimeSessionRecord): Promise<void> {
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
@@ -227,8 +279,10 @@ export class RuntimeRunner {
       const binding = await this.runtime.create(spec);
       await this.deps.trusted.bindSession(session.projectId, session.id, binding);
       this.registered.add(session.id);
-    } catch {
+      this.clearFault(session.projectId,session.id);
+    } catch (error) {
       await this.deps.trusted.markSessionUnknown(session.projectId, session.id, "Thread creation acknowledgement unavailable; no automatic retry");
+      this.recordFault(session.projectId,"session_create",error,session.id,undefined,"unknown_outcome");
     }
   }
   private async restore(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
@@ -416,20 +470,20 @@ export class RuntimeRunner {
     return this.loadEvaluationPacket(principal, run, taskInput.input);
   }
 
-  private async process(principal: Principal, original: RuntimeRunRecord): Promise<void> {
-    if (!["requested", "running", "unknown"].includes(original.state)) return;
+  private async process(principal: Principal, original: RuntimeRunRecord): Promise<boolean> {
+    if (!["requested", "running", "unknown"].includes(original.state)) return false;
     if (original.state === "requested" && !original.nativeTurnId && this.deps.mayDispatchRun &&
-      !await this.deps.mayDispatchRun(original)) return;
+      !await this.deps.mayDispatchRun(original)) return false;
     const session = await this.deps.workflow.getRuntimeSession(principal, original.projectId, original.sessionId);
-    if (session.state !== "ready") return;
+    if (session.state !== "ready") return false;
     const currentAuthority = await this.authorized(session, original.actorId);
     if (!currentAuthority && !await this.owned(session, original)) {
       if (original.state === "requested") await this.deps.trusted.rejectDispatch(original.projectId, original.id, "Run requester authority is no longer configured");
-      return;
+      return false;
     }
     if (!currentAuthority && original.state === "requested" && !original.nativeTurnId) {
       await this.deps.trusted.rejectDispatch(original.projectId, original.id, "Current authorization is unavailable for a new Turn");
-      return;
+      return false;
     }
     const binding = original.state === "requested" && !original.nativeTurnId ?
       await this.restore(session) : await this.readBinding(session);
@@ -442,17 +496,18 @@ export class RuntimeRunner {
           run = prepared.run; input = prepared.input;
         } else input = (await this.input(principal, run)).input;
       }
-      catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, error instanceof Error ? error.message : "Preflight failed"); return; }
+      catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, "Run preflight failed; inspect fixed inputs and current authorization");
+        this.recordFault(run.projectId,"run_preflight",error,run.sessionId,run.id);return false; }
       // Recheck after preflight, immediately before recording the external-start intent.
-      if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return;
+      if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return false;
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
       try {
         const turn = await this.runtime.startTurn(binding, input, run.operationId);
         run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId });
       } catch (error) {
-        const detail = error instanceof Error && error.name === "RuntimeServerError" ? error.message : "turn/start acknowledgement unavailable";
-        await this.deps.trusted.markRunUnknown(run.projectId, run.id, `${detail}; reconcile owned history before any retry`);
-        return;
+        await this.deps.trusted.markRunUnknown(run.projectId, run.id, "Turn start acknowledgement unavailable; reconcile owned history before any retry");
+        this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unknown_outcome");
+        return false;
       }
     }
     const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
@@ -463,11 +518,15 @@ export class RuntimeRunner {
         const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 10);
         if (items.some(item => object(item)?.type === "userMessage" && textOf(item).startsWith(marker(run.operationId)))) matches.push(turn);
       }
-      if (matches.length !== 1) return;
+      if (matches.length !== 1) {
+        this.recordFault(run.projectId,"run_reconcile",null,run.sessionId,run.id,"verification");
+        return false;
+      }
       run = await this.deps.trusted.bindTurn(run.projectId, run.id, matches[0]!, { kind: "historyMarker", operationId: run.operationId });
     }
     const turn = turns.find(t => t.id === run.nativeTurnId);
-    if (!turn) { await this.deps.trusted.markRunUnknown(run.projectId, run.id, "Known Turn is not currently readable"); return; }
+    if (!turn) { await this.deps.trusted.markRunUnknown(run.projectId, run.id, "Known Turn is not currently readable");
+      this.recordFault(run.projectId,"run_reconcile",null,run.sessionId,run.id,"verification");return false; }
     if (run.interruptRequested && !this.interruptAttempted.has(run.id)) {
       const events = await this.deps.workflow.listRuntimeEvents(principal, run.projectId, run.id);
       if (!events.some(e => e.kind === "run.interruptResult")) {
@@ -482,12 +541,19 @@ export class RuntimeRunner {
     }
     // The native history list can transiently project an active turn as "interrupted".
     // Only a settled native timestamp proves a terminal observation.
-    if (!["completed", "failed", "interrupted"].includes(turn.status) || !turn.completedAtUtc) return;
+    if (original.state === "running" && run.state === "running" && run.nativeTurnId === original.nativeTurnId &&
+        !run.interruptRequested && turn.status === "inProgress") {
+      // Exact readback heals a transient history failure, but does not settle a durable unknown Run.
+      this.clearFault(run.projectId,run.sessionId,run.id,"run_reconcile");
+      return false;
+    }
+    if (!["completed", "failed", "interrupted"].includes(turn.status) || !turn.completedAtUtc) return false;
     const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
     const messages = finalMessages(items);
     if (turn.error) messages.push(`Native failure: ${turn.error.summary}; category=${turn.error.category}; HTTP=${turn.error.httpStatus ?? "unknown"}; providerCode=${turn.error.providerCode ?? "unknown"}`);
     await this.deps.trusted.recordTurn(run.projectId, run.id, turn.id, turn.status as "completed" | "failed" | "interrupted",
       messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc });
+    return true;
   }
   private async flushApprovals(target?: typeof this.approvalQueue[number]): Promise<void> {
     if (this.approvalFlush) {
@@ -507,6 +573,7 @@ export class RuntimeRunner {
           await this.deps.trusted.recordSessionApprovalDeclined(approval.projectId, session.id, approval.threadId,
             approval.turnId ?? null, `Approval declined by policy: ${approval.method}; request ${approval.id}; unbound request observed during create; native identity not yet verified`);
           this.approvalQueue.splice(this.approvalQueue.indexOf(approval), 1);
+          this.clearFault(approval.projectId,session.id,undefined,"approval_receipt");
           continue;
         }
       }
@@ -527,7 +594,10 @@ export class RuntimeRunner {
         matched = true;
         break;
       }
-      if (matched) this.approvalQueue.splice(this.approvalQueue.indexOf(approval), 1);
+      if (matched) {
+        this.approvalQueue.splice(this.approvalQueue.indexOf(approval), 1);
+        if (approval.projectId) this.clearFault(approval.projectId,approval.sessionId,undefined,"approval_receipt");
+      }
     }
   }
   async result(principal: Principal, projectId: string, runId: string): Promise<{ messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }> {
@@ -542,6 +612,42 @@ export class RuntimeRunner {
       return { messages: finalMessages(items), source: "owned-native-history",
         finalPhaseConfirmed: items.some(item => object(item)?.type === "agentMessage" && object(item)?.phase === "final_answer"),
         observedAt: new Date().toISOString() };
+    } catch (error) { throw this.readFailure(error); }
+  }
+  async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string): Promise<RuntimeWorkTrace> {
+    if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
+      !principal.permissions.includes("review") || !this.deps.principals.some(p => p.actorId === principal.actorId &&
+        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review")))
+      throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+    if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
+    const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (run.projectId !== projectId || !run.nativeTurnId)
+      throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚无可核对的受管原生 Turn。");
+    const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+    if (session.projectId !== projectId || session.id !== run.sessionId || session.state !== "ready" ||
+      !await this.authorized(session, run.actorId))
+      throw new DomainError("FORBIDDEN", "此运行所属会话的授权已失效。");
+    try {
+      const binding = await this.readBinding(session);
+      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
+      const turn = turns.find(candidate => candidate.id === run.nativeTurnId);
+      if (!turn) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "已绑定的原生 Turn 当前不可见，不能确认工作轨迹。");
+      const items: RuntimeWorkTrace["items"] = [];
+      let unsupportedCount = 0, truncated = false, cursor: string | undefined = initialCursor;
+      const seen = new Set<string>();
+      for (let pageNumber = 0; pageNumber < 2; pageNumber++) {
+        const page = await this.runtime.readWorkPage!(binding, turn.id, cursor);
+        if (page.data.length + page.unsupportedCount > 50) throw new Error("Runtime work page exceeds item budget");
+        items.push(...page.data); unsupportedCount += page.unsupportedCount; truncated ||= page.truncated;
+        if (!page.nextCursor) { cursor = undefined; break; }
+        if (seen.has(page.nextCursor)) throw new Error("Runtime work cursor repeated");
+        seen.add(page.nextCursor); cursor = page.nextCursor;
+      }
+      truncated ||= !!cursor;
+      return { runId: run.id, source: "owned-native-history", observedAt: new Date().toISOString(), turn,
+        items, unsupportedCount, truncated, nextCursor: cursor ?? null,
+        completeness: truncated || unsupportedCount || initialCursor || items.length === 0 || !turn.completedAtUtc ? "partial" : "complete",
+        limits: { maxPages: 2, maxItems: 100, maxFieldChars: 2000 } };
     } catch (error) { throw this.readFailure(error); }
   }
   /** Explicit reviewer readback of a previously recorded terminal observation; never starts a turn. */
@@ -567,9 +673,11 @@ export class RuntimeRunner {
     const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
     const messages = finalMessages(items);
     if (turn.error) messages.push(`Native failure: ${turn.error.summary}; category=${turn.error.category}; HTTP=${turn.error.httpStatus ?? "unknown"}; providerCode=${turn.error.providerCode ?? "unknown"}`);
-    return this.deps.trusted.reconcileTerminalObservation(projectId, run.id, turn.id,
+    const reconciled = await this.deps.trusted.reconcileTerminalObservation(projectId, run.id, turn.id,
       turn.status as "completed" | "failed" | "interrupted", messages.join("\n\n"),
       { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc }, expectedVersion, principal, reason);
+    this.clearFault(projectId,run.sessionId,run.id);
+    return reconciled;
   }
   async stop(): Promise<void> {
     this.stopped = true; this.available = false;

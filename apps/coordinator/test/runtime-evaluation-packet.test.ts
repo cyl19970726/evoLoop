@@ -281,6 +281,11 @@ test("a newer adoption invalidates the sealed observation before native start", 
     assert.equal(fixture.runtime.starts, 0);
     assert.equal(fixture.dispatches, 0);
     assert.equal(fixture.rejected.length, 1);
-    assert.match(fixture.rejected[0]!, /Retained source observation is no longer current/);
+    assert.equal(fixture.run.state, "failed");
+    assert.equal(fixture.rejected[0], "Run preflight failed; inspect fixed inputs and current authorization");
+    assert.deepEqual(fixture.runner.status(projectId).faults.map(fault =>
+      ({ projectId: fault.projectId, runId: fault.runId, phase: fault.phase, category: fault.category })),
+      [{ projectId, runId: fixture.run.id, phase: "run_preflight", category: "verification" }]);
+    assert.doesNotMatch(JSON.stringify(fixture.runner.status(projectId)), /Retained source observation is no longer current/);
   } finally { await fixture.runner.stop(); }
 });

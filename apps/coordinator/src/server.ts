@@ -150,7 +150,7 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/runtime", async request => {
     const projectId = params(request.params).projectId!;
     await options.service.getProject(who(request.principal), projectId);
-    return { ...(options.runtime?.status() ?? { available: false, error: "尚未配置 Codex 执行服务" }), allowedCwds: [...new Set(callerGrants(projectId,who(request.principal).actorId).map(g=>g.cwd))], grants: callerGrants(projectId,who(request.principal).actorId) };
+    return { ...(options.runtime?.status(projectId) ?? { available: false, error: "尚未配置 Codex 执行服务", faults: [] }), allowedCwds: [...new Set(callerGrants(projectId,who(request.principal).actorId).map(g=>g.cwd))], grants: callerGrants(projectId,who(request.principal).actorId) };
   });
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/sessions/:id/history", async request => {
@@ -168,9 +168,9 @@ export async function buildServer(options: {
     await options.service.getProject(principal, projectId);
     if (!options.runtime) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务尚未配置。");
     if (!callerGrants(projectId, principal.actorId).length) throw new DomainError("FORBIDDEN", "当前身份没有本项目的执行恢复授权。");
-    if (options.runtime.status().available) return options.runtime.status();
+    if (options.runtime.status().available) return options.runtime.status(projectId);
     await options.runtime.recover();
-    return options.runtime.status();
+    return options.runtime.status(projectId);
   });
   app.get("/api/projects/:projectId/runtime/runs", async request => {
     const projectId = params(request.params).projectId!;
@@ -187,6 +187,15 @@ export async function buildServer(options: {
     const p = params(request.params);
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用；已保存的运行状态仍可读取。");
     return options.runtime.result(who(request.principal), p.projectId!, p.id!);
+  });
+  app.get("/api/projects/:projectId/runtime/runs/:id/trace", async request => {
+    const p = params(request.params);
+    const principal = who(request.principal);
+    if (!principal.projectIds.includes(p.projectId!) || !principal.permissions.includes("read") || !principal.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+    if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法读取原生工作轨迹。");
+    const query = z.object({ cursor: z.string().min(1).max(2048).optional() }).parse(request.query);
+    return options.runtime.trace(principal, p.projectId!, p.id!, query.cursor);
   });
   app.post("/api/projects/:projectId/runtime/runs/:id/reconcile", async request => {
     const p = params(request.params);

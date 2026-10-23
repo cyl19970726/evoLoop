@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
 import { CodexAppServerAdapter, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "../src/index.js";
+import { mapWorkItem } from "../src/work-trace.js";
 import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 
 const fixture = resolve(import.meta.dirname, "fixture.mjs");
@@ -80,6 +81,35 @@ test("correlates RPCs, filters foreign events, and reads owned history", async t
   await completed;
   assert.deepEqual(events, ["turn/started", "turn/completed"]);
   await assert.rejects(() => adapter.inspect({ ...binding, authorizationScope: "other" }), RuntimeProtocolError);
+});
+
+test("classified work pages expose command/tool outcomes and omit reasoning and unknown bodies", async t => {
+  const adapter = await open("work-trace"); t.after(() => adapter.close());
+  const binding = await adapter.create(spec);
+  const first = await adapter.readWorkPage(binding, "turn-1");
+  assert.equal(first.unsupportedCount, 2);
+  assert.equal(first.nextCursor, "page-2");
+  assert.deepEqual(first.data.map(item => item.kind), ["command"]);
+  assert.equal(first.data[0]?.exitCode, 0);
+  assert.equal(first.data[0]?.output, "hello");
+  assert.equal(JSON.stringify(first).includes("private thought"), false);
+  assert.equal(JSON.stringify(first).includes("private future content"), false);
+  const second = await adapter.readWorkPage(binding, "turn-1", first.nextCursor!);
+  assert.deepEqual(second.data.map(item => item.kind), ["tool", "file_change", "message"]);
+  assert.deepEqual(second.data[1]?.artifactRefs, ["/tmp/output.txt"]);
+  assert.equal(second.data[0]?.output, "read output");
+  await assert.rejects(() => adapter.readWorkPage({ ...binding, authorizationScope: "foreign" }, "turn-1"), RuntimeProtocolError);
+});
+
+test("work item fields have a visible bound and non-text tool output is marked incomplete", () => {
+  const command = mapWorkItem({ id: "long", type: "commandExecution", command: "echo x", status: "completed",
+    aggregatedOutput: "x".repeat(2500), exitCode: 0 });
+  assert.equal(command?.output?.length, 2000);
+  assert.equal(command?.truncated, true);
+  const tool = mapWorkItem({ id: "tool", type: "mcpToolCall", server: "files", tool: "read", status: "completed",
+    result: { content: [{ type: "image", data: "hidden image" }] } });
+  assert.equal(tool?.truncated, true);
+  assert.equal(JSON.stringify(tool).includes("hidden image"), false);
 });
 
 test("approval is visible and denied by default", async t => {
