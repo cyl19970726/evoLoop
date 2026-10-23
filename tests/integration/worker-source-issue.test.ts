@@ -4,9 +4,9 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
-import { authorizeWorkerCommand } from "../src/workers/guard.ts";
-import { workerGuardFacts } from "../src/workers/facts.ts";
-import type { WorkerIdentity } from "../src/workers/types.ts";
+import { authorizeWorkerCommand } from "../../apps/coordinator/src/workers/guard.ts";
+import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.ts";
+import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.ts";
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString || !/evoloop.*test/i.test(new URL(connectionString).pathname))
