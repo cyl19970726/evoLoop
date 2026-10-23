@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { LoopPolicyRevision, RuntimeRoleBinding } from "./division.js";
+import { roleProposalSchema, type RoleTransaction } from "./roles.js";
+import type { Operation, OutboxEvent } from "./index.js";
 
 const id = z.uuid();
 const short = z.string().trim().min(1).max(240);
@@ -19,8 +21,9 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("division.decide"), decisionId: id, loopId: id, expectedLoopVersion: version,
     sourceEventId: id, parentDispatchId: id, documentId: id, documentRevisionId: id,
     documentContentHash: z.string().regex(/^[a-f0-9]{64}$/), firstTaskId: id, expectedFirstTaskVersion: version,
+    expectedFirstTaskOwner: role.optional(),
     choice: z.enum(["method", "same-role-instance", "temporary-assignment", "new-role"]),
-    roleId: role, templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    roleId: role, proposedRole: roleProposalSchema.optional(), templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
     reason }),
   z.strictObject({ ...common, type: z.literal("division.revoke"), loopId: id, expectedLoopVersion: version,
     bindingId: id, reason }),
@@ -156,6 +159,8 @@ export interface OrchestrationTransaction {
   countNewRoleAllocations(templateId: string, templateRevision: number): Promise<number>;
   getDocumentRevisionFact(documentId: string, revisionId: string): Promise<{contentHash: string} | null>;
   getRoleState(roleId: string): Promise<{state: string; firstTaskId: string; accepted: boolean} | null>;
+  roleTransaction(): RoleTransaction;
+  insertWorkflowRoleOperation(operation: Operation, effect: OutboxEvent): Promise<void>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   findInbox(loopId: string, sourceEventId: string, recipientRoleId: string, purpose: string): Promise<OrchestrationInbox | null>;
   insertInbox(value: OrchestrationInbox): Promise<void>;
