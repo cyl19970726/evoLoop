@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { runner } from "node-pg-migrate";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
 import type { CommandResult, Principal } from "@evoloop/contracts";
@@ -9,6 +11,42 @@ import { buildServer } from "../../apps/coordinator/src/server.js";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(database)) throw new Error("Use a dedicated evoloop_*test database");
+
+test("migration 019 preserves an existing Delivery closure without changing its evidence", async t => {
+  const schema=`task_closure_legacy_${randomUUID().replaceAll("-","")}`;
+  const migrations=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
+  await runner({databaseUrl:database!,dir:migrations,direction:"up",migrationsTable:"pgmigrations",schema,count:18,
+    createSchema:true,createMigrationsSchema:true,singleTransaction:true,log:()=>{}});
+  const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
+  t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
+    try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
+  const projectId=randomUUID(),taskId=randomUUID(),actorId="legacy-reviewer";
+  const service=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
+    ids:{next:randomUUID},hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
+  const principal:Principal={actorId,projectIds:[projectId],permissions:["read","write","review"]};
+  const issue=async(command:Record<string,unknown>)=>{
+    const result=await service.execute(principal,{projectId,operationId:randomUUID(),...command} as never);
+    assert.equal(result.status,"applied",JSON.stringify(result));return result as Extract<CommandResult,{status:"applied"}>;
+  };
+  await issue({type:"project.create",title:"Legacy closure"});
+  await issue({type:"task.create",taskId,title:"Old delivered task",content:"# Old body",acceptance:"Artifact checked",owner:actorId});
+  await issue({type:"task.start",taskId,expectedVersion:1,reason:"Begin"});
+  const delivery=await issue({type:"delivery.record",taskId,expectedVersion:2,artifactRef:"fixture:old",artifactRevision:"r1",
+    contentHash:"a".repeat(64),technicalResult:"passed",technicalEvidence:"Checked",reason:"Original delivery"});
+  const current=(await service.getTask(principal,projectId,taskId)).task;
+  const closureId=randomUUID();
+  await pool.query(`INSERT INTO task_closure(project_id,closure_id,task_id,task_revision_id,delivery_id,
+    acceptance_result,acceptance_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,'met','Original evidence','Original reason',$6,'2026-10-20T00:00:00Z')`,
+    [projectId,closureId,taskId,current.currentRevisionId,delivery.revisionId,actorId]);
+  const original=(await pool.query("SELECT project_id,closure_id,task_id,task_revision_id,delivery_id,acceptance_result,acceptance_evidence,reason,actor_id,created_at FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
+  await migrate(database!,schema);
+  const preserved=(await pool.query("SELECT * FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
+  for(const [key,value] of Object.entries(original)) assert.deepEqual(preserved[key],value,key);
+  assert.equal(preserved.decision_id,null);
+  assert.equal(preserved.source_inbox_id,null);
+  assert.equal(preserved.waiting_inbox_id,null);
+});
 
 test("HTTP and PostgreSQL: a simple Task owns its Document body and closes without a pre-created source or review Task", async t => {
   const schema = `task_content_${randomUUID().replaceAll("-", "")}`;

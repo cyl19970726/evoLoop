@@ -8,6 +8,7 @@ import type {
   DiscussionRecord, DiscussionEvent,
 } from "@evoloop/contracts";
 import type { Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
+import type { CognitiveClosureFact, WaitingHandoffFact } from "@evoloop/contracts/ports";
 import { DomainError, WorkflowService } from "../src/index.ts";
 import type { RoleRecord, RoleRevision, RoleTrialReview, RoleHandoff, RoleSessionBinding } from "@evoloop/contracts/roles";
 import type { ScheduleDefinition, ScheduleRevision, Occurrence } from "@evoloop/contracts/scheduling";
@@ -42,6 +43,8 @@ type State = {
   deliveries: Delivery[];
   observations: ConsumerObservation[];
   closures: TaskClosure[];
+  cognitiveClosureFact: CognitiveClosureFact | null;
+  waitingHandoffFact: WaitingHandoffFact | null;
   discussions: Record<string, DiscussionRecord>;
   discussionEvents: DiscussionEvent[];
   roles: Record<string, RoleRecord>;
@@ -58,7 +61,7 @@ class MemoryUow implements UnitOfWork {
   state: State = {
     project: null, documents: {}, documentRevisions: {}, documentDecisions: [], tasks: {},
     taskRevisions: {}, bases: {}, links: [], impacts: {}, basisDecisions: [], operations: {}, outbox: [],
-    goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [],
+    goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [], cognitiveClosureFact: null, waitingHandoffFact: null,
     discussions: {}, discussionEvents: [],
     roles: {}, roleRevisions: [], roleReviews: [], roleHandoffs: [], roleBindings: [], schedules: {}, scheduleRevisions: [], occurrences: [],
   };
@@ -119,6 +122,8 @@ class MemoryUow implements UnitOfWork {
       listDeliveries: async taskId => state.deliveries.filter(item => item.taskId === taskId),
       listObservations: async taskId => state.observations.filter(item => item.taskId === taskId),
       listTaskClosures: async taskId => state.closures.filter(item => item.taskId === taskId),
+      getCognitiveClosureFact: async id => state.cognitiveClosureFact?.decisionId === id ? state.cognitiveClosureFact : null,
+      getWaitingHandoffFact: async id => state.waitingHandoffFact?.inboxId === id ? state.waitingHandoffFact : null,
       getProject: async () => state.project,
       getDocument: async (id) => state.documents[id] ?? null,
       getDocumentRevision: async (document, revision) => {
@@ -366,6 +371,70 @@ test("reopen invalidates an earlier delivery before the same Task can close agai
     taskId: taskA, expectedVersion: 6, deliveryId: oldDeliveryId,
     acceptanceResult: "met", acceptanceEvidence: "Old evidence", reason: "Attempt" });
   assert.equal(stale.status === "rejected" ? stale.code : null, "STALE_DELIVERY");
+});
+
+test("a settled cognition decision closes only its current Task revision; waiting needs a real handoff", async () => {
+  const prepare = async () => {
+    const f = fixture();
+    await f.service.execute(principal, {type:"project.create",projectId,operationId:f.operation(),title:"Project"});
+    await f.service.execute(principal, {type:"task.create",projectId,operationId:f.operation(),taskId:taskA,
+      title:"Review event",content:"Read fixed source",acceptance:"Record grounded choice",owner:"cognition"});
+    await f.service.execute(principal, {type:"task.start",projectId,operationId:f.operation(),taskId:taskA,
+      expectedVersion:1,reason:"Start review"});
+    const task=(await f.service.getTask(principal,projectId,taskA)).task;
+    const decisionId=f.operation(),sourceInboxId=f.operation(),sourceEventId=f.operation(),loopId=f.operation();
+    f.uow.state.cognitiveClosureFact={projectId,decisionId,actorId:"signed-cognition",kind:"no_action",
+      taskId:taskA,taskRevisionId:task.currentRevisionId,runId:f.operation(),runState:"completed",dispatchId:f.operation(),
+      loopId,sourceInboxId,sourceEventId,sourceTaskId:null,sourceTaskIsCognition:false,outcome:"no_action",purpose:"cognition",
+      recipientRoleId:"cognition",cognitiveRoleId:"cognition",loopState:"active"};
+    const close=(extra:Record<string,unknown>={})=>f.service.execute(principal,{type:"task.close",projectId,
+      operationId:f.operation(),taskId:taskA,expectedVersion:task.version,decisionId,acceptanceResult:"met",
+      acceptanceEvidence:"Reviewed fixed source and signed no further action",reason:"Acceptance reviewed",...extra} as never);
+    return {f,task,decisionId,sourceInboxId,sourceEventId,loopId,close};
+  };
+  const simple=await prepare();
+  assert.equal((await simple.close({deliveryId:simple.f.operation()})).status,"rejected");
+  assert.equal((await simple.close({waitingInboxId:simple.f.operation()})).status,"rejected");
+  const closed=await simple.close();
+  assert.equal(closed.status,"applied");
+  assert.equal(simple.f.uow.state.closures[0]?.decisionId,simple.decisionId);
+  assert.equal(simple.f.uow.state.closures[0]?.deliveryId,null);
+  assert.equal((await simple.f.service.getTask(principal,projectId,taskA)).task.state,"done");
+
+  const waiting=await prepare();
+  const sourceTaskId=taskB,waitingInboxId=waiting.f.operation();
+  waiting.f.uow.state.cognitiveClosureFact={...waiting.f.uow.state.cognitiveClosureFact!,kind:"waiting",outcome:"waiting",sourceTaskId};
+  const without=await waiting.close();
+  assert.equal(without.status==="rejected"?without.code:null,"WAITING_HANDOFF_REQUIRED");
+  waiting.f.uow.state.tasks[sourceTaskId]={...waiting.task,id:sourceTaskId};
+  waiting.f.uow.state.cognitiveClosureFact={...waiting.f.uow.state.cognitiveClosureFact!,sourceTaskIsCognition:true};
+  assert.equal((await waiting.close({waitingInboxId})).status,"rejected");
+  waiting.f.uow.state.cognitiveClosureFact={...waiting.f.uow.state.cognitiveClosureFact!,sourceTaskIsCognition:false};
+  waiting.f.uow.state.waitingHandoffFact={projectId,inboxId:waitingInboxId,loopId:waiting.loopId,
+    sourceEventId:waiting.sourceEventId,recipientRoleId:"cognition",disposition:"waiting",actorId:"signed-cognition"};
+  const accepted=await waiting.close({waitingInboxId});
+  assert.equal(accepted.status,"applied");
+  assert.equal(waiting.f.uow.state.closures[0]?.sourceTaskId,sourceTaskId);
+  assert.equal(waiting.f.uow.state.closures[0]?.waitingInboxId,waitingInboxId);
+
+  const stopped=await prepare();
+  stopped.f.uow.state.cognitiveClosureFact={...stopped.f.uow.state.cognitiveClosureFact!,kind:"stop",outcome:"no_action",loopState:"stopped"};
+  assert.equal((await stopped.close()).status,"applied");
+  const unstopped=await prepare();
+  unstopped.f.uow.state.cognitiveClosureFact={...unstopped.f.uow.state.cognitiveClosureFact!,kind:"stop",outcome:"no_action",loopState:"active"};
+  assert.equal((await unstopped.close()).status,"rejected");
+
+  const stale=await prepare();
+  stale.f.uow.state.cognitiveClosureFact={...stale.f.uow.state.cognitiveClosureFact!,taskRevisionId:stale.f.operation()};
+  assert.equal((await stale.close()).status,"rejected");
+  const failed=await prepare();
+  failed.f.uow.state.cognitiveClosureFact={...failed.f.uow.state.cognitiveClosureFact!,kind:"failed",outcome:"failed"};
+  assert.equal((await failed.close()).status,"rejected");
+  const consumer=await prepare();
+  consumer.f.uow.state.proposals.push({projectId,taskId:taskA,taskRevisionId:consumer.task.currentRevisionId,
+    stageId:null,consumer:"human",useRequired:true,evidence:"Use",stopCondition:"Use",createdAt:"2026-10-23T00:00:00.000Z"});
+  const noUse=await consumer.close();
+  assert.equal(noUse.status==="rejected"?noUse.code:null,"USE_NOT_OBSERVED");
 });
 
 test("starting a migrated todo Task without basis input retains its fixed legacy sources", async () => {

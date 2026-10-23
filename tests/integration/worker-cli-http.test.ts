@@ -571,9 +571,115 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal(secondContext.externalReferences.some((item:{body:string})=>item.body===wikiBody),true);
   const decisionId=randomUUID();
   assert.equal((await workerCommand(decisionWorker.wrapperPath,{type:"worker.decision",decisionId,
-    dispatchId:secondDispatch.entityId,runId:secondRunId,kind:"waiting",reason:"No new approved source",evidenceRefs:[]})).entityId,decisionId);
+    dispatchId:secondDispatch.entityId,runId:secondRunId,kind:"no_action",reason:"No new approved source",evidenceRefs:[]})).entityId,decisionId);
   assert.equal((await cli(decisionWorker.wrapperPath,["get",`/api/projects/${projectId}/orchestration/decisions/${decisionId}`])).reason,
     "No new approved source");
+  const decisionTaskVersion=(await workflow.getTask(owner,projectId,secondTaskId)).task.version;
+  const premature=await workflow.execute(owner,{projectId,operationId:randomUUID(),type:"task.close",taskId:secondTaskId,
+    expectedVersion:decisionTaskVersion,decisionId,acceptanceResult:"met",acceptanceEvidence:"Premature",reason:"No settlement yet"});
+  assert.equal(premature.status,"rejected");
+  await runtime.rejectDispatch(projectId,secondRunId,"Fixture terminal; no native Turn");
+  await orchestrate({type:"worker.outcome",dispatchId:secondDispatch.entityId,outcome:"no_action",deliveryId:null,
+    decisionId,evidenceRef:null,reason:"No new approved source"});
+  const closeResponse=await fetch(`${apiUrl}/api/commands`,{method:"POST",headers:{authorization:`Bearer ${ownerToken}`,
+    "content-type":"application/json"},body:JSON.stringify({projectId,operationId:randomUUID(),type:"task.close",
+    taskId:secondTaskId,expectedVersion:decisionTaskVersion,decisionId,acceptanceResult:"met",
+    acceptanceEvidence:"Signed no-action decision and terminal Run were read back",reason:"Bounded cognition accepted"})});
+  assert.equal(closeResponse.status,200,await closeResponse.text());
+  assert.equal((await workflow.getTask(owner,projectId,secondTaskId)).task.state,"done");
+  const decisionClosure=(await workflow.getTask(owner,projectId,secondTaskId)).closures.at(-1)!;
+  assert.equal(decisionClosure.decisionId,decisionId);
+  assert.equal(decisionClosure.deliveryId,null);
+  assert.equal(decisionClosure.sourceInboxId,secondInbox.entityId);
+  // Observation outbox entity_id is the business Task, while the signed operation names the Observation.
+  const sourceRow=(await pool.query(`SELECT e.entity_id,j.result->>'revisionId' AS observation_id
+    FROM outbox_event e JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id
+    WHERE e.project_id=$1 AND e.event_id=$2`,[projectId,observationEvent.event_id])).rows[0];
+  assert.equal(sourceRow.entity_id,childTaskId);
+  assert.notEqual(sourceRow.observation_id,sourceRow.entity_id);
+  const observedLoopId=randomUUID(),observedTaskId=randomUUID(),observedSessionId=randomUUID(),observedRunId=randomUUID();
+  await issue({type:"task.create",taskId:observedTaskId,stageId,title:"Judge independent consumer feedback",
+    content:"# Read the signed observation",acceptance:"Record one bounded decision",owner:cognitiveRole,
+    consumer:"owner",evidence:"Observation source",stopCondition:"One decision"});
+  await issue({type:"task.start",taskId:observedTaskId,expectedVersion:1,reason:"Fix observation evidence"});
+  await orchestrate({type:"loop.enroll",loopId:observedLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
+    allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:observationCursor.created_at.toISOString(),
+      eventId:observationCursor.event_id},maxRuns:1,maxConcurrent:1,reason:"Signed Observation closure fact"});
+  const observedInbox=await orchestrate({type:"inbox.accept",loopId:observedLoopId,sourceEventId:observationEvent.event_id,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:observedInbox.entityId,expectedVersion:1,reason:"Read exact feedback"});
+  const observedDispatch=await orchestrate({type:"dispatch.request",inboxId:observedInbox.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:observedTaskId,expectedTaskVersion:2,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Judge external source"});
+  const observedClaim=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:observedDispatch.entityId,claimToken:observedClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:observedDispatch.entityId,claimToken:observedClaim});
+  await issue({type:"runtime.session.reserve",sessionId:observedSessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,observedSessionId);
+  await runtime.bindSession(projectId,observedSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:observedSessionId,
+    roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${observedSessionId}`,nativeSessionId:`fixture-${observedSessionId}`});
+  await issue({type:"runtime.run.reserve",runId:observedRunId,taskId:observedTaskId,sessionId:observedSessionId,
+    expectedVersion:2,input:"Observe formal feedback fixture; no native Turn"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:observedDispatch.entityId,claimToken:observedClaim,result:"accepted",
+    runtimeRunId:observedRunId,reason:"Formal fixture bound"});
+  const observedWorker=await broker.issue({projectId,loopId:observedLoopId,taskId:observedTaskId,runId:observedRunId,
+    sessionId:observedSessionId,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
+  const observedDecisionId=randomUUID();
+  await workerCommand(observedWorker.wrapperPath,{type:"worker.decision",decisionId:observedDecisionId,
+    dispatchId:observedDispatch.entityId,runId:observedRunId,kind:"no_action",reason:"Feedback recorded; no further action",evidenceRefs:[]});
+  await runtime.rejectDispatch(projectId,observedRunId,"Fixture terminal; no native Turn");
+  await orchestrate({type:"worker.outcome",dispatchId:observedDispatch.entityId,outcome:"no_action",deliveryId:null,
+    decisionId:observedDecisionId,evidenceRef:null,reason:"Feedback recorded; no further action"});
+  const observedFact=await uow.read(projectId,tx=>tx.getCognitiveClosureFact!(observedDecisionId));
+  assert.equal(observedFact?.sourceTaskId,childTaskId);
+  assert.equal(observedFact?.sourceTaskIsCognition,false);
+  assert.equal(observedFact?.sourceEventId,observationEvent.event_id);
+  assert.equal(await uow.read(projectId,tx=>tx.getCognitiveClosureFact!(randomUUID())),null);
+  const unsupportedSource=(await pool.query(`SELECT event_id FROM outbox_event WHERE project_id=$1
+    AND kind='task' LIMIT 1`,[projectId])).rows[0];
+  assert.ok(unsupportedSource?.event_id);
+  await pool.query("UPDATE orchestration_inbox SET source_event_id=$3 WHERE project_id=$1 AND inbox_id=$2",
+    [projectId,observedInbox.entityId,unsupportedSource.event_id]);
+  await pool.query("UPDATE orchestration_dispatch SET data=jsonb_set(data,'{sourceEventId}',to_jsonb($3::text)) WHERE project_id=$1 AND dispatch_id=$2",
+    [projectId,observedDispatch.entityId,unsupportedSource.event_id]);
+  assert.equal(await uow.read(projectId,tx=>tx.getCognitiveClosureFact!(observedDecisionId)),null,
+    "an unsupported or tampered source cannot become a closure fact merely because the decision is signed");
+  // A formal observation of a cognition report still does not create a business handoff.
+  const cognitionSourceSessionId=randomUUID(),cognitionSourceRunId=randomUUID(),cognitionSourceDecisionId=randomUUID();
+  const cognitionSourceClaim=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:unrelatedDispatch.entityId,claimToken:cognitionSourceClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:unrelatedDispatch.entityId,claimToken:cognitionSourceClaim});
+  await issue({type:"runtime.session.reserve",sessionId:cognitionSourceSessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,cognitionSourceSessionId);
+  await runtime.bindSession(projectId,cognitionSourceSessionId,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:cognitionSourceSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${cognitionSourceSessionId}`,nativeSessionId:`fixture-${cognitionSourceSessionId}`});
+  await issue({type:"runtime.run.reserve",runId:cognitionSourceRunId,taskId:unrelatedTaskId,sessionId:cognitionSourceSessionId,
+    expectedVersion:2,input:"Review cognition source fixture; no native Turn"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:unrelatedDispatch.entityId,claimToken:cognitionSourceClaim,
+    result:"accepted",runtimeRunId:cognitionSourceRunId,reason:"Fixture bound"});
+  const cognitionSourceWorker=await broker.issue({projectId,loopId:observationLoopId,taskId:unrelatedTaskId,
+    runId:cognitionSourceRunId,sessionId:cognitionSourceSessionId,roleId:cognitiveRole,kind:"cognition",
+    allowedRoleIds:[cognitiveRole,businessRole]});
+  await workerCommand(cognitionSourceWorker.wrapperPath,{type:"worker.decision",decisionId:cognitionSourceDecisionId,
+    dispatchId:unrelatedDispatch.entityId,runId:cognitionSourceRunId,kind:"waiting",reason:"No business owner in source",evidenceRefs:[]});
+  await runtime.rejectDispatch(projectId,cognitionSourceRunId,"Fixture terminal; no native Turn");
+  await orchestrate({type:"worker.outcome",dispatchId:unrelatedDispatch.entityId,outcome:"waiting",deliveryId:null,
+    decisionId:cognitionSourceDecisionId,evidenceRef:null,reason:"No business owner in source"});
+  const cognitionSourceFact=await uow.read(projectId,tx=>tx.getCognitiveClosureFact!(cognitionSourceDecisionId));
+  assert.equal(cognitionSourceFact?.sourceTaskId,cognitiveTaskId);
+  assert.equal(cognitionSourceFact?.sourceTaskIsCognition,true);
+  const cognitionTask=(await workflow.getTask(owner,projectId,unrelatedTaskId)).task;
+  const noBusinessHandoff=await workflow.execute(owner,{projectId,operationId:randomUUID(),type:"task.close",
+    taskId:unrelatedTaskId,expectedVersion:cognitionTask.version,decisionId:cognitionSourceDecisionId,
+    waitingInboxId:randomUUID(),acceptanceResult:"met",acceptanceEvidence:"Cannot claim business handoff",
+    reason:"Review source classification"});
+  assert.equal(noBusinessHandoff.status==="rejected"?noBusinessHandoff.code:null,"WAITING_HANDOFF_REQUIRED");
   const unknown=randomUUID();
   assert.equal((await cli(wrapper,["operation",unknown],1)).error?.code,"OPERATION_NOT_FOUND");
   assert.equal((await cli(wrapper,["task",randomUUID()],1)).error?.code,"FORBIDDEN");
