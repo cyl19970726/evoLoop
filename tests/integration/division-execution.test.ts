@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -221,9 +221,11 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   t.after(async()=>app.close());
   broker=new WorkerCredentialBroker({workerRoot,apiUrl,
     cliMain:fileURLToPath(new URL("../../apps/cli/dist/main.js",import.meta.url)),
-    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
+    nodeExecutable:process.execPath,ttlMs:60_000});
   const receiptWorker=await broker.issue({projectId:pid,loopId,taskId:firstTaskId,runId,sessionId,roleId,
     kind:"business",allowedRoleIds:[roleId]});
+  assert.ok((await readFile(receiptWorker.wrapperPath,"utf8")).includes(JSON.stringify(process.execPath)),
+    "the broker wrapper must call the current host's Node executable");
   const receiver=receiptWorker.principal;
   const cli=async(args:string[],expected=0)=>{
     const result=await new Promise<{code:number|null;out:string;err:string}>((resolve,reject)=>{
