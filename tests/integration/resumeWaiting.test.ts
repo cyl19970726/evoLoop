@@ -88,4 +88,11 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   const changed=await official(reviewer,{type:"document.revise",documentId:issueId,expectedVersion:1,body:"# Later revision",reason:"Preserve old source"});
   assert.equal(changed.status,"applied");
   assert.equal((await store.transaction(projectId,tx=>tx.getSourceFact(resumed[0]!.id)))?.issueContentHash,hash("# Fixed issue"));
+  const forgedId=randomUUID();
+  await pool.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc)
+    VALUES($1,$2,$3,'decision',$4,$5,'waiting.resumed',$6,$7::jsonb,now())`,
+    [projectId,forgedId,loopId,decisionId,winningOperationId,reviewer,
+      JSON.stringify({...resumed[0]!.detail,issueContentHash:"0".repeat(64)})]);
+  assert.equal(await store.transaction(projectId,tx=>tx.getSourceFact(forgedId)),null,"a forged same-operation event cannot become a source");
+  assert.equal((await orchestration.listSourceFacts(principal(reviewer),projectId,loopId)).items.some(x=>x.id===forgedId),false);
 });
