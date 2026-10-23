@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { inTaskContext, nextAction, readableOutcome } from "../src/orchestration/summary.ts";
+import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
+import { currentChainSummary, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome } from "../src/orchestration/summary.ts";
 import { scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
+import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111", loopId = "22222222-2222-4222-8222-222222222222";
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -120,6 +121,49 @@ test("story trigger uses formal source kind and leaves complete reasons to expan
   assert.match(sourceTriggerLabel(source("dispatch.gap")),/缺少署名结果/);
   assert.match(sourceTriggerLabel(undefined),/尚未读回/);
   assert.doesNotMatch(sourceTriggerLabel(source("worker.outcome")),/[0-9a-f]{8}-[0-9a-f]{4}/);
+});
+
+test("loaded chain uses formal parent, outcome and sealed observation edges before stable time ties", () => {
+  const dispatch=(id:string,time:string,sourceEventId=id,parentDispatchId:string|null=null)=>
+    ({id,taskId:id,sourceEventId,parentDispatchId,createdAtUtc:time} as OrchestrationDispatch);
+  const first=dispatch("first","2026-10-23T09:00:00Z");
+  const business=dispatch("business","2026-10-23T10:00:00Z","from-first");
+  const feedback=dispatch("feedback","2026-10-23T08:00:00Z","use-report");
+  const gap=dispatch("gap","2026-10-23T11:00:00Z","from-feedback");
+  const unrelated=dispatch("unrelated","2026-10-23T09:30:00Z","shared-but-unverified");
+  const sources=[{id:"from-first",kind:"worker.outcome",originDispatchId:"first"},
+    {id:"use-report",kind:"observation.record",deliveryId:"fixed-delivery"},
+    {id:"from-feedback",kind:"dispatch.gap",originDispatchId:"feedback"}] as OrchestrationSourceFact[];
+  const submissions=[{dispatchId:"business",state:"sealed",deliveryId:"fixed-delivery"},
+    {dispatchId:"unrelated",state:"submitted",deliveryId:"other-delivery"}] as OrchestrationSubmission[];
+  const ordered=orderDispatches([gap,unrelated,feedback,business,first],sources,submissions);
+  assert.deepEqual(ordered.ordered.map(item=>item.id),["first","unrelated","business","feedback","gap"]);
+  assert.deepEqual([...ordered.hasLater].sort(),["business","feedback","first"]);
+  assert.equal(hasUnreadChainPages([{nextCursor:null},{nextCursor:"next"}]),true);
+  assert.equal(hasUnreadChainPages([{nextCursor:null},{nextCursor:null}]),false);
+});
+
+test("human cognition title requires this dispatch's exact projection and never promotes an event UUID", () => {
+  const dispatch={id:"current",taskId:"task",purpose:"cognition"} as OrchestrationDispatch;
+  const source={kind:"observation.record"} as OrchestrationSourceFact;
+  const stale={dispatchId:"old",sourceTaskTitle:"Business report",sourceTaskId:"source"} as WorkTaskStatus;
+  const sourceBusiness={cognition:false} as WorkTaskStatus;
+  assert.doesNotMatch(storyTitle(dispatch,"Cognition: event 1234",source,stale,sourceBusiness,"固定报告目标"),/Business report|Cognition: event/);
+  assert.match(storyTitle(dispatch,"Cognition: event 1234",source,{...stale,dispatchId:"current"},sourceBusiness,"固定报告目标"),/Business report/);
+  assert.equal(storyTitle({...dispatch,purpose:"business"},"普通调研任务",source,undefined,undefined,"固定报告目标"),"普通调研任务");
+});
+
+test("current chain summary separates signed stop, Agent use and unclosed business Task", () => {
+  const loop={state:"stopped"} as OrchestrationLoop;
+  const dispatch={id:"decision-dispatch",taskId:"business-task",purpose:"business",state:"completed",outcome:"no_action"} as OrchestrationDispatch;
+  const decision={id:"decision",dispatchId:dispatch.id,kind:"stop",createdAtUtc:"2026-10-23T12:00:00Z"} as OrchestrationWorkerDecision;
+  const submission={dispatchId:dispatch.id,state:"sealed",deliveryId:"delivery"} as OrchestrationSubmission;
+  const task={task:{id:dispatch.taskId,state:"in_progress"},closures:[],observations:[{deliveryId:"delivery",result:"used",observerKind:"agent"}]} as TaskDetail;
+  const lines=currentChainSummary(loop,[dispatch],[submission],[decision],[task],dispatch.taskId,true).join(" ");
+  assert.match(lines,/署名停止决定/);assert.match(lines,/Agent 使用/);assert.match(lines,/尚未登记验收/);
+  assert.doesNotMatch(lines,/人类使用记录/);
+  assert.doesNotMatch(currentChainSummary(loop,[dispatch],[submission],[decision],[task],dispatch.taskId,false).join(" "),/已按署名停止决定/);
+  assert.doesNotMatch(currentChainSummary(loop,[],[],[],[],dispatch.taskId).join(" "),/尚未登记验收|Agent 使用/);
 });
 
 test("task context and decision reads use scoped routes instead of scanning the first loop page", async () => {

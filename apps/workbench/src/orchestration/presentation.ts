@@ -1,4 +1,5 @@
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { WorkTaskStatus } from "../workflow/workStatusPresentation";
 
 export function sourceTriggerLabel(source: OrchestrationSourceFact | undefined): string {
   if (!source) return "固定来源尚未读回；展开核对派发来源。";
@@ -9,6 +10,17 @@ export function sourceTriggerLabel(source: OrchestrationSourceFact | undefined):
     case "dispatch.gap": return "上一轮运行终结后缺少署名结果，需要恢复判断";
     default: return `已登记来源：${source.kind}`;
   }
+}
+
+export function storyTitle(dispatch: OrchestrationDispatch, currentTaskTitle: string | undefined,
+  source: OrchestrationSourceFact | undefined, status: WorkTaskStatus | undefined,
+  sourceTaskStatus: WorkTaskStatus | undefined, scopeTitle: string | undefined): string {
+  if (dispatch.purpose !== "cognition") return currentTaskTitle ?? `任务 ${dispatch.taskId.slice(0,8)}`;
+  const trigger = sourceTriggerLabel(source);
+  const matched = status?.dispatchId === dispatch.id ? status : undefined;
+  const businessSource = matched?.sourceTaskTitle && sourceTaskStatus?.cognition === false ?
+    `${matched.sourceTaskTitle}（源任务现名称）` : null;
+  return `${trigger} · ${businessSource ?? scopeTitle ?? "上轮判断"}`;
 }
 
 export const inboxStateLabel: Record<OrchestrationInbox["state"], string> = {
