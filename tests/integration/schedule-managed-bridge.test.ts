@@ -177,11 +177,18 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
     expectedInboxVersion: 2, dispatchId: childId, parentDispatchId: parentId, taskId,
     expectedTaskVersion: 1, recipientRoleId: business, purpose: "Execute scheduled Task",
     authorizationScopeId: "business-scope", reason: "Reuse exact occurrence Task" });
-  await workerCommand(worker.wrapperPath, { type: "worker.decision", decisionId: randomUUID(),
+  const decisionId = randomUUID();
+  await workerCommand(worker.wrapperPath, { type: "worker.decision", decisionId,
     dispatchId: parentId, runId: parentRun, kind: "waiting",
     reason: "Original scheduled Task delegated to business role", evidenceRefs: [] });
   // This fixture makes the preflight Run terminal; it never starts a native model Turn.
   await runtime.rejectDispatch(projectId, parentRun, "Fixture terminal after signed waiting decision; no native model run");
+  const cognitiveTaskBeforeSettlement = (await workflow.getTask(principal(), projectId, parent.taskId)).task;
+  const unsettledClose = await workflow.execute(principal(), { projectId, operationId: randomUUID(),
+    type: "task.close", taskId: parent.taskId, expectedVersion: cognitiveTaskBeforeSettlement.version,
+    decisionId, handoffDispatchId: childId, acceptanceResult: "met",
+    acceptanceEvidence: "A signed decision alone is not settled", reason: "Reject premature closure" } as never);
+  assert.equal(unsettledClose.status === "rejected" ? unsettledClose.code : null, "DECISION_UNSETTLED");
   const child = await pumpUntil(async () => {
     const item = await orchestration.getDispatch(principal(), projectId, childId);
     return item?.runtimeRunId ? item : undefined;
@@ -240,6 +247,8 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   await pool.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
     VALUES($1,$2,$3,'forged','schedule.task.todo',$4,1,$5)`, [projectId, forged, first[0]!.operationId, taskId, now]);
   assert.equal((await orchestration.listSourceFacts(principal(), projectId, loopId)).items.some(item => item.id === forged), false);
+  assert.equal(await store.read(projectId, reader => reader.getSourceFact(forged)), null,
+    "a forged schedule label cannot be resolved as a trusted closure source");
   await assert.rejects(issue({ type: "inbox.accept", loopId, sourceEventId: forged,
     recipientRoleId: cognition, purpose: "cognitive_review" }), (error: unknown) => error instanceof OrchestrationError && error.code === "SOURCE_UNAVAILABLE");
 
@@ -282,6 +291,9 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   await write({ ...command, scheduleId: ordinaryScheduleId, revisionId: randomUUID(),
     watermarkUtc: now, rule: { kind: "once", atUtc: future },
     template: { title: "Unscoped after stop", content: "# Ordinary", acceptance: "Record", owner: business } });
+  const { watermarkUtc: _stoppedWatermark, ...stoppedTemplate } = command;
+  await write({ ...stoppedTemplate, type: "schedule.revise", revisionId: randomUUID(),
+    expectedVersion: 1, state: "stopped", reason: "End the original occurrence window" });
   const beforeStop = (await orchestration.getLoop(principal(), projectId, loopId))!;
   await issue({ type: "loop.state", loopId, expectedVersion: beforeStop.version, state: "stopped", reason: "Stop pilot" });
   now = future;
@@ -326,4 +338,66 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   }
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM schedule_occurrence WHERE project_id=$1 AND schedule_id=$2",
     [projectId, lockScheduleId])).rows[0].n, 0);
+
+  // The signed cognition Decision remains tied to the original trusted occurrence after the
+  // business Task moves beyond its created todo revision and the Loop has stopped.
+  const uow = new PostgresUnitOfWork(pool);
+  const settledParent = await orchestration.getDispatch(principal(), projectId, parentId);
+  assert.equal(settledParent?.state, "completed");
+  assert.equal(settledParent.outcome, "waiting");
+  assert.equal((await workflow.getRuntimeRun(principal(), projectId, parentRun)).state, "failed");
+  const businessTask = (await workflow.getTask(principal(), projectId, taskId)).task;
+  assert(businessTask.version > 1, "later business execution must not replace the occurrence's todo v1");
+  assert.equal((await orchestration.getLoop(principal(), projectId, loopId))?.state, "stopped");
+  const fixedSource = await store.read(projectId, reader => reader.getSourceFact(event));
+  assert.equal(fixedSource?.kind, "schedule.task.todo");
+  assert.equal(fixedSource.subjectId, taskId);
+  assert.equal(fixedSource.subjectVersion, 1);
+  assert.equal((await new PgSchedulingStore(pool).get(projectId, scheduleId))?.state, "stopped");
+  assert.equal((await pool.query("SELECT schedule_revision_id FROM schedule_occurrence WHERE project_id=$1 AND operation_id=$2",
+    [projectId, first[0]!.operationId])).rows[0].schedule_revision_id, revisionId,
+  "a stopped Schedule must not replace the occurrence's original revision");
+  const closureFact = await uow.read(projectId, reader => reader.getCognitiveClosureFact!(decisionId));
+  assert.equal(closureFact?.sourceEventId, event);
+  assert.equal(closureFact?.sourceTaskId, taskId);
+  assert.equal(closureFact?.loopId, loopId);
+  assert.equal(closureFact?.outcome, "waiting");
+
+  const cognitiveTask = (await workflow.getTask(principal(), projectId, parent.taskId)).task;
+  const wrongChild = await workflow.execute(principal(), { projectId, operationId: randomUUID(),
+    type: "task.close", taskId: parent.taskId, expectedVersion: cognitiveTask.version,
+    decisionId, handoffDispatchId: randomUUID(), acceptanceResult: "met",
+    acceptanceEvidence: "Unrelated child cannot settle waiting", reason: "Reject unrelated handoff" } as never);
+  assert.equal(wrongChild.status === "rejected" ? wrongChild.code : null, "WAITING_HANDOFF_REQUIRED");
+
+  // Simulate only a later policy projection in this isolated schema. The original source,
+  // accepted Inbox, signed Decision and settled outcome remain fixed historical facts.
+  // This does not exercise division.revoke (this fixture enrolled a static business role).
+  const originalLoopData = (await pool.query("SELECT data FROM orchestration_loop WHERE project_id=$1 AND loop_id=$2",
+    [projectId, loopId])).rows[0].data as Record<string, unknown>;
+  try {
+    await pool.query("UPDATE orchestration_loop SET data=jsonb_set(data,'{allowedBusinessRoleIds}','[]'::jsonb) WHERE project_id=$1 AND loop_id=$2",
+      [projectId, loopId]);
+    assert.equal(await store.read(projectId, reader => reader.getSourceFact(event)), null,
+      "ordinary source discovery still requires the current business-role policy");
+    const historical = await uow.read(projectId, reader => reader.getCognitiveClosureFact!(decisionId));
+    assert.equal(historical?.sourceEventId, event);
+    assert.equal(historical?.sourceTaskId, taskId);
+    assert.equal(historical?.outcome, "waiting");
+  } finally {
+    await pool.query("UPDATE orchestration_loop SET data=$3::jsonb WHERE project_id=$1 AND loop_id=$2",
+      [projectId, loopId, JSON.stringify(originalLoopData)]);
+  }
+
+  const closed = await workflow.execute(principal(), { projectId, operationId: randomUUID(),
+    type: "task.close", taskId: parent.taskId, expectedVersion: cognitiveTask.version,
+    decisionId, handoffDispatchId: childId, acceptanceResult: "met",
+    acceptanceEvidence: "Signed waiting Decision, settled outcome and same-source child checked after Loop stop",
+    reason: "Scheduled cognition handed work to the exact business Task" } as never);
+  assert.equal(closed.status, "applied", JSON.stringify(closed));
+  const closure = (await workflow.getTask(principal(), projectId, parent.taskId)).closures.at(-1);
+  assert.equal(closure?.sourceEventId, event);
+  assert.equal(closure?.sourceTaskId, taskId);
+  assert.equal(closure?.decisionId, decisionId);
+  assert.equal(closure?.handoffDispatchId, childId);
 });

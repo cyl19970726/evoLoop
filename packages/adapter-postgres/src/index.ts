@@ -6,6 +6,7 @@ import pg, { type PoolClient, type QueryResultRow } from "pg";
 import { PgRuntimeStore } from "./runtime.js";
 import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
+import { scheduledSourceFacts } from "./schedule-source.js";
 import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
@@ -154,7 +155,7 @@ class PgReader implements Reader {
       dispatch.dispatch_id,dispatch.task_id,dispatch.loop_id,dispatch.inbox_id AS source_inbox_id,
       dispatch.data->>'purpose' AS purpose,dispatch.data->>'recipientRoleId' AS recipient_role_id,
       dispatch.data->>'outcome' AS outcome,loop.data->>'cognitiveRoleId' AS cognitive_role_id,loop.state AS loop_state,
-      source_inbox.source_event_id,run.run_id,run.task_revision_id,run.state AS run_state,
+      source_inbox.source_event_id,source_out.kind AS source_out_kind,run.run_id,run.task_revision_id,run.state AS run_state,
       CASE WHEN source_out.kind='observation.record' AND source_delivery.delivery_id IS NOT NULL
              AND source_delivery.actor_id<>source_observation.actor_id THEN source_observation.task_id
            WHEN source_out.kind='document' AND source_doc.kind='issue' THEN source_doc.origin_task_id
@@ -214,10 +215,22 @@ class PgReader implements Reader {
         AND source_doc.kind='issue' AND source_doc.origin_task_id IS NOT NULL AND source_revision.revision_id IS NOT NULL)
       OR (source_event.kind IN ('worker.outcome','dispatch.gap') AND source_event.loop_id=dispatch.loop_id
         AND source_dispatch.dispatch_id IS NOT NULL)
+      OR source_out.kind='schedule.task.todo'
     ) LIMIT 1`,[this.projectId,decisionId]);
     const x=r.rows[0];
     if (!x) return null;
-    const sourceTaskId: string | null = x.source_task_id ?? null;
+    let sourceTaskId: string | null = x.source_task_id ?? null;
+    if (x.source_out_kind === "schedule.task.todo") {
+      // The label only selects a candidate; the original schedule transaction must prove its provenance.
+      // The signed, settled Decision above proves prior acceptance; retirement cannot erase that handoff.
+      const [source] = await scheduledSourceFacts(this.client, this.projectId, {
+        eventId: x.source_event_id, loopId: x.loop_id, historicalClosure: true,
+      });
+      if (!source || source.kind !== "schedule.task.todo" || source.subjectVersion !== 1 ||
+          source.sourceLoopId !== x.loop_id || source.scheduleTargetLoopId !== x.loop_id ||
+          !source.scheduleTaskRevisionId) return null;
+      sourceTaskId = source.subjectId;
+    }
     const cognitionSource=sourceTaskId ? await this.client.query(`SELECT EXISTS(SELECT 1 FROM orchestration_dispatch
       WHERE project_id=$1 AND task_id=$2 AND data->>'purpose'='cognition') AS yes`,[this.projectId,sourceTaskId]) : null;
     return {projectId:this.projectId,decisionId:x.decision_id,actorId:x.actor_id,kind:x.kind,
