@@ -1,5 +1,5 @@
 import type { TaskDetail } from "@evoloop/contracts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskLoopContext } from "./client";
 
 export function inTaskContext(dispatch: OrchestrationDispatch, context: TaskLoopContext): boolean {
@@ -63,6 +63,12 @@ export function hasUnreadChainPages(pages: Array<{nextCursor:string|null}>): boo
   return pages.some(page => page.nextCursor !== null);
 }
 
+/** A terminal gap requires its formal event; an absent submission page alone proves nothing. */
+export function hasTerminalIntentGap(dispatchId: string, events: OrchestrationEvent[],
+  submission: OrchestrationSubmission | undefined, decision: OrchestrationWorkerDecision | undefined): boolean {
+  return !submission && !decision && events.some(value => value.kind === "dispatch.gap" && value.entityId === dispatchId);
+}
+
 export function readableOutcome(dispatch: OrchestrationDispatch, submission: OrchestrationSubmission | undefined,
   detail: TaskDetail | undefined): string {
   if (dispatch.state === "unknown") return "派发结果未知，需回查原运行；不能认定没有执行。";
@@ -95,4 +101,12 @@ export function nextAction(inbox: OrchestrationInbox | undefined, dispatch: Orch
   if (dispatch.outcome === "failed") return "核对失败证据并决定是否重试。";
   if (dispatch.outcome === "no_action") return "核对无动作的理由与适用范围。";
   return "跟进运行与署名结果，不以运行结束代替交付。";
+}
+
+/** A loaded successor keeps an old waiting step from masquerading as today's responsibility. */
+export function storyNextAction(inbox: OrchestrationInbox | undefined, dispatch: OrchestrationDispatch,
+  submission: OrchestrationSubmission | undefined, hasLoadedSuccessor: boolean): string {
+  if (hasLoadedSuccessor) return "已有正式来源或父子派发接续；继续读后续记录，不把当时等待当作当前责任。";
+  if (dispatch.outcome === "waiting") return "当时记录为等待；当前条件须核对完整来源与署名理由。";
+  return nextAction(inbox,dispatch,submission);
 }

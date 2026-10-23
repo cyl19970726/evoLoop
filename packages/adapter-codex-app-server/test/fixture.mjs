@@ -2,12 +2,13 @@ import { createInterface } from "node:readline";
 
 const mode = process.argv[2] ?? "normal";
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
-const thread = { id: "thread-owned", sessionId: "thread-owned", cwd: "/tmp/evoloop-fixture" };
+const thread = { id: "thread-owned", sessionId: "thread-owned", cwd: "/tmp/evoloop-fixture", source: "appServer" };
 const lines = createInterface({ input: process.stdin });
 let initialized = false;
 let approvalId = 800;
 let pendingCreateId = null;
 let turnListReads = 0;
+let archived = mode === "already-archived";
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") { initialized = true; continue; }
@@ -36,6 +37,23 @@ for await (const line of lines) {
     send({ id, result: { thread } }); continue;
   }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
+  if (method === "thread/archive") {
+    if (params.threadId !== thread.id) { send({ id, error: { code: -32602, message: "foreign thread" } }); continue; }
+    archived = true;
+    if (mode === "lost-archive-ack") continue;
+    send({ id, result: {} }); continue;
+  }
+  if (method === "thread/list") {
+    if (params.archived !== true || params.cwd !== thread.cwd || params.sourceKinds !== undefined ||
+      params.useStateDbOnly !== true || params.limit !== 100) {
+      send({ id, error: { code: -32602, message: "unsafe listing" } }); continue;
+    }
+    const foreign = { id: "other-thread", sessionId: "other-session", cwd: thread.cwd, source: "vscode" };
+    const owned = { ...thread, source: mode === "vscode-archive" ? "vscode" : "appServer",
+      ...(mode === "foreign-archive" ? { sessionId: "different-session" } : {}) };
+    send({ id, result: { data: archived ? mode === "foreign-only" ? [foreign] :
+      mode === "foreign-samecwd" ? [foreign, owned] : [owned] : [], nextCursor: null } }); continue;
+  }
   if (method === "thread/resume" || method === "thread/read") {
     const observedEnvironment = mode === "env-observe" && method === "thread/read" ? {
       HOME: process.env.HOME ?? null, CODEX_HOME: process.env.CODEX_HOME ?? null,

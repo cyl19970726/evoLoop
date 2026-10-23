@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { Principal } from "@evoloop/contracts";
-import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationObservationFact, OrchestrationDeliveryFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
+import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationObservationFact, OrchestrationDeliveryFact, OrchestrationIssueFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
 import { OrchestrationError, OrchestrationService } from "../src/orchestration/index.js";
 
 const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), cognitiveRoleId = randomUUID(), workerRoleId = randomUUID(), taskId = randomUUID(), scopeId = randomUUID();
@@ -15,10 +15,10 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
-  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
+  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
     [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
     [source1, { projectId, id: source1, createdAtUtc: after, kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: feedbackDispatchId, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
   ]), taskVersion: 1, extraTaskId: null, taskOwnerRoleId: workerRoleId, taskState: "in_progress", taskStageId: stageId, scopeActive: true, runState: "running", runId: randomUUID(), deliveryId: randomUUID(), taskRevisionId: randomUUID(), runInputHash: "f".repeat(64) };
@@ -47,6 +47,7 @@ function harness() {
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
     getObservationFact: async id => draft.observationFact?.id === id ? draft.observationFact : null,
     getWorkflowOperationFact: async id => draft.workflowOp?.id === id ? draft.workflowOp : null,
+    getIssueFact: async (documentId, revisionId) => draft.issueFact?.documentId === documentId && draft.issueFact.revisionId === revisionId ? draft.issueFact : null,
     wasActorRole: async actorId => draft.cognitiveActors.has(actorId),
     canActAsRole: async (actorId, roleId) => actorId === cognition.actorId && roleId === cognitiveRoleId || actorId === worker.actorId && roleId === workerRoleId,
     listLoops: async () => ({ items: [...draft.loops.values()], nextCursor: null }), listInbox: async () => ({ items: [...draft.inbox.values()], nextCursor: null }), listDispatches: async () => ({ items: [...draft.dispatches.values()], nextCursor: null }), listSubmissions: async () => ({ items: [...draft.submissions.values()], nextCursor: null }), listEvents: async () => ({ items: draft.events, nextCursor: null }), listSourceFacts: async loopId => ({ items: [...draft.source.values()].filter(item => item.id === draft.loops.get(loopId)?.bootstrapEventId || item.createdAtUtc > (draft.loops.get(loopId)?.sourceAfter.createdAtUtc ?? "")), nextCursor: null }),
@@ -114,6 +115,37 @@ test("terminal missing-intent gap from cognition becomes one recovery inbox, whi
     kind: "waiting", reason: "late forged decision", evidenceRefs: [], actorId: cognition.actorId, createdAtUtc: after }); });
   await assert.rejects(() => h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
     sourceEventId: gap.id, recipientRoleId: cognitiveRoleId, purpose: "next_action" })), failed("SOURCE_UNAVAILABLE"));
+});
+
+test("only an applied fixed issue from the original Task scope wakes cognition", async () => {
+  const h = harness(); await h.enroll();
+  const eventId = randomUUID(), documentId = randomUUID(), revisionId = randomUUID();
+  const operationId = randomUUID(), writer = "independent-issue-writer", contentHash = "b".repeat(64);
+  const issue: OrchestrationSourceFact = { projectId, id: eventId, createdAtUtc: after,
+    kind: "document", subjectId: documentId, subjectVersion: 1, sourceLoopId: null,
+    originDispatchId: null, operationId, sourceActorId: writer, observationId: null,
+    deliveryId: null, observationResult: null, issueRevisionId: revisionId, issueContentHash: contentHash };
+  h.change(value => {
+    value.source.set(eventId, issue);
+    value.workflowOp = { projectId, id: operationId, actorId: writer, commandType: "document.create",
+      commandHash: "fixed", status: "applied", resultRefId: revisionId, resultVersion: 1 };
+    value.issueFact = { projectId, documentId, revisionId, contentHash, author: writer, kind: "issue",
+      originTaskId: taskId, originTaskRevisionId: value.taskRevisionId, originTaskVersion: 1,
+      originRunId: null };
+  });
+  const first = await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: eventId, recipientRoleId: cognitiveRoleId, purpose: "cognitive_review" }));
+  assert.equal((await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: eventId, recipientRoleId: cognitiveRoleId, purpose: "cognitive_review" }))).entityId, first.entityId);
+  h.change(value => { value.cognitiveActors.add(writer); });
+  await assert.rejects(() => h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: eventId, recipientRoleId: cognitiveRoleId, purpose: "next_action" })), failed("SOURCE_UNAVAILABLE"));
+  h.change(value => { value.cognitiveActors.delete(writer); value.issueFact!.originTaskVersion = 2; });
+  await assert.rejects(() => h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: eventId, recipientRoleId: cognitiveRoleId, purpose: "next_action" })), failed("SOURCE_UNAVAILABLE"));
+  h.change(value => { value.issueFact = null; });
+  await assert.rejects(() => h.service.execute(cognition, cmd({ type: "inbox.accept", loopId,
+    sourceEventId: eventId, recipientRoleId: cognitiveRoleId, purpose: "next_action" })), failed("SOURCE_UNAVAILABLE"));
 });
 
 test("fixed Task and scope are checked at request and again before external dispatch", async () => {
@@ -274,6 +306,39 @@ test("preterminal worker stop decision settles only after Run terminal and close
   assert.equal(h.data.loops.get(loopId)?.state, "stopped");
   assert.equal(h.data.dispatches.get(requested.entityId)?.outcome, "no_action");
   assert.equal(h.data.events.filter(event => event.kind === "loop.stopped").length, 1);
+});
+
+test("same-clock child request is valid before a signed cognition decision, but no new child follows it", async () => {
+  const setup = async () => {
+    const h=harness(); await h.enroll(); const inbox=await h.accept(); await h.ack(inbox.entityId);
+    const parentId=randomUUID();
+    h.change(data => data.dispatches.set(parentId,{projectId,id:parentId,version:4,loopId,
+      inboxId:randomUUID(),sourceEventId:source1,taskId,taskVersion:1,parentDispatchId:null,
+      recipientRoleId:cognitiveRoleId,purpose:"cognition",authorizationScopeId:scopeId,
+      state:"accepted",claimToken:randomUUID(),leaseUntilUtc:null,runtimeRunId:data.runId,
+      outcome:null,deliveryId:null,evidenceRef:null,reason:"bound",requestedBy:cognition.actorId,
+      createdAtUtc:at,updatedAtUtc:at}));
+    const request=cmd({type:"dispatch.request",inboxId:inbox.entityId,expectedInboxVersion:2,
+      dispatchId:randomUUID(),parentDispatchId:parentId,taskId,expectedTaskVersion:1,
+      recipientRoleId:workerRoleId,purpose:"perform bounded work",authorizationScopeId:scopeId,reason:"explicit handoff"});
+    const decision=cmd({type:"worker.decision",decisionId:randomUUID(),dispatchId:parentId,
+      runId:h.data.runId,kind:"waiting",reason:"business child owns next action",evidenceRefs:[]});
+    return {h,parentId,request,decision};
+  };
+  const before=await setup();
+  const child=await before.h.service.execute(cognition,before.request);
+  await before.h.service.execute(cognition,before.decision);
+  assert.equal((await before.h.service.execute(cognition,before.request)).replayed,true,
+    "the exact signed child request remains idempotently readable after the decision");
+  assert.equal(before.h.data.dispatches.get(child.entityId)?.parentDispatchId,before.parentId);
+  assert.equal(before.h.data.events.filter(event=>event.kind==="dispatch.requested").length,1);
+
+  const afterDecision=await setup();
+  await afterDecision.h.service.execute(cognition,afterDecision.decision);
+  await assert.rejects(() => afterDecision.h.service.execute(cognition,afterDecision.request),failed("PARENT_DECIDED"));
+  assert.equal(afterDecision.h.data.dispatches.has(afterDecision.request.dispatchId),false);
+  assert.equal(afterDecision.h.data.events.filter(event=>event.kind==="dispatch.requested").length,0);
+  assert.equal(afterDecision.h.data.inbox.get(afterDecision.request.inboxId)?.state,"acknowledged");
 });
 
 test("operation replay rechecks actor binding and retains one immutable audit decision", async () => {

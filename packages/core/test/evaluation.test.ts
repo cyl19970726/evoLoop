@@ -49,6 +49,7 @@ function fixture() {
     insertDelivery: async (value: Delivery) => { state.deliveries.push(value); },
     listObservations: async () => [],
     getRuntimeSession: async (key: string) => state.sessions.find(item => item.id === key) ?? null,
+    updateRuntimeSession: async (next: any) => { state.sessions[state.sessions.findIndex(item => item.id === next.id)] = next; },
     listRuntimeRuns: async (key?: string) => state.runs.filter(item => !key || item.taskId === key),
     getRuntimeRun: async (key: string) => state.runs.find(item => item.id === key) ?? null,
     insertRuntimeRun: async (run: any) => { state.runs.push(run); },
@@ -62,6 +63,38 @@ function fixture() {
   } as unknown as Transaction;
   return { state, tx };
 }
+
+test("session close admits only an idle bound session and blocks later Run reservation", async () => {
+  const { state, tx } = fixture();
+  const close = () => reserveRuntime({ tx, principal, command: { type: "runtime.session.close", projectId,
+    operationId: id(99), sessionId: id(10), expectedVersion: 2, reason: "Work complete" },
+    now: "2026-10-21T01:00:00Z", nextId: () => id(100), hash: () => hash });
+  state.runs.push({ id: id(90), sessionId: id(10), state: "unknown" });
+  await assert.rejects(close(), error => (error as { code?: string }).code === "SESSION_BUSY");
+  assert.equal(state.sessions[0]?.state, "ready");
+  state.runs.length = 0;
+  await close();
+  assert.equal(state.sessions[0]?.state, "closing");
+  assert.equal(state.sessions[0]?.closeOperationId, id(99));
+  assert.equal(state.events.at(-1)?.kind, "session.closeRequested");
+  await assert.rejects(close(), error => (error as { code?: string }).code === "VERSION_CONFLICT");
+  await assert.rejects(reserveRuntime({ tx, principal, command: { type: "runtime.run.reserve", projectId,
+    operationId: id(101), runId: id(102), taskId, sessionId: id(10), expectedVersion: 2, input: "Do work" },
+    now: "2026-10-21T01:01:00Z", nextId: () => id(103), hash: () => hash }),
+  error => (error as { code?: string }).code === "SESSION_NOT_READY");
+});
+
+test("normal session close rejects unknown creation and already closed sessions", async () => {
+  for (const stateName of ["unknown", "closed"] as const) {
+    const { state, tx } = fixture();
+    state.sessions[0]!.state = stateName;
+    await assert.rejects(reserveRuntime({ tx, principal, command: { type: "runtime.session.close", projectId,
+      operationId: id(104), sessionId: id(10), expectedVersion: 2, reason: "Done" },
+      now: "2026-10-21T01:00:00Z", nextId: () => id(105), hash: () => hash }),
+    error => (error as { code?: string }).code === "SESSION_NOT_READY");
+    assert.equal(state.events.length, 0);
+  }
+});
 
 test("two terminal Runs may each register a Delivery against unchanged business input", async () => {
   const { state, tx } = fixture();

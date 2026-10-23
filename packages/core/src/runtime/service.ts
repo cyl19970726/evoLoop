@@ -24,13 +24,42 @@ export class RuntimeWorkflowService {
   async verifyBinding(projectId: string, binding: RuntimeBinding): Promise<RuntimeSessionRecord> {
     return this.deps.uow.read(projectId, async reader => {
       const saved = required(await reader.getRuntimeSession(binding.sessionId), "runtime session");
-      if (saved.state !== "ready" || binding.owner !== "evoloop-codex-app-server" ||
+      if (!["ready", "closing"].includes(saved.state) || binding.owner !== "evoloop-codex-app-server" ||
         binding.projectId !== projectId || binding.roleId !== saved.roleId ||
         binding.cwd !== saved.cwd || binding.authorizationScope !== saved.authorizationScope ||
         binding.nativeThreadId !== saved.nativeThreadId || binding.nativeSessionId !== saved.nativeSessionId) {
-        throw new DomainError("FOREIGN_BINDING", "native binding does not match an owned ready session");
+        throw new DomainError("FOREIGN_BINDING", "native binding does not match an owned active session");
       }
       return saved;
+    });
+  }
+
+  async markSessionArchiveAttempt(projectId: string, sessionId: string, closeOperationId: string): Promise<RuntimeSessionRecord> {
+    return this.deps.uow.transaction(projectId, async tx => {
+      const current = required(await tx.getRuntimeSession(sessionId), "runtime session");
+      if (current.state !== "closing" || current.closeOperationId !== closeOperationId || current.closeAttemptedAt)
+        throw new DomainError("CLOSE_NOT_PENDING", "archive was already attempted or close intent changed");
+      const now = this.deps.clock.now();
+      const next = { ...current, version: current.version + 1, closeAttemptedAt: now, updatedAt: now };
+      await tx.updateRuntimeSession(next, current.version);
+      await this.emit(tx, null, sessionId, "session.archiveAttempted", "Archive may have been sent; recovery only reads native state", null, projectId);
+      return next;
+    });
+  }
+
+  async confirmSessionClosed(projectId: string, binding: RuntimeBinding, closeOperationId: string): Promise<RuntimeSessionRecord> {
+    return this.deps.uow.transaction(projectId, async tx => {
+      const current = required(await tx.getRuntimeSession(binding.sessionId), "runtime session");
+      if (current.state !== "closing" || current.closeOperationId !== closeOperationId ||
+        binding.owner !== "evoloop-codex-app-server" || binding.projectId !== projectId ||
+        binding.roleId !== current.roleId || binding.cwd !== current.cwd || binding.authorizationScope !== current.authorizationScope ||
+        binding.nativeThreadId !== current.nativeThreadId || binding.nativeSessionId !== current.nativeSessionId)
+        throw new DomainError("FOREIGN_BINDING", "close proof does not match pending owned session");
+      const now = this.deps.clock.now();
+      const next = { ...current, state: "closed" as const, version: current.version + 1, closeVerifiedAt: now, updatedAt: now };
+      await tx.updateRuntimeSession(next, current.version);
+      await this.emit(tx, null, current.id, "session.closed", "Exact owned native thread verified in archived listing", null, projectId);
+      return next;
     });
   }
 

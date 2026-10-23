@@ -35,6 +35,7 @@ function fixture() {
     links?: { documentId: string }[]; basis?: object }>();
   const documents = new Map<string, { status: "draft" | "published" | "archived"; adoptedRevisionId: string | null }>();
   const taskStarts: Record<string, any>[] = [];
+  const taskCreates: Record<string, any>[] = [];
   const documentReads: string[] = [];
   const operations = new Map<string, { result: { status: "applied"; entityId: string; version: number } }>();
   const sessions = new Map<string, { state: "reserved" | "ready"; id: string }>();
@@ -122,7 +123,7 @@ function fixture() {
       commands.push(command.type);
       const previous = operations.get(command.operationId);
       if (previous) return previous.result;
-      if (command.type === "task.create") tasks.set(command.taskId, { version: 1, state: "todo" });
+      if (command.type === "task.create") { taskCreates.push(command); tasks.set(command.taskId, { version: 1, state: "todo" }); }
       if (command.type === "task.start") {
         taskStarts.push(command);
         Object.assign(tasks.get(command.taskId)!, { version: 2, state: "in_progress" });
@@ -153,7 +154,7 @@ function fixture() {
     sealSubmission: async () => sealStatus,
     now: () => currentTime, canWrite: () => true,
   };
-  return { loop, facts, inbox, dispatches, tasks, documents, taskStarts, documentReads, sessions, runs, commands, deps,
+  return { loop, facts, inbox, dispatches, tasks, documents, taskStarts, taskCreates, documentReads, sessions, runs, commands, deps,
     rejectSource: (id: string) => rejectedSources.add(id),
     advanceTime: (value:string) => { currentTime=value; },
     loseClaimResponse: (kind:"dispatch.claim"|"dispatch.reclaim") => { lostClaimResponse=kind; },
@@ -435,6 +436,34 @@ test("verified external observation wakes cognition; raw Delivery and self cogni
   await runner.pump(); await runner.pump();
   assert.deepEqual(f.inbox.map(item => item.sourceEventId).sort(), [sourceId, externalId].sort());
   assert.equal(f.inbox.filter(item => item.sourceEventId === externalId).length, 1);
+});
+
+test("a verified issue creation seeds one cognition Task with its exact original; report does not wake", async () => {
+  const f = fixture();
+  const issueId = loopIntentId("issue-document"), issueEventId = loopIntentId("issue-source");
+  const issueRevisionId = loopIntentId("issue-initial-revision");
+  const issueHash = "a".repeat(64);
+  f.facts.push({ projectId, id: issueEventId, createdAtUtc: "2026-10-23T00:01:00.000Z",
+    kind: "document", subjectId: issueId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null,
+    operationId: loopIntentId("issue-create-operation"), sourceActorId: "independent-reporter",
+    issueRevisionId, issueContentHash: issueHash, observationId: null, deliveryId: null, observationResult: null });
+  f.facts.push({ projectId, id: loopIntentId("report-source"), createdAtUtc: "2026-10-23T00:01:01.000Z",
+    kind: "document", subjectId: loopIntentId("report-document"), subjectVersion: 1,
+    sourceLoopId: null, originDispatchId: null, operationId: loopIntentId("report-operation"),
+    sourceActorId: "independent-reporter", issueRevisionId: null, issueContentHash: null,
+    observationId: null, deliveryId: null, observationResult: null });
+  const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump(); await runner.pump();
+  assert.equal(f.inbox.filter(item => item.sourceEventId === issueEventId).length, 1);
+  assert.equal(f.inbox.some(item => item.sourceEventId === loopIntentId("report-source")), false);
+  const issueTask = f.taskCreates.find(command => String(command.content).includes(issueEventId));
+  assert.ok(issueTask);
+  assert.match(issueTask.content, new RegExp(`${issueId}/revisions/${issueRevisionId}/original`));
+  assert.match(issueTask.content, new RegExp(issueHash));
+  assert.equal(f.taskCreates.length, 2);
+  await new ManagedLoopRunner(f.deps).pump();
+  assert.equal(f.inbox.filter(item => item.sourceEventId === issueEventId).length, 1);
+  assert.equal(f.taskCreates.length, 2);
 });
 
 test("missing Stage and exhausted budget become durable waiting inbox dispositions", async () => {

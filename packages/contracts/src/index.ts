@@ -12,6 +12,8 @@ export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionSta
 
 export const idSchema = z.uuid();
 const text = z.string().trim().min(1).max(4000);
+const declaredConsumer = text.optional().describe("Exact-match declared consumer identifier. For an Agent, use the actual principal.actorId that will personally sign the observation; do not use a roleId, display name, or explanation. Put explanation in evidence or reason.");
+const consumerUseRequired = z.boolean().optional().describe("When true, also declare consumer. Task.close requires the latest observation by the declared consumer for the current Delivery to have result=used. Worker completion, a Delivery alone, or use by another actor does not satisfy this.");
 const title = z.string().trim().min(1).max(240);
 const version = z.number().int().positive();
 const common = { projectId: idSchema, operationId: idSchema };
@@ -20,17 +22,18 @@ export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
 export const taskKindSchema = z.enum(["implementation", "research", "validation"]);
 export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report"]);
+export const documentOriginSchema = z.strictObject({ taskId: idSchema, runId: idSchema.optional() });
 // Only the implemented command surface is exported; a missing integration is not a no-op command.
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("project.create"), title }),
-  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional() }),
+  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional(), origin: documentOriginSchema.optional() }),
   z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text }),
   z.strictObject({ ...common, type: z.literal("document.adopt"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.archive"), documentId: idSchema, expectedVersion: version, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.restore"), documentId: idSchema, expectedVersion: version, reason: text }),
-  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: text.optional(), useRequired: z.boolean().optional(), evidence: text.optional(), stopCondition: text.optional() }),
-  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: text.optional(), useRequired: z.boolean().optional(), evidence: text.optional(), stopCondition: text.optional(), reason: text }),
+  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, evidence: text.optional(), stopCondition: text.optional() }),
+  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, evidence: text.optional(), stopCondition: text.optional(), reason: text }),
   z.strictObject({ ...common, type: z.literal("task.reviewBasis"), taskId: idSchema, expectedVersion: version, impactId: idSchema, decision: z.enum(["adopt", "retain"]), reason: text, acceptance: text.optional() }),
   ...workflowCommands,
   ...runtimeCommands,
@@ -47,6 +50,7 @@ export interface Document {
   projectId: string; id: string; title: string; version: number;
   currentRevisionId: string; adoptedRevisionId: string | null; kind: DocumentKind | null; status: DocumentStatus;
   primaryTaskId?: string | null;
+  origin?: { taskId: string; runId: string | null; taskRevisionId: string } | null;
 }
 export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report";
 export type DocumentStatus = "draft" | "published" | "archived";
