@@ -144,9 +144,14 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
       VALUES($1,$2,$3,$4,$5,$6,$7,'consumer input',$8,'running',1,$9,'reviewer',now(),now())`,
       [projectId,readerRunId,taskId,consumerRev,readerBasisId,readerSessionId,randomUUID(),hash("consumer input"),randomUUID()]);
     await client.query("INSERT INTO orchestration_loop(project_id,loop_id,version,state,data,current_policy_revision_id) VALUES($1,$2,1,'active','{}',$3)",[projectId,loopId,policyId]);
+    const policyCreatedAt=new Date().toISOString();
+    const policyData={projectId,id:policyId,loopId,version:1,previousId:null,
+      allowedBusinessRoleIds:["researcher"],bindingByRole:{},changedBindingId:null,
+      decisionOperationId:null,actorId:"reviewer",createdAtUtc:policyCreatedAt};
     await client.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
       allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
-      VALUES($1,$2,$3,1,null,'["researcher"]','{}',null,null,'reviewer',now(),'{}')`,[projectId,policyId,loopId]);
+      VALUES($1,$2,$3,1,null,'["researcher"]','{}',null,null,'reviewer',$4,$5)`,
+      [projectId,policyId,loopId,policyCreatedAt,JSON.stringify(policyData)]);
     await client.query(`INSERT INTO orchestration_inbox(project_id,inbox_id,loop_id,source_event_id,recipient_role_id,purpose,
       version,state,data) VALUES($1,$2,$3,$4,'researcher','next_action',1,'acknowledged','{}')`,
       [projectId,inboxId,loopId,randomUUID()]);
