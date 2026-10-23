@@ -24,6 +24,8 @@ Task 主正文的唯一权威是 DocumentRevision。Task 与每个 TaskRevision 
 
 用途类型与 format 分开；未分类可为空，Document 生命周期使用 draft/published/archived。已发布 r3 与新草稿 r4 可以共存，归档不删历史或越过权限。初期验收留原任务内，正文写作与使用语义见[任务与过程文档](../product/tasks-and-documents.md)。
 
+issue/report 可带不可变 `origin`：Task ID、可空的 Run ID，以及服务派生的固定 TaskRevision；指定 Run 时采用其实际输入修订，不能由作者提交一个猜测的版本。017 迁移保留旧文档的空来源。只有带来源 issue 的正式首次创建操作及初稿 hash 进入认知来源，按该固定任务修订的历史 Stage/Goal 归属；不从标题或当前任务归属反推，也不自动订阅 report。读取和选作修复依据仍需核固定修订与权限，来源关系不证明问题属实或已经修复。
+
 ## 2. 三类对象怎样形成闭环
 
 [总览的工作回路](overview.md#3-沿一轮工作理解系统)已画出从观察到下一步的顺序；本页只核对其中对象的身份和权威：Wiki 认识支持或挑战需求 Document，采纳的需求修订成为 Task 的固定依据，交付与实际使用可推动新的认识或需求修订。Git 正式规范按固定 commit 引用，正文仍由对应仓库维护。关系记录“支持”不证明结论正确，还须读取依据、相反解释和适用条件。
