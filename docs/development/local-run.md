@@ -8,6 +8,16 @@
 
 **承载真实试用的 PostgreSQL 数据目录必须位于持久位置**，例如仓库外的专用应用数据目录；不要沿用 `mktemp`、`/tmp` 或 macOS `$TMPDIR` 中的一次性测试集群。开始保存真实材料前，由数据库管理者核对实际 `data_directory`（具权限时可执行 `SHOW data_directory`）、备份位置及隔离恢复结果；连接串和进程仍在并不能保证底层目录持久。临时实验转为连续试用前，先停写，备份并恢复到新的持久目录，再核数据与未决运行后切换。
 
+本机真实试用切换前，用数据库管理身份运行只读预检。`--expected-data-directory` 应来自部署计划中的预期持久目录；证据目标的父目录须已存在、位于仓库外且由当前用户私有管理，目标文件须尚不存在：
+
+```bash
+npm run pilot:storage:check -- \
+  --expected-data-directory /absolute/persistent/evoloop-pg \
+  --evidence-out /absolute/private-evidence/storage-preflight.json
+```
+
+脚本从 `EVOLOOP_DATABASE_URL` 读取数值回环地址与显式端口，核实际 PostgreSQL 18 的目录、本机规范路径、属主、权限及 postmaster 启动绑定，拒绝临时、缓存或仓库内目录。它以新 0600 JSON 保存当前核验事实，不输出连接凭据；权限不足、路径错配或连接/查询超时会失败，不能当作通过。该检查用于本机持续试用，不约束一次性测试集群，也不替代备份与恢复演练。
+
 先在 PostgreSQL 中建立专用空库及有建表权限的用户，然后安装、构建：
 
 ```bash
