@@ -1,4 +1,4 @@
-import type { TaskDetail } from "@evoloop/contracts";
+import type { Goal, Stage, TaskDetail } from "@evoloop/contracts";
 import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import { ApiError, request } from "../api";
 
@@ -35,6 +35,10 @@ export function orchestrationClient(token: string, projectId: string) {
     },
     loops: (cursor?: string) => page<OrchestrationLoop>("/loops", cursor),
     loop: (loopId: string) => get<OrchestrationLoop>(`/loops/${encodeURIComponent(loopId)}`),
+    goal: (goalId: string) => request<Goal>(token, `/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}`, 15000),
+    stage: (stageId: string) => request<Stage>(token, `/api/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageId)}`, 15000),
+    taskRevisions: (taskId: string) => request<Array<{revision:{id:string;version:number}}>>(token,
+      `/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/revisions`, 15000),
     taskContext: (taskId: string, cursor?: string) => page<TaskLoopContext>(`/tasks/${encodeURIComponent(taskId)}/context`, cursor),
     tasks: (loopId: string, cursor?: string) => page<TaskDetail>(`/loops/${encodeURIComponent(loopId)}/tasks`, cursor),
     decision: (decisionId: string) => get<OrchestrationWorkerDecision>(`/decisions/${encodeURIComponent(decisionId)}`),

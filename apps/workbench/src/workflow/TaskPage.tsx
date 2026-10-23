@@ -10,6 +10,7 @@ import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { DeliveryArtifact, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
+import { taskSectionFromHash } from "../orchestration/navigation";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -129,12 +130,24 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
-  const [tab, setTab] = useState<TaskTab>("overview");
+  const [tab, setTab] = useState<TaskTab>(() => selectedRevision ? "history" :
+    taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
+  useEffect(() => {
+    const onHash = () => {
+      const requested = taskSectionFromHash(window.location.hash, projectId, id);
+      if (requested) setTab(selectedRevision ? "history" : requested);
+    };
+    window.addEventListener("hashchange", onHash);
+    onHash();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [projectId, id, selectedRevision]);
   const [basisDocuments, setBasisDocuments] = useState<Record<string, DocumentDetail>>({});
   const [basisError, setBasisError] = useState("");
   const [error, setError] = useState("");
   const historyRequestRef = useRef(0);
-  useEffect(() => { ++historyRequestRef.current; setHistorical(null); setTab("overview"); setDetail(null); setBasisDocuments({}); }, [id, projectId]);
+  useEffect(() => { ++historyRequestRef.current; setHistorical(null);
+    setTab(selectedRevision ? "history" : taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
+    setDetail(null); setBasisDocuments({}); }, [id, projectId]);
   useEffect(() => {
     let active = true;
     setError("");

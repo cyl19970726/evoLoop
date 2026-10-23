@@ -4,14 +4,16 @@ import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, Orc
 import { errorText } from "../api";
 import { Notice } from "../workflow/ActionForm";
 import { mergePage, orchestrationClient, type LoopPart, type LoopPartItem, type OrchestrationStatus, type ResultPage, type TaskLoopContext } from "./client";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, submissionStateLabel } from "./presentation";
+import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "./presentation";
 import { inTaskContext, nextAction, readableOutcome } from "./summary";
+import { taskSectionHref } from "./navigation";
 import "./orchestration.css";
 
 interface LoopData {
   inbox: ResultPage<OrchestrationInbox>; dispatches: ResultPage<OrchestrationDispatch>;
   submissions: ResultPage<OrchestrationSubmission>; events: ResultPage<OrchestrationEvent>;
   tasks: ResultPage<TaskDetail>; decisions: Record<string, OrchestrationWorkerDecision>;
+  revisionIds: Record<string, Record<number, string>>;
 }
 const empty = <T,>(): ResultPage<T> => ({ items: [], nextCursor: null });
 const short = (id: string) => id.slice(0, 8);
@@ -19,6 +21,27 @@ const taskHref = (projectId: string, taskId: string) => `#/p/${encodeURIComponen
 const statusLabel = (value: string) => ({ active: "运行中", paused: "已暂停新派发", stopped: "已停止新派发" }[value] ?? value);
 const dispositionLabel = (value: string | null) => ({ no_action: "无后续动作", waiting: "等待", failed: "处理失败", stop: "停止", dispatch: "已请求派发" }[value ?? ""] ?? "未登记");
 const outcomeLabel = (value: string) => ({ delivered: "已登记交付结果", no_action: "无后续动作", waiting: "等待", failed: "处理失败" }[value] ?? value);
+
+async function revisionIdsFor(client: ReturnType<typeof orchestrationClient>, dispatches: OrchestrationDispatch[]) {
+  const ids: Record<string, Record<number, string>> = {};
+  await Promise.all([...new Set(dispatches.map(item => item.taskId))].map(async taskId => {
+    try { ids[taskId] = Object.fromEntries((await client.taskRevisions(taskId)).map(item => [item.revision.version,item.revision.id])); }
+    catch { /* Fixed link stays visibly unavailable rather than claiming today's Task is the old revision. */ }
+  }));
+  return ids;
+}
+
+async function scopeTitles(client: ReturnType<typeof orchestrationClient>, loops: OrchestrationLoop[]) {
+  const labels: Record<string, string> = {};
+  await Promise.all(loops.map(async loop => {
+    const [goal, stage] = await Promise.allSettled([client.goal(loop.goalId),
+      loop.stageId ? client.stage(loop.stageId) : Promise.resolve(null)]);
+    const outcome = goal.status === "fulfilled" ? goal.value.outcome : null;
+    const deliverable = stage.status === "fulfilled" ? stage.value?.deliverable : null;
+    labels[loop.id] = [outcome,deliverable].filter(Boolean).join(" · ") || `判断职责 ${loop.cognitiveRoleId}`;
+  }));
+  return labels;
+}
 
 export function OrchestrationPanel({ token, projectId, refresh, taskId }: { token: string; projectId: string; refresh: number; taskId?: string }) {
   const [status, setStatus] = useState<OrchestrationStatus | null>(null);
@@ -29,19 +52,21 @@ export function OrchestrationPanel({ token, projectId, refresh, taskId }: { toke
   const [epoch, setEpoch] = useState(0);
   const [moreLoops, setMoreLoops] = useState(false);
   const [taskContexts, setTaskContexts] = useState<ResultPage<TaskLoopContext>>(empty);
+  const [titles, setTitles] = useState<Record<string,string>>({});
   useEffect(() => {
     let active = true;
     const client = orchestrationClient(token, projectId);
-    setLoading(true); setSelected(null); setLoops(empty()); setTaskContexts(empty()); setStatus(null); setOverviewError("");
+    setLoading(true); setSelected(null); setLoops(empty()); setTaskContexts(empty()); setTitles({}); setStatus(null); setOverviewError("");
     void (async () => {
       if (!taskId) return client.overview();
       const [nextStatus, context] = await Promise.all([client.status(), client.taskContext(taskId)]);
       const related = await Promise.all(context.items.map(item => client.loop(item.loopId)));
       return {status:nextStatus,loops:{items:related,nextCursor:null},context};
-    })().then(({ status: nextStatus, loops: page, ...rest }) => {
+    })().then(async ({ status: nextStatus, loops: page, ...rest }) => {
+      const labels = await scopeTitles(client,page.items);
       if (!active) return;
       if ("context" in rest && rest.context) setTaskContexts(rest.context);
-      setStatus(nextStatus); setLoops(page); setSelected(page.items[0]?.id ?? null); setLoading(false);
+      setStatus(nextStatus); setLoops(page); setTitles(labels); setSelected(page.items[0]?.id ?? null); setLoading(false);
     }).catch(cause => { if (active) { setOverviewError(errorText(cause)); setLoading(false); } });
     return () => { active = false; };
   }, [token, projectId, refresh, epoch]);
@@ -52,15 +77,18 @@ export function OrchestrationPanel({ token, projectId, refresh, taskId }: { toke
       try {
         const client=orchestrationClient(token,projectId), page=await client.taskContext(taskId,cursor);
         const related=await Promise.all(page.items.map(item=>client.loop(item.loopId)));
+        const labels=await scopeTitles(client,related);
         setTaskContexts(current=>({items:[...current.items,...page.items],nextCursor:page.nextCursor}));
-        setLoops(current=>mergePage(current,{items:related,nextCursor:null}));setOverviewError("");
+        setLoops(current=>mergePage(current,{items:related,nextCursor:null}));setTitles(current=>({...current,...labels}));setOverviewError("");
       } catch (cause) {setOverviewError(errorText(cause));}
       finally {setMoreLoops(false);}
       return;
     }
     const cursor = loops.nextCursor; if (!cursor || moreLoops) return;
     setMoreLoops(true);
-    try { const page = await orchestrationClient(token, projectId).loops(cursor); setLoops(current => mergePage(current, page)); setOverviewError(""); }
+    try { const client=orchestrationClient(token,projectId), page = await client.loops(cursor);
+      const labels=await scopeTitles(client,page.items);
+      setLoops(current => mergePage(current, page)); setTitles(current=>({...current,...labels})); setOverviewError(""); }
     catch (cause) { setOverviewError(errorText(cause)); }
     finally { setMoreLoops(false); }
   }
@@ -78,17 +106,17 @@ export function OrchestrationPanel({ token, projectId, refresh, taskId }: { toke
     </div>}
     {!loading && loops.items.length === 0 && !overviewError && <p className="empty">{taskId ? "当前任务没有读到关联的受管循环。" : status?.state === "disabled" ? "自动循环未配置或尚未启用；没有可观察的受管循环。" : "尚未登记受管循环。"}</p>}
     {loops.items.length > 0 && <><div className="orch-loop-picker" role="group" aria-label="选择循环">
-      {loops.items.map((loop,index) => <button className={selected === loop.id ? "selected" : ""} key={loop.id} onClick={() => setSelected(loop.id)}>
-        {taskId ? "关联工作链" : "工作链"} {index+1} · {statusLabel(loop.state)}
+      {loops.items.map(loop => <button className={selected === loop.id ? "selected" : ""} key={loop.id} onClick={() => setSelected(loop.id)}>
+        {titles[loop.id] ?? `判断职责 ${loop.cognitiveRoleId}`} · {statusLabel(loop.state)}
       </button>)}
     </div>{(taskId ? taskContexts.nextCursor : loops.nextCursor) && <button disabled={moreLoops} onClick={loadMoreLoops}>{moreLoops ? "读取中…" : `继续读取关联循环（已载入 ${loops.items.length}，还有更多）`}</button>}
       {selected && <LoopObservation key={`${projectId}:${selected}:${refresh}:${epoch}`} token={token} projectId={projectId}
-        loop={loops.items.find(item => item.id === selected)!} taskId={taskId} context={taskContexts.items.find(item => item.loopId === selected)} />}
+        loop={loops.items.find(item => item.id === selected)!} title={titles[selected]} taskId={taskId} context={taskContexts.items.find(item => item.loopId === selected)} />}
     </>}
   </section>;
 }
 
-function LoopObservation({ token, projectId, loop, taskId, context }: { token: string; projectId: string; loop: OrchestrationLoop; taskId?: string; context?: TaskLoopContext }) {
+function LoopObservation({ token, projectId, loop, title, taskId, context }: { token: string; projectId: string; loop: OrchestrationLoop; title?: string; taskId?: string; context?: TaskLoopContext }) {
   const [data, setData] = useState<LoopData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -103,7 +131,8 @@ function LoopObservation({ token, projectId, loop, taskId, context }: { token: s
       await Promise.all(events.items.filter(item => item.kind === "worker.decision").map(async item => {
         try { decisions[item.entityId] = await client.decision(item.entityId); } catch { /* The summary states when a decision could not be read back. */ }
       }));
-      if (active) { setData({ inbox, dispatches, submissions, events, tasks, decisions }); setLoading(false); }
+      const revisionIds=await revisionIdsFor(client,dispatches.items);
+      if (active) { setData({ inbox, dispatches, submissions, events, tasks, decisions, revisionIds }); setLoading(false); }
     }).catch(cause => { if (active) { setError(errorText(cause)); setLoading(false); } });
     return () => { active = false; };
   }, [token, projectId, loop.id]);
@@ -113,12 +142,13 @@ function LoopObservation({ token, projectId, loop, taskId, context }: { token: s
     try {
       const client = orchestrationClient(token, projectId);
       const page = await client.part(loop.id, kind, cursor);
+      const revisionIds = kind === "dispatches" ? await revisionIdsFor(client,page.items as OrchestrationDispatch[]) : {};
       const decisions: Record<string, OrchestrationWorkerDecision> = {};
       if (kind === "events") await Promise.all((page.items as OrchestrationEvent[]).filter(item => item.kind === "worker.decision").map(async item => {
         try { decisions[item.entityId] = await client.decision(item.entityId); } catch { /* Keep the unread reason visibly unknown. */ }
       }));
       setData(current => current ? { ...current, [kind]: mergePage(current[kind] as ResultPage<LoopPartItem[K]>, page),
-        decisions:{...current.decisions,...decisions} } as LoopData : current);
+        decisions:{...current.decisions,...decisions},revisionIds:{...current.revisionIds,...revisionIds} } as LoopData : current);
       setError("");
     } catch (cause) { setError(errorText(cause)); }
     finally { setMore(null); }
@@ -141,7 +171,7 @@ function LoopObservation({ token, projectId, loop, taskId, context }: { token: s
   const relatedDispatchId = (dispatchId: string) => !taskId || !!context &&
     (context.dispatchIds.includes(dispatchId) || context.parentDispatchIds.includes(dispatchId));
   return <div className="orch-loop">
-    <div className="orch-loop-head"><div><h3>{taskId ? "当前任务关联工作链" : "受管工作链"} · {statusLabel(loop.state)}</h3><p>判断职责 {loop.cognitiveRoleId} · 执行职责 {loop.allowedBusinessRoleIds.join("、")}</p></div></div>
+    <div className="orch-loop-head"><div><h3>{title ?? `判断职责 ${loop.cognitiveRoleId}`} · {statusLabel(loop.state)}</h3><p>判断职责 {loop.cognitiveRoleId} · 执行职责 {loop.allowedBusinessRoleIds.join("、")}</p></div></div>
     <details className="orch-technical"><summary>固定范围、预算与技术标识</summary><p>派发预算 {loop.dispatchCount}/{loop.maxRuns} · 同时上限 {loop.maxConcurrent}</p><dl className="orch-facts"><div><dt>Loop ID</dt><dd><code>{loop.id}</code></dd></div><div><dt>目标 / 阶段</dt><dd><code>{loop.goalId}</code>{loop.stageId && <> / <code>{loop.stageId}</code></>}</dd></div>
       <div><dt>授权人 / 初始事件</dt><dd>{loop.enrolledBy} / <code>{loop.bootstrapEventId}</code></dd></div></dl>
     <p className="muted">入站起点 {loop.sourceAfter.createdAtUtc} · 事件 <code>{loop.sourceAfter.eventId ?? "起始时间点"}</code>。派发预算记录请求次数，不等于成功 Run 数。</p></details>
@@ -167,9 +197,11 @@ function LoopObservation({ token, projectId, loop, taskId, context }: { token: s
               inbox?.reason ? `${inbox.reason} · ${inbox.acknowledgedBy ?? "未见署名"}` : "决定理由尚未读回；可在审计记录中核对。"}</dd></div>
             <div><dt>结果</dt><dd>{readableOutcome(item,submission,detail)}</dd></div>
             <div><dt>下一步</dt><dd>{nextAction(inbox,item,submission)}</dd></div></dl>
-          <p className="orch-story-links"><a href={taskHref(projectId,item.taskId)}>原任务（含修订与依据）</a>
-            {item.runtimeRunId && <> · <a href={taskHref(projectId,item.taskId)}>实际运行（任务内）</a></>}
-            {submission?.deliveryId && <> · <a href={taskHref(projectId,item.taskId)}>交付与使用记录</a></>}
+          <p className="orch-story-links">{data.revisionIds[item.taskId]?.[item.taskVersion] ?
+            <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>原任务固定修订 v{item.taskVersion}</a> :
+            <span>原任务固定修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
+            {item.runtimeRunId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"runtime"})}>实际运行（{short(item.runtimeRunId)}）</a></>}
+            {submission?.deliveryId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"delivery"})}>交付与使用记录</a></>}
             {item.parentDispatchId && <> · 上游派发见下方记录</>}</p>
           <details><summary>完整固定标识与核对</summary><p>派发 <code>{item.id}</code> · 来源事件 <code>{item.sourceEventId}</code> · 入站 <code>{item.inboxId}</code></p>
             {item.parentDispatchId && <p>上游派发 <code>{item.parentDispatchId}</code></p>}
@@ -210,7 +242,7 @@ function LoopObservation({ token, projectId, loop, taskId, context }: { token: s
             <p>拟登记产物：{item.deliveryIntent.artifactRef} · {item.deliveryIntent.artifactRevision}</p>
             <p>技术结果：{item.deliveryIntent.technicalResult} · {item.deliveryIntent.technicalEvidence}</p>
             {item.agentObservation && <p>提交时拟记录的 Agent 观察：{item.agentObservation}</p>}
-            {item.evidenceRefs.length > 0 && <p>附带证据：{item.evidenceRefs.join("、")}</p>}{item.reason && <p>封存理由：{item.reason}</p>}</details></article>)}
+            {item.evidenceRefs.length > 0 && <p>附带证据：{item.evidenceRefs.join("、")}</p>}{item.reason && <p>封存结果：{sealReasonLabel(item.reason)}{sealReasonLabel(item.reason) !== item.reason && <small> · 原记录码 {item.reason}</small>}</p>}</details></article>)}
         {moreButton("submissions", data.submissions.items.length)}</section>
       <section className="orch-audit"><details><summary>审计事件 · 已载入 {data.events.items.length}{data.events.nextCursor ? "，仍有更多" : ""}</summary>
         <p className="muted">事件记录只说明曾登记状态变化，不证明消费者实际使用或 Task 验收。</p>

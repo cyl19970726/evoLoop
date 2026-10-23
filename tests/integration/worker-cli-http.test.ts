@@ -16,6 +16,7 @@ import { buildServer } from "../../apps/coordinator/src/server.js";
 import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { createWorkerSealer } from "../../apps/coordinator/src/orchestration/seal.js";
+import { readTaskContext } from "../../apps/coordinator/src/orchestration/setup.js";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || new URL(database).pathname !== "/evoloop_journey_eval_test")
@@ -272,6 +273,31 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal(businessSealed.status,"sealed",JSON.stringify(businessSealed));
   await orchestrate({type:"worker.outcome",dispatchId:childDispatch.entityId,outcome:"delivered",
     deliveryId:businessSealed.deliveryId,decisionId:null,evidenceRef:"fixture:business-report",reason:"Signed report sealed"});
+  const observationLoopId=randomUUID(),observationTaskId=randomUUID();
+  await issue({type:"task.create",taskId:observationTaskId,stageId,title:"Review independent feedback",
+    content:"# Consumer feedback",acceptance:"Read fixed observation",owner:cognitiveRole,
+    consumer:"fixture",evidence:"Independent observation",stopCondition:"One check"});
+  await issue({type:"task.start",taskId:observationTaskId,expectedVersion:1,reason:"Fix observation review"});
+  const observationCursor=(await pool.query(`SELECT created_at,event_id FROM outbox_event WHERE project_id=$1
+    ORDER BY created_at DESC,event_id DESC LIMIT 1`,[projectId])).rows[0];
+  await orchestrate({type:"loop.enroll",loopId:observationLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
+    allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:observationCursor.created_at.toISOString(),
+      eventId:observationCursor.event_id},maxRuns:1,maxConcurrent:1,reason:"Independent feedback fixture"});
+  const observationOperationId=randomUUID();
+  await issue({type:"observation.record",operationId:observationOperationId,taskId:childTaskId,
+    deliveryId:businessSealed.deliveryId,observer:controller,observerKind:"agent",result:"notUsed",
+    evidence:"Fixture observer read formal report but did not claim use",reason:"Independent source for review"});
+  const observationEvent=(await pool.query(`SELECT event_id FROM outbox_event WHERE project_id=$1
+    AND operation_id=$2 AND kind='observation.record'`,[projectId,observationOperationId])).rows[0];
+  assert.ok(observationEvent?.event_id);
+  const observationInbox=await orchestrate({type:"inbox.accept",loopId:observationLoopId,
+    sourceEventId:observationEvent.event_id,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:observationInbox.entityId,expectedVersion:1,
+    reason:"Read independent feedback"});
+  const observationDispatch=await orchestrate({type:"dispatch.request",inboxId:observationInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:observationTaskId,
+    expectedTaskVersion:2,recipientRoleId:cognitiveRole,purpose:"cognition",
+    authorizationScopeId:cognitiveScope,reason:"Review observed use boundary"});
   const continuationTaskId=randomUUID(),continuationRunId=randomUUID(),continuationSessionId=randomUUID();
   await issue({type:"task.create",taskId:continuationTaskId,stageId,title:"Review business report",content:"# Read fixed delivery",
     acceptance:"Confirm exact report original",owner:cognitiveRole,consumer:"fixture",evidence:"Business report",
@@ -303,6 +329,25 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     result:"accepted",runtimeRunId:continuationRunId,reason:"Fixture continuation Run bound"});
   const continuationWorker=await broker.issue({projectId,loopId,taskId:continuationTaskId,runId:continuationRunId,
     sessionId:continuationSessionId,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
+  const businessContext=await readTaskContext(pool,workflow,owner,projectId,childTaskId,50);
+  const sameLoopContext=businessContext.items.find(item=>item.loopId===loopId);
+  assert.ok(sameLoopContext?.sourceEventIds.includes(feedbackEvent.event_id),"business outcome source is retained");
+  assert.ok(sameLoopContext.dispatchIds.includes(childDispatch.entityId));
+  assert.ok(sameLoopContext.dispatchIds.includes(continuationDispatch.entityId),"next cognition is related by outcome, not parentDispatch");
+  const independentContext=businessContext.items.find(item=>item.loopId===observationLoopId);
+  assert.ok(independentContext?.sourceEventIds.includes(observationEvent.event_id),"applied observation source is retained");
+  assert.ok(independentContext.dispatchIds.includes(observationDispatch.entityId),"independent observation cognition is related without parentDispatch");
+  await runtime.rejectDispatch(projectId,continuationRunId,"Fixture terminal with no worker intent");
+  const beforeGap=(await orchestration.getDispatch(owner,projectId,continuationDispatch.entityId))!;
+  await orchestrate({type:"dispatch.gap",dispatchId:continuationDispatch.entityId,
+    expectedVersion:beforeGap.version,reason:"Fixture worker credential expired before signed intent",evidenceRef:null});
+  const gapEvent=(await pool.query(`SELECT event_id FROM orchestration_event WHERE project_id=$1 AND loop_id=$2
+    AND entity_id=$3 AND kind='dispatch.gap' ORDER BY created_at_utc DESC LIMIT 1`,
+  [projectId,loopId,continuationDispatch.entityId])).rows[0];
+  assert.ok(gapEvent?.event_id);
+  const gapContext=await readTaskContext(pool,workflow,owner,projectId,continuationTaskId,50);
+  assert.ok(gapContext.items.find(item=>item.loopId===loopId)?.sourceEventIds.includes(gapEvent.event_id),
+    "terminal intent gap is a real downstream source even without a delivered outcome");
   assert.notEqual(continuationWorker.principal.actorId,businessWorker.principal.actorId);
   const childBeforeMove=(await workflow.getTask(owner,projectId,childTaskId)).task;
   await issue({type:"task.reopen",taskId:childTaskId,expectedVersion:childBeforeMove.version,
