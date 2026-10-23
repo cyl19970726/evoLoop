@@ -368,7 +368,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
           {visiblePage.validity !== visiblePage.observedValidity && <Notice error>此固定版创建时为{statusText(visiblePage.validity)}；目前标为{statusText(visiblePage.observedValidity)}。使用前请复核来源。</Notice>}
           {fixedRevision && !readingCurrent && <button onClick={() => openPage(visiblePage.knowledgeId)}>阅读当前发布版</button>}
           <div className="knowledge-fulltext"><MarkdownBody source={visiblePage.body} identity={`knowledge-${visiblePage.knowledgeId}-${visiblePage.revision}`}
-            omitLeadingTitle={visiblePage.title} /></div>
+            omitLeadingTitle={visiblePage.title} projectId={context.projectId} /></div>
           <details className="knowledge-source-text"><summary>核对 Markdown 原文</summary><pre>{visiblePage.body}</pre></details>
           <p className="muted">正文 SHA-256 <code className="break-anywhere">{visiblePage.contentHash}</code></p>
           {canWrite && <details className="knowledge-maintenance"><summary>基于此页提出修订候选</summary>
@@ -412,7 +412,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
       </nav><div>{candidate ? <article><h3>{candidate.title} · {statusText(candidate.status)}</h3>
         <p className="muted knowledge-candidate-meta">候选 {candidate.candidateId} · 固定基线 {candidate.expectedRevision ?? "新页"} · SHA-256 <code>{candidate.contentHash}</code></p>
         <div className="knowledge-candidate-preview"><MarkdownBody source={candidate.body}
-          identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} /></div>
+          identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} projectId={context.projectId} /></div>
         <details className="knowledge-candidate-source"><summary>核对 Markdown 原文</summary><pre>{candidate.body}</pre></details>
         <h4>固定来源</h4><ul>{candidate.sources.map(item => { const id = sourceId(item.sourceKey);
           return <li key={`${item.sourceKey}:${item.originRevision}`}>{id ? <a href={documentLink(context.projectId, id, item.originRevision,
