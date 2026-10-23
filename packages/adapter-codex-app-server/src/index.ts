@@ -361,6 +361,36 @@ export class CodexAppServerAdapter implements RuntimePort {
     return result;
   }
 
+  async archiveThread(binding: RuntimeBinding): Promise<void> {
+    this.owned(binding);
+    // 0.154.0 returns an empty acknowledgement. The coordinator must verify archive separately.
+    await this.request("thread/archive", { threadId: binding.nativeThreadId });
+  }
+
+  async isThreadArchived(binding: RuntimeBinding): Promise<boolean> {
+    this.owned(binding);
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
+      const result = object(await this.request("thread/list", { archived: true, cwd: binding.cwd,
+        useStateDbOnly: true, limit: 100, ...(cursor ? { cursor } : {}) }));
+      if (!result || !Array.isArray(result.data)) throw new RuntimeProtocolError("invalid archived thread page");
+      for (const entry of result.data) {
+        const thread = object(entry);
+        if (!thread || !nonempty(thread.id)) throw new RuntimeProtocolError("invalid archived thread identity");
+        if (thread.id === binding.nativeThreadId) {
+          if (thread.sessionId !== binding.nativeSessionId || thread.cwd !== binding.cwd)
+            throw new RuntimeProtocolError("archived thread does not match owned binding");
+          return true;
+        }
+      }
+      if (result.nextCursor == null) return false;
+      if (!nonempty(result.nextCursor) || seen.has(result.nextCursor)) throw new RuntimeProtocolError("invalid archived thread cursor");
+      seen.add(result.nextCursor); cursor = result.nextCursor;
+    }
+    throw new RuntimeProtocolError("archived thread listing exceeds bounded recovery window");
+  }
+
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
     const result = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 100, ...(cursor ? { cursor } : {}) }));

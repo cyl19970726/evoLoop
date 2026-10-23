@@ -11,6 +11,33 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
   await adapter.open(); return adapter;
 };
 
+test("owned archive requires exact native readback; empty and lost acknowledgements are not proof", async t => {
+  const normal = await open(); t.after(() => normal.close());
+  const binding = await normal.create(spec);
+  assert.equal(await normal.isThreadArchived(binding), false);
+  await normal.archiveThread(binding);
+  assert.equal(await normal.isThreadArchived(binding), true);
+  await assert.rejects(() => normal.archiveThread({ ...binding, nativeThreadId: "desktop" }), RuntimeProtocolError);
+
+  // The same RPC deadline covers child initialization; retain the normal startup budget.
+  const lost = await open("lost-archive-ack"); t.after(() => lost.close());
+  const same = await lost.create(spec);
+  await assert.rejects(() => lost.archiveThread(same), RuntimeUnknownError);
+  assert.equal(await lost.isThreadArchived(same), true);
+
+  const foreign = await open("foreign-archive"); t.after(() => foreign.close());
+  const other = await foreign.create(spec);
+  await foreign.archiveThread(other);
+  await assert.rejects(() => foreign.isThreadArchived(other), RuntimeProtocolError);
+
+  for (const [mode, expected] of [["vscode-archive", true], ["foreign-samecwd", true], ["foreign-only", false]] as const) {
+    const candidate = await open(mode); t.after(() => candidate.close());
+    const owned = await candidate.create(spec);
+    await candidate.archiveThread(owned);
+    assert.equal(await candidate.isThreadArchived(owned), expected, mode);
+  }
+});
+
 test("actual App Server child receives only explicit login and transport environment", async t => {
   const adapter = new CodexAppServerAdapter({ executable: process.execPath,
     spawnArgs: [fixture, "env-observe"], requestTimeoutMs: 500,
