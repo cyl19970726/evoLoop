@@ -39,7 +39,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 负责人讨论的决定使用 `discussion.decision.record`，由核心同事务追加讨论事件和所属 Document 正文；通用 `document.revise` 不会同步讨论指针。若另行编辑后返回 `DOCUMENT_CHANGED`，先核对原操作的确定拒绝，再完整回读讨论登记版与文档当前版、哈希及最新决定。经实际判断后，以新意图/新操作 ID、当前 Discussion `expectedVersion`、真实当前 `documentRevisionId` 及最新决定的 supersede 引用提交，并显式增加 `documentRecovery: { expectedDocumentVersion, reason }`。核心仅在确有失配、版本匹配且原件可核时，从当前正文追加恢复依据和本次决定；旧修订、拒绝记录及冻结输入不变。不失配时不提供恢复字段，不能直接改数据库指针。操作未知仍先按原 ID 对账，讨论及文档权威见[项目数据](../architecture/project-data.md#3-关系与认知读取)；实际操作也应读取项目内业务技能的讨论指引。
 
-评价入口的首片针对**一个固定 Task、两组条件**。先读取 `evaluation-source TASK_UUID --project UUID`，取得进行中 Task 当前来源修订及服务端推导的签名；再查看 `command schema evaluation.create`，以固定协议/共同材料、同一指令与判据建立直接组和额外 Wiki 组。直接组要求 Task 本身没有必需 Wiki；两组声明相同模型和运行环境。修订定义用 `evaluation.revise` 追加新版本，既有尝试不搬到新版。`list evaluations --project UUID [--task UUID | --knowledge UUID]` 与 `evaluation EVALUATION_UUID --project UUID [--revision UUID]` 读取定义、全部真实尝试、判定、更正与结论。普通 `runtime.run.reserve` 必须带固定评价绑定，且每次尝试使用新的受管 Session；成功预留才有真实 Attempt，派发前还须完成受控输入包绑定。用 `evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID` 回读实际包及固定来源，不能把定义中的材料清单当作已送达证明。
+评价入口的首片针对**一个固定 Task、两组条件**。先读取 `evaluation-source TASK_UUID --project UUID`，取得进行中 Task 当前来源修订及服务端推导的签名；再查看 `command schema evaluation.create`，以固定协议/共同材料、同一指令与判据建立直接组和额外 Wiki 组。直接组要求 Task 本身没有必需 Wiki；两组声明相同模型和运行环境。修订定义用 `evaluation.revise` 追加新版本，既有尝试不搬到新版。`list evaluations --project UUID [--task UUID | --knowledge UUID]` 与 `evaluation EVALUATION_UUID --project UUID [--revision UUID]` 读取定义、全部真实尝试、判定、更正与结论。普通 `runtime.run.reserve` 不要求评价；只有声明为评价尝试的 Run 才须固定 `evaluation` 绑定，每次尝试使用新的受管 Session。成功预留才有真实 Attempt，派发前还须完成受控输入包绑定。用 `evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID` 回读实际包及固定来源，不能把定义中的材料清单当作已送达证明。
 
 Run 确认终态后，用 `delivery.record.runId` 显式登记产物，先核任务业务输入仍与执行时一致；交付登记修订不等于 Run 的执行修订。每个尝试用 `evaluation.assessment.record` 记录显式关联该 Run 的 Delivery/Observation、失败、采用、真人效果、证据与成本；旧无 Run 归因的交付不能推测为评价成果。没有成本回执填 `null`，不填零。更正指定 `supersedesId`；`evaluation.conclusion.record` 必须选取所有首次及重试尝试的当前判定，并明确比较限制和下一步选择。首片只允许 `with_limits` 或 `unknown`，不能把两组记录与局部成本标成完全可比。`nextActionRef` 可固定引用已有 Task 的 `{kind:"task",taskId,taskRevisionId}`，服务端校验同项目及修订归属，不自动创建或开始它。命令结构以 `command schema TYPE` 为准，读回包、Run、交付及观察后再下结论。评价不会自动关闭原 Task 或发布 Wiki。本轮已由授权的负责人 Agent 完成两组真实运行、完整输入包与产物回读，并登记有限评价；具体范围与阶段决定见[完整旅程接续试用](../roadmap.md#完整旅程接续试用)。Wiki 采用正确不代表增量收益，Agent 使用不代表真人效果。
 
@@ -55,6 +55,20 @@ CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show I
 npm run --silent cli -- receipts reconcile "$RECEIPT_ID"
 npm run --silent cli -- receipts retry "$RECEIPT_ID"
 ```
+
+## 受管执行与自动接续
+
+自动循环使用同一 CLI、业务 core 和 App Server，另有独立的编排命令与回执。`command types/schema/run` 同时发现两类命令；编排命令发往 `/api/orchestration/commands`，原业务命令仍发往 `/api/commands`。用 `list loops`、`list inbox --loop ID`、`list dispatches --loop ID`、`read loop ID --events`、`read dispatch ID` 和 `read submission ID` 回读。编排操作在 `/api/projects/PROJECT_ID/orchestration/operations/OPERATION_ID` 核对原 actor 与命令摘要；CLI 不自动重发。显式 `receipts retry` 只支持其纯事务白名单，原生启动和封存等阶段先对账。
+
+管理员一次配置项目职责、目录、scope 与预算，再 `loop.enroll` 固定 Goal/Stage、起始事件基线、认知职责及允许的业务职责。循环不扫描并启动历史 todo。认知先读取真实依据，再通过 CLI 创建有界 Task 和子派发；每项 Task 不需要人重新开始或预留。`cognitive_review` 与 `next_action` 分别承载同一来源的认知与后续动作，子派发引用父认知 Dispatch，等父运行有署名封存交付后才执行。业务结果经独立来源订阅去重回到认知，不消费飞书投影的回执。
+
+自动执行中，Task 的 `documentIds` 选择所需过程输入。首次开始会显式封存这些文档的 published/adopted 修订；已有关联但未发布或归档的输入会阻断，不被静默忽略。已有 basis 沿用固定来源及保留决定。过程报告交付使用 `#/p/PROJECT_ID/documents/DOCUMENT_ID?revision=REVISION_ID` 固定入口，`artifactRevision` 与 `contentHash` 要和保存后回读的原文一致，供后续认知精确读取。
+
+受管 worker 使用原生输入提供的私有 wrapper，只带固定 Loop/Task/Run/Session 和职责的独立短期身份。运行期间读取 `context` 和固定原件，并在终态前通过 `worker.submit` 提交有署名的交付意图，或以 `worker.decision` 说明无动作、等待、失败或停止。终态回收者核对原身份、输入修订/hash、原 operation 与实际业务日志后封存 Delivery；提交人和封存人分别留证，final 摘要不代填交付。已终态或 unknown Run 不接受第一次补交；真正终态前已提交的同 ID 操作仍可回读。具体执行方式见仓库内 `.agents/skills/evoloop-workflow/references/managed-workers.md`。
+
+暂停/停止阻止新派发和原生启动，不撤销已经在途的有效凭据；既有运行可在原范围提交、回读和收尾。撤权或到期另行处理，结果不明保留原 ID。未署名、封存未知与缺少职责保留待处理证据，不凭 Run 完成自动 close Task。首片为每次派发建立独立 managed Session，尚未复用会话，也不自动创建永久 Role、桥接 Desktop 或完成长期分工研究。
+
+独立消费者的 `observation.record` 会经真实操作回执与 actor 核对后进入认知来源，按 Delivery 当时的固定 Task 修订、Stage 和 Goal 去重归属；生产者自报和本 Loop 认知自己的观察不算独立使用。认知可据技术失败等其它新证据采取授权内行动，独立观察只用于证明实际消费和效果。已知终态缺署名提交目前只记录缺口并释放并发；未知运行保持占用，自动形成缺口恢复任务仍待后续切片。
 
 ## 当前边界
 

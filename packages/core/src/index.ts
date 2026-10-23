@@ -616,10 +616,12 @@ export class WorkflowService {
     return this.read(principal, projectId, async reader => {
       required(await reader.getTask(taskId), "Task");
       const revisions = await reader.listTaskRevisions(taskId);
-      return Promise.all(revisions.map(async revision => ({ revision,
+      const result: Array<{ revision: TaskRevision; basis: BasisSet | null }> = [];
+      for (const revision of revisions) result.push({ revision,
         basis: revision.basisSetId
           ? required(await reader.getBasisSet(taskId, revision.id, revision.basisSetId), "Basis set") : null,
-      })));
+      });
+      return result;
     });
   }
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {

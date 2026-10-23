@@ -1,13 +1,24 @@
 import { readFile, realpath } from "node:fs/promises";
 import { z } from "zod";
+import type { RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 
 const absolute = z.string().min(1).max(1024).regex(/^\//);
 const grant = z.strictObject({
   projectId: z.uuid(), actorId: z.string().min(1).max(100), roleId: z.string().min(1).max(4000),
   authorizationScope: z.string().min(1).max(4000), cwd: absolute,
   sandbox: z.enum(["read-only", "workspace-write"]),
+  model: z.string().min(1).max(100).optional(),
+  networkAccess: z.boolean().default(false),
+  approvalPolicy: z.enum(["on-request", "untrusted"]).default("on-request"),
 });
-export type RuntimeGrant = z.infer<typeof grant>;
+export type RuntimeGrant = Omit<z.infer<typeof grant>, "networkAccess" | "approvalPolicy"> &
+  Partial<Pick<z.infer<typeof grant>, "networkAccess" | "approvalPolicy">>;
+export function runtimeThreadConfig(grants: RuntimeGrant[], spec: RuntimeSessionSpec): Record<string, unknown> | undefined {
+  return grants.some(value => value.actorId === spec.actorId && value.projectId === spec.projectId &&
+    value.roleId === spec.roleId && value.authorizationScope === spec.authorizationScope && value.cwd === spec.cwd &&
+    value.sandbox === spec.sandbox && value.networkAccess && spec.sandbox === "workspace-write")
+    ? {"sandbox_workspace_write.network_access": true} : undefined;
+}
 const integrationSchema = z.strictObject({
   repositories: z.array(z.strictObject({ projectId:z.uuid(), repositoryId:z.string().min(1).max(100), root:absolute, allowedPaths:z.array(z.string().min(1).max(1024)).min(1).max(200) })).max(200).default([]),
   feishu: z.strictObject({
@@ -24,7 +35,14 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
-    grants: z.array(grant).max(200),
+    grants: z.array(grant).max(200).refine(values => new Set(values.map(value => JSON.stringify([
+      value.projectId, value.actorId, value.roleId, value.authorizationScope, value.cwd, value.sandbox,
+    ]))).size === values.length, "Runtime authorization profiles must be unique"),
+  }).optional(),
+  orchestration: z.strictObject({
+    enabled: z.boolean(), controllerActorId: z.string().min(1).max(100), workerRoot: absolute,
+    credentialTtlMs: z.number().int().min(60000).max(86400000).default(3600000),
+    pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
   }).optional(),
 });
 export async function loadIntegrations(path?: string) {
@@ -41,5 +59,5 @@ export async function loadIntegrations(path?: string) {
     if (!allowedRuntimeCwds(projectId).includes(cwd)) return false;
     try { return await realpath(cwd) === cwd; } catch { return false; }
   };
-  return { runtime, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant };
+  return { runtime, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant };
 }

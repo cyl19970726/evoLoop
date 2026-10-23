@@ -23,11 +23,13 @@ import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { loadIntegrations } from "./configuration.js";
+import { loadIntegrations, runtimeThreadConfig } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
+import { setupManagedLoops } from "./orchestration/setup.js";
+import { managedRuntimeAdmission } from "./orchestration/admission.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -92,11 +94,13 @@ const repositoryForPrincipal = (principal: Principal, projectId: string) => {
   });
 };
 const runtimeConfig = integrations.runtime;
+const mayStartManaged = integrations.orchestration?.enabled ? managedRuntimeAdmission(pool) : async () => true;
 const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
+  threadConfig: spec => runtimeThreadConfig(runtimeConfig.grants, spec),
 }) : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal}),
@@ -107,6 +111,8 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   }),
   blobsForPrincipal,
   principals: credentials, canWrite: lease.canWrite, allowedCwd: integrations.allowedRuntimeCwd,
+  mayCreateSession: session => mayStartManaged(session.projectId, "session", session.id),
+  mayDispatchRun: run => mayStartManaged(run.projectId, "run", run.id),
   hasGrant: integrations.hasRuntimeGrant }) : null;
 if (runner) {
   try { await runner.start(); }
@@ -129,7 +135,16 @@ const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: 
   ...(feishu?.enabled && feishu.pollEnabled ? { pollIntervalMs: feishu.pollIntervalMs } : {}),
 });
 await collaboration.start();
+const managed = setupManagedLoops({pool, workflow: service, runtime: runner, integrations, credentials,
+  canWrite: lease.canWrite, now: clock.now, apiUrl: `http://127.0.0.1:${port}`,
+  projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
+  cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
+  sourceConfiguration: principal => ({
+    git: integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
+    wiki: !!knowledge?.enabled && knowledge.projectIds.some(projectId => !principal || principal.projectIds.includes(projectId)),
+  }),
+  ...(managed ? {orchestration: managed.routes, workers: managed.workers} : {}),
   ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
     runner.readEvaluationPacket(principal, projectId, runId) } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
   allowedRuntimeCwds: integrations.allowedRuntimeCwds, hasRuntimeGrant: integrations.hasRuntimeGrant,
@@ -146,7 +161,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { await collaboration.stop(); await scheduling.stop(); await app.close(); }
+  try { await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
   finally {
     try { if (runner) await runner.stop(); }
     finally { try { await lease.release(); } finally { await pool.end(); } }
@@ -154,5 +169,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

@@ -1,6 +1,6 @@
 # 本机运行与恢复
 
-当前是可运行的本机试用切片：11 个工作区，代码包含 PostgreSQL 迁移 012，已在隔离数据库验收；目标、阶段、过程 Document、Task、负责人讨论、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
+当前是可运行的本机试用切片：11 个工作区，受管自动循环候选包含 PostgreSQL 迁移 016；旧试用环境的迁移和运行版本须分别核对，不随候选自动升级。目标、阶段、过程 Document、Task、负责人讨论、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
 
 ## 环境与启动
 
@@ -44,7 +44,7 @@ JS
 
 日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。tick 只创建 `todo` Task 及其固定主正文，不自动开始或运行。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope`、绝对路径 `cwd` 和 `sandbox`（`read-only` 或 `workspace-write`）；确认实际项目目录和授权后才启用。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份和集成配置在启动时读取，修改后重启。
 
-如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
+如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。`maintainerId` 必须与实际发布/对账身份的 `actorId` 一致，且该身份具有对应项目的 review 权限；任意标签或另一个未配置的身份不会取得维护权。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
 
 ```bash
 chmod 600 "$EVOLOOP_AUTH_FILE" "$EVOLOOP_INTEGRATIONS_FILE"
@@ -53,6 +53,16 @@ npm start
 ```
 
 访问 `http://127.0.0.1:4318`，用身份文件中的 token 登录。令牌只留在当前页面内存，刷新后需重新登录。更新应用后请刷新已打开的标签页并重新登录；旧标签页仍可能运行旧版本界面，本轮独立消费曾因此失败，刷新后才成功，失败观察仍保留。`EVOLOOP_PORT` 可改端口；服务监听回环地址。迁移不会在启动时自动执行。C5 将 Task 正文归入 Document 并改为四态；既有实例须单独运行迁移并同步服务、CLI 和界面版本，本轮未自动升级其他会话的预览或持久数据。同一数据库只允许一个 coordinator 持有专用连接锁；锁丢失后写入不可用，不是双机自动接管证明。
+
+## 受管自动循环候选
+
+在独立数据库迁移至 **016** 后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 read/write/review 权限的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含现有精确授权字段，可增加 `model`、`approvalPolicy` 和默认关闭的 `networkAccess`。同一项目/actor/职责/scope/目录/sandbox 的重复 profile 被拒绝；各 actor 的网络授权互不借用。当前网络启用只适用于明确授权的 workspace-write profile。
+
+worker 的 `cwd` 应是专用、私有、允许写工作文件的目录；原件权限另按项目引用验证。`workerRoot` 保存 0700/0600 的短期凭据和 wrapper，不能位于开发 checkout。CLI 回执放在其获准工作目录的 `.local/worker-receipts/RUN_ID`，避免只读密钥目录与 sandbox 写目录混用。不要把真实配置、令牌、回执、原始 session 或外部正文提交 Git。配置在启动时读取，变更需要重启；撤销 broker 凭据与暂停 Loop 是不同操作。
+
+凭据到期或撤销后，私有 metadata 仍用于判定历史角色及排除认知自反馈；保留这些元数据，不能把删除整个 worker 目录当成令牌清理方式。当前版本尚未把这项历史分类迁到独立数据库记录。已知终态缺署名提交会留下缺口并释放并发占用；自动形成恢复任务仍属后续切片。未知原生结果继续占用并沿原 ID 对账。
+
+服务启动后，先经普通命令创建/接受真实 Goal 和 Stage，再查看 `command schema loop.enroll` 配置一次范围、职责、来源基线和有限运行预算。自动循环不替用户决定项目目标；配置生效后，认知可在范围内自主形成 Task 和请求执行，控制者不逐 Task 代点 start/reserve。worker 的正式提交、停止与未知恢复协议见[Agent CLI](agent-cli.md#受管执行与自动接续)。运行页和关联任务页显示工作原因、责任、决定、结果与下一步，技术回执可展开核对。第一条真实运行完成也不等于负责人独立验收，更不能提前补算其余两条自动旅程。
 
 ## 体验有边界的复核
 

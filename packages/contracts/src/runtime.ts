@@ -59,6 +59,8 @@ export interface RuntimeBinding {
 }
 
 export interface RuntimeSessionSpec {
+  /** Trusted reservation actor; not sent as user-editable native input. */
+  actorId?: string;
   sessionId: string;
   roleId: string;
   projectId: string;

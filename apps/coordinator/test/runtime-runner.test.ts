@@ -26,6 +26,7 @@ const run: RuntimeRunRecord = {
 class FakeRuntime {
   ready = false;
   starts = 0;
+  creates = 0;
   disconnectListeners = new Set<(reason: string) => void>();
   approvalListeners = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   async open() { this.ready = true; }
@@ -36,12 +37,95 @@ class FakeRuntime {
   async emitApproval(request: RuntimeApprovalRequest) { for (const listener of this.approvalListeners) await listener(request); }
   disconnect(reason: string) { this.ready = false; for (const listener of this.disconnectListeners) listener(reason); }
   async registerBinding(_binding: RuntimeBinding) {}
+  async create() { this.creates++; return { sessionId: session.id, projectId, roleId: session.roleId,
+    cwd: session.cwd, authorizationScope: session.authorizationScope, nativeThreadId: "owned-thread",
+    nativeSessionId: "owned-session", owner: "evoloop-codex-app-server" as const }; }
   async resume(binding: RuntimeBinding) { return binding; }
   async inspect(_binding: RuntimeBinding): Promise<unknown> { return { thread: { id: session.nativeThreadId, sessionId: session.nativeSessionId, cwd: session.cwd } }; }
   async listTurns(): Promise<RuntimePage<RuntimeTurn>> { return { data: [], nextCursor: null }; }
   async listItems(): Promise<RuntimePage<unknown>> { return { data: [], nextCursor: null }; }
   async startTurn() { this.starts++; throw Error("unknown start must not replay"); }
 }
+
+test("reserved session waits at admission and creates one native thread after resume", async () => {
+  const reserved: RuntimeSessionRecord = { ...session, state: "reserved", nativeThreadId: null, nativeSessionId: null };
+  const runtime = new FakeRuntime();
+  let permitted = false, beginCalls = 0;
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [reserved],
+    listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    beginSessionCreate: async () => { beginCalls++; },
+    bindSession: async () => { reserved.state = "ready"; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayCreateSession: async () => permitted });
+  try {
+    await runner.start();
+    assert.equal(runtime.creates, 0);
+    assert.equal(beginCalls, 0);
+    assert.equal(reserved.state, "reserved");
+    permitted = true;
+    await runner.pump(); await runner.pump();
+    assert.equal(runtime.creates, 1);
+    assert.equal(beginCalls, 1);
+  } finally { await runner.stop(); }
+});
+
+test("requested Run waits without native start or state mutation, then uses its original operation once", async () => {
+  const requested = { ...run, state: "requested" as const, nativeTurnId: null };
+  const runtime = new FakeRuntime();
+  let permitted = false, beginCalls = 0, bindCalls = 0;
+  const seenOperations: string[] = [];
+  runtime.startTurn = async (_binding: RuntimeBinding, _input: string, operationId: string) => {
+    runtime.starts++; seenOperations.push(operationId); return { id: "turn-managed", status: "inProgress" };
+  };
+  runtime.listTurns = async () => ({ data: [{ id: "turn-managed", status: "inProgress" }], nextCursor: null });
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [requested], getRuntimeSession: async () => session } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    beginDispatch: async () => { beginCalls++; },
+    bindTurn: async () => { bindCalls++; return { ...requested, state: "running", nativeTurnId: "turn-managed" }; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayDispatchRun: async () => permitted });
+  (runner as unknown as { input: () => Promise<{ input: string }> }).input = async () => ({ input: "fixed task input" });
+  try {
+    await runner.start();
+    assert.equal(runtime.starts, 0);
+    assert.equal(beginCalls, 0);
+    assert.equal(requested.state, "requested");
+    permitted = true;
+    await runner.pump();
+    assert.equal(runtime.starts, 1);
+    assert.equal(beginCalls, 1);
+    assert.equal(bindCalls, 1);
+    assert.deepEqual(seenOperations, [requested.operationId]);
+  } finally { await runner.stop(); }
+});
+
+test("late admission denial after preflight leaves the requested Run untouched", async () => {
+  const requested = { ...run, state: "requested" as const, nativeTurnId: null };
+  const runtime = new FakeRuntime();
+  let checks = 0, beginCalls = 0;
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [requested], getRuntimeSession: async () => session } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    beginDispatch: async () => { beginCalls++; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayDispatchRun: async () => ++checks % 2 === 1 });
+  (runner as unknown as { input: () => Promise<{ input: string }> }).input = async () => ({ input: "fixed input" });
+  try {
+    await runner.start();
+    assert.equal(checks, 2);
+    assert.equal(beginCalls, 0);
+    assert.equal(runtime.starts, 0);
+    assert.equal(requested.state, "requested");
+  } finally { await runner.stop(); }
+});
 
 test("transport disconnect closes admission; explicit recovery reconciles unknown run without replay", async () => {
   const instances: FakeRuntime[] = [];
@@ -112,7 +196,8 @@ test("transient interrupted history without completion time cannot settle a boun
     recordTurn: async (_projectId: string, _runId: string, _turnId: string, status: string) => { recorded.push(status); return active; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
-    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayDispatchRun: async () => false });
   runtime.listItems = async () =>
     ({ data: [{ id: "message-1", type: "agentMessage", phase: "final_answer", text: "Done" }], nextCursor: null });
   try {
@@ -120,6 +205,28 @@ test("transient interrupted history without completion time cannot settle a boun
     assert.equal(reads, 1);
     assert.deepEqual(recorded, []);
     await runner.pump();
+    assert.deepEqual(recorded, ["completed"]);
+    assert.equal(runtime.starts, 0);
+  } finally { await runner.stop(); }
+});
+
+test("admission denial does not block terminal reconciliation of an unknown bound Turn", async () => {
+  const uncertain = { ...run, state: "unknown" as const, nativeTurnId: "turn-known" };
+  const runtime = new FakeRuntime();
+  runtime.listTurns = async () => ({ data: [{ id: "turn-known", status: "completed",
+    completedAtUtc: "2026-10-23T12:00:00.000Z" }], nextCursor: null });
+  runtime.listItems = async () => ({ data: [{ type: "agentMessage", phase: "final_answer", text: "Finished" }], nextCursor: null });
+  const recorded: string[] = [];
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [uncertain], getRuntimeSession: async () => session } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    recordTurn: async (_projectId: string, _runId: string, _turnId: string, status: string) => { recorded.push(status); return uncertain; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayDispatchRun: async () => false });
+  try {
+    await runner.start();
     assert.deepEqual(recorded, ["completed"]);
     assert.equal(runtime.starts, 0);
   } finally { await runner.stop(); }

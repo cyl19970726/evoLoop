@@ -1,0 +1,104 @@
+import type { Pool } from "pg";
+import { createHash, randomUUID } from "node:crypto";
+import { isAbsolute, join, resolve, sep } from "node:path";
+import type { Principal } from "@evoloop/contracts";
+import type { WorkflowService } from "@evoloop/core";
+import { OrchestrationService } from "@evoloop/core/orchestration";
+import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
+import type { AuthConfig } from "../auth.js";
+import type { loadIntegrations } from "../configuration.js";
+import type { RuntimeRunner } from "../runtime/runner.js";
+import { WorkerCredentialBroker } from "../workers/credentials.js";
+import { workerGuardFacts } from "../workers/facts.js";
+import { ManagedLoopRunner } from "./runner.js";
+import { createWorkerSealer } from "./seal.js";
+
+export function setupManagedLoops(options: {
+  pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
+  integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
+  canWrite(): boolean; now(): string; apiUrl: string; projectRoot: string; cliMain: string;
+}) {
+  const config = options.integrations.orchestration;
+  if (!config?.enabled) return null;
+  if (!options.runtime || !options.integrations.runtime?.enabled) throw new Error("Managed loops require configured runtime");
+  const root = resolve(config.workerRoot), checkout = resolve(options.projectRoot);
+  if (!isAbsolute(config.workerRoot) || root === checkout || root.startsWith(checkout + sep))
+    throw new Error("Worker credentials require an external private directory");
+  const entry = options.credentials.find(value => value.actorId === config.controllerActorId);
+  if (!entry || !["read", "write", "review"].every(permission => entry.permissions.includes(permission as "read" | "write" | "review")))
+    throw new Error("Managed loop controller requires one configured reviewer identity");
+  const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions]};
+  const grants = options.integrations.runtime.grants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId));
+  const broker = new WorkerCredentialBroker({workerRoot: root, apiUrl: options.apiUrl,
+    cliMain: options.cliMain, nodeExecutable: process.execPath, ttlMs: config.credentialTtlMs,
+    receiptDirectory: scope => {
+      const matches = grants.filter(value => value.projectId === scope.projectId && value.roleId === scope.roleId);
+      if (matches.length !== 1) throw new Error("Worker receipt workspace is ambiguous");
+      return join(matches[0]!.cwd, ".local/worker-receipts", scope.runId);
+    }});
+  const controller = async (projectId: string, roleId: string) => {
+    const matches = grants.filter(value => value.projectId === projectId && value.roleId === roleId);
+    if (matches.length !== 1) return null;
+    const grant = matches[0]!;
+    if (!await options.integrations.allowedRuntimeCwd(projectId, grant.cwd)) return null;
+    return {principal: controllerPrincipal, authorizationScopeId: grant.authorizationScope, cwd: grant.cwd,
+      ...(grant.model ? {model: grant.model} : {}), sandbox: grant.sandbox, approvalPolicy: grant.approvalPolicy,
+      skillPath: join(checkout, ".agents/skills/evoloop-workflow/SKILL.md")};
+  };
+  const store = new PgOrchestrationStore(options.pool, {
+    wasActorRole: (projectId, actorId, loopId, roleId) => broker.wasActorRole(projectId, actorId, loopId, roleId),
+    getAuthorizationFact: async (projectId, scopeId) => {
+      const matches = grants.filter(value => value.projectId === projectId && value.authorizationScope === scopeId);
+      const grant = matches.length === 1 ? matches[0]! : null;
+      return grant ? {projectId, scopeId, actorId: grant.actorId, roleId: grant.roleId,
+        active: await options.integrations.allowedRuntimeCwd(projectId, grant.cwd)} : null;
+    },
+    canActAsRole: async (projectId, actorId, roleId) => {
+      if (grants.some(value => value.projectId === projectId && value.actorId === actorId && value.roleId === roleId)) return true;
+      const identity = await broker.identityForActor(actorId);
+      return identity?.scope.projectId === projectId && identity.scope.roleId === roleId;
+    },
+  });
+  const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
+    hash: value => createHash("sha256").update(value).digest("hex")});
+  const seal = createWorkerSealer({workflow: options.workflow, orchestration, credential: broker,
+    controller: async (projectId, roleId) => (await controller(projectId, roleId))?.principal ?? null, now: options.now});
+  const runner = new ManagedLoopRunner({projects: entry.projectIds, reader: projectId => entry.projectIds.includes(projectId) ? controllerPrincipal : null,
+    controller, workflow: options.workflow, orchestration, runtime: options.runtime,
+    credential: {lookup: runId => broker.lookup(runId), issue: async scope => {
+      const loop = await orchestration.getLoop(controllerPrincipal, scope.projectId, scope.loopId);
+      if (loop?.state !== "active") throw new Error("Loop no longer active; no new credential issued");
+      return broker.issue(scope);
+    }}, sealSubmission: seal, now: options.now, canWrite: options.canWrite});
+  return {runner, broker, service: orchestration,
+    start: () => runner.start(config.pollIntervalMs), stop: () => runner.stop(),
+    workers: {authenticate: (header: string | undefined) => broker.authenticate(header),
+      facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity)},
+    routes: {service: orchestration, status: () => runner.status(),
+      taskContext: async (principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) => {
+        await options.workflow.getTask(principal, projectId, taskId);
+        const result = await options.pool.query(`SELECT loop_id,array_agg(DISTINCT data->>'sourceEventId') AS sources,
+          array_agg(dispatch_id::text) AS dispatches,array_remove(array_agg(DISTINCT data->>'parentDispatchId'),NULL) AS parents
+          FROM orchestration_dispatch WHERE project_id=$1 AND task_id=$2 AND ($3::uuid IS NULL OR loop_id>$3)
+          GROUP BY loop_id ORDER BY loop_id LIMIT $4`, [projectId, taskId, cursor ?? null, limit + 1]);
+        const items = result.rows.slice(0, limit).map(row => ({loopId: row.loop_id as string, sourceEventIds: row.sources as string[],
+          dispatchIds: row.dispatches as string[], parentDispatchIds: row.parents as string[]}));
+        return {items, nextCursor: result.rows.length > limit ? items.at(-1)!.loopId : null};
+      },
+      listTasks: async (principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string) => {
+        const loop = await orchestration.getLoop(principal, projectId, loopId);
+        if (!loop) return {items: [], nextCursor: null};
+        const result = await options.pool.query(`SELECT t.task_id FROM task t JOIN LATERAL
+          (SELECT proposal.stage_id FROM task_proposal proposal JOIN task_revision r
+            ON r.project_id=proposal.project_id AND r.task_id=proposal.task_id AND r.revision_id=proposal.task_revision_id
+            WHERE proposal.project_id=t.project_id AND proposal.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true
+          JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id
+          WHERE t.project_id=$1 AND s.goal_id=$2 AND ($3::uuid IS NULL OR s.stage_id=$3)
+          AND ($4::uuid IS NULL OR t.task_id>$4) ORDER BY t.task_id LIMIT $5`,
+          [projectId, loop.goalId, loop.stageId, cursor ?? null, limit + 1]);
+        const ids = result.rows.slice(0, limit).map(value => value.task_id as string);
+        return {items: await Promise.all(ids.map(id => options.workflow.getTask(principal, projectId, id))),
+          nextCursor: result.rows.length > limit ? ids.at(-1)! : null};
+      }},
+  };
+}

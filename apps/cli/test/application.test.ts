@@ -61,3 +61,17 @@ test("input mistakes and missing auth return structured failures without stack t
     assert.equal(JSON.parse(result.stderr).error.code, "INVALID_INPUT"); assert.ok(!result.stderr.includes("secret"));
   }
 });
+test("a worker reads its exact Run without requiring a project-wide list", async () => {
+  const project = "00000000-0000-4000-8000-000000000001", runId = "00000000-0000-4000-8000-000000000002";
+  const seen: string[] = [];
+  const mocked = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    const path = new URL(String(url)).pathname; seen.push(path);
+    return new Response(JSON.stringify(path.endsWith(`/${runId}`) ? {id: runId, inputHash: "fixed"} : {code: "FORBIDDEN"}),
+      {status: path.endsWith(`/${runId}`) ? 200 : 403});
+  });
+  try {
+    const result = await run(["read", "run", runId], {EVOLOOP_TOKEN: "private-fixture", EVOLOOP_PROJECT: project});
+    assert.equal(result.code, 0); assert.equal(JSON.parse(result.stdout).inputHash, "fixed");
+    assert.deepEqual(seen, [`/api/projects/${project}/runtime/runs/${runId}`]);
+  } finally {mocked.mock.restore();}
+});
