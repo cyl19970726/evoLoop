@@ -29,7 +29,8 @@ class Reader implements OrchestrationReader {
     const detail=x.detail as Record<string,unknown>,op=x.operation_result as Record<string,unknown>;
     const loop=x.loop_data as OrchestrationLoop,dispatch=x.dispatch_data as OrchestrationDispatch,decision=x.decision_data as OrchestrationWorkerDecision;
     if(x.operation_actor!==x.actor_id || op.entityType!=="loop" || op.entityId!==loop.id ||
-      !Number.isInteger(op.version) || Number(op.version)<2 || op.version!==detail.resumedAtLoopVersion ||
+      !Number.isInteger(op.version) || Number(op.version)<2 || Number(op.version)>loop.version ||
+      op.version!==detail.resumedAtLoopVersion ||
       decision.projectId!==this.projectId || decision.id!==x.entity_id || decision.kind!=="waiting" ||
       decision.dispatchId!==dispatch.id || decision.runId!==dispatch.runtimeRunId || decision.taskId!==dispatch.taskId ||
       dispatch.projectId!==this.projectId || dispatch.loopId!==loop.id || dispatch.parentDispatchId!==null ||
@@ -243,6 +244,7 @@ class Reader implements OrchestrationReader {
       LEFT JOIN process_document issue ON issue.project_id=e.project_id AND issue.document_id=e.entity_id
         AND issue.kind='issue' AND issue.origin_task_id IS NOT NULL AND e.version=1
         AND j.command_type='document.create' AND j.result->>'status'='applied'
+        AND j.result->>'entityId'=e.entity_id::text AND j.result->>'version'='1'
       LEFT JOIN document_revision issue_revision ON issue_revision.project_id=issue.project_id
         AND issue_revision.document_id=issue.document_id AND issue_revision.revision_id::text=j.result->>'revisionId'
         AND issue_revision.previous_revision_id IS NULL AND issue_revision.author=j.actor_id

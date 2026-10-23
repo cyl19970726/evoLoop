@@ -567,8 +567,8 @@ test("review control resumes one terminal waiting cognition from fixed Issue wit
   await assert.rejects(()=>f.h.service.execute(reviewer,f.command()),failed("ALREADY_RESUMED"));
 });
 
-test("waiting resume rejects worker, stale version, child, unknown Run, exhausted budget and stopped Loop",async()=>{
-  for(const mutation of ["worker","stale","child","unknown","budget","stopped","foreign"] as const){
+test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted budget and non-Issue sources",async()=>{
+  for(const mutation of ["worker","noReview","noWrite","stale","child","unknown","budget","paused","stopped","foreign","notIssue","wrongDecision","unsettled"] as const){
     const f=waitingIssueFixture();await f.make();let principal=reviewer;
     const command=f.command();
     f.h.change(value=>{
@@ -576,12 +576,22 @@ test("waiting resume rejects worker, stale version, child, unknown Run, exhauste
       if(mutation==="child")value.dispatches.set(randomUUID(),{...value.dispatches.get(f.dispatchId)!,id:randomUUID(),parentDispatchId:f.dispatchId});
       if(mutation==="unknown")value.runState="unknown";
       if(mutation==="budget")value.loops.set(loopId,{...value.loops.get(loopId)!,maxRuns:1});
+      if(mutation==="paused")value.loops.set(loopId,{...value.loops.get(loopId)!,state:"paused"});
       if(mutation==="stopped")value.loops.set(loopId,{...value.loops.get(loopId)!,state:"stopped"});
       if(mutation==="foreign")value.dispatches.set(f.dispatchId,{...value.dispatches.get(f.dispatchId)!,loopId:randomUUID()});
+      if(mutation==="notIssue")value.dispatches.set(f.dispatchId,{...value.dispatches.get(f.dispatchId)!,sourceEventId:source0});
+      if(mutation==="wrongDecision")value.decisions.set(f.decisionId,{...value.decisions.get(f.decisionId)!,dispatchId:randomUUID()});
+      if(mutation==="unsettled"){
+        const id=randomUUID();value.dispatches.set(id,{...value.dispatches.get(f.dispatchId)!,id,state:"unknown"});
+      }
     });
     if(mutation==="worker")principal={...reviewer,actorId:"worker-test"};
-    const code={worker:"FORBIDDEN",stale:"VERSION_CONFLICT",child:"WAITING_UNAVAILABLE",unknown:"RUN_NOT_TERMINAL",
-      budget:"BUDGET_EXHAUSTED",stopped:"LOOP_STOPPED",foreign:"WAITING_UNAVAILABLE"}[mutation];
+    if(mutation==="noReview")principal={...reviewer,permissions:["read","write"]};
+    if(mutation==="noWrite")principal={...reviewer,permissions:["read","review"]};
+    const code={worker:"FORBIDDEN",noReview:"FORBIDDEN",noWrite:"FORBIDDEN",stale:"VERSION_CONFLICT",
+      child:"WAITING_UNAVAILABLE",unknown:"RUN_NOT_TERMINAL",budget:"BUDGET_EXHAUSTED",paused:"LOOP_PAUSED",
+      stopped:"LOOP_STOPPED",foreign:"WAITING_UNAVAILABLE",notIssue:"SOURCE_UNAVAILABLE",
+      wrongDecision:"WAITING_UNAVAILABLE",unsettled:"WAITING_UNAVAILABLE"}[mutation];
     await assert.rejects(()=>f.h.service.execute(principal,command),failed(code),mutation);
     assert.equal(f.h.data.events.filter(x=>x.kind==="waiting.resumed").length,0);
   }
