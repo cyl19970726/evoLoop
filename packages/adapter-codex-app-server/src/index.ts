@@ -374,13 +374,13 @@ export class CodexAppServerAdapter implements RuntimePort {
     const seen = new Set<string>();
     for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
       const result = object(await this.request("thread/list", { archived: true, cwd: binding.cwd,
-        sourceKinds: ["appServer"], useStateDbOnly: true, limit: 100, ...(cursor ? { cursor } : {}) }));
+        useStateDbOnly: true, limit: 100, ...(cursor ? { cursor } : {}) }));
       if (!result || !Array.isArray(result.data)) throw new RuntimeProtocolError("invalid archived thread page");
       for (const entry of result.data) {
         const thread = object(entry);
         if (!thread || !nonempty(thread.id)) throw new RuntimeProtocolError("invalid archived thread identity");
         if (thread.id === binding.nativeThreadId) {
-          if (thread.sessionId !== binding.nativeSessionId || thread.cwd !== binding.cwd || thread.source !== "appServer")
+          if (thread.sessionId !== binding.nativeSessionId || thread.cwd !== binding.cwd)
             throw new RuntimeProtocolError("archived thread does not match owned binding");
           return true;
         }

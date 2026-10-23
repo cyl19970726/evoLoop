@@ -200,8 +200,9 @@ export class RuntimeRunner {
     }
     if (session.closeAttemptedAt) return;
     if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
-    const inspected = object(await this.runtime.inspect(binding));
-    if (object(inspected?.thread)?.source !== "appServer") throw new Error("Native archive target is not an owned App Server thread");
+    // Native source is a UI classification, not proof of who created the thread.
+    // inspect validates the exact persisted thread/session/cwd binding before archive.
+    await this.runtime.inspect(binding);
     await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
     try { await this.runtime.archiveThread(binding); }
     catch { /* Archive may have happened. A subsequent pump only reads archived state. */ }

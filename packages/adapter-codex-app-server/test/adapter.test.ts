@@ -29,6 +29,13 @@ test("owned archive requires exact native readback; empty and lost acknowledgeme
   const other = await foreign.create(spec);
   await foreign.archiveThread(other);
   await assert.rejects(() => foreign.isThreadArchived(other), RuntimeProtocolError);
+
+  for (const [mode, expected] of [["vscode-archive", true], ["foreign-samecwd", true], ["foreign-only", false]] as const) {
+    const candidate = await open(mode); t.after(() => candidate.close());
+    const owned = await candidate.create(spec);
+    await candidate.archiveThread(owned);
+    assert.equal(await candidate.isThreadArchived(owned), expected, mode);
+  }
 });
 
 test("actual App Server child receives only explicit login and transport environment", async t => {
