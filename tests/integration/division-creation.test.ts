@@ -126,6 +126,16 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   await denied({...decision,expectedFirstTaskOwner:"changed-owner"},"CREATION_DENIED");
   const unreadable=new OrchestrationService({...deps,store,verifyProposalMaterial:async()=>false});
   await denied(decision,"MATERIAL_UNREADABLE",unreadable);
+  await pool.query("UPDATE project_stage SET state='reviewed' WHERE project_id=$1 AND stage_id=$2",[projectId,stageId]);
+  await denied(decision,"STAGE_NOT_ACTIVE");
+  for (const [table,condition,params] of [
+    ["role_definition","project_id=$1",[projectId]],
+    ["runtime_role_binding","project_id=$1",[projectId]],
+    ["operation_journal","project_id=$1 AND command_type IN ('role.propose','role.decide')",[projectId]],
+    ["orchestration_operation","project_id=$1 AND operation_id=$2",[projectId,decision.operationId]],
+  ] as const) assert.equal((await pool.query(`SELECT count(*)::int n FROM ${table} WHERE ${condition}`,params)).rows[0].n,0,
+    `${table} must remain empty after a non-active Stage rejection`);
+  await pool.query("UPDATE project_stage SET state='active' WHERE project_id=$1 AND stage_id=$2",[projectId,stageId]);
   assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1",[projectId])).rows[0].n,0);
   for (const failingMethod of ["insertWorkflowRoleOperation","insertBinding","insertPolicy","insertOperation"] as const) {
     const brokenStore:OrchestrationStore={read:(p,action)=>store.read(p,action),transaction:(p,action)=>store.transaction(p,
@@ -161,4 +171,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   assert.equal(binding?.roleId,winner.roleId);
   assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1",[projectId])).rows[0].n,1);
   assert.equal((await pool.query("SELECT count(*)::int n FROM runtime_role_binding WHERE project_id=$1 AND choice='new-role'",[projectId])).rows[0].n,1);
+  await pool.query("UPDATE project_stage SET state='reviewed' WHERE project_id=$1 AND stage_id=$2",[projectId,stageId]);
+  assert.equal((await service.execute(principal(cognition),winner as never)).replayed,true,
+    "a committed original operation must replay its history even after Stage review");
 });

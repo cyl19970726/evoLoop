@@ -241,6 +241,9 @@ export class OrchestrationService {
           Date.parse(command.proposedRole.reviewAtUtc) > Date.parse(template.expiresAtUtc) ||
           await tx.hasInFlightRunForTask(task.id))
           return fail("CREATION_DENIED", "new Role creation requires exact permitted trial, owner, idle todo Task and expiry");
+        const stage = task.stageId ? await tx.getStageFact(task.stageId) : null;
+        if (!stage || stage.projectId !== loop.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
+          return fail("STAGE_NOT_ACTIVE", "first Task must remain under the active Goal Stage before trial Role creation");
         const controller = await this.deps.getTrialController?.(loop.projectId, template.actorId);
         if (!controller || controller.actorId !== template.actorId || !controller.projectIds.includes(loop.projectId) ||
           !controller.permissions.includes("write") || !controller.permissions.includes("review"))
