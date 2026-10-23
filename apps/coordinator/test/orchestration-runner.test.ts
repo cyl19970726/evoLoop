@@ -167,6 +167,28 @@ function fixture() {
     lastScope: () => lastScope, lastInput: () => lastInput };
 }
 
+test("historical method-waiting stays pending without looking for a binding or starting a child", async () => {
+  const f=fixture(),parentId=loopIntentId("legacy-method-parent"),runId=loopIntentId("legacy-method-run");
+  const methodId=loopIntentId("legacy-method-decision"),firstTaskId=loopIntentId("legacy-method-task");
+  f.loop.dispatchCount=1;f.loop.maxRuns=1;
+  f.dispatches.push({projectId,id:parentId,version:5,loopId,inboxId:loopIntentId("legacy-method-inbox"),
+    sourceEventId:sourceId,taskId:loopIntentId("legacy-cognition-task"),taskVersion:2,parentDispatchId:null,
+    recipientRoleId:cognition,purpose:"cognition",authorizationScopeId:scopeId,state:"completed",
+    claimToken:null,leaseUntilUtc:null,runtimeRunId:runId,outcome:"waiting",deliveryId:null,evidenceRef:null,
+    reason:"Historical method waiting",requestedBy:principal.actorId,createdAtUtc:now,updatedAtUtc:now});
+  const orchestration=f.deps.orchestration as unknown as Record<string,unknown>;
+  orchestration.getDecisionForDispatch=async()=>({id:loopIntentId("legacy-waiting"),kind:"waiting",
+    divisionDecisionId:methodId,runId});
+  orchestration.getDivisionDecisionFact=async()=>({id:methodId,loopId,parentDispatchId:parentId,
+    sourceEventId:sourceId,firstTaskId,firstTaskVersion:1,choice:"method"});
+  orchestration.getBinding=async()=>{throw new Error("METHOD_MUST_NOT_READ_BINDING");};
+  const runner=new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  assert.equal(runner.status().faults.some(fault=>fault.code==="METHOD_MUST_NOT_READ_BINDING"),false);
+  assert.equal(f.dispatches.length,1);
+  assert.equal(f.commands.includes("division.consume"),false);
+});
+
 test("bootstrap seeds exactly one cognition Task and dispatch across repeated polls", async () => {
   const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
   await runner.pump(); await runner.pump();

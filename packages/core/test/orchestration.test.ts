@@ -847,6 +847,30 @@ test("method-only intent needs no delegated Role and a later stop leaves it unus
   assert.equal((await f.h.service.getDecision({...reviewer,permissions:["read","write","review"]},projectId,stopped.entityId))?.divisionDecisionId,null);
 });
 
+test("method on the current in-progress cognition Task can submit its own work but cannot invent a waiting handoff", async () => {
+  const f=divisionFixture();await f.setup();
+  f.h.change(data=>{data.taskOwnerRoleId=cognitiveRoleId;data.taskState="in_progress";});
+  const before=f.h.data.loops.get(loopId)!;
+  const method=await f.h.service.execute(cognition,{...f.decision(),choice:"method",roleId:cognitiveRoleId,
+    templateId:null,templateRevision:null,templateHash:null});
+  assert.equal(method.entityType,"decision");
+  assert.equal(f.h.data.bindings.size,0);
+  assert.equal(f.h.data.loops.get(loopId)?.currentPolicyRevisionId,before.currentPolicyRevisionId);
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,before.dispatchCount);
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"worker.decision",decisionId:randomUUID(),
+    dispatchId:f.parentDispatchId,runId:f.parentRunId,kind:"waiting",divisionDecisionId:null,
+    reason:"No child yet",evidenceRefs:[]})),failed("INVALID_CAUSALITY"));
+  assert.equal(f.h.data.decisions.size,0);
+  const submission=await f.h.service.execute(cognition,cmd({type:"worker.submit",submissionId:randomUUID(),
+    dispatchId:f.parentDispatchId,runId:f.parentRunId,taskRevisionId:f.h.data.taskRevisionId,
+    runInputHash:f.h.data.runInputHash,deliveryOperationId:randomUUID(),
+    deliveryIntent:{artifactRef:"artifact:method-report",artifactRevision:"v1",contentHash:"a".repeat(64),
+      technicalResult:"passed",technicalEvidence:"Fixture report",reason:"Record actual method result"},
+    agentObservation:"Fixture report only",evidenceRefs:[]}));
+  assert.equal(submission.entityType,"submission");
+  assert.equal(f.h.data.submissions.size,1);
+});
+
 test("division rejects text-only authority, foreign scope, changed material, outsider and revoked template", async () => {
   const f = divisionFixture(); await f.setup();
   const request = f.decision();
