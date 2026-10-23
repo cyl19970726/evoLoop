@@ -112,6 +112,10 @@ export class OrchestrationService {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       this.version(loop.version, command.expectedLoopVersion);
       this.active(loop);
+      if (!loop.stageId) return fail("STAGE_NOT_ACTIVE", "waiting resume requires an active enrolled Stage");
+      const stage = await tx.getStageFact(loop.stageId);
+      if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
+        return fail("STAGE_NOT_ACTIVE", "waiting resume requires the same active enrolled Stage");
       if (loop.dispatchCount >= loop.maxRuns) return fail("BUDGET_EXHAUSTED", "loop has no remaining Run budget");
       const decision = await tx.getDecision(command.decisionId);
       const dispatch = await tx.getDispatch(command.dispatchId);
@@ -161,6 +165,10 @@ export class OrchestrationService {
       const resumedWaiting = source?.kind === "waiting.resumed" && source.sourceLoopId === loop.id && !!source.originalSourceEventId;
       if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation && !scopedIssue && !resumedWaiting) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be an enrolled or verified source in this loop");
       if (resumedWaiting) {
+        if (!loop.stageId) return fail("STAGE_NOT_ACTIVE", "resumed waiting source requires an active enrolled Stage");
+        const stage = await tx.getStageFact(loop.stageId);
+        if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
+          return fail("STAGE_NOT_ACTIVE", "resumed waiting source requires the same active enrolled Stage");
         const root = await tx.getSourceFact(source.originalSourceEventId!);
         if (!root || root.kind !== "document" || root.projectId !== command.projectId || root.subjectId !== source.subjectId ||
           root.issueRevisionId !== source.issueRevisionId || root.issueContentHash !== source.issueContentHash ||
