@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import type { Principal } from "@evoloop/contracts";
+import type { OrchestrationDispatch } from "@evoloop/contracts/orchestration";
 import type { WorkflowService } from "@evoloop/core";
 import { OrchestrationService } from "@evoloop/core/orchestration";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
@@ -10,6 +11,7 @@ import type { loadIntegrations } from "../configuration.js";
 import type { RuntimeRunner } from "../runtime/runner.js";
 import { WorkerCredentialBroker } from "../workers/credentials.js";
 import { workerGuardFacts } from "../workers/facts.js";
+import { canReadDivisionEvidence } from "../workers/guard.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 import { readWorkStatuses } from "./work-status.js";
@@ -86,6 +88,7 @@ export function setupManagedLoops(options: {
   pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
   canWrite(): boolean; now(): string; apiUrl: string; projectRoot: string; cliMain: string;
+  verifyProposalMaterial(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
 }) {
   const config = options.integrations.orchestration;
   if (!config?.enabled) return null;
@@ -102,6 +105,7 @@ export function setupManagedLoops(options: {
     cliMain: options.cliMain, nodeExecutable: process.execPath, ttlMs: config.credentialTtlMs,
     receiptDirectory: scope => {
       const matches = grants.filter(value => value.projectId === scope.projectId && value.roleId === scope.roleId);
+      if (matches.length === 0) return join(root, scope.runId, "receipts");
       if (matches.length !== 1) throw new Error("Worker receipt workspace is ambiguous");
       return join(matches[0]!.cwd, ".local/worker-receipts", scope.runId);
     }});
@@ -131,11 +135,47 @@ export function setupManagedLoops(options: {
   const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
     hash: value => createHash("sha256").update(value).digest("hex"),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
-    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null});
+    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
+    canReadDivisionMaterial: async (actorId, documentId, revisionId) => {
+      const identity = await broker.identityForActor(actorId);
+      if (!identity || identity.scope.kind !== "cognition") return false;
+      return canReadDivisionEvidence(identity, workerGuardFacts(options.pool, identity), documentId, revisionId);
+    },
+    getTrialController: async (projectId, actorId) => actorId === controllerPrincipal.actorId &&
+      controllerPrincipal.projectIds.includes(projectId) ? controllerPrincipal : null,
+    verifyProposalMaterial: options.verifyProposalMaterial});
+  const dynamicController = async (dispatch: OrchestrationDispatch, historical = false) => {
+    if (!dispatch.bindingId || !entry.projectIds.includes(dispatch.projectId)) return null;
+    const binding = await orchestration.getBinding(controllerPrincipal, dispatch.projectId, dispatch.bindingId);
+    if (!binding || binding.projectId !== dispatch.projectId || binding.loopId !== dispatch.loopId ||
+      binding.roleId !== dispatch.recipientRoleId || binding.authorizationScopeId !== dispatch.authorizationScopeId ||
+      binding.actorId !== controllerPrincipal.actorId || binding.firstTaskId !== dispatch.taskId ||
+      dispatch.parentDispatchId !== binding.parentDispatchId)
+      return null;
+    if (!historical) {
+      const loop = await orchestration.getLoop(controllerPrincipal, dispatch.projectId, dispatch.loopId);
+      const policy = loop?.currentPolicyRevisionId ? await orchestration.getPolicy(controllerPrincipal, dispatch.projectId, loop.currentPolicyRevisionId) : null;
+      const template = await options.integrations.getDelegationTemplate(dispatch.projectId, binding.template.id);
+      const role = await options.pool.query(`SELECT d.state FROM role_definition d WHERE d.project_id=$1 AND d.role_id=$2
+        AND EXISTS (SELECT 1 FROM role_decision rd WHERE rd.project_id=d.project_id AND rd.role_id=d.role_id
+          AND rd.decision='accept-trial')`, [dispatch.projectId, binding.roleId]);
+      if (!loop || loop.state !== "active" || !policy || policy.bindingByRole[binding.roleId] !== binding.id ||
+        !template || template.hash !== binding.template.hash || template.template.revision !== binding.template.revision ||
+        template.template.actorId !== binding.actorId || template.template.authorizationScopeId !== binding.authorizationScopeId ||
+        Date.parse(template.template.expiresAtUtc) <= Date.parse(options.now()) ||
+        !["trial", "active"].includes(role.rows[0]?.state)) return null;
+    }
+    return { principal: controllerPrincipal, authorizationScopeId: binding.authorizationScopeId,
+      cwd: binding.runtime.cwd, model: binding.runtime.model, sandbox: binding.runtime.sandbox,
+      approvalPolicy: binding.runtime.approvalPolicy,
+      skillPath: join(checkout, ".agents/skills/evoloop-workflow/SKILL.md") };
+  };
   const seal = createWorkerSealer({workflow: options.workflow, orchestration, credential: broker,
-    controller: async (projectId, roleId) => (await controller(projectId, roleId))?.principal ?? null, now: options.now});
+    controller: async (projectId, roleId, dispatch) => dispatch?.bindingId
+      ? (await dynamicController(dispatch, true))?.principal ?? null
+      : (await controller(projectId, roleId))?.principal ?? null, now: options.now});
   const runner = new ManagedLoopRunner({projects: entry.projectIds, reader: projectId => entry.projectIds.includes(projectId) ? controllerPrincipal : null,
-    controller, workflow: options.workflow, orchestration, runtime: options.runtime,
+    controller, dynamicController, workflow: options.workflow, orchestration, runtime: options.runtime,
     credential: {lookup: runId => broker.lookup(runId), issue: async scope => {
       const loop = await orchestration.getLoop(controllerPrincipal, scope.projectId, scope.loopId);
       if (loop?.state !== "active") throw new Error("Loop no longer active; no new credential issued");
@@ -146,6 +186,23 @@ export function setupManagedLoops(options: {
     workers: {authenticate: (header: string | undefined) => broker.authenticate(header),
       facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity)},
     routes: {service: orchestration, status: () => runner.status(),
+      delegationChoices: async (principal: Principal, projectId: string, loopId: string) => {
+        const loop = await orchestration.getLoop(principal,projectId,loopId);
+        if (!loop) return {items:[]};
+        const candidates = options.integrations.runtime?.delegationTemplates.filter(t => t.projectId===projectId &&
+          t.loopId===loopId && t.goalId===loop.goalId && t.cognitionRoleIds.includes(loop.cognitiveRoleId) &&
+          Date.parse(t.expiresAtUtc)>Date.parse(options.now())) ?? [];
+        const items = await Promise.all(candidates.map(async template => {
+          const fixed = await options.integrations.getDelegationTemplate(projectId,template.id);
+          const roles = await options.pool.query(`SELECT d.role_id,d.state,EXISTS(SELECT 1 FROM role_decision rd
+            WHERE rd.project_id=d.project_id AND rd.role_id=d.role_id AND rd.decision='accept-trial') AS accepted
+            FROM role_definition d WHERE d.project_id=$1 AND d.role_id=ANY($2::uuid[])`,
+            [projectId,template.existingRoleIds]);
+          return {template,hash:fixed?.hash ?? null,existingRoles:roles.rows.map(row => ({id:row.role_id as string,
+            state:row.state as string,accepted:row.accepted as boolean}))};
+        }));
+        return {items};
+      },
       taskContext: (principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string) =>
         readTaskContext(options.pool, options.workflow, principal, projectId, taskId, limit, cursor),
       workStatuses: (principal: Principal, projectId: string, taskIds: string[]) =>

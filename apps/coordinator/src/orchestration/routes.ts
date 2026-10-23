@@ -7,6 +7,7 @@ import type { OrchestrationService } from "@evoloop/core/orchestration";
 
 export interface OrchestrationRouteOptions {
   service: OrchestrationService;
+  delegationChoices?(principal: Principal, projectId: string, loopId: string): Promise<unknown>;
   status?(): unknown;
   listTasks?(principal: Principal, projectId: string, loopId: string, limit: number, cursor?: string): Promise<{items: TaskDetail[]; nextCursor: string | null}>;
   taskContext?(principal: Principal, projectId: string, taskId: string, limit: number, cursor?: string): Promise<unknown>;
@@ -43,6 +44,10 @@ export function registerOrchestrationRoutes(app: FastifyInstance, options: Orche
   app.get("/api/projects/:projectId/orchestration/loops/:id", async (request, reply) => {
     const p = params.parse(request.params);
     return await service.getLoop(principal(request.principal), p.projectId!, p.id!) ?? reply.code(404).send({code: "NOT_FOUND"});
+  });
+  if (options.delegationChoices) app.get("/api/projects/:projectId/orchestration/loops/:id/delegation-choices", async request => {
+    const p = params.parse(request.params);
+    return options.delegationChoices!(principal(request.principal),p.projectId!,p.id!);
   });
   app.get("/api/projects/:projectId/orchestration/policies/:id", async (request, reply) => {
     const p = params.parse(request.params);

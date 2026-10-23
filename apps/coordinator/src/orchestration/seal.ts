@@ -14,7 +14,7 @@ export interface WorkerSealerDependencies {
   workflow: Pick<WorkflowService, "getTask" | "getOperation" | "execute">;
   orchestration: Pick<OrchestrationService, "getSubmissionForDispatch" | "getDecisionForDispatch" | "execute">;
   credential: Pick<WorkerCredentialBroker, "lookup">;
-  controller(projectId: string, roleId: string): Principal | null | Promise<Principal | null>;
+  controller(projectId: string, roleId: string, dispatch?: OrchestrationDispatch): Principal | null | Promise<Principal | null>;
   now(): string;
 }
 const terminal = (run: RuntimeRunRecord) => ["completed", "failed", "interrupted"].includes(run.state);
@@ -43,7 +43,7 @@ export function createWorkerSealer(deps: WorkerSealerDependencies) {
   return async (dispatch: OrchestrationDispatch, run: RuntimeRunRecord): Promise<SettlementResult> => {
     if (dispatch.projectId !== run.projectId || dispatch.taskId !== run.taskId || dispatch.runtimeRunId !== run.id ||
       dispatch.state !== "accepted" || !terminal(run)) return { status: "pending", reason: "BOUND_TERMINAL_RUN_REQUIRED" };
-    const controller = await deps.controller(dispatch.projectId, dispatch.recipientRoleId);
+    const controller = await deps.controller(dispatch.projectId, dispatch.recipientRoleId, dispatch);
     if (!controller || !controller.projectIds.includes(dispatch.projectId) ||
       !["read", "write", "review"].every(p => controller.permissions.includes(p as "read" | "write" | "review")))
       return { status: "pending", reason: "SEAL_CONTROLLER_UNAVAILABLE" };

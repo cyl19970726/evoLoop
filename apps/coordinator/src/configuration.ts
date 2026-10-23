@@ -24,6 +24,21 @@ export function runtimeThreadConfig(grants: RuntimeGrant[], spec: RuntimeSession
     value.sandbox === spec.sandbox && value.networkAccess && spec.sandbox === "workspace-write")
     ? {"sandbox_workspace_write.network_access": true} : undefined;
 }
+/** A dynamic Session's exact binding takes precedence over every static or other-template profile. */
+export async function runtimeThreadConfigForSession(grants: RuntimeGrant[], spec: RuntimeSessionSpec,
+  dynamic: {isDynamicSession(projectId:string,sessionId:string):Promise<boolean>;
+    networkAccessForSession(value: {projectId:string;sessionId:string;actorId:string;roleId:string;
+      authorizationScope:string;cwd:string;sandbox:string;model:string|null;approvalPolicy:string}):Promise<boolean|null>} | null) {
+  if (dynamic && await dynamic.isDynamicSession(spec.projectId,spec.sessionId)) {
+    if (!spec.actorId) return undefined;
+    const network=await dynamic.networkAccessForSession({projectId:spec.projectId,sessionId:spec.sessionId,
+      actorId:spec.actorId,roleId:spec.roleId,authorizationScope:spec.authorizationScope,
+      cwd:spec.cwd,sandbox:spec.sandbox,model:spec.model??null,approvalPolicy:spec.approvalPolicy});
+    return network===true && spec.sandbox==="workspace-write"
+      ? {"sandbox_workspace_write.network_access":true} : undefined;
+  }
+  return runtimeThreadConfig(grants,spec);
+}
 const integrationSchema = z.strictObject({
   repositories: z.array(z.strictObject({ projectId:z.uuid(), repositoryId:z.string().min(1).max(100), root:absolute, allowedPaths:z.array(z.string().min(1).max(1024)).min(1).max(200) })).max(200).default([]),
   feishu: z.strictObject({
@@ -63,7 +78,8 @@ export async function loadIntegrations(path?: string) {
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
     g.authorizationScope === scope.authorizationScope && g.cwd === scope.cwd && g.sandbox === scope.sandbox);
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
-    if (!allowedRuntimeCwds(projectId).includes(cwd)) return false;
+    if (!allowedRuntimeCwds(projectId).includes(cwd) &&
+      !(runtime?.enabled && runtime.delegationTemplates.some(t => t.projectId === projectId && t.cwd === cwd))) return false;
     try { return await realpath(cwd) === cwd; } catch { return false; }
   };
   const getDelegationTemplate = async (projectId: string, templateId: string) => {

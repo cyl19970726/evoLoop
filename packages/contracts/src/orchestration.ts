@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { LoopPolicyRevision, RuntimeRoleBinding } from "./division.js";
+import { roleProposalSchema, type RoleTransaction } from "./roles.js";
+import type { Operation, OutboxEvent } from "./index.js";
 
 const id = z.uuid();
 const short = z.string().trim().min(1).max(240);
@@ -19,11 +21,22 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("division.decide"), decisionId: id, loopId: id, expectedLoopVersion: version,
     sourceEventId: id, parentDispatchId: id, documentId: id, documentRevisionId: id,
     documentContentHash: z.string().regex(/^[a-f0-9]{64}$/), firstTaskId: id, expectedFirstTaskVersion: version,
+    expectedFirstTaskOwner: role.optional(),
     choice: z.enum(["method", "same-role-instance", "temporary-assignment", "new-role"]),
-    roleId: role, templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    roleId: role, proposedRole: roleProposalSchema.optional(), templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
     reason }),
   z.strictObject({ ...common, type: z.literal("division.revoke"), loopId: id, expectedLoopVersion: version,
     bindingId: id, reason }),
+  /** Controller-only budget reservation for a completed, signed waiting decision. Task remains with its prior owner. */
+  z.strictObject({ ...common, type: z.literal("division.consume"), loopId: id, expectedLoopVersion: version,
+    bindingId: id, waitingDecisionId: id, parentDispatchId: id, dispatchId: id, reason }),
+  /** A separate journalled Task update bridges the observed version to the first child version. */
+  z.strictObject({ ...common, type: z.literal("division.confirmTransfer"), dispatchId: id,
+    transferOperationId: id, transferredTaskVersion: version, reason }),
+  /** The receiving worker attests to reading the fixed handoff after its own Run exists. */
+  z.strictObject({ ...common, type: z.literal("division.ackHandoff"), dispatchId: id, runId: id,
+    documentRevisionId: id, documentContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    taskRevisionId: id, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.accept"), loopId: id, sourceEventId: id, recipientRoleId: role, purpose: z.enum(["cognitive_review", "next_action"]) }),
   z.strictObject({ ...common, type: z.literal("inbox.ack"), inboxId: id, expectedVersion: version, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.dispose"), inboxId: id, expectedVersion: version, disposition: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRef: short.nullable() }),
@@ -121,6 +134,7 @@ export interface OrchestrationIssueFact {
 }
 export interface OrchestrationTaskFact { projectId: string; id: string; version: number; state: "todo" | "in_progress" | "done" | "cancelled"; ownerRoleId: string; goalId: string | null; stageId: string | null }
 export interface OrchestrationTaskScopeFact { projectId: string; taskId: string; taskVersion: number; goalId: string | null; stageId: string | null }
+export interface OrchestrationTaskRevisionFact { projectId: string; taskId: string; revisionId: string; version: number; ownerRoleId: string; actorId: string; reason: string }
 export interface OrchestrationGoalFact { projectId: string; id: string; state: string }
 export interface OrchestrationStageFact { projectId: string; id: string; goalId: string; state: string }
 export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown" }
@@ -145,6 +159,8 @@ export interface OrchestrationTransaction {
   countNewRoleAllocations(templateId: string, templateRevision: number): Promise<number>;
   getDocumentRevisionFact(documentId: string, revisionId: string): Promise<{contentHash: string} | null>;
   getRoleState(roleId: string): Promise<{state: string; firstTaskId: string; accepted: boolean} | null>;
+  roleTransaction(): RoleTransaction;
+  insertWorkflowRoleOperation(operation: Operation, effect: OutboxEvent): Promise<void>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   findInbox(loopId: string, sourceEventId: string, recipientRoleId: string, purpose: string): Promise<OrchestrationInbox | null>;
   insertInbox(value: OrchestrationInbox): Promise<void>;
@@ -158,6 +174,9 @@ export interface OrchestrationTransaction {
   findDecisionByDispatch(dispatchId: string): Promise<OrchestrationWorkerDecision | null>;
   hasChildDispatch(parentDispatchId: string): Promise<boolean>;
   hasWaitingResume(decisionId: string): Promise<boolean>;
+  hasDivisionTransferConfirmed(dispatchId: string): Promise<boolean>;
+  hasDivisionHandoffAck(dispatchId: string): Promise<boolean>;
+  hasInFlightRunForTask(taskId: string): Promise<boolean>;
   hasUnsettledDispatchForSource(loopId: string, sourceEventId: string, exceptDispatchId: string): Promise<boolean>;
   insertDecision(value: OrchestrationWorkerDecision): Promise<void>;
   insertSubmission(value: OrchestrationSubmission): Promise<void>;
@@ -171,6 +190,7 @@ export interface OrchestrationTransaction {
   getTaskFact(id: string): Promise<OrchestrationTaskFact | null>;
   /** Scope at the dispatch's fixed Task revision, never the current Task head. */
   getTaskScopeAtVersion(taskId: string, taskVersion: number): Promise<OrchestrationTaskScopeFact | null>;
+  getTaskRevisionFact(taskId: string, taskVersion: number): Promise<OrchestrationTaskRevisionFact | null>;
   getGoalFact(id: string): Promise<OrchestrationGoalFact | null>;
   getStageFact(id: string): Promise<OrchestrationStageFact | null>;
   getAuthorizationFact(scopeId: string): Promise<OrchestrationAuthorizationFact | null>;
