@@ -6,6 +6,7 @@ import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
+import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 
 const projectId = randomUUID();
@@ -47,6 +48,27 @@ class FakeRuntime {
   async startTurn() { this.starts++; throw Error("unknown start must not replay"); }
 }
 
+test("a project lookup failure is retained, while a genuinely absent project is skipped", async () => {
+  const runtime = new FakeRuntime();
+  let absent = false;
+  const workflow = { getProject: async () => {
+    if (absent) throw new DomainError("NOT_FOUND", "Project was not found");
+    throw new Error("database connection failed with secret=private");
+  } } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).faults.map(fault => [fault.phase,fault.projectId]), [["project_scan",projectId]]);
+    assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /secret=private/);
+    absent = true;
+    await runner.pump();
+    assert.equal(runner.status(projectId).faults.length, 1, "a missing project does not prove that an earlier outage recovered");
+  } finally { await runner.stop(); }
+});
+
 test("closing session archives once, verifies identity, and restart only reads after uncertain acknowledgement", async () => {
   const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
   class ArchiveRuntime extends FakeRuntime {
@@ -86,11 +108,15 @@ test("closing session archives once, verifies identity, and restart only reads a
   try {
     await again.start();
     assert.equal(lost.archives, 1); assert.equal(closing.state, "closing");
+    assert.deepEqual(again.status(projectId).faults.map(fault=>[fault.sessionId,fault.phase,fault.category]),
+      [[closing.id,"session_close","unknown_outcome"]]);
     await again.pump();
     assert.equal(lost.archives, 1);
+    assert.equal(again.status(projectId).faults.length,1,"an unverified archive remains attributable to its Session");
     lost.archived = true;
     await again.pump();
     assert.equal(confirms, 2); assert.equal(closing.state, "closed");
+    assert.equal(again.status(projectId).faults.length,0,"only verified closure clears its Session fault");
   } finally { await again.stop(); }
 
   closing.state = "closing"; closing.closeAttemptedAt = null;
@@ -107,6 +133,106 @@ test("closing session archives once, verifies identity, and restart only reads a
     assert.equal(closing.closeAttemptedAt, null);
     assert.equal(closing.state, "closing");
   } finally { await reject.stop(); }
+});
+
+test("runtime faults retain exact Run ownership, redact errors, and clear only the recovered Run",async()=>{
+  const otherProject=randomUUID();
+  const sessionA={...session,id:randomUUID()},sessionA2={...session,id:randomUUID()},
+    sessionB={...session,projectId:otherProject,id:randomUUID()};
+  const runA={...run,id:randomUUID(),sessionId:sessionA.id,nativeTurnId:"turn-a",state:"unknown" as const},
+    runA2={...run,id:randomUUID(),sessionId:sessionA2.id,nativeTurnId:"turn-a2",state:"running" as const},
+    runB={...run,projectId:otherProject,id:randomUUID(),sessionId:sessionB.id,nativeTurnId:"turn-b",state:"unknown" as const};
+  const sessions=[sessionA,sessionA2,sessionB],runs=[runA,runA2,runB];
+  let failA=true,failB=true,settleA2=false;
+  class DiagnosticRuntime extends FakeRuntime {
+    override async listTurns(binding:RuntimeBinding):Promise<RuntimePage<RuntimeTurn>> {
+      if (binding.sessionId===sessionA.id&&failA || binding.sessionId===sessionB.id&&failB)
+        throw new Error("secret=do-not-project; stack=private");
+      const turnId=binding.sessionId===sessionA.id?"turn-a":binding.sessionId===sessionB.id?"turn-b":"turn-a2";
+      return {data:[{id:turnId,status:binding.sessionId===sessionA2.id&&!settleA2?"inProgress":"completed",
+        ...(binding.sessionId===sessionA2.id&&!settleA2?{}:{completedAtUtc:new Date().toISOString()})}],nextCursor:null};
+    }
+  }
+  const native=new DiagnosticRuntime();
+  const workflow={getProject:async()=>({id:projectId}),
+    listRuntimeSessions:async(_p:Principal,p:string)=>sessions.filter(s=>s.projectId===p),
+    listRuntimeRuns:async(_p:Principal,p:string)=>runs.filter(r=>r.projectId===p),
+    getRuntimeSession:async(_p:Principal,p:string,id:string)=>sessions.find(s=>s.projectId===p&&s.id===id)!} as unknown as WorkflowService;
+  const trusted=({recoverDispatching:async()=>({sessions:[],runs:[]}),
+    recordTurn:async(p:string,id:string)=>{const matched=runs.find(r=>r.projectId===p&&r.id===id)!;matched.state="completed";}}) as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & DiagnosticRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId,otherProject],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try {
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>[f.projectId,f.sessionId,f.runId,f.phase]),
+      [[projectId,sessionA.id,runA.id,"run_reconcile"]]);
+    assert.deepEqual(runner.status(otherProject).faults.map(f=>f.runId),[runB.id]);
+    assert.equal(runner.status().faults.length,0,"unscoped health cannot reveal project Run IDs");
+    assert.doesNotMatch(JSON.stringify(runner.status(projectId)),/secret|private|turn-b|"runId":"undefined"/);
+    settleA2=true;await runner.pump();
+    assert.equal(runA2.state,"completed");
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[runA.id],
+      "an unrelated successful Run cannot clear an unknown Run");
+    failA=false;await runner.pump();
+    assert.equal(runA.state,"completed");
+    assert.equal(runner.status(projectId).faults.length,0);
+    assert.deepEqual(runner.status(otherProject).faults.map(f=>f.runId),[runB.id]);
+  }finally{await runner.stop();}
+});
+
+test("an admission skip cannot erase an earlier Run fault; its persisted terminal state can",async()=>{
+  const requested={...run,id:randomUUID(),state:"requested" as RuntimeRunRecord["state"],nativeTurnId:null};
+  let permitted=true;
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+    listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>{throw new Error("private API token");}} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const native=new FakeRuntime();
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>permitted});
+  try {
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[requested.id]);
+    permitted=false;await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[requested.id]);
+    assert.doesNotMatch(JSON.stringify(runner.status(projectId)),/private API token/);
+    requested.state="failed";await runner.pump();
+    assert.equal(runner.status(projectId).faults.length,0);
+  }finally{await runner.stop();}
+});
+
+test("only an exact running Turn readback clears a transient reconcile fault before terminal",async()=>{
+  const active={...run,id:randomUUID(),state:"running" as RuntimeRunRecord["state"],nativeTurnId:"owned-turn"};
+  const native=new FakeRuntime();
+  let failRead=true,turnStatus="inProgress",completedAtUtc:string|null=null,settled=0;
+  native.listTurns=async()=>{
+    if(failRead)throw new Error("private list failure");
+    return {data:[{id:"owned-turn",status:turnStatus,completedAtUtc}],nextCursor:null};
+  };
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+    listRuntimeRuns:async()=>[active],getRuntimeSession:async()=>session} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+    recordTurn:async()=>{settled++;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[active.id]);
+    failRead=false;await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults,[],"the same persisted running Turn is readable again");
+    assert.equal(settled,0);
+    active.state="unknown";failRead=true;await runner.pump();
+    failRead=false;await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[active.id],"durable unknown is not healed by an active Turn");
+    turnStatus="interrupted";await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults.map(f=>f.runId),[active.id],"interrupted without completion time is not terminal");
+    turnStatus="completed";completedAtUtc=new Date().toISOString();await runner.pump();
+    assert.equal(settled,1);
+    assert.deepEqual(runner.status(projectId).faults,[]);
+    assert.equal(native.starts,0);
+  }finally{await runner.stop();}
 });
 
 test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
@@ -280,21 +406,31 @@ test("transport disconnect closes admission; explicit recovery reconciles unknow
 test("creating-session approval receipt labels native identity unverified", async () => {
   const creating = { ...session, state: "creating" as const, nativeThreadId: null, nativeSessionId: null };
   const receipts: string[] = [];
+  let receiptUnavailable = true;
   let runtime!: FakeRuntime;
   const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [creating],
     listRuntimeRuns: async () => [], getRuntimeSession: async () => creating } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
     recordSessionApprovalDeclined: async (_projectId: string, _sessionId: string, _threadId: string,
-      _turnId: string | null, detail: string) => { receipts.push(detail); } } as unknown as RuntimeWorkflowService;
+      _turnId: string | null, detail: string) => {
+        if (receiptUnavailable) throw new Error("secret=approval-receipt");
+        receipts.push(detail);
+      } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => (runtime = new FakeRuntime()) as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
-    await runtime.emitApproval({ id: 800, method: "item/commandExecution/requestApproval", params: {},
-      threadId: "unverified-thread", projectId, sessionId: session.id });
+    await assert.rejects(() => runtime.emitApproval({ id: 800, method: "item/commandExecution/requestApproval", params: {},
+      threadId: "unverified-thread", projectId, sessionId: session.id }), /Approval evidence unavailable/);
+    assert.deepEqual(runner.status(projectId).faults.map(fault => [fault.sessionId,fault.phase]),
+      [[session.id,"approval_receipt"]]);
+    assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /secret=approval-receipt/);
+    receiptUnavailable = false;
+    await runner.recover();
     assert.equal(receipts.length, 1);
     assert.match(receipts[0]!, /unbound request observed during create; native identity not yet verified/);
+    assert.deepEqual(runner.status(projectId).faults, []);
   } finally { await runner.stop(); }
 });
 
