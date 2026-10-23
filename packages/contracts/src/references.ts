@@ -27,6 +27,8 @@ export const taskExternalReferenceSchema = z.strictObject({ ...fixed, decisionId
     ctx.addIssue({ code: "custom", path: ["revision"], message: "Run Task revision must be a UUID" });
 });
 export type TaskExternalReferenceCommand = z.infer<typeof taskExternalReferenceSchema>;
+/** Trusted runner supplies only identity; the reference transaction resolves all authority itself. */
+export interface StudyReferenceProvenance { declarationId: string; loopId: string; inboxId: string; sourceDecisionId: string }
 export interface FormalSourceDecision {
   projectId: string; id: string; gitReferenceId: string; documentId: string; documentRevisionId: string;
   decision: "adopted" | "rejected" | "incorporated"; actorId: string; reason: string; createdAt: string;
@@ -36,6 +38,7 @@ export interface TaskExternalReferenceRecord {
   decision: ExternalReferenceDecision; kind: ExternalReferenceKind; referenceId: string; revision: string;
   contentHash: string; reason: string; actionImpact: string; actorId: string; createdAt: string;
   observedCurrentRevision: string; observedCurrentHash: string; observedCurrentValidity: "valid";
+  studyProvenance?: StudyReferenceProvenance | null;
 }
 export interface TaskExternalReferenceHead { projectId: string; taskId: string; slotId: string; version: number; decisionId: string }
 export interface ReferenceReader {
@@ -56,6 +59,8 @@ export interface ReferenceReader {
   listFormalSourceDecisions(gitReferenceId: string): Promise<FormalSourceDecision[]>;
 }
 export interface ReferenceTransaction extends ReferenceReader {
+  resolveStudyReferenceAuthority(provenance: StudyReferenceProvenance, targetTaskId: string,
+    actorId: string): Promise<{source: TaskExternalReferenceRecord; declaringActorId: string} | null>;
   savepoint<T>(action: () => Promise<T>): Promise<T>;
   insertOperation(operation: Operation): Promise<void>;
   appendOutbox(event: OutboxEvent): Promise<void>;

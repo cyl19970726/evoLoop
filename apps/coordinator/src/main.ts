@@ -1,5 +1,6 @@
 import { withObservedSources } from "./knowledge/observed-repository.js";
 import { readExternalMaterials } from "./references/materials.js";
+import { createReferenceDependencies } from "./references/routes.js";
 import { GitDocumentSource } from "@evoloop/adapter-git-documents";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -9,7 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
-import { authConfigSchema } from "./auth.js";
+import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
@@ -41,6 +42,8 @@ if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVO
 let credentials: ReturnType<typeof authConfigSchema.parse>;
 try { credentials = authConfigSchema.parse(JSON.parse(await readFile(authFile, "utf8"))); }
 catch { throw new Error("Invalid identity file: check its JSON and credential schema; values are not logged."); }
+const currentStudyReviewer = async (projectId: string, actorId: string) =>
+  hasCurrentStudyReviewer(credentials,projectId,actorId);
 const port = Number(process.env.EVOLOOP_PORT ?? "4318");
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid EVOLOOP_PORT.");
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTimeoutMillis: 5000, query_timeout: 15000 });
@@ -120,7 +123,8 @@ const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter(
   threadConfig: spec => runtimeThreadConfigForSession(runtimeConfig.grants,spec,sessionOrigin),
 }) : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
-  workerTraceAuthority: (identity, targetRunId) => workerGuardFacts(pool, identity).fixedRunTrace!(targetRunId),
+  workerTraceAuthority: (identity, targetRunId) =>
+    workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),
   readDocumentOriginal: (principal, revision) => readDocumentOriginal({ uow, blobsForPrincipal }, principal, revision),
   readEvaluationMaterial: (principal, projectId, source) => readEvaluationMaterial(principal, projectId, source, {
@@ -173,6 +177,10 @@ const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: 
 });
 await collaboration.start();
 const managed = setupManagedLoops({pool, workflow: service, runtime: runner, integrations, credentials,
+  runSessionAvailable,
+  referenceDependencies: principal => createReferenceDependencies({uow,gitForPrincipal,
+    knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable,
+    hasCurrentStudyReviewer:currentStudyReviewer},principal),
   canWrite: lease.canWrite, now: clock.now, apiUrl: `http://127.0.0.1:${port}`,
   verifyProposalMaterial: async (principal, projectId, documentId, revisionId, hash) => {
     try {

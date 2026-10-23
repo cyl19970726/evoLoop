@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { WorkflowService } from "@evoloop/core";
 import { buildServer } from "../src/server.js";
-import { authenticate, authConfigSchema } from "../src/auth.js";
+import { authenticate, authConfigSchema, hasCurrentStudyReviewer } from "../src/auth.js";
 import type { SchedulingPump } from "../src/scheduling/pump.js";
 import { DomainError } from "@evoloop/contracts/ports";
 
@@ -52,6 +52,16 @@ test("auth rejects malformed, short and duplicate credentials", () => {
   assert.equal(authenticate(`Basic ${token}`, credentials), null);
   assert.equal(authConfigSchema.safeParse([...credentials, ...credentials]).success, false);
   assert.equal(authConfigSchema.safeParse([{ ...credentials[0], token: "short" }]).success, false);
+});
+
+test("current study reviewer accepts equivalent token rotation but never combines partial project grants", () => {
+  const rotating=authConfigSchema.parse([...credentials,{...credentials[0]!,token:"b".repeat(40)}]);
+  assert.equal(hasCurrentStudyReviewer(rotating,projectId,"local-owner"),true);
+  assert.equal(hasCurrentStudyReviewer(rotating,projectId,"other-owner"),false);
+  rotating[1]!.permissions=["read","write"];
+  assert.equal(hasCurrentStudyReviewer(rotating,projectId,"local-owner"),false);
+  rotating.splice(0);
+  assert.equal(hasCurrentStudyReviewer(rotating,projectId,"local-owner"),false);
 });
 
 test("owner history and discussion queries preserve authenticated identity and project scope", async () => {

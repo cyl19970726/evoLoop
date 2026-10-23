@@ -5,6 +5,7 @@ import type { Principal } from "@evoloop/contracts";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import type { RoleRecord, RoleTransaction } from "@evoloop/contracts/roles";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationObservationFact, OrchestrationDeliveryFact, OrchestrationIssueFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
+import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { OrchestrationError, OrchestrationService } from "../src/orchestration/index.js";
 
 const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), cognitiveRoleId = randomUUID(), workerRoleId = randomUUID(), taskId = randomUUID(), scopeId = randomUUID();
@@ -75,6 +76,10 @@ function harness() {
       projectId, taskId: id, revisionId: draft.taskRevisionId, version: taskVersion,
       ownerRoleId: draft.taskOwnerRoleId, actorId: reviewer.actorId,
       reason: draft.taskVersion === 2 && draft.bindings.size ? `division-transfer:${[...draft.bindings.keys()][0]}` : "fixture" } : null,
+    getStudyDeclaration: async () => null,
+    resolveStudySource: async () => null,
+    getStudyTaskSnapshot: async () => [],
+    isAutoCognitionTask: async () => false,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
@@ -394,6 +399,27 @@ test("operation replay rechecks actor binding and retains one immutable audit de
   assert.equal(first.replayed, false); assert.equal(replay.replayed, true); assert.equal(h.data.events.length, 1);
   await assert.rejects(() => h.service.execute({ ...reviewer, permissions: ["write"] }, command), failed("FORBIDDEN"));
   await assert.rejects(() => h.service.execute(reviewer, { ...command, reason: "different" }), failed("OPERATION_CONFLICT"));
+});
+
+test("optional paused enrollment preserves old active command bytes and its original replay", async () => {
+  const old=harness();
+  const command=cmd<Extract<OrchestrationCommand,{type:"loop.enroll"}>>({type:"loop.enroll",
+    loopId,goalId,stageId,cognitiveRoleId,allowedBusinessRoleIds:[workerRoleId],
+    sourceAfter:{createdAtUtc:at,eventId:source0},maxRuns:2,maxConcurrent:1,reason:"old active"});
+  assert.equal(Object.hasOwn(orchestrationCommandSchema.parse(command),"initialState"),false);
+  await old.service.execute(reviewer,command);
+  assert.equal(old.data.loops.get(loopId)?.state,"active");
+  assert.equal(Object.hasOwn(old.data.events[0]!.detail,"initialState"),false);
+  assert.equal((await old.service.execute(reviewer,command)).replayed,true);
+  const paused=harness();
+  await paused.service.execute(reviewer,{...command,operationId:op(),initialState:"paused"});
+  assert.equal(paused.data.loops.get(loopId)?.state,"paused");
+  assert.equal(paused.data.loops.get(loopId)?.dispatchCount,0);
+  assert.equal(paused.data.events[0]!.detail.initialState,"paused");
+  await paused.service.execute(reviewer,cmd({type:"loop.state",loopId,expectedVersion:1,
+    state:"active",reason:"material ready"}));
+  assert.equal(paused.data.loops.get(loopId)?.state,"active");
+  assert.equal(paused.data.loops.get(loopId)?.dispatchCount,0);
 });
 
 test("pause and explicit no_action or stop do not consume run budget; stopped loop cannot resume", async () => {

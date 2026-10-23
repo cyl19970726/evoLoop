@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { PgRoleQueries } from "./roles.js";
 import type { Operation, OutboxEvent } from "@evoloop/contracts";
 import type { LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
-import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationDivisionDecisionFact, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationDivisionDecisionFact, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision, StudyMaterialDeclaration, StudyMaterialItem, StudyCopiedReference } from "@evoloop/contracts/orchestration";
+import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { scheduledSourceFacts } from "./schedule-source.js";
 
 type Row = Record<string, any>;
@@ -14,6 +15,12 @@ type Authorization = {
 };
 const iso = (v: unknown) => v instanceof Date ? v.toISOString() : String(v);
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+const intentId=(...parts:string[])=>{
+  const bytes=Buffer.from(createHash("sha256").update(JSON.stringify(parts)).digest().subarray(0,16));
+  bytes[6]=(bytes[6]!&0x0f)|0x50;bytes[8]=(bytes[8]!&0x3f)|0x80;
+  const hex=bytes.toString("hex");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+};
 const data = <T>(row: Row | undefined): T | null => row ? row.data as T : null;
 const page = <T>(items: T[], limit: number, id: (item:T)=>string) => ({
   items: items.slice(0,limit), nextCursor: items.length>limit ? id(items[limit-1]!) : null,
@@ -103,6 +110,29 @@ class Reader implements OrchestrationReader {
     return page<T>(r.rows.map(x=>x.data),limit,x=>String((x as Record<string,string>).id));
   }
   getLoop(id:string){return this.one<OrchestrationLoop>("orchestration_loop","loop_id",id);}
+  async getStudyDeclaration(id:string):Promise<StudyMaterialDeclaration|null>{
+    const r=await this.db.query(`SELECT e.loop_id,e.entity_id,e.operation_id,e.actor_id,e.detail,
+        o.actor_id AS operation_actor,o.command_hash,o.result
+      FROM orchestration_event e JOIN orchestration_operation o ON o.project_id=e.project_id
+        AND o.operation_id=e.operation_id
+      WHERE e.project_id=$1 AND e.entity_id=$2 AND e.entity_type='decision'
+        AND e.kind='loop.studyMaterial.declared' LIMIT 2`,[this.projectId,id]);
+    if(r.rows.length!==1)return null;
+    const x=r.rows[0], detail=x.detail as Record<string,unknown>;
+    const parsed=orchestrationCommandSchema.safeParse(detail.command);
+    if(!parsed.success || parsed.data.type!=="loop.studyMaterial.declare")return null;
+    const cmd=parsed.data, declaration=detail.declaration as StudyMaterialDeclaration | undefined;
+    if(!declaration || declaration.projectId!==this.projectId || declaration.id!==id ||
+      declaration.loopId!==x.loop_id || declaration.operationId!==x.operation_id ||
+      declaration.actorId!==x.actor_id || declaration.controllerActorId!==cmd.controllerActorId ||
+      declaration.sourceTaskId!==cmd.sourceTaskId || declaration.sourceTaskRevisionId!==cmd.sourceTaskRevisionId ||
+      !Array.isArray(declaration.items) || declaration.items.length!==cmd.sourceDecisionIds.length ||
+      declaration.items.some((item,index)=>item.sourceDecisionId!==cmd.sourceDecisionIds[index]) ||
+      x.operation_actor!==x.actor_id || cmd.operationId!==x.operation_id || cmd.loopId!==x.loop_id ||
+      x.result?.entityType!=="decision" || x.result?.entityId!==id || x.result?.version!==1 ||
+      createHash("sha256").update(canonical(cmd)).digest("hex")!==x.command_hash)return null;
+    return declaration;
+  }
   getPolicy(id:string){return this.one<LoopPolicyRevision>("loop_policy_revision","policy_id",id);}
   getBinding(id:string){return this.one<RuntimeRoleBinding>("runtime_role_binding","binding_id",id);}
   listLoops(limit:number,cursor?:string){return this.listing<OrchestrationLoop>("orchestration_loop","loop_id",limit,cursor);}
@@ -337,8 +367,73 @@ class Reader implements OrchestrationReader {
     return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null}:null;}
 
 }
+/** Reuse the exact declaration verifier on a caller-owned project transaction. */
+export function readStudyDeclaration(client:PoolClient,projectId:string,id:string){
+  return new Reader(client,projectId).getStudyDeclaration(id);
+}
 class Tx extends Reader implements OrchestrationTransaction {
   constructor(db:PoolClient,projectId:string,private readonly authorization:Authorization){super(db,projectId);}
+  async resolveStudySource(taskId:string,revisionId:string,decisionIds:string[]):Promise<StudyMaterialItem[]|null>{
+    const r=await this.db.query(`SELECT d.decision_id,d.slot_id,run.run_id,run.task_revision_id,run.input_hash
+      FROM task_revision source_revision
+      JOIN task_external_ref_snapshot snapshot ON snapshot.project_id=source_revision.project_id
+        AND snapshot.task_id=source_revision.task_id AND snapshot.task_revision_id=source_revision.revision_id
+      JOIN task_external_ref_decision d ON d.project_id=snapshot.project_id
+        AND d.decision_id=snapshot.decision_id AND d.task_id=snapshot.task_id AND d.slot_id=snapshot.slot_id
+        AND d.source_kind='run'
+      JOIN task_external_ref_head head ON head.project_id=d.project_id AND head.task_id=d.task_id
+        AND head.slot_id=d.slot_id AND head.decision_id=d.decision_id
+      JOIN runtime_run run ON run.project_id=d.project_id AND run.run_id::text=d.reference_id
+        AND run.task_revision_id::text=d.source_revision AND run.input_hash=d.content_hash
+      JOIN runtime_session session ON session.project_id=run.project_id AND session.session_id=run.session_id
+      WHERE source_revision.project_id=$1 AND source_revision.task_id=$2 AND source_revision.revision_id=$3
+        AND d.decision_id=ANY($4::uuid[]) AND run.state IN ('completed','failed','interrupted')
+        AND run.native_turn_id IS NOT NULL AND session.state='ready'
+        AND session.native_thread_id IS NOT NULL AND session.native_session_id IS NOT NULL`,
+      [this.projectId,taskId,revisionId,decisionIds]);
+    if(r.rows.length!==decisionIds.length)return null;
+    const byId=new Map(r.rows.map((row:Row)=>[row.decision_id as string,row]));
+    return decisionIds.map(id=>{const row=byId.get(id);return row?{sourceDecisionId:id,
+      sourceSlotId:row.slot_id,runId:row.run_id,targetTaskRevisionId:row.task_revision_id,
+      inputHash:row.input_hash} as StudyMaterialItem:null;}).every(Boolean) ? decisionIds.map(id=>{
+      const row=byId.get(id)!;return {sourceDecisionId:id,sourceSlotId:row.slot_id,
+        runId:row.run_id,targetTaskRevisionId:row.task_revision_id,inputHash:row.input_hash};}) : null;
+  }
+  async getStudyTaskSnapshot(taskId:string,revisionId:string):Promise<StudyCopiedReference[]>{
+    // Historical dispatch fixtures may read during a staged migration before 025 adds this column.
+    const r=await this.db.query(`SELECT d.source_kind,d.decision_id,d.slot_id,d.reference_id,d.source_revision,
+      d.content_hash,to_jsonb(d)->'study_provenance' AS study_provenance
+      FROM task_external_ref_snapshot snapshot JOIN task_external_ref_decision d
+        ON d.project_id=snapshot.project_id AND d.decision_id=snapshot.decision_id
+      WHERE snapshot.project_id=$1 AND snapshot.task_id=$2 AND snapshot.task_revision_id=$3
+      ORDER BY snapshot.slot_id LIMIT 101`,[this.projectId,taskId,revisionId]);
+    return r.rows.map((row:Row)=>({kind:row.source_kind,slotId:row.slot_id,decisionId:row.decision_id,
+      sourceDecisionId:row.study_provenance?.sourceDecisionId ?? "",sourceSlotId:"",
+      runId:row.reference_id,targetTaskRevisionId:row.source_revision,inputHash:row.content_hash,
+      provenance:row.study_provenance ?? null}));
+  }
+  async isAutoCognitionTask(loopId:string,inboxId:string,taskId:string,controllerActorId:string,stageId:string):Promise<boolean>{
+    if(taskId!==intentId(loopId,inboxId,"cognition-task"))return false;
+    const r=await this.db.query(`SELECT 1 FROM orchestration_loop loop
+      JOIN orchestration_inbox inbox ON inbox.project_id=loop.project_id
+        AND inbox.loop_id=loop.loop_id AND inbox.inbox_id=$3
+        AND inbox.purpose='cognitive_review' AND inbox.data->>'recipientRoleId'=loop.data->>'cognitiveRoleId'
+      JOIN task target ON target.project_id=loop.project_id AND target.task_id=$4
+        AND target.owner=loop.data->>'cognitiveRoleId' AND target.kind='research'
+      JOIN task_revision initial ON initial.project_id=target.project_id AND initial.task_id=target.task_id
+        AND initial.version=1 AND initial.actor_id=$5 AND initial.owner=target.owner AND initial.kind='research'
+      JOIN task_proposal proposal ON proposal.project_id=initial.project_id
+        AND proposal.task_id=initial.task_id AND proposal.task_revision_id=initial.revision_id
+        AND proposal.stage_id=$6
+      JOIN operation_journal created ON created.project_id=target.project_id
+        AND created.operation_id=$7 AND created.command_type='task.create'
+        AND created.actor_id=$5 AND created.result->>'status'='applied'
+        AND created.result->>'entityId'=target.task_id::text
+        AND created.result->>'revisionId'=initial.revision_id::text
+      WHERE loop.project_id=$1 AND loop.loop_id=$2 LIMIT 1`,
+      [this.projectId,loopId,inboxId,taskId,controllerActorId,stageId,intentId(taskId,"create")]);
+    return !!r.rowCount;
+  }
   roleTransaction(){return new PgRoleQueries(this.db,this.projectId);}
   async insertWorkflowRoleOperation(operation:Operation,effect:OutboxEvent){
     await this.db.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)

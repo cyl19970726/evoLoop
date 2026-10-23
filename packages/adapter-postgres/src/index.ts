@@ -421,6 +421,8 @@ class PgTransaction extends PgReader implements Transaction {
   updateDiscussion(value: import("@evoloop/contracts").DiscussionRecord, expectedVersion: number, event: import("@evoloop/contracts").DiscussionEvent) { return this.discussions.updateDiscussion(value, expectedVersion, event); }
   insertFormalSourceDecision(value:FormalSourceDecision){return this.references.insertFormalSourceDecision(value);}
   insertTaskExternalDecision(value:TaskExternalReferenceRecord){return this.references.insertTaskExternalDecision(value);}
+  resolveStudyReferenceAuthority(provenance:import("@evoloop/contracts/references").StudyReferenceProvenance,
+    targetTaskId:string,actorId:string){return this.references.resolveStudyReferenceAuthority(provenance,targetTaskId,actorId);}
   advanceTaskExternalHead(value:TaskExternalReferenceHead,expectedVersion:number){return this.references.advanceTaskExternalHead(value,expectedVersion);}
 
   createRole(record: RoleRecord, revision: RoleRevision) { return this.roles.createRole(record, revision); }

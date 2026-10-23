@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import type { Principal, RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
+import type { CommandResult, Principal, RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact } from "@evoloop/contracts/orchestration";
+import type { StudyReferenceProvenance, TaskExternalReferenceCommand } from "@evoloop/contracts/references";
 import type { WorkflowService } from "@evoloop/core";
 import { OrchestrationError } from "@evoloop/core/orchestration";
 import type { OrchestrationService } from "@evoloop/core/orchestration";
@@ -36,6 +37,8 @@ export interface ManagedLoopDependencies {
   reader(projectId: string): Principal | null;
   orchestration: OrchestrationService;
   workflow: WorkflowService;
+  applyStudyReference?(principal: Principal, command: TaskExternalReferenceCommand,
+    provenance: StudyReferenceProvenance): Promise<CommandResult>;
   runtime: Pick<RuntimeRunner, "pump">;
   /** A live controller binding for the requested role and authorization scope. */
   controller(projectId: string, roleId: string): Promise<ManagedRoleProfile | null>;
@@ -256,6 +259,39 @@ export class ManagedLoopRunner {
         acceptance: "Record a grounded decision: create and dispatch a scoped business Task, wait, take no action, or stop.",
         consumer: loop.cognitiveRoleId, useRequired: false,
         evidence: `Source event ${inbox.sourceEventId}`, stopCondition: "A decision is recorded for this source." }));
+    }
+    if (current.currentStudyDeclarationId) {
+      if (!this.deps.applyStudyReference) throw new Error("STUDY_REFERENCE_UNAVAILABLE");
+      const declaration = await this.deps.orchestration.getStudyDeclaration(cognitive.principal,
+        loop.projectId,current.currentStudyDeclarationId);
+      if (!declaration || declaration.loopId !== loop.id || declaration.stageId !== loop.stageId ||
+        declaration.controllerActorId !== cognitive.principal.actorId) throw new Error("STUDY_DECLARATION_CHANGED");
+      const createOp = await this.deps.workflow.getOperation(cognitive.principal,loop.projectId,
+        loopIntentId(taskId,"create"));
+      if (!createOp || createOp.commandType !== "task.create" || createOp.result.status !== "applied" ||
+        createOp.result.entityId !== taskId || createOp.result.version !== 1 || !createOp.result.revisionId)
+        throw new Error("STUDY_RECEIVER_ORIGIN_UNVERIFIED");
+      let revisionId=createOp.result.revisionId, version=1;
+      for (const item of declaration.items) {
+        const prefix=[declaration.id,inbox.id,item.sourceDecisionId];
+        const provenance={declarationId:declaration.id,loopId:loop.id,inboxId:inbox.id,
+          sourceDecisionId:item.sourceDecisionId};
+        const command:TaskExternalReferenceCommand={projectId:loop.projectId,
+          operationId:loopIntentId(...prefix,"reference"),actorId:cognitive.principal.actorId,
+          decisionId:loopIntentId(...prefix,"decision"),taskId,taskRevisionId:revisionId,
+          expectedTaskVersion:version,slotId:loopIntentId(...prefix,"slot"),expectedHeadVersion:0,
+          decision:"adopt",kind:"run",referenceId:item.runId,revision:item.targetTaskRevisionId,
+          contentHash:item.inputHash,reason:`Declared trace study ${declaration.id}`,
+          actionImpact:"Review the fixed Run trace to compare actual work and choose a bounded next action."};
+        const result=await this.deps.applyStudyReference(cognitive.principal,command,provenance);
+        if (result.status!=="applied" || result.entityId!==taskId ||
+          result.decisionId!==command.decisionId || result.version!==version+1 || !result.revisionId)
+          throw new Error(`STUDY_COPY_${result.status === "rejected" ? result.code : "MISMATCH"}`);
+        revisionId=result.revisionId;version=result.version;
+      }
+      const copied=await this.deps.workflow.getTask(cognitive.principal,loop.projectId,taskId);
+      if (copied.task.version!==version || copied.task.currentRevisionId!==revisionId)
+        throw new Error("STUDY_RECEIVER_CHANGED");
     }
     const detail = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId);
     await this.deps.orchestration.execute(cognitive.principal, { type: "dispatch.request", projectId: loop.projectId,
