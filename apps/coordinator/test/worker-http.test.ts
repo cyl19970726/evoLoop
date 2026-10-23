@@ -40,6 +40,7 @@ async function fixture() {
   const businessAuth = await tokenFor(B_RUN), cognitionAuth = await tokenFor(C_RUN);
   const ownerAuth = {authorization:`Bearer ${ownerToken}`};
   let loopState: "active" | "paused" | "stopped" = "active";
+  let adoptedRun = false;
   const reached: string[] = [];
   const facts: WorkerGuardFacts = {
     loop: async key => key === LOOP ? {projectId:P,state:loopState,goalId:GOAL,stageId:STAGE,
@@ -55,6 +56,7 @@ async function fixture() {
     fixedDocument: async (task,doc,rev) => task === TASK && doc === DOC && rev === DOC_REV,
     fixedReference: async (task,kind,ref,rev) => task === TASK &&
       (kind === "git" && ref === GIT || kind === "wiki" && ref === WIKI && rev === WIKI_REV),
+    fixedRunTrace: async target => adoptedRun && target === id(70),
     operation: async key => key === id(90) ? {projectId:P,actorId:business.principal.actorId} :
       key === id(91) ? {projectId:P,actorId:"somebody-else"} : null,
     dispatchForRun: async run => run === B_RUN || run === C_RUN ?
@@ -84,6 +86,9 @@ async function fixture() {
   } as unknown as OrchestrationService;
   const app = await buildServer({credentials:[{token:ownerToken,actorId:"owner",projectIds:[P],permissions:["read","write","review"]}],
     service:workflow, orchestration:{service:orchestration},
+    runtime:{status:()=>({available:true,error:null}),trace:async (_principal:unknown,_project:string,target:string,_cursor:unknown,identity:unknown)=>{
+      reached.push(`trace:${target}:${identity ? "worker" : "reviewer"}`); return {runId:target,source:"owned-native-history"};
+    }} as never,
     workers:{authenticate:header=>broker.authenticate(header),facts:()=>facts},
     documents:{uow:{} as DocumentPayloadUnitOfWork,blobsForPrincipal:async()=>({} as BlobStore)},
     references:{uow:{read:async (_p:string,fn:(reader:unknown)=>Promise<unknown>)=>fn({getGitSourceRef:async()=>({ref:{commit:"fixed"}})})} as ReferenceUnitOfWork,
@@ -95,8 +100,32 @@ async function fixture() {
   const inject = (auth: Record<string,string>, method:string, url:string, payload?:unknown) =>
     app.inject({method,url,headers:auth,...(payload === undefined ? {} : {payload})});
   return {app,root,broker,business,cognition,businessAuth,cognitionAuth,ownerAuth,reached,inject,
-    setState:(value:typeof loopState)=>{loopState=value;},expire:()=>{now+=61_000;},close:async()=>{await app.close();await rm(root,{recursive:true,force:true});}};
+    setState:(value:typeof loopState)=>{loopState=value;},setAdoptedRun:(value:boolean)=>{adoptedRun=value;},
+    expire:()=>{now+=61_000;},close:async()=>{await app.close();await rm(root,{recursive:true,force:true});}};
 }
+
+test("worker trace requires its fixed adopted Run and authenticated identity, not review permission", async () => {
+  const f=await fixture();
+  try {
+    const target=id(70), url=`/api/projects/${P}/runtime/runs/${target}/trace`;
+    assert.equal((await f.inject(f.businessAuth,"GET",url)).statusCode,403);
+    f.setAdoptedRun(true);
+    const allowed=await f.inject(f.businessAuth,"GET",url);
+    assert.equal(allowed.statusCode,200,allowed.body);
+    assert.equal(allowed.json().runId,target);
+    assert.equal((await f.inject(f.businessAuth,"GET",`${url}?cursor=page-2`)).statusCode,200);
+    assert.ok(f.reached.includes(`trace:${target}:worker`));
+    for (const denied of [
+      `/api/projects/${P}/runtime/runs/${id(71)}/trace`,
+      `/api/projects/${OTHER}/runtime/runs/${target}/trace`,
+      `${url}?readerTaskId=${TASK}`,
+      `${url}?cursor=page-2&cursor=page-3`,
+      `${url}?cursor=page-2&scope=all`,
+    ]) assert.equal((await f.inject(f.businessAuth,"GET",denied)).statusCode,403,denied);
+    f.setAdoptedRun(false);
+    assert.equal((await f.inject(f.businessAuth,"GET",url)).statusCode,403);
+  } finally {await f.close();}
+});
 
 test("real broker identity crosses HTTP hooks; unauthorized requests never reach services", async () => {
   const f=await fixture();

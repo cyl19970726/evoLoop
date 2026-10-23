@@ -293,6 +293,28 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
           AND ($6::text IS NULL OR d.source_revision=$6) LIMIT 1`,
         [gap.taskId, gap.taskRevisionId, kind, referenceId, revisionId ?? null]);
     },
+    fixedRunTrace: async targetRunId => !!await one(`SELECT 1 FROM runtime_run reader_run
+      JOIN runtime_session reader_session ON reader_session.project_id=reader_run.project_id
+        AND reader_session.session_id=reader_run.session_id
+      JOIN orchestration_dispatch dispatch ON dispatch.project_id=reader_run.project_id
+        AND dispatch.data->>'runtimeRunId'=reader_run.run_id::text
+      JOIN task_external_ref_snapshot snapshot ON snapshot.project_id=reader_run.project_id
+        AND snapshot.task_id=reader_run.task_id AND snapshot.task_revision_id=reader_run.task_revision_id
+      JOIN task_external_ref_decision decision ON decision.project_id=snapshot.project_id
+        AND decision.decision_id=snapshot.decision_id AND decision.source_kind='run'
+      JOIN runtime_run target_run ON target_run.project_id=reader_run.project_id
+        AND target_run.run_id::text=decision.reference_id
+      JOIN runtime_session target_session ON target_session.project_id=target_run.project_id
+        AND target_session.session_id=target_run.session_id
+      WHERE reader_run.project_id=$1 AND reader_run.run_id=$2 AND reader_run.task_id=$3
+        AND reader_run.session_id=$4 AND reader_session.role_id=$5 AND reader_session.state='ready'
+        AND reader_run.native_turn_id IS NOT NULL AND dispatch.loop_id=$6
+        AND dispatch.data->>'recipientRoleId'=$5 AND target_run.run_id=$7
+        AND decision.source_revision=target_run.task_revision_id::text
+        AND decision.content_hash=target_run.input_hash
+        AND target_run.state IN ('completed','failed','interrupted') AND target_run.native_turn_id IS NOT NULL
+        AND target_session.state='ready' AND target_session.native_thread_id IS NOT NULL
+      LIMIT 1`, [scope.runId,scope.taskId,scope.sessionId,scope.roleId,scope.loopId,targetRunId]),
     operation: async id => {
       const row = await one(`SELECT actor_id FROM operation_journal WHERE project_id=$1 AND operation_id=$2
         UNION ALL SELECT actor_id FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2`, [id]);

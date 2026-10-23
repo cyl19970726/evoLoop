@@ -7,6 +7,7 @@ import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
+import type { WorkerIdentity } from "../workers/types.js";
 import { fixedDocumentMaterial } from "./materials.js";
 import type { ReadDocumentOriginal } from "./materials.js";
 import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId, evaluationPacketBlobPayload, evaluationPacketMediaType,
@@ -91,6 +92,8 @@ export class RuntimeRunner {
     /** Exact persisted dynamic Session/Run ownership for read-only reconciliation and one-shot settlement. */
     canSettleOwned?(session: RuntimeSessionRecord, run?: RuntimeRunRecord): Promise<boolean>;
     ownedCwd?(projectId: string, cwd: string): Promise<boolean>;
+    /** Trusted database check of the reader Run's frozen, reviewed Run-reference snapshot. */
+    workerTraceAuthority?(identity: WorkerIdentity, targetRunId: string): Promise<boolean>;
     /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
     mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
     mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
@@ -394,13 +397,15 @@ export class RuntimeRunner {
       throw new Error("Actual Task basis differs from the frozen evaluation source signature");
     if (signature.external.length && !this.deps.readExternalMaterials)
       throw new Error("Frozen Task external references cannot be loaded; evaluation input is incomplete");
+    if (signature.external.some(source => source.kind === "run"))
+      throw new Error("Evaluation packet cannot treat a Run input hash as a transcript original");
 
     const staticMaterials = [definition.protocol, ...definition.case.materials];
     if (staticMaterials.some(source => source.kind !== "document" && source.kind !== "git"))
       throw new Error("Evaluation protocol and common materials must be fixed Document or Git sources");
     if (condition.wikiRefs !== null && condition.wikiRefs?.some(source => source.kind !== "wiki"))
       throw new Error("Evaluation Wiki condition contains a non-Wiki source");
-    const external = signature.external.map(source => ({ kind: source.kind, id: source.referenceId,
+    const external = signature.external.filter((source): source is typeof source & { kind: "git" | "wiki" } => source.kind !== "run").map(source => ({ kind: source.kind, id: source.referenceId,
       revision: source.revision, contentHash: source.contentHash }));
     return { evaluation, sources: uniqueEvaluationSources([...taskInput.sources, ...external, ...staticMaterials, ...(condition.wikiRefs ?? [])]) };
   }
@@ -614,11 +619,23 @@ export class RuntimeRunner {
         observedAt: new Date().toISOString() };
     } catch (error) { throw this.readFailure(error); }
   }
-  async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string): Promise<RuntimeWorkTrace> {
-    if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
-      !principal.permissions.includes("review") || !this.deps.principals.some(p => p.actorId === principal.actorId &&
-        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review")))
-      throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+  async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string,
+    workerIdentity?: WorkerIdentity): Promise<RuntimeWorkTrace> {
+    const reviewer = !!principal.actorId && principal.projectIds.includes(projectId) && principal.permissions.includes("read") &&
+      principal.permissions.includes("review") && this.deps.principals.some(p => p.actorId === principal.actorId &&
+        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review"));
+    if (workerIdentity) {
+      const scope = workerIdentity.scope;
+      if (workerIdentity.principal.actorId !== principal.actorId || scope.projectId !== projectId ||
+          !principal.permissions.includes("read") || !this.deps.workerTraceAuthority)
+        throw new DomainError("FORBIDDEN", "受管读取者身份或固定引用不可用。");
+      const reader = await this.deps.workflow.getRuntimeRun(principal, projectId, scope.runId);
+      const readerSession = await this.deps.workflow.getRuntimeSession(principal, projectId, scope.sessionId);
+      if (reader.taskId !== scope.taskId || reader.sessionId !== scope.sessionId || !reader.nativeTurnId ||
+          readerSession.roleId !== scope.roleId || readerSession.state !== "ready" ||
+          !await this.authorized(readerSession, reader.actorId) || !await this.deps.workerTraceAuthority(workerIdentity, runId))
+        throw new DomainError("FORBIDDEN", "目标运行未被本次受管运行的固定依据采纳。");
+    } else if (!reviewer) throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
     if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
     if (run.projectId !== projectId || !run.nativeTurnId)

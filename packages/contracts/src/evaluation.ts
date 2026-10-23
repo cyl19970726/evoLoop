@@ -14,7 +14,7 @@ const sourceSignature = z.strictObject({ title: note, contentDocumentId: id, con
   acceptance: note, owner: note, kind: note, basis: z.array(z.strictObject({ documentId: id, revisionId: id, contentHash: sha })).min(1).max(20),
   retentions: z.array(z.strictObject({ documentId: id, revisionId: id, observedAdoptedRevisionId: id,
     reason: note, actorId: note, createdAt: z.string().min(1) })).max(19),
-  external: z.array(z.strictObject({ slotId: id, kind: z.enum(["git", "wiki"]), referenceId: z.string().min(1).max(512),
+  external: z.array(z.strictObject({ slotId: id, kind: z.enum(["git", "wiki", "run"]), referenceId: z.string().min(1).max(512),
     revision: z.string().min(1).max(512), contentHash: sha })).max(100) });
 export type EvaluationSourceSignature = z.infer<typeof sourceSignature>;
 const environment = z.strictObject({ cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: note,
