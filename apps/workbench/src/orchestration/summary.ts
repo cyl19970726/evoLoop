@@ -1,9 +1,66 @@
 import type { TaskDetail } from "@evoloop/contracts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskLoopContext } from "./client";
 
 export function inTaskContext(dispatch: OrchestrationDispatch, context: TaskLoopContext): boolean {
   return context.dispatchIds.includes(dispatch.id) || context.parentDispatchIds.includes(dispatch.id);
+}
+
+/** Order only loaded dispatches; an edge requires an exact formal parent, source origin, or sealed Delivery. */
+export function orderDispatches(dispatches: OrchestrationDispatch[], sources: OrchestrationSourceFact[],
+  submissions: OrchestrationSubmission[]) {
+  const byId = new Map(dispatches.map(item => [item.id, item]));
+  const bySource = new Map(sources.map(item => [item.id, item]));
+  const byDelivery = new Map(submissions.filter(item => item.state === "sealed" && item.deliveryId)
+    .map(item => [item.deliveryId!, item.dispatchId]));
+  const parents = new Map(dispatches.map(item => {
+    const source = bySource.get(item.sourceEventId);
+    const candidates = [item.parentDispatchId,
+      source?.kind === "worker.outcome" || source?.kind === "dispatch.gap" ? source.originDispatchId : null,
+      source?.kind === "observation.record" && source.deliveryId ? byDelivery.get(source.deliveryId) : null];
+    return [item.id, new Set(candidates.filter((id): id is string => !!id && id !== item.id && byId.has(id)))] as const;
+  }));
+  const hasLater = new Set([...parents.values()].flatMap(ids => [...ids]));
+  const compare = (a: OrchestrationDispatch, b: OrchestrationDispatch) =>
+    a.createdAtUtc.localeCompare(b.createdAtUtc) || a.id.localeCompare(b.id);
+  const remaining = new Map(byId), ordered: OrchestrationDispatch[] = [];
+  while (remaining.size) {
+    const available = [...remaining.values()].filter(item => [...parents.get(item.id)!].every(id => !remaining.has(id))).sort(compare);
+    if (!available.length) {
+      // A malformed cycle cannot justify a made-up chronology; retain stable recorded time order.
+      ordered.push(...[...remaining.values()].sort(compare));
+      break;
+    }
+    const next = available[0]!;
+    ordered.push(next); remaining.delete(next.id);
+  }
+  return {ordered,hasLater};
+}
+
+export function currentChainSummary(loop: OrchestrationLoop, dispatches: OrchestrationDispatch[],
+  submissions: OrchestrationSubmission[], decisions: OrchestrationWorkerDecision[], tasks: TaskDetail[], taskId?: string,
+  allPagesLoaded = false): string[] {
+  const latestDecision = [...decisions].sort((a,b) => b.createdAtUtc.localeCompare(a.createdAtUtc) || b.id.localeCompare(a.id))[0];
+  const sealed = new Set(submissions.filter(item => item.state === "sealed" && item.deliveryId).map(item => item.deliveryId!));
+  const used = tasks.flatMap(item => item.observations ?? []).filter(item => sealed.has(item.deliveryId) && item.result === "used");
+  const lines: string[] = [];
+  if (loop.state === "stopped") {
+    const stoppedByDecision = allPagesLoaded && latestDecision?.kind === "stop" && dispatches.some(item => item.id === latestDecision.dispatchId &&
+      item.state === "completed" && item.outcome === "no_action");
+    lines.push(stoppedByDecision ? "本链已按署名停止决定结束接续。" : "本循环已停止新派发；已在途工作仍须逐项核对。");
+  } else if (loop.state === "paused") lines.push("本循环已暂停新派发；既有工作仍需核对。");
+  else lines.push("本循环仍可接续；下方按已读回的派发与来源展示。");
+  if (used.some(item => item.observerKind === "human")) lines.push("已读回正式交付的人类使用记录；这不等于任务验收。");
+  else if (used.some(item => item.observerKind === "agent")) lines.push("已读回正式交付的 Agent 使用记录；真人使用与任务验收仍须另行核对。");
+  const focus = taskId ? tasks.find(item => item.task.id === taskId) : undefined;
+  if (focus?.task.state === "in_progress" && focus.closures?.length === 0 &&
+    dispatches.some(item => item.taskId === taskId && item.purpose === "business"))
+    lines.push("当前业务任务仍在进行中，尚未登记验收；负责人核对交付与验收条件。");
+  return lines;
+}
+
+export function hasUnreadChainPages(pages: Array<{nextCursor:string|null}>): boolean {
+  return pages.some(page => page.nextCursor !== null);
 }
 
 export function readableOutcome(dispatch: OrchestrationDispatch, submission: OrchestrationSubmission | undefined,

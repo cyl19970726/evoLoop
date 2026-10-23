@@ -279,9 +279,14 @@ export class ManagedLoopRunner {
     const token = loopIntentId(dispatch.id, "claim-token");
     if (dispatch.state === "pending") {
       if (dispatch.parentDispatchId) {
-        const parent = await this.pages(cursor => this.deps.orchestration.listDispatches(profile.principal, loop.projectId, loop.id, 100, cursor));
-        const settled = parent.find(item => item.id === dispatch.parentDispatchId);
-        if (!settled || settled.state !== "completed" || settled.outcome !== "delivered") return;
+        const parent = await this.deps.orchestration.getDispatch(profile.principal, loop.projectId, dispatch.parentDispatchId);
+        if (!parent || parent.projectId !== loop.projectId || parent.loopId !== loop.id ||
+          parent.sourceEventId !== dispatch.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId ||
+          parent.purpose !== "cognition" || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state)) return;
+        const run = await this.deps.workflow.getRuntimeRun(profile.principal, loop.projectId, parent.runtimeRunId).catch(() => null);
+        if (!run || run.projectId !== loop.projectId || run.taskId !== parent.taskId || !terminal(run.state)) return;
+        const submission = await this.deps.orchestration.getSubmissionForDispatch(profile.principal, loop.projectId, parent.id);
+        if (submission && ["submitted", "sealing", "unknown"].includes(submission.state)) return;
       }
       const leaseUntilUtc = new Date(Date.parse(this.deps.now()) + 240_000).toISOString();
       dispatch = await this.claimIntent(profile, { type: "dispatch.claim", projectId: loop.projectId,
@@ -369,13 +374,13 @@ export class ManagedLoopRunner {
       .find(fact => fact.id === dispatch.sourceEventId) : null;
     const gapContext = source?.kind === "dispatch.gap" && source.sourceLoopId === loop.id &&
       source.originDispatchId && source.gapRunId && source.gapTaskVersion
-      ? ` Recovery source is dispatch.gap ${source.id} from original Dispatch ${source.originDispatchId}, terminal Run ${source.gapRunId}, Task ${source.subjectId} at version ${source.gapTaskVersion}. Read the original Dispatch at get /api/projects/${loop.projectId}/orchestration/dispatches/${source.originDispatchId} and original Run at get /api/projects/${loop.projectId}/runtime/runs/${source.gapRunId}; its taskRevisionId identifies the exact readable Task revision at get /api/projects/${loop.projectId}/tasks/${source.subjectId}/revisions/REVISION_ID and fixed basis originals at get /api/projects/${loop.projectId}/documents/DOCUMENT_ID/revisions/REVISION_ID/original. Do not use the Task's current detail or revision list to reconstruct this gap.` : "";
+      ? ` Recovery source is dispatch.gap ${source.id} from original Dispatch ${source.originDispatchId}, terminal Run ${source.gapRunId}, Task ${source.subjectId} at version ${source.gapTaskVersion}. Read the original Dispatch at get /api/projects/${loop.projectId}/orchestration/dispatches/${source.originDispatchId} and original Run at get /api/projects/${loop.projectId}/runtime/runs/${source.gapRunId}; its taskRevisionId identifies the exact readable Task revision at get /api/projects/${loop.projectId}/tasks/${source.subjectId}/revisions/REVISION_ID and fixed basis originals at get /api/projects/${loop.projectId}/documents/DOCUMENT_ID/revisions/REVISION_ID/original. Check existing same-parent/source child dispatches before requesting more business work; a prior signed child request is an execution commitment, while the parent's final declaration may still be absent. Do not use the Task's current detail or revision list to reconstruct this gap.` : "";
     const businessScopes = kind === "cognition" ? (await Promise.all(loop.allowedBusinessRoleIds.map(async roleId => {
       const target = await this.deps.controller(loop.projectId, roleId);
       return target ? `${roleId}=${target.authorizationScopeId}` : `${roleId}=unavailable`;
     }))).join(", ") : "";
     const message = kind === "cognition"
-      ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, fixed Documents, Git/Wiki and feedback with the scoped CLI. Decide a bounded next action. To delegate, create a Stage-linked business Task, accept the SAME source event as a next_action inbox, acknowledge it, then request its dispatch with parentDispatchId=${dispatch.id} and the business role/scope mapping: ${businessScopes}. Record a signed worker submission or decision before this Turn ends.`
+      ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, fixed Documents, Git/Wiki and feedback with the scoped CLI. Decide a bounded next action. Check for an existing exact same-parent/source child before creating more work. To delegate new work, create a Stage-linked business Task, accept the SAME source event as a next_action inbox, acknowledge it, then request its dispatch with parentDispatchId=${dispatch.id} and the business role/scope mapping: ${businessScopes}. Record a signed worker submission or decision before this Turn ends.`
       : `Execute Task ${dispatch.taskId} from its fixed basis. Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
     const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
@@ -391,11 +396,15 @@ export class ManagedLoopRunner {
     const seal = await this.deps.sealSubmission(dispatch, run);
     if (seal.status === "pending" && !seal.reason) return;
     if (seal.status !== "sealed" && seal.status !== "decision") {
-      const reason = `Worker intent gap: ${seal.status}`;
+      const child = seal.status === "absent" && dispatch.purpose === "cognition"
+        ? await this.signedChildRequest(profile, dispatch) : null;
+      const reason = child
+        ? `Worker intent gap: final declaration absent; signed child request ${child.id} already exists`
+        : `Worker intent gap: ${seal.status}`;
       if (!dispatch.reason.startsWith("Worker intent gap:")) {
         await this.deps.orchestration.execute(profile.principal, { type: "dispatch.gap", projectId: dispatch.projectId,
           operationId: loopIntentId(dispatch.id, "worker-intent-gap"), dispatchId: dispatch.id,
-          expectedVersion: dispatch.version, reason, evidenceRef: seal.evidenceRef ?? null });
+          expectedVersion: dispatch.version, reason, evidenceRef: child ? `dispatch:${child.id}` : seal.evidenceRef ?? null });
       }
       return;
     }
@@ -408,5 +417,20 @@ export class ManagedLoopRunner {
       decisionId: seal.status === "decision" ? seal.decisionId! : null,
       evidenceRef: seal.evidenceRef ?? null,
       reason: seal.reason ?? (outcome === "delivered" ? "Signed worker submission sealed as actual Delivery" : "Signed worker decision after terminal Run") });
+  }
+  private async signedChildRequest(profile: ManagedRoleProfile, parent: OrchestrationDispatch) {
+    const children = await this.pages(cursor => this.deps.orchestration.listDispatches(profile.principal,
+      parent.projectId, parent.loopId, 100, cursor));
+    for (const child of children) {
+      if (child.projectId !== parent.projectId || child.loopId !== parent.loopId ||
+        child.parentDispatchId !== parent.id || child.sourceEventId !== parent.sourceEventId ||
+        child.recipientRoleId === parent.recipientRoleId) continue;
+      const inbox = await this.deps.orchestration.getInbox(profile.principal, parent.projectId, child.inboxId);
+      if (inbox?.projectId === parent.projectId && inbox.loopId === parent.loopId &&
+        inbox.sourceEventId === parent.sourceEventId && inbox.purpose === "next_action" &&
+        inbox.state === "disposed" && inbox.disposition === "dispatch" && inbox.dispatchId === child.id)
+        return child;
+    }
+    return null;
   }
 }

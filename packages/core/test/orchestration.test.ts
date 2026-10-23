@@ -15,10 +15,10 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
-  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
+  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
     [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
     [source1, { projectId, id: source1, createdAtUtc: after, kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: feedbackDispatchId, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
   ]), taskVersion: 1, extraTaskId: null, taskOwnerRoleId: workerRoleId, taskState: "in_progress", taskStageId: stageId, scopeActive: true, runState: "running", runId: randomUUID(), deliveryId: randomUUID(), taskRevisionId: randomUUID(), runInputHash: "f".repeat(64) };
@@ -36,14 +36,14 @@ function harness() {
     getDispatch: async id => draft.dispatches.get(id) ?? (id === feedbackDispatchId ? { projectId, id, version: 5, loopId, inboxId: randomUUID(), sourceEventId: source0, taskId, taskVersion: 1, parentDispatchId: randomUUID(), recipientRoleId: workerRoleId, purpose: "prior business", authorizationScopeId: scopeId, state: "completed", claimToken: randomUUID(), leaseUntilUtc: null, runtimeRunId: randomUUID(), outcome: "failed", deliveryId: null, evidenceRef: null, reason: "prior failure", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: after } : null), insertDispatch: async value => { draft.dispatches.set(value.id, value); }, updateDispatch: async (value, expected) => { assert.equal(draft.dispatches.get(value.id)?.version, expected); draft.dispatches.set(value.id, value); },
     countCapacityUsed: async id => [...draft.dispatches.values()].filter(item => item.loopId === id &&
       (["claimed", "dispatching", "unknown"].includes(item.state) ||
-        item.state === "accepted" && (item.runtimeRunId !== draft.runId || !["completed", "failed", "interrupted"].includes(draft.runState)))).length,
+        item.state === "accepted" && !["completed", "failed", "interrupted"].includes(item.runtimeRunId === draft.runId ? draft.runState : draft.parentRunStates.get(item.runtimeRunId ?? "") ?? "unknown"))).length,
     appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } }, getSourceFact: async id => draft.source.get(id) ?? null,
     getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
     getTaskScopeAtVersion: async (id, taskVersion) => id === taskId && taskVersion === 1 ? { projectId, taskId: id, taskVersion, goalId, stageId } : null,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? { projectId, id, goalId, state: "active" } : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
-    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : null,
+    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)! } : null,
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
     getObservationFact: async id => draft.observationFact?.id === id ? draft.observationFact : null,
     getWorkflowOperationFact: async id => draft.workflowOp?.id === id ? draft.workflowOp : null,
@@ -62,6 +62,7 @@ function harness() {
     const parentId = randomUUID(), parentDeliveryId = randomUUID();
     const parent: OrchestrationDispatch = { projectId, id: parentId, version: 5, loopId, inboxId: randomUUID(), sourceEventId: inbox.sourceEventId, taskId, taskVersion: 1, parentDispatchId: null, recipientRoleId: cognitiveRoleId, purpose: "cognition", authorizationScopeId: scopeId, state: "completed", claimToken: randomUUID(), leaseUntilUtc: after, runtimeRunId: randomUUID(), outcome: "delivered", deliveryId: parentDeliveryId, evidenceRef: null, reason: "cognitive result", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: at };
     data.dispatches.set(parentId, parent);
+    data.parentRunStates.set(parent.runtimeRunId!, "completed");
     const submission: OrchestrationSubmission = { projectId, id: randomUUID(), version: 3, dispatchId: parentId, runId: parent.runtimeRunId!, taskId, taskRevisionId: data.taskRevisionId, runInputHash: data.runInputHash, deliveryOperationId: randomUUID(), deliveryIntent: { artifactRef: "cognition", artifactRevision: "r1", contentHash: "b".repeat(64), technicalResult: "passed", technicalEvidence: "reviewed", reason: "decision" }, agentObservation: null, evidenceRefs: [], state: "sealed", submittedBy: cognition.actorId, sealedBy: reviewer.actorId, expectedTaskVersion: 1, sealToken: randomUUID(), deliveryId: parentDeliveryId, reason: "sealed", createdAtUtc: at, updatedAtUtc: at };
     data.submissions.set(submission.id, submission);
     return service.execute(cognition, cmd({ type: "dispatch.request", inboxId, expectedInboxVersion: 2, dispatchId, parentDispatchId: parentId, taskId, expectedTaskVersion: 1, recipientRoleId: workerRoleId, purpose: "perform Task", authorizationScopeId: scopeId, reason: "Task required" }));
@@ -157,6 +158,8 @@ test("fixed Task and scope are checked at request and again before external disp
   h.change(value => { value.scopeActive = false; });
   await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: requested.entityId, claimToken: randomUUID(), leaseUntilUtc: after })), failed("SCOPE_NOT_AUTHORIZED"));
   assert.equal(h.data.dispatches.get(requested.entityId)?.state, "pending");
+  h.change(value => { value.scopeActive = true; value.taskVersion = 2; });
+  await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: requested.entityId, claimToken: randomUUID(), leaseUntilUtc: after })), failed("TASK_CHANGED"));
 });
 
 test("a Goal-scoped loop cannot dispatch a standalone Task without a proven active Stage link", async () => {
@@ -166,7 +169,7 @@ test("a Goal-scoped loop cannot dispatch a standalone Task without a proven acti
   assert.equal([...h.data.dispatches.values()].filter(item => item.recipientRoleId === workerRoleId).length, 0);
 });
 
-test("cognition may queue a same-source business request while its Run is active, but child claim waits for sealed parent", async () => {
+test("cognition may queue a same-source business request while its Run is active, but child claim waits for terminal parent", async () => {
   const h = harness(); await h.enroll(); h.change(value => { value.taskOwnerRoleId = cognitiveRoleId; });
   const cognitionInbox = await h.service.execute(cognition, cmd({ type: "inbox.accept", loopId, sourceEventId: source1, recipientRoleId: cognitiveRoleId, purpose: "cognitive_review" }));
   await h.ack(cognitionInbox.entityId);
@@ -180,6 +183,74 @@ test("cognition may queue a same-source business request while its Run is active
   const child = await h.service.execute(cognition, cmd({ type: "dispatch.request", inboxId: actionInbox.entityId, expectedInboxVersion: 2, dispatchId: randomUUID(), parentDispatchId: parent.entityId, taskId, expectedTaskVersion: 1, recipientRoleId: workerRoleId, purpose: "perform Task", authorizationScopeId: scopeId, reason: "cognitive decision" }));
   assert.equal(h.data.dispatches.get(child.entityId)?.state, "pending");
   await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: child.entityId, claimToken: randomUUID(), leaseUntilUtc: after })), failed("PARENT_NOT_READY"));
+});
+
+test("formal business request starts once after waiting parent Run terminates without a Delivery", async () => {
+  const h = harness(); await h.enroll(); const item = await h.accept(); await h.ack(item.entityId);
+  const child = await h.request(item.entityId);
+  const dispatch = h.data.dispatches.get(child.entityId)!;
+  const parent = h.data.dispatches.get(dispatch.parentDispatchId!)!;
+  h.change(value => {
+    value.dispatches.set(parent.id, { ...parent, state: "completed", outcome: "waiting", deliveryId: null });
+    value.submissions.clear();
+  });
+  const token = randomUUID();
+  await h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: child.entityId, claimToken: token, leaseUntilUtc: after }));
+  await h.service.execute(worker, cmd({ type: "dispatch.start", dispatchId: child.entityId, claimToken: token }));
+  assert.equal(h.data.dispatches.get(child.entityId)?.state, "dispatching");
+  assert.equal(h.data.events.filter(event => event.kind === "dispatch.started" && event.entityId === child.entityId).length, 1);
+  await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: child.entityId, claimToken: token, leaseUntilUtc: after })), failed("DISPATCH_NOT_PENDING"));
+});
+
+test("accepted parent with signed request releases child after known terminal Run even before outcome", async () => {
+  for (const state of ["completed", "failed", "interrupted"] as const) {
+    const h = harness(); await h.enroll(); const item = await h.accept(); await h.ack(item.entityId);
+    const child = await h.request(item.entityId);
+    const parent = h.data.dispatches.get(h.data.dispatches.get(child.entityId)!.parentDispatchId!)!;
+    h.change(value => {
+      value.dispatches.set(parent.id, { ...parent, state: "accepted", outcome: null, deliveryId: null });
+      value.submissions.clear(); value.parentRunStates.set(parent.runtimeRunId!, state);
+    });
+    await h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: child.entityId, claimToken: randomUUID(), leaseUntilUtc: after }));
+    assert.equal(h.data.dispatches.get(child.entityId)?.state, "claimed");
+  }
+});
+
+test("parent unknown/nonterminal/seal-unknown and broken causal edge cannot release child", async () => {
+  for (const mode of ["running", "unknown", "submitted", "sealing", "seal-unknown", "source", "request"] as const) {
+    const h = harness(); await h.enroll(); const item = await h.accept(); await h.ack(item.entityId);
+    const child = await h.request(item.entityId);
+    const dispatch = h.data.dispatches.get(child.entityId)!;
+    const parent = h.data.dispatches.get(dispatch.parentDispatchId!)!;
+    h.change(value => {
+      if (mode === "running" || mode === "unknown") value.parentRunStates.set(parent.runtimeRunId!, mode);
+      if (["submitted", "sealing", "seal-unknown"].includes(mode)) {
+        const submission = [...value.submissions.values()].find(s => s.dispatchId === parent.id)!;
+        value.submissions.set(submission.id, { ...submission, state: mode === "seal-unknown" ? "unknown" : mode });
+      }
+      if (mode === "source") value.dispatches.set(parent.id, { ...parent, sourceEventId: randomUUID() });
+      if (mode === "request") value.inbox.set(dispatch.inboxId, { ...value.inbox.get(dispatch.inboxId)!, dispatchId: randomUUID() });
+    });
+    await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: child.entityId, claimToken: randomUUID(), leaseUntilUtc: after })), failed("PARENT_NOT_READY"));
+  }
+});
+
+test("a claimed child rechecks parent terminality before reclaim and external start", async () => {
+  for (const operation of ["dispatch.reclaim", "dispatch.start"] as const) {
+    const h = harness(); await h.enroll(); const item = await h.accept(); await h.ack(item.entityId);
+    const child = await h.request(item.entityId), token = randomUUID();
+    await h.service.execute(worker, cmd({ type: "dispatch.claim", dispatchId: child.entityId, claimToken: token, leaseUntilUtc: after }));
+    const parent = h.data.dispatches.get(h.data.dispatches.get(child.entityId)!.parentDispatchId!)!;
+    h.change(value => { value.parentRunStates.set(parent.runtimeRunId!, "unknown"); });
+    if (operation === "dispatch.reclaim") {
+      h.advanceTime("2026-10-23T09:00:02.000Z");
+      await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.reclaim", dispatchId: child.entityId,
+        expectedVersion: 2, claimToken: token, leaseUntilUtc: "2026-10-23T09:00:03.000Z" })), failed("PARENT_NOT_READY"));
+    } else {
+      await assert.rejects(() => h.service.execute(worker, cmd({ type: "dispatch.start", dispatchId: child.entityId, claimToken: token })), failed("PARENT_NOT_READY"));
+    }
+    assert.equal(h.data.dispatches.get(child.entityId)?.state, "claimed");
+  }
 });
 
 test("unknown dispatch is fenced and never automatically claimed or counted as free capacity", async () => {
@@ -388,7 +459,7 @@ test("observation must match actual applied operation, actor, Delivery and enrol
   }
 });
 
-test("terminal accepted Run frees concurrency without fabricating a worker outcome; unknown stays fenced", async () => {
+test("a fabricated child is rejected even when another accepted Run is terminal", async () => {
   for (const runState of ["completed", "failed", "interrupted", "unknown"] as const) {
     const h=harness(); await h.enroll(); const inbox=await h.accept(); await h.ack(inbox.entityId);
     const first=await h.request(inbox.entityId), firstToken=randomUUID();
@@ -403,8 +474,7 @@ test("terminal accepted Run frees concurrency without fabricating a worker outco
         claimToken:null,leaseUntilUtc:null,runtimeRunId:null,outcome:null,deliveryId:null});
     });
     const claim=()=>h.service.execute(worker,cmd({type:"dispatch.claim",dispatchId:secondDispatchId,claimToken:randomUUID(),leaseUntilUtc:after}));
-    if(runState==="unknown") await assert.rejects(claim,failed("CAPACITY_FULL"));
-    else { const result=await claim(); assert.equal(result.entityId,secondDispatchId); }
+    await assert.rejects(claim,failed("PARENT_NOT_READY")); // A fabricated child is not a formal request.
     assert.equal(h.data.dispatches.get(first.entityId)?.state,"accepted");
     assert.equal(h.data.dispatches.get(first.entityId)?.outcome,null);
     assert.equal(h.data.events.filter(event=>event.kind==="worker.outcome" || event.kind==="worker.decision").length,0);

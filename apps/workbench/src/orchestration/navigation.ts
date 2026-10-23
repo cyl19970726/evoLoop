@@ -16,3 +16,12 @@ export function taskSectionFromHash(hash: string, projectId: string, taskId: str
   const tab = params.get("tab");
   return tab && params.getAll("tab").length === 1 && sections.has(tab as TaskSection) ? tab as TaskSection : "overview";
 }
+
+/** Land at the visible panel after React has switched a deep-linked tab. */
+export function scrollToTaskSection(projectId: string, taskId: string, section: TaskSection,
+  revisionId: string | undefined, getElement: (id: string) => HTMLElement | null): boolean {
+  const panel = getElement(`task-panel-${projectId}-${taskId}-${revisionId ?? "current"}-${section}`);
+  if (!panel || panel.hidden) return false;
+  panel.scrollIntoView({ block: "start", behavior: "auto" });
+  return true;
+}
