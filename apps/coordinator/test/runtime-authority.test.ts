@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
-import { loadIntegrations } from "../src/configuration.js";
+import { delegationTemplateHash, loadIntegrations } from "../src/configuration.js";
 
 const projectId = randomUUID();
 const sessionId = randomUUID();
@@ -83,6 +83,27 @@ test("session close command requires project review and exact execution grant", 
     assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 200);
     assert.equal(calls, 1);
   } finally { await app.close(); }
+});
+
+test("delegation template is explicit, versioned, canonical and cannot inherit a static Role grant", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-delegation-config-"));
+  try {
+    const file = join(directory, "integration.json"), loopId = randomUUID(), goalId = randomUUID();
+    const template = { id: randomUUID(), revision: 1, projectId, goalId, loopId,
+      existingRoleIds: [randomUUID()], newRoleAllocation: null, firstTaskId: randomUUID(),
+      actorId: "trial-worker", authorizationScopeId: "trial:one", decisionActorIds: ["cognition"],
+      allowedChoices: ["temporary-assignment"], cwd, model: "test-model", sandbox: "read-only",
+      networkAccess: false, approvalPolicy: "on-request", expiresAtUtc: "2030-01-01T00:00:00.000Z" };
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[grant],delegationTemplates:[template]}}));
+    const loaded = await loadIntegrations(file);
+    const selected = await loaded.getDelegationTemplate(projectId,template.id);
+    assert.equal(selected?.hash,delegationTemplateHash(template as never));
+    assert.equal(await loaded.getDelegationTemplate(randomUUID(),template.id),null);
+    assert.equal(await loaded.getDelegationTemplate(projectId,randomUUID()),null);
+    assert.equal(loaded.hasRuntimeGrant({...grant,roleId:template.existingRoleIds[0]}),false);
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[grant],delegationTemplates:[template,{...template,revision:2}]}}));
+    await assert.rejects(loadIntegrations(file),/Invalid integration configuration/);
+  } finally { await rm(directory,{recursive:true,force:true}); }
 });
 
 test("reviewer recovery endpoint is explicit and checks project authority", async () => {

@@ -1,11 +1,13 @@
 import type { Principal } from "@evoloop/contracts";
+import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 
 export class OrchestrationError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "OrchestrationError"; }
 }
-export interface OrchestrationDependencies { store: OrchestrationStore; now(): string; nextId(): string; hash(value: string): string }
+export interface OrchestrationDependencies { store: OrchestrationStore; now(): string; nextId(): string; hash(value: string): string;
+  getDelegationTemplate?(projectId: string, templateId: string): Promise<{template: DelegationTemplate; hash: string} | null> }
 const fail = (code: string, message: string, currentVersion?: number): never => { throw new OrchestrationError(code, message, currentVersion); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const cursorAfter = (a: { createdAtUtc: string; eventId: string }, b: { createdAtUtc: string; eventId: string | null }): boolean => Date.parse(a.createdAtUtc) > Date.parse(b.createdAtUtc) || (Date.parse(a.createdAtUtc) === Date.parse(b.createdAtUtc) && a.eventId > (b.eventId ?? ""));
@@ -20,7 +22,7 @@ export class OrchestrationService {
     if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
     if (command.type === "loop.resumeWaiting" && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot resume waiting cognition");
     const now = this.deps.now();
     if (!Number.isFinite(Date.parse(now)) || !now.endsWith("Z")) return fail("INVALID_TIME", "clock must return UTC time");
@@ -43,6 +45,8 @@ export class OrchestrationService {
   async getInbox(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getInbox(id)); }
   async getDispatch(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getDispatch(id)); }
   async getLoop(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getLoop(id)); }
+  async getPolicy(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getPolicy(id)); }
+  async getBinding(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getBinding(id)); }
   async listLoops(principal: Principal, projectId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listLoops(this.limit(limit), cursor)); }
   async listInbox(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listInbox(loopId, this.limit(limit), cursor)); }
   async listDispatches(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listDispatches(loopId, this.limit(limit), cursor)); }
@@ -57,7 +61,21 @@ export class OrchestrationService {
   private limit(n: number) { if (!Number.isInteger(n) || n < 1 || n > 100) return fail("INVALID_PAGE", "page limit must be 1–100"); return n; }
 
   private async authorize(tx: OrchestrationTransaction, principal: Principal, command: OrchestrationCommand): Promise<void> {
-    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
+    if (command.type === "division.decide") {
+      if (command.choice === "method") {
+        const loop = await tx.getLoop(command.loopId);
+        if (!loop || (!principal.permissions.includes("review") && !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId))))
+          return fail("FORBIDDEN", "method decision requires cognition Role or reviewer");
+      } else {
+        if (!command.templateId || !command.templateRevision || !command.templateHash) return fail("TEMPLATE_REQUIRED", "explicit delegation template required");
+        const found = await this.deps.getDelegationTemplate?.(command.projectId, command.templateId);
+        if (!found || found.hash !== command.templateHash || found.template.revision !== command.templateRevision ||
+          !found.template.decisionActorIds.includes(principal.actorId) || Date.parse(found.template.expiresAtUtc) <= Date.parse(this.deps.now()))
+          return fail("DELEGATION_DENIED", "current delegation template does not authorize the actor");
+      }
+      return;
+    }
+    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
     let loop: OrchestrationLoop | null = null;
     let dispatch: OrchestrationDispatch | null = null;
     if (command.type === "inbox.accept") loop = await tx.getLoop(command.loopId);
@@ -95,9 +113,108 @@ export class OrchestrationService {
       }
       if (await tx.getLoop(command.loopId)) return fail("ALREADY_EXISTS", "loop ID already enrolled");
       const bootstrapEventId = this.deps.nextId();
-      const loop: OrchestrationLoop = { projectId: command.projectId, id: command.loopId, version: 1, goalId: goal.id, stageId: command.stageId, bootstrapEventId, cognitiveRoleId: command.cognitiveRoleId, allowedBusinessRoleIds: command.allowedBusinessRoleIds, sourceAfter: command.sourceAfter, maxRuns: command.maxRuns, maxConcurrent: command.maxConcurrent, dispatchCount: 0, state: "active", enrolledBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now };
-      await tx.insertLoop(loop); await event(loop.id, "loop", loop.id, "loop.enrolled", { goalId: loop.goalId, stageId: loop.stageId, sourceAfter: loop.sourceAfter }, bootstrapEventId);
+      const policyId = this.deps.nextId();
+      const loop: OrchestrationLoop = { projectId: command.projectId, id: command.loopId, version: 1, goalId: goal.id, stageId: command.stageId, bootstrapEventId, cognitiveRoleId: command.cognitiveRoleId, allowedBusinessRoleIds: command.allowedBusinessRoleIds, sourceAfter: command.sourceAfter, maxRuns: command.maxRuns, maxConcurrent: command.maxConcurrent, dispatchCount: 0, state: "active", enrolledBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, currentPolicyRevisionId: policyId };
+      await tx.insertLoop(loop);
+      await tx.insertPolicy({ projectId: command.projectId, id: policyId, loopId: loop.id, version: 1, previousId: null, allowedBusinessRoleIds: [...command.allowedBusinessRoleIds], bindingByRole: {}, changedBindingId: null, decisionOperationId: null, actorId: principal.actorId, createdAtUtc: now });
+      await event(loop.id, "loop", loop.id, "loop.enrolled", { goalId: loop.goalId, stageId: loop.stageId, sourceAfter: loop.sourceAfter, policyRevisionId: policyId }, bootstrapEventId);
       return result("loop", loop.id, 1);
+    }
+    if (command.type === "division.decide") {
+      const loop = await this.loop(tx, command.loopId, command.projectId);
+      this.active(loop); this.version(loop.version, command.expectedLoopVersion);
+      if (command.choice === "method" && !principal.permissions.includes("review") &&
+        !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId)))
+        return fail("FORBIDDEN", "method decision requires cognition Role or reviewer");
+      if (!loop.currentPolicyRevisionId) return fail("POLICY_MISSING", "Loop policy revision required");
+      const current = await tx.getPolicy(loop.currentPolicyRevisionId);
+      if (!current || current.loopId !== loop.id) return fail("POLICY_MISSING", "current Loop policy unavailable");
+      const parent = await tx.getDispatch(command.parentDispatchId);
+      if (!parent || parent.loopId !== loop.id || parent.sourceEventId !== command.sourceEventId ||
+        parent.recipientRoleId !== loop.cognitiveRoleId || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state))
+        return fail("INVALID_CAUSALITY", "same-source cognition parent required");
+      const parentRun = await tx.getRunFact(parent.runtimeRunId);
+      if (!parentRun || !["completed", "failed", "interrupted"].includes(parentRun.state))
+        return fail("PARENT_NOT_READY", "cognition parent Run must be known terminal");
+      if (await tx.findDecisionByDispatch(parent.id)) return fail("PARENT_DECIDED", "cognition parent already signed a terminal choice");
+      const source = await tx.getSourceFact(command.sourceEventId);
+      if (!source || source.projectId !== loop.projectId) return fail("SOURCE_UNAVAILABLE", "fixed source unavailable");
+      const material = await tx.getDocumentRevisionFact(command.documentId, command.documentRevisionId);
+      if (!material || material.contentHash !== command.documentContentHash) return fail("MATERIAL_CHANGED", "fixed Document revision/hash required");
+      const task = await tx.getTaskFact(command.firstTaskId);
+      if (!task || task.projectId !== loop.projectId || task.version !== command.expectedFirstTaskVersion ||
+        !["todo", "in_progress"].includes(task.state) || task.goalId !== loop.goalId ||
+        (loop.stageId !== null && task.stageId !== loop.stageId)) return fail("TASK_CHANGED", "first Task and Loop scope must match");
+      if (await tx.hasDivisionDecision(loop.id, command.sourceEventId, task.id)) return fail("ALREADY_EXISTS", "source and first Task already have a division decision");
+      if (command.choice === "method") {
+        if (command.templateId || command.templateRevision || command.templateHash || command.roleId !== task.ownerRoleId)
+          return fail("INVALID_POLICY", "method choice cannot allocate authority or alter Task owner");
+        await event(loop.id, "decision", command.decisionId, "division.decided", { choice: command.choice, sourceEventId: source.id, parentDispatchId: parent.id, documentId: command.documentId, documentRevisionId: command.documentRevisionId, documentContentHash: command.documentContentHash, firstTaskId: task.id, firstTaskVersion: task.version, roleId: command.roleId, reason: command.reason });
+        return result("decision", command.decisionId, 1);
+      }
+      if (!command.templateId || !command.templateRevision || !command.templateHash) return fail("TEMPLATE_REQUIRED", "explicit delegation template required");
+      const found = await this.deps.getDelegationTemplate?.(loop.projectId, command.templateId);
+      const template = found?.template;
+      if (!template || found.hash !== command.templateHash || template.revision !== command.templateRevision ||
+        template.projectId !== loop.projectId || template.goalId !== loop.goalId || template.loopId !== loop.id ||
+        template.firstTaskId !== task.id || !template.decisionActorIds.includes(principal.actorId) ||
+        !template.allowedChoices.includes(command.choice) || Date.parse(template.expiresAtUtc) <= Date.parse(now))
+        return fail("DELEGATION_DENIED", "current exact delegation template does not authorize this decision");
+      if (command.choice === "new-role") {
+        if (!template.newRoleAllocation || template.existingRoleIds.includes(command.roleId) ||
+          current.allowedBusinessRoleIds.includes(command.roleId) ||
+          await tx.countNewRoleAllocations(template.id, template.revision) >= template.newRoleAllocation.maxTotal)
+          return fail("DELEGATION_DENIED", "new Role allocation limit or boundary exceeded");
+      } else if (!template.existingRoleIds.includes(command.roleId))
+        return fail("DELEGATION_DENIED", "existing Role is outside delegated set");
+      const roleState = await tx.getRoleState(command.roleId);
+      if (!roleState || !["trial", "active"].includes(roleState.state) || !roleState.accepted ||
+        (command.choice === "new-role" && (roleState.state !== "trial" || roleState.firstTaskId !== task.id)))
+        return fail("ROLE_NOT_ACCEPTED", "Role must have a formal accepted trial or active state");
+      if (current.bindingByRole[command.roleId]) return fail("ALREADY_EXISTS", "Role already has a current dynamic binding");
+      const binding: RuntimeRoleBinding = { projectId: loop.projectId, id: command.decisionId, loopId: loop.id, goalId: loop.goalId,
+        choice: command.choice,
+        roleId: command.roleId, actorId: template.actorId, authorizationScopeId: template.authorizationScopeId,
+        decisionOperationId: command.operationId, sourceEventId: source.id, parentDispatchId: parent.id,
+        firstTaskId: task.id, firstTaskVersion: task.version, documentId: command.documentId,
+        documentRevisionId: command.documentRevisionId, documentContentHash: command.documentContentHash,
+        template: { id: template.id, revision: template.revision, hash: found.hash }, grant: template,
+        runtime: { cwd: template.cwd, model: template.model, sandbox: template.sandbox,
+          networkAccess: template.networkAccess, approvalPolicy: template.approvalPolicy, expiresAtUtc: template.expiresAtUtc },
+        decidedBy: principal.actorId, createdAtUtc: now };
+      await tx.insertBinding(binding);
+      const policy: LoopPolicyRevision = { projectId: loop.projectId, id: this.deps.nextId(), loopId: loop.id,
+        version: current.version + 1, previousId: current.id,
+        allowedBusinessRoleIds: [...new Set([...current.allowedBusinessRoleIds, command.roleId])],
+        bindingByRole: { ...current.bindingByRole, [command.roleId]: binding.id },
+        changedBindingId: binding.id, decisionOperationId: command.operationId, actorId: principal.actorId, createdAtUtc: now };
+      await tx.insertPolicy(policy);
+      await tx.updateLoop({ ...loop, version: loop.version + 1, allowedBusinessRoleIds: policy.allowedBusinessRoleIds,
+        currentPolicyRevisionId: policy.id, updatedAtUtc: now }, loop.version);
+      await event(loop.id, "binding", binding.id, "division.decided", { choice: command.choice, sourceEventId: source.id,
+        parentDispatchId: parent.id, firstTaskId: task.id, firstTaskVersion: task.version, documentId: command.documentId,
+        documentRevisionId: command.documentRevisionId, documentContentHash: command.documentContentHash,
+        roleId: binding.roleId, template: binding.template, policyRevisionId: policy.id, reason: command.reason });
+      return result("binding", binding.id, 1);
+    }
+    if (command.type === "division.revoke") {
+      const loop = await this.loop(tx, command.loopId, command.projectId);
+      this.version(loop.version, command.expectedLoopVersion);
+      if (!loop.currentPolicyRevisionId) return fail("POLICY_MISSING", "current Loop policy unavailable");
+      const current = await tx.getPolicy(loop.currentPolicyRevisionId), binding = await tx.getBinding(command.bindingId);
+      if (!current || !binding || binding.loopId !== loop.id || current.bindingByRole[binding.roleId] !== binding.id)
+        return fail("BINDING_NOT_CURRENT", "binding is not current for this Loop");
+      const bindingByRole = { ...current.bindingByRole }; delete bindingByRole[binding.roleId];
+      const staticRole = await this.initialPolicyContains(tx, current, binding.roleId);
+      const allowedBusinessRoleIds = current.allowedBusinessRoleIds.filter(role => role !== binding.roleId || staticRole);
+      const policy: LoopPolicyRevision = { projectId: loop.projectId, id: this.deps.nextId(), loopId: loop.id,
+        version: current.version + 1, previousId: current.id, allowedBusinessRoleIds, bindingByRole,
+        changedBindingId: binding.id, decisionOperationId: command.operationId, actorId: principal.actorId, createdAtUtc: now };
+      await tx.insertPolicy(policy);
+      await tx.updateLoop({ ...loop, version: loop.version + 1, allowedBusinessRoleIds,
+        currentPolicyRevisionId: policy.id, updatedAtUtc: now }, loop.version);
+      await event(loop.id, "binding", binding.id, "division.revoked", { policyRevisionId: policy.id, reason: command.reason });
+      return result("binding", binding.id, 2);
     }
     if (command.type === "loop.state") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
@@ -259,13 +376,18 @@ export class OrchestrationService {
       const inbox = await this.inbox(tx, command.inboxId, command.projectId);
       const loop = await this.loop(tx, inbox.loopId, command.projectId);
       this.active(loop); this.version(inbox.version, command.expectedInboxVersion);
+      const policy = loop.currentPolicyRevisionId ? await tx.getPolicy(loop.currentPolicyRevisionId) : null;
+      if (!policy || policy.loopId !== loop.id) return fail("POLICY_MISSING", "current policy required");
       if (inbox.state !== "acknowledged") return fail("ACK_REQUIRED", "acknowledged inbox item required");
       if (loop.dispatchCount >= loop.maxRuns) return fail("RUN_LIMIT", "loop run budget exhausted");
       const cognitionRequest = command.recipientRoleId === loop.cognitiveRoleId;
       if (cognitionRequest) {
         if (command.purpose !== "cognition" || inbox.purpose !== "cognitive_review" || command.parentDispatchId !== null) return fail("INVALID_CAUSALITY", "cognition requires cognitive_review inbox without a parent dispatch");
       } else {
-        if (!loop.allowedBusinessRoleIds.includes(command.recipientRoleId) || inbox.purpose !== "next_action" || !command.parentDispatchId) return fail("INVALID_CAUSALITY", "business dispatch requires next_action inbox and cognition parent");
+        if (!policy.allowedBusinessRoleIds.includes(command.recipientRoleId) || inbox.purpose !== "next_action" || !command.parentDispatchId) return fail("INVALID_CAUSALITY", "business dispatch requires next_action inbox and cognition parent");
+        if (policy.bindingByRole[command.recipientRoleId] &&
+          !(await this.initialPolicyContains(tx, policy, command.recipientRoleId)))
+          return fail("DYNAMIC_EXECUTION_PENDING", "dynamic binding awaits the controlled Task and Session continuation");
         const parent = await tx.getDispatch(command.parentDispatchId);
         if (!parent || parent.projectId !== command.projectId || parent.loopId !== loop.id || parent.sourceEventId !== inbox.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state)) return fail("PARENT_NOT_READY", "accepted cognition dispatch for the same source is required");
         // A signed decision fixes the parent's choice. The project transaction lock orders
@@ -279,11 +401,11 @@ export class OrchestrationService {
       const stage = await tx.getStageFact(task.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage must be active under the loop goal");
       if (await tx.getDispatch(command.dispatchId)) return fail("ALREADY_EXISTS", "dispatch ID already used");
-      const dispatch: OrchestrationDispatch = { projectId: command.projectId, id: command.dispatchId, version: 1, loopId: loop.id, inboxId: inbox.id, sourceEventId: inbox.sourceEventId, taskId: task.id, taskVersion: task.version, parentDispatchId: command.parentDispatchId, recipientRoleId: command.recipientRoleId, purpose: command.purpose, authorizationScopeId: auth.scopeId, state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null, evidenceRef: null, reason: command.reason, requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now };
+      const dispatch: OrchestrationDispatch = { projectId: command.projectId, id: command.dispatchId, version: 1, loopId: loop.id, inboxId: inbox.id, sourceEventId: inbox.sourceEventId, taskId: task.id, taskVersion: task.version, parentDispatchId: command.parentDispatchId, recipientRoleId: command.recipientRoleId, purpose: command.purpose, authorizationScopeId: auth.scopeId, state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null, evidenceRef: null, reason: command.reason, requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, policyRevisionId: policy.id, bindingId: null };
       await tx.insertDispatch(dispatch);
       await tx.updateInbox({ ...inbox, version: inbox.version + 1, state: "disposed", disposition: "dispatch", dispatchId: dispatch.id, reason: command.reason, updatedAtUtc: now }, inbox.version);
       await tx.updateLoop({ ...loop, version: loop.version + 1, dispatchCount: loop.dispatchCount + 1, updatedAtUtc: now }, loop.version);
-      await event(loop.id, "dispatch", dispatch.id, "dispatch.requested", { taskId: task.id, taskVersion: task.version, sourceEventId: inbox.sourceEventId, recipientRoleId: dispatch.recipientRoleId });
+      await event(loop.id, "dispatch", dispatch.id, "dispatch.requested", { taskId: task.id, taskVersion: task.version, sourceEventId: inbox.sourceEventId, recipientRoleId: dispatch.recipientRoleId, policyRevisionId: policy.id });
       return result("dispatch", dispatch.id, 1);
     }
     if (command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") return this.applySeal(tx, principal, command, now, event, result);
@@ -457,12 +579,13 @@ export class OrchestrationService {
 
   private async parentRequestReady(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop) {
     if (dispatch.recipientRoleId === loop.cognitiveRoleId) return;
+    const historicalPolicy = dispatch.policyRevisionId ? await tx.getPolicy(dispatch.policyRevisionId) : null;
     const parent = dispatch.parentDispatchId ? await tx.getDispatch(dispatch.parentDispatchId) : null;
     const inbox = await tx.getInbox(dispatch.inboxId);
     if (!parent || parent.projectId !== dispatch.projectId || parent.loopId !== loop.id ||
       parent.sourceEventId !== dispatch.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId ||
       parent.purpose !== "cognition" || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state) ||
-      !loop.allowedBusinessRoleIds.includes(dispatch.recipientRoleId) ||
+      !historicalPolicy || historicalPolicy.loopId !== loop.id || !historicalPolicy.allowedBusinessRoleIds.includes(dispatch.recipientRoleId) ||
       !inbox || inbox.projectId !== dispatch.projectId || inbox.loopId !== loop.id ||
       inbox.sourceEventId !== dispatch.sourceEventId || inbox.recipientRoleId !== loop.cognitiveRoleId ||
       inbox.purpose !== "next_action" || inbox.state !== "disposed" || inbox.disposition !== "dispatch" ||
@@ -474,6 +597,16 @@ export class OrchestrationService {
     const submission = await tx.findSubmissionByDispatch(parent.id);
     if (submission && ["submitted", "sealing", "unknown"].includes(submission.state))
       return fail("PARENT_NOT_READY", "cognition seal must have a known result before business dispatch");
+  }
+
+  private async initialPolicyContains(tx: OrchestrationTransaction, current: LoopPolicyRevision, roleId: string): Promise<boolean> {
+    let initial = current;
+    while (initial.previousId) {
+      const previous = await tx.getPolicy(initial.previousId);
+      if (!previous || previous.loopId !== current.loopId) return fail("POLICY_MISSING", "policy ancestry unavailable");
+      initial = previous;
+    }
+    return initial.allowedBusinessRoleIds.includes(roleId);
   }
 
   private async freshTaskAndScope(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop, actorId: string) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { Principal } from "@evoloop/contracts";
+import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationObservationFact, OrchestrationDeliveryFact, OrchestrationIssueFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
 import { OrchestrationError, OrchestrationService } from "../src/orchestration/index.js";
 
@@ -15,16 +16,24 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { loops: Map<string, OrchestrationLoop>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; enrolledStageFact?: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { loops: Map<string, OrchestrationLoop>; policies: Map<string, LoopPolicyRevision>; bindings: Map<string, RuntimeRoleBinding>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; enrolledStageFact?: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
-  let data: Data = { loops: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
+  let delegation: {template: DelegationTemplate; hash: string} | null = null;
+  const roleStates = new Map<string, {state:string;firstTaskId:string;accepted:boolean}>();
+  let data: Data = { loops: new Map(), policies: new Map(), bindings: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
     [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
     [source1, { projectId, id: source1, createdAtUtc: after, kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: feedbackDispatchId, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
   ]), taskVersion: 1, extraTaskId: null, taskOwnerRoleId: workerRoleId, taskState: "in_progress", taskStageId: stageId, scopeActive: true, runState: "running", runId: randomUUID(), deliveryId: randomUUID(), taskRevisionId: randomUUID(), runInputHash: "f".repeat(64) };
   const view = (draft: Data): OrchestrationTransaction & OrchestrationReader => ({
     getOperation: async id => draft.operations.get(id) ?? null, insertOperation: async value => { draft.operations.set(value.id, value); },
     getLoop: async id => draft.loops.get(id) ?? null, insertLoop: async value => { draft.loops.set(value.id, value); }, updateLoop: async (value, expected) => { assert.equal(draft.loops.get(value.id)?.version, expected); draft.loops.set(value.id, value); },
+    getPolicy: async id => draft.policies.get(id) ?? null, insertPolicy: async value => { draft.policies.set(value.id, value); },
+    getBinding: async id => draft.bindings.get(id) ?? null, insertBinding: async value => { draft.bindings.set(value.id, value); },
+    hasDivisionDecision: async (id, source, task) => draft.events.some(item => item.loopId === id && item.kind === "division.decided" && item.detail.sourceEventId === source && item.detail.firstTaskId === task),
+    countNewRoleAllocations: async (templateId, revision) => [...draft.bindings.values()].filter(item => item.choice === "new-role" && item.template.id === templateId && item.template.revision === revision).length,
+    getDocumentRevisionFact: async () => ({contentHash: "a".repeat(64)}),
+    getRoleState: async id => roleStates.get(id) ?? (id === workerRoleId ? {state: "active", firstTaskId: taskId, accepted: true} : null),
     getInbox: async id => draft.inbox.get(id) ?? null,
     findInbox: async (id, sourceEventId, recipientRoleId, purpose) => [...draft.inbox.values()].find(item => item.loopId === id && item.sourceEventId === sourceEventId && item.recipientRoleId === recipientRoleId && item.purpose === purpose) ?? null,
     insertInbox: async value => { draft.inbox.set(value.id, value); }, updateInbox: async (value, expected) => { assert.equal(draft.inbox.get(value.id)?.version, expected); draft.inbox.set(value.id, value); },
@@ -56,7 +65,8 @@ function harness() {
     listLoops: async () => ({ items: [...draft.loops.values()], nextCursor: null }), listInbox: async () => ({ items: [...draft.inbox.values()], nextCursor: null }), listDispatches: async () => ({ items: [...draft.dispatches.values()], nextCursor: null }), listSubmissions: async () => ({ items: [...draft.submissions.values()], nextCursor: null }), listEvents: async () => ({ items: draft.events, nextCursor: null }), listSourceFacts: async loopId => ({ items: [...draft.source.values()].filter(item => item.id === draft.loops.get(loopId)?.bootstrapEventId || item.createdAtUtc > (draft.loops.get(loopId)?.sourceAfter.createdAtUtc ?? "")), nextCursor: null }),
   });
   const store: OrchestrationStore = { transaction: async (_project, action) => { const draft = structuredClone(data); const result = await action(view(draft)); data = draft; return result; }, read: async (_project, action) => action(view(data)) };
-  const service = new OrchestrationService({ store, now: () => currentTime, nextId: randomUUID, hash: value => value });
+  const service = new OrchestrationService({ store, now: () => currentTime, nextId: randomUUID, hash: value => value,
+    getDelegationTemplate: async (_project, id) => delegation?.template.id === id ? delegation : null });
   const enroll = () => service.execute(reviewer, cmd({ type: "loop.enroll", loopId, goalId, stageId, cognitiveRoleId, allowedBusinessRoleIds: [workerRoleId], sourceAfter: { createdAtUtc: at, eventId: source0 }, maxRuns: 2, maxConcurrent: 1, reason: "bounded pilot" }));
   const accept = () => service.execute(cognition, cmd({ type: "inbox.accept", loopId, sourceEventId: source1, recipientRoleId: cognitiveRoleId, purpose: "next_action" }));
   const ack = (inboxId: string, expectedVersion = 1) => service.execute(cognition, cmd({ type: "inbox.ack", inboxId, expectedVersion, reason: "read source" }));
@@ -70,7 +80,9 @@ function harness() {
     data.submissions.set(submission.id, submission);
     return service.execute(cognition, cmd({ type: "dispatch.request", inboxId, expectedInboxVersion: 2, dispatchId, parentDispatchId: parentId, taskId, expectedTaskVersion: 1, recipientRoleId: workerRoleId, purpose: "perform Task", authorizationScopeId: scopeId, reason: "Task required" }));
   };
-  return { service, enroll, accept, ack, request, get data() { return data; }, advanceTime(value: string) { currentTime = value; }, change(fn: (value: Data) => void) { fn(data); } };
+  return { service, enroll, accept, ack, request, get data() { return data; }, advanceTime(value: string) { currentTime = value; },
+    change(fn: (value: Data) => void) { fn(data); }, setDelegation(value: {template: DelegationTemplate; hash: string} | null) { delegation = value; },
+    setRoleState(id: string, value: {state:string;firstTaskId:string;accepted:boolean}) { roleStates.set(id,value); } };
 }
 
 test("enrollment starts after a verified event, duplicate source is one inbox, and no Task is dispatched on enrollment", async () => {
@@ -616,4 +628,109 @@ test("waiting resume requires the enrolled Stage to remain active, including at 
   await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
     sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("STAGE_NOT_ACTIVE"));
   assert.equal(f.h.data.source.get(resumed.id)?.kind,"waiting.resumed","historical source remains readable");
+});
+
+function divisionFixture() {
+  const h = harness(), parentDispatchId = randomUUID(), parentRunId = randomUUID();
+  const templateId = randomUUID(), templateHash = "b".repeat(64), documentId = randomUUID(), documentRevisionId = randomUUID();
+  const template: DelegationTemplate = { id: templateId, revision: 1, projectId, goalId, loopId,
+    existingRoleIds: [workerRoleId], newRoleAllocation: null, firstTaskId: taskId,
+    actorId: "delegated-worker", authorizationScopeId: "scope:division", decisionActorIds: [cognition.actorId],
+    allowedChoices: ["same-role-instance", "temporary-assignment"], cwd: "/tmp/evoloop-divison-test", model: "test-model",
+    sandbox: "read-only", networkAccess: false, approvalPolicy: "on-request", expiresAtUtc: "2026-10-24T00:00:00.000Z" };
+  const decision = () => cmd({ type: "division.decide", decisionId: randomUUID(), loopId,
+    expectedLoopVersion: h.data.loops.get(loopId)!.version, sourceEventId: source1, parentDispatchId,
+    documentId, documentRevisionId, documentContentHash: "a".repeat(64), firstTaskId: taskId,
+    expectedFirstTaskVersion: 1, choice: "temporary-assignment", roleId: workerRoleId,
+    templateId, templateRevision: 1, templateHash, reason: "bounded responsibility trial" });
+  const setup = async () => {
+    await h.enroll();
+    h.change(value => {
+      value.dispatches.set(parentDispatchId, { projectId, id: parentDispatchId, version: 5, loopId,
+        inboxId: randomUUID(), sourceEventId: source1, taskId, taskVersion: 1, parentDispatchId: null,
+        recipientRoleId: cognitiveRoleId, purpose: "cognition", authorizationScopeId: scopeId,
+        state: "completed", claimToken: null, leaseUntilUtc: null, runtimeRunId: parentRunId,
+        outcome: "delivered", deliveryId: null, evidenceRef: null, reason: "review", requestedBy: cognition.actorId,
+        createdAtUtc: at, updatedAtUtc: at });
+      value.parentRunStates.set(parentRunId, "completed");
+    });
+    h.setDelegation({template,hash:templateHash});
+  };
+  return { h, setup, decision, template, templateHash, parentDispatchId };
+}
+
+test("division decision pins material, bounded template and policy without refreshing Loop budget", async () => {
+  const f = divisionFixture(); await f.setup();
+  const initial = f.h.data.loops.get(loopId)!;
+  const request = f.decision();
+  const first = await f.h.service.execute(cognition, request);
+  assert.equal(first.entityType, "binding");
+  assert.equal(f.h.data.bindings.size, 1);
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount, initial.dispatchCount);
+  assert.equal(f.h.data.loops.get(loopId)?.maxRuns, initial.maxRuns);
+  const revised = f.h.data.policies.get(f.h.data.loops.get(loopId)!.currentPolicyRevisionId!)!;
+  assert.equal(revised.bindingByRole[workerRoleId], first.entityId);
+  const next = await f.h.accept(); await f.h.ack(next.entityId);
+  const staticDispatch = await f.h.service.execute(cognition, cmd({type:"dispatch.request",inboxId:next.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,taskId,
+    expectedTaskVersion:1,recipientRoleId:workerRoleId,purpose:"first trial run",authorizationScopeId:scopeId,
+    reason:"original static authorization"}));
+  assert.equal(f.h.data.dispatches.get(staticDispatch.entityId)?.bindingId,null,
+    "the existing Role can still use its original static authorization");
+  assert.equal((await f.h.service.execute(cognition, request)).replayed, true);
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,reason:"different intent"}), failed("OPERATION_CONFLICT"));
+  assert.equal(f.h.data.bindings.size, 1);
+});
+
+test("division rejects text-only authority, foreign scope, changed material, outsider and revoked template", async () => {
+  const f = divisionFixture(); await f.setup();
+  const request = f.decision();
+  await assert.rejects(() => f.h.service.execute(worker, request), failed("DELEGATION_DENIED"));
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,operationId:op(),documentContentHash:"c".repeat(64)}), failed("MATERIAL_CHANGED"));
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,operationId:op(),firstTaskId:randomUUID()}), failed("TASK_CHANGED"));
+  f.h.setDelegation({template:{...f.template,goalId:randomUUID()},hash:f.templateHash});
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,operationId:op()}), failed("DELEGATION_DENIED"));
+  f.h.setDelegation(null);
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,operationId:op()}), failed("DELEGATION_DENIED"));
+  f.h.setDelegation({template:{...f.template,model:"expanded-model"},hash:"c".repeat(64)});
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,operationId:op()}), failed("DELEGATION_DENIED"));
+  f.h.advanceTime("2026-10-25T00:00:00.000Z");
+  f.h.setDelegation({template:f.template,hash:f.templateHash});
+  await assert.rejects(() => f.h.service.execute(cognition, {...request,operationId:op()}), failed("DELEGATION_DENIED"));
+});
+
+test("a newly accepted Role consumes one delegated allocation but cannot dispatch before continuation", async () => {
+  const f = divisionFixture(); await f.setup();
+  const newRoleId = randomUUID();
+  f.h.setRoleState(newRoleId,{state:"trial",firstTaskId:taskId,accepted:true});
+  f.h.setDelegation({template:{...f.template,existingRoleIds:[],newRoleAllocation:{maxTotal:1,requiredState:"trial"},
+    allowedChoices:["new-role"]},hash:f.templateHash});
+  const request = {...f.decision(),choice:"new-role" as const,roleId:newRoleId};
+  const chosen = await f.h.service.execute(cognition,request);
+  assert.equal(f.h.data.bindings.get(chosen.entityId)?.choice,"new-role");
+  assert.equal(f.h.data.bindings.get(chosen.entityId)?.firstTaskVersion,1);
+  const next = await f.h.accept(); await f.h.ack(next.entityId);
+  await assert.rejects(() => f.h.service.execute(cognition,cmd({type:"dispatch.request",inboxId:next.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,taskId,
+    expectedTaskVersion:1,recipientRoleId:newRoleId,purpose:"unwired trial",authorizationScopeId:scopeId,
+    reason:"first Task"})),failed("DYNAMIC_EXECUTION_PENDING"));
+  await f.h.service.execute(reviewer,cmd({type:"division.revoke",loopId,
+    expectedLoopVersion:f.h.data.loops.get(loopId)!.version,bindingId:chosen.entityId,reason:"stop trial"}));
+  assert.equal(f.h.data.bindings.size,1,"withdrawal does not return the new Role allocation");
+  await assert.rejects(() => f.h.service.execute(cognition,cmd({type:"dispatch.request",inboxId:next.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,taskId,
+    expectedTaskVersion:1,recipientRoleId:newRoleId,purpose:"revoked trial",authorizationScopeId:scopeId,
+    reason:"first Task"})),failed("INVALID_CAUSALITY"));
+});
+
+test("revoke retains historical policy and cumulative binding but removes current dynamic permission", async () => {
+  const f = divisionFixture(); await f.setup();
+  const binding = await f.h.service.execute(cognition, f.decision());
+  const formerId = f.h.data.loops.get(loopId)!.currentPolicyRevisionId!;
+  await f.h.service.execute(reviewer, cmd({type:"division.revoke",loopId,
+    expectedLoopVersion:f.h.data.loops.get(loopId)!.version,bindingId:binding.entityId,reason:"trial stopped"}));
+  assert.equal(f.h.data.policies.get(formerId)?.bindingByRole[workerRoleId], binding.entityId);
+  assert.equal(f.h.data.policies.get(f.h.data.loops.get(loopId)!.currentPolicyRevisionId!)?.bindingByRole[workerRoleId], undefined);
+  assert.equal(f.h.data.bindings.size, 1);
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount, 0);
 });

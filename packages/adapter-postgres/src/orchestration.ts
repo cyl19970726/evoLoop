@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { createHash } from "node:crypto";
+import type { LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 
 type Row = Record<string, any>;
@@ -99,6 +100,8 @@ class Reader implements OrchestrationReader {
     return page<T>(r.rows.map(x=>x.data),limit,x=>String((x as Record<string,string>).id));
   }
   getLoop(id:string){return this.one<OrchestrationLoop>("orchestration_loop","loop_id",id);}
+  getPolicy(id:string){return this.one<LoopPolicyRevision>("loop_policy_revision","policy_id",id);}
+  getBinding(id:string){return this.one<RuntimeRoleBinding>("runtime_role_binding","binding_id",id);}
   listLoops(limit:number,cursor?:string){return this.listing<OrchestrationLoop>("orchestration_loop","loop_id",limit,cursor);}
   getInbox(id:string){return this.one<OrchestrationInbox>("orchestration_inbox","inbox_id",id);}
   listInbox(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationInbox>("orchestration_inbox","inbox_id",limit,cursor,loopId);}
@@ -302,12 +305,23 @@ class Reader implements OrchestrationReader {
 class Tx extends Reader implements OrchestrationTransaction {
   constructor(db:PoolClient,projectId:string,private readonly authorization:Authorization){super(db,projectId);}
   async insertOperation(x:OrchestrationOperation){await this.db.query("INSERT INTO orchestration_operation VALUES($1,$2,$3,$4,$5::jsonb,$6)",[this.projectId,x.id,x.actorId,x.commandHash,JSON.stringify(x.result),x.createdAtUtc]);}
-  async insertLoop(x:OrchestrationLoop){await this.db.query("INSERT INTO orchestration_loop VALUES($1,$2,$3,$4,$5::jsonb)",[this.projectId,x.id,x.version,x.state,JSON.stringify(x)]);}
-  async updateLoop(x:OrchestrationLoop,expectedVersion:number){await this.cas("orchestration_loop","loop_id",x.id,expectedVersion,x.version,x.state,x);}
+  async insertLoop(x:OrchestrationLoop){await this.db.query("INSERT INTO orchestration_loop(project_id,loop_id,version,state,data,current_policy_revision_id) VALUES($1,$2,$3,$4,$5::jsonb,$6)",[this.projectId,x.id,x.version,x.state,JSON.stringify(x),x.currentPolicyRevisionId]);}
+  async updateLoop(x:OrchestrationLoop,expectedVersion:number){await this.cas("orchestration_loop","loop_id",x.id,expectedVersion,x.version,x.state,x);await this.db.query("UPDATE orchestration_loop SET current_policy_revision_id=$3 WHERE project_id=$1 AND loop_id=$2",[this.projectId,x.id,x.currentPolicyRevisionId]);}
+  async insertPolicy(x:LoopPolicyRevision){await this.db.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
+    VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb)`, [this.projectId,x.id,x.loopId,x.version,x.previousId,JSON.stringify(x.allowedBusinessRoleIds),JSON.stringify(x.bindingByRole),x.changedBindingId,x.decisionOperationId,x.actorId,x.createdAtUtc,JSON.stringify(x)]);}
+  async insertBinding(x:RuntimeRoleBinding){await this.db.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`, [this.projectId,x.id,x.loopId,x.goalId,x.roleId,x.choice,x.template.id,x.template.revision,x.template.hash,x.decisionOperationId,x.sourceEventId,x.parentDispatchId,x.firstTaskId,x.firstTaskVersion,x.documentId,x.documentRevisionId,x.documentContentHash,JSON.stringify(x)]);}
+  async hasDivisionDecision(loopId:string,sourceEventId:string,firstTaskId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND loop_id=$2 AND kind='division.decided' AND detail->>'sourceEventId'=$3 AND detail->>'firstTaskId'=$4 LIMIT 1",[this.projectId,loopId,sourceEventId,firstTaskId]);return !!r.rowCount;}
+  async countNewRoleAllocations(templateId:string,templateRevision:number){const r=await this.db.query("SELECT count(*)::int AS n FROM runtime_role_binding WHERE project_id=$1 AND template_id=$2 AND template_revision=$3 AND choice='new-role'",[this.projectId,templateId,templateRevision]);return Number(r.rows[0]?.n??0);}
+  async getDocumentRevisionFact(documentId:string,revisionId:string){const r=await this.db.query("SELECT content_hash FROM document_revision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3",[this.projectId,documentId,revisionId]);return r.rows[0]?{contentHash:r.rows[0].content_hash as string}:null;}
+  async getRoleState(roleId:string){const r=await this.db.query(`SELECT d.state,r.proposal->>'firstTaskId' AS first_task_id,
+    EXISTS(SELECT 1 FROM role_decision decision WHERE decision.project_id=d.project_id AND decision.role_id=d.role_id AND decision.decision='accept-trial') AS accepted
+    FROM role_definition d JOIN role_revision r ON r.project_id=d.project_id AND r.role_id=d.role_id AND r.revision_id=d.current_revision_id
+    WHERE d.project_id=$1 AND d.role_id=$2`,[this.projectId,roleId]);return r.rows[0]?{state:r.rows[0].state as string,firstTaskId:r.rows[0].first_task_id as string,accepted:r.rows[0].accepted as boolean}:null;}
   async findInbox(loopId:string,sourceEventId:string,recipientRoleId:string,purpose:string){const r=await this.db.query("SELECT data FROM orchestration_inbox WHERE project_id=$1 AND loop_id=$2 AND source_event_id=$3 AND recipient_role_id=$4 AND purpose=$5",[this.projectId,loopId,sourceEventId,recipientRoleId,purpose]);return data<OrchestrationInbox>(r.rows[0]);}
   async insertInbox(x:OrchestrationInbox){await this.db.query("INSERT INTO orchestration_inbox VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)",[this.projectId,x.id,x.loopId,x.sourceEventId,x.recipientRoleId,x.purpose,x.version,x.state,JSON.stringify(x)]);}
   async updateInbox(x:OrchestrationInbox,expectedVersion:number){await this.cas("orchestration_inbox","inbox_id",x.id,expectedVersion,x.version,x.state,x);}
-  async insertDispatch(x:OrchestrationDispatch){await this.db.query("INSERT INTO orchestration_dispatch VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)",[this.projectId,x.id,x.loopId,x.inboxId,x.taskId,x.taskVersion,x.version,x.state,JSON.stringify(x)]);}
+  async insertDispatch(x:OrchestrationDispatch){await this.db.query("INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data,policy_revision_id,binding_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)",[this.projectId,x.id,x.loopId,x.inboxId,x.taskId,x.taskVersion,x.version,x.state,JSON.stringify(x),x.policyRevisionId,x.bindingId??null]);}
   async updateDispatch(x:OrchestrationDispatch,expectedVersion:number){await this.cas("orchestration_dispatch","dispatch_id",x.id,expectedVersion,x.version,x.state,x);}
   async insertSubmission(x:OrchestrationSubmission){const dispatch=await this.getDispatch(x.dispatchId);if(!dispatch)throw new Error("dispatch unavailable");await this.db.query("INSERT INTO orchestration_submission VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)",[this.projectId,x.id,x.dispatchId,dispatch.loopId,x.version,x.state,JSON.stringify(x)]);}
   async insertDecision(x:OrchestrationWorkerDecision){await this.db.query("INSERT INTO orchestration_decision VALUES($1,$2,$3,$4::jsonb)",[this.projectId,x.id,x.dispatchId,JSON.stringify(x)]);}

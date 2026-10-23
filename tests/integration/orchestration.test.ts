@@ -8,6 +8,7 @@ import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
+import type { DelegationTemplate } from "@evoloop/contracts/division";
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -390,6 +391,117 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await issue(actor,{type:"loop.state",loopId,expectedVersion:5,state:"stopped",reason:"Stop bounded work"});
   await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"LOOP_STOPPED");
   assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[projectId,op])).rows[0].n,1);
+  // A new trial Role is proposed through the existing Role contract. The separate
+  // delegation template grants only one bounded allocation for this Goal/Loop/Task.
+  const newRoleId=randomUUID(),divisionTaskId=randomUUID(),materialId=randomUUID(),materialBody="# Observed division gap";
+  assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:divisionTaskId,stageId,title:"Trial first Task",content:"# One bounded trial",acceptance:"Record one result",
+    owner:cognitiveRole,consumer:"owner",evidence:"Observed division gap",stopCondition:"One trial"})).status,"applied");
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:divisionTaskId,expectedVersion:1,reason:"Freeze trial input"})).status,"applied");
+  const material=await workflow.execute(principal(actor),{type:"document.create",projectId,operationId:randomUUID(),
+    documentId:materialId,kind:"report",title:"Fixed division diagnosis",body:materialBody});
+  assert.equal(material.status,"applied");
+  const observedAtUtc=new Date().toISOString();
+  const proposal={title:"Bounded diagnosis role",goal:"Resolve one observed gap",independentResponsibility:"Diagnose one recurring error",
+    ownerScope:"One trial Task",inputs:["Fixed source"],writableAssets:[],deliverables:["Trial result"],
+    triggers:["Observed repeat"],workflow:"Inspect fixed materials, then deliver",handoffBoundary:"Return to existing owner",
+    evidence:[{kind:"backlog",observation:"One unhandled gap",sourceRef:`task:${divisionTaskId}`,observedAtUtc},
+      {kind:"effect",observation:"Current path delayed",sourceRef:`task:${divisionTaskId}`,observedAtUtc},
+      {kind:"cost",observation:"One review and handoff",sourceRef:`task:${divisionTaskId}`,observedAtUtc}],
+    alternatives:[{kind:"method",assessment:"Could adjust current method",estimatedCost:"One change"},
+      {kind:"knowledge",assessment:"Could revise guide",estimatedCost:"One revision"},
+      {kind:"another-instance",assessment:"Could add capacity",estimatedCost:"One instance"},
+      {kind:"temporary-assignment",assessment:"Could assign a specialist",estimatedCost:"One trial"}],
+    firstTaskId:divisionTaskId,baseline:"Current task delayed",expectedEffect:"One bounded result",costLimit:"One trial",
+    trialDays:7,reviewAtUtc:new Date(Date.now()+86_400_000).toISOString(),exitCriteria:"Review first result"};
+  const proposed=await workflow.execute(principal(actor),{type:"role.propose",projectId,operationId:randomUUID(),roleId:newRoleId,proposal});
+  assert.equal(proposed.status,"applied",JSON.stringify(proposed));
+  const acceptedRole=await workflow.execute(principal(actor),{type:"role.decide",projectId,operationId:randomUUID(),
+    roleId:newRoleId,expectedVersion:1,decision:"accept-trial",reason:"Bounded Role trial"});
+  assert.equal(acceptedRole.status,"applied",JSON.stringify(acceptedRole));
+  const template:DelegationTemplate={id:randomUUID(),revision:1,projectId,goalId,loopId:lateLoopId,
+    existingRoleIds:[],newRoleAllocation:{maxTotal:1,requiredState:"trial"},firstTaskId:divisionTaskId,
+    actorId:"trial-worker",authorizationScopeId:"trial-scope",decisionActorIds:[actor],allowedChoices:["new-role"],
+    cwd:"/tmp",model:"test-model",sandbox:"read-only",networkAccess:false,approvalPolicy:"on-request",
+    expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
+  const templateHash=sha(JSON.stringify(template));
+  let templateCurrent=true;
+  const division=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha,
+    getDelegationTemplate:async(project,id)=>templateCurrent&&project===projectId&&id===template.id?{template,hash:templateHash}:null});
+  const beforeDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
+  const decisionOperationId=randomUUID(),decision={type:"division.decide",projectId,operationId:decisionOperationId,
+    decisionId:randomUUID(),loopId:lateLoopId,expectedLoopVersion:beforeDivision.version,
+    sourceEventId:lateLoop.bootstrapEventId,parentDispatchId:lateDispatch.entityId,
+    documentId:materialId,documentRevisionId:material.revisionId,documentContentHash:sha(materialBody),
+    firstTaskId:divisionTaskId,expectedFirstTaskVersion:2,choice:"new-role",roleId:newRoleId,
+    templateId:template.id,templateRevision:template.revision,templateHash,reason:"One explicitly bounded trial"};
+  const decided=await division.execute(principal(actor),decision as never);
+  assert.equal(decided.entityType,"binding");
+  assert.equal((await division.execute(principal(actor),decision as never)).replayed,true);
+  await fails(division.execute(principal(actor),{...decision,reason:"changed"} as never),"OPERATION_CONFLICT");
+  const afterDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
+  assert.equal(afterDivision.dispatchCount,beforeDivision.dispatchCount);
+  assert.equal(afterDivision.maxRuns,beforeDivision.maxRuns);
+  assert.equal((await division.getBinding(principal(actor),projectId,decided.entityId))?.grant.newRoleAllocation?.maxTotal,1);
+  const divisionPolicy=(await division.getPolicy(principal(actor),projectId,afterDivision.currentPolicyRevisionId!))!;
+  assert.equal(divisionPolicy.bindingByRole[newRoleId],decided.entityId);
+  const pendingInbox=await division.execute(principal(actor),{type:"inbox.accept",projectId,operationId:randomUUID(),
+    loopId:lateLoopId,sourceEventId:lateLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"next_action"});
+  await division.execute(principal(actor),{type:"inbox.ack",projectId,operationId:randomUUID(),
+    inboxId:pendingInbox.entityId,expectedVersion:1,reason:"Inspect decision"});
+  const dynamicRequest={type:"dispatch.request",projectId,operationId:randomUUID(),inboxId:pendingInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:lateDispatch.entityId,taskId:divisionTaskId,
+    expectedTaskVersion:2,recipientRoleId:newRoleId,purpose:"trial first Task",authorizationScopeId:"trial-scope",reason:"Pending continuation"};
+  await fails(division.execute(principal(actor),dynamicRequest as never),"RUN_LIMIT");
+  // This sealed SQL fixture models a future controlled child dispatch solely to
+  // verify the historical query; this first slice still refuses dynamic dispatch.
+  const historicalChildId=randomUUID(),historicalOperationId=randomUUID(),historicalEventId=randomUUID();
+  const fixtureClient=await pool.connect();
+  await fixtureClient.query("BEGIN");
+  try {
+    const inboxRow=(await fixtureClient.query("SELECT data FROM orchestration_inbox WHERE project_id=$1 AND inbox_id=$2",
+      [projectId,pendingInbox.entityId])).rows[0];
+    await fixtureClient.query("UPDATE orchestration_inbox SET version=3,state='disposed',data=$3::jsonb WHERE project_id=$1 AND inbox_id=$2",
+      [projectId,pendingInbox.entityId,JSON.stringify({...inboxRow.data,version:3,state:"disposed",disposition:"dispatch",dispatchId:historicalChildId})]);
+    const childData={projectId,id:historicalChildId,loopId:lateLoopId,inboxId:pendingInbox.entityId,
+      sourceEventId:lateLoop.bootstrapEventId,taskId:divisionTaskId,taskVersion:2,
+      parentDispatchId:lateDispatch.entityId,recipientRoleId:newRoleId,purpose:"bounded trial",
+      authorizationScopeId:"trial-scope",state:"pending",requestedBy:actor,
+      policyRevisionId:divisionPolicy.id,bindingId:decided.entityId};
+    await fixtureClient.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data,policy_revision_id,binding_id)
+      VALUES($1,$2,$3,$4,$5,2,1,'pending',$6::jsonb,$7,$8)`,
+      [projectId,historicalChildId,lateLoopId,pendingInbox.entityId,divisionTaskId,JSON.stringify(childData),divisionPolicy.id,decided.entityId]);
+    await fixtureClient.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,now())",
+      [projectId,historicalOperationId,actor,sha("historical-fixture"),JSON.stringify({entityType:"dispatch",entityId:historicalChildId,version:1,replayed:false})]);
+    await fixtureClient.query("INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'dispatch',$4,$5,'dispatch.requested',$6,$7::jsonb,now())",
+      [projectId,historicalEventId,lateLoopId,historicalChildId,historicalOperationId,actor,
+        JSON.stringify({sourceEventId:lateLoop.bootstrapEventId,taskId:divisionTaskId,recipientRoleId:newRoleId})]);
+    await fixtureClient.query("COMMIT");
+  } catch(error) { await fixtureClient.query("ROLLBACK"); throw error; }
+  finally { fixtureClient.release(); }
+  const uow = new PostgresUnitOfWork(pool);
+  assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)));
+  await division.execute(principal(actor),{type:"division.revoke",projectId,operationId:randomUUID(),loopId:lateLoopId,
+    expectedLoopVersion:afterDivision.version,bindingId:decided.entityId,reason:"Withdraw trial authority"});
+  assert.equal((await division.getPolicy(principal(actor),projectId,divisionPolicy.id))?.bindingByRole[newRoleId],decided.entityId);
+  assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)),
+    "withdrawal cannot erase proof under the dispatch's pinned policy");
+  assert.equal((await division.getPolicy(principal(actor),projectId,
+    (await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!))?.allowedBusinessRoleIds.includes(newRoleId),false);
+  await fails(division.execute(principal(actor),{...dynamicRequest,operationId:randomUUID()} as never),"VERSION_CONFLICT");
+  templateCurrent=false;
+  await fails(division.execute(principal(actor),{...decision,operationId:randomUUID()} as never),"DELEGATION_DENIED");
+  assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(requested.entityId)));
+  const historicalPolicyId = (await orchestrator.getDispatch(principal(actor),projectId,requested.entityId))!.policyRevisionId!;
+  assert.equal((await pool.query("SELECT division_historical_role_allowed($1,$2,$3) AS yes",[projectId,requested.entityId,"unlisted-role"])).rows[0].yes,false);
+  await assert.rejects(pool.query("UPDATE loop_policy_revision SET allowed_business_role_ids='[]'::jsonb WHERE project_id=$1 AND policy_id=$2",[projectId,historicalPolicyId]));
+  const revokedPolicyId=(await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!;
+  await assert.rejects(pool.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
+    allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
+    SELECT project_id,$1,loop_id,version+1,policy_id,allowed_business_role_ids||to_jsonb('forged-role'::text),
+      binding_by_role,$2,$3,'forger',now(),'{}'::jsonb FROM loop_policy_revision WHERE project_id=$4 AND policy_id=$5`,
+    [randomUUID(),decided.entityId,randomUUID(),projectId,revokedPolicyId]));
 });
 test("017 upgrades nonempty preexisting project facts without rewriting them",async()=>{
   const oldSchema=`el_orch_upgrade_${randomUUID().replaceAll("-","").slice(0,12)}`;
