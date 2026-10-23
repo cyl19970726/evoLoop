@@ -5,7 +5,10 @@ import type { OrchestrationSourceFact } from "@evoloop/contracts/orchestration";
 export async function scheduledSourceFacts(db: PoolClient, projectId: string, options: {
   eventId?: string | undefined; loopId?: string | undefined; afterUtc?: string | undefined; afterId?: string | null | undefined;
   cursorUtc?: string | undefined; cursorId?: string | undefined; limit?: number | undefined;
+  historicalClosure?: boolean | undefined;
 }): Promise<OrchestrationSourceFact[]> {
+  if (options.historicalClosure && (!options.eventId || !options.loopId))
+    throw new Error("Historical schedule closure requires an exact event and Loop");
   const result = await db.query(`SELECT e.event_id,e.created_at,o.schedule_id,o.schedule_revision_id,o.planned_at_utc,
       o.task_id,o.operation_id,j.actor_id,created.revision_id AS task_revision_id,
       p.stage_id, r.task_template->'managedTarget'->>'loopId' AS target_loop_id
@@ -49,7 +52,7 @@ export async function scheduledSourceFacts(db: PoolClient, projectId: string, op
       AND r.task_template->'managedTarget'->>'stageId'=p.stage_id::text
       AND l.data->>'stageId'=p.stage_id::text AND l.data->>'goalId'=s.goal_id::text
       AND r.task_template->>'owner'=r.authorization_scope->>'roleId'
-      AND (l.data->'allowedBusinessRoleIds') ? (r.task_template->>'owner')
+      AND ($9::boolean OR (l.data->'allowedBusinessRoleIds') ? (r.task_template->>'owner'))
       AND ($2::uuid IS NULL OR e.event_id=$2)
       AND ($3::uuid IS NULL OR l.loop_id=$3)
       AND ($4::timestamptz IS NULL OR e.created_at>$4::timestamptz OR
@@ -59,6 +62,7 @@ export async function scheduledSourceFacts(db: PoolClient, projectId: string, op
     projectId, options.eventId ?? null, options.loopId ?? null,
     options.afterUtc ?? null, options.afterId ?? null,
     options.cursorUtc ?? null, options.cursorId ?? null, options.limit ?? 1,
+    options.historicalClosure === true,
   ]);
   return result.rows.map(row => ({
     projectId, id: row.event_id, createdAtUtc: new Date(row.created_at).toISOString(),
