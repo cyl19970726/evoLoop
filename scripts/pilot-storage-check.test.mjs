@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { canonicalDataDirectory, checkPilotStorage, connectionTarget, localPostmaster,
+import { canonicalDataDirectory, checkPilotStorage, connectionTarget, localClientOptions, localPostmaster,
   temporaryPath } from "./pilot-storage-check.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,6 +14,8 @@ const rejected = code => error => error?.code === code && error.message === code
 
 test("only explicit numeric loopback PostgreSQL targets pass URL preflight", () => {
   assert.deepEqual(connectionTarget(databaseUrl), { host: "127.0.0.1", port: 55461, database: "evoloop_pilot_test" });
+  assert.deepEqual(localClientOptions(databaseUrl), { connectionString: databaseUrl,
+    connectionTimeoutMillis: 5_000, query_timeout: 5_000, statement_timeout: 5_000 });
   for (const url of ["postgres://pilot@db.example:55461/evoloop_pilot_test",
     "postgres://pilot@localhost:55461/evoloop_pilot_test", "postgres://pilot@127.0.0.1/evoloop_pilot_test",
     "postgres://pilot@127.0.0.1:55461/evoloop_pilot_test?host=db.example", "not-a-url"]) {
@@ -46,6 +48,11 @@ test("safe errors never expose PG diagnostics or credentials", async t => {
   await assert.rejects(checkPilotStorage({ databaseUrl, expectedDataDirectory: data, evidenceOut,
     clientFactory: () => ({ connect: async () => { throw new Error(`password private-secret ${databaseUrl}`); } }) }),
   rejected("PG_CONNECT_FAILED"));
+  await assert.rejects(lstat(evidenceOut), { code: "ENOENT" });
+  await assert.rejects(checkPilotStorage({ databaseUrl, expectedDataDirectory: data, evidenceOut,
+    clientFactory: () => ({ connect: async () => {},
+      query: async () => { throw new Error(`query timeout private-secret ${databaseUrl}`); }, end: async () => {} }) }),
+  rejected("PG_READ_FAILED"));
   await assert.rejects(lstat(evidenceOut), { code: "ENOENT" });
 });
 

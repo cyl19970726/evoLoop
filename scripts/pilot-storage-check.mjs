@@ -6,6 +6,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const timeoutMillis = 5_000;
+export const localClientOptions = connectionString => ({ connectionString,
+  connectionTimeoutMillis: timeoutMillis, query_timeout: timeoutMillis, statement_timeout: timeoutMillis });
 const inside = (path, root) => path === root || path.startsWith(root + sep);
 export class StorageCheckError extends Error {
   constructor(code) { super(code); this.name = "StorageCheckError"; this.code = code; }
@@ -109,7 +112,8 @@ export async function writeEvidence(out, evidence) {
   }
 }
 
-export async function checkPilotStorage({ databaseUrl, expectedDataDirectory, evidenceOut, clientFactory = url => new pg.Client({ connectionString: url }) }) {
+export async function checkPilotStorage({ databaseUrl, expectedDataDirectory, evidenceOut,
+  clientFactory = url => new pg.Client(localClientOptions(url)) }) {
   if (!["darwin", "linux"].includes(process.platform)) fail("LOCAL_PREFLIGHT_UNSUPPORTED_OS");
   const target = connectionTarget(databaseUrl);
   if (!expectedDataDirectory || !isAbsolute(expectedDataDirectory)) fail("ABSOLUTE_DATA_PATH_REQUIRED");
