@@ -82,7 +82,14 @@ function fixture() {
       if (command.type === "dispatch.reclaim") Object.assign(dispatch!, { leaseUntilUtc: command.leaseUntilUtc, version: dispatch!.version + 1 });
       if (command.type === "dispatch.start") Object.assign(dispatch!, { state: "dispatching" });
       if (command.type === "dispatch.resolve") Object.assign(dispatch!, { state: command.result, runtimeRunId: command.runtimeRunId });
-      if (command.type === "dispatch.gap") Object.assign(dispatch!, { reason: command.reason, version: dispatch!.version + 1 });
+      if (command.type === "dispatch.gap") {
+        Object.assign(dispatch!, { reason: command.reason, version: dispatch!.version + 1 });
+        facts.push({ projectId, id: loopIntentId(dispatch!.id, "gap-source"), createdAtUtc: currentTime,
+          kind: "dispatch.gap", subjectId: dispatch!.taskId, subjectVersion: dispatch!.version,
+          sourceLoopId: loopId, originDispatchId: dispatch!.id, gapRunId: dispatch!.runtimeRunId,
+          gapTaskVersion: dispatch!.taskVersion,
+          ...noObservation });
+      }
       if (command.type === "worker.outcome") Object.assign(dispatch!, { state: "completed", outcome: command.outcome, deliveryId: command.deliveryId });
       if (command.type === "dispatch.claim" || command.type === "dispatch.reclaim") {
         const canonical = JSON.stringify(command, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
@@ -179,7 +186,7 @@ test("pause blocks new claims while an accepted terminal Run can settle", async 
   assert.equal(f.dispatches[0]!.outcome, "no_action");
 });
 
-test("unknown Run and absent signed intent remain accountable without invented Delivery or next cognition", async () => {
+test("unknown Run waits; terminal missing intent creates one recovery cognition after gap and restart", async () => {
   const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
   await runner.pump();
   const dispatch = f.dispatches[0]!;
@@ -192,8 +199,19 @@ test("unknown Run and absent signed intent remain accountable without invented D
   assert.equal(dispatch.state, "accepted");
   assert.equal(f.inbox.length, 1);
   assert.equal(dispatch.reason, "Worker intent gap: absent");
+  assert.equal(f.inbox.some(item => item.sourceEventId === loopIntentId(dispatch.id, "gap-source")), false);
+  f.loop.state = "paused";
   await runner.pump();
   assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 1);
+  assert.equal(f.inbox.filter(item => item.sourceEventId === loopIntentId(dispatch.id, "gap-source")).length, 0);
+  f.loop.state = "active";
+  await runner.pump();
+  assert.equal(f.inbox.filter(item => item.sourceEventId === loopIntentId(dispatch.id, "gap-source")).length, 1);
+  assert.equal(f.tasks.size, 2);
+  assert.equal(f.dispatches.length, 2);
+  await new ManagedLoopRunner(f.deps).pump();
+  assert.equal(f.inbox.filter(item => item.sourceEventId === loopIntentId(dispatch.id, "gap-source")).length, 1);
+  assert.equal(f.commands.filter(type => type === "task.create").length, 2);
 });
 
 test("post-start crash reuses original Task start and worker credential", async () => {

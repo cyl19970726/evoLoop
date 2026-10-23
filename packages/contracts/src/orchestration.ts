@@ -86,8 +86,11 @@ export interface OrchestrationSourceFact {
   /** Populated only for a verified workflow observation.record outbox event. */
   operationId: string | null; sourceActorId: string | null; observationId: string | null;
   deliveryId: string | null; observationResult: "used" | "failed" | "notUsed" | null;
+  /** Fixed Run of a formal dispatch.gap; absent for other source kinds. */
+  gapRunId?: string | null; gapTaskVersion?: number | null;
 }
 export interface OrchestrationTaskFact { projectId: string; id: string; version: number; state: "todo" | "in_progress" | "done" | "cancelled"; ownerRoleId: string; goalId: string | null; stageId: string | null }
+export interface OrchestrationTaskScopeFact { projectId: string; taskId: string; taskVersion: number; goalId: string | null; stageId: string | null }
 export interface OrchestrationGoalFact { projectId: string; id: string; state: string }
 export interface OrchestrationStageFact { projectId: string; id: string; goalId: string; state: string }
 export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown" }
@@ -123,6 +126,8 @@ export interface OrchestrationTransaction {
   appendEvent(value: OrchestrationEvent): Promise<void>;
   getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
   getTaskFact(id: string): Promise<OrchestrationTaskFact | null>;
+  /** Scope at the dispatch's fixed Task revision, never the current Task head. */
+  getTaskScopeAtVersion(taskId: string, taskVersion: number): Promise<OrchestrationTaskScopeFact | null>;
   getGoalFact(id: string): Promise<OrchestrationGoalFact | null>;
   getStageFact(id: string): Promise<OrchestrationStageFact | null>;
   getAuthorizationFact(scopeId: string): Promise<OrchestrationAuthorizationFact | null>;

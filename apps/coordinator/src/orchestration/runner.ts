@@ -154,6 +154,13 @@ export class ManagedLoopRunner {
         !!fact.operationId && !!fact.sourceActorId && !!fact.observationId &&
         !!fact.deliveryId && ["used", "failed", "notUsed"].includes(fact.observationResult ?? "");
     }
+    if (fact.kind === "dispatch.gap" && fact.sourceLoopId === loop.id && fact.originDispatchId && fact.gapRunId) {
+      // A missing signed intent is a software recovery source even when the failed worker was cognition itself.
+      return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
+        d.runtimeRunId === fact.gapRunId && d.taskVersion === fact.gapTaskVersion &&
+        d.state === "accepted" && d.outcome === null &&
+        d.version >= fact.subjectVersion);
+    }
     if (fact.kind !== "worker.outcome" || fact.sourceLoopId !== loop.id || !fact.originDispatchId) return false;
     return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
       d.version === fact.subjectVersion && d.recipientRoleId !== loop.cognitiveRoleId &&
@@ -195,7 +202,7 @@ export class ManagedLoopRunner {
     const taskId = loopIntentId(loop.id, inbox.id, "cognition-task");
     const existing = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId).catch(() => null);
     if (!existing) {
-      const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `business result event ${inbox.sourceEventId}`;
+      const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `verified source event ${inbox.sourceEventId}`;
       applied(await this.deps.workflow.execute(cognitive.principal, { type: "task.create", projectId: loop.projectId,
         operationId: loopIntentId(taskId, "create"), taskId, stageId: loop.stageId,
         title: `Cognition: ${source}`, owner: loop.cognitiveRoleId, kind: "research",

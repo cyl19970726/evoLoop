@@ -263,7 +263,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const lateLast=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
   await issue(actor,{type:"loop.enroll",loopId:lateLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
     allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:lateLast.created_at.toISOString(),eventId:lateLast.event_id},
-    maxRuns:1,maxConcurrent:1,reason:"Terminal first-intent rejection"});
+    maxRuns:2,maxConcurrent:1,reason:"Terminal first-intent rejection and recovery"});
   const lateLoop=(await orchestrator.getLoop(principal(actor),projectId,lateLoopId))!;
   await fails(issue(actor,{type:"inbox.accept",loopId:lateLoopId,sourceEventId:external.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
   const lateInbox=await issue(actor,{type:"inbox.accept",loopId:lateLoopId,sourceEventId:lateLoop.bootstrapEventId,
@@ -280,10 +280,54 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.equal(lateRun.status,"applied");
   await issue(actor,{type:"dispatch.resolve",dispatchId:lateDispatch.entityId,claimToken:lateClaim,result:"accepted",
     runtimeRunId:lateRunId,reason:"Bound late Run"});
+  await fails(issue(actor,{type:"dispatch.gap",dispatchId:lateDispatch.entityId,expectedVersion:4,
+    reason:"Worker intent gap: not terminal",evidenceRef:null}),"RUN_NOT_TERMINAL");
   await runtime.rejectDispatch(projectId,lateRunId,"Fixture terminal before first intent");
   await fails(issue(actor,{type:"worker.submit",submissionId:randomUUID(),dispatchId:lateDispatch.entityId,runId:lateRunId,
     taskRevisionId:lateRun.revisionId,runInputHash:sha("Reject late first submission"),deliveryOperationId:randomUUID(),
     deliveryIntent:cognitiveIntent,agentObservation:"Late intent",evidenceRefs:[]}),"RUN_NOT_ACTIVE");
+  const gap=await issue(actor,{type:"dispatch.gap",dispatchId:lateDispatch.entityId,expectedVersion:4,
+    reason:"Worker intent gap: absent",evidenceRef:null});
+  assert.equal(gap.version,5);
+  const gapEvent=(await pool.query("SELECT event_id,detail FROM orchestration_event WHERE project_id=$1 AND operation_id IN (SELECT operation_id FROM orchestration_operation WHERE project_id=$1 AND result->>'entityId'=$2) AND kind='dispatch.gap'",[projectId,lateDispatch.entityId])).rows[0];
+  assert.ok(gapEvent);
+  assert.equal(gapEvent.detail.runId,lateRunId);
+  assert.equal(gapEvent.detail.taskVersion,2);
+  const gapSource=(await store.transaction(projectId,tx=>tx.getSourceFact(gapEvent.event_id)))!;
+  assert.equal(gapSource.gapRunId,lateRunId);
+  assert.equal(gapSource.subjectVersion,5);
+  await fails(issue(actor,{type:"dispatch.gap",dispatchId:lateDispatch.entityId,expectedVersion:5,
+    reason:"Worker intent gap: duplicate",evidenceRef:null}),"GAP_RECORDED");
+  const lateTaskBeforeMove=(await workflow.getTask(principal(actor),projectId,lateTaskId)).task;
+  const lateReopen=await workflow.execute(principal(actor),{type:"task.reopen",projectId,operationId:randomUUID(),taskId:lateTaskId,
+    expectedVersion:lateTaskBeforeMove.version,reason:"Later work belongs to another Goal"});
+  assert.equal(lateReopen.status,"applied",JSON.stringify(lateReopen));
+  const lateMove=await workflow.execute(principal(actor),{type:"task.update",projectId,operationId:randomUUID(),taskId:lateTaskId,
+    expectedVersion:lateReopen.version,title:lateTaskBeforeMove.title,content:lateTaskBeforeMove.content,
+    acceptance:lateTaskBeforeMove.acceptance,owner:lateTaskBeforeMove.owner,stageId:foreignStageId,
+    reason:"Move future work without rewriting failed Run scope"});
+  assert.equal(lateMove.status,"applied",JSON.stringify(lateMove));
+  assert.equal((await store.transaction(projectId,tx=>tx.getTaskScopeAtVersion(lateTaskId,2)))?.stageId,stageId);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,lateLoopId)).items.some(x=>x.id===gapEvent.event_id),true);
+  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,foreignLoopId)).items.some(x=>x.id===gapEvent.event_id),false);
+  await fails(issue(actor,{type:"inbox.accept",loopId:foreignLoopId,sourceEventId:gapEvent.event_id,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  const recoveryInbox=await issue(actor,{type:"inbox.accept",loopId:lateLoopId,sourceEventId:gapEvent.event_id,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  assert.equal((await issue(actor,{type:"inbox.accept",loopId:lateLoopId,sourceEventId:gapEvent.event_id,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"})).entityId,recoveryInbox.entityId);
+  await issue(actor,{type:"inbox.ack",inboxId:recoveryInbox.entityId,expectedVersion:1,reason:"Review real terminal gap"});
+  const recoveryTaskId=randomUUID();
+  const recoveryTask=await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:recoveryTaskId,stageId,title:"Review missing signed intent",content:"# Verify original Run and decide next action",
+    acceptance:"Record an evidenced next decision",owner:cognitiveRole,consumer:"owner",evidence:`Gap ${gapEvent.event_id}`,
+    stopCondition:"A decision is recorded"});
+  assert.equal(recoveryTask.status,"applied",JSON.stringify(recoveryTask));
+  const recoveryDispatch=await issue(actor,{type:"dispatch.request",inboxId:recoveryInbox.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:recoveryTaskId,expectedTaskVersion:1,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Review fixed terminal gap"});
+  assert.equal((await orchestrator.getDispatch(principal(actor),projectId,recoveryDispatch.entityId))?.state,"pending");
+  assert.equal((await orchestrator.getDispatch(principal(actor),projectId,lateDispatch.entityId))?.state,"accepted");
   assert.equal((await orchestrator.listDispatches(principal(actor),projectId,loopId)).items.find(x=>x.id===requested.entityId)?.runtimeRunId,runId);
   await issue(actor,{type:"loop.state",loopId,expectedVersion:5,state:"stopped",reason:"Stop bounded work"});
   await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"LOOP_STOPPED");

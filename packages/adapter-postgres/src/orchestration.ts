@@ -54,11 +54,11 @@ class Reader implements OrchestrationReader {
       SELECT event_id AS id,created_at_utc,kind,entity_id AS subject_id,1 AS subject_version,
         loop_id AS source_loop_id,NULL::uuid AS origin_dispatch_id,
         NULL::uuid AS operation_id,NULL::text AS source_actor_id,NULL::uuid AS observation_id,
-        NULL::uuid AS delivery_id,NULL::text AS observation_result
+        NULL::uuid AS delivery_id,NULL::text AS observation_result,NULL::uuid AS gap_run_id,NULL::integer AS gap_task_version
         FROM orchestration_event WHERE project_id=$1 AND loop_id=$2 AND event_id=$3::uuid AND kind='loop.enrolled'
       UNION ALL
       SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,d.version,e.loop_id,d.dispatch_id,
-        NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text
+        NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer
         FROM orchestration_event e JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
         JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
         WHERE e.project_id=$1 AND e.loop_id=$2 AND e.kind='worker.outcome'
@@ -66,7 +66,7 @@ class Reader implements OrchestrationReader {
           AND d.data->>'recipientRoleId'<>l.data->>'cognitiveRoleId'
       UNION ALL
       SELECT e.event_id,e.created_at,e.kind,e.entity_id,e.version,NULL::uuid,NULL::uuid,
-        e.operation_id,j.actor_id,o.observation_id,o.delivery_id,o.result
+        e.operation_id,j.actor_id,o.observation_id,o.delivery_id,o.result,NULL::uuid,NULL::integer
         FROM outbox_event e
         JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id
           AND j.command_type='observation.record' AND j.result->>'status'='applied'
@@ -83,6 +83,31 @@ class Reader implements OrchestrationReader {
         WHERE e.project_id=$1 AND e.kind='observation.record'
           AND (e.created_at>$4::timestamptz OR (e.created_at=$4::timestamptz AND ($5::uuid IS NULL OR e.event_id>$5::uuid)))
           AND s.goal_id=$9::uuid AND ($10::uuid IS NULL OR s.stage_id=$10::uuid)
+      UNION ALL
+      SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,(op.result->>'version')::integer,e.loop_id,d.dispatch_id,
+        NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,
+        COALESCE((e.detail->>'runId')::uuid,(d.data->>'runtimeRunId')::uuid),
+        COALESCE((e.detail->>'taskVersion')::integer,d.task_version)
+        FROM orchestration_event e
+        JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
+        JOIN orchestration_operation op ON op.project_id=e.project_id AND op.operation_id=e.operation_id
+        JOIN runtime_run r ON r.project_id=d.project_id AND r.run_id=(d.data->>'runtimeRunId')::uuid
+        JOIN task_revision tr ON tr.project_id=d.project_id AND tr.task_id=d.task_id AND tr.version=d.task_version
+        JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision pr
+          ON pr.project_id=p.project_id AND pr.task_id=p.task_id AND pr.revision_id=p.task_revision_id
+          WHERE p.project_id=d.project_id AND p.task_id=d.task_id AND pr.version<=tr.version
+          ORDER BY pr.version DESC LIMIT 1) fixed_scope ON fixed_scope.stage_id IS NOT NULL
+        JOIN project_stage fixed_stage ON fixed_stage.project_id=d.project_id AND fixed_stage.stage_id=fixed_scope.stage_id
+        WHERE e.project_id=$1 AND e.loop_id=$2 AND e.kind='dispatch.gap'
+          AND fixed_stage.goal_id=$9::uuid AND ($10::uuid IS NULL OR fixed_stage.stage_id=$10::uuid)
+          AND d.state='accepted' AND d.data->>'outcome' IS NULL
+          AND r.state IN ('completed','failed','interrupted')
+          AND COALESCE((e.detail->>'runId')::uuid,r.run_id)=r.run_id
+          AND NOT EXISTS (SELECT 1 FROM orchestration_submission s WHERE s.project_id=d.project_id AND s.dispatch_id=d.dispatch_id)
+          AND NOT EXISTS (SELECT 1 FROM orchestration_decision w WHERE w.project_id=d.project_id AND w.dispatch_id=d.dispatch_id)
+          AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
+            AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
+            AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))
     ) SELECT * FROM sources WHERE ($6::timestamptz IS NULL OR (created_at_utc,id)>($6::timestamptz,$7::uuid))
       ORDER BY created_at_utc,id LIMIT $8`,[this.projectId,loopId,loop.bootstrapEventId,
         loop.sourceAfter.createdAtUtc,loop.sourceAfter.eventId,cursorTime??null,cursorId??null,limit+1,loop.goalId,loop.stageId]);
@@ -90,7 +115,8 @@ class Reader implements OrchestrationReader {
       kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,
       sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,
       operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,
-      deliveryId:x.delivery_id??null,observationResult:x.observation_result??null} as OrchestrationSourceFact));
+      deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,
+      gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null} as OrchestrationSourceFact));
     return {items:items.slice(0,limit),nextCursor:items.length>limit?`${items[limit-1]!.createdAtUtc}|${items[limit-1]!.id}`:null};
   }
 }
@@ -117,24 +143,48 @@ class Tx extends Reader implements OrchestrationTransaction {
   async getSourceFact(id:string):Promise<OrchestrationSourceFact|null>{const r=await this.db.query(`SELECT e.event_id,e.created_at AS created_at_utc,e.kind,e.entity_id AS subject_id,e.version AS subject_version,
       NULL::uuid AS source_loop_id,NULL::uuid AS origin_dispatch_id,e.operation_id,
       CASE WHEN e.kind='observation.record' AND j.command_type='observation.record' AND j.result->>'status'='applied' THEN j.actor_id END AS source_actor_id,
-      o.observation_id,o.delivery_id,o.result AS observation_result
+      o.observation_id,o.delivery_id,o.result AS observation_result,NULL::uuid AS gap_run_id,NULL::integer AS gap_task_version
       FROM outbox_event e
       LEFT JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id AND e.kind='observation.record'
       LEFT JOIN consumer_observation o ON o.project_id=e.project_id AND o.observation_id::text=j.result->>'revisionId'
         AND o.task_id=e.entity_id AND o.actor_id=j.actor_id AND j.command_type='observation.record' AND j.result->>'status'='applied'
       WHERE e.project_id=$1 AND e.event_id=$2
     UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,e.entity_id,1,e.loop_id,NULL::uuid,
-      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text
+      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer
       FROM orchestration_event e JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
       WHERE e.project_id=$1 AND e.event_id=$2 AND e.event_id=(l.data->>'bootstrapEventId')::uuid AND e.kind='loop.enrolled'
     UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,d.version,e.loop_id,d.dispatch_id,
-      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text
+      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer
       FROM orchestration_event e JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
       JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
       WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='worker.outcome'
         AND e.detail->>'outcome' IN ('delivered','failed','waiting','no_action')
-        AND d.data->>'recipientRoleId'<>l.data->>'cognitiveRoleId'`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null}:null;}
+        AND d.data->>'recipientRoleId'<>l.data->>'cognitiveRoleId'
+    UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,(op.result->>'version')::integer,e.loop_id,d.dispatch_id,
+      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,
+      COALESCE((e.detail->>'runId')::uuid,(d.data->>'runtimeRunId')::uuid),
+      COALESCE((e.detail->>'taskVersion')::integer,d.task_version)
+      FROM orchestration_event e
+      JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
+      JOIN orchestration_operation op ON op.project_id=e.project_id AND op.operation_id=e.operation_id
+      JOIN runtime_run r ON r.project_id=d.project_id AND r.run_id=(d.data->>'runtimeRunId')::uuid
+      WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='dispatch.gap'
+        AND d.state='accepted' AND d.data->>'outcome' IS NULL AND r.state IN ('completed','failed','interrupted')
+        AND COALESCE((e.detail->>'runId')::uuid,r.run_id)=r.run_id
+        AND NOT EXISTS (SELECT 1 FROM orchestration_submission s WHERE s.project_id=d.project_id AND s.dispatch_id=d.dispatch_id)
+        AND NOT EXISTS (SELECT 1 FROM orchestration_decision w WHERE w.project_id=d.project_id AND w.dispatch_id=d.dispatch_id)
+        AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
+          AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
+        AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null}:null;}
   async getTaskFact(id:string):Promise<OrchestrationTaskFact|null>{const r=await this.db.query(`SELECT t.*,p.stage_id,s.goal_id FROM task t LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true LEFT JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.task_id,version:x.version,state:x.state,ownerRoleId:x.owner,goalId:x.goal_id??null,stageId:x.stage_id??null}:null;}
+  async getTaskScopeAtVersion(taskId:string,taskVersion:number){const r=await this.db.query(`SELECT tr.version,p.stage_id,s.goal_id FROM task_revision tr
+    LEFT JOIN LATERAL (SELECT proposal.stage_id FROM task_proposal proposal
+      JOIN task_revision pr ON pr.project_id=proposal.project_id AND pr.task_id=proposal.task_id AND pr.revision_id=proposal.task_revision_id
+      WHERE proposal.project_id=tr.project_id AND proposal.task_id=tr.task_id AND pr.version<=tr.version
+      ORDER BY pr.version DESC LIMIT 1) p ON true
+    LEFT JOIN project_stage s ON s.project_id=tr.project_id AND s.stage_id=p.stage_id
+    WHERE tr.project_id=$1 AND tr.task_id=$2 AND tr.version=$3`,[this.projectId,taskId,taskVersion]);
+    const x=r.rows[0];return x?{projectId:this.projectId,taskId,taskVersion:x.version,stageId:x.stage_id??null,goalId:x.goal_id??null}:null;}
   async getGoalFact(id:string){const r=await this.db.query("SELECT goal_id FROM project_goal WHERE project_id=$1 AND goal_id=$2",[this.projectId,id]);return r.rows[0]?{projectId:this.projectId,id,state:"active"}:null;}
   async getStageFact(id:string){const r=await this.db.query("SELECT stage_id,goal_id,state FROM project_stage WHERE project_id=$1 AND stage_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.stage_id,goalId:x.goal_id,state:x.state}:null;}
   getAuthorizationFact(scopeId:string){return this.authorization.getAuthorizationFact(this.projectId,scopeId);}
