@@ -1,10 +1,15 @@
 import type { Pool } from "pg";
+import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { WorkerIdentity } from "./types.js";
 import type { WorkerGuardFacts } from "./guard.js";
 
 /** Authorization facts are project-scoped reads of the authoritative records, not caller supplied labels. */
 export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGuardFacts {
   const scope = identity.scope;
+  // Only the public read contract is used here. No grant is supplied by this worker path.
+  const trustedSources = new PgOrchestrationStore(pool, {
+    getAuthorizationFact: async () => null, canActAsRole: async () => false, wasActorRole: async () => false,
+  });
   const one = async (sql: string, args: unknown[]) => (await pool.query(sql, [scope.projectId, ...args])).rows[0] ?? null;
   const loop = async () => (await one("SELECT data FROM orchestration_loop WHERE project_id=$1 AND loop_id=$2", [scope.loopId]))?.data ?? null;
   const task = async (taskId: string) => {
@@ -69,6 +74,7 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       JOIN task t ON t.project_id=l.project_id AND t.task_id=l.task_id
       JOIN process_document p ON p.project_id=l.project_id AND p.document_id=l.document_id
       WHERE l.project_id=$1 AND l.document_id=$2 AND p.adopted_revision_id=$3
+        AND p.status='published'
       LIMIT 21`, [scope.projectId, documentId, revisionId]);
     if (rows.rows.length > 20) return false;
     for (const row of rows.rows) if (await task(row.task_id)) return true;
@@ -86,6 +92,25 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       [ids, documentId, revisionId, scope.runId, scope.kind === "cognition"])) return true;
     return await adoptedLinkedDocument(documentId, revisionId) || await deliveredDocument(documentId, revisionId);
   };
+  const divisionBinding = async (bindingId: string) => !!await one(`SELECT 1 FROM runtime_role_binding b
+    JOIN orchestration_dispatch parent ON parent.project_id=b.project_id AND parent.dispatch_id=b.parent_dispatch_id
+    WHERE b.project_id=$1 AND b.binding_id=$2 AND b.loop_id=$3
+      AND (($4='cognition' AND parent.data->>'runtimeRunId'=$5 AND parent.task_id=$6)
+        OR ($4='business' AND EXISTS (SELECT 1 FROM orchestration_dispatch child
+          WHERE child.project_id=b.project_id AND child.binding_id=b.binding_id
+            AND child.data->>'runtimeRunId'=$5 AND child.task_id=$6
+            AND child.data->>'recipientRoleId'=$7))) LIMIT 1`,
+    [bindingId,scope.loopId,scope.kind,scope.runId,scope.taskId,scope.roleId]);
+  const divisionMaterial = async (documentId: string, revisionId: string) => !!await one(`SELECT 1
+    FROM runtime_role_binding b JOIN orchestration_dispatch parent
+      ON parent.project_id=b.project_id AND parent.dispatch_id=b.parent_dispatch_id
+    WHERE b.project_id=$1 AND b.loop_id=$2 AND b.document_id=$3 AND b.document_revision_id=$4
+      AND (($5='cognition' AND parent.data->>'runtimeRunId'=$6 AND parent.task_id=$7)
+        OR ($5='business' AND EXISTS (SELECT 1 FROM orchestration_dispatch child
+          WHERE child.project_id=b.project_id AND child.binding_id=b.binding_id
+            AND child.data->>'runtimeRunId'=$6 AND child.task_id=$7
+            AND child.data->>'recipientRoleId'=$8))) LIMIT 1`,
+    [scope.loopId,documentId,revisionId,scope.kind,scope.runId,scope.taskId,scope.roleId]);
   // Resolve the single gap that this cognition Run actually received. Current Task ownership is deliberately
   // absent: the original Task may have moved after its immutable dispatch/version was accepted.
   const recoveryGap = async () => {
@@ -161,22 +186,23 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
             AND b.task_revision_id=r.revision_id AND b.document_id=$4 AND b.document_revision_id=$5))
       LIMIT 1`, [gap.taskId, gap.taskRevisionId, documentId, revisionId]);
   };
-  const sourceIssueDocumentRevision = async (documentId: string, revisionId: string) => {
-    if (scope.kind !== "cognition") return false;
+  const sourceIssue = async (documentId: string) => {
+    if (scope.kind !== "cognition") return null;
     const enrolled = await loop();
-    if (!enrolled) return false;
-    return !!await one(`SELECT 1 FROM orchestration_dispatch dispatch
+    if (!enrolled) return null;
+    const original = await one(`SELECT revision.revision_id FROM orchestration_dispatch dispatch
       JOIN orchestration_inbox inbox ON inbox.project_id=dispatch.project_id AND inbox.inbox_id=dispatch.inbox_id
         AND inbox.loop_id=dispatch.loop_id AND inbox.purpose='cognitive_review'
       JOIN outbox_event event ON event.project_id=inbox.project_id AND event.event_id=inbox.source_event_id
         AND event.kind='document' AND event.version=1
       JOIN operation_journal operation ON operation.project_id=event.project_id AND operation.operation_id=event.operation_id
         AND operation.command_type='document.create' AND operation.result->>'status'='applied'
-        AND operation.result->>'entityId'=event.entity_id::text AND operation.result->>'revisionId'=$3::text
+        AND operation.result->>'entityId'=event.entity_id::text AND operation.result->>'version'='1'
       JOIN process_document document ON document.project_id=event.project_id AND document.document_id=event.entity_id
         AND document.kind='issue' AND document.origin_task_id IS NOT NULL
       JOIN document_revision revision ON revision.project_id=document.project_id AND revision.document_id=document.document_id
-        AND revision.revision_id=$3::uuid AND revision.previous_revision_id IS NULL AND revision.author=operation.actor_id
+        AND operation.result->>'revisionId'=revision.revision_id::text
+        AND revision.previous_revision_id IS NULL AND revision.author=operation.actor_id
       JOIN task_revision original ON original.project_id=document.project_id AND original.task_id=document.origin_task_id
         AND original.revision_id=document.origin_task_revision_id
       JOIN LATERAL (SELECT proposal.stage_id FROM task_proposal proposal JOIN task_revision proposal_revision
@@ -185,10 +211,31 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         WHERE proposal.project_id=original.project_id AND proposal.task_id=original.task_id
           AND proposal_revision.version<=original.version ORDER BY proposal_revision.version DESC LIMIT 1) fixed_scope ON true
       JOIN project_stage stage ON stage.project_id=original.project_id AND stage.stage_id=fixed_scope.stage_id
-      WHERE dispatch.project_id=$1 AND dispatch.loop_id=$4 AND dispatch.data->>'runtimeRunId'=$5
-        AND dispatch.data->>'recipientRoleId'=$6 AND document.document_id=$2
-        AND stage.goal_id=$7 AND ($8::uuid IS NULL OR stage.stage_id=$8::uuid) LIMIT 1`,
-      [documentId, revisionId, scope.loopId, scope.runId, scope.roleId, enrolled.goalId, enrolled.stageId]);
+      WHERE dispatch.project_id=$1 AND dispatch.loop_id=$3 AND dispatch.task_id=$8
+        AND dispatch.data->>'runtimeRunId'=$4 AND dispatch.data->>'recipientRoleId'=$5
+        AND dispatch.data->>'sourceEventId'=inbox.source_event_id::text AND document.document_id=$2
+        AND stage.goal_id=$6 AND ($7::uuid IS NULL OR stage.stage_id=$7::uuid) LIMIT 1`,
+      [documentId, scope.loopId, scope.runId, scope.roleId, enrolled.goalId, enrolled.stageId, scope.taskId]);
+    if (original) return original;
+    // A resume is a new orchestration event, not another Issue creation. Bind this
+    // credential to its exact dispatch/inbox, then use the PG reader's verified chain.
+    const current = await one(`SELECT inbox.source_event_id FROM orchestration_dispatch dispatch
+      JOIN orchestration_inbox inbox ON inbox.project_id=dispatch.project_id AND inbox.inbox_id=dispatch.inbox_id
+        AND inbox.loop_id=dispatch.loop_id AND inbox.purpose='cognitive_review'
+      WHERE dispatch.project_id=$1 AND dispatch.loop_id=$2 AND dispatch.task_id=$3
+        AND dispatch.data->>'runtimeRunId'=$4 AND dispatch.data->>'recipientRoleId'=$5
+        AND dispatch.data->>'sourceEventId'=inbox.source_event_id::text LIMIT 1`,
+      [scope.loopId, scope.taskId, scope.runId, scope.roleId]);
+    if (!current) return null;
+    const fact = await trustedSources.read(scope.projectId, reader => reader.getSourceFact(current.source_event_id));
+    return fact?.kind === "waiting.resumed" && fact.projectId === scope.projectId &&
+      fact.sourceLoopId === scope.loopId && fact.subjectId === documentId && fact.issueRevisionId &&
+      fact.originalSourceEventId && fact.waitingDecisionId ? {revision_id: fact.issueRevisionId} : null;
+  };
+  const sourceIssueDocumentRevision = async (documentId: string, revisionId: string) =>
+    (await sourceIssue(documentId))?.revision_id === revisionId;
+  const sourceIssueLinkedDocument = async (documentId: string) => {
+    return !!await sourceIssue(documentId);
   };
   return {
     loop: async id => id === scope.loopId ? loop() : null,
@@ -196,11 +243,12 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
     recoveryGap,
     recoveryDocument,
     sourceIssueDocumentRevision,
+    sourceIssueLinkedDocument,
     taskRevision: async (taskId, revisionId) => !!await task(taskId) && !!await one(
       "SELECT 1 FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [taskId, revisionId]),
     run: async id => {
-      const row = await one("SELECT task_id,session_id FROM runtime_run WHERE project_id=$1 AND run_id=$2", [id]);
-      return row ? {projectId: scope.projectId, taskId: row.task_id, sessionId: row.session_id} : null;
+      const row = await one("SELECT task_id,session_id,state FROM runtime_run WHERE project_id=$1 AND run_id=$2", [id]);
+      return row ? {projectId: scope.projectId, taskId: row.task_id, sessionId: row.session_id,state:row.state} : null;
     },
     delivery: async id => {
       const row = await one("SELECT task_id,run_id FROM delivery WHERE project_id=$1 AND delivery_id=$2", [id]);
@@ -221,6 +269,8 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         {projectId: scope.projectId, taskId: null, loopId: scope.loopId} : null;
     },
     fixedDocument,
+    divisionBinding,
+    divisionMaterial,
     ownedDocumentRevision: async (documentId, revisionId) => !!await one(`SELECT 1 FROM document_revision r
       JOIN process_document d ON d.project_id=r.project_id AND d.document_id=r.document_id
       WHERE r.project_id=$1 AND r.document_id=$2 AND r.revision_id=$3 AND r.author=$4 AND d.kind IN ('report','issue')`,

@@ -1,0 +1,194 @@
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import pg from "pg";
+import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
+import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
+import { WorkflowService } from "@evoloop/core";
+import { OrchestrationService } from "@evoloop/core/orchestration";
+import { buildServer } from "../../apps/coordinator/src/server.ts";
+import { authorizeWorkerCommand } from "../../apps/coordinator/src/workers/guard.ts";
+import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.ts";
+import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.ts";
+
+const connectionString = process.env.TEST_DATABASE_URL;
+if (!connectionString || !/evoloop.*test/i.test(new URL(connectionString).pathname))
+  throw new Error("worker source Issue PG test requires a dedicated evoloop_*_test database");
+const schema = `el_source_issue_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}` });
+const id = randomUUID;
+const projectId = id(), goalId = id(), stageId = id(), taskId = id(), taskRevisionId = id();
+const taskDocumentId = id(), taskDocumentRevisionId = id(), issueId = id(), issueRevisionId = id();
+const loopId = id(), inboxId = id(), dispatchId = id(), runId = id(), sessionId = id();
+const operationId = id(), sourceEventId = id(), actorId = "worker-original-business";
+const now = "2026-10-23T00:00:00Z";
+const identity: WorkerIdentity = { principal: { actorId: "worker-current-cognition", projectIds: [projectId], permissions: ["read", "write", "review"] },
+  scope: { projectId, loopId, taskId, runId, sessionId, roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", "builder"] } };
+
+before(async () => {
+  await migrate(connectionString, schema);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET CONSTRAINTS ALL DEFERRED");
+    await client.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'fixture',$2)", [projectId, now]);
+    await client.query(`INSERT INTO project_goal(project_id,goal_id,version,outcome,constraints,consumer,authority,scope,owner,actor_id,created_at)
+      VALUES($1,$2,1,'o','c','c','a','s','planner','fixture',$3)`, [projectId, goalId, now]);
+    await client.query(`INSERT INTO project_stage(project_id,stage_id,goal_id,version,deliverable,learning_question,state,actor_id,created_at)
+      VALUES($1,$2,$3,1,'d','q','active','fixture',$4)`, [projectId, stageId, goalId, now]);
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
+      VALUES($1,$2,'task',1,$3,'task','draft')`, [projectId, taskDocumentId, taskDocumentRevisionId]);
+    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,reason)
+      VALUES($1,$2,$3,'task','markdown',$4,'fixture',$5,'initial')`, [projectId, taskDocumentId, taskDocumentRevisionId, "a".repeat(64), now]);
+    await client.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,content_document_id,content_revision_id,
+      acceptance,owner,state) VALUES($1,$2,1,$3,'task',$4,$5,'accept','builder','todo')`,
+      [projectId, taskId, taskRevisionId, taskDocumentId, taskDocumentRevisionId]);
+    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,content_document_id,content_revision_id,
+      acceptance,owner,state,actor_id,reason,created_at) VALUES($1,$2,$3,1,'task',$4,$5,'accept','builder','todo','fixture','initial',$6)`,
+      [projectId, taskId, taskRevisionId, taskDocumentId, taskDocumentRevisionId, now]);
+    await client.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,evidence,stop_condition,created_at)
+      VALUES($1,$2,$3,$4,'owner',false,'evidence','stop',$5)`, [projectId, taskId, taskRevisionId, stageId, now]);
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status,
+      origin_task_id,origin_task_revision_id) VALUES($1,$2,'issue',1,$3,'issue','draft',$4,$5)`,
+      [projectId, issueId, issueRevisionId, taskId, taskRevisionId]);
+    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,reason)
+      VALUES($1,$2,$3,'issue','markdown',$4,$5,$6,'initial')`, [projectId, issueId, issueRevisionId, "b".repeat(64), actorId, now]);
+    await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,$3,'hash','document.create',$4,$5)`, [projectId, operationId, actorId,
+      JSON.stringify({ status: "applied", entityId: issueId, revisionId: issueRevisionId, version: 1 }), now]);
+    await client.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
+      VALUES($1,$2,$3,'document','document',$4,1,$5)`, [projectId, sourceEventId, operationId, issueId, now]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+
+  const orchestration = new OrchestrationService({store: new PgOrchestrationStore(pool, {
+    getAuthorizationFact: async () => null, canActAsRole: async () => false, wasActorRole: async () => false,
+  }), now: () => new Date(now).toISOString(), nextId: id,
+    hash: value => createHash("sha256").update(value).digest("hex")});
+  const reviewer = {actorId: "fixture", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review">};
+  const enrolled = await orchestration.execute(reviewer, {type: "loop.enroll", projectId, operationId: id(), loopId,
+    goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
+    sourceAfter: {createdAtUtc: "2026-10-22T23:59:59.000Z", eventId: null},
+    maxRuns: 1, maxConcurrent: 1, reason: "Fixed source Issue fixture"});
+  assert.equal(enrolled.entityId, loopId);
+  const loop = await orchestration.getLoop(reviewer, projectId, loopId);
+  const policyRevisionId = loop?.currentPolicyRevisionId;
+  assert.ok(policyRevisionId);
+
+  const dispatchClient = await pool.connect();
+  try {
+    await dispatchClient.query("BEGIN");
+    await dispatchClient.query("SET CONSTRAINTS ALL DEFERRED");
+    await dispatchClient.query(`INSERT INTO orchestration_inbox(project_id,inbox_id,loop_id,source_event_id,recipient_role_id,purpose,version,state,data)
+      VALUES($1,$2,$3,$4,'planner','cognitive_review',1,'acknowledged','{}')`, [projectId, inboxId, loopId, sourceEventId]);
+    await dispatchClient.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data,policy_revision_id,binding_id)
+      VALUES($1,$2,$3,$4,$5,1,1,'accepted',$6,$7,NULL)`, [projectId, dispatchId, loopId, inboxId, taskId,
+      JSON.stringify({ runtimeRunId: runId, recipientRoleId: "planner", sourceEventId,
+        policyRevisionId, bindingId: null }), policyRevisionId]);
+    await dispatchClient.query("COMMIT");
+  } catch (error) { await dispatchClient.query("ROLLBACK"); throw error; }
+  finally { dispatchClient.release(); }
+});
+after(async () => {
+  await pool.end();
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try { await client.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await client.end(); }
+});
+
+test("only the exact current dispatch source Issue can be linked, even before adoption", async () => {
+  const unrelatedIssueId = id(), unrelatedRevisionId = id(), unrelatedOperationId = id();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET CONSTRAINTS ALL DEFERRED");
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status,
+      origin_task_id,origin_task_revision_id) VALUES($1,$2,'other issue',1,$3,'issue','draft',$4,$5)`,
+      [projectId, unrelatedIssueId, unrelatedRevisionId, taskId, taskRevisionId]);
+    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,reason)
+      VALUES($1,$2,$3,'other issue','markdown',$4,$5,$6,'initial')`,
+      [projectId, unrelatedIssueId, unrelatedRevisionId, "c".repeat(64), actorId, now]);
+    await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,$3,'hash','document.create',$4,$5)`, [projectId, unrelatedOperationId, actorId,
+      JSON.stringify({ status: "applied", entityId: unrelatedIssueId, revisionId: unrelatedRevisionId, version: 1 }), now]);
+    await client.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
+      VALUES($1,$2,$3,'document','document',$4,1,$5)`, [projectId, id(), unrelatedOperationId, unrelatedIssueId, now]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  const command = (documentId: string) => ({ type: "task.create", projectId, operationId: id(),
+    taskId: id(), owner: "builder", stageId, documentIds: [documentId] });
+  const facts = workerGuardFacts(pool, identity);
+  assert.equal(await facts.sourceIssueDocumentRevision?.(issueId, issueRevisionId), true);
+  assert.equal(await authorizeWorkerCommand(identity, command(issueId), facts), true);
+  assert.equal(await authorizeWorkerCommand(identity, { ...command(issueId), type: "task.update", taskId, owner: "builder" }, facts), true);
+  assert.equal(await authorizeWorkerCommand(identity, command(unrelatedIssueId), facts), false);
+  assert.equal(await facts.sourceIssueDocumentRevision?.(unrelatedIssueId, unrelatedRevisionId), false);
+  assert.equal(await authorizeWorkerCommand(identity, command(id()), facts), false);
+  assert.equal(await authorizeWorkerCommand({ ...identity, scope: { ...identity.scope, kind: "business", roleId: "builder" } },
+    command(issueId), facts), false);
+  const otherRun = { ...identity, scope: { ...identity.scope, runId: id() } };
+  assert.equal(await authorizeWorkerCommand(otherRun, command(issueId), workerGuardFacts(pool, otherRun)), false);
+  assert.equal(await authorizeWorkerCommand({ ...identity, scope: { ...identity.scope, projectId: id() } },
+    command(issueId), facts), false);
+});
+
+test("scoped HTTP publishes original Issue, creates linked Tasks, and core start rejects adoption drift", async () => {
+  const owner = { actorId: "source-test-owner", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
+    clock: { now: () => now }, ids: { next: id },
+    hasher: { hash: (body: string) => createHash("sha256").update(body).digest("hex") } });
+  const app = await buildServer({ service: workflow, credentials: [{ token: "o".repeat(40), actorId: owner.actorId,
+    projectIds: [projectId], permissions: ["read", "write", "review"] }], workers: {
+    authenticate: async header => header === "Bearer fixture-worker" ? identity : null,
+    facts: worker => workerGuardFacts(pool, worker),
+  }});
+  const workerCommand = async (body: Record<string, unknown>) => app.inject({ method: "POST", url: "/api/commands",
+    headers: { authorization: "Bearer fixture-worker" }, payload: { projectId, operationId: id(), ...body } });
+  try {
+  const published = await workerCommand({ type: "document.publish", documentId: issueId,
+    expectedVersion: 1, revisionId: issueRevisionId, reason: "Accept observed original source" });
+  assert.equal(published.statusCode, 200, published.body);
+  assert.equal(published.json().status, "applied");
+  const childId = id();
+  const created = await workerCommand({ type: "task.create", taskId: childId,
+    stageId, title: "Fix source", content: "Use fixed issue", acceptance: "Verify repair", owner: "builder",
+    consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
+  assert.equal(created.statusCode, 200, created.body);
+  assert.equal(created.json().status, "applied");
+  const startedOriginal = await workflow.execute(owner, { type: "task.start", projectId, operationId: id(),
+    taskId: childId, expectedVersion: 1, basis: [{ documentId: issueId, revisionId: issueRevisionId }],
+    reason: "Seal original source" });
+  assert.equal(startedOriginal.status, "applied");
+  assert.equal((await workflow.getTask(owner, projectId, childId)).basis?.members.find(item =>
+    item.documentId === issueId)?.revisionId, issueRevisionId);
+  const laterChildId = id();
+  const laterChild = await workerCommand({ type: "task.create", taskId: laterChildId, stageId,
+    title: "Later follow-up", content: "Use original issue", acceptance: "Verify repair", owner: "builder",
+    consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
+  assert.equal(laterChild.statusCode, 200, laterChild.body);
+  const revised = await workflow.execute(owner, { type: "document.revise", projectId, operationId: id(),
+    documentId: issueId, expectedVersion: 2, body: "changed issue", reason: "New candidate" });
+  assert.equal(revised.status, "applied");
+  const candidate = await workflow.getDocument(owner, projectId, issueId);
+  const republished = await workflow.execute(owner, { type: "document.publish", projectId, operationId: id(),
+    documentId: issueId, expectedVersion: 3, revisionId: candidate.current.id, reason: "New adoption" });
+  assert.equal(republished.status, "applied");
+  const started = await workflow.execute(owner, { type: "task.start", projectId, operationId: id(),
+    taskId: laterChildId, expectedVersion: 1, basis: [{ documentId: issueId, revisionId: issueRevisionId }],
+    reason: "Pin original source" });
+  assert.equal(started.status === "rejected" ? started.code : null, "BASIS_CHANGED");
+  const child = await workflow.getTask(owner, projectId, laterChildId);
+  assert.equal(child.task.state, "todo");
+  assert.equal(child.basis, null);
+  const reopened = await workflow.execute(owner, { type: "task.reopen", projectId, operationId: id(),
+    taskId: childId, expectedVersion: 2, reason: "Repeat fixed-source work" });
+  assert.equal(reopened.status, "applied");
+  const inheritedStart = await workflow.execute(owner, { type: "task.start", projectId, operationId: id(),
+    taskId: childId, expectedVersion: 3, reason: "Reuse sealed source without review" });
+  assert.equal(inheritedStart.status === "rejected" ? inheritedStart.code : null, "BASIS_CHANGED");
+  const inherited = await workflow.getTask(owner, projectId, childId);
+  assert.equal(inherited.task.state, "todo");
+  assert.equal(inherited.basis?.members.find(item => item.documentId === issueId)?.revisionId, issueRevisionId);
+  } finally { await app.close(); }
+});

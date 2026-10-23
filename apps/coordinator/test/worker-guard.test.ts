@@ -53,11 +53,38 @@ test("worker route guard denies foreign reads and every unlisted write", async (
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages/${wikiId}?revision=${revisionId}&revision=${u()}` }, facts), false);
 });
 
+test("dynamic handoff reads stay on the worker's own binding and fixed material",async()=>{
+  const bindingId=u(),foreignBinding=u();
+  const bounded:WorkerGuardFacts={...facts,
+    divisionBinding:async id=>id===bindingId,
+    divisionMaterial:async(doc,revision)=>doc===documentId&&revision===revisionId,
+    fixedDocument:async()=>false,document:async()=>null};
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/orchestration/bindings/${bindingId}`},bounded),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/orchestration/bindings/${foreignBinding}`},bounded),false);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/original`},bounded),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/documents/${documentId}/revisions/${u()}/original`},bounded),false);
+  const thinker:WorkerIdentity={principal:worker.principal,scope:{...worker.scope,kind:"cognition",roleId:"planner",allowedRoleIds:["planner"]}};
+  assert.equal(await authorizeWorkerRequest(thinker,{method:"GET",path:`/api/projects/${projectId}/orchestration/loops/${loopId}/delegation-choices`},bounded),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/orchestration/loops/${loopId}/delegation-choices`},bounded),false);
+  const parent={projectId,id:parentDispatchId,loopId,taskId,sourceEventId:revisionId,runtimeRunId:runId};
+  const cognitionFacts={...bounded,dispatchForRun:async()=>parent,
+    run:async()=>({projectId,taskId,sessionId,state:"running" as const})};
+  const intention=command("division.decide",{loopId,parentDispatchId,sourceEventId:revisionId,
+    firstTaskId:taskId,documentId,documentRevisionId:revisionId});
+  assert.equal(await authorizeWorkerRequest(thinker,{method:"POST",path:"/api/orchestration/commands",body:intention},cognitionFacts),false,
+    "a future binding must not bootstrap access to its own evidence");
+  assert.equal(await authorizeWorkerRequest(thinker,{method:"POST",path:"/api/orchestration/commands",body:intention},
+    {...cognitionFacts,fixedDocument:async()=>true}),true);
+});
+
 test("cognitive worker owner, loop and dispatch boundaries", async () => {
   const thinker: WorkerIdentity = { principal: { ...worker.principal }, scope: { ...worker.scope, kind: "cognition", roleId: "planner", allowedRoleIds: ["planner", "builder"] } };
   assert.equal(await authorizeWorkerCommand(thinker, command("task.create", { taskId: u(), owner: "builder", stageId }), facts), true);
   assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/goals/${goalId}` }, facts), true);
   assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/stages/${stageId}/reviews` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/orchestration/loops/${loopId}/sources` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/orchestration/loops/${loopId}/sources` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/orchestration/loops/${u()}/sources` }, facts), false);
   assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `/api/projects/${projectId}/goals/${u()}` }, facts), false);
   assert.equal(await authorizeWorkerCommand(thinker, command("task.create", { taskId: u(), owner: "outside" }), facts), false);
   assert.equal(await authorizeWorkerCommand(thinker, command("dispatch.request", { taskId, inboxId, parentDispatchId, recipientRoleId: "builder" }), facts), true);
@@ -73,6 +100,23 @@ test("cognitive worker owner, loop and dispatch boundaries", async () => {
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${taskId}` }, paused), true);
   assert.equal(await authorizeWorkerCommand(worker, command("delivery.record", { taskId, runId }), paused), true);
   assert.equal(await authorizeWorkerCommand(thinker, command("dispatch.request", { taskId, inboxId, recipientRoleId: "builder" }), paused), false);
+});
+
+test("planning candidates require cognition, exact Task revision and one query parameter", async () => {
+  const thinker: WorkerIdentity = { principal: { ...worker.principal },
+    scope: { ...worker.scope, kind: "cognition", roleId: "planner", allowedRoleIds: ["planner", "builder"] } };
+  const path = `/api/projects/${projectId}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${revisionId}`;
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path}, facts), true);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path},
+    {...facts, loop: async () => ({projectId, state: "active", goalId, stageId: null,
+      cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"]})}), true);
+  assert.equal(await authorizeWorkerRequest(worker, {method: "GET", path}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: path.replace(taskId, u())}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: path.replace(revisionId, u())},
+    {...facts, taskRevision: async (_task, revision) => revision === revisionId}), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: `${path}&taskRevisionId=${revisionId}`}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: `${path}&all=true`}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: path.replace(`?taskRevisionId=${revisionId}`, "")}, facts), false);
 });
 test("a worker can verify the exact report revision it authored and cognition can read its Loop child", async () => {
   const report = u(), reportRevision = u(), child = u();
@@ -122,6 +166,7 @@ test("worker issue provenance is bound to its own Run; cognition reads and adopt
   const sourceFacts: WorkerGuardFacts = { ...facts,
     document: async () => null,
     sourceIssueDocumentRevision: async (doc, revision) => doc === issueId && revision === issueRevisionId,
+    sourceIssueLinkedDocument: async doc => doc === issueId,
   };
   assert.equal(await authorizeWorkerCommand(worker, command("document.create", {
     documentId: issueId, kind: "issue", origin: { taskId, runId }, title: "Problem", body: "Evidence",
@@ -143,4 +188,15 @@ test("worker issue provenance is bound to its own Run; cognition reads and adopt
   assert.equal(await authorizeWorkerCommand(thinker, command("document.publish", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), true);
   assert.equal(await authorizeWorkerCommand(thinker, command("document.adopt", { documentId: issueId, revisionId: laterRevisionId }), sourceFacts), false);
   assert.equal(await authorizeWorkerCommand(worker, command("document.adopt", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), false);
+  const create = command("task.create", { taskId: u(), owner: "builder", stageId, documentIds: [issueId] });
+  const update = command("task.update", { taskId, owner: "builder", documentIds: [issueId] });
+  assert.equal(await authorizeWorkerCommand(thinker, create, sourceFacts), true);
+  assert.equal(await authorizeWorkerCommand(thinker, update, sourceFacts), true);
+  assert.equal(await authorizeWorkerCommand(worker, create, sourceFacts), false);
+  for (const rejected of [u(), documentId]) {
+    assert.equal(await authorizeWorkerCommand(thinker, { ...create, documentIds: [rejected] }, sourceFacts), false);
+    assert.equal(await authorizeWorkerCommand(thinker, { ...update, documentIds: [rejected] }, sourceFacts), false);
+  }
+  assert.equal(await authorizeWorkerCommand(thinker, create,
+    { ...sourceFacts, sourceIssueLinkedDocument: async () => false }), false);
 });

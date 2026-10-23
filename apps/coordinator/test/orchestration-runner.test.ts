@@ -33,7 +33,9 @@ function fixture() {
   const dispatches: OrchestrationDispatch[] = [];
   const tasks = new Map<string, { version: number; state: "todo" | "in_progress";
     links?: { documentId: string }[]; basis?: object }>();
-  const documents = new Map<string, { status: "draft" | "published" | "archived"; adoptedRevisionId: string | null }>();
+  const documents = new Map<string, { status: "draft" | "published" | "archived"; adoptedRevisionId: string | null;
+    currentRevisionId?: string }>();
+  const documentHashes = new Map<string, string>();
   const taskStarts: Record<string, any>[] = [];
   const taskCreates: Record<string, any>[] = [];
   const documentReads: string[] = [];
@@ -50,6 +52,9 @@ function fixture() {
   const orchestration = {
     getOperation: async (_: Principal, _projectId: string, id: string) => { if (loseReadbackOnce) { loseReadbackOnce=false; throw new Error("RECEIPT_READ_LOST"); } return orchestrationOperations.get(id) ?? null; },
     getDispatch: async (_: Principal, _projectId: string, id: string) => dispatches.find(item => item.id === id) ?? null,
+    getInbox: async (_: Principal, _projectId: string, id: string) => inbox.find(item => item.id === id) ?? null,
+    getSubmissionForDispatch: async () => null,
+    getDecisionForDispatch: async () => null,
     listLoops: async () => ({ items: [loop], nextCursor: null }),
     getLoop: async () => loop,
     listSourceFacts: async () => ({ items: facts, nextCursor: null }),
@@ -108,14 +113,15 @@ function fixture() {
     getDocument: async (_: Principal, _projectId: string, id: string) => {
       documentReads.push(id);
       const document = documents.get(id); if (!document) throw new Error(`missing document ${id}`);
-      return { document: { id, ...document } };
+      return { document: { id, ...document }, adopted: document.adoptedRevisionId
+        ? { id: document.adoptedRevisionId, contentHash: documentHashes.get(id) } : null };
     },
     getOperation: async (_: Principal, _projectId: string, id: string) => operations.get(id) ?? null,
     getRuntimeSession: async (_: Principal, _projectId: string, id: string) => {
       const session = sessions.get(id); if (!session) throw new Error("missing session"); return session;
     },
     getRuntimeRun: async (_: Principal, _projectId: string, id: string) => {
-      const run = runs.get(id); if (!run) throw new Error("missing run"); return run;
+      const run = runs.get(id); if (!run) throw new Error("missing run"); return { projectId, ...run };
     },
     execute: async (_: Principal, command: Record<string, any>) => {
       commands.push(command.type);
@@ -152,7 +158,7 @@ function fixture() {
     sealSubmission: async () => sealStatus,
     now: () => currentTime, canWrite: () => true,
   };
-  return { loop, facts, inbox, dispatches, tasks, documents, taskStarts, taskCreates, documentReads, sessions, runs, commands, deps,
+  return { loop, facts, inbox, dispatches, tasks, documents, documentHashes, taskStarts, taskCreates, documentReads, sessions, runs, commands, deps,
     rejectSource: (id: string) => rejectedSources.add(id),
     advanceTime: (value:string) => { currentTime=value; },
     loseClaimResponse: (kind:"dispatch.claim"|"dispatch.reclaim") => { lostClaimResponse=kind; },
@@ -185,6 +191,77 @@ test("pause blocks new claims while an accepted terminal Run can settle", async 
   await runner.pump();
   assert.equal(f.dispatches[0]!.state, "completed");
   assert.equal(f.dispatches[0]!.outcome, "no_action");
+});
+
+test("signed waiting cognition settles without a gap and releases its requested child once", async () => {
+  const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "accepted"; parent.outcome = null; parent.deliveryId = null;
+  parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "requested" });
+  f.setSeal({ status: "decision", decisionId: loopIntentId("waiting-decision"), outcome: "waiting", reason: "Signed waiting decision" });
+  const childTaskId = loopIntentId("child-task"), childId = loopIntentId("child-dispatch");
+  const childInboxId = loopIntentId("child-inbox");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.inbox.push({ projectId, id: childInboxId, loopId, sourceEventId: parent.sourceEventId,
+    recipientRoleId: cognition, purpose: "next_action", version: 3, state: "disposed",
+    acknowledgedBy: principal.actorId, disposition: "dispatch", reason: null, evidenceRef: null,
+    dispatchId: childId, createdAtUtc: now, updatedAtUtc: now });
+  f.dispatches.push({ projectId, id: childId, version: 1, loopId,
+    inboxId: childInboxId, sourceEventId: parent.sourceEventId, taskId: childTaskId, taskVersion: 1,
+    parentDispatchId: parent.id, recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId,
+    state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null,
+    evidenceRef: null, reason: "signed dispatch request", requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now });
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 0);
+  f.runs.get(parent.runtimeRunId)!.state = "completed";
+  await runner.pump();
+  assert.equal(parent.state, "completed");
+  assert.equal(parent.outcome, "waiting");
+  assert.equal(parent.deliveryId, null);
+  assert.equal(f.commands.filter(type => type === "worker.outcome").length, 1);
+  assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 0);
+  assert.equal(f.dispatches[1]!.state, "dispatching");
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 1);
+  assert.equal(f.taskStarts.filter(item => item.taskId === childTaskId).length, 1);
+});
+
+test("terminal cognition with a signed child but no final declaration records a closure gap", async () => {
+  const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "accepted"; parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "completed" });
+  const childTaskId = loopIntentId("child-without-parent-declaration-task");
+  const childId = loopIntentId("child-without-parent-declaration-dispatch");
+  const childInboxId = loopIntentId("child-without-parent-declaration-inbox");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.inbox.push({ projectId, id: childInboxId, loopId, sourceEventId: parent.sourceEventId,
+    recipientRoleId: cognition, purpose: "next_action", version: 3, state: "disposed",
+    acknowledgedBy: principal.actorId, disposition: "dispatch", reason: null, evidenceRef: null,
+    dispatchId: childId, createdAtUtc: now, updatedAtUtc: now });
+  f.dispatches.push({ projectId, id: childId, version: 1, loopId, inboxId: childInboxId,
+    sourceEventId: parent.sourceEventId, taskId: childTaskId, taskVersion: 1, parentDispatchId: parent.id,
+    recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId,
+    state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null,
+    deliveryId: null, evidenceRef: null, reason: "signed dispatch request", requestedBy: principal.actorId,
+    createdAtUtc: now, updatedAtUtc: now });
+  await runner.pump();
+  assert.equal(parent.state, "accepted");
+  assert.equal(parent.outcome, null);
+  assert.equal(parent.deliveryId, null);
+  assert.match(parent.reason, /final declaration absent/);
+  assert.match(parent.reason, new RegExp(childId));
+  assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 1);
+  assert.equal(f.commands.filter(type => type === "worker.outcome").length, 0);
+  assert.equal(f.dispatches.find(item => item.id === childId)!.state, "dispatching");
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 1);
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 1);
+  assert.equal(f.taskStarts.filter(item => item.taskId === childTaskId).length, 1);
+  assert.equal(f.dispatches.filter(item => item.purpose === "next_action").length, 1);
 });
 
 test("unknown Run waits; terminal missing intent creates one recovery cognition after gap and restart", async () => {
@@ -282,6 +359,91 @@ test("existing Task basis is inherited without reading current linked adoption",
   assert.equal(task.state, "in_progress");
   assert.equal(Object.hasOwn(f.taskStarts[0]!, "basis"), false);
   assert.deepEqual(f.documentReads, []);
+});
+
+async function fixedIssueChild(sourceKind: "document" | "waiting.resumed" = "document") {
+  const f = fixture(), runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "accepted";
+  parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "completed" });
+  f.setSeal({ status: "decision", decisionId: loopIntentId("source-parent-decision"),
+    outcome: "waiting", reason: "fixed source follow-up" });
+  const childTaskId = loopIntentId("issue-child-task"), childInboxId = loopIntentId("issue-child-inbox");
+  const childId = loopIntentId("issue-child-dispatch");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.inbox.push({ projectId, id: childInboxId, loopId, sourceEventId: sourceId, recipientRoleId: cognition,
+    purpose: "next_action", version: 3, state: "disposed", acknowledgedBy: principal.actorId,
+    disposition: "dispatch", reason: null, evidenceRef: null, dispatchId: childId, createdAtUtc: now, updatedAtUtc: now });
+  const child: OrchestrationDispatch = { projectId, id: childId, version: 1, loopId, inboxId: childInboxId,
+    sourceEventId: sourceId, taskId: childTaskId, taskVersion: 1, parentDispatchId: parent.id,
+    recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId, state: "pending",
+    claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null,
+    evidenceRef: null, reason: "fixed issue child", requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now };
+  f.dispatches.push(child);
+  const sourceIssueId = loopIntentId("fixed-source-issue"), fixedRevisionId = loopIntentId("fixed-source-revision");
+  const contentHash = "b".repeat(64);
+  f.facts[0] = { projectId, id: sourceId, createdAtUtc: now, kind: sourceKind, subjectId: sourceIssueId,
+    subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: loopIntentId("source-operation"),
+    sourceActorId: "business-reporter", issueRevisionId: fixedRevisionId, issueContentHash: contentHash,
+    observationId: null, deliveryId: null, observationResult: null };
+  const task = f.tasks.get(child.taskId)!;
+  task.links = [{ documentId: sourceIssueId }];
+  f.documents.set(sourceIssueId, { status: "published", adoptedRevisionId: fixedRevisionId,
+    currentRevisionId: fixedRevisionId });
+  f.documentHashes.set(sourceIssueId, contentHash);
+  return { f, runner, child, task, sourceIssueId, fixedRevisionId, contentHash };
+}
+
+test("Issue child start pins the original source revision and waits for exact publication", async () => {
+  const { f, runner, child, task, sourceIssueId, fixedRevisionId } = await fixedIssueChild();
+  f.documents.set(sourceIssueId, { status: "draft", adoptedRevisionId: null, currentRevisionId: fixedRevisionId });
+  await runner.pump(); await runner.pump();
+  assert.equal(task.state, "todo");
+  assert.equal(f.taskStarts.length, 0);
+  assert.match(runner.status().faults[0]!.code, /LINKED_BASIS_UNPUBLISHED/);
+  f.documents.set(sourceIssueId, { status: "published", adoptedRevisionId: fixedRevisionId, currentRevisionId: fixedRevisionId });
+  await runner.pump();
+  assert.deepEqual(f.taskStarts[0]!.basis, [{ documentId: sourceIssueId, revisionId: fixedRevisionId }]);
+  assert.equal(f.taskStarts[0]!.taskId, child.taskId);
+});
+
+test("Issue child refuses missing link, later head or adoption, and mismatched existing basis", async () => {
+  for (const change of ["missing", "head", "adopted", "hash", "basis"] as const) {
+    const { f, runner, task, sourceIssueId, fixedRevisionId } = await fixedIssueChild();
+    if (change === "missing") task.links = [];
+    if (change === "head") f.documents.get(sourceIssueId)!.currentRevisionId = loopIntentId("later-head");
+    if (change === "adopted") f.documents.get(sourceIssueId)!.adoptedRevisionId = loopIntentId("later-adoption");
+    if (change === "hash") f.documentHashes.set(sourceIssueId, "c".repeat(64));
+    if (change === "basis") task.basis = { members: [{ documentId: sourceIssueId,
+      revisionId: loopIntentId("later-basis") }], retentions: [] };
+    await runner.pump(); await runner.pump();
+    assert.equal(task.state, "todo", change);
+    assert.equal(f.taskStarts.length, 0, change);
+    assert.match(runner.status().faults[0]!.code, /SOURCE_ISSUE_/, change);
+  }
+});
+
+test("Issue child inherits an existing basis only when it retains the original revision", async () => {
+  const { f, runner, task, sourceIssueId, fixedRevisionId } = await fixedIssueChild();
+  task.basis = { members: [{ documentId: sourceIssueId, revisionId: fixedRevisionId }], retentions: [] };
+  f.documents.get(sourceIssueId)!.adoptedRevisionId = loopIntentId("later-adoption");
+  await runner.pump(); await runner.pump();
+  assert.equal(task.state, "in_progress");
+  assert.equal(Object.hasOwn(f.taskStarts[0]!, "basis"), false);
+});
+
+test("resumed Issue child uses the same original and rejects a newer adoption", async () => {
+  const original = await fixedIssueChild("waiting.resumed");
+  await original.runner.pump(); await original.runner.pump();
+  assert.deepEqual(original.f.taskStarts[0]!.basis,
+    [{ documentId: original.sourceIssueId, revisionId: original.fixedRevisionId }]);
+  const changed = await fixedIssueChild("waiting.resumed");
+  changed.f.documents.get(changed.sourceIssueId)!.adoptedRevisionId = loopIntentId("new-adoption");
+  await changed.runner.pump(); await changed.runner.pump();
+  assert.equal(changed.task.state, "todo");
+  assert.match(changed.runner.status().faults[0]!.code, /SOURCE_ISSUE_CHANGED/);
 });
 
 test("more than 19 linked Documents blocks automatic Task start", async () => {
@@ -393,6 +555,62 @@ test("a verified issue creation seeds one cognition Task with its exact original
   assert.equal(f.taskCreates.length, 2);
 });
 
+test("trusted waiting resume opens a new cognition Run with the unchanged fixed Issue", async () => {
+  const f = fixture(), runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const previous = f.dispatches[0]!;
+  previous.state = "completed";
+  previous.runtimeRunId = loopIntentId(previous.id, "run");
+  previous.outcome = null;
+  const resumeId = loopIntentId("resume-source"), issueId = loopIntentId("resume-issue");
+  const revisionId = loopIntentId("resume-original-revision"), decisionId = loopIntentId("waiting-decision");
+  const resumed = { projectId, id: resumeId, createdAtUtc: "2026-10-23T00:01:00.000Z",
+    kind: "waiting.resumed", subjectId: issueId, subjectVersion: 1, sourceLoopId: loopId,
+    originDispatchId: previous.id, operationId: loopIntentId("resume-operation"), sourceActorId: "review-owner",
+    issueRevisionId: revisionId, issueContentHash: "d".repeat(64), observationId: null,
+    deliveryId: null, observationResult: null, waitingDecisionId: decisionId,
+    waitingRunId: previous.runtimeRunId, previousSourceEventId: sourceId,
+    originalSourceEventId: sourceId } as OrchestrationSourceFact;
+  f.facts.push(resumed);
+  await runner.pump();
+  assert.equal(f.taskCreates.some(item => String(item.content).includes(resumeId)), false);
+  previous.outcome = "waiting";
+  await runner.pump();
+  const cognitionTask = f.taskCreates.find(item => String(item.content).includes(resumeId));
+  assert.ok(cognitionTask);
+  assert.match(cognitionTask.content, new RegExp(`${issueId}/revisions/${revisionId}/original`));
+  assert.match(cognitionTask.content, new RegExp(decisionId));
+  await runner.pump();
+  const session = [...f.sessions.values()][0];
+  assert.ok(session);
+  session.state = "ready";
+  await runner.pump();
+  assert.match(f.lastInput()!, new RegExp(decisionId));
+  assert.match(f.lastInput()!, new RegExp(`${issueId} revision ${revisionId}`));
+});
+
+test("targeted scheduled todo enters cognition once with its existing Task identity", async () => {
+  const f = fixture();
+  const taskId = loopIntentId("scheduled-business-task"), eventId = loopIntentId("scheduled-source");
+  const scheduleId = loopIntentId("schedule"), revisionId = loopIntentId("schedule-revision");
+  f.tasks.set(taskId, { version: 1, state: "todo" });
+  f.facts.push({ projectId, id: eventId, createdAtUtc: "2026-10-23T00:01:00.000Z",
+    kind: "schedule.task.todo", subjectId: taskId, subjectVersion: 1,
+    sourceLoopId: loopId, originDispatchId: null, operationId: loopIntentId("schedule-operation"),
+    sourceActorId: "schedule:builder", observationId: null, deliveryId: null, observationResult: null,
+    scheduleId, scheduleRevisionId: revisionId, plannedAtUtc: "2026-10-23T00:01:00.000Z",
+    scheduleTargetLoopId: loopId, scheduleTargetStageId: stageId,
+    scheduleTaskRevisionId: loopIntentId("scheduled-task-revision") });
+  const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump(); await new ManagedLoopRunner(f.deps).pump();
+  assert.equal(f.inbox.filter(item => item.sourceEventId === eventId).length, 1);
+  const cognitionTask = f.taskCreates.find(command => String(command.content).includes(scheduleId));
+  assert.ok(cognitionTask);
+  assert.match(cognitionTask.content, new RegExp(taskId));
+  assert.match(cognitionTask.content, /reuse it for the next_action child dispatch/);
+  assert.equal(f.taskCreates.some(command => command.taskId === taskId), false);
+});
+
 test("missing Stage and exhausted budget become durable waiting inbox dispositions", async () => {
   const noStage = fixture(); noStage.loop.stageId = null;
   await new ManagedLoopRunner(noStage.deps).pump();
@@ -448,6 +666,28 @@ test("stopped dispatching intent without a Run becomes a durable unknown gap", a
   assert.equal(dispatch.state, "unknown");
   assert.equal(f.sessions.size, 0);
   assert.equal(f.runs.size, 0);
+});
+
+test("paused dynamic dispatch reconciles only its historical exact Run without a static profile", async () => {
+  const f=fixture();await new ManagedLoopRunner(f.deps).pump();
+  const dispatch=f.dispatches[0]!;
+  Object.assign(dispatch,{bindingId:loopIntentId("binding"),recipientRoleId:"dynamic-role",state:"dispatching",
+    claimToken:loopIntentId(dispatch.id,"claim-token")});
+  const runId=loopIntentId(dispatch.id,"run");
+  f.runs.set(runId,{id:runId,taskId:dispatch.taskId,state:"requested"});
+  f.loop.state="paused";
+  const historicalCalls:boolean[]=[];
+  const deps:ManagedLoopDependencies={...f.deps,controller:async(_project,role)=>
+      role===cognition?{principal,authorizationScopeId:scopeId,cwd:"/tmp/evoloop-test",
+        sandbox:"workspace-write",approvalPolicy:"on-request"}:null,
+    dynamicController:async(_dispatch,historical)=>{historicalCalls.push(historical===true);
+      return historical?{principal,authorizationScopeId:scopeId,cwd:"/tmp/evoloop-test",
+        sandbox:"workspace-write",approvalPolicy:"on-request"}:null;}};
+  await new ManagedLoopRunner(deps).pump();
+  assert.equal(dispatch.state,"accepted");
+  assert.deepEqual(historicalCalls,[true]);
+  assert.equal(f.sessions.size,0);
+  assert.equal(f.runs.size,1);
 });
 
 test("claim commit plus lost response and readback recovers next tick without another native Run", async () => {

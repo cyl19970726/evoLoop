@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { inTaskContext, nextAction, readableOutcome } from "../src/orchestration/summary.ts";
-import { taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
+import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/orchestration/summary.ts";
+import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
+import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111", loopId = "22222222-2222-4222-8222-222222222222";
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -99,6 +100,104 @@ test("three Task links select fixed history, runtime and delivery without crossi
   assert.equal(taskSectionFromHash(runtime,projectId,"55555555-5555-4555-8555-555555555555"),null);
   assert.equal(taskSectionFromHash(runtime,loopId,taskId),null);
   assert.equal(taskSectionFromHash(`${runtime}&tab=history`,projectId,taskId),"overview");
+});
+
+test("deep-linked delivery lands at its visible panel, while hidden or missing panels cannot claim a landing", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const calls:string[]=[];
+  const deliveryPanel={hidden:false,scrollIntoView:(options:{block:string})=>calls.push(options.block)} as HTMLElement;
+  const getElement=(id:string)=>id === `task-panel-${projectId}-${taskId}-current-delivery` ? deliveryPanel : null;
+  assert.equal(scrollToTaskSection(projectId,taskId,"delivery",undefined,getElement),true);
+  assert.deepEqual(calls,["start"]);
+  assert.equal(scrollToTaskSection(projectId,taskId,"runtime",undefined,getElement),false);
+  assert.equal(scrollToTaskSection(projectId,taskId,"history",loopId,()=>({...deliveryPanel,hidden:true}) as HTMLElement),false);
+  assert.deepEqual(calls,["start"]);
+});
+
+test("internal Task tab updates the URL so a later same-Task delivery link changes route and Back restores runtime", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const delivery=taskSectionHref(projectId,taskId,{tab:"delivery"});
+  const runtime=taskSectionHref(projectId,taskId,{tab:"runtime"});
+  const location={hash:delivery};
+  assert.equal(navigateTaskTab(projectId,taskId,"runtime",location),true);
+  assert.equal(location.hash,runtime);
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
+  assert.notEqual(location.hash,delivery,"the story link is now a real hash navigation");
+  location.hash=delivery;
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"delivery");
+  assert.equal(navigateTaskTab(projectId,taskId,"delivery",location),false);
+  location.hash=runtime;
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
+});
+
+test("story trigger uses formal source kind and leaves complete reasons to expanded evidence", () => {
+  const source=(kind:string)=>({kind} as OrchestrationSourceFact);
+  assert.match(sourceTriggerLabel(source("worker.outcome")),/工作结果/);
+  assert.match(sourceTriggerLabel(source("observation.record")),/实际使用反馈/);
+  assert.match(sourceTriggerLabel(source("dispatch.gap")),/缺少署名结果/);
+  assert.match(sourceTriggerLabel(undefined),/尚未读回/);
+  assert.doesNotMatch(sourceTriggerLabel(source("worker.outcome")),/[0-9a-f]{8}-[0-9a-f]{4}/);
+});
+
+test("loaded chain uses formal parent, outcome and sealed observation edges before stable time ties", () => {
+  const dispatch=(id:string,time:string,sourceEventId=id,parentDispatchId:string|null=null)=>
+    ({id,taskId:id,sourceEventId,parentDispatchId,createdAtUtc:time} as OrchestrationDispatch);
+  const first=dispatch("first","2026-10-23T09:00:00Z");
+  const business=dispatch("business","2026-10-23T10:00:00Z","from-first");
+  const feedback=dispatch("feedback","2026-10-23T08:00:00Z","use-report");
+  const gap=dispatch("gap","2026-10-23T11:00:00Z","from-feedback");
+  const unrelated=dispatch("unrelated","2026-10-23T09:30:00Z","shared-but-unverified");
+  const sources=[{id:"from-first",kind:"worker.outcome",originDispatchId:"first"},
+    {id:"use-report",kind:"observation.record",deliveryId:"fixed-delivery"},
+    {id:"from-feedback",kind:"dispatch.gap",originDispatchId:"feedback"}] as OrchestrationSourceFact[];
+  const submissions=[{dispatchId:"business",state:"sealed",deliveryId:"fixed-delivery"},
+    {dispatchId:"unrelated",state:"submitted",deliveryId:"other-delivery"}] as OrchestrationSubmission[];
+  const ordered=orderDispatches([gap,unrelated,feedback,business,first],sources,submissions);
+  assert.deepEqual(ordered.ordered.map(item=>item.id),["first","unrelated","business","feedback","gap"]);
+  assert.deepEqual([...ordered.hasLater].sort(),["business","feedback","first"]);
+  assert.equal(hasUnreadChainPages([{nextCursor:null},{nextCursor:"next"}]),true);
+  assert.equal(hasUnreadChainPages([{nextCursor:null},{nextCursor:null}]),false);
+});
+
+test("terminal intent gap requires its formal event; an old waiting instruction is never current", () => {
+  const gap={kind:"dispatch.gap",entityId:"dispatch-1"} as OrchestrationEvent;
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],undefined,undefined),true);
+  assert.equal(hasTerminalIntentGap("other",[gap],undefined,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[],undefined,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],{id:"submission"} as OrchestrationSubmission,undefined),false);
+  assert.equal(hasTerminalIntentGap("dispatch-1",[gap],undefined,{id:"decision"} as OrchestrationWorkerDecision),false);
+  const waiting={outcome:"waiting",state:"completed"} as OrchestrationDispatch;
+  assert.match(storyNextAction(undefined,waiting,undefined,false),/当时记录为等待/);
+  assert.match(storyNextAction(undefined,waiting,undefined,true),/已有正式来源或父子派发接续/);
+});
+
+test("human cognition title requires this dispatch's exact projection and never promotes an event UUID", () => {
+  const dispatch={id:"current",taskId:"task",purpose:"cognition"} as OrchestrationDispatch;
+  const source={kind:"observation.record"} as OrchestrationSourceFact;
+  const stale={dispatchId:"old",sourceTaskTitle:"Business report",sourceTaskId:"source"} as WorkTaskStatus;
+  const sourceBusiness={cognition:false} as WorkTaskStatus;
+  assert.doesNotMatch(storyTitle(dispatch,"Cognition: event 1234",source,stale,sourceBusiness,"固定报告目标"),/Business report|Cognition: event/);
+  assert.match(storyTitle(dispatch,"Cognition: event 1234",source,{...stale,dispatchId:"current"},sourceBusiness,"固定报告目标"),/Business report/);
+  assert.equal(storyTitle({...dispatch,purpose:"business"},"普通调研任务",source,undefined,undefined,"固定报告目标"),"普通调研任务");
+  const longGoal="固定目标".repeat(30);
+  const compact=storyTitle(dispatch,"Cognition: event 1234",source,undefined,undefined,longGoal);
+  assert.ok(compact.length < longGoal.length);
+  assert.ok(compact.endsWith("…"));
+  assert.equal(decisionHeading(false),"派发决定");
+  assert.equal(decisionHeading(true),"Worker 署名判定");
+});
+
+test("current chain summary separates signed stop, Agent use and unclosed business Task", () => {
+  const loop={state:"stopped"} as OrchestrationLoop;
+  const dispatch={id:"decision-dispatch",taskId:"business-task",purpose:"business",state:"completed",outcome:"no_action"} as OrchestrationDispatch;
+  const decision={id:"decision",dispatchId:dispatch.id,kind:"stop",createdAtUtc:"2026-10-23T12:00:00Z"} as OrchestrationWorkerDecision;
+  const submission={dispatchId:dispatch.id,state:"sealed",deliveryId:"delivery"} as OrchestrationSubmission;
+  const task={task:{id:dispatch.taskId,state:"in_progress"},closures:[],observations:[{deliveryId:"delivery",result:"used",observerKind:"agent"}]} as TaskDetail;
+  const lines=currentChainSummary(loop,[dispatch],[submission],[decision],[task],dispatch.taskId,true).join(" ");
+  assert.match(lines,/署名停止决定/);assert.match(lines,/Agent 使用/);assert.match(lines,/尚未登记验收/);
+  assert.doesNotMatch(lines,/人类使用记录/);
+  assert.doesNotMatch(currentChainSummary(loop,[dispatch],[submission],[decision],[task],dispatch.taskId,false).join(" "),/已按署名停止决定/);
+  assert.doesNotMatch(currentChainSummary(loop,[],[],[],[],dispatch.taskId).join(" "),/尚未登记验收|Agent 使用/);
 });
 
 test("task context and decision reads use scoped routes instead of scanning the first loop page", async () => {

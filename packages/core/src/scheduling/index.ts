@@ -31,25 +31,31 @@ export class SchedulingService {
   async tick(principal: Principal, projectId: string, nowUtc: string, authorizedScopeIds: readonly string[]): Promise<Occurrence[]> {
     authorize(principal, projectId);
     const results: Occurrence[] = [];
+    const errors: string[] = [];
     for (const schedule of await this.store.listActive(projectId)) {
-      const scope = schedule.revision.authorization;
-      if (!scope.scopeId || !scope.roleId || !scope.authorizedBy || !authorizedScopeIds.includes(scope.scopeId)) continue;
-      if (scope.expiresAtUtc && Date.parse(nowUtc) > Date.parse(scope.expiresAtUtc)) continue;
-      const queued = await this.store.listQueued(projectId, schedule.id);
-      for (const occurrence of queued) {
-        if (occurrence.revisionId !== schedule.currentRevisionId) continue; // Revision change requires explicit queued-work review.
-        if (await this.store.hasOpenOccurrence(projectId, schedule.id)) break;
-        results.push(await this.store.materialize(schedule, occurrence.plannedAtUtc, nowUtc, "created", "queued occurrence admitted"));
+      try {
+        const scope = schedule.revision.authorization;
+        if (!scope.scopeId || !scope.roleId || !scope.authorizedBy || !authorizedScopeIds.includes(scope.scopeId)) continue;
+        if (scope.expiresAtUtc && Date.parse(nowUtc) > Date.parse(scope.expiresAtUtc)) continue;
+        const queued = await this.store.listQueued(projectId, schedule.id);
+        for (const occurrence of queued) {
+          if (occurrence.revisionId !== schedule.currentRevisionId) continue; // Revision change requires explicit queued-work review.
+          if (await this.store.hasOpenOccurrence(projectId, schedule.id)) break;
+          results.push(await this.store.materialize(schedule, occurrence.plannedAtUtc, nowUtc, "created", "queued occurrence admitted"));
+        }
+        const due = computeDue(schedule.revision, schedule.watermarkUtc, nowUtc);
+        for (const plannedAtUtc of due.plannedAtUtc) {
+          const overlap = await this.store.hasOpenOccurrence(projectId, schedule.id);
+          const state = overlap ? schedule.revision.overlap === "queue" ? "queued" : "skipped" : "created";
+          results.push(await this.store.materialize(schedule, plannedAtUtc, nowUtc, state, overlap ? `overlap ${state}` : "scheduled"));
+        }
+        // A watermark is a decision about examined time, not evidence of task completion.
+        await this.store.advanceWatermark(projectId, schedule.id, schedule.version, due.checkedThroughUtc, `checked ${due.totalDue} slots; policy skipped ${due.skippedCount}`);
+      } catch (error) {
+        errors.push(`${schedule.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
-      const due = computeDue(schedule.revision, schedule.watermarkUtc, nowUtc);
-      for (const plannedAtUtc of due.plannedAtUtc) {
-        const overlap = await this.store.hasOpenOccurrence(projectId, schedule.id);
-        const state = overlap ? schedule.revision.overlap === "queue" ? "queued" : "skipped" : "created";
-        results.push(await this.store.materialize(schedule, plannedAtUtc, nowUtc, state, overlap ? `overlap ${state}` : "scheduled"));
-      }
-      // A watermark is a decision about examined time, not evidence of task completion.
-      await this.store.advanceWatermark(projectId, schedule.id, schedule.version, due.checkedThroughUtc, `checked ${due.totalDue} slots; policy skipped ${due.skippedCount}`);
     }
+    if (errors.length) throw new ScheduleAccessError(`schedule tick failed for ${errors.join("; ")}`);
     return results;
   }
 }

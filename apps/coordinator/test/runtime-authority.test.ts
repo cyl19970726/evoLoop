@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
-import { loadIntegrations } from "../src/configuration.js";
+import { delegationTemplateHash, loadIntegrations, runtimeThreadConfigForSession } from "../src/configuration.js";
 
 const projectId = randomUUID();
 const sessionId = randomUUID();
@@ -62,27 +62,91 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("session close command requires project review and exact execution grant", async () => {
-  let calls = 0, granted = true;
+test("a bound dynamic Session cannot fall back to the same Role's static grant after revocation", async () => {
+  let calls = 0, current = false;
+  const service = { ...workManagementQueries,
+    getRuntimeSession: async () => ({ projectId,id:sessionId,actorId:grant.actorId,roleId:grant.roleId,
+      authorizationScope:grant.authorizationScope,cwd:grant.cwd,sandbox:grant.sandbox }),
+    execute: async () => { calls++; return {status:"applied",operationId,entityId:sessionId,version:1}; },
+  } as unknown as WorkflowService;
+  const app = await buildServer({service,credentials:credentials as never,
+    runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,
+    hasRuntimeGrant:()=>true,allowedRuntimeCwd:async()=>true,
+    isDynamicSession:async()=>true,
+    authorizeDynamicSession:async()=>current,
+    authorizeDynamicRun:async()=>current});
+  try {
+    const reserveRun={type:"runtime.run.reserve",projectId,operationId:randomUUID(),sessionId,
+      runId:randomUUID(),taskId:randomUUID(),expectedVersion:1,input:"Bounded task"};
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,403);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,403);
+    assert.equal(calls,0);
+    current=true;
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,200);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,200);
+    assert.equal(calls,2);
+  } finally { await app.close(); }
+});
+
+test("dynamic network access follows the exact Session binding despite a colliding static or expired template",async()=>{
+  const spec={...grant,sessionId,model:"model",approvalPolicy:"on-request" as const};
+  const staticTrue=[{...grant,sandbox:"workspace-write" as const,networkAccess:true}];
+  assert.deepEqual(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},null),
+    {"sandbox_workspace_write.network_access":true});
+  const dynamic={isDynamicSession:async()=>true,networkAccessForSession:async()=>false};
+  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},dynamic),undefined);
+  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},
+    {...dynamic,networkAccessForSession:async()=>null}),undefined,
+    "an expired other template or revoked binding cannot supply network permission");
+  assert.deepEqual(await runtimeThreadConfigForSession([], {...spec,sandbox:"workspace-write"},
+    {...dynamic,networkAccessForSession:async()=>true}),{"sandbox_workspace_write.network_access":true});
+});
+
+test("session close requires project review but no requester execution grant", async () => {
+  let calls = 0, available = true;
   const service = { ...workManagementQueries,
     getRuntimeSession: async () => ({ id: sessionId, roleId: grant.roleId, authorizationScope: grant.authorizationScope,
       cwd: grant.cwd, sandbox: grant.sandbox }),
     execute: async () => { calls++; return { status: "applied", operationId, entityId: sessionId, version: 4 }; } } as unknown as WorkflowService;
-  const runtime = { status: () => ({ available: true, error: null }) } as RuntimeRunner;
+  const runtime = { status: () => ({ available, error: null }) } as RuntimeRunner;
   const app = await buildServer({ service, credentials: credentials as never, runtime,
-    hasRuntimeGrant: scope => granted && scope.projectId === projectId && scope.actorId === "reviewer" &&
-      scope.roleId === grant.roleId && scope.authorizationScope === grant.authorizationScope && scope.cwd === cwd && scope.sandbox === grant.sandbox });
+    hasRuntimeGrant: () => false });
   const payload = { type: "runtime.session.close", projectId, operationId, sessionId, expectedVersion: 3, reason: "Work complete" };
   try {
     assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${"w".repeat(40)}` }, payload })).statusCode, 403);
-    granted = false;
-    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 403);
-    granted = true;
+    available = false;
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 409);
+    available = true;
+    const reserve = { type: "runtime.run.reserve", projectId, operationId: randomUUID(), sessionId,
+      runId: randomUUID(), taskId: randomUUID(), expectedVersion: 1, input: "Still needs execution authority" };
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload: reserve })).statusCode, 403);
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload: command })).statusCode, 403);
     assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload: { ...payload, projectId: randomUUID() } })).statusCode, 403);
     assert.equal(calls, 0);
     assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 200);
     assert.equal(calls, 1);
   } finally { await app.close(); }
+});
+
+test("delegation template is explicit, versioned, canonical and cannot inherit a static Role grant", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-delegation-config-"));
+  try {
+    const file = join(directory, "integration.json"), loopId = randomUUID(), goalId = randomUUID();
+    const template = { id: randomUUID(), revision: 1, projectId, goalId, loopId,
+      existingRoleIds: [randomUUID()], cognitionRoleIds: [], newRoleAllocation: null, firstTaskId: randomUUID(),
+      actorId: "trial-worker", authorizationScopeId: "trial:one", decisionActorIds: ["cognition"],
+      allowedChoices: ["temporary-assignment"], cwd, model: "test-model", sandbox: "read-only",
+      networkAccess: false, approvalPolicy: "on-request", expiresAtUtc: "2030-01-01T00:00:00.000Z" };
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[grant],delegationTemplates:[template]}}));
+    const loaded = await loadIntegrations(file);
+    const selected = await loaded.getDelegationTemplate(projectId,template.id);
+    assert.equal(selected?.hash,delegationTemplateHash(template as never));
+    assert.equal(await loaded.getDelegationTemplate(randomUUID(),template.id),null);
+    assert.equal(await loaded.getDelegationTemplate(projectId,randomUUID()),null);
+    assert.equal(loaded.hasRuntimeGrant({...grant,roleId:template.existingRoleIds[0]}),false);
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[grant],delegationTemplates:[template,{...template,revision:2}]}}));
+    await assert.rejects(loadIntegrations(file),/Invalid integration configuration/);
+  } finally { await rm(directory,{recursive:true,force:true}); }
 });
 
 test("reviewer recovery endpoint is explicit and checks project authority", async () => {

@@ -56,12 +56,13 @@ const reads: Record<string, { path: string; modes: string[]; list?: boolean }> =
 const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
   loop: { path: "loops", modes: ["events"] }, inbox: { path: "inbox", modes: [] },
   dispatch: { path: "dispatches", modes: [] }, submission: { path: "submissions", modes: [] },
+  policy: { path: "policies", modes: [] }, binding: { path: "bindings", modes: [] },
 };
 const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSchema.options];
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
   commands: ["id", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
-    "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID]",
+    "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "document UUID --project UUID [--revision UUID]", "original DOCUMENT_UUID --project UUID --revision UUID [--out NEW_DIRECTORY]",
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
