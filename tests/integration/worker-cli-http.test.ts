@@ -142,6 +142,15 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await issue({type:"task.create",taskId:linkedTodoId,stageId,title:"Linked todo",content:"# Before start",acceptance:"Read source",
     owner:businessRole,documentIds:[linkedDocumentId],consumer:"fixture",evidence:"Linked source",stopCondition:"Read once"});
   assert.equal((await cli(wrapper,["original",linkedDocumentId,"--revision",linkedDocument.revisionId!])).body,linkedBody);
+  const linkedLater=await issue({type:"document.revise",documentId:linkedDocumentId,expectedVersion:2,
+    body:"# Later linked content",reason:"Owner changed source after cognition observed it"});
+  assert.equal((await cli(wrapper,["document",linkedDocumentId],1)).error?.code,"FORBIDDEN");
+  assert.equal((await cli(wrapper,["get",`/api/projects/${projectId}/documents/${linkedDocumentId}/revisions`],1)).error?.code,
+    "FORBIDDEN");
+  assert.equal((await cli(wrapper,["original",linkedDocumentId,"--revision",linkedDocument.revisionId!])).body,
+    linkedBody);
+  assert.equal((await cli(wrapper,["original",linkedDocumentId,"--revision",linkedLater.revisionId!],1)).error?.code,
+    "FORBIDDEN");
   const unadoptedId=randomUUID(),unadopted=await issue({type:"document.create",documentId:unadoptedId,title:"Draft input",body:"# Draft"});
   await issue({type:"task.create",taskId:randomUUID(),stageId,title:"Draft linked todo",content:"# Before start",acceptance:"Read",
     owner:businessRole,documentIds:[unadoptedId],consumer:"fixture",evidence:"Draft source",stopCondition:"Read once"});
@@ -162,9 +171,11 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(wrapper,["original",outsideDocumentId,"--revision",outsideDocument.revisionId!],1)).error?.code,
     "FORBIDDEN");
   const reportId=randomUUID();
-  await workerCommand(wrapper,{type:"document.create",documentId:reportId,kind:"report",title:"Worker report",body:"# Worker evidence"});
-  const report=await cli(wrapper,["document",reportId]);
-  assert.equal((await cli(wrapper,["original",reportId,"--revision",report.current.id])).body,"# Worker evidence");
+  const reportCreated=await workerCommand(wrapper,{type:"document.create",documentId:reportId,kind:"report",title:"Worker report",body:"# Worker evidence"});
+  const reportRevisionId=reportCreated.revisionId as string;
+  assert.ok(reportRevisionId);
+  assert.equal((await cli(wrapper,["document",reportId,"--revision",reportRevisionId])).body,"# Worker evidence");
+  assert.equal((await cli(wrapper,["original",reportId,"--revision",reportRevisionId])).body,"# Worker evidence");
   const childTaskId=randomUUID();
   await workerCommand(wrapper,{type:"task.create",taskId:childTaskId,stageId,title:"Bounded child action",content:"# Next",
     acceptance:"One check",owner:businessRole,consumer:"owner",evidence:"Source reviewed",stopCondition:"One action"});
@@ -242,15 +253,18 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await workerCommand(businessWrapper,{type:"task.create",taskId:randomUUID(),stageId,title:"Forbidden",
     content:"# No",acceptance:"No",owner:businessRole},1)).error?.code,"FORBIDDEN");
   const businessReportId=randomUUID(),businessReportBody="# Business delivery report\nFixed facts.";
-  await workerCommand(businessWrapper,{type:"document.create",documentId:businessReportId,kind:"report",
+  const businessReportCreated=await workerCommand(businessWrapper,{type:"document.create",documentId:businessReportId,kind:"report",
     title:"Business delivery report",body:businessReportBody});
-  const businessReport=await cli(businessWrapper,["document",businessReportId]);
+  const businessReportRevisionId=businessReportCreated.revisionId as string;
+  assert.ok(businessReportRevisionId);
+  assert.equal((await cli(businessWrapper,["document",businessReportId,"--revision",businessReportRevisionId])).body,
+    businessReportBody);
   const businessSubmissionId=randomUUID();
   assert.equal((await workerCommand(businessWrapper,{type:"worker.submit",submissionId:businessSubmissionId,
     dispatchId:childDispatch.entityId,runId:businessRunId,taskRevisionId:businessRun.revisionId,
     runInputHash:hash(businessInput),deliveryOperationId:randomUUID(),
-    deliveryIntent:{artifactRef:`#/p/${projectId}/documents/${businessReportId}?revision=${businessReport.current.id}`,
-      artifactRevision:businessReport.current.id,contentHash:hash(businessReportBody),technicalResult:"passed",
+    deliveryIntent:{artifactRef:`#/p/${projectId}/documents/${businessReportId}?revision=${businessReportRevisionId}`,
+      artifactRevision:businessReportRevisionId,contentHash:hash(businessReportBody),technicalResult:"passed",
       technicalEvidence:"Fixture report was written through worker CLI",reason:"Fixed report delivered"},
     agentObservation:"Fixture report recorded; no native execution",evidenceRefs:[]})).entityId,businessSubmissionId);
   const businessTerminal=await runtime.rejectDispatch(projectId,businessRunId,"Fixture terminal; no native Turn");
@@ -308,7 +322,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(continuationWorker.wrapperPath,["task",childTaskId],1)).error?.code,"FORBIDDEN");
   assert.equal((await cli(continuationWorker.wrapperPath,["original",newGoalLinkId,"--revision",newGoalLink.revisionId!],1)).error?.code,
     "FORBIDDEN");
-  assert.equal((await cli(continuationWorker.wrapperPath,["original",businessReportId,"--revision",businessReport.current.id])).body,
+  assert.equal((await cli(continuationWorker.wrapperPath,["original",businessReportId,"--revision",businessReportRevisionId])).body,
     businessReportBody);
   const newGoalLoopId=randomUUID(),newGoalTaskId=randomUUID(),newGoalSessionId=randomUUID(),newGoalRunId=randomUUID();
   await issue({type:"task.create",taskId:newGoalTaskId,stageId:outsideStageId,title:"New Goal cognition",
@@ -349,18 +363,23 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(newGoalWorker.wrapperPath,["task",childTaskId])).task.id,childTaskId);
   assert.equal((await cli(newGoalWorker.wrapperPath,["original",newGoalLinkId,"--revision",newGoalLink.revisionId!])).body,
     "# New Goal only");
-  assert.equal((await cli(newGoalWorker.wrapperPath,["original",businessReportId,"--revision",businessReport.current.id],1)).error?.code,
+  assert.equal((await cli(newGoalWorker.wrapperPath,["original",businessReportId,"--revision",businessReportRevisionId],1)).error?.code,
     "FORBIDDEN");
   const revisedReport=await issue({type:"document.revise",documentId:businessReportId,expectedVersion:1,
     body:"# Later report revision",reason:"Different bytes after fixed delivery"});
+  assert.equal((await cli(businessWrapper,["document",businessReportId],1)).error?.code,"FORBIDDEN");
+  assert.equal((await cli(businessWrapper,["get",`/api/projects/${projectId}/documents/${businessReportId}/revisions`],1)).error?.code,
+    "FORBIDDEN");
+  assert.equal((await cli(businessWrapper,["original",businessReportId,"--revision",businessReportRevisionId])).body,
+    businessReportBody);
   assert.equal((await cli(continuationWorker.wrapperPath,["document",businessReportId],1)).error?.code,"FORBIDDEN");
   assert.equal((await cli(continuationWorker.wrapperPath,["get",`/api/projects/${projectId}/documents/${businessReportId}/revisions`],1)).error?.code,
     "FORBIDDEN");
-  assert.equal((await cli(continuationWorker.wrapperPath,["original",businessReportId,"--revision",businessReport.current.id])).body,
+  assert.equal((await cli(continuationWorker.wrapperPath,["original",businessReportId,"--revision",businessReportRevisionId])).body,
     businessReportBody);
   assert.equal((await cli(continuationWorker.wrapperPath,["original",businessReportId,"--revision",revisedReport.revisionId!],1)).error?.code,
     "FORBIDDEN");
-  assert.equal((await cli(continuationWorker.wrapperPath,["original",reportId,"--revision",report.current.id],1)).error?.code,
+  assert.equal((await cli(continuationWorker.wrapperPath,["original",reportId,"--revision",reportRevisionId],1)).error?.code,
     "FORBIDDEN");
   assert.equal((await cli(businessWrapper,["original",businessReportId,"--revision",revisedReport.revisionId!],1)).error?.code,
     "FORBIDDEN");
@@ -429,7 +448,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     runtimeRunId:secondRunId,reason:"Second fixture Run bound"});
   const decisionWorker=await broker.issue({projectId,loopId:secondLoopId,taskId:secondTaskId,runId:secondRunId,
     sessionId:secondSessionId,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
-  assert.equal((await cli(decisionWorker.wrapperPath,["original",businessReportId,"--revision",businessReport.current.id],1)).error?.code,
+  assert.equal((await cli(decisionWorker.wrapperPath,["original",businessReportId,"--revision",businessReportRevisionId],1)).error?.code,
     "FORBIDDEN");
   const beforeStop=(await orchestration.getLoop(owner,projectId,secondLoopId))!;
   await orchestrate({type:"loop.state",loopId:secondLoopId,expectedVersion:beforeStop.version,state:"stopped",

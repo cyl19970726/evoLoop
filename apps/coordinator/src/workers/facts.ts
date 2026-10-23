@@ -111,7 +111,7 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       const own = await one("SELECT 1 FROM document_revision WHERE project_id=$1 AND document_id=$2 AND author=$3 LIMIT 1", [id, identity.principal.actorId]);
       if (linked || own) return {projectId: scope.projectId, taskId: own ? scope.taskId : null, loopId: scope.loopId};
       return await deliveredDocument(id) ?
-        {projectId: scope.projectId, taskId: null, loopId: scope.loopId, fixedOnly: true} : null;
+        {projectId: scope.projectId, taskId: null, loopId: scope.loopId} : null;
     },
     fixedDocument,
     ownedDocumentRevision: async (documentId, revisionId) => !!await one(`SELECT 1 FROM document_revision r

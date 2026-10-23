@@ -46,6 +46,8 @@ test("worker route guard denies foreign reads and every unlisted write", async (
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/original` }, facts), true);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${u()}/original` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/references/git/${gitId}` }, facts), true);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages/${wikiId}?revision=${revisionId}` }, facts), true);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages/${wikiId}?revision=${revisionId}&revision=${u()}` }, facts), false);
@@ -81,6 +83,8 @@ test("a worker can verify the exact report revision it authored and cognition ca
   const path = `/api/projects/${projectId}/documents/${report}/revisions/`;
   assert.equal(await authorizeWorkerRequest(worker, {method: "GET", path: `${path}${reportRevision}/original`}, own), true);
   assert.equal(await authorizeWorkerRequest(worker, {method: "GET", path: `${path}${u()}/original`}, own), false);
+  assert.equal(await authorizeWorkerRequest(worker, {method: "GET", path: `/api/projects/${projectId}/documents/${report}`}, own), false);
+  assert.equal(await authorizeWorkerRequest(worker, {method: "GET", path: `${path.slice(0,-1)}`}, own), false);
   const thinker = {...worker,scope:{...worker.scope,kind:"cognition" as const,roleId:"planner"}};
   assert.equal(await authorizeWorkerRequest(thinker, {method:"GET",path:`/api/projects/${projectId}/orchestration/dispatches/${child}`},own),true);
   assert.equal(await authorizeWorkerRequest(worker, {method:"GET",path:`/api/projects/${projectId}/orchestration/dispatches/${child}`},own),false);

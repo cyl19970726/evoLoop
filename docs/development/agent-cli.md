@@ -66,6 +66,8 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 受管 worker 使用原生输入提供的私有 wrapper，只带固定 Loop/Task/Run/Session 和职责的独立短期身份。运行期间读取 `context` 和固定原件，并在终态前通过 `worker.submit` 提交有署名的交付意图，或以 `worker.decision` 说明无动作、等待、失败或停止。终态回收者核对原身份、输入修订/hash、原 operation 与实际业务日志后封存 Delivery；提交人和封存人分别留证，final 摘要不代填交付。已终态或 unknown Run 不接受第一次补交；真正终态前已提交的同 ID 操作仍可回读。具体执行方式见仓库内 `.agents/skills/evoloop-workflow/references/managed-workers.md`。
 
+worker 读 Document 一律指定修订：`document ID --revision REV` 或 `original ID --revision REV`；无版本详情和修订列表被拒绝，自己曾写过或任务曾关联也不能借此读取别人后来改写的正文。新建报告直接使用 `document.create` 回执里的 `revisionId` 核对原文，普通负责人身份的文档入口不受这项 worker 限制。
+
 暂停/停止阻止新派发和原生启动，不撤销已经在途的有效凭据；既有运行可在原范围提交、回读和收尾。撤权或到期另行处理，结果不明保留原 ID。未署名、封存未知与缺少职责保留待处理证据，不凭 Run 完成自动 close Task。首片为每次派发建立独立 managed Session，尚未复用会话，也不自动创建永久 Role、桥接 Desktop 或完成长期分工研究。
 
 独立消费者的 `observation.record` 会经真实操作回执与 actor 核对后进入认知来源，按 Delivery 当时的固定 Task 修订、Stage 和 Goal 去重归属；生产者自报和本 Loop 认知自己的观察不算独立使用。认知可据技术失败等其它新证据采取授权内行动，独立观察只用于证明实际消费和效果。已知终态缺署名提交目前只记录缺口并释放并发；未知运行保持占用，自动形成缺口恢复任务仍待后续切片。

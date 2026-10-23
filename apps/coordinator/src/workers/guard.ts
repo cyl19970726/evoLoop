@@ -9,7 +9,7 @@ export interface WorkerGuardFacts {
   run(runId: string): Promise<(Fact & { taskId: string; sessionId: string }) | null>;
   delivery(deliveryId: string): Promise<(Fact & { taskId: string; runId: string | null }) | null>;
   inbox(inboxId: string): Promise<(Fact & { loopId: string; state: "pending" | "acknowledged" | "disposed" }) | null>;
-  document(documentId: string): Promise<(Fact & { taskId: string | null; loopId: string | null; fixedOnly?: boolean }) | null>;
+  document(documentId: string): Promise<(Fact & { taskId: string | null; loopId: string | null }) | null>;
   fixedDocument(taskId: string, documentId: string, revisionId: string): Promise<boolean>;
   ownedDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   fixedReference(taskId: string, kind: "git" | "wiki", referenceId: string, revisionId?: string): Promise<boolean>;
@@ -80,8 +80,9 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       if (!same(document, scope.projectId)) return false;
       if (parts.length >= 4 && id(parts[3])) return parts.length === 4 || parts[4] === "original" ?
         (await facts.fixedDocument(scope.taskId, parts[1], parts[3]) || await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true) : false;
-      if (document?.fixedOnly) return false;
-      return document?.taskId === scope.taskId || scope.kind === "cognition" && document?.loopId === scope.loopId;
+      // Every worker document read must bind a revision. A detail/list route can reveal a later
+      // current body even when an older authored, linked, or delivered revision is authorized.
+      return false;
     }
     if ((parts[0] === "operations" && parts.length === 2 && id(parts[1])) ||
         (parts[0] === "orchestration" && parts[1] === "operations" && parts.length === 3 && id(parts[2]))) {
