@@ -152,3 +152,38 @@ test("explicit terminal reconciliation requires review and the exact current ses
     assert.deepEqual(calls, [{ actorId: "reviewer", version: 4, reason: payload.reason }]);
   } finally { await app.close(); }
 });
+
+test("project read reviewer can inspect a bound trace without execution grant while reserve and reconcile stay denied", async () => {
+  const runId = randomUUID();
+  let reads = 0, mutations = 0;
+  const traceToken = "q".repeat(40);
+  const traceHeaders = { authorization: `Bearer ${traceToken}` };
+  const service = { ...workManagementQueries,
+    execute: async () => { mutations++; return { status: "applied" }; },
+    getRuntimeRun: async () => ({ id: runId, sessionId }),
+    getRuntimeSession: async () => ({ id: sessionId, roleId: grant.roleId, authorizationScope: grant.authorizationScope,
+      cwd: grant.cwd, sandbox: grant.sandbox }) } as unknown as WorkflowService;
+  const runtime = { status: () => ({ available: true, error: null }),
+    trace: async (_principal: unknown, _projectId: string, _runId: string, cursor?: string) => {
+      reads++; return { runId, cursor: cursor ?? null, source: "owned-native-history" };
+    } } as unknown as RuntimeRunner;
+  const app = await buildServer({ service, credentials: [...credentials,
+    { token: traceToken, actorId: "trace-reviewer", projectIds: [projectId], permissions: ["read", "review"] }] as never,
+    runtime, runtimeGrants: (_project, actor) => actor === "reviewer" ? [grant] : [], hasRuntimeGrant: scope => scope.actorId === "reviewer",
+    allowedRuntimeCwd: async () => true });
+  try {
+    const url = `/api/projects/${projectId}/runtime/runs/${runId}/trace`;
+    assert.equal((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${"w".repeat(40)}` } })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/api/projects/${randomUUID()}/runtime/runs/${runId}/trace`, headers: traceHeaders })).statusCode, 403);
+    const accepted = await app.inject({ method: "GET", url: `${url}?cursor=page-2`, headers: traceHeaders });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal(accepted.json().cursor, "page-2");
+    const reserve = await app.inject({ method: "POST", url: "/api/commands", headers: traceHeaders, payload: { ...command, operationId: randomUUID() } });
+    assert.equal(reserve.statusCode, 403);
+    const reconcile = await app.inject({ method: "POST", url: `/api/projects/${projectId}/runtime/runs/${runId}/reconcile`, headers: traceHeaders,
+      payload: { expectedVersion: 3, reason: "readback" } });
+    assert.equal(reconcile.statusCode, 403);
+    assert.equal(reads, 1);
+    assert.equal(mutations, 0);
+  } finally { await app.close(); }
+});

@@ -12,7 +12,7 @@ interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
 const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop"]);
-const switches = ["help", "history", "graph", "events", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
+const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
   return value!;
@@ -43,14 +43,14 @@ function mode(args: Args, names: string[]): string | undefined {
   if (selected.length > 1) throw new UsageError(`Choose one of ${names.map(key => `--${key}`).join(", ")}.`);
   return selected[0];
 }
-const readModes = ["events", "history", "revisions", "result", "occurrences", "reviews", "handoffs", "bindings"];
+const readModes = ["events", "history", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings"];
 const listPaths: Record<string, string> = { tasks: "tasks", documents: "documents", goals: "goals", stages: "stages", discussions: "discussions", roles: "roles",
   schedules: "schedules", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
 const orchestrationLists: Record<string, string> = { loops: "loops", inbox: "inbox", dispatches: "dispatches" };
 const reads: Record<string, { path: string; modes: string[]; list?: boolean }> = {
   goal: { path: "goals", modes: ["revisions"] }, stage: { path: "stages", modes: ["revisions", "reviews"] },
   discussion: { path: "discussions", modes: ["events"] }, role: { path: "roles", modes: ["revisions", "reviews", "handoffs", "bindings"], list: true },
-  schedule: { path: "schedules", modes: ["revisions", "occurrences"], list: true }, run: { path: "runtime/runs", modes: ["events", "result"] },
+  schedule: { path: "schedules", modes: ["revisions", "occurrences"], list: true }, run: { path: "runtime/runs", modes: ["events", "result", "trace"] },
   session: { path: "runtime/sessions", modes: ["events", "history"], list: true }, git: { path: "references/git", modes: [] }, references: { path: "references/tasks", modes: [] },
 };
 const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
@@ -66,7 +66,7 @@ const help = {
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
-    `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}]`,
+    `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor CURSOR for run --trace]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
     "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
@@ -203,7 +203,8 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   if (action === "candidate" || action === "operation") { check(args, 2, ["project"]); return client.get(`${prefix}/${action === "candidate" ? "knowledge/candidates" : "operations"}/${uuid(args.words[1], action)}`); }
   if (action === "read") {
-    check(args, 3, ["project", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
+    check(args, 3, ["project", "cursor", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
+    if (option(args, "cursor") && !(kind === "run" && selected === "trace")) throw new UsageError("--cursor applies only to read run --trace.");
     const orchestration = orchestrationReads[kind];
     if (orchestration) {
       if (selected && !orchestration.modes.includes(selected)) throw new UsageError("Unsupported orchestration read mode.");
@@ -216,7 +217,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       if (!found) throw new ReceiptError("OBJECT_NOT_FOUND", "Object was absent from this bounded authorized list; global absence is not proven.");
       return found;
     }
-    return client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}`);
+    return client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${option(args, "cursor") ? `?cursor=${encodeURIComponent(option(args, "cursor")!)}` : ""}`);
   }
   throw new UsageError("Unknown command; use help.");
 }
