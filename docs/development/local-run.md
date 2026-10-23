@@ -4,7 +4,11 @@
 
 ## 环境与启动
 
-使用 Node.js **24.x**、npm、PostgreSQL **18** 的独立数据库；备份工具 `pg_dump`/`pg_restore` 也须是 18.x。连接串、身份文件、外部 Blob 和 Wiki 正文均留在仓库外。先在 PostgreSQL 中建立专用空库及有建表权限的用户，然后安装、构建：
+使用 Node.js **24.x**、npm、PostgreSQL **18** 的独立数据库；备份工具 `pg_dump`/`pg_restore` 也须是 18.x。连接串、身份文件、外部 Blob 和 Wiki 正文均留在仓库外。
+
+**承载真实试用的 PostgreSQL 数据目录必须位于持久位置**，例如仓库外的专用应用数据目录；不要沿用 `mktemp`、`/tmp` 或 macOS `$TMPDIR` 中的一次性测试集群。开始保存真实材料前，由数据库管理者核对实际 `data_directory`（具权限时可执行 `SHOW data_directory`）、备份位置及隔离恢复结果；连接串和进程仍在并不能保证底层目录持久。临时实验转为连续试用前，先停写，备份并恢复到新的持久目录，再核数据与未决运行后切换。
+
+先在 PostgreSQL 中建立专用空库及有建表权限的用户，然后安装、构建：
 
 ```bash
 node --version
@@ -122,6 +126,8 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
   --blob-root /absolute/restored/evoloop-blobs
 # 含 Wiki 快照时还需 --wiki-snapshot-out /absolute/restored/wiki-export。
 ```
+
+若源数据库丢失或损坏，先保全残余文件、日志、原生运行与 CLI 回执，再在独立端口的新空库恢复；初次恢复不连接 coordinator、调度或 runner。备份仅覆盖其一致快照：备份后发生的成功响应、请求或原生结束记录须单独列出，不自动补成恢复库中的 Run、Decision 或操作历史。**恢复快照查不到某操作，不能按普通“未查到”路径重新提交**，因为提交记录本身可能已经丢失。预算也不能退回备份值后直接续跑；须核已消耗和未决派发，明确事故分界及接续范围。无法证明连续性时，记录本轮因存储丢失中断，不宣称无损恢复。
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 
