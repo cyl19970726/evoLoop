@@ -50,6 +50,8 @@ function fixture() {
   const orchestration = {
     getOperation: async (_: Principal, _projectId: string, id: string) => { if (loseReadbackOnce) { loseReadbackOnce=false; throw new Error("RECEIPT_READ_LOST"); } return orchestrationOperations.get(id) ?? null; },
     getDispatch: async (_: Principal, _projectId: string, id: string) => dispatches.find(item => item.id === id) ?? null,
+    getInbox: async (_: Principal, _projectId: string, id: string) => inbox.find(item => item.id === id) ?? null,
+    getSubmissionForDispatch: async () => null,
     listLoops: async () => ({ items: [loop], nextCursor: null }),
     getLoop: async () => loop,
     listSourceFacts: async () => ({ items: facts, nextCursor: null }),
@@ -115,7 +117,7 @@ function fixture() {
       const session = sessions.get(id); if (!session) throw new Error("missing session"); return session;
     },
     getRuntimeRun: async (_: Principal, _projectId: string, id: string) => {
-      const run = runs.get(id); if (!run) throw new Error("missing run"); return run;
+      const run = runs.get(id); if (!run) throw new Error("missing run"); return { projectId, ...run };
     },
     execute: async (_: Principal, command: Record<string, any>) => {
       commands.push(command.type);
@@ -185,6 +187,77 @@ test("pause blocks new claims while an accepted terminal Run can settle", async 
   await runner.pump();
   assert.equal(f.dispatches[0]!.state, "completed");
   assert.equal(f.dispatches[0]!.outcome, "no_action");
+});
+
+test("signed waiting cognition settles without a gap and releases its requested child once", async () => {
+  const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "accepted"; parent.outcome = null; parent.deliveryId = null;
+  parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "requested" });
+  f.setSeal({ status: "decision", decisionId: loopIntentId("waiting-decision"), outcome: "waiting", reason: "Signed waiting decision" });
+  const childTaskId = loopIntentId("child-task"), childId = loopIntentId("child-dispatch");
+  const childInboxId = loopIntentId("child-inbox");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.inbox.push({ projectId, id: childInboxId, loopId, sourceEventId: parent.sourceEventId,
+    recipientRoleId: cognition, purpose: "next_action", version: 3, state: "disposed",
+    acknowledgedBy: principal.actorId, disposition: "dispatch", reason: null, evidenceRef: null,
+    dispatchId: childId, createdAtUtc: now, updatedAtUtc: now });
+  f.dispatches.push({ projectId, id: childId, version: 1, loopId,
+    inboxId: childInboxId, sourceEventId: parent.sourceEventId, taskId: childTaskId, taskVersion: 1,
+    parentDispatchId: parent.id, recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId,
+    state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null,
+    evidenceRef: null, reason: "signed dispatch request", requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now });
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 0);
+  f.runs.get(parent.runtimeRunId)!.state = "completed";
+  await runner.pump();
+  assert.equal(parent.state, "completed");
+  assert.equal(parent.outcome, "waiting");
+  assert.equal(parent.deliveryId, null);
+  assert.equal(f.commands.filter(type => type === "worker.outcome").length, 1);
+  assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 0);
+  assert.equal(f.dispatches[1]!.state, "dispatching");
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 1);
+  assert.equal(f.taskStarts.filter(item => item.taskId === childTaskId).length, 1);
+});
+
+test("terminal cognition with a signed child but no final declaration records a closure gap", async () => {
+  const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "accepted"; parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "completed" });
+  const childTaskId = loopIntentId("child-without-parent-declaration-task");
+  const childId = loopIntentId("child-without-parent-declaration-dispatch");
+  const childInboxId = loopIntentId("child-without-parent-declaration-inbox");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.inbox.push({ projectId, id: childInboxId, loopId, sourceEventId: parent.sourceEventId,
+    recipientRoleId: cognition, purpose: "next_action", version: 3, state: "disposed",
+    acknowledgedBy: principal.actorId, disposition: "dispatch", reason: null, evidenceRef: null,
+    dispatchId: childId, createdAtUtc: now, updatedAtUtc: now });
+  f.dispatches.push({ projectId, id: childId, version: 1, loopId, inboxId: childInboxId,
+    sourceEventId: parent.sourceEventId, taskId: childTaskId, taskVersion: 1, parentDispatchId: parent.id,
+    recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId,
+    state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null,
+    deliveryId: null, evidenceRef: null, reason: "signed dispatch request", requestedBy: principal.actorId,
+    createdAtUtc: now, updatedAtUtc: now });
+  await runner.pump();
+  assert.equal(parent.state, "accepted");
+  assert.equal(parent.outcome, null);
+  assert.equal(parent.deliveryId, null);
+  assert.match(parent.reason, /final declaration absent/);
+  assert.match(parent.reason, new RegExp(childId));
+  assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 1);
+  assert.equal(f.commands.filter(type => type === "worker.outcome").length, 0);
+  assert.equal(f.dispatches.find(item => item.id === childId)!.state, "dispatching");
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.gap").length, 1);
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 1);
+  assert.equal(f.taskStarts.filter(item => item.taskId === childTaskId).length, 1);
+  assert.equal(f.dispatches.filter(item => item.purpose === "next_action").length, 1);
 });
 
 test("unknown Run waits; terminal missing intent creates one recovery cognition after gap and restart", async () => {
