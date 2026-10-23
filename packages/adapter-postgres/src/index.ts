@@ -153,7 +153,8 @@ class PgReader implements Reader {
       dispatch.data->>'purpose' AS purpose,dispatch.data->>'recipientRoleId' AS recipient_role_id,
       dispatch.data->>'outcome' AS outcome,loop.data->>'cognitiveRoleId' AS cognitive_role_id,loop.state AS loop_state,
       source_inbox.source_event_id,run.run_id,run.task_revision_id,run.state AS run_state,
-      CASE WHEN source_out.kind='observation.record' THEN source_observation.task_id
+      CASE WHEN source_out.kind='observation.record' AND source_delivery.delivery_id IS NOT NULL
+             AND source_delivery.actor_id<>source_observation.actor_id THEN source_observation.task_id
            WHEN source_out.kind='document' AND source_doc.kind='issue' THEN source_doc.origin_task_id
            WHEN source_event.kind IN ('worker.outcome','dispatch.gap') THEN source_dispatch.task_id
            ELSE NULL END AS source_task_id
@@ -185,16 +186,43 @@ class PgReader implements Reader {
       AND settled_op.operation_id=settled.operation_id AND settled_op.actor_id=settled.actor_id
       AND settled_op.result->>'entityId'=dispatch.dispatch_id::text
     LEFT JOIN outbox_event source_out ON source_out.project_id=source_inbox.project_id AND source_out.event_id=source_inbox.source_event_id
+    LEFT JOIN operation_journal source_op ON source_op.project_id=source_out.project_id
+      AND source_op.operation_id=source_out.operation_id AND source_op.result->>'status'='applied'
     LEFT JOIN consumer_observation source_observation ON source_observation.project_id=source_out.project_id
-      AND source_observation.observation_id=source_out.entity_id AND source_out.kind='observation.record'
+      AND source_observation.observation_id::text=source_op.result->>'revisionId'
+      AND source_observation.task_id=source_out.entity_id AND source_observation.actor_id=source_op.actor_id
+      AND source_op.command_type='observation.record'
+      AND source_out.kind='observation.record'
+    LEFT JOIN delivery source_delivery ON source_delivery.project_id=source_observation.project_id
+      AND source_delivery.delivery_id=source_observation.delivery_id
+      AND source_delivery.task_id=source_observation.task_id
     LEFT JOIN process_document source_doc ON source_doc.project_id=source_out.project_id AND source_doc.document_id=source_out.entity_id
+    LEFT JOIN document_revision source_revision ON source_revision.project_id=source_doc.project_id
+      AND source_revision.document_id=source_doc.document_id
+      AND source_revision.revision_id::text=source_op.result->>'revisionId'
+      AND source_revision.previous_revision_id IS NULL AND source_revision.author=source_op.actor_id
     LEFT JOIN orchestration_event source_event ON source_event.project_id=source_inbox.project_id AND source_event.event_id=source_inbox.source_event_id
     LEFT JOIN orchestration_dispatch source_dispatch ON source_dispatch.project_id=source_event.project_id AND source_dispatch.dispatch_id=source_event.entity_id
-    WHERE d.project_id=$1 AND d.decision_id=$2 LIMIT 1`,[this.projectId,decisionId]);
-    const x=r.rows[0];return x?{projectId:this.projectId,decisionId:x.decision_id,actorId:x.actor_id,kind:x.kind,
+    WHERE d.project_id=$1 AND d.decision_id=$2 AND (
+      (source_event.kind='loop.enrolled' AND source_event.loop_id=dispatch.loop_id
+        AND source_event.event_id=(loop.data->>'bootstrapEventId')::uuid)
+      OR (source_out.kind='observation.record' AND source_op.command_type='observation.record'
+        AND source_delivery.delivery_id IS NOT NULL AND source_delivery.actor_id<>source_observation.actor_id)
+      OR (source_out.kind='document' AND source_out.version=1 AND source_op.command_type='document.create'
+        AND source_doc.kind='issue' AND source_doc.origin_task_id IS NOT NULL AND source_revision.revision_id IS NOT NULL)
+      OR (source_event.kind IN ('worker.outcome','dispatch.gap') AND source_event.loop_id=dispatch.loop_id
+        AND source_dispatch.dispatch_id IS NOT NULL)
+    ) LIMIT 1`,[this.projectId,decisionId]);
+    const x=r.rows[0];
+    if (!x) return null;
+    const sourceTaskId: string | null = x.source_task_id ?? null;
+    const cognitionSource=sourceTaskId ? await this.client.query(`SELECT EXISTS(SELECT 1 FROM orchestration_dispatch
+      WHERE project_id=$1 AND task_id=$2 AND data->>'purpose'='cognition') AS yes`,[this.projectId,sourceTaskId]) : null;
+    return {projectId:this.projectId,decisionId:x.decision_id,actorId:x.actor_id,kind:x.kind,
       taskId:x.task_id,taskRevisionId:x.task_revision_id,runId:x.run_id,runState:x.run_state,dispatchId:x.dispatch_id,
-      loopId:x.loop_id,sourceInboxId:x.source_inbox_id,sourceEventId:x.source_event_id,sourceTaskId:x.source_task_id??null,
-      outcome:x.outcome,purpose:x.purpose,recipientRoleId:x.recipient_role_id,cognitiveRoleId:x.cognitive_role_id,loopState:x.loop_state} as CognitiveClosureFact:null;
+      loopId:x.loop_id,sourceInboxId:x.source_inbox_id,sourceEventId:x.source_event_id,sourceTaskId,
+      sourceTaskIsCognition:cognitionSource?.rows[0]?.yes === true,
+      outcome:x.outcome,purpose:x.purpose,recipientRoleId:x.recipient_role_id,cognitiveRoleId:x.cognitive_role_id,loopState:x.loop_state} as CognitiveClosureFact;
   }
   async getWaitingHandoffFact(inboxId:string):Promise<WaitingHandoffFact|null> {
     const r=await this.client.query(`SELECT i.inbox_id,i.loop_id,i.source_event_id,i.recipient_role_id,e.actor_id

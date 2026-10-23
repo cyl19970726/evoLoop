@@ -413,8 +413,8 @@ export async function applyWorkflow({
           throw new DomainError("DECISION_UNSETTLED", "close requires a settled, signed cognition Decision for this fixed Task revision");
         let waitingInboxId: string | null = null;
         if (fact.kind === "waiting") {
-          if (!c.waitingInboxId || !fact.sourceTaskId || fact.sourceTaskId === task.id || !await tx.getTask(fact.sourceTaskId))
-            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a discoverable source business Task and same-source waiting Inbox");
+          if (!c.waitingInboxId || !fact.sourceTaskId || fact.sourceTaskId === task.id || fact.sourceTaskIsCognition || !await tx.getTask(fact.sourceTaskId))
+            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a discoverable source business Task and same-source waiting Inbox; cognition Tasks are not business handoffs");
           const waiting = await tx.getWaitingHandoffFact?.(c.waitingInboxId);
           if (!waiting || waiting.projectId !== c.projectId || waiting.loopId !== fact.loopId ||
             waiting.sourceEventId !== fact.sourceEventId || waiting.recipientRoleId !== fact.cognitiveRoleId ||

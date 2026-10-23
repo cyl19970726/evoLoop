@@ -57,6 +57,8 @@ export interface CognitiveClosureFact {
   projectId: string; decisionId: string; actorId: string; kind: "no_action" | "waiting" | "stop" | "failed";
   taskId: string; taskRevisionId: string; runId: string; runState: "completed" | "failed" | "interrupted";
   dispatchId: string; loopId: string; sourceInboxId: string; sourceEventId: string; sourceTaskId: string | null;
+  /** Historical source Task was itself dispatched for cognition; it is not a business handoff. */
+  sourceTaskIsCognition: boolean;
   outcome: "no_action" | "waiting" | "failed"; purpose: string; recipientRoleId: string; cognitiveRoleId: string;
   loopState: "active" | "paused" | "stopped";
 }

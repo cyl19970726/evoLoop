@@ -46,7 +46,10 @@ BEGIN
     SELECT * INTO waited FROM orchestration_inbox WHERE project_id=NEW.project_id AND inbox_id=NEW.waiting_inbox_id;
     IF waited.inbox_id IS NULL OR waited.loop_id<>dispatched.loop_id OR waited.source_event_id<>NEW.source_event_id
       OR waited.purpose<>'next_action' OR waited.state<>'disposed' OR waited.data->>'disposition'<>'waiting'
-      OR NEW.source_task_id IS NULL OR NEW.source_task_id=NEW.task_id THEN
+      OR NEW.source_task_id IS NULL OR NEW.source_task_id=NEW.task_id
+      OR EXISTS(SELECT 1 FROM orchestration_dispatch source_dispatch
+        WHERE source_dispatch.project_id=NEW.project_id AND source_dispatch.task_id=NEW.source_task_id
+          AND source_dispatch.data->>'purpose'='cognition') THEN
       RAISE EXCEPTION 'waiting closure requires a discoverable same-source handoff' USING ERRCODE='23514';
     END IF;
   ELSIF NEW.waiting_inbox_id IS NOT NULL THEN

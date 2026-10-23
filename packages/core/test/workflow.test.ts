@@ -385,7 +385,7 @@ test("a settled cognition decision closes only its current Task revision; waitin
     const decisionId=f.operation(),sourceInboxId=f.operation(),sourceEventId=f.operation(),loopId=f.operation();
     f.uow.state.cognitiveClosureFact={projectId,decisionId,actorId:"signed-cognition",kind:"no_action",
       taskId:taskA,taskRevisionId:task.currentRevisionId,runId:f.operation(),runState:"completed",dispatchId:f.operation(),
-      loopId,sourceInboxId,sourceEventId,sourceTaskId:null,outcome:"no_action",purpose:"cognition",
+      loopId,sourceInboxId,sourceEventId,sourceTaskId:null,sourceTaskIsCognition:false,outcome:"no_action",purpose:"cognition",
       recipientRoleId:"cognition",cognitiveRoleId:"cognition",loopState:"active"};
     const close=(extra:Record<string,unknown>={})=>f.service.execute(principal,{type:"task.close",projectId,
       operationId:f.operation(),taskId:taskA,expectedVersion:task.version,decisionId,acceptanceResult:"met",
@@ -407,6 +407,9 @@ test("a settled cognition decision closes only its current Task revision; waitin
   const without=await waiting.close();
   assert.equal(without.status==="rejected"?without.code:null,"WAITING_HANDOFF_REQUIRED");
   waiting.f.uow.state.tasks[sourceTaskId]={...waiting.task,id:sourceTaskId};
+  waiting.f.uow.state.cognitiveClosureFact={...waiting.f.uow.state.cognitiveClosureFact!,sourceTaskIsCognition:true};
+  assert.equal((await waiting.close({waitingInboxId})).status,"rejected");
+  waiting.f.uow.state.cognitiveClosureFact={...waiting.f.uow.state.cognitiveClosureFact!,sourceTaskIsCognition:false};
   waiting.f.uow.state.waitingHandoffFact={projectId,inboxId:waitingInboxId,loopId:waiting.loopId,
     sourceEventId:waiting.sourceEventId,recipientRoleId:"cognition",disposition:"waiting",actorId:"signed-cognition"};
   const accepted=await waiting.close({waitingInboxId});
