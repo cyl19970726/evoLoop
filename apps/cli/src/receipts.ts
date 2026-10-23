@@ -3,6 +3,7 @@ import { link, mkdir, open, readFile, readdir, rename, rm, writeFile } from "nod
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { commandSchema, idSchema } from "@evoloop/contracts";
+import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { ApiClient, CliApiError } from "./client.js";
 
 type Json = Record<string, unknown>;
@@ -12,7 +13,12 @@ const canonical = (value: unknown): string => JSON.stringify(value, (_key, child
   return object ? Object.fromEntries(Object.keys(object).sort().map(key => [key, object[key]])) : child;
 });
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
-export interface Recovery { kind: "core" | "candidate" | "publish" | "manual"; path: string }
+const orchestrationCanonical = (value: unknown): string => JSON.stringify(value, (_key, child: unknown) => {
+  const object = record(child);
+  return object ? Object.fromEntries(Object.entries(object).sort(([a], [b]) => a.localeCompare(b))) : child;
+});
+const replayableOrchestration = new Set(["loop.enroll", "loop.state", "inbox.accept", "inbox.ack", "inbox.dispose", "dispatch.request", "worker.submit"]);
+export interface Recovery { kind: "core" | "orchestration" | "candidate" | "publish" | "manual"; path: string }
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
   confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover";
@@ -185,12 +191,19 @@ export async function retryReceipt(client: ApiClient, store: ReceiptStore, apiUr
     recovery: receipt.recovery, ...(receipt.targetId === undefined ? {} : { targetId: receipt.targetId }) };
   if (sha(canonical(intent)) !== receipt.requestHash)
     throw new ReceiptError("INVALID_RECEIPT", "Saved intent changed; preserve the original receipt and reconcile it.");
-  const command = commandSchema.safeParse(receipt.body);
-  if (receipt.path !== "/api/commands" || receipt.confirmation !== "command" || receipt.recovery.kind !== "core" ||
-    !receipt.operationId || receipt.recovery.path !== `/api/projects/${receipt.projectId}/operations/${receipt.operationId}` ||
-    !command.success || command.data.projectId !== receipt.projectId || command.data.operationId !== receipt.operationId ||
-    command.data.type !== receipt.kind || canonical(command.data) !== canonical(receipt.body))
-    throw new ReceiptError("RETRY_UNSUPPORTED", "Only a saved /api/commands intent can be replayed. External actions require their own reconciliation.");
+  const business = commandSchema.safeParse(receipt.body);
+  const orchestration = orchestrationCommandSchema.safeParse(receipt.body);
+  const ordinary = receipt.path === "/api/commands" && receipt.recovery.kind === "core" && business.success &&
+    receipt.recovery.path === `/api/projects/${receipt.projectId}/operations/${receipt.operationId}` &&
+    business.data.projectId === receipt.projectId && business.data.operationId === receipt.operationId &&
+    business.data.type === receipt.kind && canonical(business.data) === canonical(receipt.body);
+  const managed = receipt.path === "/api/orchestration/commands" && receipt.recovery.kind === "orchestration" && orchestration.success &&
+    receipt.recovery.path === `/api/projects/${receipt.projectId}/orchestration/operations/${receipt.operationId}` &&
+    orchestration.data.projectId === receipt.projectId && orchestration.data.operationId === receipt.operationId &&
+    orchestration.data.type === receipt.kind && replayableOrchestration.has(orchestration.data.type) &&
+    orchestrationCanonical(orchestration.data) === orchestrationCanonical(receipt.body);
+  if (receipt.confirmation !== "command" || !receipt.operationId || !ordinary && !managed)
+    throw new ReceiptError("RETRY_UNSUPPORTED", "Only an immutable transactional command can be explicitly replayed. Seal and external dispatch actions require reconciliation.");
   if (receipt.state !== "pending") return receipt;
   try { return await reconcileReceipt(client, store, apiUrl, token, id, actor); }
   catch (error) {
@@ -223,15 +236,28 @@ export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, a
     await store.update(receipt, { lastError: { code: "MANUAL_RECONCILIATION_REQUIRED", observation: observed } });
     throw pending(receipt, observed);
   }
-  const result = receipt.recovery.kind === "core" ? record(observed)?.result : receipt.recovery.kind === "publish" ? record(observed)?.result : observed;
-  if (receipt.recovery.kind === "core" && (record(observed)?.id !== receipt.operationId || record(observed)?.projectId !== receipt.projectId)) throw pending(receipt, observed);
+  const operation = record(observed);
+  const result = receipt.recovery.kind === "core" ? operation?.result : receipt.recovery.kind === "publish" ? operation?.result :
+    receipt.recovery.kind === "orchestration" ? (() => {
+      const stored = record(operation?.result);
+      return stored && typeof stored.entityId === "string" && typeof stored.version === "number" ?
+        { status: "applied", operationId: receipt.operationId, entityId: stored.entityId, revisionId: null, version: stored.version, replayed: stored.replayed } : null;
+    })() : observed;
+  if ((receipt.recovery.kind === "core" || receipt.recovery.kind === "orchestration") &&
+    (operation?.id !== receipt.operationId || operation.projectId !== receipt.projectId)) throw pending(receipt, observed);
   const command = receipt.path === "/api/commands" ? commandSchema.safeParse(receipt.body) : null;
   const expectedActor = receipt.actorId ?? actor?.actorId;
   if (receipt.recovery.kind === "core" && command?.success && expectedActor) {
-    const operation = record(observed);
     const expectedHash = sha(canonical({ actorId: expectedActor, command: command.data }));
     if (operation?.actorId !== expectedActor || operation.commandType !== command.data.type || operation.commandHash !== expectedHash)
       throw pending(receipt, { code: "OPERATION_INTENT_MISMATCH" });
+  }
+  if (receipt.recovery.kind === "orchestration") {
+    const managed = orchestrationCommandSchema.safeParse(receipt.body);
+    if (!managed.success || !expectedActor || operation?.actorId !== expectedActor ||
+        operation.commandHash !== sha(orchestrationCanonical(managed.data)) ||
+        managed.data.projectId !== receipt.projectId || managed.data.operationId !== receipt.operationId ||
+        managed.data.type !== receipt.kind) throw pending(receipt, { code: "OPERATION_INTENT_MISMATCH" });
   }
   if (rejected(receipt, result)) return store.update(receipt, { state: "rejected", result });
   if (confirmed(receipt, result)) return store.update(receipt, { state: "confirmed", result });

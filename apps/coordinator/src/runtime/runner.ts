@@ -71,6 +71,9 @@ export class RuntimeRunner {
     runtimeFactory(): ManagedRuntime; workflow: WorkflowService; trusted: RuntimeWorkflowService;
     principals: Principal[]; canWrite(): boolean; allowedCwd(projectId: string, cwd: string): Promise<boolean>;
     hasGrant(scope: RuntimeGrant): boolean;
+    /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
+    mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
+    mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
     readDocumentOriginal?: ReadDocumentOriginal;
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
@@ -182,9 +185,10 @@ export class RuntimeRunner {
   }
   private async create(session: RuntimeSessionRecord): Promise<void> {
     if (!this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
+    if (this.deps.mayCreateSession && !await this.deps.mayCreateSession(session)) return;
     await this.deps.trusted.beginSessionCreate(session.projectId, session.id);
     try {
-      const spec: RuntimeSessionSpec = { sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
+      const spec: RuntimeSessionSpec = { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
         cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
         approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}) };
       const binding = await this.runtime.create(spec);
@@ -381,6 +385,8 @@ export class RuntimeRunner {
 
   private async process(principal: Principal, original: RuntimeRunRecord): Promise<void> {
     if (!["requested", "running", "unknown"].includes(original.state)) return;
+    if (original.state === "requested" && !original.nativeTurnId && this.deps.mayDispatchRun &&
+      !await this.deps.mayDispatchRun(original)) return;
     const session = await this.deps.workflow.getRuntimeSession(principal, original.projectId, original.sessionId);
     if (session.state !== "ready") return;
     if (!this.authorized(session, original.actorId)) {
@@ -389,7 +395,7 @@ export class RuntimeRunner {
     }
     const binding = await this.restore(session);
     let run = original;
-    if (run.state === "requested") {
+    if (run.state === "requested" && !run.nativeTurnId) {
       let input: string;
       try {
         if (run.evaluationBinding) {
@@ -398,6 +404,8 @@ export class RuntimeRunner {
         } else input = (await this.input(principal, run)).input;
       }
       catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, error instanceof Error ? error.message : "Preflight failed"); return; }
+      // Recheck after preflight, immediately before recording the external-start intent.
+      if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return;
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
       try {
         const turn = await this.runtime.startTurn(binding, input, run.operationId);
