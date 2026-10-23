@@ -114,6 +114,52 @@ CREATE TRIGGER loop_policy_binding_validate BEFORE INSERT ON loop_policy_revisio
 -- The service inserts the event before its operation receipt, so provenance is
 -- checked at commit. Readers consume data JSON; it must describe the same fact
 -- as the indexed columns rather than a second, wider authority.
+CREATE FUNCTION finite_utc_instant(value jsonb) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF jsonb_typeof(value) IS DISTINCT FROM 'string' OR
+    value #>> '{}' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$' THEN
+    RETURN false; END IF;
+  RETURN isfinite((value #>> '{}')::timestamptz);
+EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN RETURN false;
+END $$;
+CREATE FUNCTION valid_delegation_snapshot(g jsonb, decided_at jsonb) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF jsonb_typeof(g) IS DISTINCT FROM 'object' OR NOT coalesce(g ?& ARRAY[
+    'id','revision','projectId','goalId','loopId','existingRoleIds','newRoleAllocation','firstTaskId',
+    'actorId','authorizationScopeId','decisionActorIds','allowedChoices','cwd','model','sandbox',
+    'networkAccess','approvalPolicy','expiresAtUtc'],false) OR
+    g - ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds','newRoleAllocation','firstTaskId',
+      'actorId','authorizationScopeId','decisionActorIds','allowedChoices','cwd','model','sandbox',
+      'networkAccess','approvalPolicy','expiresAtUtc'] <> '{}'::jsonb THEN RETURN false; END IF;
+  IF jsonb_typeof(g->'id') IS DISTINCT FROM 'string' OR jsonb_typeof(g->'revision') IS DISTINCT FROM 'number' OR
+    jsonb_typeof(g->'projectId') IS DISTINCT FROM 'string' OR jsonb_typeof(g->'goalId') IS DISTINCT FROM 'string' OR
+    jsonb_typeof(g->'loopId') IS DISTINCT FROM 'string' OR jsonb_typeof(g->'firstTaskId') IS DISTINCT FROM 'string' OR
+    jsonb_typeof(g->'existingRoleIds') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(g->'decisionActorIds') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(g->'allowedChoices') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(g->'actorId') IS DISTINCT FROM 'string' OR length(g->>'actorId') NOT BETWEEN 1 AND 100 OR
+    jsonb_typeof(g->'authorizationScopeId') IS DISTINCT FROM 'string' OR
+    length(g->>'authorizationScopeId') NOT BETWEEN 1 AND 4000 OR
+    jsonb_typeof(g->'cwd') IS DISTINCT FROM 'string' OR length(g->>'cwd') NOT BETWEEN 1 AND 1024 OR
+    left(g->>'cwd',1)<>'/' OR jsonb_typeof(g->'model') IS DISTINCT FROM 'string' OR
+    length(g->>'model') NOT BETWEEN 1 AND 100 OR
+    jsonb_typeof(g->'sandbox') IS DISTINCT FROM 'string' OR g->>'sandbox' NOT IN ('read-only','workspace-write') OR
+    jsonb_typeof(g->'networkAccess') IS DISTINCT FROM 'boolean' OR
+    jsonb_typeof(g->'approvalPolicy') IS DISTINCT FROM 'string' OR
+    g->>'approvalPolicy' NOT IN ('on-request','untrusted') OR
+    (g->'newRoleAllocation'<>'null'::jsonb AND g->'newRoleAllocation'<>
+      '{"maxTotal":1,"requiredState":"trial"}'::jsonb) OR
+    jsonb_array_length(g->'existingRoleIds')>20 OR jsonb_array_length(g->'decisionActorIds') NOT BETWEEN 1 AND 20 OR
+    jsonb_array_length(g->'allowedChoices') NOT BETWEEN 1 AND 3 THEN RETURN false; END IF;
+  IF EXISTS(SELECT 1 FROM jsonb_array_elements(g->'existingRoleIds') x WHERE jsonb_typeof(x)<>'string' OR
+      x #>> '{}' !~ '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$') OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements(g->'decisionActorIds') x WHERE jsonb_typeof(x)<>'string' OR
+      length(x #>> '{}') NOT BETWEEN 1 AND 100) OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements(g->'allowedChoices') x WHERE jsonb_typeof(x)<>'string' OR
+      x #>> '{}' NOT IN ('same-role-instance','temporary-assignment','new-role')) OR
+    NOT finite_utc_instant(g->'expiresAtUtc') OR NOT finite_utc_instant(decided_at) THEN RETURN false; END IF;
+  RETURN (g->>'expiresAtUtc')::timestamptz > (decided_at #>> '{}')::timestamptz;
+END $$;
 CREATE FUNCTION verify_division_binding() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE delegated_grant jsonb := NEW.data->'grant'; parent orchestration_dispatch%ROWTYPE;
   owner_loop orchestration_loop%ROWTYPE; observed_stage uuid; observed_goal uuid;
@@ -129,13 +175,7 @@ BEGIN
     'template',jsonb_build_object('id',NEW.template_id,'revision',NEW.template_revision,'hash',NEW.template_hash),
     'grant',delegated_grant,'runtime',NEW.data->'runtime','decidedBy',NEW.data->'decidedBy',
     'createdAtUtc',NEW.data->'createdAtUtc') OR
-    delegated_grant IS NULL OR jsonb_typeof(delegated_grant)<>'object' OR
-    NOT coalesce(delegated_grant ?& ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds',
-      'newRoleAllocation','firstTaskId','actorId','authorizationScopeId','decisionActorIds','allowedChoices',
-      'cwd','model','sandbox','networkAccess','approvalPolicy','expiresAtUtc'],false) OR
-    delegated_grant - ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds','newRoleAllocation',
-      'firstTaskId','actorId','authorizationScopeId','decisionActorIds','allowedChoices','cwd','model',
-      'sandbox','networkAccess','approvalPolicy','expiresAtUtc'] <> '{}'::jsonb OR
+    NOT valid_delegation_snapshot(delegated_grant,NEW.data->'createdAtUtc') OR
     delegated_grant->>'id' IS DISTINCT FROM NEW.template_id::text OR
     delegated_grant->>'revision' IS DISTINCT FROM NEW.template_revision::text OR
     delegated_grant->>'projectId' IS DISTINCT FROM NEW.project_id::text OR
@@ -144,18 +184,6 @@ BEGIN
     delegated_grant->>'firstTaskId' IS DISTINCT FROM NEW.first_task_id::text OR
     delegated_grant->>'actorId' IS DISTINCT FROM NEW.data->>'actorId' OR
     delegated_grant->>'authorizationScopeId' IS DISTINCT FROM NEW.data->>'authorizationScopeId' OR
-    jsonb_typeof(delegated_grant->'existingRoleIds') IS DISTINCT FROM 'array' OR
-    jsonb_typeof(delegated_grant->'decisionActorIds') IS DISTINCT FROM 'array' OR
-    jsonb_typeof(delegated_grant->'allowedChoices') IS DISTINCT FROM 'array' OR
-    jsonb_typeof(delegated_grant->'networkAccess') IS DISTINCT FROM 'boolean' OR
-    nullif(delegated_grant->>'cwd','') IS NULL OR left(delegated_grant->>'cwd',1)<>'/' OR
-    nullif(delegated_grant->>'model','') IS NULL OR
-    coalesce(delegated_grant->>'sandbox' NOT IN ('read-only','workspace-write'),true) OR
-    coalesce(delegated_grant->>'approvalPolicy' NOT IN ('on-request','untrusted'),true) OR
-    (delegated_grant->'newRoleAllocation'<>'null'::jsonb AND delegated_grant->'newRoleAllocation'<>
-      '{"maxTotal":1,"requiredState":"trial"}'::jsonb) OR
-    EXISTS(SELECT 1 FROM jsonb_array_elements_text(delegated_grant->'allowedChoices') choice
-      WHERE choice NOT IN ('same-role-instance','temporary-assignment','new-role')) OR
     NOT coalesce(delegated_grant->'decisionActorIds' ? (NEW.data->>'decidedBy'),false) OR
     NOT coalesce(delegated_grant->'allowedChoices' ? NEW.choice,false) OR
     (CASE WHEN NEW.choice='new-role' THEN delegated_grant->'newRoleAllocation' IS DISTINCT FROM

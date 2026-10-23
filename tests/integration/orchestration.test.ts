@@ -514,6 +514,21 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await allowsSql(client=>insertSignedFixture(client));
   await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{data.roleId=businessRole;}));
   await rejectsSql(client=>insertSignedFixture(client,b=>{b.runtime.cwd="/tmp/wider";}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{Reflect.deleteProperty(data.grant,"actorId");}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data,{actorId:null});Object.assign(data.grant,{actorId:null});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data,{authorizationScopeId:null});Object.assign(data.grant,{authorizationScopeId:null});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{model:123});Object.assign(data.runtime,{model:123});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:null});Object.assign(data.runtime,{expiresAtUtc:null});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:"2026-99-99T00:00:00Z"});
+    Object.assign(data.runtime,{expiresAtUtc:"2026-99-99T00:00:00Z"});}));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{
+    Object.assign(data.grant,{expiresAtUtc:"2020-01-01T00:00:00Z"});
+    Object.assign(data.runtime,{expiresAtUtc:"2020-01-01T00:00:00Z"});}));
   await rejectsSql(client=>insertSignedFixture(client,(_b,op)=>{op.entityType="dispatch";}));
   await rejectsSql(client=>insertSignedFixture(client,(b)=>{b.decidedBy="forged-actor";}));
   await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.parentDispatchId=cognition.entityId;event.parentDispatchId=b.parentDispatchId;}));
