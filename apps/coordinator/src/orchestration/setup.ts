@@ -11,6 +11,7 @@ import type { loadIntegrations } from "../configuration.js";
 import type { RuntimeRunner } from "../runtime/runner.js";
 import { WorkerCredentialBroker } from "../workers/credentials.js";
 import { workerGuardFacts } from "../workers/facts.js";
+import { authorizeWorkerRequest } from "../workers/guard.js";
 import { ManagedLoopRunner } from "./runner.js";
 import { createWorkerSealer } from "./seal.js";
 import { readWorkStatuses } from "./work-status.js";
@@ -87,6 +88,7 @@ export function setupManagedLoops(options: {
   pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
   canWrite(): boolean; now(): string; apiUrl: string; projectRoot: string; cliMain: string;
+  verifyProposalMaterial(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
 }) {
   const config = options.integrations.orchestration;
   if (!config?.enabled) return null;
@@ -133,7 +135,18 @@ export function setupManagedLoops(options: {
   const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
     hash: value => createHash("sha256").update(value).digest("hex"),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
-    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null});
+    getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
+    getTrialController: async (projectId, actorId) => actorId === controllerPrincipal.actorId &&
+      controllerPrincipal.projectIds.includes(projectId) ? controllerPrincipal : null,
+    verifyProposalMaterial: async (principal, projectId, documentId, revisionId, hash) => {
+      if (principal.actorId.startsWith("worker-")) {
+        const identity = await broker.identityForActor(principal.actorId);
+        if (!identity || !await authorizeWorkerRequest(identity, {method:"GET",
+          path:`/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/original`},
+          workerGuardFacts(options.pool,identity))) return false;
+      }
+      return options.verifyProposalMaterial(principal,projectId,documentId,revisionId,hash);
+    }});
   const dynamicController = async (dispatch: OrchestrationDispatch, historical = false) => {
     if (!dispatch.bindingId || !entry.projectIds.includes(dispatch.projectId)) return null;
     const binding = await orchestration.getBinding(controllerPrincipal, dispatch.projectId, dispatch.bindingId);

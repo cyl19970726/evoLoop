@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { createHash } from "node:crypto";
+import { PgRoleQueries } from "./roles.js";
+import type { Operation, OutboxEvent } from "@evoloop/contracts";
 import type { LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationDivisionDecisionFact, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import { scheduledSourceFacts } from "./schedule-source.js";
@@ -136,7 +138,10 @@ class Reader implements OrchestrationReader {
   async hasWaitingResume(decisionId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='waiting.resumed' AND entity_id=$2 LIMIT 1",[this.projectId,decisionId]);return !!r.rowCount;}
   async hasDivisionTransferConfirmed(dispatchId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='division.transferConfirmed' AND entity_type='dispatch' AND entity_id=$2 LIMIT 1",[this.projectId,dispatchId]);return !!r.rowCount;}
   async hasDivisionHandoffAck(dispatchId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='division.handoffAcknowledged' AND entity_type='dispatch' AND entity_id=$2 LIMIT 1",[this.projectId,dispatchId]);return !!r.rowCount;}
-  async hasInFlightRunForTask(taskId:string){const r=await this.db.query("SELECT 1 FROM runtime_run WHERE project_id=$1 AND task_id=$2 AND state IN ('requested','dispatching','running','unknown') LIMIT 1",[this.projectId,taskId]);return !!r.rowCount;}
+  async hasInFlightRunForTask(taskId:string){const r=await this.db.query(`SELECT 1 FROM runtime_run
+      WHERE project_id=$1 AND task_id=$2 AND state IN ('requested','dispatching','running','unknown')
+      UNION ALL SELECT 1 FROM orchestration_dispatch WHERE project_id=$1 AND task_id=$2
+        AND state IN ('pending','claimed','dispatching','accepted','unknown') LIMIT 1`,[this.projectId,taskId]);return !!r.rowCount;}
   async hasUnsettledDispatchForSource(loopId:string,sourceEventId:string,exceptDispatchId:string){const r=await this.db.query(`SELECT 1 FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2
     AND data->>'sourceEventId'=$3 AND dispatch_id<>$4 AND state IN ('pending','claimed','dispatching','accepted','unknown') LIMIT 1`,[this.projectId,loopId,sourceEventId,exceptDispatchId]);return !!r.rowCount;}
   listSubmissions(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationSubmission>("orchestration_submission","submission_id",limit,cursor,loopId);}
@@ -334,6 +339,15 @@ class Reader implements OrchestrationReader {
 }
 class Tx extends Reader implements OrchestrationTransaction {
   constructor(db:PoolClient,projectId:string,private readonly authorization:Authorization){super(db,projectId);}
+  roleTransaction(){return new PgRoleQueries(this.db,this.projectId);}
+  async insertWorkflowRoleOperation(operation:Operation,effect:OutboxEvent){
+    await this.db.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)`,[this.projectId,operation.id,operation.actorId,operation.commandHash,
+      operation.commandType,JSON.stringify(operation.result),operation.createdAt]);
+    await this.db.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[this.projectId,effect.id,effect.operationId,effect.effectKey,effect.kind,
+      effect.entityId,effect.version,effect.createdAt]);
+  }
   async insertOperation(x:OrchestrationOperation){await this.db.query("INSERT INTO orchestration_operation VALUES($1,$2,$3,$4,$5::jsonb,$6)",[this.projectId,x.id,x.actorId,x.commandHash,JSON.stringify(x.result),x.createdAtUtc]);}
   async insertLoop(x:OrchestrationLoop){await this.db.query("INSERT INTO orchestration_loop(project_id,loop_id,version,state,data,current_policy_revision_id) VALUES($1,$2,$3,$4,$5::jsonb,$6)",[this.projectId,x.id,x.version,x.state,JSON.stringify(x),x.currentPolicyRevisionId]);}
   async updateLoop(x:OrchestrationLoop,expectedVersion:number){await this.cas("orchestration_loop","loop_id",x.id,expectedVersion,x.version,x.state,x);await this.db.query("UPDATE orchestration_loop SET current_policy_revision_id=$3 WHERE project_id=$1 AND loop_id=$2",[this.projectId,x.id,x.currentPolicyRevisionId]);}
@@ -410,6 +424,10 @@ class Tx extends Reader implements OrchestrationTransaction {
 /** Live grants are injected by the coordinator; this store never turns persisted role names into authority. */
 export class PgOrchestrationStore implements OrchestrationStore {
   constructor(private readonly pool:Pool,private readonly authorization:Authorization){}
-  async transaction<T>(projectId:string,action:(tx:OrchestrationTransaction)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN");const locked=await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[projectId]);if(!locked.rowCount)throw new Error("PROJECT_NOT_FOUND");const result=await action(new Tx(client,projectId,this.authorization));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
+  async transaction<T>(projectId:string,action:(tx:OrchestrationTransaction)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN");
+    // WorkflowService takes this same project key before any Task CAS. Share it so the
+    // observed first Task cannot change between division checks and the Role commit.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",[projectId]);
+    const locked=await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[projectId]);if(!locked.rowCount)throw new Error("PROJECT_NOT_FOUND");const result=await action(new Tx(client,projectId,this.authorization));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
   async read<T>(projectId:string,action:(reader:OrchestrationReader)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN TRANSACTION READ ONLY");const result=await action(new Reader(client,projectId));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
 }

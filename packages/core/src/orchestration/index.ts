@@ -1,4 +1,5 @@
-import type { Principal } from "@evoloop/contracts";
+import type { Operation, OutboxEvent, Principal } from "@evoloop/contracts";
+import { applyRole, RoleRuleError } from "../roles/index.js";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
@@ -8,7 +9,9 @@ export class OrchestrationError extends Error {
 }
 export interface OrchestrationDependencies { store: OrchestrationStore; now(): string; nextId(): string; hash(value: string): string;
   getDelegationTemplate?(projectId: string, templateId: string): Promise<{template: DelegationTemplate; hash: string} | null>;
-  getWorkerScope?(actorId: string): Promise<{projectId: string; loopId: string; taskId: string; runId: string; roleId: string; kind: string} | null> }
+  getWorkerScope?(actorId: string): Promise<{projectId: string; loopId: string; taskId: string; runId: string; roleId: string; kind: string} | null>;
+  getTrialController?(projectId: string, actorId: string): Promise<Principal | null>;
+  verifyProposalMaterial?(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean> }
 const fail = (code: string, message: string, currentVersion?: number): never => { throw new OrchestrationError(code, message, currentVersion); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const cursorAfter = (a: { createdAtUtc: string; eventId: string }, b: { createdAtUtc: string; eventId: string | null }): boolean => Date.parse(a.createdAtUtc) > Date.parse(b.createdAtUtc) || (Date.parse(a.createdAtUtc) === Date.parse(b.createdAtUtc) && a.eventId > (b.eventId ?? ""));
@@ -203,7 +206,7 @@ export class OrchestrationService {
         (loop.stageId !== null && task.stageId !== loop.stageId)) return fail("TASK_CHANGED", "first Task and Loop scope must match");
       if (await tx.hasDivisionDecision(loop.id, command.sourceEventId, task.id)) return fail("ALREADY_EXISTS", "source and first Task already have a division decision");
       if (command.choice === "method") {
-        if (command.templateId || command.templateRevision || command.templateHash || command.roleId !== task.ownerRoleId)
+        if (command.templateId || command.templateRevision || command.templateHash || command.roleId !== task.ownerRoleId || command.proposedRole || command.expectedFirstTaskOwner)
           return fail("INVALID_POLICY", "method choice cannot allocate authority or alter Task owner");
         await event(loop.id, "decision", command.decisionId, "division.decided", { choice: command.choice, sourceEventId: source.id, parentDispatchId: parent.id, documentId: command.documentId, documentRevisionId: command.documentRevisionId, documentContentHash: command.documentContentHash, firstTaskId: task.id, firstTaskVersion: task.version, roleId: command.roleId, reason: command.reason });
         return result("decision", command.decisionId, 1);
@@ -224,6 +227,43 @@ export class OrchestrationService {
           return fail("DELEGATION_DENIED", "new Role allocation limit or boundary exceeded");
       } else if (!template.existingRoleIds.includes(command.roleId))
         return fail("DELEGATION_DENIED", "existing Role is outside delegated set");
+      if (command.proposedRole) {
+        const creation = template.newRoleAllocation?.creation;
+        if (command.choice !== "new-role" || !creation?.allowProposeAndAcceptTrial ||
+          !command.expectedFirstTaskOwner || task.ownerRoleId !== command.expectedFirstTaskOwner ||
+          command.proposedRole.firstTaskId !== task.id || task.state !== "todo" ||
+          command.proposedRole.trialDays > creation.maxTrialDays ||
+          Date.parse(command.proposedRole.reviewAtUtc) > Date.parse(template.expiresAtUtc) ||
+          await tx.hasInFlightRunForTask(task.id))
+          return fail("CREATION_DENIED", "new Role creation requires exact permitted trial, owner, idle todo Task and expiry");
+        const controller = await this.deps.getTrialController?.(loop.projectId, template.actorId);
+        if (!controller || controller.actorId !== template.actorId || !controller.projectIds.includes(loop.projectId) ||
+          !controller.permissions.includes("write") || !controller.permissions.includes("review"))
+          return fail("CREATION_DENIED", "configured controller must hold project review authority");
+        if (!await this.deps.verifyProposalMaterial?.(principal, loop.projectId, command.documentId,
+          command.documentRevisionId, command.documentContentHash))
+          return fail("MATERIAL_UNREADABLE", "researcher must be able to read the fixed original Document");
+        if (await tx.roleTransaction().getRole(command.roleId))
+          return fail("ROLE_ALREADY_EXISTS", "Role ID belongs to an earlier proposal; read its original operation");
+        try {
+          const proposeCommand = {type:"role.propose" as const,projectId:loop.projectId,
+            operationId:scheduleIdFor(this.deps.hash,`${command.operationId}:role.propose`),
+            roleId:command.roleId,proposal:command.proposedRole};
+          const proposed = await applyRole(tx.roleTransaction(), principal, proposeCommand,
+            {nowUtc:now,nextId:this.deps.nextId});
+          await this.roleOperation(tx, principal, proposeCommand, proposed, now);
+          const acceptCommand = {type:"role.decide" as const,projectId:loop.projectId,
+            operationId:scheduleIdFor(this.deps.hash,`${command.operationId}:role.decide`),
+            roleId:command.roleId,expectedVersion:1,
+            decision:"accept-trial" as const,reason:`Trial accepted under delegation template ${template.id} revision ${template.revision}; researcher ${principal.actorId}; division operation ${command.operationId}`};
+          const accepted = await applyRole(tx.roleTransaction(), controller, acceptCommand,
+            {nowUtc:now,nextId:this.deps.nextId});
+          await this.roleOperation(tx, controller, acceptCommand, accepted, now);
+        } catch (error) {
+          if (error instanceof RoleRuleError) return fail(error.code, error.message, error.currentVersion);
+          throw error;
+        }
+      } else if (command.expectedFirstTaskOwner) return fail("INVALID_COMMAND", "owner baseline only applies to a proposed Role");
       const roleState = await tx.getRoleState(command.roleId);
       if (!roleState || !["trial", "active"].includes(roleState.state) || !roleState.accepted ||
         (command.choice === "new-role" && (roleState.state !== "trial" || roleState.firstTaskId !== task.id)))
@@ -737,6 +777,19 @@ export class OrchestrationService {
     if (command.decisionId) { const decision = await tx.getDecision(command.decisionId); if (decision?.kind === "stop" && loop.state !== "stopped") { await tx.updateLoop({ ...loop, state: "stopped", version: loop.version + 1, updatedAtUtc: now }, loop.version); await event(loop.id, "loop", loop.id, "loop.stopped", { decisionId: decision.id, reason: decision.reason }); } }
     await event(loop.id, "dispatch", dispatch.id, "worker.outcome", { outcome: next.outcome, deliveryId: next.deliveryId, decisionId: command.decisionId, evidenceRef: next.evidenceRef, reason: command.reason });
     return result("dispatch", dispatch.id, next.version);
+  }
+
+  private async roleOperation(tx: OrchestrationTransaction, principal: Principal,
+    command: Extract<import("@evoloop/contracts/roles").RoleCommand,{type:"role.propose"|"role.decide"}>,
+    applied: import("../roles/index.js").RoleApplied, now: string): Promise<void> {
+    const operation: Operation = {projectId:command.projectId,id:command.operationId,actorId:principal.actorId,
+      commandHash:this.deps.hash(canonical({actorId:principal.actorId,command})),commandType:command.type,
+      result:{status:"applied",operationId:command.operationId,entityId:applied.entityId,
+        version:applied.version,revisionId:applied.revisionId},createdAt:now};
+    const effect: OutboxEvent = {projectId:command.projectId,id:this.deps.nextId(),operationId:command.operationId,
+      effectKey:`${command.projectId}:role:${applied.entityId}`,kind:"role",entityId:applied.entityId,
+      version:applied.version,createdAt:now};
+    await tx.insertWorkflowRoleOperation(operation,effect);
   }
 
   private async applySeal(
