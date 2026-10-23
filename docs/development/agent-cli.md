@@ -78,6 +78,10 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 管理员一次配置项目职责、目录、scope 与预算，再 `loop.enroll` 固定 Goal/Stage、起始事件基线、认知职责及允许的业务职责。循环不扫描并启动历史 todo。认知先读取真实依据，核对可复用的 Stage 待办；合适且无在途或 unknown Run 的 todo Task 可按观察到的版本申请子派发，不同工作才新建 Task。`cognitive_review` 与 `next_action` 分别承载同一来源的认知与后续动作，正式子派发在父最终决定前提出，引用父认知 Dispatch；父 Run 已知终态且封存副作用已知后即可执行，无需父报告或 Delivery。每项 Task 不需要人重新开始或预留。业务结果经独立来源订阅去重回到认知，不消费飞书投影的回执。
 
+真实执行轨迹的认知研究先由有项目 read/write/review 权限的非 worker 在当前 active Loop 上调用 `loop.studyMaterial.declare`。以 `command schema loop.studyMaterial.declare` 查看字段：声明一个来源 Task 的固定修订和最多十个已正式采纳的 Run decision ID，指定配置中的 controller actor，并用当前 Loop version 做 CAS。来源 Run 必须终态、Session ready，且当前执行 grant 仍允许读取；来源 Task 与被研究业务 Task 已正式完成并不妨碍声明。`read study DECLARATION_ID` 回读服务端解析出的 Run ID、目标 Task 修订和输入 hash，`read loop LOOP_ID --events` 回读声明与撤销。每个 Loop 同时只有一个当前声明；`loop.studyMaterial.revoke` 使用当前 version 撤销新读取权，保留历史 operation、decision 与固定引用。声明不重置执行预算。
+
+controller 为新的认知 inbox 自动创建 Task 后，把声明中的每项 Run 作为正式外部引用复制到该 Task 的精确修订，再按更新后的 Task version 请求派发。复制中断以同一 operation ID 恢复，不提前开 Run；复制不全、来源 slot 被替换、Session 关闭或 grant 撤销都会阻断新派发和新 trace 读取。未声明时仍按普通认知流程推进，但不会自动得到轨迹权限。普通 reviewer 直接执行 `reference.task` 正式采纳 Run 的既有语义保留；受管 worker 只能读自己 Run 固定 Task 修订实际包含、且仍有当前来源与自身执行权限的轨迹。新 slot、正文里的 UUID 和事后给自动 Task 补普通引用都不能扩大自动研究范围。
+
 自动执行中，Task 的 `documentIds` 选择所需过程输入。首次开始会显式封存这些文档的 published/adopted 修订；已有关联但未发布或归档的输入会阻断，不被静默忽略。已有 basis 沿用固定来源及保留决定。过程报告交付使用 `#/p/PROJECT_ID/documents/DOCUMENT_ID?revision=REVISION_ID` 固定入口，`artifactRevision` 与 `contentHash` 要和保存后回读的原文一致，供后续认知精确读取。
 
 受管 worker 使用原生输入提供的私有 wrapper，只带固定 Loop/Task/Run/Session 和职责的独立短期身份。运行期间读取 `context` 和固定原件，并在终态前通过 `worker.submit` 提交有署名的交付意图，或以 `worker.decision` 说明无动作、等待、失败或停止。终态回收者核对原身份、输入修订/hash、原 operation 与实际业务日志后封存 Delivery；提交人和封存人分别留证，final 摘要不代填交付。已终态或 unknown Run 不接受第一次补交；真正终态前已提交的同 ID 操作仍可回读。具体执行方式见仓库内 `.agents/skills/evoloop-workflow/references/managed-workers.md`。

@@ -1,5 +1,6 @@
 import { withObservedSources } from "./knowledge/observed-repository.js";
 import { readExternalMaterials } from "./references/materials.js";
+import { createReferenceDependencies } from "./references/routes.js";
 import { GitDocumentSource } from "@evoloop/adapter-git-documents";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -173,6 +174,9 @@ const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: 
 });
 await collaboration.start();
 const managed = setupManagedLoops({pool, workflow: service, runtime: runner, integrations, credentials,
+  runSessionAvailable,
+  referenceDependencies: principal => createReferenceDependencies({uow,gitForPrincipal,
+    knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable},principal),
   canWrite: lease.canWrite, now: clock.now, apiUrl: `http://127.0.0.1:${port}`,
   verifyProposalMaterial: async (principal, projectId, documentId, revisionId, hash) => {
     try {

@@ -1,10 +1,12 @@
 import type { Pool } from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import type { Principal } from "@evoloop/contracts";
+import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import type { OrchestrationDispatch } from "@evoloop/contracts/orchestration";
 import type { WorkflowService } from "@evoloop/core";
 import { OrchestrationService } from "@evoloop/core/orchestration";
+import { applyDeclaredStudyReference, type ReferenceDependencies } from "@evoloop/core/references";
+import type { StudyReferenceProvenance, TaskExternalReferenceCommand } from "@evoloop/contracts/references";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { AuthConfig } from "../auth.js";
 import type { loadIntegrations } from "../configuration.js";
@@ -89,6 +91,8 @@ export function setupManagedLoops(options: {
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
   canWrite(): boolean; now(): string; apiUrl: string; projectRoot: string; cliMain: string;
   verifyProposalMaterial(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
+  runSessionAvailable(projectId: string, run: RuntimeRunRecord, session: RuntimeSessionRecord): Promise<boolean>;
+  referenceDependencies(principal: Principal): Promise<ReferenceDependencies>;
 }) {
   const config = options.integrations.orchestration;
   if (!config?.enabled) return null;
@@ -136,6 +140,12 @@ export function setupManagedLoops(options: {
     hash: value => createHash("sha256").update(value).digest("hex"),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
     getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
+    canReadStudySourceRun: async (principal, projectId, runId) => {
+      if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read")) return false;
+      const run = await options.workflow.getRuntimeRun(principal, projectId, runId).catch(() => null);
+      const session = run ? await options.workflow.getRuntimeSession(principal, projectId, run.sessionId).catch(() => null) : null;
+      return !!run && !!session && await options.runSessionAvailable(projectId, run, session);
+    },
     canReadDivisionMaterial: async (actorId, documentId, revisionId) => {
       const identity = await broker.identityForActor(actorId);
       if (!identity || identity.scope.kind !== "cognition") return false;
@@ -176,6 +186,8 @@ export function setupManagedLoops(options: {
       : (await controller(projectId, roleId))?.principal ?? null, now: options.now});
   const runner = new ManagedLoopRunner({projects: entry.projectIds, reader: projectId => entry.projectIds.includes(projectId) ? controllerPrincipal : null,
     controller, dynamicController, workflow: options.workflow, orchestration, runtime: options.runtime,
+    applyStudyReference: async (principal:Principal, command:TaskExternalReferenceCommand, provenance:StudyReferenceProvenance) =>
+      applyDeclaredStudyReference(await options.referenceDependencies(principal), principal, command, provenance),
     credential: {lookup: runId => broker.lookup(runId), issue: async scope => {
       const loop = await orchestration.getLoop(controllerPrincipal, scope.projectId, scope.loopId);
       if (loop?.state !== "active") throw new Error("Loop no longer active; no new credential issued");

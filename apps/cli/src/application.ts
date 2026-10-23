@@ -57,6 +57,7 @@ const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
   loop: { path: "loops", modes: ["events"] }, inbox: { path: "inbox", modes: [] },
   dispatch: { path: "dispatches", modes: [] }, submission: { path: "submissions", modes: [] },
   policy: { path: "policies", modes: [] }, binding: { path: "bindings", modes: [] },
+  study: { path: "study-declarations", modes: [] },
 };
 const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSchema.options];
 const help = {
