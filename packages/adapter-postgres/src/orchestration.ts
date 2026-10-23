@@ -105,6 +105,9 @@ class Reader implements OrchestrationReader {
           AND COALESCE((e.detail->>'runId')::uuid,r.run_id)=r.run_id
           AND NOT EXISTS (SELECT 1 FROM orchestration_submission s WHERE s.project_id=d.project_id AND s.dispatch_id=d.dispatch_id)
           AND NOT EXISTS (SELECT 1 FROM orchestration_decision w WHERE w.project_id=d.project_id AND w.dispatch_id=d.dispatch_id)
+          AND NOT EXISTS (SELECT 1 FROM orchestration_event source_gap WHERE source_gap.project_id=d.project_id
+            AND source_gap.loop_id=d.loop_id AND source_gap.event_id::text=d.data->>'sourceEventId'
+            AND source_gap.kind='dispatch.gap')
           AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
             AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
             AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))

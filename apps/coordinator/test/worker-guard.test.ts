@@ -89,3 +89,30 @@ test("a worker can verify the exact report revision it authored and cognition ca
   assert.equal(await authorizeWorkerRequest(thinker, {method:"GET",path:`/api/projects/${projectId}/orchestration/dispatches/${child}`},own),true);
   assert.equal(await authorizeWorkerRequest(worker, {method:"GET",path:`/api/projects/${projectId}/orchestration/dispatches/${child}`},own),false);
 });
+
+test("recovery cognition reads only the gap's terminal Run and fixed Task and basis revisions", async () => {
+  const thinker = {...worker, scope: {...worker.scope, kind: "cognition" as const, roleId: "planner"}};
+  const originalRunId = u(), originalTaskId = u(), originalRevisionId = u(), originalDocumentId = u(), originalDocumentRevisionId = u();
+  const gapFacts: WorkerGuardFacts = {...facts,
+    task: async () => null, document: async () => null,
+    recoveryGap: async () => ({projectId, loopId, dispatchId: u(), eventId: u(),
+      runId: originalRunId, taskId: originalTaskId, taskRevisionId: originalRevisionId}),
+    recoveryDocument: async (doc, revision) => doc === originalDocumentId && revision === originalDocumentRevisionId};
+  const get = (path: string, f = gapFacts) => authorizeWorkerRequest(thinker,
+    {method: "GET", path: `/api/projects/${projectId}/${path}`}, f);
+  assert.equal(await get(`runtime/runs/${originalRunId}`), true);
+  assert.equal(await get(`runtime/runs/${originalRunId}/result`), true);
+  assert.equal(await get(`tasks/${originalTaskId}/revisions/${originalRevisionId}`), true);
+  assert.equal(await get(`references/tasks/${originalTaskId}/revisions/${originalRevisionId}`), true);
+  assert.equal(await get(`documents/${originalDocumentId}/revisions/${originalDocumentRevisionId}/original`), true);
+  for (const path of [`runtime/runs/${u()}`, `tasks/${originalTaskId}`, `tasks/${originalTaskId}/revisions`,
+    `tasks/${originalTaskId}/revisions/${u()}`, `documents/${originalDocumentId}`,
+    `documents/${originalDocumentId}/revisions`, `documents/${originalDocumentId}/revisions/${u()}/original`])
+    assert.equal(await get(path), false, path);
+  assert.equal(await get(`runtime/runs/${originalRunId}`, {...gapFacts, recoveryGap: async () => null}), false);
+  assert.equal(await get(`runtime/runs/${originalRunId}`, {...gapFacts, recoveryGap: async () =>
+    ({projectId, loopId: u(), dispatchId: u(), eventId: u(), runId: originalRunId,
+      taskId: originalTaskId, taskRevisionId: originalRevisionId})}), false);
+  assert.equal(await authorizeWorkerRequest(worker,
+    {method:"GET",path:`/api/projects/${projectId}/runtime/runs/${originalRunId}`},gapFacts),false);
+});

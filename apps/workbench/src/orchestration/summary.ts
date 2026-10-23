@@ -2,17 +2,8 @@ import type { TaskDetail } from "@evoloop/contracts";
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { TaskLoopContext } from "./client";
 
-export function relatedDispatches(dispatches: OrchestrationDispatch[], taskId: string): OrchestrationDispatch[] {
-  const direct = dispatches.filter(item => item.taskId === taskId);
-  const sources = new Set(direct.map(item => item.sourceEventId));
-  const ids = new Set(direct.map(item => item.id));
-  return dispatches.filter(item => ids.has(item.id) || sources.has(item.sourceEventId) ||
-    item.parentDispatchId !== null && ids.has(item.parentDispatchId));
-}
-
 export function inTaskContext(dispatch: OrchestrationDispatch, context: TaskLoopContext): boolean {
-  return context.dispatchIds.includes(dispatch.id) || context.parentDispatchIds.includes(dispatch.id) ||
-    context.sourceEventIds.includes(dispatch.sourceEventId);
+  return context.dispatchIds.includes(dispatch.id) || context.parentDispatchIds.includes(dispatch.id);
 }
 
 export function readableOutcome(dispatch: OrchestrationDispatch, submission: OrchestrationSubmission | undefined,

@@ -86,9 +86,86 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       [ids, documentId, revisionId, scope.runId, scope.kind === "cognition"])) return true;
     return await adoptedLinkedDocument(documentId, revisionId) || await deliveredDocument(documentId, revisionId);
   };
+  // Resolve the single gap that this cognition Run actually received. Current Task ownership is deliberately
+  // absent: the original Task may have moved after its immutable dispatch/version was accepted.
+  const recoveryGap = async () => {
+    if (scope.kind !== "cognition") return null;
+    const enrolled = await loop();
+    if (!enrolled) return null;
+    const row = await one(`SELECT origin.dispatch_id, e.event_id, original_run.run_id,
+        origin.task_id, fixed.revision_id AS task_revision_id
+      FROM orchestration_dispatch current_dispatch
+      JOIN orchestration_inbox inbox ON inbox.project_id=current_dispatch.project_id
+        AND inbox.inbox_id=current_dispatch.inbox_id AND inbox.loop_id=current_dispatch.loop_id
+        AND inbox.source_event_id=(current_dispatch.data->>'sourceEventId')::uuid
+      JOIN runtime_run current_run ON current_run.project_id=current_dispatch.project_id
+        AND current_run.run_id=(current_dispatch.data->>'runtimeRunId')::uuid
+        AND current_run.task_id=current_dispatch.task_id
+      JOIN orchestration_event e ON e.project_id=inbox.project_id AND e.event_id=inbox.source_event_id
+        AND e.loop_id=inbox.loop_id AND e.kind='dispatch.gap' AND e.entity_type='dispatch'
+      JOIN orchestration_operation op ON op.project_id=e.project_id AND op.operation_id=e.operation_id
+      JOIN orchestration_dispatch origin ON origin.project_id=e.project_id AND origin.dispatch_id=e.entity_id
+        AND origin.loop_id=e.loop_id AND origin.state='accepted' AND origin.data->>'outcome' IS NULL
+      JOIN runtime_run original_run ON original_run.project_id=origin.project_id
+        AND original_run.run_id=(origin.data->>'runtimeRunId')::uuid AND original_run.task_id=origin.task_id
+        AND original_run.state IN ('completed','failed','interrupted')
+      JOIN task_revision fixed ON fixed.project_id=origin.project_id AND fixed.task_id=origin.task_id
+        AND fixed.version>=origin.task_version AND fixed.revision_id=original_run.task_revision_id
+      JOIN task_revision dispatch_fixed ON dispatch_fixed.project_id=origin.project_id
+        AND dispatch_fixed.task_id=origin.task_id AND dispatch_fixed.version=origin.task_version
+      JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision pr
+        ON pr.project_id=p.project_id AND pr.task_id=p.task_id AND pr.revision_id=p.task_revision_id
+        WHERE p.project_id=dispatch_fixed.project_id AND p.task_id=dispatch_fixed.task_id
+          AND pr.version<=dispatch_fixed.version
+        ORDER BY pr.version DESC LIMIT 1) historical ON true
+      JOIN project_stage stage ON stage.project_id=fixed.project_id AND stage.stage_id=historical.stage_id
+      JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision pr
+        ON pr.project_id=p.project_id AND pr.task_id=p.task_id AND pr.revision_id=p.task_revision_id
+        WHERE p.project_id=fixed.project_id AND p.task_id=fixed.task_id AND pr.version<=fixed.version
+        ORDER BY pr.version DESC LIMIT 1) run_scope ON true
+      JOIN project_stage run_stage ON run_stage.project_id=fixed.project_id AND run_stage.stage_id=run_scope.stage_id
+      WHERE current_dispatch.project_id=$1 AND current_dispatch.loop_id=$2
+        AND current_dispatch.state='accepted'
+        AND current_dispatch.data->>'runtimeRunId'=$3 AND current_dispatch.task_id=$4
+        AND current_run.session_id=$8
+        AND current_dispatch.data->>'recipientRoleId'=$5
+        AND current_dispatch.data->>'sourceEventId'=inbox.source_event_id::text
+        AND inbox.purpose='cognitive_review' AND inbox.state IN ('acknowledged','disposed')
+        AND COALESCE(e.detail->>'runId',original_run.run_id::text)=original_run.run_id::text
+        AND COALESCE(e.detail->>'taskId',origin.task_id::text)=origin.task_id::text
+        AND COALESCE((e.detail->>'taskVersion')::integer,origin.task_version)=origin.task_version
+        AND op.actor_id=e.actor_id AND op.result->>'entityType'='dispatch'
+        AND (op.result->>'entityId')=origin.dispatch_id::text
+        AND COALESCE((e.detail->>'dispatchVersion')::integer,(op.result->>'version')::integer)
+          =(op.result->>'version')::integer
+        AND (op.result->>'version')::integer<=origin.version
+        AND stage.goal_id=$6 AND ($7::uuid IS NULL OR stage.stage_id=$7)
+        AND run_stage.goal_id=$6 AND ($7::uuid IS NULL OR run_stage.stage_id=$7)
+        AND NOT EXISTS (SELECT 1 FROM orchestration_submission s WHERE s.project_id=origin.project_id AND s.dispatch_id=origin.dispatch_id)
+        AND NOT EXISTS (SELECT 1 FROM orchestration_decision d WHERE d.project_id=origin.project_id AND d.dispatch_id=origin.dispatch_id)
+        AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
+          AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
+          AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))
+      LIMIT 1`, [scope.loopId, scope.runId, scope.taskId, scope.roleId, enrolled.goalId, enrolled.stageId, scope.sessionId]);
+    return row ? {projectId: scope.projectId, loopId: scope.loopId, dispatchId: row.dispatch_id,
+      eventId: row.event_id, runId: row.run_id, taskId: row.task_id, taskRevisionId: row.task_revision_id} : null;
+  };
+  const recoveryDocument = async (documentId: string, revisionId: string) => {
+    const gap = await recoveryGap();
+    if (!gap) return false;
+    return !!await one(`SELECT 1 FROM task_revision r
+      JOIN document_revision doc ON doc.project_id=r.project_id AND doc.document_id=$4 AND doc.revision_id=$5
+      WHERE r.project_id=$1 AND r.task_id=$2 AND r.revision_id=$3
+        AND ((r.content_document_id=$4 AND r.content_revision_id=$5) OR EXISTS
+          (SELECT 1 FROM basis_member b WHERE b.project_id=r.project_id AND b.task_id=r.task_id
+            AND b.task_revision_id=r.revision_id AND b.document_id=$4 AND b.document_revision_id=$5))
+      LIMIT 1`, [gap.taskId, gap.taskRevisionId, documentId, revisionId]);
+  };
   return {
     loop: async id => id === scope.loopId ? loop() : null,
     task,
+    recoveryGap,
+    recoveryDocument,
     taskRevision: async (taskId, revisionId) => !!await task(taskId) && !!await one(
       "SELECT 1 FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [taskId, revisionId]),
     run: async id => {
@@ -118,14 +195,24 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       JOIN process_document d ON d.project_id=r.project_id AND d.document_id=r.document_id
       WHERE r.project_id=$1 AND r.document_id=$2 AND r.revision_id=$3 AND r.author=$4 AND d.kind IN ('report','issue')`,
       [documentId, revisionId, identity.principal.actorId]),
-    fixedReference: async (taskId, kind, referenceId, revisionId) => !!await task(taskId) && !!await one(`SELECT 1
-      FROM task_external_ref_snapshot s JOIN task_external_ref_decision d
-        ON d.project_id=s.project_id AND d.decision_id=s.decision_id
-      WHERE s.project_id=$1 AND s.task_id=ANY($2::uuid[]) AND (s.task_revision_id=
-        (SELECT task_revision_id FROM runtime_run WHERE project_id=$1 AND run_id=$3) OR
-        ($7 AND s.task_revision_id=(SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=s.task_id)))
-      AND d.source_kind=$4 AND d.reference_id=$5 AND ($6::text IS NULL OR d.source_revision=$6) LIMIT 1`,
-      [scope.kind === "cognition" ? await authorizedTaskIds() : [taskId], scope.runId, kind, referenceId, revisionId ?? null, scope.kind === "cognition"]),
+    fixedReference: async (taskId, kind, referenceId, revisionId) => {
+      if (await task(taskId) && await one(`SELECT 1
+        FROM task_external_ref_snapshot s JOIN task_external_ref_decision d
+          ON d.project_id=s.project_id AND d.decision_id=s.decision_id
+        WHERE s.project_id=$1 AND s.task_id=ANY($2::uuid[]) AND (s.task_revision_id=
+          (SELECT task_revision_id FROM runtime_run WHERE project_id=$1 AND run_id=$3) OR
+          ($7 AND s.task_revision_id=(SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=s.task_id)))
+        AND d.source_kind=$4 AND d.reference_id=$5 AND ($6::text IS NULL OR d.source_revision=$6) LIMIT 1`,
+        [scope.kind === "cognition" ? await authorizedTaskIds() : [taskId], scope.runId, kind, referenceId, revisionId ?? null, scope.kind === "cognition"])) return true;
+      const gap = await recoveryGap();
+      if (!gap || kind === "wiki" && !revisionId) return false;
+      return !!await one(`SELECT 1 FROM task_external_ref_snapshot s
+        JOIN task_external_ref_decision d ON d.project_id=s.project_id AND d.decision_id=s.decision_id
+        WHERE s.project_id=$1 AND s.task_id=$2 AND s.task_revision_id=$3
+          AND d.source_kind=$4 AND d.reference_id=$5
+          AND ($6::text IS NULL OR d.source_revision=$6) LIMIT 1`,
+        [gap.taskId, gap.taskRevisionId, kind, referenceId, revisionId ?? null]);
+    },
     operation: async id => {
       const row = await one(`SELECT actor_id FROM operation_journal WHERE project_id=$1 AND operation_id=$2
         UNION ALL SELECT actor_id FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2`, [id]);

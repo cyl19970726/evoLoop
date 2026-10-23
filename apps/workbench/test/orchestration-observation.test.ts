@@ -3,7 +3,7 @@ import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
 import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { inTaskContext, nextAction, readableOutcome, relatedDispatches } from "../src/orchestration/summary.ts";
+import { inTaskContext, nextAction, readableOutcome } from "../src/orchestration/summary.ts";
 import { taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
@@ -71,18 +71,20 @@ test("human summary distinguishes signed intent, actual delivery and human use",
   assert.match(nextAction({state:"pending"} as OrchestrationInbox,undefined,undefined),/核对入站来源/);
 });
 
-test("task chain relation includes same source and direct parent, but excludes unrelated loop tasks", () => {
+test("task story follows server-verified dispatch IDs and an explicit upstream parent, never a shared source alone", () => {
   const direct={id:"a",taskId:"task",sourceEventId:"source",parentDispatchId:null} as OrchestrationDispatch;
   const sameSource={id:"b",taskId:"other",sourceEventId:"source",parentDispatchId:null} as OrchestrationDispatch;
   const child={id:"c",taskId:"third",sourceEventId:"later",parentDispatchId:"a"} as OrchestrationDispatch;
   const unrelated={id:"d",taskId:"unrelated",sourceEventId:"unrelated",parentDispatchId:null} as OrchestrationDispatch;
-  assert.deepEqual(relatedDispatches([direct,sameSource,child,unrelated],"task").map(item=>item.id),["a","b","c"]);
   const context={loopId,sourceEventIds:["source"],dispatchIds:["a"],parentDispatchIds:[]};
   assert.equal(inTaskContext(direct,context),true);
-  assert.equal(inTaskContext(sameSource,context),true);
+  assert.equal(inTaskContext(sameSource,context),false);
+  assert.equal(inTaskContext(child,{...context,dispatchIds:["a","c"]}),true);
   assert.equal(inTaskContext(unrelated,context),false);
   const feedback={...unrelated,id:"next-cognition",sourceEventId:"outcome-event",parentDispatchId:null};
-  assert.equal(inTaskContext(feedback,{...context,sourceEventIds:["source","outcome-event"]}),true);
+  assert.equal(inTaskContext(feedback,{...context,sourceEventIds:["source","outcome-event"]}),false);
+  assert.equal(inTaskContext(feedback,{...context,dispatchIds:["a","next-cognition"]}),true);
+  assert.equal(inTaskContext(sameSource,{...context,parentDispatchIds:["b"]}),true);
 });
 
 test("three Task links select fixed history, runtime and delivery without crossing Task scope", () => {

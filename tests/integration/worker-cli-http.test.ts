@@ -49,7 +49,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await writeFile(join(gitRoot,"formal.md"),gitBody);
   git("add","formal.md");git("commit","-qm","fixed source");
   const commit=git("rev-parse","HEAD");
-  const gitSource=new GitDocumentSource([{projectId,repositoryId:"formal",root:gitRoot,allowedPaths:["formal.md"]}],async()=>true);
+  const gitSource=new GitDocumentSource([{projectId,repositoryId:"formal",root:gitRoot,
+    allowedPaths:["formal.md","gap.md","later.md"]}],async()=>true);
   let broker:WorkerCredentialBroker;
   const store=new PgOrchestrationStore(pool,{
     getAuthorizationFact:async (project,scope)=>project===projectId && [cognitiveScope,businessScope].includes(scope) ?
@@ -282,7 +283,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     ORDER BY created_at DESC,event_id DESC LIMIT 1`,[projectId])).rows[0];
   await orchestrate({type:"loop.enroll",loopId:observationLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
     allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:observationCursor.created_at.toISOString(),
-      eventId:observationCursor.event_id},maxRuns:1,maxConcurrent:1,reason:"Independent feedback fixture"});
+      eventId:observationCursor.event_id},maxRuns:3,maxConcurrent:1,reason:"Independent feedback fixture"});
   const observationOperationId=randomUUID();
   await issue({type:"observation.record",operationId:observationOperationId,taskId:childTaskId,
     deliveryId:businessSealed.deliveryId,observer:controller,observerKind:"agent",result:"notUsed",
@@ -298,6 +299,60 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:observationTaskId,
     expectedTaskVersion:2,recipientRoleId:cognitiveRole,purpose:"cognition",
     authorizationScopeId:cognitiveScope,reason:"Review observed use boundary"});
+  const observationClaim=randomUUID(),observationSessionId=randomUUID(),observationRunId=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:observationDispatch.entityId,claimToken:observationClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:observationDispatch.entityId,claimToken:observationClaim});
+  await issue({type:"runtime.session.reserve",sessionId:observationSessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,observationSessionId);
+  await runtime.bindSession(projectId,observationSessionId,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:observationSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${observationSessionId}`,nativeSessionId:`fixture-${observationSessionId}`});
+  await issue({type:"runtime.run.reserve",runId:observationRunId,taskId:observationTaskId,
+    sessionId:observationSessionId,expectedVersion:2,input:"Fixture observation review; no native Turn"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:observationDispatch.entityId,claimToken:observationClaim,
+    result:"accepted",runtimeRunId:observationRunId,reason:"Fixture observed cognition bound"});
+  await runtime.rejectDispatch(projectId,observationRunId,"Fixture terminal with no signed intent");
+  const observationBeforeGap=(await orchestration.getDispatch(owner,projectId,observationDispatch.entityId))!;
+  await orchestrate({type:"dispatch.gap",dispatchId:observationDispatch.entityId,
+    expectedVersion:observationBeforeGap.version,reason:"Observed cognition credential expired",evidenceRef:null});
+  const observationGap=(await pool.query(`SELECT event_id FROM orchestration_event WHERE project_id=$1
+    AND loop_id=$2 AND entity_id=$3 AND kind='dispatch.gap' ORDER BY created_at_utc DESC LIMIT 1`,
+  [projectId,observationLoopId,observationDispatch.entityId])).rows[0];
+  assert.ok(observationGap?.event_id);
+  const observationRecoveryTaskId=randomUUID();
+  await issue({type:"task.create",taskId:observationRecoveryTaskId,stageId,title:"Recover observed cognition",
+    content:"# Read the fixed gap",acceptance:"One bounded recovery",owner:cognitiveRole,
+    consumer:"fixture",evidence:"Formal terminal gap",stopCondition:"One check"});
+  await issue({type:"task.start",taskId:observationRecoveryTaskId,expectedVersion:1,reason:"Fix recovery scope"});
+  const observationRecoveryInbox=await orchestrate({type:"inbox.accept",loopId:observationLoopId,
+    sourceEventId:observationGap.event_id,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:observationRecoveryInbox.entityId,expectedVersion:1,
+    reason:"Read exact terminal gap"});
+  const observationRecoveryDispatch=await orchestrate({type:"dispatch.request",inboxId:observationRecoveryInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:observationRecoveryTaskId,
+    expectedTaskVersion:2,recipientRoleId:cognitiveRole,purpose:"cognition",
+    authorizationScopeId:cognitiveScope,reason:"Recover from formal gap source"});
+  const unrelatedTaskId=randomUUID(),unrelatedObservationOperationId=randomUUID();
+  await issue({type:"task.create",taskId:unrelatedTaskId,stageId,title:"Review separate feedback",
+    content:"# Separate observation",acceptance:"Separate check",owner:cognitiveRole,
+    consumer:"fixture",evidence:"Different Task",stopCondition:"One check"});
+  await issue({type:"task.start",taskId:unrelatedTaskId,expectedVersion:1,reason:"Fix separate scope"});
+  await issue({type:"observation.record",operationId:unrelatedObservationOperationId,taskId:cognitiveTaskId,
+    deliveryId:settled.deliveryId,observer:controller,observerKind:"agent",result:"notUsed",
+    evidence:"Separate cognitive report observation",reason:"Unrelated source in the same Loop"});
+  const unrelatedObservation=(await pool.query(`SELECT event_id FROM outbox_event WHERE project_id=$1
+    AND operation_id=$2 AND kind='observation.record'`,[projectId,unrelatedObservationOperationId])).rows[0];
+  assert.ok(unrelatedObservation?.event_id);
+  const unrelatedInbox=await orchestrate({type:"inbox.accept",loopId:observationLoopId,
+    sourceEventId:unrelatedObservation.event_id,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:unrelatedInbox.entityId,expectedVersion:1,
+    reason:"Read separate feedback"});
+  const unrelatedDispatch=await orchestrate({type:"dispatch.request",inboxId:unrelatedInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:unrelatedTaskId,
+    expectedTaskVersion:2,recipientRoleId:cognitiveRole,purpose:"cognition",
+    authorizationScopeId:cognitiveScope,reason:"Separate same-Loop work"});
   const continuationTaskId=randomUUID(),continuationRunId=randomUUID(),continuationSessionId=randomUUID();
   await issue({type:"task.create",taskId:continuationTaskId,stageId,title:"Review business report",content:"# Read fixed delivery",
     acceptance:"Confirm exact report original",owner:cognitiveRole,consumer:"fixture",evidence:"Business report",
@@ -337,6 +392,12 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const independentContext=businessContext.items.find(item=>item.loopId===observationLoopId);
   assert.ok(independentContext?.sourceEventIds.includes(observationEvent.event_id),"applied observation source is retained");
   assert.ok(independentContext.dispatchIds.includes(observationDispatch.entityId),"independent observation cognition is related without parentDispatch");
+  assert.ok(independentContext.sourceEventIds.includes(observationGap.event_id),"formal terminal gap is retained downstream");
+  assert.ok(independentContext.dispatchIds.includes(observationRecoveryDispatch.entityId),"gap recovery cognition is reached through the observed cognition");
+  assert.equal(independentContext.dispatchIds.includes(unrelatedDispatch.entityId),false,
+    "another same-Loop observation does not pull in an unrelated Task");
+  assert.equal(independentContext.sourceEventIds.includes(unrelatedObservation.event_id),false,
+    "unrelated same-Loop source is not part of this Task story");
   await runtime.rejectDispatch(projectId,continuationRunId,"Fixture terminal with no worker intent");
   const beforeGap=(await orchestration.getDispatch(owner,projectId,continuationDispatch.entityId))!;
   await orchestrate({type:"dispatch.gap",dispatchId:continuationDispatch.entityId,
@@ -447,10 +508,13 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     acceptance:"One signed waiting reason",owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One decision"});
   await issue({type:"task.start",taskId:secondTaskId,expectedVersion:1,reason:"Freeze second fixture"});
   const gitRefId=randomUUID();
+  const observedGit=new Map<string,{revision:string;body:string}>([[gitRefId,{revision:commit,body:gitBody}]]);
   const deps={uow,git:gitSource,hashText:hash,nextId:randomUUID,now:()=>new Date().toISOString(),
-    observeExternal:async (_actor:unknown,_project:string,kind:"git"|"wiki")=>({status:"reachable" as const,
-      revision:kind==="git"?commit:wikiRevision,contentHash:kind==="git"?hash(gitBody):hash(wikiBody),
-      currentRevision:kind==="git"?commit:wikiRevision,currentHash:kind==="git"?hash(gitBody):hash(wikiBody),
+    observeExternal:async (_actor:unknown,_project:string,kind:"git"|"wiki",referenceId:string)=>({status:"reachable" as const,
+      revision:kind==="git"?observedGit.get(referenceId)?.revision??"":wikiRevision,
+      contentHash:kind==="git"?hash(observedGit.get(referenceId)?.body??""):hash(wikiBody),
+      currentRevision:kind==="git"?observedGit.get(referenceId)?.revision??"":wikiRevision,
+      currentHash:kind==="git"?hash(observedGit.get(referenceId)?.body??""):hash(wikiBody),
       currentValidity:"valid" as const})};
   const registered=await registerFixedGitReference(deps,owner,{projectId,operationId:randomUUID(),actorId:controller,
     referenceId:gitRefId,repositoryId:"formal",path:"formal.md",commit,contentHash:hash(gitBody)});
@@ -520,4 +584,227 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await workerCommand(wrapper,{type:"runtime.session.reserve",sessionId:randomUUID(),roleId:cognitiveRole,
     cwd:directory,authorizationScope:cognitiveScope,sandbox:"read-only",approvalPolicy:"on-request"},1)).error?.code,"FORBIDDEN");
   assert.ok(run.revisionId);
+
+  // A fresh loop receives a verified terminal intent gap after the original Task moved to another Goal.
+  const gapLoopId=randomUUID(),gapTaskId=randomUUID(),gapRunId=randomUUID(),gapSessionId=randomUUID();
+  await issue({type:"task.create",taskId:gapTaskId,stageId,title:"Original gap Task",content:"# Frozen old work",
+    acceptance:"Inspect fixed work",owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One Run"});
+  const gapCursor=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
+  await orchestrate({type:"loop.enroll",loopId:gapLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
+    allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:gapCursor.created_at.toISOString(),eventId:gapCursor.event_id},
+    maxRuns:2,maxConcurrent:1,reason:"Terminal gap scoped read fixture"});
+  const gapLoop=(await orchestration.getLoop(owner,projectId,gapLoopId))!;
+  const gapSeed=await orchestrate({type:"inbox.accept",loopId:gapLoopId,sourceEventId:gapLoop.bootstrapEventId,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:gapSeed.entityId,expectedVersion:1,reason:"Read seed"});
+  const original=await orchestrate({type:"dispatch.request",inboxId:gapSeed.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:gapTaskId,expectedTaskVersion:1,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Original cognition"});
+  const gapClaim=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:original.entityId,claimToken:gapClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:original.entityId,claimToken:gapClaim});
+  await issue({type:"task.start",taskId:gapTaskId,expectedVersion:1,reason:"Managed start after dispatch request"});
+  await issue({type:"runtime.session.reserve",sessionId:gapSessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,gapSessionId);
+  await runtime.bindSession(projectId,gapSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:gapSessionId,
+    roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${gapSessionId}`,nativeSessionId:`fixture-${gapSessionId}`});
+  await issue({type:"runtime.run.reserve",runId:gapRunId,taskId:gapTaskId,sessionId:gapSessionId,
+    expectedVersion:2,input:"Original fixed input"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:original.entityId,claimToken:gapClaim,
+    result:"accepted",runtimeRunId:gapRunId,reason:"Original Run bound"});
+  const originalWorker=await broker.issue({projectId,loopId:gapLoopId,taskId:gapTaskId,runId:gapRunId,
+    sessionId:gapSessionId,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
+  await runtime.rejectDispatch(projectId,gapRunId,"Terminal fixture without signed intent");
+  await orchestrate({type:"dispatch.gap",dispatchId:original.entityId,expectedVersion:4,
+    reason:"Worker intent gap: absent",evidenceRef:null});
+  const recoveryGapEvent=(await pool.query("SELECT event_id FROM orchestration_event WHERE project_id=$1 AND kind='dispatch.gap' AND entity_id=$2",
+    [projectId,original.entityId])).rows[0].event_id as string;
+  const oldRevision=(await pool.query("SELECT task_revision_id FROM runtime_run WHERE project_id=$1 AND run_id=$2",
+    [projectId,gapRunId])).rows[0].task_revision_id as string;
+  assert.equal((await pool.query("SELECT task_version FROM orchestration_dispatch WHERE project_id=$1 AND dispatch_id=$2",
+    [projectId,original.entityId])).rows[0].task_version,1);
+  assert.equal((await pool.query("SELECT version FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3",
+    [projectId,gapTaskId,oldRevision])).rows[0].version,3);
+  const oldContent=(await pool.query("SELECT content_document_id,content_revision_id FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3",
+    [projectId,gapTaskId,oldRevision])).rows[0];
+  const beforeMove=(await workflow.getTask(owner,projectId,gapTaskId)).task;
+  const reopenedGap=await issue({type:"task.reopen",taskId:gapTaskId,expectedVersion:beforeMove.version,reason:"Later work"});
+  await issue({type:"task.update",taskId:gapTaskId,expectedVersion:reopenedGap.version,
+    title:beforeMove.title,content:"# New Goal secret",acceptance:beforeMove.acceptance,owner:beforeMove.owner,
+    stageId:outsideStageId,reason:"Move later Task head"});
+  const recoveryTaskId=randomUUID(),recoverySessionId=randomUUID(),recoveryRunId=randomUUID();
+  await issue({type:"task.create",taskId:recoveryTaskId,stageId,title:"Inspect old gap",content:"# Recover",
+    acceptance:"One signed finding",owner:cognitiveRole,consumer:"owner",evidence:"Gap",stopCondition:"One Run"});
+  await issue({type:"task.start",taskId:recoveryTaskId,expectedVersion:1,reason:"Fix recovery Task"});
+  const recoveryInbox=await orchestrate({type:"inbox.accept",loopId:gapLoopId,sourceEventId:recoveryGapEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:recoveryInbox.entityId,expectedVersion:1,reason:"Read gap"});
+  const recoveryDispatch=await orchestrate({type:"dispatch.request",inboxId:recoveryInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:recoveryTaskId,
+    expectedTaskVersion:2,recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,
+    reason:"Recover exactly one old gap"});
+  const recoveryClaim=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
+  await issue({type:"runtime.session.reserve",sessionId:recoverySessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,recoverySessionId);
+  await runtime.bindSession(projectId,recoverySessionId,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:recoverySessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${recoverySessionId}`,nativeSessionId:`fixture-${recoverySessionId}`});
+  await issue({type:"runtime.run.reserve",runId:recoveryRunId,taskId:recoveryTaskId,
+    sessionId:recoverySessionId,expectedVersion:2,input:"Read the original gap"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
+    result:"accepted",runtimeRunId:recoveryRunId,reason:"Recovery Run bound"});
+  const recoveryWorker=await broker.issue({projectId,loopId:gapLoopId,taskId:recoveryTaskId,runId:recoveryRunId,
+    sessionId:recoverySessionId,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
+  const recoveryGet=(path:string,expected=0)=>cli(recoveryWorker.wrapperPath,["get",`/api/projects/${projectId}/${path}`],expected);
+  assert.equal((await recoveryGet(`runtime/runs/${gapRunId}`)).id,gapRunId);
+  assert.equal((await recoveryGet(`tasks/${gapTaskId}/revisions/${oldRevision}`)).revision.id,oldRevision);
+  assert.equal((await cli(recoveryWorker.wrapperPath,["original",oldContent.content_document_id,"--revision",oldContent.content_revision_id])).body,
+    "# Frozen old work");
+  for(const path of [`tasks/${gapTaskId}`,`tasks/${gapTaskId}/revisions`,
+    `documents/${oldContent.content_document_id}`,`documents/${oldContent.content_document_id}/revisions`,
+    `runtime/runs/${secondRunId}`,`tasks/${gapTaskId}/revisions/${randomUUID()}`])
+    assert.equal((await recoveryGet(path,1)).error?.code,"FORBIDDEN",path);
+  assert.equal((await cli(recoveryWorker.wrapperPath,["original",oldContent.content_document_id,
+    "--revision",(await workflow.getTask(owner,projectId,gapTaskId)).task.contentRevisionId],1)).error?.code,"FORBIDDEN");
+  assert.equal((await cli(originalWorker.wrapperPath,["get",`/api/projects/${projectId}/runtime/runs/${recoveryRunId}`],1)).error?.code,
+    "FORBIDDEN");
+  assert.equal((await cli(newGoalWorker.wrapperPath,["get",`/api/projects/${projectId}/runtime/runs/${gapRunId}`],1)).error?.code,
+    "FORBIDDEN");
+  const unknownLoopId=randomUUID(),unknownTaskId=randomUUID(),unknownSessionId=randomUUID(),unknownRunId=randomUUID();
+  await issue({type:"task.create",taskId:unknownTaskId,stageId,title:"Unresolved work",content:"# Unknown",
+    acceptance:"Do not infer terminal",owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One Run"});
+  const unknownGitRefId=randomUUID();
+  const unknownGitBody="# Gap fixed source\n";
+  await writeFile(join(gitRoot,"gap.md"),unknownGitBody);
+  git("add","gap.md");git("commit","-qm","fixed gap source");
+  const unknownCommit=git("rev-parse","HEAD");
+  observedGit.set(unknownGitRefId,{revision:unknownCommit,body:unknownGitBody});
+  assert.equal((await registerFixedGitReference(deps,owner,{projectId,operationId:randomUUID(),actorId:controller,
+    referenceId:unknownGitRefId,repositoryId:"formal",path:"gap.md",commit:unknownCommit,
+    contentHash:hash(unknownGitBody)})).status,"applied");
+  const beforeUnknownGit=(await workflow.getTask(owner,projectId,unknownTaskId)).task;
+  const unknownGit=await decideTaskExternalReference(deps,owner,{projectId,operationId:randomUUID(),actorId:controller,
+    decisionId:randomUUID(),taskId:unknownTaskId,taskRevisionId:beforeUnknownGit.currentRevisionId,
+    expectedTaskVersion:beforeUnknownGit.version,slotId:randomUUID(),expectedHeadVersion:0,decision:"adopt",
+    kind:"git",referenceId:unknownGitRefId,revision:unknownCommit,contentHash:hash(unknownGitBody),reason:"Freeze Git in original Run",
+    actionImpact:"Read exact Git bytes"});
+  assert.equal(unknownGit.status,"applied");
+  const beforeUnknownWiki=(await workflow.getTask(owner,projectId,unknownTaskId)).task;
+  const unknownWiki=await decideTaskExternalReference(deps,owner,{projectId,operationId:randomUUID(),actorId:controller,
+    decisionId:randomUUID(),taskId:unknownTaskId,taskRevisionId:beforeUnknownWiki.currentRevisionId,
+    expectedTaskVersion:beforeUnknownWiki.version,slotId:randomUUID(),expectedHeadVersion:0,decision:"adopt",
+    kind:"wiki",referenceId:wikiId,revision:wikiRevision,contentHash:hash(wikiBody),reason:"Freeze Wiki in original Run",
+    actionImpact:"Read exact Wiki bytes"});
+  assert.equal(unknownWiki.status,"applied");
+  const unknownCursor=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
+  await orchestrate({type:"loop.enroll",loopId:unknownLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
+    allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:unknownCursor.created_at.toISOString(),eventId:unknownCursor.event_id},
+    maxRuns:2,maxConcurrent:1,reason:"Unknown Run is not yet a gap"});
+  const unknownLoop=(await orchestration.getLoop(owner,projectId,unknownLoopId))!;
+  const unknownInbox=await orchestrate({type:"inbox.accept",loopId:unknownLoopId,
+    sourceEventId:unknownLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:unknownInbox.entityId,expectedVersion:1,reason:"Read seed"});
+  const unresolved=await orchestrate({type:"dispatch.request",inboxId:unknownInbox.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:unknownTaskId,expectedTaskVersion:3,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Unresolved fixture"});
+  const unknownClaim=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:unresolved.entityId,claimToken:unknownClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:unresolved.entityId,claimToken:unknownClaim});
+  await issue({type:"task.start",taskId:unknownTaskId,expectedVersion:3,reason:"Prepare unresolved Run"});
+  await issue({type:"runtime.session.reserve",sessionId:unknownSessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,unknownSessionId);
+  await runtime.bindSession(projectId,unknownSessionId,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:unknownSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${unknownSessionId}`,nativeSessionId:`fixture-${unknownSessionId}`});
+  await issue({type:"runtime.run.reserve",runId:unknownRunId,taskId:unknownTaskId,
+    sessionId:unknownSessionId,expectedVersion:4,input:"Unresolved native start"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:unresolved.entityId,claimToken:unknownClaim,
+    result:"accepted",runtimeRunId:unknownRunId,reason:"Run identity bound"});
+  await runtime.beginDispatch(projectId,unknownRunId);
+  const unknownOperationId=(await pool.query("SELECT operation_id FROM runtime_run WHERE project_id=$1 AND run_id=$2",
+    [projectId,unknownRunId])).rows[0].operation_id as string;
+  const fixtureTurnId=`fixture-turn-${unknownRunId}`;
+  await runtime.bindTurn(projectId,unknownRunId,{id:fixtureTurnId,status:"running"},
+    {kind:"startReply",operationId:unknownOperationId});
+  await runtime.markRunUnknown(projectId,unknownRunId,"No native proof of terminal state");
+  await assert.rejects(orchestrate({type:"dispatch.gap",dispatchId:unresolved.entityId,expectedVersion:4,
+    reason:"Worker intent gap: unproven",evidenceRef:null}),{code:"RUN_NOT_TERMINAL"});
+  assert.equal((await orchestration.listSourceFacts(owner,projectId,unknownLoopId)).items.some(item=>item.kind==="dispatch.gap"),false);
+  await runtime.recordTurn(projectId,unknownRunId,fixtureTurnId,"completed","Fixture terminal observation");
+  await orchestrate({type:"dispatch.gap",dispatchId:unresolved.entityId,expectedVersion:4,
+    reason:"Worker intent gap: no signed submission",evidenceRef:null});
+  const referenceGapEvent=(await pool.query("SELECT event_id FROM orchestration_event WHERE project_id=$1 AND kind='dispatch.gap' AND entity_id=$2",
+    [projectId,unresolved.entityId])).rows[0].event_id as string;
+  const unknownFixedRevision=(await pool.query("SELECT task_revision_id FROM runtime_run WHERE project_id=$1 AND run_id=$2",
+    [projectId,unknownRunId])).rows[0].task_revision_id as string;
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_external_ref_snapshot WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3",
+    [projectId,unknownTaskId,unknownFixedRevision])).rows[0].n,2);
+  const lateRefId=randomUUID();
+  const lateGitBody="# Later private source\n";
+  await writeFile(join(gitRoot,"later.md"),lateGitBody);
+  git("add","later.md");git("commit","-qm","later private source");
+  const lateCommit=git("rev-parse","HEAD");
+  observedGit.set(lateRefId,{revision:lateCommit,body:lateGitBody});
+  assert.equal((await registerFixedGitReference(deps,owner,{projectId,operationId:randomUUID(),actorId:controller,
+    referenceId:lateRefId,repositoryId:"formal",path:"later.md",commit:lateCommit,
+    contentHash:hash(lateGitBody)})).status,"applied");
+  const beforeLateRef=(await workflow.getTask(owner,projectId,unknownTaskId)).task;
+  assert.equal((await decideTaskExternalReference(deps,owner,{projectId,operationId:randomUUID(),actorId:controller,
+    decisionId:randomUUID(),taskId:unknownTaskId,taskRevisionId:beforeLateRef.currentRevisionId,
+    expectedTaskVersion:beforeLateRef.version,slotId:randomUUID(),expectedHeadVersion:0,decision:"adopt",
+    kind:"git",referenceId:lateRefId,revision:lateCommit,contentHash:hash(lateGitBody),reason:"Later source outside fixed Run",
+    actionImpact:"Must stay private to later Task versions"})).status,"applied");
+  assert.equal((await cli(newGoalWorker.wrapperPath,["read","git",unknownGitRefId],1)).error?.code,"FORBIDDEN");
+  const beforeReferenceMove=(await workflow.getTask(owner,projectId,unknownTaskId)).task;
+  const reopenedReference=await issue({type:"task.reopen",taskId:unknownTaskId,expectedVersion:beforeReferenceMove.version,
+    reason:"Later Goal change"});
+  await issue({type:"task.update",taskId:unknownTaskId,expectedVersion:reopenedReference.version,
+    title:beforeReferenceMove.title,content:"# Later private version",acceptance:beforeReferenceMove.acceptance,
+    owner:beforeReferenceMove.owner,stageId:outsideStageId,reason:"Move old source Task away"});
+  const referenceRecoveryTaskId=randomUUID(),referenceRecoverySessionId=randomUUID(),referenceRecoveryRunId=randomUUID();
+  await issue({type:"task.create",taskId:referenceRecoveryTaskId,stageId,title:"Recover fixed references",
+    content:"# Read original",acceptance:"One bounded finding",owner:cognitiveRole,consumer:"owner",evidence:"Gap",
+    stopCondition:"One Run"});
+  await issue({type:"task.start",taskId:referenceRecoveryTaskId,expectedVersion:1,reason:"Fix recovery source"});
+  const referenceInbox=await orchestrate({type:"inbox.accept",loopId:unknownLoopId,sourceEventId:referenceGapEvent,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestrate({type:"inbox.ack",inboxId:referenceInbox.entityId,expectedVersion:1,reason:"Review fixed gap"});
+  const referenceDispatch=await orchestrate({type:"dispatch.request",inboxId:referenceInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:null,taskId:referenceRecoveryTaskId,
+    expectedTaskVersion:2,recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,
+    reason:"Read old external snapshot"});
+  const referenceClaim=randomUUID();
+  await orchestrate({type:"dispatch.claim",dispatchId:referenceDispatch.entityId,claimToken:referenceClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestrate({type:"dispatch.start",dispatchId:referenceDispatch.entityId,claimToken:referenceClaim});
+  await issue({type:"runtime.session.reserve",sessionId:referenceRecoverySessionId,roleId:cognitiveRole,cwd:directory,
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,referenceRecoverySessionId);
+  await runtime.bindSession(projectId,referenceRecoverySessionId,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:referenceRecoverySessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${referenceRecoverySessionId}`,nativeSessionId:`fixture-${referenceRecoverySessionId}`});
+  await issue({type:"runtime.run.reserve",runId:referenceRecoveryRunId,taskId:referenceRecoveryTaskId,
+    sessionId:referenceRecoverySessionId,expectedVersion:2,input:"Read fixed Git and Wiki"});
+  await orchestrate({type:"dispatch.resolve",dispatchId:referenceDispatch.entityId,claimToken:referenceClaim,
+    result:"accepted",runtimeRunId:referenceRecoveryRunId,reason:"Recovery reference Run bound"});
+  const referenceWorker=await broker.issue({projectId,loopId:unknownLoopId,taskId:referenceRecoveryTaskId,
+    runId:referenceRecoveryRunId,sessionId:referenceRecoverySessionId,roleId:cognitiveRole,
+    kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]});
+  const referencePath=`/api/projects/${projectId}/references/tasks/${unknownTaskId}/revisions/${unknownFixedRevision}`;
+  const snapshot=await cli(referenceWorker.wrapperPath,["get",referencePath]);
+  assert.equal(snapshot.length,2);
+  assert.equal(Buffer.from((await cli(referenceWorker.wrapperPath,["read","git",unknownGitRefId])).base64,"base64").toString(),unknownGitBody);
+  assert.equal((await cli(referenceWorker.wrapperPath,["knowledge",wikiId,"--revision",wikiRevision])).body,wikiBody);
+  assert.equal((await cli(referenceWorker.wrapperPath,["read","git",lateRefId],1)).error?.code,"FORBIDDEN");
+  assert.equal((await cli(referenceWorker.wrapperPath,["knowledge",wikiId,"--revision",randomUUID()],1)).error?.code,"FORBIDDEN");
+  assert.equal((await cli(businessWrapper,["read","git",unknownGitRefId],1)).error?.code,"FORBIDDEN");
 });
