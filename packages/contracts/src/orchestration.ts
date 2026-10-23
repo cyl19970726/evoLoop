@@ -14,6 +14,7 @@ const common = { projectId: id, operationId: id };
 export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
+  z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.accept"), loopId: id, sourceEventId: id, recipientRoleId: role, purpose: z.enum(["cognitive_review", "next_action"]) }),
   z.strictObject({ ...common, type: z.literal("inbox.ack"), inboxId: id, expectedVersion: version, reason }),
   z.strictObject({ ...common, type: z.literal("inbox.dispose"), inboxId: id, expectedVersion: version, disposition: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRef: short.nullable() }),
@@ -93,6 +94,9 @@ export interface OrchestrationSourceFact {
   /** Fixed managed Schedule occurrence and creation Task revision. */
   scheduleId?: string | null; scheduleRevisionId?: string | null; plannedAtUtc?: string | null;
   scheduleTargetLoopId?: string | null; scheduleTargetStageId?: string | null; scheduleTaskRevisionId?: string | null;
+  /** A verified waiting.resumed chain back to the fixed original Issue. */
+  waitingDecisionId?: string | null; previousSourceEventId?: string | null;
+  originalSourceEventId?: string | null; waitingRunId?: string | null;
 }
 export interface OrchestrationIssueFact {
   projectId: string; documentId: string; revisionId: string; contentHash: string; author: string;
@@ -126,6 +130,9 @@ export interface OrchestrationTransaction {
   getDecision(id: string): Promise<OrchestrationWorkerDecision | null>;
   findSubmissionByDispatch(dispatchId: string): Promise<OrchestrationSubmission | null>;
   findDecisionByDispatch(dispatchId: string): Promise<OrchestrationWorkerDecision | null>;
+  hasChildDispatch(parentDispatchId: string): Promise<boolean>;
+  hasWaitingResume(decisionId: string): Promise<boolean>;
+  hasUnsettledDispatchForSource(loopId: string, sourceEventId: string, exceptDispatchId: string): Promise<boolean>;
   insertDecision(value: OrchestrationWorkerDecision): Promise<void>;
   insertSubmission(value: OrchestrationSubmission): Promise<void>;
   updateSubmission(value: OrchestrationSubmission, expectedVersion: number): Promise<void>;

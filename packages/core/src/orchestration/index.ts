@@ -1,6 +1,6 @@
 import type { Principal } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
-import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 
 export class OrchestrationError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "OrchestrationError"; }
@@ -24,7 +24,8 @@ export class OrchestrationService {
     if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    if (command.type === "loop.resumeWaiting" && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot resume waiting cognition");
     const now = this.deps.now();
     if (!Number.isFinite(Date.parse(now)) || !now.endsWith("Z")) return fail("INVALID_TIME", "clock must return UTC time");
     return this.deps.store.transaction(command.projectId, async tx => {
@@ -60,7 +61,7 @@ export class OrchestrationService {
   private limit(n: number) { if (!Number.isInteger(n) || n < 1 || n > 100) return fail("INVALID_PAGE", "page limit must be 1–100"); return n; }
 
   private async authorize(tx: OrchestrationTransaction, principal: Principal, command: OrchestrationCommand): Promise<void> {
-    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
+    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
     let loop: OrchestrationLoop | null = null;
     let dispatch: OrchestrationDispatch | null = null;
     if (command.type === "inbox.accept") loop = await tx.getLoop(command.loopId);
@@ -111,6 +112,46 @@ export class OrchestrationService {
       await tx.updateLoop(next, loop.version); await event(loop.id, "loop", loop.id, "loop.state", { state: next.state, reason: command.reason });
       return result("loop", loop.id, next.version);
     }
+    if (command.type === "loop.resumeWaiting") {
+      const loop = await this.loop(tx, command.loopId, command.projectId);
+      this.version(loop.version, command.expectedLoopVersion);
+      this.active(loop);
+      if (loop.dispatchCount >= loop.maxRuns) return fail("BUDGET_EXHAUSTED", "loop has no remaining Run budget");
+      const decision = await tx.getDecision(command.decisionId);
+      const dispatch = await tx.getDispatch(command.dispatchId);
+      if (!decision || !dispatch || decision.projectId !== command.projectId || dispatch.projectId !== command.projectId ||
+        decision.dispatchId !== dispatch.id || dispatch.loopId !== loop.id || dispatch.parentDispatchId !== null ||
+        dispatch.recipientRoleId !== loop.cognitiveRoleId || decision.kind !== "waiting" ||
+        dispatch.state !== "completed" || dispatch.outcome !== "waiting" ||
+        dispatch.runtimeRunId !== decision.runId || dispatch.taskId !== decision.taskId ||
+        await tx.findSubmissionByDispatch(dispatch.id))
+        return fail("WAITING_UNAVAILABLE", "decision must belong to completed waiting cognition in this loop");
+      const run = await tx.getRunFact(decision.runId);
+      if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId ||
+        !["completed", "failed", "interrupted"].includes(run.state))
+        return fail("RUN_NOT_TERMINAL", "waiting cognition Run must have a known terminal state");
+      if (await tx.hasChildDispatch(dispatch.id) || await tx.hasUnsettledDispatchForSource(loop.id, dispatch.sourceEventId, dispatch.id))
+        return fail("WAITING_UNAVAILABLE", "waiting cognition already has a child or unsettled dispatch");
+      if (await tx.hasWaitingResume(decision.id)) return fail("ALREADY_RESUMED", "waiting decision has already been resumed");
+      const previous = await tx.getSourceFact(dispatch.sourceEventId);
+      const rootId = previous?.kind === "document" ? previous.id : previous?.kind === "waiting.resumed" ? previous.originalSourceEventId : null;
+      const root = rootId ? await tx.getSourceFact(rootId) : null;
+      if (!previous || !root || !rootId || root.kind !== "document" || root.projectId !== command.projectId ||
+        previous.projectId !== command.projectId ||
+        (previous.kind === "waiting.resumed" && (previous.sourceLoopId !== loop.id || previous.subjectId !== root.subjectId ||
+          previous.issueRevisionId !== root.issueRevisionId || previous.issueContentHash !== root.issueContentHash)))
+        return fail("SOURCE_UNAVAILABLE", "waiting source must trace to a fixed Issue in this project");
+      await this.fixedIssue(tx, loop, root, command.projectId);
+      const next = { ...loop, version: loop.version + 1, updatedAtUtc: now };
+      await tx.updateLoop(next, loop.version);
+      await event(loop.id, "decision", decision.id, "waiting.resumed", {
+        previousSourceEventId: previous.id, originalSourceEventId: root.id,
+        issueDocumentId: root.subjectId, issueRevisionId: root.issueRevisionId, issueContentHash: root.issueContentHash,
+        decisionId: decision.id, dispatchId: dispatch.id, runId: run.id,
+        resumedAtLoopVersion: next.version, evidenceRef: command.evidenceRef, reason: command.reason,
+      });
+      return result("loop", loop.id, next.version);
+    }
     if (command.type === "inbox.accept") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       this.active(loop);
@@ -122,7 +163,8 @@ export class OrchestrationService {
       const externalObservation = source?.kind === "observation.record" && source.sourceLoopId === null && source.originDispatchId === null;
       const scopedIssue = source?.kind === "document" && source.sourceLoopId === null && source.originDispatchId === null && !!source.issueRevisionId;
       const scheduled = source?.kind === "schedule.task.todo" && source.sourceLoopId === loop.id && source.scheduleTargetLoopId === loop.id && source.originDispatchId === null;
-      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation && !scopedIssue && !scheduled) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be the enrolled seed, own business feedback, terminal intent gap, scoped consumer observation, fixed issue, or targeted Schedule occurrence");
+      const resumedWaiting = source?.kind === "waiting.resumed" && source.sourceLoopId === loop.id && !!source.originalSourceEventId;
+      if (!source || source.projectId !== command.projectId || (!bootstrap && !feedback && !recoveryGap && !externalObservation && !scopedIssue && !scheduled && !resumedWaiting) || (!bootstrap && !cursorAfter({ createdAtUtc: source.createdAtUtc, eventId: source.id }, loop.sourceAfter))) return fail("SOURCE_UNAVAILABLE", "source event must be an enrolled or verified source in this loop");
       if (scheduled) {
         if (!source.scheduleId || !source.scheduleRevisionId || !source.plannedAtUtc ||
           !source.scheduleTargetStageId || !source.scheduleTaskRevisionId || !source.operationId || !source.sourceActorId || source.subjectVersion !== 1 ||
@@ -144,29 +186,16 @@ export class OrchestrationService {
           !stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
           return fail("SOURCE_UNAVAILABLE", "Schedule source has no matching applied operation or fixed active Stage");
       }
+      if (resumedWaiting) {
+        const root = await tx.getSourceFact(source.originalSourceEventId!);
+        if (!root || root.kind !== "document" || root.projectId !== command.projectId || root.subjectId !== source.subjectId ||
+          root.issueRevisionId !== source.issueRevisionId || root.issueContentHash !== source.issueContentHash ||
+          !source.waitingDecisionId || !source.originDispatchId || !source.waitingRunId || !source.previousSourceEventId)
+          return fail("SOURCE_UNAVAILABLE", "resumed waiting source has no fixed Issue chain");
+        await this.fixedIssue(tx, loop, root, command.projectId);
+      }
       if (scopedIssue) {
-        if (!source.operationId || !source.sourceActorId || !source.issueRevisionId || !source.issueContentHash || source.subjectVersion !== 1)
-          return fail("SOURCE_UNAVAILABLE", "issue source lacks creation operation or fixed revision");
-        const operation = await tx.getWorkflowOperationFact(source.operationId);
-        const issue = await tx.getIssueFact(source.subjectId, source.issueRevisionId);
-        if (!operation || operation.projectId !== command.projectId || operation.commandType !== "document.create" ||
-          operation.status !== "applied" || operation.actorId !== source.sourceActorId ||
-          operation.resultRefId !== source.issueRevisionId || operation.resultVersion !== 1 ||
-          !issue || issue.projectId !== command.projectId || issue.documentId !== source.subjectId ||
-          issue.revisionId !== source.issueRevisionId || issue.contentHash !== source.issueContentHash ||
-          issue.author !== source.sourceActorId || !issue.originTaskId || !issue.originTaskRevisionId ||
-          await tx.wasActorRole(issue.author, loop.id, loop.cognitiveRoleId))
-          return fail("SOURCE_UNAVAILABLE", "issue must be an applied, fixed, independently authored creation in this project");
-        if (issue.originRunId) {
-          const run = await tx.getRunFact(issue.originRunId);
-          if (!run || run.projectId !== command.projectId || run.taskId !== issue.originTaskId ||
-            run.taskRevisionId !== issue.originTaskRevisionId || run.state === "unknown")
-            return fail("SOURCE_UNAVAILABLE", "issue Run must match the fixed Task input and have a known state");
-        }
-        const fixed = await tx.getTaskScopeAtVersion(issue.originTaskId, issue.originTaskVersion);
-        if (!fixed || fixed.projectId !== command.projectId || fixed.taskVersion !== issue.originTaskVersion ||
-          !fixed.stageId || fixed.goalId !== loop.goalId || (loop.stageId !== null && fixed.stageId !== loop.stageId))
-          return fail("SOURCE_UNAVAILABLE", "issue origin Task revision is outside this loop's fixed Goal and Stage");
+        await this.fixedIssue(tx, loop, source, command.projectId);
       }
       if (recoveryGap) {
         const origin = await tx.getDispatch(source.originDispatchId!);
@@ -476,6 +505,31 @@ export class OrchestrationService {
   private claim(dispatch: OrchestrationDispatch, token: string, now: string, requireFreshLease = true) {
     if (dispatch.claimToken !== token) return fail("CLAIM_MISMATCH", "dispatch claim token changed");
     if (requireFreshLease && (!dispatch.leaseUntilUtc || Date.parse(dispatch.leaseUntilUtc) <= Date.parse(now))) return fail("CLAIM_EXPIRED", "dispatch claim expired before start");
+  }
+  private async fixedIssue(tx: OrchestrationTransaction, loop: OrchestrationLoop, source: OrchestrationSourceFact, projectId: string) {
+    if (!source.operationId || !source.sourceActorId || !source.issueRevisionId || !source.issueContentHash ||
+      source.subjectVersion !== 1 || source.sourceLoopId !== null || source.originDispatchId !== null)
+      return fail("SOURCE_UNAVAILABLE", "Issue source lacks original creation operation or fixed revision");
+    const operation = await tx.getWorkflowOperationFact(source.operationId);
+    const issue = await tx.getIssueFact(source.subjectId, source.issueRevisionId);
+    if (!operation || operation.projectId !== projectId || operation.commandType !== "document.create" ||
+      operation.status !== "applied" || operation.actorId !== source.sourceActorId ||
+      operation.resultRefId !== source.issueRevisionId || operation.resultVersion !== 1 ||
+      !issue || issue.projectId !== projectId || issue.documentId !== source.subjectId ||
+      issue.revisionId !== source.issueRevisionId || issue.contentHash !== source.issueContentHash ||
+      issue.author !== source.sourceActorId || !issue.originTaskId || !issue.originTaskRevisionId ||
+      await tx.wasActorRole(issue.author, loop.id, loop.cognitiveRoleId))
+      return fail("SOURCE_UNAVAILABLE", "Issue must be an applied, fixed, independently authored creation in this project");
+    if (issue.originRunId) {
+      const run = await tx.getRunFact(issue.originRunId);
+      if (!run || run.projectId !== projectId || run.taskId !== issue.originTaskId ||
+        run.taskRevisionId !== issue.originTaskRevisionId || run.state === "unknown")
+        return fail("SOURCE_UNAVAILABLE", "Issue Run must match its fixed Task input and have a known state");
+    }
+    const fixed = await tx.getTaskScopeAtVersion(issue.originTaskId, issue.originTaskVersion);
+    if (!fixed || fixed.projectId !== projectId || fixed.taskVersion !== issue.originTaskVersion ||
+      !fixed.stageId || fixed.goalId !== loop.goalId || (loop.stageId !== null && fixed.stageId !== loop.stageId))
+      return fail("SOURCE_UNAVAILABLE", "Issue origin Task revision is outside this loop's fixed Goal and Stage");
   }
   private active(loop: OrchestrationLoop) { if (loop.state !== "active") return fail(loop.state === "stopped" ? "LOOP_STOPPED" : "LOOP_PAUSED", "loop is not active"); }
   private version(actual: number, expected: number) { if (actual !== expected) return fail("VERSION_CONFLICT", "version changed", actual); }
