@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace } from "@evoloop/contracts/runtime";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
@@ -542,6 +542,42 @@ export class RuntimeRunner {
       return { messages: finalMessages(items), source: "owned-native-history",
         finalPhaseConfirmed: items.some(item => object(item)?.type === "agentMessage" && object(item)?.phase === "final_answer"),
         observedAt: new Date().toISOString() };
+    } catch (error) { throw this.readFailure(error); }
+  }
+  async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string): Promise<RuntimeWorkTrace> {
+    if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
+      !principal.permissions.includes("review") || !this.deps.principals.some(p => p.actorId === principal.actorId &&
+        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review")))
+      throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+    if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
+    const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (run.projectId !== projectId || !run.nativeTurnId)
+      throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚无可核对的受管原生 Turn。");
+    const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+    if (session.projectId !== projectId || session.id !== run.sessionId || session.state !== "ready" ||
+      !await this.authorized(session, run.actorId))
+      throw new DomainError("FORBIDDEN", "此运行所属会话的授权已失效。");
+    try {
+      const binding = await this.readBinding(session);
+      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
+      const turn = turns.find(candidate => candidate.id === run.nativeTurnId);
+      if (!turn) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "已绑定的原生 Turn 当前不可见，不能确认工作轨迹。");
+      const items: RuntimeWorkTrace["items"] = [];
+      let unsupportedCount = 0, truncated = false, cursor: string | undefined = initialCursor;
+      const seen = new Set<string>();
+      for (let pageNumber = 0; pageNumber < 2; pageNumber++) {
+        const page = await this.runtime.readWorkPage!(binding, turn.id, cursor);
+        if (page.data.length + page.unsupportedCount > 50) throw new Error("Runtime work page exceeds item budget");
+        items.push(...page.data); unsupportedCount += page.unsupportedCount; truncated ||= page.truncated;
+        if (!page.nextCursor) { cursor = undefined; break; }
+        if (seen.has(page.nextCursor)) throw new Error("Runtime work cursor repeated");
+        seen.add(page.nextCursor); cursor = page.nextCursor;
+      }
+      truncated ||= !!cursor;
+      return { runId: run.id, source: "owned-native-history", observedAt: new Date().toISOString(), turn,
+        items, unsupportedCount, truncated, nextCursor: cursor ?? null,
+        completeness: truncated || unsupportedCount || initialCursor || items.length === 0 || !turn.completedAtUtc ? "partial" : "complete",
+        limits: { maxPages: 2, maxItems: 100, maxFieldChars: 2000 } };
     } catch (error) { throw this.readFailure(error); }
   }
   /** Explicit reviewer readback of a previously recorded terminal observation; never starts a turn. */
