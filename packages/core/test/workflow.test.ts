@@ -440,7 +440,31 @@ test("a settled cognition decision closes only its current Task revision; waitin
   bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,parentDispatchId:bootstrap.f.uow.state.cognitiveClosureFact!.dispatchId,recipientRoleId:"cognition"};
   assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
   bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,recipientRoleId:"builder"};
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,
+    requestedBy:"controller",requestedAtUtc:"2026-10-23T00:00:01.000Z",
+    division:{bindingId:bootstrap.f.operation(),waitingDecisionId:bootstrap.f.operation(),acknowledgedRunId:bootstrap.f.operation()}};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,
+    division:{...bootstrap.f.uow.state.childHandoffFact.division!,waitingDecisionId:bootstrap.decisionId}};
   assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"applied");
+
+  const ordinary=await prepare();
+  const ordinaryChild=ordinary.f.operation();
+  ordinary.f.uow.state.cognitiveClosureFact={...ordinary.f.uow.state.cognitiveClosureFact!,kind:"waiting",outcome:"waiting"};
+  ordinary.f.uow.state.childHandoffFact={projectId,dispatchId:ordinaryChild,taskId:taskB,loopId:ordinary.loopId,
+    sourceEventId:ordinary.sourceEventId,parentDispatchId:ordinary.f.uow.state.cognitiveClosureFact!.dispatchId,
+    recipientRoleId:"builder",cognitiveRoleId:"cognition",requestedBy:"controller",
+    requestedAtUtc:"2026-10-23T00:00:01.000Z",sourceInboxId:ordinary.f.operation()};
+  assert.equal((await ordinary.close({handoffDispatchId:ordinaryChild})).status,"rejected");
+
+  const direct=await prepare();
+  const directChild=direct.f.operation();
+  direct.f.uow.state.cognitiveClosureFact={...direct.f.uow.state.cognitiveClosureFact!,kind:"waiting",outcome:"waiting"};
+  direct.f.uow.state.childHandoffFact={projectId,dispatchId:directChild,taskId:taskB,loopId:direct.loopId,
+    sourceEventId:direct.sourceEventId,parentDispatchId:direct.f.uow.state.cognitiveClosureFact!.dispatchId,
+    recipientRoleId:"builder",cognitiveRoleId:"cognition",requestedBy:"signed-cognition",
+    requestedAtUtc:"2026-10-22T23:59:59.000Z",sourceInboxId:direct.f.operation()};
+  assert.equal((await direct.close({handoffDispatchId:directChild})).status,"applied");
   assert.equal(bootstrap.f.uow.state.closures[0]?.sourceTaskId,null);
   assert.equal(bootstrap.f.uow.state.closures[0]?.handoffTaskId,taskB);
   assert.equal(bootstrap.f.uow.state.closures[0]?.handoffDispatchId,childDispatchId);

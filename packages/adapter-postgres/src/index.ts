@@ -1,6 +1,7 @@
 import { PgReferenceStore } from "./references.js";
 import type { FormalSourceDecision, TaskExternalReferenceRecord, TaskExternalReferenceHead } from "@evoloop/contracts/references";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { runner } from "node-pg-migrate";
 import pg, { type PoolClient, type QueryResultRow } from "pg";
 import { PgRuntimeStore } from "./runtime.js";
@@ -10,6 +11,7 @@ import { scheduledSourceFacts } from "./schedule-source.js";
 import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
+const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
 import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
@@ -267,11 +269,142 @@ class PgReader implements Reader {
       JOIN orchestration_operation operation ON operation.project_id=requested.project_id
         AND operation.operation_id=requested.operation_id AND operation.actor_id=requested.actor_id
         AND operation.result->>'entityId'=child.dispatch_id::text
-      WHERE child.project_id=$1 AND child.dispatch_id=$2 AND child.state<>'rejected' LIMIT 1`,[this.projectId,dispatchId]);
-    const x=r.rows[0];return x?{projectId:this.projectId,dispatchId:x.dispatch_id,taskId:x.task_id,loopId:x.loop_id,
+      WHERE child.project_id=$1 AND child.dispatch_id=$2 AND child.state<>'rejected'
+        AND child.data->>'purpose'<>'division' LIMIT 1`,[this.projectId,dispatchId]);
+    const x=r.rows[0];
+    if(x)return {projectId:this.projectId,dispatchId:x.dispatch_id,taskId:x.task_id,loopId:x.loop_id,
       sourceEventId:x.source_event_id,parentDispatchId:x.parent_dispatch_id,recipientRoleId:x.recipient_role_id,
       cognitiveRoleId:x.cognitive_role_id,requestedBy:x.requested_by,requestedAtUtc:iso(x.requested_at_utc),
-      sourceInboxId:x.source_inbox_id} as ChildHandoffFact:null;
+      sourceInboxId:x.source_inbox_id} as ChildHandoffFact;
+    const delegated=await this.client.query(`SELECT child.dispatch_id,child.task_id,child.loop_id,child.inbox_id,
+      child.data->>'sourceEventId' AS source_event_id,child.data->>'parentDispatchId' AS parent_dispatch_id,
+      child.data->>'recipientRoleId' AS recipient_role_id,child.data->>'requestedBy' AS requested_by,
+      loop.data->>'cognitiveRoleId' AS cognitive_role_id,b.binding_id,b.data->>'decidedBy' AS decided_by,
+      waiting.decision_id AS waiting_decision_id,consumed.created_at_utc AS requested_at_utc,
+      receiving.run_id AS receiving_run_id,ack.operation_id AS ack_operation_id,
+      ack.detail AS ack_detail,ack_op.command_hash AS ack_command_hash
+      FROM orchestration_dispatch child
+      JOIN orchestration_loop loop ON loop.project_id=child.project_id AND loop.loop_id=child.loop_id
+      JOIN runtime_role_binding b ON b.project_id=child.project_id AND b.binding_id=child.binding_id
+        AND b.loop_id=child.loop_id AND b.role_id::text=child.data->>'recipientRoleId'
+        AND b.first_task_id=child.task_id AND b.parent_dispatch_id::text=child.data->>'parentDispatchId'
+        AND b.source_event_id::text=child.data->>'sourceEventId'
+        AND child.data->>'bindingId'=b.binding_id::text
+        AND valid_runtime_role_binding_snapshot(b.data)
+      JOIN task business_task ON business_task.project_id=child.project_id AND business_task.task_id=child.task_id
+        AND business_task.state<>'cancelled'
+      JOIN loop_policy_revision policy ON policy.project_id=child.project_id AND policy.policy_id=child.policy_revision_id
+        AND policy.loop_id=child.loop_id AND policy.binding_by_role->>b.role_id::text=b.binding_id::text
+        AND policy.decision_operation_id=b.decision_operation_id
+        AND child.data->>'policyRevisionId'=policy.policy_id::text
+      JOIN orchestration_dispatch parent ON parent.project_id=child.project_id
+        AND parent.dispatch_id=b.parent_dispatch_id AND parent.loop_id=child.loop_id
+        AND parent.data->>'sourceEventId'=child.data->>'sourceEventId'
+        AND parent.data->>'recipientRoleId'=loop.data->>'cognitiveRoleId'
+        AND parent.data->>'purpose'='cognition' AND parent.state='completed' AND parent.data->>'outcome'='waiting'
+      JOIN orchestration_decision waiting ON waiting.project_id=child.project_id
+        AND waiting.dispatch_id=parent.dispatch_id AND waiting.data->>'kind'='waiting'
+        AND waiting.data->>'divisionDecisionId'=b.binding_id::text
+        AND waiting.data->>'runId'=parent.data->>'runtimeRunId'
+        AND waiting.data->>'actorId'=b.data->>'decidedBy'
+      JOIN runtime_run parent_run ON parent_run.project_id=parent.project_id
+        AND parent_run.run_id=(parent.data->>'runtimeRunId')::uuid
+        AND parent_run.task_id=parent.task_id AND parent_run.state='completed'
+      JOIN orchestration_inbox inbox ON inbox.project_id=child.project_id AND inbox.inbox_id=child.inbox_id
+        AND inbox.loop_id=child.loop_id AND inbox.source_event_id=b.source_event_id
+        AND inbox.purpose='next_action' AND inbox.state='disposed'
+        AND inbox.data->>'disposition'='dispatch' AND inbox.data->>'dispatchId'=child.dispatch_id::text
+        AND inbox.data->>'evidenceRef'='division:'||b.binding_id::text
+      JOIN orchestration_event decided ON decided.project_id=b.project_id AND decided.loop_id=b.loop_id
+        AND decided.entity_type='binding' AND decided.entity_id=b.binding_id
+        AND decided.kind='division.decided' AND decided.operation_id=b.decision_operation_id
+        AND decided.actor_id=b.data->>'decidedBy'
+        AND decided.detail->>'parentDispatchId'=parent.dispatch_id::text
+        AND decided.detail->>'sourceEventId'=b.source_event_id::text
+        AND decided.detail->>'firstTaskId'=b.first_task_id::text
+        AND decided.detail->>'policyRevisionId'=policy.policy_id::text
+      JOIN orchestration_operation decided_op ON decided_op.project_id=decided.project_id
+        AND decided_op.operation_id=decided.operation_id AND decided_op.actor_id=decided.actor_id
+        AND decided_op.result->>'entityType'='binding'
+        AND decided_op.result->>'entityId'=b.binding_id::text
+      JOIN orchestration_event consumed ON consumed.project_id=child.project_id AND consumed.loop_id=child.loop_id
+        AND consumed.entity_type='dispatch' AND consumed.entity_id=child.dispatch_id
+        AND consumed.kind='division.consumed' AND consumed.actor_id=child.data->>'requestedBy'
+        AND consumed.detail->>'bindingId'=b.binding_id::text
+        AND consumed.detail->>'waitingDecisionId'=waiting.decision_id::text
+        AND consumed.detail->>'parentDispatchId'=parent.dispatch_id::text
+        AND consumed.detail->>'sourceEventId'=b.source_event_id::text
+        AND consumed.detail->>'firstTaskId'=child.task_id::text
+        AND consumed.detail->>'policyRevisionId'=policy.policy_id::text
+      JOIN orchestration_operation consumed_op ON consumed_op.project_id=consumed.project_id
+        AND consumed_op.operation_id=consumed.operation_id AND consumed_op.actor_id=consumed.actor_id
+        AND consumed_op.result->>'entityType'='dispatch'
+        AND consumed_op.result->>'entityId'=child.dispatch_id::text
+        AND consumed_op.result->>'version'='1'
+      JOIN orchestration_event transfer ON transfer.project_id=child.project_id AND transfer.loop_id=child.loop_id
+        AND transfer.entity_type='dispatch' AND transfer.entity_id=child.dispatch_id
+        AND transfer.kind='division.transferConfirmed' AND transfer.actor_id=consumed.actor_id
+        AND transfer.detail->>'bindingId'=b.binding_id::text
+        AND transfer.detail->>'observedTaskVersion'=b.first_task_version::text
+        AND transfer.detail->>'transferredTaskVersion'=child.task_version::text
+      JOIN orchestration_operation transfer_op ON transfer_op.project_id=transfer.project_id
+        AND transfer_op.operation_id=transfer.operation_id AND transfer_op.actor_id=transfer.actor_id
+        AND transfer_op.result->>'entityType'='dispatch'
+        AND transfer_op.result->>'entityId'=child.dispatch_id::text
+        AND transfer_op.result->>'version'='2'
+      JOIN task_revision before_transfer ON before_transfer.project_id=child.project_id
+        AND before_transfer.task_id=child.task_id AND before_transfer.version=b.first_task_version
+        AND before_transfer.owner<>b.role_id::text
+      JOIN task_revision after_transfer ON after_transfer.project_id=child.project_id
+        AND after_transfer.task_id=child.task_id AND after_transfer.version=child.task_version
+        AND after_transfer.version=before_transfer.version+1 AND after_transfer.owner=b.role_id::text
+        AND after_transfer.actor_id=consumed.actor_id
+        AND after_transfer.reason='division-transfer:'||b.binding_id::text
+        AND transfer.detail->>'revisionId'=after_transfer.revision_id::text
+      JOIN operation_journal task_op ON task_op.project_id=child.project_id
+        AND task_op.operation_id=(transfer.detail->>'transferOperationId')::uuid
+        AND task_op.actor_id=consumed.actor_id AND task_op.command_type='task.update'
+        AND task_op.result->>'status'='applied'
+        AND task_op.result->>'revisionId'=after_transfer.revision_id::text
+        AND task_op.result->>'version'=after_transfer.version::text
+      JOIN runtime_run receiving ON receiving.project_id=child.project_id
+        AND receiving.run_id=(child.data->>'runtimeRunId')::uuid
+        AND receiving.task_id=child.task_id AND receiving.state<>'unknown'
+      JOIN document_revision material ON material.project_id=b.project_id
+        AND material.document_id=b.document_id AND material.revision_id=b.document_revision_id
+        AND material.content_hash=b.document_content_hash
+      JOIN orchestration_event ack ON ack.project_id=child.project_id AND ack.loop_id=child.loop_id
+        AND ack.entity_type='dispatch' AND ack.entity_id=child.dispatch_id
+        AND ack.kind='division.handoffAcknowledged' AND ack.actor_id LIKE 'worker-%'
+        AND ack.detail->>'runId'=receiving.run_id::text
+        AND ack.detail->>'taskRevisionId'=receiving.task_revision_id::text
+        AND ack.detail->>'documentRevisionId'=material.revision_id::text
+        AND ack.detail->>'documentContentHash'=material.content_hash
+      JOIN orchestration_operation ack_op ON ack_op.project_id=ack.project_id
+        AND ack_op.operation_id=ack.operation_id AND ack_op.actor_id=ack.actor_id
+        AND ack_op.result->>'entityType'='dispatch'
+        AND ack_op.result->>'entityId'=child.dispatch_id::text
+      WHERE child.project_id=$1 AND child.dispatch_id=$2 AND child.binding_id IS NOT NULL
+        AND child.data->>'purpose'='division' AND child.state IN ('accepted','completed')
+        AND child.data->>'authorizationScopeId'=b.data->>'authorizationScopeId'
+        AND child.data->>'requestedBy'=b.data->>'actorId'
+        AND child.task_version=b.first_task_version+1
+        AND b.template_id::text=b.data->'template'->>'id'
+        AND b.template_revision::text=b.data->'template'->>'revision'
+        AND b.template_hash=b.data->'template'->>'hash'
+      LIMIT 2`,[this.projectId,dispatchId]);
+    if(delegated.rows.length!==1)return null;
+    const d=delegated.rows[0],detail=d.ack_detail as Record<string,unknown>;
+    const ackCommand={projectId:this.projectId,operationId:d.ack_operation_id,type:"division.ackHandoff",
+      dispatchId:d.dispatch_id,runId:d.receiving_run_id,documentRevisionId:detail.documentRevisionId,
+      documentContentHash:detail.documentContentHash,taskRevisionId:detail.taskRevisionId,reason:detail.declaration};
+    if(typeof detail.declaration!=="string" ||
+      createHash("sha256").update(canonical(ackCommand)).digest("hex")!==d.ack_command_hash)return null;
+    return {projectId:this.projectId,dispatchId:d.dispatch_id,taskId:d.task_id,loopId:d.loop_id,
+      sourceEventId:d.source_event_id,parentDispatchId:d.parent_dispatch_id,recipientRoleId:d.recipient_role_id,
+      cognitiveRoleId:d.cognitive_role_id,requestedBy:d.requested_by,requestedAtUtc:iso(d.requested_at_utc),
+      sourceInboxId:d.inbox_id,division:{bindingId:d.binding_id,waitingDecisionId:d.waiting_decision_id,
+        acknowledgedRunId:d.receiving_run_id}} as ChildHandoffFact;
   }
   async getWaitingHandoffFact(inboxId:string):Promise<WaitingHandoffFact|null> {
     const r=await this.client.query(`SELECT i.inbox_id,i.loop_id,i.source_event_id,i.recipient_role_id,e.actor_id
