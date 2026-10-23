@@ -446,6 +446,99 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.equal((await division.getBinding(principal(actor),projectId,decided.entityId))?.grant.newRoleAllocation?.maxTotal,1);
   const divisionPolicy=(await division.getPolicy(principal(actor),projectId,afterDivision.currentPolicyRevisionId!))!;
   assert.equal(divisionPolicy.bindingByRole[newRoleId],decided.entityId);
+  const rejectsSql=async(run:(client:pg.PoolClient)=>Promise<unknown>)=>assert.rejects(async()=>{
+    const client=await pool.connect();await client.query("BEGIN");
+    try { await run(client);await client.query("SET CONSTRAINTS ALL IMMEDIATE"); }
+    finally { await client.query("ROLLBACK");client.release(); }
+  });
+  const unrelatedOperation=(await pool.query("SELECT operation_id FROM orchestration_operation WHERE project_id=$1 AND result->>'entityType'='dispatch' LIMIT 1",[projectId])).rows[0].operation_id;
+  await rejectsSql(client=>client.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,
+    template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,
+    first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
+    SELECT project_id,$1,loop_id,goal_id,role_id,choice,template_id,template_revision,template_hash,$2,
+      source_event_id,parent_dispatch_id,first_task_id,first_task_version,document_id,document_revision_id,
+      document_content_hash,jsonb_set(data,'{id}',to_jsonb($1::text))
+    FROM runtime_role_binding WHERE project_id=$3 AND binding_id=$4`,[randomUUID(),unrelatedOperation,projectId,decided.entityId]));
+  await rejectsSql(client=>client.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,
+    previous_policy_id,allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,
+    actor_id,created_at_utc,data) SELECT project_id,$1,loop_id,version+1,policy_id,
+    (SELECT coalesce(jsonb_agg(value),'[]'::jsonb) FROM jsonb_array_elements(allowed_business_role_ids) value WHERE value #>> '{}'<>$2),
+    binding_by_role-$2,$3,$4,$5,now(),jsonb_build_object('allowedBusinessRoleIds',to_jsonb(ARRAY[$2]))
+    FROM loop_policy_revision WHERE project_id=$6 AND policy_id=$7`,
+    [randomUUID(),newRoleId,decided.entityId,decisionOperationId,actor,projectId,divisionPolicy.id]));
+  const sqlTaskId=randomUUID();
+  assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:sqlTaskId,stageId,title:"SQL provenance fixture",content:"# Bounded",acceptance:"Check",owner:businessRole,
+    consumer:"owner",evidence:"Fixture",stopCondition:"One check"})).status,"applied");
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:sqlTaskId,expectedVersion:1,reason:"Fix observed version"})).status,"applied");
+  const otherGoalId=randomUUID();
+  assert.equal((await workflow.execute(principal(actor),{type:"goal.create",projectId,operationId:randomUUID(),
+    goalId:otherGoalId,outcome:"Unrelated",constraints:"Local",consumer:"owner",authority:"reviewer",scope:"pilot",owner:actor})).status,"applied");
+  const originalBinding=(await division.getBinding(principal(actor),projectId,decided.entityId))!;
+  const insertSignedFixture=async(client:pg.PoolClient,
+    change:(b:typeof originalBinding,op:Record<string,unknown>,event:Record<string,unknown>)=>void=()=>{},
+    changeData:(data:typeof originalBinding)=>void=()=>{})=>{
+    const id=randomUUID(),operationId=randomUUID(),templateId=randomUUID(),createdAtUtc=new Date().toISOString();
+    const binding={...structuredClone(originalBinding),id,choice:"same-role-instance" as const,decisionOperationId:operationId,
+      firstTaskId:sqlTaskId,firstTaskVersion:2,template:{...originalBinding.template,id:templateId},
+      grant:{...originalBinding.grant,id:templateId,firstTaskId:sqlTaskId,existingRoleIds:[newRoleId],
+        newRoleAllocation:null,allowedChoices:["same-role-instance"]},createdAtUtc};
+    const operation:Record<string,unknown>={entityType:"binding",entityId:id,version:1,replayed:false};
+    const detail:Record<string,unknown>={choice:binding.choice,sourceEventId:binding.sourceEventId,
+      parentDispatchId:binding.parentDispatchId,firstTaskId:binding.firstTaskId,firstTaskVersion:binding.firstTaskVersion,
+      documentId:binding.documentId,documentRevisionId:binding.documentRevisionId,
+      documentContentHash:binding.documentContentHash,roleId:binding.roleId,template:binding.template,
+      policyRevisionId:randomUUID()};
+    change(binding,operation,detail);
+    const bindingData=structuredClone(binding);changeData(bindingData);
+    await client.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+      [projectId,operationId,actor,sha(operationId),JSON.stringify(operation),createdAtUtc]);
+    await client.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,
+      template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,
+      first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`,
+      [projectId,binding.id,binding.loopId,binding.goalId,binding.roleId,binding.choice,binding.template.id,
+        binding.template.revision,binding.template.hash,binding.decisionOperationId,binding.sourceEventId,
+        binding.parentDispatchId,binding.firstTaskId,binding.firstTaskVersion,binding.documentId,
+        binding.documentRevisionId,binding.documentContentHash,JSON.stringify(bindingData)]);
+    await client.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
+      kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'binding',$4,$5,'division.decided',$6,$7::jsonb,$8)`,
+      [projectId,randomUUID(),binding.loopId,binding.id,operationId,actor,JSON.stringify(detail),createdAtUtc]);
+  };
+  const allowsSql=async(run:(client:pg.PoolClient)=>Promise<unknown>)=>{
+    const client=await pool.connect();await client.query("BEGIN");
+    try {await run(client);await client.query("SET CONSTRAINTS ALL IMMEDIATE");}
+    finally {await client.query("ROLLBACK");client.release();}
+  };
+  await allowsSql(client=>insertSignedFixture(client));
+  await rejectsSql(client=>insertSignedFixture(client,()=>{},data=>{data.roleId=businessRole;}));
+  await rejectsSql(client=>insertSignedFixture(client,b=>{b.runtime.cwd="/tmp/wider";}));
+  await rejectsSql(client=>insertSignedFixture(client,(_b,op)=>{op.entityType="dispatch";}));
+  await rejectsSql(client=>insertSignedFixture(client,(b)=>{b.decidedBy="forged-actor";}));
+  await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.parentDispatchId=cognition.entityId;event.parentDispatchId=b.parentDispatchId;}));
+  await rejectsSql(client=>insertSignedFixture(client,(b)=>{b.goalId=otherGoalId;b.grant.goalId=b.goalId;}));
+  await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.firstTaskVersion=99;event.firstTaskVersion=99;}));
+  await rejectsSql(client=>insertSignedFixture(client,(b,_op,event)=>{b.documentContentHash="0".repeat(64);event.documentContentHash=b.documentContentHash;}));
+  const insertRevokeFixture=async(client:pg.PoolClient,resultType="binding")=>{
+    const policyId=randomUUID(),operationId=randomUUID(),createdAtUtc=new Date().toISOString();
+    const policy={...divisionPolicy,id:policyId,version:divisionPolicy.version+1,previousId:divisionPolicy.id,
+      allowedBusinessRoleIds:divisionPolicy.allowedBusinessRoleIds.filter(role=>role!==newRoleId),
+      bindingByRole:{},changedBindingId:decided.entityId,decisionOperationId:operationId,actorId:actor,createdAtUtc};
+    await client.query("INSERT INTO orchestration_operation(project_id,operation_id,actor_id,command_hash,result,created_at_utc) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
+      [projectId,operationId,actor,sha(operationId),JSON.stringify({entityType:resultType,entityId:decided.entityId,version:2,replayed:false}),createdAtUtc]);
+    await client.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
+      allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb)`,
+      [projectId,policy.id,policy.loopId,policy.version,policy.previousId,JSON.stringify(policy.allowedBusinessRoleIds),
+        JSON.stringify(policy.bindingByRole),policy.changedBindingId,policy.decisionOperationId,policy.actorId,createdAtUtc,JSON.stringify(policy)]);
+    await client.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
+      kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'binding',$4,$5,'division.revoked',$6,$7::jsonb,$8)`,
+      [projectId,randomUUID(),lateLoopId,decided.entityId,operationId,actor,
+        JSON.stringify({policyRevisionId:policyId,reason:"Fixture"}),createdAtUtc]);
+  };
+  await allowsSql(client=>insertRevokeFixture(client));
+  await rejectsSql(client=>insertRevokeFixture(client,"dispatch"));
   const pendingInbox=await division.execute(principal(actor),{type:"inbox.accept",projectId,operationId:randomUUID(),
     loopId:lateLoopId,sourceEventId:lateLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"next_action"});
   await division.execute(principal(actor),{type:"inbox.ack",projectId,operationId:randomUUID(),
@@ -487,6 +580,12 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.equal((await division.getPolicy(principal(actor),projectId,divisionPolicy.id))?.bindingByRole[newRoleId],decided.entityId);
   assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)),
     "withdrawal cannot erase proof under the dispatch's pinned policy");
+  const revokedPolicyId=(await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!;
+  await assert.rejects(pool.query(`UPDATE orchestration_dispatch SET policy_revision_id=$3,
+    data=jsonb_set(data,'{policyRevisionId}',to_jsonb($3::text)) WHERE project_id=$1 AND dispatch_id=$2`,
+    [projectId,historicalChildId,revokedPolicyId]));
+  await assert.rejects(pool.query(`UPDATE orchestration_dispatch SET data=jsonb_set(data,'{policyRevisionId}',
+    to_jsonb($3::text)) WHERE project_id=$1 AND dispatch_id=$2`,[projectId,historicalChildId,revokedPolicyId]));
   assert.equal((await division.getPolicy(principal(actor),projectId,
     (await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!))?.allowedBusinessRoleIds.includes(newRoleId),false);
   await fails(division.execute(principal(actor),{...dynamicRequest,operationId:randomUUID()} as never),"VERSION_CONFLICT");
@@ -496,7 +595,6 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const historicalPolicyId = (await orchestrator.getDispatch(principal(actor),projectId,requested.entityId))!.policyRevisionId!;
   assert.equal((await pool.query("SELECT division_historical_role_allowed($1,$2,$3) AS yes",[projectId,requested.entityId,"unlisted-role"])).rows[0].yes,false);
   await assert.rejects(pool.query("UPDATE loop_policy_revision SET allowed_business_role_ids='[]'::jsonb WHERE project_id=$1 AND policy_id=$2",[projectId,historicalPolicyId]));
-  const revokedPolicyId=(await division.getLoop(principal(actor),projectId,lateLoopId))!.currentPolicyRevisionId!;
   await assert.rejects(pool.query(`INSERT INTO loop_policy_revision(project_id,policy_id,loop_id,version,previous_policy_id,
     allowed_business_role_ids,binding_by_role,changed_binding_id,decision_operation_id,actor_id,created_at_utc,data)
     SELECT project_id,$1,loop_id,version+1,policy_id,allowed_business_role_ids||to_jsonb('forged-role'::text),

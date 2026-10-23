@@ -111,6 +111,147 @@ BEGIN
 END $$;
 CREATE TRIGGER loop_policy_binding_validate BEFORE INSERT ON loop_policy_revision
   FOR EACH ROW EXECUTE FUNCTION validate_loop_policy_bindings();
+-- The service inserts the event before its operation receipt, so provenance is
+-- checked at commit. Readers consume data JSON; it must describe the same fact
+-- as the indexed columns rather than a second, wider authority.
+CREATE FUNCTION verify_division_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE delegated_grant jsonb := NEW.data->'grant'; parent orchestration_dispatch%ROWTYPE;
+  owner_loop orchestration_loop%ROWTYPE; observed_stage uuid; observed_goal uuid;
+BEGIN
+  IF NEW.data IS DISTINCT FROM jsonb_build_object(
+    'projectId',NEW.project_id,'id',NEW.binding_id,'loopId',NEW.loop_id,'goalId',NEW.goal_id,
+    'roleId',NEW.role_id,'choice',NEW.choice,'actorId',NEW.data->'actorId',
+    'authorizationScopeId',NEW.data->'authorizationScopeId','decisionOperationId',NEW.decision_operation_id,
+    'sourceEventId',NEW.source_event_id,'parentDispatchId',NEW.parent_dispatch_id,
+    'firstTaskId',NEW.first_task_id,'firstTaskVersion',NEW.first_task_version,
+    'documentId',NEW.document_id,'documentRevisionId',NEW.document_revision_id,
+    'documentContentHash',NEW.document_content_hash,
+    'template',jsonb_build_object('id',NEW.template_id,'revision',NEW.template_revision,'hash',NEW.template_hash),
+    'grant',delegated_grant,'runtime',NEW.data->'runtime','decidedBy',NEW.data->'decidedBy',
+    'createdAtUtc',NEW.data->'createdAtUtc') OR
+    delegated_grant IS NULL OR jsonb_typeof(delegated_grant)<>'object' OR
+    NOT coalesce(delegated_grant ?& ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds',
+      'newRoleAllocation','firstTaskId','actorId','authorizationScopeId','decisionActorIds','allowedChoices',
+      'cwd','model','sandbox','networkAccess','approvalPolicy','expiresAtUtc'],false) OR
+    delegated_grant - ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds','newRoleAllocation',
+      'firstTaskId','actorId','authorizationScopeId','decisionActorIds','allowedChoices','cwd','model',
+      'sandbox','networkAccess','approvalPolicy','expiresAtUtc'] <> '{}'::jsonb OR
+    delegated_grant->>'id' IS DISTINCT FROM NEW.template_id::text OR
+    delegated_grant->>'revision' IS DISTINCT FROM NEW.template_revision::text OR
+    delegated_grant->>'projectId' IS DISTINCT FROM NEW.project_id::text OR
+    delegated_grant->>'goalId' IS DISTINCT FROM NEW.goal_id::text OR
+    delegated_grant->>'loopId' IS DISTINCT FROM NEW.loop_id::text OR
+    delegated_grant->>'firstTaskId' IS DISTINCT FROM NEW.first_task_id::text OR
+    delegated_grant->>'actorId' IS DISTINCT FROM NEW.data->>'actorId' OR
+    delegated_grant->>'authorizationScopeId' IS DISTINCT FROM NEW.data->>'authorizationScopeId' OR
+    jsonb_typeof(delegated_grant->'existingRoleIds') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(delegated_grant->'decisionActorIds') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(delegated_grant->'allowedChoices') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(delegated_grant->'networkAccess') IS DISTINCT FROM 'boolean' OR
+    nullif(delegated_grant->>'cwd','') IS NULL OR left(delegated_grant->>'cwd',1)<>'/' OR
+    nullif(delegated_grant->>'model','') IS NULL OR
+    coalesce(delegated_grant->>'sandbox' NOT IN ('read-only','workspace-write'),true) OR
+    coalesce(delegated_grant->>'approvalPolicy' NOT IN ('on-request','untrusted'),true) OR
+    (delegated_grant->'newRoleAllocation'<>'null'::jsonb AND delegated_grant->'newRoleAllocation'<>
+      '{"maxTotal":1,"requiredState":"trial"}'::jsonb) OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements_text(delegated_grant->'allowedChoices') choice
+      WHERE choice NOT IN ('same-role-instance','temporary-assignment','new-role')) OR
+    NOT coalesce(delegated_grant->'decisionActorIds' ? (NEW.data->>'decidedBy'),false) OR
+    NOT coalesce(delegated_grant->'allowedChoices' ? NEW.choice,false) OR
+    (CASE WHEN NEW.choice='new-role' THEN delegated_grant->'newRoleAllocation' IS DISTINCT FROM
+        '{"maxTotal":1,"requiredState":"trial"}'::jsonb OR coalesce(delegated_grant->'existingRoleIds' ? NEW.role_id::text,false)
+      ELSE NOT coalesce(delegated_grant->'existingRoleIds' ? NEW.role_id::text,false) END) OR
+    NEW.data->'runtime' IS DISTINCT FROM jsonb_build_object(
+      'cwd',delegated_grant->'cwd','model',delegated_grant->'model','sandbox',delegated_grant->'sandbox',
+      'networkAccess',delegated_grant->'networkAccess','approvalPolicy',delegated_grant->'approvalPolicy',
+      'expiresAtUtc',delegated_grant->'expiresAtUtc') THEN
+    RAISE EXCEPTION 'division binding JSON and delegated template disagree' USING ERRCODE='23514'; END IF;
+  SELECT * INTO owner_loop FROM orchestration_loop WHERE project_id=NEW.project_id AND loop_id=NEW.loop_id;
+  SELECT * INTO parent FROM orchestration_dispatch WHERE project_id=NEW.project_id AND dispatch_id=NEW.parent_dispatch_id;
+  SELECT p.stage_id,s.goal_id INTO observed_stage,observed_goal FROM task_revision r
+    JOIN task_proposal p ON p.project_id=r.project_id AND p.task_id=r.task_id AND p.task_revision_id=r.revision_id
+    JOIN project_stage s ON s.project_id=p.project_id AND s.stage_id=p.stage_id
+    WHERE r.project_id=NEW.project_id AND r.task_id=NEW.first_task_id AND r.version<=NEW.first_task_version
+    ORDER BY r.version DESC LIMIT 1;
+  IF owner_loop.loop_id IS NULL OR owner_loop.data->>'goalId' IS DISTINCT FROM NEW.goal_id::text OR
+    parent.dispatch_id IS NULL OR parent.loop_id<>NEW.loop_id OR parent.data->>'sourceEventId' IS DISTINCT FROM NEW.source_event_id::text OR
+    parent.data->>'recipientRoleId' IS DISTINCT FROM owner_loop.data->>'cognitiveRoleId' OR
+    parent.state NOT IN ('accepted','completed') OR
+    NOT EXISTS(SELECT 1 FROM runtime_run r WHERE r.project_id=NEW.project_id
+      AND r.run_id::text=parent.data->>'runtimeRunId' AND r.task_id=parent.task_id
+      AND r.state IN ('completed','failed','interrupted')) OR
+    NOT EXISTS(SELECT 1 FROM task_revision r WHERE r.project_id=NEW.project_id AND r.task_id=NEW.first_task_id
+      AND r.version=NEW.first_task_version) OR observed_goal IS DISTINCT FROM NEW.goal_id OR
+    (owner_loop.data->>'stageId' IS NOT NULL AND observed_stage::text IS DISTINCT FROM owner_loop.data->>'stageId') OR
+    NOT EXISTS(SELECT 1 FROM role_definition d JOIN role_revision r ON r.project_id=d.project_id
+      AND r.role_id=d.role_id AND r.revision_id=d.current_revision_id
+      WHERE d.project_id=NEW.project_id AND d.role_id=NEW.role_id AND d.state IN ('trial','active')
+        AND EXISTS(SELECT 1 FROM role_decision decision WHERE decision.project_id=d.project_id
+          AND decision.role_id=d.role_id AND decision.decision='accept-trial')
+        AND (NEW.choice<>'new-role' OR (d.state='trial' AND r.proposal->>'firstTaskId'=NEW.first_task_id::text))) OR
+    (NEW.data->'grant'->>'expiresAtUtc')::timestamptz <= (NEW.data->>'createdAtUtc')::timestamptz OR
+    NOT EXISTS(SELECT 1 FROM document_revision d WHERE d.project_id=NEW.project_id AND d.document_id=NEW.document_id
+      AND d.revision_id=NEW.document_revision_id AND d.content_hash=NEW.document_content_hash) OR
+    NOT EXISTS(SELECT 1 FROM orchestration_operation o WHERE o.project_id=NEW.project_id AND o.operation_id=NEW.decision_operation_id
+      AND o.actor_id=NEW.data->>'decidedBy' AND o.result->>'entityType'='binding'
+      AND o.result->>'entityId'=NEW.binding_id::text AND o.result->>'version'='1'
+      AND o.created_at_utc=(NEW.data->>'createdAtUtc')::timestamptz) OR
+    NOT EXISTS(SELECT 1 FROM orchestration_event e WHERE e.project_id=NEW.project_id AND e.loop_id=NEW.loop_id
+      AND e.entity_type='binding' AND e.entity_id=NEW.binding_id AND e.operation_id=NEW.decision_operation_id
+      AND e.actor_id=NEW.data->>'decidedBy' AND e.kind='division.decided'
+      AND e.detail->>'choice'=NEW.choice AND e.detail->>'sourceEventId'=NEW.source_event_id::text
+      AND e.detail->>'parentDispatchId'=NEW.parent_dispatch_id::text AND e.detail->>'firstTaskId'=NEW.first_task_id::text
+      AND e.detail->>'firstTaskVersion'=NEW.first_task_version::text AND e.detail->>'documentId'=NEW.document_id::text
+      AND e.detail->>'documentRevisionId'=NEW.document_revision_id::text
+      AND e.detail->>'documentContentHash'=NEW.document_content_hash AND e.detail->>'roleId'=NEW.role_id::text
+      AND e.detail->'template'=NEW.data->'template'
+      AND e.created_at_utc=(NEW.data->>'createdAtUtc')::timestamptz) THEN
+    RAISE EXCEPTION 'division binding lacks fixed Task, material, parent or signed decision' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER division_binding_provenance AFTER INSERT ON runtime_role_binding
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_division_binding();
+CREATE FUNCTION verify_division_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE prior loop_policy_revision%ROWTYPE; expected_kind text; expected_version text;
+BEGIN
+  IF NEW.data IS DISTINCT FROM jsonb_build_object('projectId',NEW.project_id,'id',NEW.policy_id,
+    'loopId',NEW.loop_id,'version',NEW.version,'previousId',NEW.previous_policy_id,
+    'allowedBusinessRoleIds',NEW.allowed_business_role_ids,'bindingByRole',NEW.binding_by_role,
+    'changedBindingId',NEW.changed_binding_id,'decisionOperationId',NEW.decision_operation_id,
+    'actorId',NEW.actor_id,'createdAtUtc',NEW.data->'createdAtUtc') OR
+    NEW.data->>'createdAtUtc' IS DISTINCT FROM to_char(NEW.created_at_utc AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') THEN
+    RAISE EXCEPTION 'Loop policy JSON differs from immutable columns' USING ERRCODE='23514'; END IF;
+  IF NEW.version=1 THEN RETURN NEW; END IF;
+  SELECT * INTO prior FROM loop_policy_revision WHERE project_id=NEW.project_id AND policy_id=NEW.previous_policy_id;
+  expected_kind := CASE WHEN prior.binding_by_role ? (SELECT role_id::text FROM runtime_role_binding
+    WHERE project_id=NEW.project_id AND binding_id=NEW.changed_binding_id) THEN 'division.revoked' ELSE 'division.decided' END;
+  expected_version := CASE WHEN expected_kind='division.revoked' THEN '2' ELSE '1' END;
+  IF NOT EXISTS(SELECT 1 FROM orchestration_operation o WHERE o.project_id=NEW.project_id
+      AND o.operation_id=NEW.decision_operation_id AND o.actor_id=NEW.actor_id
+      AND o.result->>'entityType'='binding' AND o.result->>'entityId'=NEW.changed_binding_id::text
+      AND o.result->>'version'=expected_version AND o.created_at_utc=NEW.created_at_utc) OR
+    NOT EXISTS(SELECT 1 FROM orchestration_event e WHERE e.project_id=NEW.project_id AND e.loop_id=NEW.loop_id
+      AND e.entity_type='binding' AND e.entity_id=NEW.changed_binding_id AND e.operation_id=NEW.decision_operation_id
+      AND e.actor_id=NEW.actor_id AND e.kind=expected_kind AND e.detail->>'policyRevisionId'=NEW.policy_id::text
+      AND e.created_at_utc=NEW.created_at_utc) THEN
+    RAISE EXCEPTION 'Loop policy lacks matching signed division decision or revocation' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER division_policy_provenance AFTER INSERT ON loop_policy_revision
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_division_policy();
+CREATE FUNCTION protect_dispatch_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.data->>'policyRevisionId' IS DISTINCT FROM NEW.policy_revision_id::text OR
+    NEW.data->'bindingId' IS DISTINCT FROM coalesce(to_jsonb(NEW.binding_id::text),'null'::jsonb) OR
+    (TG_OP='UPDATE' AND (NEW.policy_revision_id IS DISTINCT FROM OLD.policy_revision_id OR
+      NEW.binding_id IS DISTINCT FROM OLD.binding_id OR
+      NEW.data->>'policyRevisionId' IS DISTINCT FROM OLD.data->>'policyRevisionId' OR
+      NEW.data->'bindingId' IS DISTINCT FROM OLD.data->'bindingId')) THEN
+    RAISE EXCEPTION 'Dispatch historical policy reference is immutable and consistent' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER dispatch_policy_protect BEFORE INSERT OR UPDATE ON orchestration_dispatch
+  FOR EACH ROW EXECUTE FUNCTION protect_dispatch_policy();
 -- Historical child evidence refers to the policy pinned at request time.
 CREATE OR REPLACE FUNCTION division_historical_role_allowed(p_project uuid,p_dispatch uuid,p_role text)
 RETURNS boolean LANGUAGE sql STABLE AS $$
