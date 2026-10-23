@@ -8,7 +8,7 @@ import type {
   DiscussionRecord, DiscussionEvent,
 } from "@evoloop/contracts";
 import type { Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
-import type { CognitiveClosureFact, WaitingHandoffFact } from "@evoloop/contracts/ports";
+import type { CognitiveClosureFact, WaitingHandoffFact, ChildHandoffFact } from "@evoloop/contracts/ports";
 import { DomainError, WorkflowService } from "../src/index.ts";
 import type { RoleRecord, RoleRevision, RoleTrialReview, RoleHandoff, RoleSessionBinding } from "@evoloop/contracts/roles";
 import type { ScheduleDefinition, ScheduleRevision, Occurrence } from "@evoloop/contracts/scheduling";
@@ -45,6 +45,7 @@ type State = {
   closures: TaskClosure[];
   cognitiveClosureFact: CognitiveClosureFact | null;
   waitingHandoffFact: WaitingHandoffFact | null;
+  childHandoffFact: ChildHandoffFact | null;
   discussions: Record<string, DiscussionRecord>;
   discussionEvents: DiscussionEvent[];
   roles: Record<string, RoleRecord>;
@@ -61,7 +62,7 @@ class MemoryUow implements UnitOfWork {
   state: State = {
     project: null, documents: {}, documentRevisions: {}, documentDecisions: [], tasks: {},
     taskRevisions: {}, bases: {}, links: [], impacts: {}, basisDecisions: [], operations: {}, outbox: [],
-    goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [], cognitiveClosureFact: null, waitingHandoffFact: null,
+    goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [], cognitiveClosureFact: null, waitingHandoffFact: null, childHandoffFact: null,
     discussions: {}, discussionEvents: [],
     roles: {}, roleRevisions: [], roleReviews: [], roleHandoffs: [], roleBindings: [], schedules: {}, scheduleRevisions: [], occurrences: [],
   };
@@ -124,6 +125,7 @@ class MemoryUow implements UnitOfWork {
       listTaskClosures: async taskId => state.closures.filter(item => item.taskId === taskId),
       getCognitiveClosureFact: async id => state.cognitiveClosureFact?.decisionId === id ? state.cognitiveClosureFact : null,
       getWaitingHandoffFact: async id => state.waitingHandoffFact?.inboxId === id ? state.waitingHandoffFact : null,
+      getChildHandoffFact: async id => state.childHandoffFact?.dispatchId === id ? state.childHandoffFact : null,
       getProject: async () => state.project,
       getDocument: async (id) => state.documents[id] ?? null,
       getDocumentRevision: async (document, revision) => {
@@ -386,7 +388,7 @@ test("a settled cognition decision closes only its current Task revision; waitin
     f.uow.state.cognitiveClosureFact={projectId,decisionId,actorId:"signed-cognition",kind:"no_action",
       taskId:taskA,taskRevisionId:task.currentRevisionId,runId:f.operation(),runState:"completed",dispatchId:f.operation(),
       loopId,sourceInboxId,sourceEventId,sourceTaskId:null,sourceTaskIsCognition:false,outcome:"no_action",purpose:"cognition",
-      recipientRoleId:"cognition",cognitiveRoleId:"cognition",loopState:"active"};
+      recipientRoleId:"cognition",cognitiveRoleId:"cognition",loopState:"active",decidedAtUtc:"2026-10-23T00:00:00.000Z"};
     const close=(extra:Record<string,unknown>={})=>f.service.execute(principal,{type:"task.close",projectId,
       operationId:f.operation(),taskId:taskA,expectedVersion:task.version,decisionId,acceptanceResult:"met",
       acceptanceEvidence:"Reviewed fixed source and signed no further action",reason:"Acceptance reviewed",...extra} as never);
@@ -416,6 +418,32 @@ test("a settled cognition decision closes only its current Task revision; waitin
   assert.equal(accepted.status,"applied");
   assert.equal(waiting.f.uow.state.closures[0]?.sourceTaskId,sourceTaskId);
   assert.equal(waiting.f.uow.state.closures[0]?.waitingInboxId,waitingInboxId);
+
+  const bootstrap=await prepare();
+  const childDispatchId=bootstrap.f.operation();
+  bootstrap.f.uow.state.cognitiveClosureFact={...bootstrap.f.uow.state.cognitiveClosureFact!,kind:"waiting",outcome:"waiting"};
+  bootstrap.f.uow.state.childHandoffFact={projectId,dispatchId:childDispatchId,taskId:taskB,loopId:bootstrap.loopId,
+    sourceEventId:bootstrap.sourceEventId,parentDispatchId:bootstrap.f.uow.state.cognitiveClosureFact!.dispatchId,
+    recipientRoleId:"builder",cognitiveRoleId:"cognition",requestedBy:"signed-cognition",
+    requestedAtUtc:"2026-10-22T23:59:59.000Z",sourceInboxId:bootstrap.f.operation()};
+  assert.equal((await bootstrap.close()).status,"rejected");
+  assert.equal((await bootstrap.close({waitingInboxId:bootstrap.f.operation(),handoffDispatchId:childDispatchId})).status,"rejected");
+  assert.equal((await bootstrap.close({handoffDispatchId:bootstrap.f.operation()})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,requestedAtUtc:"2026-10-23T00:00:01.000Z"};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,requestedAtUtc:"2026-10-22T23:59:59.000Z",requestedBy:"other-worker"};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,requestedBy:"signed-cognition",sourceEventId:bootstrap.f.operation()};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,sourceEventId:bootstrap.sourceEventId,parentDispatchId:bootstrap.f.operation()};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,parentDispatchId:bootstrap.f.uow.state.cognitiveClosureFact!.dispatchId,recipientRoleId:"cognition"};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"rejected");
+  bootstrap.f.uow.state.childHandoffFact={...bootstrap.f.uow.state.childHandoffFact,recipientRoleId:"builder"};
+  assert.equal((await bootstrap.close({handoffDispatchId:childDispatchId})).status,"applied");
+  assert.equal(bootstrap.f.uow.state.closures[0]?.sourceTaskId,null);
+  assert.equal(bootstrap.f.uow.state.closures[0]?.handoffTaskId,taskB);
+  assert.equal(bootstrap.f.uow.state.closures[0]?.handoffDispatchId,childDispatchId);
 
   const stopped=await prepare();
   stopped.f.uow.state.cognitiveClosureFact={...stopped.f.uow.state.cognitiveClosureFact!,kind:"stop",outcome:"no_action",loopState:"stopped"};

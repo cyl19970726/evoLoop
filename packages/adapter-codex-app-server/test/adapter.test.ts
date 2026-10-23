@@ -20,7 +20,8 @@ test("owned archive requires exact native readback; empty and lost acknowledgeme
   assert.equal(await normal.isThreadArchived(binding), true);
   await assert.rejects(() => normal.archiveThread({ ...binding, nativeThreadId: "desktop" }), RuntimeProtocolError);
 
-  const lost = await open("lost-archive-ack", 50); t.after(() => lost.close());
+  // The same RPC deadline covers child initialization; retain the normal startup budget.
+  const lost = await open("lost-archive-ack"); t.after(() => lost.close());
   const same = await lost.create(spec);
   await assert.rejects(() => lost.archiveThread(same), RuntimeUnknownError);
   assert.equal(await lost.isThreadArchived(same), true);

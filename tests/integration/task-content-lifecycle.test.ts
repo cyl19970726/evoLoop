@@ -46,6 +46,8 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   assert.equal(preserved.decision_id,null);
   assert.equal(preserved.source_inbox_id,null);
   assert.equal(preserved.waiting_inbox_id,null);
+  assert.equal(preserved.handoff_dispatch_id,null);
+  assert.equal(preserved.handoff_task_id,null);
 });
 
 test("HTTP and PostgreSQL: a simple Task owns its Document body and closes without a pre-created source or review Task", async t => {

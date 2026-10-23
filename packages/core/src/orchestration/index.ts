@@ -231,6 +231,9 @@ export class OrchestrationService {
         if (!loop.allowedBusinessRoleIds.includes(command.recipientRoleId) || inbox.purpose !== "next_action" || !command.parentDispatchId) return fail("INVALID_CAUSALITY", "business dispatch requires next_action inbox and cognition parent");
         const parent = await tx.getDispatch(command.parentDispatchId);
         if (!parent || parent.projectId !== command.projectId || parent.loopId !== loop.id || parent.sourceEventId !== inbox.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state)) return fail("PARENT_NOT_READY", "accepted cognition dispatch for the same source is required");
+        // A signed decision fixes the parent's choice. The project transaction lock orders
+        // child requests and worker decisions even when their UTC timestamps are identical.
+        if (await tx.findDecisionByDispatch(parent.id)) return fail("PARENT_DECIDED", "cognition decision is already signed; no later child dispatch can be attributed to it");
       }
       const auth = await tx.getAuthorizationFact(command.authorizationScopeId);
       if (!auth || auth.projectId !== command.projectId || !auth.active || auth.roleId !== command.recipientRoleId) return fail("SCOPE_NOT_AUTHORIZED", "active scoped worker authorization required");

@@ -13,6 +13,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
   getCognitiveClosureFact?(decisionId: string): Promise<CognitiveClosureFact | null>;
   getWaitingHandoffFact?(inboxId: string): Promise<WaitingHandoffFact | null>;
+  getChildHandoffFact?(dispatchId: string): Promise<ChildHandoffFact | null>;
   getDiscussion(id: string): Promise<DiscussionRecord | null>;
   listDiscussions(limit: number, cursor?: string): Promise<Page<DiscussionRecord>>;
   listDiscussionEvents(id: string): Promise<DiscussionEvent[]>;
@@ -61,10 +62,16 @@ export interface CognitiveClosureFact {
   sourceTaskIsCognition: boolean;
   outcome: "no_action" | "waiting" | "failed"; purpose: string; recipientRoleId: string; cognitiveRoleId: string;
   loopState: "active" | "paused" | "stopped";
+  decidedAtUtc: string;
 }
 export interface WaitingHandoffFact {
   projectId: string; inboxId: string; loopId: string; sourceEventId: string;
   recipientRoleId: string; disposition: "waiting"; actorId: string;
+}
+export interface ChildHandoffFact {
+  projectId: string; dispatchId: string; taskId: string; loopId: string; sourceEventId: string;
+  parentDispatchId: string; recipientRoleId: string; cognitiveRoleId: string;
+  requestedBy: string; requestedAtUtc: string; sourceInboxId: string;
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
