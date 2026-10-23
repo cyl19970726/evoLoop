@@ -79,7 +79,7 @@ sequenceDiagram
 
 ## 受管 worker 自动接续候选
 
-第一条自动接续的代码使用独立的 Loop/Inbox/Dispatch/Submission 记录，Task 仍只有四态。Loop 明确项目 Goal/Stage、起始来源、认知与可用业务职责、运行与并发预算；独立入站从自己的订阅去重读取，不领取飞书投影的回执，也不自动开始历史 todo。认知评审与下一动作使用同一来源下不同 purpose 的入站，业务子派发显式引用父认知派发；父运行有实际署名封存交付后才开始子工作。业务终态结果通过一次来源事件进入下一认知，排除认知自己的完成事件，避免自唤醒。
+第一条自动接续的代码使用独立的 Loop/Inbox/Dispatch/Submission 记录，Task 仍只有四态。Loop 明确项目 Goal/Stage、起始来源、认知与可用业务职责、运行与并发预算；独立入站从自己的订阅去重读取，不领取飞书投影的回执，也不自动开始历史 todo。认知评审与下一动作使用同一来源下不同 purpose 的入站，业务子派发显式引用父认知派发；正式 `dispatch.request` 是业务执行承诺。父认知 Run 确认进入 completed、failed 或 interrupted 后，且原封存效果没有未知项，才可在现有授权、Task 版本、Goal/Stage、预算和 Loop 活动状态下启动子工作；父认知无需额外交报告或 Delivery。未知 Run/封存沿原 ID 对账，暂停或停止的 Loop 不启动新工作；已请求子派发若需撤销，仍缺显式取消动作。业务终态结果通过一次来源事件进入下一认知，排除认知自己的完成事件，避免自唤醒。
 
 独立消费者的使用观察也是来源。订阅校验真实 applied operation、签名 actor、Observation 和 Delivery；依 Delivery 固定 Task 修订的 Stage/Goal 路由，排除生产者自报和本 Loop 的认知自反馈，后移 Task 不转移旧交付归属。独立观察证明使用及效果，不是所有下一步的批准条件；技术故障和系统缺口仍可支持有据修复或补证。缺署名意图目前只形成持久缺口，尚不自动建立恢复任务；已确认终态释放并发占用，原生 unknown 继续占用并按原意图核对。
 

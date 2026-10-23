@@ -17,7 +17,8 @@ const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:[
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
 const runtime=new RuntimeWorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
-const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&scope===scopeId?{projectId,scopeId,actorId:worker,roleId:businessRole,active:true}:project===projectId&&scope===cognitiveScope?{projectId,scopeId:cognitiveScope,actorId:actor,roleId:cognitiveRole,active:true}:null,
+let businessGrantActive=true;
+const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&scope===scopeId?{projectId,scopeId,actorId:worker,roleId:businessRole,active:businessGrantActive}:project===projectId&&scope===cognitiveScope?{projectId,scopeId:cognitiveScope,actorId:actor,roleId:cognitiveRole,active:true}:null,
   canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole),
   wasActorRole:async(project,who,loop,role)=>project===projectId&&who===actor&&role===cognitiveRole});
 const orchestrator=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha});
@@ -110,6 +111,18 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     parentDispatchId:cognition.entityId,taskId,expectedTaskVersion:2,recipientRoleId:businessRole,purpose:"Execute one bounded task",
     authorizationScopeId:scopeId,reason:"Reviewed task"});
   assert.equal((await orchestrator.listDispatches(principal(actor),projectId,loopId)).items.length,2);
+  // A terminal parent alone cannot authorize a child with a foreign causal edge.
+  const parentBefore=await store.transaction(projectId,tx=>tx.getDispatch(cognition.entityId)); assert.ok(parentBefore);
+  await store.transaction(projectId,tx=>tx.updateDispatch({...parentBefore,sourceEventId:randomUUID(),version:parentBefore.version+1},parentBefore.version));
+  await fails(issue(worker,{type:"dispatch.claim",dispatchId:requested.entityId,claimToken:randomUUID(),
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()}),"PARENT_NOT_READY");
+  const parentChanged=await store.transaction(projectId,tx=>tx.getDispatch(cognition.entityId)); assert.ok(parentChanged);
+  await store.transaction(projectId,tx=>tx.updateDispatch({...parentChanged,sourceEventId:loop.bootstrapEventId,version:parentChanged.version+1},parentChanged.version));
+  // The original request cannot bypass a revoked child-role grant either.
+  businessGrantActive=false;
+  await fails(issue(worker,{type:"dispatch.claim",dispatchId:requested.entityId,claimToken:randomUUID(),
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()}),"SCOPE_NOT_AUTHORIZED");
+  businessGrantActive=true;
   await fails(issue(actor,{type:"dispatch.claim",dispatchId:requested.entityId,claimToken:randomUUID(),
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()}),"FORBIDDEN");
   await fails(issue(worker,{type:"dispatch.claim",dispatchId:requested.entityId,claimToken:randomUUID(),

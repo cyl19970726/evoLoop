@@ -263,9 +263,14 @@ export class ManagedLoopRunner {
     const token = loopIntentId(dispatch.id, "claim-token");
     if (dispatch.state === "pending") {
       if (dispatch.parentDispatchId) {
-        const parent = await this.pages(cursor => this.deps.orchestration.listDispatches(profile.principal, loop.projectId, loop.id, 100, cursor));
-        const settled = parent.find(item => item.id === dispatch.parentDispatchId);
-        if (!settled || settled.state !== "completed" || settled.outcome !== "delivered") return;
+        const parent = await this.deps.orchestration.getDispatch(profile.principal, loop.projectId, dispatch.parentDispatchId);
+        if (!parent || parent.projectId !== loop.projectId || parent.loopId !== loop.id ||
+          parent.sourceEventId !== dispatch.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId ||
+          parent.purpose !== "cognition" || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state)) return;
+        const run = await this.deps.workflow.getRuntimeRun(profile.principal, loop.projectId, parent.runtimeRunId).catch(() => null);
+        if (!run || run.projectId !== loop.projectId || run.taskId !== parent.taskId || !terminal(run.state)) return;
+        const submission = await this.deps.orchestration.getSubmissionForDispatch(profile.principal, loop.projectId, parent.id);
+        if (submission && ["submitted", "sealing", "unknown"].includes(submission.state)) return;
       }
       const leaseUntilUtc = new Date(Date.parse(this.deps.now()) + 240_000).toISOString();
       dispatch = await this.claimIntent(profile, { type: "dispatch.claim", projectId: loop.projectId,

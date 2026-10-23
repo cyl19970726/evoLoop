@@ -248,7 +248,7 @@ export class OrchestrationService {
       this.active(loop);
       if (dispatch.state !== "pending") return fail("DISPATCH_NOT_PENDING", "only pending dispatch can be claimed");
       if (Date.parse(command.leaseUntilUtc) <= Date.parse(now) || Date.parse(command.leaseUntilUtc) > Date.parse(now) + 300_000) return fail("INVALID_LEASE", "lease must expire within five minutes");
-      await this.parentDelivered(tx, dispatch, loop);
+      await this.parentRequestReady(tx, dispatch, loop);
       if (await tx.countCapacityUsed(loop.id) >= loop.maxConcurrent) return fail("CAPACITY_FULL", "loop concurrency limit reached, including unknown dispatches");
       await this.freshTaskAndScope(tx, dispatch, loop, principal.actorId);
       const next: OrchestrationDispatch = { ...dispatch, version: dispatch.version + 1, state: "claimed", claimToken: command.claimToken, leaseUntilUtc: command.leaseUntilUtc, updatedAtUtc: now };
@@ -259,7 +259,7 @@ export class OrchestrationService {
       this.active(loop); this.version(dispatch.version, command.expectedVersion);
       if (dispatch.state !== "claimed" || dispatch.claimToken !== command.claimToken || !dispatch.leaseUntilUtc || Date.parse(dispatch.leaseUntilUtc) > Date.parse(now)) return fail("RECLAIM_UNAVAILABLE", "only the same expired pre-start claim can renew its lease");
       if (Date.parse(command.leaseUntilUtc) <= Date.parse(now) || Date.parse(command.leaseUntilUtc) > Date.parse(now) + 300_000) return fail("INVALID_LEASE", "lease must expire within five minutes");
-      await this.freshTaskAndScope(tx, dispatch, loop, principal.actorId); await this.parentDelivered(tx, dispatch, loop);
+      await this.freshTaskAndScope(tx, dispatch, loop, principal.actorId); await this.parentRequestReady(tx, dispatch, loop);
       const next = { ...dispatch, version: dispatch.version + 1, leaseUntilUtc: command.leaseUntilUtc, updatedAtUtc: now };
       await tx.updateDispatch(next, dispatch.version); await event(loop.id, "dispatch", dispatch.id, "dispatch.reclaimed", { leaseUntilUtc: next.leaseUntilUtc });
       return result("dispatch", dispatch.id, next.version);
@@ -268,7 +268,7 @@ export class OrchestrationService {
       this.active(loop); this.claim(dispatch, command.claimToken, now);
       if (dispatch.state !== "claimed") return fail("INVALID_STATE", "dispatch must be claimed before external start");
       await this.freshTaskAndScope(tx, dispatch, loop, principal.actorId);
-      await this.parentDelivered(tx, dispatch, loop);
+      await this.parentRequestReady(tx, dispatch, loop);
       const next: OrchestrationDispatch = { ...dispatch, version: dispatch.version + 1, state: "dispatching", updatedAtUtc: now };
       await tx.updateDispatch(next, dispatch.version); await event(loop.id, "dispatch", dispatch.id, "dispatch.started", { taskId: dispatch.taskId, taskVersion: dispatch.taskVersion });
       return result("dispatch", dispatch.id, next.version);
@@ -390,12 +390,25 @@ export class OrchestrationService {
     return result("submission", submission.id, next.version);
   }
 
-  private async parentDelivered(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop) {
+  private async parentRequestReady(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop) {
     if (dispatch.recipientRoleId === loop.cognitiveRoleId) return;
     const parent = dispatch.parentDispatchId ? await tx.getDispatch(dispatch.parentDispatchId) : null;
-    if (!parent || parent.projectId !== dispatch.projectId || parent.loopId !== loop.id || parent.sourceEventId !== dispatch.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId || parent.state !== "completed" || parent.outcome !== "delivered") return fail("PARENT_NOT_READY", "cognition must finish with a delivered outcome before business dispatch");
+    const inbox = await tx.getInbox(dispatch.inboxId);
+    if (!parent || parent.projectId !== dispatch.projectId || parent.loopId !== loop.id ||
+      parent.sourceEventId !== dispatch.sourceEventId || parent.recipientRoleId !== loop.cognitiveRoleId ||
+      parent.purpose !== "cognition" || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state) ||
+      !loop.allowedBusinessRoleIds.includes(dispatch.recipientRoleId) ||
+      !inbox || inbox.projectId !== dispatch.projectId || inbox.loopId !== loop.id ||
+      inbox.sourceEventId !== dispatch.sourceEventId || inbox.recipientRoleId !== loop.cognitiveRoleId ||
+      inbox.purpose !== "next_action" || inbox.state !== "disposed" || inbox.disposition !== "dispatch" ||
+      inbox.dispatchId !== dispatch.id) return fail("PARENT_NOT_READY", "formal same-source cognition request required");
+    const run = await tx.getRunFact(parent.runtimeRunId);
+    if (!run || run.projectId !== dispatch.projectId || run.taskId !== parent.taskId ||
+      !["completed", "failed", "interrupted"].includes(run.state))
+      return fail("PARENT_NOT_READY", "bound cognition Run must have a known terminal state");
     const submission = await tx.findSubmissionByDispatch(parent.id);
-    if (!submission || submission.state !== "sealed" || !submission.deliveryId || submission.deliveryId !== parent.deliveryId) return fail("PARENT_NOT_READY", "cognition Delivery must be sealed before business dispatch");
+    if (submission && ["submitted", "sealing", "unknown"].includes(submission.state))
+      return fail("PARENT_NOT_READY", "cognition seal must have a known result before business dispatch");
   }
 
   private async freshTaskAndScope(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop, actorId: string) {

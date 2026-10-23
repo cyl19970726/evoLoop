@@ -49,6 +49,7 @@ function fixture() {
   const orchestration = {
     getOperation: async (_: Principal, _projectId: string, id: string) => { if (loseReadbackOnce) { loseReadbackOnce=false; throw new Error("RECEIPT_READ_LOST"); } return orchestrationOperations.get(id) ?? null; },
     getDispatch: async (_: Principal, _projectId: string, id: string) => dispatches.find(item => item.id === id) ?? null,
+    getSubmissionForDispatch: async () => null,
     listLoops: async () => ({ items: [loop], nextCursor: null }),
     getLoop: async () => loop,
     listSourceFacts: async () => ({ items: facts, nextCursor: null }),
@@ -114,7 +115,7 @@ function fixture() {
       const session = sessions.get(id); if (!session) throw new Error("missing session"); return session;
     },
     getRuntimeRun: async (_: Principal, _projectId: string, id: string) => {
-      const run = runs.get(id); if (!run) throw new Error("missing run"); return run;
+      const run = runs.get(id); if (!run) throw new Error("missing run"); return { projectId, ...run };
     },
     execute: async (_: Principal, command: Record<string, any>) => {
       commands.push(command.type);
@@ -184,6 +185,30 @@ test("pause blocks new claims while an accepted terminal Run can settle", async 
   await runner.pump();
   assert.equal(f.dispatches[0]!.state, "completed");
   assert.equal(f.dispatches[0]!.outcome, "no_action");
+});
+
+test("waiting cognition without Delivery releases its formally requested child only after terminal Run", async () => {
+  const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const parent = f.dispatches[0]!;
+  parent.state = "completed"; parent.outcome = "waiting"; parent.deliveryId = null;
+  parent.runtimeRunId = loopIntentId(parent.id, "run");
+  f.runs.set(parent.runtimeRunId, { id: parent.runtimeRunId, taskId: parent.taskId, state: "requested" });
+  const childTaskId = loopIntentId("child-task"), childId = loopIntentId("child-dispatch");
+  f.tasks.set(childTaskId, { version: 1, state: "todo" });
+  f.dispatches.push({ projectId, id: childId, version: 1, loopId,
+    inboxId: loopIntentId("child-inbox"), sourceEventId: parent.sourceEventId, taskId: childTaskId, taskVersion: 1,
+    parentDispatchId: parent.id, recipientRoleId: "builder", purpose: "next_action", authorizationScopeId: scopeId,
+    state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null,
+    evidenceRef: null, reason: "signed dispatch request", requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now });
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 0);
+  f.runs.get(parent.runtimeRunId)!.state = "completed";
+  await runner.pump();
+  assert.equal(f.dispatches[1]!.state, "dispatching");
+  await runner.pump();
+  assert.equal(f.commands.filter(type => type === "dispatch.claim").length, 1);
+  assert.equal(f.taskStarts.filter(item => item.taskId === childTaskId).length, 1);
 });
 
 test("unknown Run waits; terminal missing intent creates one recovery cognition after gap and restart", async () => {
