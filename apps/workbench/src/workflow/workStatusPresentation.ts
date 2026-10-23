@@ -64,3 +64,11 @@ export function partitionWorkTasks(tasks: Task[], statuses: Record<string, WorkT
     unknown:tasks.filter(task => !statuses[task.id]),
   };
 }
+
+export function visibleWorkGroups(tasks: Task[], statuses: Record<string, WorkTaskStatus>, classificationUnavailable: boolean) {
+  if (classificationUnavailable) return {
+    primary: tasks, cognition: [] as Task[], unknown: [] as Task[], primaryKind: "unclassified" as const,
+  };
+  const { business, cognition, unknown } = partitionWorkTasks(tasks, statuses);
+  return { primary: business, cognition, unknown, primaryKind: "business" as const };
+}
