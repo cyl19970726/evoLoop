@@ -12,7 +12,8 @@
   "scripts": {
     "docs:check": "node scripts/docs/cli.js check",
     "docs:build": "node scripts/docs/cli.js build",
-    "test": "npm run test:docs && npm run test:unit",
+    "test": "npm run test:docs && npm run test:pilot-storage && npm run test:unit",
+    "test:pilot-storage": "node --test scripts/pilot-storage-check.test.mjs",
     "test:docs": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
     "test:unit": "npm run build:packages && node --import tsx --test packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts apps/cli/test/*.test.ts packages/adapter-codex-app-server/test/*.test.ts packages/adapter-git-documents/test/*.test.ts packages/adapter-local-blobs/test/*.test.ts packages/connector-feishu/test/*.test.ts packages/adapter-wiki-openviking/test/*.test.ts",
     "test:integration": "node scripts/test-integration.mjs",
@@ -22,6 +23,7 @@
     "start": "node apps/coordinator/dist/main.js",
     "cli": "node apps/cli/dist/main.js",
     "db:migrate": "node apps/coordinator/dist/migrate.js",
+    "pilot:storage:check": "node scripts/pilot-storage-check.mjs",
     "architecture:build": "node scripts/architecture-map/build.mjs"
   },
   "dependencies": {
