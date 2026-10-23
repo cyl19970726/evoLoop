@@ -159,6 +159,7 @@ export interface OrchestrationTransaction {
 }
 export interface OrchestrationReader {
   getOperation(id: string): Promise<OrchestrationOperation | null>;
+  getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
   getLoop(id: string): Promise<OrchestrationLoop | null>;
   listLoops(limit: number, cursor?: string): Promise<{ items: OrchestrationLoop[]; nextCursor: string | null }>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
