@@ -16,6 +16,7 @@ export interface WorkerGuardFacts {
   fixedDocument(taskId: string, documentId: string, revisionId: string): Promise<boolean>;
   ownedDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   sourceIssueDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
+  sourceIssueLinkedDocument?(documentId: string): Promise<boolean>;
   fixedReference(taskId: string, kind: "git" | "wiki", referenceId: string, revisionId?: string): Promise<boolean>;
   operation(operationId: string): Promise<(Fact & { actorId: string }) | null>;
   dispatchForRun?(runId: string): Promise<(Fact & {id: string; loopId: string; taskId: string; sourceEventId: string; runtimeRunId: string | null}) | null>;
@@ -170,7 +171,9 @@ export async function authorizeWorkerCommand(identity: WorkerIdentity, value: un
     for (const documentId of command.documentIds) {
       if (!id(documentId)) return false;
       const document = await facts.document(documentId);
-      if (!same(document, scope.projectId) || document?.loopId !== scope.loopId) return false;
+      if (!same(document, scope.projectId) || document?.loopId !== scope.loopId) {
+        if (scope.kind !== "cognition" || await facts.sourceIssueLinkedDocument?.(documentId) !== true) return false;
+      }
     }
     return true;
   };
