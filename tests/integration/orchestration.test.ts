@@ -411,7 +411,10 @@ test("017 upgrades nonempty preexisting project facts without rewriting them",as
     const after=await snapshot();
     assert.deepEqual(after,before);
     assert.equal((await client.query("SELECT count(*)::int n FROM process_document WHERE project_id=$1 AND (origin_task_id IS NOT NULL OR origin_task_revision_id IS NOT NULL OR origin_run_id IS NOT NULL)",[oldProject])).rows[0].n,0);
-    assert.equal((await client.query("SELECT count(*)::int n FROM pgmigrations")).rows[0].n,17);
+    const appliedMigrations=(await client.query("SELECT name FROM pgmigrations ORDER BY id")).rows;
+    assert.equal(appliedMigrations.filter(row=>row.name.startsWith("017_")).length,1,
+      "017 must be applied exactly once while allowing later migrations");
+    assert.ok(appliedMigrations.length>=17);
   }finally{
     await client.end().catch(()=>{});
     const cleanup=new pg.Client({connectionString:url});await cleanup.connect();
