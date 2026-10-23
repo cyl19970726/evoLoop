@@ -27,8 +27,8 @@ export class OrchestrationService {
     if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
-    if (command.type === "loop.resumeWaiting" && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot resume waiting cognition");
+    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    if ((command.type === "loop.resumeWaiting" || command.type === "division.consume" || command.type === "division.confirmTransfer") && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot consume or resume waiting cognition");
     const now = this.deps.now();
     if (!Number.isFinite(Date.parse(now)) || !now.endsWith("Z")) return fail("INVALID_TIME", "clock must return UTC time");
     return this.deps.store.transaction(command.projectId, async tx => {
@@ -86,7 +86,7 @@ export class OrchestrationService {
       }
       return;
     }
-    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
+    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
     let loop: OrchestrationLoop | null = null;
     let dispatch: OrchestrationDispatch | null = null;
     if (command.type === "inbox.accept") loop = await tx.getLoop(command.loopId);
@@ -101,6 +101,31 @@ export class OrchestrationService {
     }
     if (!loop || loop.projectId !== command.projectId) return fail("NOT_FOUND", "loop not found in project");
     const roleId = dispatch ? dispatch.recipientRoleId : loop.cognitiveRoleId;
+    if (command.type === "division.ackHandoff") {
+      const scope = await this.deps.getWorkerScope?.(principal.actorId);
+      if (!principal.actorId.startsWith("worker-") || !dispatch?.bindingId || !scope ||
+        scope.kind !== "business" || scope.projectId !== command.projectId ||
+        scope.loopId !== loop.id || scope.roleId !== dispatch.recipientRoleId ||
+        scope.taskId !== dispatch.taskId || scope.runId !== command.runId)
+        return fail("FORBIDDEN", "handoff receipt requires the receiving brokered worker and exact Run");
+      return;
+    }
+    if (dispatch?.bindingId && ["dispatch.claim", "dispatch.reclaim", "dispatch.start", "dispatch.resolve"].includes(command.type)) {
+      const binding = await tx.getBinding(dispatch.bindingId);
+      if (!binding || binding.actorId !== principal.actorId || binding.roleId !== dispatch.recipientRoleId ||
+        binding.authorizationScopeId !== dispatch.authorizationScopeId ||
+        binding.loopId !== loop.id || binding.projectId !== command.projectId)
+        return fail("FORBIDDEN", "dynamic child requires its exact controller binding");
+      return;
+    }
+    if (dispatch?.bindingId && (command.type === "worker.submit" || command.type === "worker.decision")) {
+      const scope = await this.deps.getWorkerScope?.(principal.actorId);
+      if (!principal.actorId.startsWith("worker-") || !scope || scope.kind !== "business" ||
+        scope.projectId !== command.projectId || scope.loopId !== loop.id ||
+        scope.roleId !== dispatch.recipientRoleId || scope.taskId !== dispatch.taskId ||
+        scope.runId !== command.runId) return fail("FORBIDDEN", "dynamic outcome requires its exact receiving worker");
+      return;
+    }
     if (command.type === "worker.decision" && principal.actorId.startsWith("worker-")) {
       const scope = await this.deps.getWorkerScope?.(principal.actorId);
       if (!scope || scope.projectId !== command.projectId || scope.loopId !== loop.id ||
@@ -248,6 +273,114 @@ export class OrchestrationService {
       await event(loop.id, "binding", binding.id, "division.revoked", { policyRevisionId: policy.id, reason: command.reason });
       return result("binding", binding.id, 2);
     }
+    if (command.type === "division.consume") {
+      const loop = await this.loop(tx, command.loopId, command.projectId);
+      this.active(loop); this.version(loop.version, command.expectedLoopVersion);
+      if (!loop.currentPolicyRevisionId || loop.dispatchCount >= loop.maxRuns ||
+        await tx.countCapacityUsed(loop.id) >= loop.maxConcurrent)
+        return fail("CAPACITY_UNAVAILABLE", "current Loop policy, budget and capacity must allow the child Run");
+      const policy = await tx.getPolicy(loop.currentPolicyRevisionId);
+      const binding = await tx.getBinding(command.bindingId);
+      const parent = await tx.getDispatch(command.parentDispatchId);
+      const decision = await tx.getDecision(command.waitingDecisionId);
+      if (!policy || policy.loopId !== loop.id || !binding || binding.projectId !== command.projectId ||
+        binding.loopId !== loop.id || binding.goalId !== loop.goalId ||
+        policy.bindingByRole[binding.roleId] !== binding.id ||
+        !policy.allowedBusinessRoleIds.includes(binding.roleId) ||
+        !parent || parent.projectId !== command.projectId || parent.loopId !== loop.id ||
+        parent.id !== binding.parentDispatchId || parent.sourceEventId !== binding.sourceEventId ||
+        parent.recipientRoleId !== loop.cognitiveRoleId || parent.purpose !== "cognition" ||
+        parent.state !== "completed" || parent.outcome !== "waiting" || !parent.runtimeRunId ||
+        !decision || decision.projectId !== command.projectId || decision.dispatchId !== parent.id ||
+        decision.runId !== parent.runtimeRunId || decision.kind !== "waiting" ||
+        decision.divisionDecisionId !== binding.id)
+        return fail("INVALID_CAUSALITY", "current binding and final waiting choice must identify the same cognition parent");
+      const run = await tx.getRunFact(parent.runtimeRunId);
+      if (!run || run.projectId !== command.projectId || run.taskId !== parent.taskId || run.state !== "completed" ||
+        await tx.findSubmissionByDispatch(parent.id) || await tx.hasChildDispatch(parent.id) ||
+        await tx.hasWaitingResume(decision.id) ||
+        await tx.hasUnsettledDispatchForSource(loop.id, parent.sourceEventId, parent.id))
+        return fail("INVALID_CAUSALITY", "completed parent must have one unconsumed waiting path");
+      const template = await this.deps.getDelegationTemplate?.(loop.projectId, binding.template.id);
+      const role = await tx.getRoleState(binding.roleId);
+      if (!template || template.hash !== binding.template.hash ||
+        template.template.revision !== binding.template.revision ||
+        Date.parse(template.template.expiresAtUtc) <= Date.parse(now) ||
+        template.template.projectId !== loop.projectId || template.template.goalId !== loop.goalId ||
+        template.template.loopId !== loop.id || template.template.firstTaskId !== binding.firstTaskId ||
+        template.template.actorId !== principal.actorId ||
+        template.template.authorizationScopeId !== binding.authorizationScopeId ||
+        !role?.accepted || !["trial", "active"].includes(role.state))
+        return fail("DELEGATION_DENIED", "current exact template and accepted Role are required for a new child");
+      const task = await tx.getTaskFact(binding.firstTaskId);
+      if (!task || task.projectId !== command.projectId || task.version !== binding.firstTaskVersion ||
+        task.ownerRoleId === binding.roleId || task.goalId !== loop.goalId ||
+        (loop.stageId !== null && task.stageId !== loop.stageId))
+        return fail("TASK_CHANGED", "original first Task must retain its observed owner, version and Loop scope");
+      if (task.state !== "todo") return fail("TASK_HANDOFF_REQUIRES_REOPEN", "in-progress first Task requires an explicit normal return to todo before transfer");
+      if (await tx.hasInFlightRunForTask(task.id)) return fail("TASK_BUSY", "first Task has an active or unknown Run");
+      const stage = task.stageId ? await tx.getStageFact(task.stageId) : null;
+      if (!stage || stage.projectId !== loop.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
+        return fail("STAGE_NOT_ACTIVE", "first Task must remain under the active Goal Stage");
+      if (await tx.getDispatch(command.dispatchId)) return fail("ALREADY_EXISTS", "child Dispatch ID already used");
+      const inboxId = scheduleIdFor(this.deps.hash, `division-inbox:${binding.id}`);
+      if (await tx.getInbox(inboxId) || await tx.findInbox(loop.id, parent.sourceEventId, loop.cognitiveRoleId, "next_action"))
+        return fail("ALREADY_EXISTS", "division continuation cannot replace an existing next-action inbox");
+      const inbox: OrchestrationInbox = { projectId: loop.projectId, id: inboxId, version: 1, loopId: loop.id,
+        sourceEventId: parent.sourceEventId, recipientRoleId: loop.cognitiveRoleId, purpose: "next_action",
+        state: "disposed", acknowledgedBy: decision.actorId, disposition: "dispatch", reason: command.reason,
+        evidenceRef: `division:${binding.id}`, dispatchId: command.dispatchId, createdAtUtc: now, updatedAtUtc: now };
+      const dispatch: OrchestrationDispatch = { projectId: loop.projectId, id: command.dispatchId,
+        version: 1, loopId: loop.id, inboxId, sourceEventId: parent.sourceEventId, taskId: task.id,
+        taskVersion: binding.firstTaskVersion, parentDispatchId: parent.id, recipientRoleId: binding.roleId,
+        purpose: "division", authorizationScopeId: binding.authorizationScopeId, state: "pending",
+        claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null,
+        evidenceRef: null, reason: command.reason, requestedBy: principal.actorId,
+        createdAtUtc: now, updatedAtUtc: now, policyRevisionId: policy.id, bindingId: binding.id };
+      await tx.insertInbox(inbox); await tx.insertDispatch(dispatch);
+      await tx.updateLoop({ ...loop, version: loop.version + 1, dispatchCount: loop.dispatchCount + 1,
+        updatedAtUtc: now }, loop.version);
+      await event(loop.id, "dispatch", dispatch.id, "division.consumed", { bindingId: binding.id,
+        waitingDecisionId: decision.id, parentDispatchId: parent.id, sourceEventId: parent.sourceEventId,
+        firstTaskId: task.id, observedTaskVersion: binding.firstTaskVersion,
+        policyRevisionId: policy.id });
+      return result("dispatch", dispatch.id, 1);
+    }
+    if (command.type === "division.confirmTransfer") {
+      const dispatch = await this.dispatch(tx, command.dispatchId, command.projectId);
+      const loop = await this.loop(tx, dispatch.loopId, command.projectId);
+      if (!dispatch.bindingId || dispatch.state !== "pending" ||
+        await tx.hasDivisionTransferConfirmed(dispatch.id))
+        return fail("HANDOFF_NOT_PENDING", "one unconfirmed dynamic child reservation is required");
+      const binding = await tx.getBinding(dispatch.bindingId);
+      if (!binding || binding.projectId !== command.projectId || binding.loopId !== loop.id ||
+        binding.firstTaskId !== dispatch.taskId || binding.firstTaskVersion !== dispatch.taskVersion ||
+        dispatch.parentDispatchId !== binding.parentDispatchId || dispatch.recipientRoleId !== binding.roleId ||
+        dispatch.requestedBy !== principal.actorId || binding.actorId !== principal.actorId)
+        return fail("INVALID_CAUSALITY", "child reservation and exact controller binding differ");
+      const before = await tx.getTaskRevisionFact(binding.firstTaskId, binding.firstTaskVersion);
+      const after = await tx.getTaskRevisionFact(binding.firstTaskId, command.transferredTaskVersion);
+      const task = await tx.getTaskFact(binding.firstTaskId);
+      const transfer = await tx.getWorkflowOperationFact(command.transferOperationId);
+      if (!before || !after || !task || task.projectId !== command.projectId ||
+        task.version !== command.transferredTaskVersion || task.state !== "todo" ||
+        command.transferredTaskVersion !== binding.firstTaskVersion + 1 ||
+        before.ownerRoleId === binding.roleId || after.ownerRoleId !== binding.roleId ||
+        after.actorId !== principal.actorId || after.reason !== `division-transfer:${binding.id}` ||
+        task.ownerRoleId !== binding.roleId || task.goalId !== loop.goalId ||
+        (loop.stageId !== null && task.stageId !== loop.stageId) ||
+        !transfer || transfer.projectId !== command.projectId || transfer.actorId !== principal.actorId ||
+        transfer.commandType !== "task.update" || transfer.status !== "applied" ||
+        transfer.resultRefId !== after.revisionId || transfer.resultVersion !== after.version)
+        return fail("TASK_TRANSFER_UNCONFIRMED", "one journalled Task owner transfer must bridge the fixed child baseline");
+      const next = { ...dispatch, version: dispatch.version + 1, taskVersion: command.transferredTaskVersion,
+        updatedAtUtc: now };
+      await tx.updateDispatch(next, dispatch.version);
+      await event(loop.id, "dispatch", dispatch.id, "division.transferConfirmed", { bindingId: binding.id,
+        transferOperationId: command.transferOperationId, observedTaskVersion: binding.firstTaskVersion,
+        transferredTaskVersion: command.transferredTaskVersion, revisionId: after.revisionId });
+      return result("dispatch", dispatch.id, next.version);
+    }
     if (command.type === "loop.state") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       this.version(loop.version, command.expectedVersion);
@@ -271,6 +404,7 @@ export class OrchestrationService {
       if (!decision || !dispatch || decision.projectId !== command.projectId || dispatch.projectId !== command.projectId ||
         decision.dispatchId !== dispatch.id || dispatch.loopId !== loop.id || dispatch.parentDispatchId !== null ||
         dispatch.recipientRoleId !== loop.cognitiveRoleId || decision.kind !== "waiting" ||
+        decision.divisionDecisionId != null ||
         dispatch.state !== "completed" || dispatch.outcome !== "waiting" ||
         dispatch.runtimeRunId !== decision.runId || dispatch.taskId !== decision.taskId ||
         await tx.findSubmissionByDispatch(dispatch.id))
@@ -467,8 +601,28 @@ export class OrchestrationService {
     if (command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") return this.applySeal(tx, principal, command, now, event, result);
     const dispatch = await this.dispatch(tx, command.dispatchId, command.projectId);
     const loop = await this.loop(tx, dispatch.loopId, command.projectId);
+    if (command.type === "division.ackHandoff") {
+      if (!dispatch.bindingId || dispatch.state !== "accepted" || dispatch.runtimeRunId !== command.runId ||
+        !await tx.hasDivisionTransferConfirmed(dispatch.id) || await tx.hasDivisionHandoffAck(dispatch.id))
+        return fail("HANDOFF_NOT_READY", "one accepted transferred dynamic Run may be acknowledged once");
+      const binding = await tx.getBinding(dispatch.bindingId), run = await tx.getRunFact(command.runId);
+      if (!binding || binding.projectId !== command.projectId || binding.loopId !== loop.id ||
+        binding.firstTaskId !== dispatch.taskId || binding.roleId !== dispatch.recipientRoleId ||
+        binding.documentRevisionId !== command.documentRevisionId ||
+        binding.documentContentHash !== command.documentContentHash || !run ||
+        run.projectId !== command.projectId || run.taskId !== dispatch.taskId ||
+        run.taskRevisionId !== command.taskRevisionId ||
+        !["requested","dispatching","running"].includes(run.state))
+        return fail("HANDOFF_MISMATCH", "receipt must cite the fixed material and receiving Run's Task revision");
+      await event(loop.id,"dispatch",dispatch.id,"division.handoffAcknowledged",{
+        runId:command.runId,documentRevisionId:command.documentRevisionId,
+        documentContentHash:command.documentContentHash,taskRevisionId:command.taskRevisionId,
+        declaration:command.reason});
+      return result("dispatch",dispatch.id,dispatch.version);
+    }
     if (command.type === "worker.decision") {
       if (dispatch.state !== "accepted" || dispatch.runtimeRunId !== command.runId) return fail("RUN_MISMATCH", "decision requires this accepted dispatch and bound Run");
+      if (dispatch.bindingId && !await tx.hasDivisionHandoffAck(dispatch.id)) return fail("HANDOFF_UNACKNOWLEDGED", "receiving worker must acknowledge the fixed handoff before deciding");
       const run = await tx.getRunFact(command.runId);
       if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId) return fail("RUN_MISMATCH", "decision Run must belong to this fixed project Task");
       if (!["requested", "dispatching", "running"].includes(run.state)) return fail("RUN_NOT_ACTIVE", "first worker decision must be recorded before the Run becomes terminal or unknown");
@@ -490,6 +644,7 @@ export class OrchestrationService {
     }
     if (command.type === "worker.submit") {
       if (dispatch.state !== "accepted" || dispatch.runtimeRunId !== command.runId) return fail("RUN_MISMATCH", "submission requires this accepted dispatch and bound Run");
+      if (dispatch.bindingId && !await tx.hasDivisionHandoffAck(dispatch.id)) return fail("HANDOFF_UNACKNOWLEDGED", "receiving worker must acknowledge the fixed handoff before submitting");
       if (await tx.findSubmissionByDispatch(dispatch.id) || await tx.findDecisionByDispatch(dispatch.id) || await tx.getSubmission(command.submissionId)) return fail("ALREADY_EXISTS", "dispatch already has a submission or ID is used");
       const run = await tx.getRunFact(command.runId);
       if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId || run.taskRevisionId !== command.taskRevisionId || run.inputHash !== command.runInputHash) return fail("RUN_MISMATCH", "submission fixed input must match bound Run");
@@ -677,10 +832,24 @@ export class OrchestrationService {
   }
 
   private async freshTaskAndScope(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop, actorId: string) {
+    if (dispatch.bindingId && !await tx.hasDivisionTransferConfirmed(dispatch.id))
+      return fail("HANDOFF_NOT_CONFIRMED", "dynamic child cannot start before its journalled Task transfer");
     const task = await tx.getTaskFact(dispatch.taskId);
-    const auth = await tx.getAuthorizationFact(dispatch.authorizationScopeId);
+    const auth = dispatch.bindingId ? null : await tx.getAuthorizationFact(dispatch.authorizationScopeId);
     if (!task || task.projectId !== dispatch.projectId || task.version !== dispatch.taskVersion || (task.state !== "todo" && task.state !== "in_progress") || task.ownerRoleId !== dispatch.recipientRoleId || task.goalId !== loop.goalId || !task.stageId || (loop.stageId !== null && task.stageId !== loop.stageId)) return fail("TASK_CHANGED", "Task changed before dispatch; explicit new request required");
-    if (!auth || auth.projectId !== dispatch.projectId || !auth.active || auth.roleId !== dispatch.recipientRoleId || auth.actorId !== actorId) return fail("SCOPE_NOT_AUTHORIZED", "worker scope changed before dispatch");
+    if (dispatch.bindingId) {
+      const policy = loop.currentPolicyRevisionId ? await tx.getPolicy(loop.currentPolicyRevisionId) : null;
+      const binding = await tx.getBinding(dispatch.bindingId);
+      const template = binding ? await this.deps.getDelegationTemplate?.(loop.projectId, binding.template.id) : null;
+      const role = binding ? await tx.getRoleState(binding.roleId) : null;
+      if (!policy || !binding || policy.bindingByRole[binding.roleId] !== binding.id ||
+        !template || template.hash !== binding.template.hash || template.template.revision !== binding.template.revision ||
+        template.template.actorId !== actorId || template.template.authorizationScopeId !== dispatch.authorizationScopeId ||
+        Date.parse(template.template.expiresAtUtc) <= Date.parse(this.deps.now()) ||
+        !role?.accepted || !["trial", "active"].includes(role.state))
+        return fail("SCOPE_NOT_AUTHORIZED", "current exact dynamic binding is required before a new start");
+    } else if (!auth || auth.projectId !== dispatch.projectId || !auth.active || auth.roleId !== dispatch.recipientRoleId || auth.actorId !== actorId)
+      return fail("SCOPE_NOT_AUTHORIZED", "worker scope changed before dispatch");
     const stage = await tx.getStageFact(task.stageId);
     if (!stage || stage.projectId !== dispatch.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage changed before dispatch");
   }

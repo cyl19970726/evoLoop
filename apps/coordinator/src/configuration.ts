@@ -63,7 +63,8 @@ export async function loadIntegrations(path?: string) {
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
     g.authorizationScope === scope.authorizationScope && g.cwd === scope.cwd && g.sandbox === scope.sandbox);
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
-    if (!allowedRuntimeCwds(projectId).includes(cwd)) return false;
+    if (!allowedRuntimeCwds(projectId).includes(cwd) &&
+      !(runtime?.enabled && runtime.delegationTemplates.some(t => t.projectId === projectId && t.cwd === cwd))) return false;
     try { return await realpath(cwd) === cwd; } catch { return false; }
   };
   const getDelegationTemplate = async (projectId: string, templateId: string) => {

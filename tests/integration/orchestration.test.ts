@@ -15,6 +15,8 @@ import type { DelegationTemplate } from "@evoloop/contracts/division";
 import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
 import { authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard.js";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
+import { dynamicRuntimeAdmission } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
+import { loopIntentId } from "../../apps/coordinator/src/orchestration/runner.js";
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -693,6 +695,14 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   finally { fixtureClient.release(); }
   const uow = new PostgresUnitOfWork(pool);
   assert.ok(await uow.read(projectId,reader=>reader.getChildHandoffFact(historicalChildId)));
+  const admission=dynamicRuntimeAdmission(pool,async(project,id)=>project===projectId&&id===template.id?
+    {template,hash:templateHash}:null,()=>new Date().toISOString());
+  const historicalSession={projectId,id:loopIntentId(historicalChildId,"session"),actorId:template.actorId,
+    roleId:newRoleId,authorizationScope:template.authorizationScopeId,cwd:template.cwd,model:template.model,
+    sandbox:template.sandbox,approvalPolicy:template.approvalPolicy};
+  assert.equal(await admission.isDynamicSession(projectId,historicalSession.id),true);
+  assert.equal(await admission.canCreateSession(historicalSession as never),false,
+    "a pinned dynamic child without a confirmed transfer cannot become a native Session");
   await division.execute(principal(actor),{type:"division.revoke",projectId,operationId:randomUUID(),loopId:lateLoopId,
     expectedLoopVersion:afterDivision.version,bindingId:decided.entityId,reason:"Withdraw trial authority"});
   assert.equal((await division.getPolicy(principal(actor),projectId,divisionPolicy.id))?.bindingByRole[newRoleId],decided.entityId);

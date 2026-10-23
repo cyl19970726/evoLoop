@@ -92,6 +92,25 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
       [ids, documentId, revisionId, scope.runId, scope.kind === "cognition"])) return true;
     return await adoptedLinkedDocument(documentId, revisionId) || await deliveredDocument(documentId, revisionId);
   };
+  const divisionBinding = async (bindingId: string) => !!await one(`SELECT 1 FROM runtime_role_binding b
+    JOIN orchestration_dispatch parent ON parent.project_id=b.project_id AND parent.dispatch_id=b.parent_dispatch_id
+    WHERE b.project_id=$1 AND b.binding_id=$2 AND b.loop_id=$3
+      AND (($4='cognition' AND parent.data->>'runtimeRunId'=$5 AND parent.task_id=$6)
+        OR ($4='business' AND EXISTS (SELECT 1 FROM orchestration_dispatch child
+          WHERE child.project_id=b.project_id AND child.binding_id=b.binding_id
+            AND child.data->>'runtimeRunId'=$5 AND child.task_id=$6
+            AND child.data->>'recipientRoleId'=$7))) LIMIT 1`,
+    [bindingId,scope.loopId,scope.kind,scope.runId,scope.taskId,scope.roleId]);
+  const divisionMaterial = async (documentId: string, revisionId: string) => !!await one(`SELECT 1
+    FROM runtime_role_binding b JOIN orchestration_dispatch parent
+      ON parent.project_id=b.project_id AND parent.dispatch_id=b.parent_dispatch_id
+    WHERE b.project_id=$1 AND b.loop_id=$2 AND b.document_id=$3 AND b.document_revision_id=$4
+      AND (($5='cognition' AND parent.data->>'runtimeRunId'=$6 AND parent.task_id=$7)
+        OR ($5='business' AND EXISTS (SELECT 1 FROM orchestration_dispatch child
+          WHERE child.project_id=b.project_id AND child.binding_id=b.binding_id
+            AND child.data->>'runtimeRunId'=$6 AND child.task_id=$7
+            AND child.data->>'recipientRoleId'=$8))) LIMIT 1`,
+    [scope.loopId,documentId,revisionId,scope.kind,scope.runId,scope.taskId,scope.roleId]);
   // Resolve the single gap that this cognition Run actually received. Current Task ownership is deliberately
   // absent: the original Task may have moved after its immutable dispatch/version was accepted.
   const recoveryGap = async () => {
@@ -250,6 +269,8 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         {projectId: scope.projectId, taskId: null, loopId: scope.loopId} : null;
     },
     fixedDocument,
+    divisionBinding,
+    divisionMaterial,
     ownedDocumentRevision: async (documentId, revisionId) => !!await one(`SELECT 1 FROM document_revision r
       JOIN process_document d ON d.project_id=r.project_id AND d.document_id=r.document_id
       WHERE r.project_id=$1 AND r.document_id=$2 AND r.revision_id=$3 AND r.author=$4 AND d.kind IN ('report','issue')`,

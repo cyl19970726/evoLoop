@@ -39,6 +39,8 @@ export interface ManagedLoopDependencies {
   runtime: Pick<RuntimeRunner, "pump">;
   /** A live controller binding for the requested role and authorization scope. */
   controller(projectId: string, roleId: string): Promise<ManagedRoleProfile | null>;
+  /** Resolve a dynamic Dispatch against its current immutable policy and external template. */
+  dynamicController?(dispatch: OrchestrationDispatch, historical?: boolean): Promise<ManagedRoleProfile | null>;
   credential: {
     issue(scope: WorkerScope): Promise<ManagedWorkerCredential>;
     lookup(runId: string): Promise<ManagedWorkerCredential | null>;
@@ -118,6 +120,8 @@ export class ManagedLoopRunner {
     for (const dispatch of dispatches) {
       try {
         if (dispatch.state === "accepted") await this.settle(dispatch);
+        else if (dispatch.state === "completed" && loop.state === "active" &&
+          dispatch.recipientRoleId === loop.cognitiveRoleId) await this.continueDivision(loop, dispatch, cognitive);
         else if (dispatch.state === "dispatching" && loop.state !== "active")
           await this.reconcilePausedDispatch(loop, dispatch);
         else if (loop.state === "active" && ["pending", "claimed", "dispatching"].includes(dispatch.state))
@@ -312,7 +316,8 @@ export class ManagedLoopRunner {
     return basis;
   }
   private async advanceDispatch(loop: OrchestrationLoop, original: OrchestrationDispatch) {
-    const profile = await this.deps.controller(loop.projectId, original.recipientRoleId);
+    const profile = original.bindingId ? await this.deps.dynamicController?.(original) :
+      await this.deps.controller(loop.projectId, original.recipientRoleId);
     if (!profile || profile.authorizationScopeId !== original.authorizationScopeId) throw new Error("ROLE_SCOPE_UNAVAILABLE");
     let dispatch = original;
     const token = loopIntentId(dispatch.id, "claim-token");
@@ -438,17 +443,72 @@ export class ManagedLoopRunner {
       const target = await this.deps.controller(loop.projectId, roleId);
       return target ? `${roleId}=${target.authorizationScopeId}` : `${roleId}=unavailable`;
     }))).join(", ") : "";
+    const handoff = dispatch.bindingId ? await this.deps.orchestration.getBinding(profile.principal,loop.projectId,dispatch.bindingId) : null;
+    if (dispatch.bindingId && !handoff) throw new Error("DIVISION_BINDING_MISSING");
+    const handoffContext = handoff ? ` Read fixed handoff binding ${handoff.id} at get /api/projects/${loop.projectId}/orchestration/bindings/${handoff.id}, then its original Document ${handoff.documentId} revision ${handoff.documentRevisionId} at get /api/projects/${loop.projectId}/documents/${handoff.documentId}/revisions/${handoff.documentRevisionId}/original; verify SHA-256 ${handoff.documentContentHash}. After this Run exists and you have read it, sign division.ackHandoff using dispatchId=${dispatch.id}, runId=${runId}, documentRevisionId=${handoff.documentRevisionId}, documentContentHash=${handoff.documentContentHash}, and the Run's taskRevisionId. You must sign this receipt yourself before worker.submit or worker.decision.` : "";
     const message = kind === "cognition"
-      ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. To delegate, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
-      : `Execute Task ${dispatch.taskId} from its fixed basis. Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
+      ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. For bounded division choices read get /api/projects/${loop.projectId}/orchestration/loops/${loop.id}/delegation-choices; decide before your final worker decision and cite the resulting binding in waiting. To delegate through the static path, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
+      : `Execute Task ${dispatch.taskId} from its fixed basis.${handoffContext} Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
     const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}${scheduleContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
     if (input.length > 4000) throw new Error("WORKER_INPUT_TOO_LONG");
     return input;
   }
+  /** Recover the same transfer and child request after any crash; never infer a new choice from native text. */
+  private async continueDivision(loop: OrchestrationLoop, parent: OrchestrationDispatch, cognitive: ManagedRoleProfile) {
+    if (parent.state !== "completed" || parent.outcome !== "waiting" || !parent.runtimeRunId) return;
+    const decision = await this.deps.orchestration.getDecisionForDispatch(cognitive.principal, loop.projectId, parent.id);
+    if (!decision || decision.kind !== "waiting" || !decision.divisionDecisionId || decision.runId !== parent.runtimeRunId) return;
+    const binding = await this.deps.orchestration.getBinding(cognitive.principal, loop.projectId, decision.divisionDecisionId);
+    if (!binding || binding.parentDispatchId !== parent.id || binding.sourceEventId !== parent.sourceEventId ||
+      binding.firstTaskId === parent.taskId || binding.loopId !== loop.id) throw new Error("DIVISION_BINDING_MISMATCH");
+    const childId = loopIntentId(binding.id, "division-child");
+    let child = await this.deps.orchestration.getDispatch(cognitive.principal, loop.projectId, childId);
+    const reserved = child ?? { ...parent, id: childId,
+      taskId: binding.firstTaskId, parentDispatchId: parent.id,
+      recipientRoleId: binding.roleId, authorizationScopeId: binding.authorizationScopeId,
+      bindingId: binding.id,
+      ...(loop.currentPolicyRevisionId ? {policyRevisionId:loop.currentPolicyRevisionId} : {}) };
+    const profile = await this.deps.dynamicController?.(reserved);
+    if (!child && !profile) throw new Error("DIVISION_GRANT_UNAVAILABLE");
+    const reader = profile?.principal ?? cognitive.principal;
+    const run = await this.deps.workflow.getRuntimeRun(reader, loop.projectId, parent.runtimeRunId);
+    if (run.state !== "completed") return;
+    if (!child) {
+      const currentLoop = await this.deps.orchestration.getLoop(profile!.principal, loop.projectId, loop.id);
+      if (!currentLoop || currentLoop.state !== "active") return;
+      await this.deps.orchestration.execute(profile!.principal, { type: "division.consume", projectId: loop.projectId,
+        operationId: loopIntentId(binding.id, "division.consume"), loopId: loop.id,
+        expectedLoopVersion: currentLoop.version, bindingId: binding.id, waitingDecisionId: decision.id,
+        parentDispatchId: parent.id, dispatchId: childId, reason: `First Task from division ${binding.id}` });
+      child = await this.deps.orchestration.getDispatch(profile!.principal, loop.projectId, childId);
+    }
+    if (!child || child.state !== "pending" || child.taskVersion !== binding.firstTaskVersion) return;
+    const transferOperationId = loopIntentId(binding.id, "task.transfer");
+    const historical = await this.deps.dynamicController?.(child, true);
+    if (!historical) throw new Error("DIVISION_HISTORICAL_OWNER_UNAVAILABLE");
+    const prior = await this.deps.workflow.getOperation(historical.principal, loop.projectId, transferOperationId);
+    if (!prior) {
+      if (!profile) return; // Revocation or expiry may not start a new transfer.
+      const detail = await this.deps.workflow.getTask(profile.principal, loop.projectId, binding.firstTaskId);
+      if (detail.task.state !== "todo") throw new Error("TASK_HANDOFF_REQUIRES_REOPEN");
+      if (detail.task.version !== binding.firstTaskVersion || detail.task.owner === binding.roleId)
+        throw new Error("DIVISION_TASK_HANDOFF_BASELINE_CHANGED");
+      applied(await this.deps.workflow.execute(profile.principal, { type: "task.update", projectId: loop.projectId,
+        operationId: transferOperationId, taskId: detail.task.id, expectedVersion: binding.firstTaskVersion,
+        title: detail.task.title, content: detail.task.content, acceptance: detail.task.acceptance,
+        owner: binding.roleId, kind: detail.task.kind, reason: `division-transfer:${binding.id}` }));
+    } else applied(prior.result);
+    const transferred = await this.deps.workflow.getTask(historical.principal, loop.projectId, binding.firstTaskId);
+    await this.deps.orchestration.execute(historical.principal, { type: "division.confirmTransfer", projectId: loop.projectId,
+      operationId: loopIntentId(binding.id, "division.confirmTransfer"), dispatchId: childId,
+      transferOperationId, transferredTaskVersion: transferred.task.version,
+      reason: "Journalled Task owner transfer confirmed" });
+  }
   private async settle(dispatch: OrchestrationDispatch) {
     if (!dispatch.runtimeRunId) throw new Error("ACCEPTED_DISPATCH_WITHOUT_RUN");
-    const profile = await this.deps.controller(dispatch.projectId, dispatch.recipientRoleId);
+    const profile = dispatch.bindingId ? await this.deps.dynamicController?.(dispatch, true) :
+      await this.deps.controller(dispatch.projectId, dispatch.recipientRoleId);
     if (!profile) throw new Error("ROLE_SCOPE_UNAVAILABLE");
     const run = await this.deps.workflow.getRuntimeRun(profile.principal, dispatch.projectId, dispatch.runtimeRunId);
     if (!terminal(run.state)) return;

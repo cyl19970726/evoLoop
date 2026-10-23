@@ -62,6 +62,32 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("a bound dynamic Session cannot fall back to the same Role's static grant after revocation", async () => {
+  let calls = 0, current = false;
+  const service = { ...workManagementQueries,
+    getRuntimeSession: async () => ({ projectId,id:sessionId,actorId:grant.actorId,roleId:grant.roleId,
+      authorizationScope:grant.authorizationScope,cwd:grant.cwd,sandbox:grant.sandbox }),
+    execute: async () => { calls++; return {status:"applied",operationId,entityId:sessionId,version:1}; },
+  } as unknown as WorkflowService;
+  const app = await buildServer({service,credentials:credentials as never,
+    runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,
+    hasRuntimeGrant:()=>true,allowedRuntimeCwd:async()=>true,
+    isDynamicSession:async()=>true,
+    authorizeDynamicSession:async()=>current,
+    authorizeDynamicRun:async()=>current});
+  try {
+    const reserveRun={type:"runtime.run.reserve",projectId,operationId:randomUUID(),sessionId,
+      runId:randomUUID(),taskId:randomUUID(),expectedVersion:1,input:"Bounded task"};
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,403);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,403);
+    assert.equal(calls,0);
+    current=true;
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:command})).statusCode,200);
+    assert.equal((await app.inject({method:"POST",url:"/api/commands",headers,payload:reserveRun})).statusCode,200);
+    assert.equal(calls,2);
+  } finally { await app.close(); }
+});
+
 test("session close requires project review but no requester execution grant", async () => {
   let calls = 0, available = true;
   const service = { ...workManagementQueries,

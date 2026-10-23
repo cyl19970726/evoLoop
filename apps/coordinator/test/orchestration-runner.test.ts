@@ -54,6 +54,7 @@ function fixture() {
     getDispatch: async (_: Principal, _projectId: string, id: string) => dispatches.find(item => item.id === id) ?? null,
     getInbox: async (_: Principal, _projectId: string, id: string) => inbox.find(item => item.id === id) ?? null,
     getSubmissionForDispatch: async () => null,
+    getDecisionForDispatch: async () => null,
     listLoops: async () => ({ items: [loop], nextCursor: null }),
     getLoop: async () => loop,
     listSourceFacts: async () => ({ items: facts, nextCursor: null }),

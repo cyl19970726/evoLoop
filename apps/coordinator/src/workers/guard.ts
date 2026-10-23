@@ -21,6 +21,8 @@ export interface WorkerGuardFacts {
   operation(operationId: string): Promise<(Fact & { actorId: string }) | null>;
   dispatchForRun?(runId: string): Promise<(Fact & {id: string; loopId: string; taskId: string; sourceEventId: string; runtimeRunId: string | null}) | null>;
   dispatch?(dispatchId: string): Promise<(Fact & {loopId: string}) | null>;
+  divisionBinding?(bindingId: string): Promise<boolean>;
+  divisionMaterial?(documentId: string, revisionId: string): Promise<boolean>;
   submission?(submissionId: string): Promise<(Fact & {runId: string; taskId: string}) | null>;
   decision?(decisionId: string): Promise<(Fact & {loopId: string; runId: string; taskId: string; actorId: string}) | null>;
 }
@@ -57,7 +59,7 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
     if (scope.kind === "cognition" && loop.stageId && parts[0] === "stages" && parts[1] === loop.stageId &&
         (parts.length === 2 || parts.length === 3 && ["revisions", "reviews"].includes(parts[2]!))) return true;
     if (scope.kind === "cognition" && parts[0] === "orchestration" && parts[1] === "loops" && parts[2] === scope.loopId &&
-        (parts.length === 3 || parts.length === 4 && ["inbox", "dispatches", "events", "sources", "tasks", "submissions"].includes(parts[3]!))) return true;
+        (parts.length === 3 || parts.length === 4 && ["inbox", "dispatches", "events", "sources", "tasks", "submissions", "delegation-choices"].includes(parts[3]!))) return true;
     if (scope.kind === "cognition" && parts[0] === "orchestration" && parts[1] === "inbox" && id(parts[2]) && parts.length === 3) {
       const inbox = await facts.inbox(parts[2]);
       return same(inbox, scope.projectId) && inbox?.loopId === scope.loopId;
@@ -112,6 +114,9 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       if (parts.length >= 4 && id(parts[3]) &&
           (parts.length === 4 || parts.length === 5 && parts[4] === "original") &&
           await facts.sourceIssueDocumentRevision?.(parts[1], parts[3]) === true) return true;
+      if (parts.length >= 4 && id(parts[3]) &&
+          (parts.length === 4 || parts.length === 5 && parts[4] === "original") &&
+          await facts.divisionMaterial?.(parts[1], parts[3]) === true) return true;
       const document = await facts.document(parts[1]);
       if (!same(document, scope.projectId)) return false;
       if (parts.length >= 4 && id(parts[3])) return parts.length === 4 || parts[4] === "original" ?
@@ -133,6 +138,8 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       const related = scope.kind === "cognition" ? await facts.dispatch?.(parts[2]) : null;
       return !!related && same(related, scope.projectId) && related.loopId === scope.loopId;
     }
+    if (parts[0] === "orchestration" && parts[1] === "bindings" && id(parts[2]) && parts.length === 3)
+      return await facts.divisionBinding?.(parts[2]) === true;
     if (parts[0] === "orchestration" && parts[1] === "submissions" && id(parts[2]) && parts.length === 3) {
       const submission = await facts.submission?.(parts[2]);
       return !!submission && same(submission, scope.projectId) && submission.runId === scope.runId && submission.taskId === scope.taskId;
@@ -196,7 +203,8 @@ export async function authorizeWorkerCommand(identity: WorkerIdentity, value: un
       run?.taskId === scope.taskId && run.sessionId === scope.sessionId &&
       ["requested","dispatching","running"].includes(run.state ?? "");
   }
-  if (command.type === "worker.submit" || command.type === "worker.decision") {
+  if (command.type === "worker.submit" || command.type === "worker.decision" || command.type === "division.ackHandoff") {
+    if (command.type === "division.ackHandoff" && scope.kind !== "business") return false;
     if (command.type === "worker.decision" && command.divisionDecisionId != null &&
         (scope.kind !== "cognition" || command.kind !== "waiting" || !id(command.divisionDecisionId))) return false;
     const dispatch = await facts.dispatchForRun?.(scope.runId);
