@@ -29,6 +29,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
+import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
@@ -140,6 +141,8 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
   projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
+  planningSources: (principal, projectId, taskId, revisionId, loopId) =>
+    readPlanningSources(pool, principal, projectId, taskId, revisionId, loopId),
   sourceConfiguration: principal => ({
     git: integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
     wiki: !!knowledge?.enabled && knowledge.projectIds.some(projectId => !principal || principal.projectIds.includes(projectId)),

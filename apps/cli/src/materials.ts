@@ -27,6 +27,11 @@ export interface TaskContext {
   task: TaskDetail["task"] | null; revision: TaskRevision | null; basis: BasisSet | null;
   history: Array<{ revision: TaskRevision; basis: BasisSet | null }> | null;
   documents: VerifiedOriginal[]; externalReferences: ExternalOriginal[]; failures: MaterialFailure[];
+  /** Observed planning pointers are neither sealed basis nor originals read by this command. */
+  observedPlanningCandidates: Array<{ sourceTaskId: string; sourceTaskRevisionId: string;
+    documentId: string; adoptedRevisionId: string; contentHash: string; status: "published"; originalPath: string }>;
+  planningUnavailableLinks: Array<{ documentId: string; reason: "archived" | "not_published" }>;
+  planningObservedAtUtc: string | null;
 }
 function obj(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new MaterialError(`${label} is invalid`);
@@ -174,7 +179,9 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
   let detail: TaskDetail;
   try { detail = obj(await client.get(root), "Task detail") as unknown as TaskDetail; }
   catch (error) { return { status: "partial", projectId, taskId, taskRevisionId: revisionId ?? "", task: null, revision: null,
-    basis: null, history: null, documents: [], externalReferences: [], failures: [{ kind: "task", id: taskId, revisionId: revisionId ?? null, reason: reason(error) }] }; }
+    basis: null, history: null, documents: [], externalReferences: [], observedPlanningCandidates: [],
+    planningUnavailableLinks: [], planningObservedAtUtc: null,
+    failures: [{ kind: "task", id: taskId, revisionId: revisionId ?? null, reason: reason(error) }] }; }
   if (detail.task?.projectId !== projectId || detail.task?.id !== taskId || detail.revision?.id !== detail.task.currentRevisionId)
     throw new MaterialError("Task detail scope or current revision is inconsistent");
   const selectedId = revisionId ? uuid(revisionId, "Task revision ID") : detail.revision.id;
@@ -189,6 +196,61 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
         (basis && (basis.projectId !== projectId || basis.taskId !== taskId || basis.taskRevisionId !== selectedId || basis.id !== revision.basisSetId || basis.sealed !== true)))
       throw new MaterialError("Selected Task revision or sealed basis scope is inconsistent");
   } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: reason(error) }); }
+  const observedPlanningCandidates: TaskContext["observedPlanningCandidates"] = [];
+  const planningUnavailableLinks: TaskContext["planningUnavailableLinks"] = [];
+  let planningObservedAtUtc: string | null = null;
+  if (!revisionId && detail.task.state === "todo" && revision && basis === null) {
+    if (!Array.isArray(detail.links))
+      failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: "Task links are missing from current detail" });
+    else {
+      const links = detail.links.filter(link => link.documentId !== revision.contentDocumentId);
+      if (links.length > 0) {
+        try {
+          if (links.length > 19) throw new MaterialError("More than 19 linked planning sources");
+          const path = `${fixedPath(projectId)}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${selectedId}`;
+          const planning = obj(await client.get(path), "Planning sources");
+          if (planning.projectId !== projectId || planning.taskId !== taskId ||
+              planning.observedTaskRevisionId !== selectedId || planning.sealed !== false ||
+              typeof planning.observedAtUtc !== "string" || Number.isNaN(Date.parse(planning.observedAtUtc)) ||
+              !Array.isArray(planning.observedPlanningCandidates) || !Array.isArray(planning.unavailableLinks))
+            throw new MaterialError("Planning source scope or candidate set is invalid");
+          planningObservedAtUtc = planning.observedAtUtc;
+          const expected = new Set(links.map(link => link.documentId));
+          if (expected.size !== links.length) throw new MaterialError("Task links are duplicated");
+          const seen = new Set<string>();
+          for (const raw of planning.observedPlanningCandidates) {
+            const item = obj(raw, "Planning candidate");
+            const documentId = uuid(string(item.documentId, "Candidate document"), "Candidate document");
+            const adoptedRevisionId = uuid(string(item.adoptedRevisionId, "Candidate revision"), "Candidate revision");
+            const originalPath = `${fixedPath(projectId)}/documents/${documentId}/revisions/${adoptedRevisionId}/original`;
+            if (!expected.has(documentId) || seen.has(documentId) || item.sourceTaskId !== taskId ||
+                item.sourceTaskRevisionId !== selectedId || item.status !== "published" ||
+                item.originalPath !== originalPath || !SHA.test(string(item.contentHash, "Candidate hash")))
+              throw new MaterialError("Planning candidate is not bound to the current Task links and revision");
+            seen.add(documentId);
+            observedPlanningCandidates.push(item as unknown as TaskContext["observedPlanningCandidates"][number]);
+          }
+          for (const raw of planning.unavailableLinks) {
+            const item = obj(raw, "Unavailable planning link");
+            const documentId = uuid(string(item.documentId, "Unavailable document"), "Unavailable document");
+            if (!expected.has(documentId) || seen.has(documentId) ||
+                !["archived", "not_published"].includes(String(item.reason)))
+              throw new MaterialError("Unavailable planning link differs from current Task links");
+            seen.add(documentId);
+            planningUnavailableLinks.push(item as unknown as TaskContext["planningUnavailableLinks"][number]);
+            failures.push({ kind: "document", id: documentId, revisionId: null,
+              reason: `Linked planning source is ${item.reason}` });
+          }
+          if (seen.size !== expected.size) throw new MaterialError("Planning sources omit linked Task documents");
+        } catch (error) {
+          observedPlanningCandidates.length = 0;
+          planningUnavailableLinks.length = 0;
+          planningObservedAtUtc = null;
+          failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: `Planning sources: ${reason(error)}` });
+        }
+      }
+    }
+  }
   let history: TaskContext["history"] = null;
   try {
     const raw = list(await client.get(`${root}/revisions`), "Task revision history");
@@ -270,7 +332,8 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
     } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: `External snapshot: ${reason(error)}` }); }
   }
   return { status: failures.length ? "partial" : "complete", projectId, taskId, taskRevisionId: selectedId,
-    task: detail.task, revision, basis, history, documents, externalReferences, failures };
+    task: detail.task, revision, basis, history, documents, externalReferences,
+    observedPlanningCandidates, planningUnavailableLinks, planningObservedAtUtc, failures };
 }
 async function readGit(client: ReadClient, projectId: string, fixed: TaskExternalReferenceRecord): Promise<string> {
   if (fixed.observedCurrentRevision !== fixed.revision || fixed.observedCurrentHash !== fixed.contentHash)

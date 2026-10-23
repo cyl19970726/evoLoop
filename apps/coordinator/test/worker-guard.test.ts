@@ -74,6 +74,23 @@ test("cognitive worker owner, loop and dispatch boundaries", async () => {
   assert.equal(await authorizeWorkerCommand(worker, command("delivery.record", { taskId, runId }), paused), true);
   assert.equal(await authorizeWorkerCommand(thinker, command("dispatch.request", { taskId, inboxId, recipientRoleId: "builder" }), paused), false);
 });
+
+test("planning candidates require cognition, exact Task revision and one query parameter", async () => {
+  const thinker: WorkerIdentity = { principal: { ...worker.principal },
+    scope: { ...worker.scope, kind: "cognition", roleId: "planner", allowedRoleIds: ["planner", "builder"] } };
+  const path = `/api/projects/${projectId}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${revisionId}`;
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path}, facts), true);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path},
+    {...facts, loop: async () => ({projectId, state: "active", goalId, stageId: null,
+      cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"]})}), true);
+  assert.equal(await authorizeWorkerRequest(worker, {method: "GET", path}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: path.replace(taskId, u())}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: path.replace(revisionId, u())},
+    {...facts, taskRevision: async (_task, revision) => revision === revisionId}), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: `${path}&taskRevisionId=${revisionId}`}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: `${path}&all=true`}, facts), false);
+  assert.equal(await authorizeWorkerRequest(thinker, {method: "GET", path: path.replace(`?taskRevisionId=${revisionId}`, "")}, facts), false);
+});
 test("a worker can verify the exact report revision it authored and cognition can read its Loop child", async () => {
   const report = u(), reportRevision = u(), child = u();
   const own = {...facts, document: async (id: string) => id === report ? {projectId,taskId,loopId} : null,
