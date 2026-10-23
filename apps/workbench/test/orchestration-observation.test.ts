@@ -3,9 +3,9 @@ import { mock, test } from "node:test";
 import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
 import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { inTaskContext, nextAction, readableOutcome, relatedDispatches } from "../src/orchestration/summary.ts";
-import { taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
+import { inTaskContext, nextAction, orderDispatches, readableOutcome, relatedDispatches, storyNextAction } from "../src/orchestration/summary.ts";
+import { navigateTaskTab, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 
 const projectId = "11111111-1111-4111-8111-111111111111", loopId = "22222222-2222-4222-8222-222222222222";
@@ -21,9 +21,12 @@ test("observer uses scoped pagination and preserves the server's more-pages sign
     const client = orchestrationClient("private", projectId);
     const first = await client.loops();
     const second = await client.part(loopId, "dispatches", first.nextCursor!);
+    const sources = await client.part(loopId,"sources");
     assert.equal(first.nextCursor, "opaque/+next"); assert.equal(second.nextCursor, "opaque/+next");
+    assert.equal(sources.nextCursor,"opaque/+next");
     assert.deepEqual(paths, [`/api/projects/${projectId}/orchestration/loops?limit=50`,
-      `/api/projects/${projectId}/orchestration/loops/${loopId}/dispatches?limit=50&cursor=opaque%2F%2Bnext`]);
+      `/api/projects/${projectId}/orchestration/loops/${loopId}/dispatches?limit=50&cursor=opaque%2F%2Bnext`,
+      `/api/projects/${projectId}/orchestration/loops/${loopId}/sources?limit=50`]);
     const merged = mergePage({ items: [{ id: "one", version: 1 }], nextCursor: "next" },
       { items: [{ id: "one", version: 2 }, { id: "two", version: 1 }], nextCursor: null });
     assert.deepEqual(merged.items.map(item => [item.id, item.version]), [["one", 2], ["two", 1]]);
@@ -79,10 +82,34 @@ test("task chain relation includes same source and direct parent, but excludes u
   assert.deepEqual(relatedDispatches([direct,sameSource,child,unrelated],"task").map(item=>item.id),["a","b","c"]);
   const context={loopId,sourceEventIds:["source"],dispatchIds:["a"],parentDispatchIds:[]};
   assert.equal(inTaskContext(direct,context),true);
-  assert.equal(inTaskContext(sameSource,context),true);
+  assert.equal(inTaskContext(sameSource,context),false,"a shared source alone does not prove this Task's dispatch relation");
   assert.equal(inTaskContext(unrelated,context),false);
   const feedback={...unrelated,id:"next-cognition",sourceEventId:"outcome-event",parentDispatchId:null};
-  assert.equal(inTaskContext(feedback,{...context,sourceEventIds:["source","outcome-event"]}),true);
+  assert.equal(inTaskContext(feedback,{...context,sourceEventIds:["source","outcome-event"]}),false);
+  assert.equal(inTaskContext(feedback,{...context,dispatchIds:["a","next-cognition"]}),true);
+});
+
+test("story order follows recorded time and exact parent/outcome cause, never UUID or a shared source", () => {
+  const at = (id:string,time:string,sourceEventId:string,parentDispatchId:string|null=null) =>
+    ({id,createdAtUtc:time,sourceEventId,parentDispatchId,outcome:null} as OrchestrationDispatch);
+  const first = at("z","2026-10-23T10:00:00Z","source");
+  const sibling = at("a","2026-10-23T10:01:00Z","source");
+  const next = at("b","2026-10-23T09:59:00Z","outcome");
+  const source = {id:"outcome",kind:"worker.outcome",originDispatchId:"z"} as OrchestrationSourceFact;
+  const result=orderDispatches([next,sibling,first],[source],[]);
+  assert.deepEqual(result.ordered.map(item=>item.id),["z","b","a"]);
+  assert.deepEqual([...result.hasLater],["z"]);
+  assert.deepEqual(orderDispatches([next,sibling,first],[],[]).ordered.map(item=>item.id),["b","z","a"],
+    "an unread source cannot fabricate an edge; the UI must flag the partial page");
+  const child=at("c","2026-10-23T09:58:00Z","other","b");
+  assert.deepEqual(orderDispatches([child,next,sibling,first],[source],[]).ordered.map(item=>item.id),["z","b","c","a"]);
+});
+
+test("an old waiting card cannot present its past instruction as today's next action", () => {
+  const waiting = {outcome:"waiting",state:"completed"} as OrchestrationDispatch;
+  assert.match(storyNextAction(undefined,waiting,undefined,false),/当时记录为等待/);
+  assert.match(storyNextAction(undefined,waiting,undefined,true),/已有正式来源或父子派发接续/);
+  assert.doesNotMatch(storyNextAction(undefined,waiting,undefined,true),/有新事实后再判断/);
 });
 
 test("three Task links select fixed history, runtime and delivery without crossing Task scope", () => {
@@ -97,6 +124,21 @@ test("three Task links select fixed history, runtime and delivery without crossi
   assert.equal(taskSectionFromHash(runtime,projectId,"55555555-5555-4555-8555-555555555555"),null);
   assert.equal(taskSectionFromHash(runtime,loopId,taskId),null);
   assert.equal(taskSectionFromHash(`${runtime}&tab=history`,projectId,taskId),"overview");
+});
+
+test("internal tabs change the canonical hash so a same-Task link works and Back restores its tab", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const delivery=taskSectionHref(projectId,taskId,{tab:"delivery"});
+  const runtime=taskSectionHref(projectId,taskId,{tab:"runtime"});
+  const location={hash:delivery};
+  assert.equal(navigateTaskTab(projectId,taskId,"runtime",location),true);
+  assert.equal(location.hash,runtime);
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
+  location.hash=delivery;
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"delivery");
+  assert.equal(navigateTaskTab(projectId,taskId,"delivery",location),false);
+  location.hash=runtime;
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
 });
 
 test("task context and decision reads use scoped routes instead of scanning the first loop page", async () => {
