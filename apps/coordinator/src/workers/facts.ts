@@ -1,10 +1,15 @@
 import type { Pool } from "pg";
+import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { WorkerIdentity } from "./types.js";
 import type { WorkerGuardFacts } from "./guard.js";
 
 /** Authorization facts are project-scoped reads of the authoritative records, not caller supplied labels. */
 export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGuardFacts {
   const scope = identity.scope;
+  // Only the public read contract is used here. No grant is supplied by this worker path.
+  const trustedSources = new PgOrchestrationStore(pool, {
+    getAuthorizationFact: async () => null, canActAsRole: async () => false, wasActorRole: async () => false,
+  });
   const one = async (sql: string, args: unknown[]) => (await pool.query(sql, [scope.projectId, ...args])).rows[0] ?? null;
   const loop = async () => (await one("SELECT data FROM orchestration_loop WHERE project_id=$1 AND loop_id=$2", [scope.loopId]))?.data ?? null;
   const task = async (taskId: string) => {
@@ -166,14 +171,14 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
     if (scope.kind !== "cognition") return null;
     const enrolled = await loop();
     if (!enrolled) return null;
-    return await one(`SELECT revision.revision_id FROM orchestration_dispatch dispatch
+    const original = await one(`SELECT revision.revision_id FROM orchestration_dispatch dispatch
       JOIN orchestration_inbox inbox ON inbox.project_id=dispatch.project_id AND inbox.inbox_id=dispatch.inbox_id
         AND inbox.loop_id=dispatch.loop_id AND inbox.purpose='cognitive_review'
       JOIN outbox_event event ON event.project_id=inbox.project_id AND event.event_id=inbox.source_event_id
         AND event.kind='document' AND event.version=1
       JOIN operation_journal operation ON operation.project_id=event.project_id AND operation.operation_id=event.operation_id
         AND operation.command_type='document.create' AND operation.result->>'status'='applied'
-        AND operation.result->>'entityId'=event.entity_id::text
+        AND operation.result->>'entityId'=event.entity_id::text AND operation.result->>'version'='1'
       JOIN process_document document ON document.project_id=event.project_id AND document.document_id=event.entity_id
         AND document.kind='issue' AND document.origin_task_id IS NOT NULL
       JOIN document_revision revision ON revision.project_id=document.project_id AND revision.document_id=document.document_id
@@ -192,6 +197,21 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
         AND dispatch.data->>'sourceEventId'=inbox.source_event_id::text AND document.document_id=$2
         AND stage.goal_id=$6 AND ($7::uuid IS NULL OR stage.stage_id=$7::uuid) LIMIT 1`,
       [documentId, scope.loopId, scope.runId, scope.roleId, enrolled.goalId, enrolled.stageId, scope.taskId]);
+    if (original) return original;
+    // A resume is a new orchestration event, not another Issue creation. Bind this
+    // credential to its exact dispatch/inbox, then use the PG reader's verified chain.
+    const current = await one(`SELECT inbox.source_event_id FROM orchestration_dispatch dispatch
+      JOIN orchestration_inbox inbox ON inbox.project_id=dispatch.project_id AND inbox.inbox_id=dispatch.inbox_id
+        AND inbox.loop_id=dispatch.loop_id AND inbox.purpose='cognitive_review'
+      WHERE dispatch.project_id=$1 AND dispatch.loop_id=$2 AND dispatch.task_id=$3
+        AND dispatch.data->>'runtimeRunId'=$4 AND dispatch.data->>'recipientRoleId'=$5
+        AND dispatch.data->>'sourceEventId'=inbox.source_event_id::text LIMIT 1`,
+      [scope.loopId, scope.taskId, scope.runId, scope.roleId]);
+    if (!current) return null;
+    const fact = await trustedSources.read(scope.projectId, reader => reader.getSourceFact(current.source_event_id));
+    return fact?.kind === "waiting.resumed" && fact.projectId === scope.projectId &&
+      fact.sourceLoopId === scope.loopId && fact.subjectId === documentId && fact.issueRevisionId &&
+      fact.originalSourceEventId && fact.waitingDecisionId ? {revision_id: fact.issueRevisionId} : null;
   };
   const sourceIssueDocumentRevision = async (documentId: string, revisionId: string) =>
     (await sourceIssue(documentId))?.revision_id === revisionId;

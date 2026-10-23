@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
+import { buildServer } from "../../apps/coordinator/src/server.ts";
 import { authorizeWorkerCommand } from "../../apps/coordinator/src/workers/guard.ts";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.ts";
 import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.ts";
@@ -19,7 +20,7 @@ const taskDocumentId = id(), taskDocumentRevisionId = id(), issueId = id(), issu
 const loopId = id(), inboxId = id(), dispatchId = id(), runId = id(), sessionId = id();
 const operationId = id(), sourceEventId = id(), actorId = "worker-original-business";
 const now = "2026-10-23T00:00:00Z";
-const identity: WorkerIdentity = { principal: { actorId: "worker-current-cognition", projectIds: [projectId], permissions: ["read", "write"] },
+const identity: WorkerIdentity = { principal: { actorId: "worker-current-cognition", projectIds: [projectId], permissions: ["read", "write", "review"] },
   scope: { projectId, loopId, taskId, runId, sessionId, roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", "builder"] } };
 
 before(async () => {
@@ -52,7 +53,7 @@ before(async () => {
       VALUES($1,$2,$3,'issue','markdown',$4,$5,$6,'initial')`, [projectId, issueId, issueRevisionId, "b".repeat(64), actorId, now]);
     await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
       VALUES($1,$2,$3,'hash','document.create',$4,$5)`, [projectId, operationId, actorId,
-      JSON.stringify({ status: "applied", entityId: issueId, revisionId: issueRevisionId }), now]);
+      JSON.stringify({ status: "applied", entityId: issueId, revisionId: issueRevisionId, version: 1 }), now]);
     await client.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
       VALUES($1,$2,$3,'document','document',$4,1,$5)`, [projectId, sourceEventId, operationId, issueId, now]);
     await client.query(`INSERT INTO orchestration_loop(project_id,loop_id,version,state,data) VALUES($1,$2,1,'active',$3)`,
@@ -88,7 +89,7 @@ test("only the exact current dispatch source Issue can be linked, even before ad
       [projectId, unrelatedIssueId, unrelatedRevisionId, "c".repeat(64), actorId, now]);
     await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
       VALUES($1,$2,$3,'hash','document.create',$4,$5)`, [projectId, unrelatedOperationId, actorId,
-      JSON.stringify({ status: "applied", entityId: unrelatedIssueId, revisionId: unrelatedRevisionId }), now]);
+      JSON.stringify({ status: "applied", entityId: unrelatedIssueId, revisionId: unrelatedRevisionId, version: 1 }), now]);
     await client.query(`INSERT INTO outbox_event(project_id,event_id,operation_id,effect_key,kind,entity_id,version,created_at)
       VALUES($1,$2,$3,'document','document',$4,1,$5)`, [projectId, id(), unrelatedOperationId, unrelatedIssueId, now]);
     await client.query("COMMIT");
@@ -110,19 +111,40 @@ test("only the exact current dispatch source Issue can be linked, even before ad
     command(issueId), facts), false);
 });
 
-test("core start atomically rejects an older fixed Issue when adoption drifts", async () => {
+test("scoped HTTP publishes original Issue, creates linked Tasks, and core start rejects adoption drift", async () => {
   const owner = { actorId: "source-test-owner", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
     clock: { now: () => now }, ids: { next: id },
     hasher: { hash: (body: string) => createHash("sha256").update(body).digest("hex") } });
-  const published = await workflow.execute(owner, { type: "document.publish", projectId, operationId: id(),
-    documentId: issueId, expectedVersion: 1, revisionId: issueRevisionId, reason: "Accept original source" });
-  assert.equal(published.status, "applied");
+  const app = await buildServer({ service: workflow, credentials: [{ token: "o".repeat(40), actorId: owner.actorId,
+    projectIds: [projectId], permissions: ["read", "write", "review"] }], workers: {
+    authenticate: async header => header === "Bearer fixture-worker" ? identity : null,
+    facts: worker => workerGuardFacts(pool, worker),
+  }});
+  const workerCommand = async (body: Record<string, unknown>) => app.inject({ method: "POST", url: "/api/commands",
+    headers: { authorization: "Bearer fixture-worker" }, payload: { projectId, operationId: id(), ...body } });
+  try {
+  const published = await workerCommand({ type: "document.publish", documentId: issueId,
+    expectedVersion: 1, revisionId: issueRevisionId, reason: "Accept observed original source" });
+  assert.equal(published.statusCode, 200, published.body);
+  assert.equal(published.json().status, "applied");
   const childId = id();
-  const created = await workflow.execute(owner, { type: "task.create", projectId, operationId: id(), taskId: childId,
+  const created = await workerCommand({ type: "task.create", taskId: childId,
     stageId, title: "Fix source", content: "Use fixed issue", acceptance: "Verify repair", owner: "builder",
     consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
-  assert.equal(created.status, "applied");
+  assert.equal(created.statusCode, 200, created.body);
+  assert.equal(created.json().status, "applied");
+  const startedOriginal = await workflow.execute(owner, { type: "task.start", projectId, operationId: id(),
+    taskId: childId, expectedVersion: 1, basis: [{ documentId: issueId, revisionId: issueRevisionId }],
+    reason: "Seal original source" });
+  assert.equal(startedOriginal.status, "applied");
+  assert.equal((await workflow.getTask(owner, projectId, childId)).basis?.members.find(item =>
+    item.documentId === issueId)?.revisionId, issueRevisionId);
+  const laterChildId = id();
+  const laterChild = await workerCommand({ type: "task.create", taskId: laterChildId, stageId,
+    title: "Later follow-up", content: "Use original issue", acceptance: "Verify repair", owner: "builder",
+    consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
+  assert.equal(laterChild.statusCode, 200, laterChild.body);
   const revised = await workflow.execute(owner, { type: "document.revise", projectId, operationId: id(),
     documentId: issueId, expectedVersion: 2, body: "changed issue", reason: "New candidate" });
   assert.equal(revised.status, "applied");
@@ -131,10 +153,20 @@ test("core start atomically rejects an older fixed Issue when adoption drifts", 
     documentId: issueId, expectedVersion: 3, revisionId: candidate.current.id, reason: "New adoption" });
   assert.equal(republished.status, "applied");
   const started = await workflow.execute(owner, { type: "task.start", projectId, operationId: id(),
-    taskId: childId, expectedVersion: 1, basis: [{ documentId: issueId, revisionId: issueRevisionId }],
+    taskId: laterChildId, expectedVersion: 1, basis: [{ documentId: issueId, revisionId: issueRevisionId }],
     reason: "Pin original source" });
   assert.equal(started.status === "rejected" ? started.code : null, "BASIS_CHANGED");
-  const child = await workflow.getTask(owner, projectId, childId);
+  const child = await workflow.getTask(owner, projectId, laterChildId);
   assert.equal(child.task.state, "todo");
   assert.equal(child.basis, null);
+  const reopened = await workflow.execute(owner, { type: "task.reopen", projectId, operationId: id(),
+    taskId: childId, expectedVersion: 2, reason: "Repeat fixed-source work" });
+  assert.equal(reopened.status, "applied");
+  const inheritedStart = await workflow.execute(owner, { type: "task.start", projectId, operationId: id(),
+    taskId: childId, expectedVersion: 3, reason: "Reuse sealed source without review" });
+  assert.equal(inheritedStart.status === "rejected" ? inheritedStart.code : null, "BASIS_CHANGED");
+  const inherited = await workflow.getTask(owner, projectId, childId);
+  assert.equal(inherited.task.state, "todo");
+  assert.equal(inherited.basis?.members.find(item => item.documentId === issueId)?.revisionId, issueRevisionId);
+  } finally { await app.close(); }
 });
