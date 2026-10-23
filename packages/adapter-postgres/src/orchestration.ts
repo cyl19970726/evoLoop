@@ -216,13 +216,23 @@ class Reader implements OrchestrationReader {
     const scheduled = await scheduledSourceFacts(this.db, this.projectId, { loopId,
       afterUtc: loop.sourceAfter.createdAtUtc, afterId: loop.sourceAfter.eventId,
       cursorUtc: cursorTime, cursorId, limit: limit + 1 });
-    const waiting=await this.db.query(`SELECT event_id FROM orchestration_event
-      WHERE project_id=$1 AND loop_id=$2 AND kind='waiting.resumed'
-        AND (created_at_utc>$3::timestamptz OR (created_at_utc=$3::timestamptz AND ($4::uuid IS NULL OR event_id>$4::uuid)))
-        AND ($5::timestamptz IS NULL OR (created_at_utc,event_id)>($5::timestamptz,$6::uuid))
-      ORDER BY created_at_utc,event_id LIMIT $7`,[this.projectId,loopId,loop.sourceAfter.createdAtUtc,loop.sourceAfter.eventId,
-        cursorTime??null,cursorId??null,limit+1]);
-    for(const row of waiting.rows){const source=await this.getSourceFact(row.event_id);if(source)items.push(source);}
+    let scanTime=cursorTime??loop.sourceAfter.createdAtUtc;
+    let scanId=cursorId??loop.sourceAfter.eventId;
+    let verifiedWaiting=0;
+    while(verifiedWaiting<=limit){
+      const waiting=await this.db.query(`SELECT event_id,created_at_utc::text AS cursor_time FROM orchestration_event
+        WHERE project_id=$1 AND loop_id=$2 AND kind='waiting.resumed'
+          AND (created_at_utc>$3::timestamptz OR (created_at_utc=$3::timestamptz AND ($4::uuid IS NULL OR event_id>$4::uuid)))
+          AND (created_at_utc>$5::timestamptz OR (created_at_utc=$5::timestamptz AND ($6::uuid IS NULL OR event_id>$6::uuid)))
+        ORDER BY created_at_utc,event_id LIMIT 100`,[this.projectId,loopId,loop.sourceAfter.createdAtUtc,loop.sourceAfter.eventId,scanTime,scanId]);
+      if(!waiting.rows.length)break;
+      for(const row of waiting.rows){
+        scanTime=row.cursor_time;scanId=row.event_id;
+        const source=await this.getSourceFact(row.event_id);
+        if(source){items.push(source);verifiedWaiting++;if(verifiedWaiting>limit)break;}
+      }
+      if(verifiedWaiting>limit || waiting.rows.length<100)break;
+    }
     const merged = [...items, ...scheduled].sort((a,b) => a.createdAtUtc.localeCompare(b.createdAtUtc) || a.id.localeCompare(b.id));
     return {items:merged.slice(0,limit),nextCursor:merged.length>limit?`${merged[limit-1]!.createdAtUtc}|${merged[limit-1]!.id}`:null};
   }
