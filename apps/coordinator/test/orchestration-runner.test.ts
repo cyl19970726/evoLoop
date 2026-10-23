@@ -360,7 +360,7 @@ test("existing Task basis is inherited without reading current linked adoption",
   assert.deepEqual(f.documentReads, []);
 });
 
-async function fixedIssueChild() {
+async function fixedIssueChild(sourceKind: "document" | "waiting.resumed" = "document") {
   const f = fixture(), runner = new ManagedLoopRunner(f.deps);
   await runner.pump();
   const parent = f.dispatches[0]!;
@@ -383,7 +383,7 @@ async function fixedIssueChild() {
   f.dispatches.push(child);
   const sourceIssueId = loopIntentId("fixed-source-issue"), fixedRevisionId = loopIntentId("fixed-source-revision");
   const contentHash = "b".repeat(64);
-  f.facts[0] = { projectId, id: sourceId, createdAtUtc: now, kind: "document", subjectId: sourceIssueId,
+  f.facts[0] = { projectId, id: sourceId, createdAtUtc: now, kind: sourceKind, subjectId: sourceIssueId,
     subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: loopIntentId("source-operation"),
     sourceActorId: "business-reporter", issueRevisionId: fixedRevisionId, issueContentHash: contentHash,
     observationId: null, deliveryId: null, observationResult: null };
@@ -431,6 +431,18 @@ test("Issue child inherits an existing basis only when it retains the original r
   await runner.pump(); await runner.pump();
   assert.equal(task.state, "in_progress");
   assert.equal(Object.hasOwn(f.taskStarts[0]!, "basis"), false);
+});
+
+test("resumed Issue child uses the same original and rejects a newer adoption", async () => {
+  const original = await fixedIssueChild("waiting.resumed");
+  await original.runner.pump(); await original.runner.pump();
+  assert.deepEqual(original.f.taskStarts[0]!.basis,
+    [{ documentId: original.sourceIssueId, revisionId: original.fixedRevisionId }]);
+  const changed = await fixedIssueChild("waiting.resumed");
+  changed.f.documents.get(changed.sourceIssueId)!.adoptedRevisionId = loopIntentId("new-adoption");
+  await changed.runner.pump(); await changed.runner.pump();
+  assert.equal(changed.task.state, "todo");
+  assert.match(changed.runner.status().faults[0]!.code, /SOURCE_ISSUE_CHANGED/);
 });
 
 test("more than 19 linked Documents blocks automatic Task start", async () => {
@@ -562,6 +574,40 @@ test("targeted scheduled todo enters cognition once with its existing Task ident
   assert.match(cognitionTask.content, new RegExp(taskId));
   assert.match(cognitionTask.content, /reuse it for the next_action child dispatch/);
   assert.equal(f.taskCreates.some(command => command.taskId === taskId), false);
+});
+
+test("trusted waiting resume opens a new cognition Run with the unchanged fixed Issue", async () => {
+  const f = fixture(), runner = new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const previous = f.dispatches[0]!;
+  previous.state = "completed";
+  previous.runtimeRunId = loopIntentId(previous.id, "run");
+  previous.outcome = null;
+  const resumeId = loopIntentId("resume-source"), issueId = loopIntentId("resume-issue");
+  const revisionId = loopIntentId("resume-original-revision"), decisionId = loopIntentId("waiting-decision");
+  const resumed = { projectId, id: resumeId, createdAtUtc: "2026-10-23T00:01:00.000Z",
+    kind: "waiting.resumed", subjectId: issueId, subjectVersion: 1, sourceLoopId: loopId,
+    originDispatchId: previous.id, operationId: loopIntentId("resume-operation"), sourceActorId: "review-owner",
+    issueRevisionId: revisionId, issueContentHash: "d".repeat(64), observationId: null,
+    deliveryId: null, observationResult: null, waitingDecisionId: decisionId,
+    waitingRunId: previous.runtimeRunId, previousSourceEventId: sourceId,
+    originalSourceEventId: sourceId } as OrchestrationSourceFact;
+  f.facts.push(resumed);
+  await runner.pump();
+  assert.equal(f.taskCreates.some(item => String(item.content).includes(resumeId)), false);
+  previous.outcome = "waiting";
+  await runner.pump();
+  const cognitionTask = f.taskCreates.find(item => String(item.content).includes(resumeId));
+  assert.ok(cognitionTask);
+  assert.match(cognitionTask.content, new RegExp(`${issueId}/revisions/${revisionId}/original`));
+  assert.match(cognitionTask.content, new RegExp(decisionId));
+  await runner.pump();
+  const session = [...f.sessions.values()][0];
+  assert.ok(session);
+  session.state = "ready";
+  await runner.pump();
+  assert.match(f.lastInput()!, new RegExp(decisionId));
+  assert.match(f.lastInput()!, new RegExp(`${issueId} revision ${revisionId}`));
 });
 
 test("missing Stage and exhausted budget become durable waiting inbox dispositions", async () => {

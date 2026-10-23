@@ -6,6 +6,9 @@ import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
+import { authorizeWorkerCommand, authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard.ts";
+import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.ts";
+import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.ts";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated evoloop test DB required");
@@ -85,6 +88,46 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   assert.deepEqual(await orchestration.getDecision(principal(reviewer),projectId,decisionId),beforeDecision);
   const next=await managed(cognition,{type:"inbox.accept",loopId,sourceEventId:resumed[0]!.id,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
   assert.equal(next.entityType,"inbox");
+  await managed(cognition,{type:"inbox.ack",inboxId:next.entityId,expectedVersion:1,reason:"Read resumed fixed source"});
+  const resumedTask=randomUUID(),resumedDispatch=randomUUID(),resumedSession=randomUUID(),resumedRun=randomUUID();
+  await official(reviewer,{type:"task.create",taskId:resumedTask,stageId,title:"Review resumed Issue",
+    content:"# Review the unchanged original",acceptance:"One decision",owner:cognitiveRole,
+    consumer:"owner",evidence:"New review",stopCondition:"One decision"});
+  await official(reviewer,{type:"task.start",taskId:resumedTask,expectedVersion:1,reason:"Fix resumed cognition input"});
+  await managed(cognition,{type:"dispatch.request",inboxId:next.entityId,expectedInboxVersion:2,
+    dispatchId:resumedDispatch,parentDispatchId:null,taskId:resumedTask,expectedTaskVersion:2,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:scope,reason:"New review after waiting"});
+  const resumedClaim=randomUUID();
+  await managed(cognition,{type:"dispatch.claim",dispatchId:resumedDispatch,claimToken:resumedClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await managed(cognition,{type:"dispatch.start",dispatchId:resumedDispatch,claimToken:resumedClaim});
+  await official(reviewer,{type:"runtime.session.reserve",sessionId:resumedSession,roleId:cognitiveRole,
+    cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,resumedSession);
+  await runtime.bindSession(projectId,resumedSession,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:resumedSession,roleId:cognitiveRole,cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,
+    nativeThreadId:`fixture-${resumedSession}`,nativeSessionId:`fixture-${resumedSession}`});
+  await official(reviewer,{type:"runtime.run.reserve",runId:resumedRun,taskId:resumedTask,
+    sessionId:resumedSession,expectedVersion:2,input:"Read resumed source with scoped worker identity"});
+  await managed(cognition,{type:"dispatch.resolve",dispatchId:resumedDispatch,claimToken:resumedClaim,
+    result:"accepted",runtimeRunId:resumedRun,reason:"Fixture new Run; no native Turn"});
+  const worker:WorkerIdentity={principal:{actorId:`worker-${randomUUID()}`,projectIds:[projectId],
+    permissions:["read","write","review"]},scope:{projectId,loopId,taskId:resumedTask,runId:resumedRun,
+      sessionId:resumedSession,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]}};
+  const facts=workerGuardFacts(pool,worker);
+  const fixedPath=`/api/projects/${projectId}/documents/${issueId}/revisions/${created.revisionId}/original`;
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:fixedPath},facts),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:fixedPath.replace(created.revisionId!,randomUUID())},facts),false);
+  assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/documents/${issueId}`},facts),false);
+  const link={type:"task.create",projectId,operationId:randomUUID(),taskId:randomUUID(),stageId,
+    title:"Follow up",content:"Use fixed Issue",acceptance:"Check",owner:businessRole,
+    consumer:"owner",evidence:"Proof",stopCondition:"Done",documentIds:[issueId]};
+  assert.equal(await authorizeWorkerCommand(worker,link,facts),true);
+  assert.equal(await authorizeWorkerCommand(worker,{...link,documentIds:[randomUUID()]},facts),false);
+  const wrongRun:WorkerIdentity={...worker,scope:{...worker.scope,runId:randomUUID()}};
+  assert.equal(await authorizeWorkerCommand(wrongRun,link,workerGuardFacts(pool,wrongRun)),false);
+  const wrongLoop:WorkerIdentity={...worker,scope:{...worker.scope,loopId:randomUUID()}};
+  assert.equal(await authorizeWorkerCommand(wrongLoop,link,workerGuardFacts(pool,wrongLoop)),false);
   const changed=await official(reviewer,{type:"document.revise",documentId:issueId,expectedVersion:1,body:"# Later revision",reason:"Preserve old source"});
   assert.equal(changed.status,"applied");
   assert.equal((await store.transaction(projectId,tx=>tx.getSourceFact(resumed[0]!.id)))?.issueContentHash,hash("# Fixed issue"));
