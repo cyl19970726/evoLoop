@@ -430,10 +430,12 @@ export async function applyWorkflow({
             const child = await tx.getChildHandoffFact?.(c.handoffDispatchId!);
             if (!child || child.projectId !== c.projectId || child.parentDispatchId !== fact.dispatchId ||
               child.loopId !== fact.loopId || child.sourceEventId !== fact.sourceEventId ||
-              child.requestedBy !== fact.actorId || child.recipientRoleId === fact.cognitiveRoleId ||
+              child.recipientRoleId === fact.cognitiveRoleId ||
               child.cognitiveRoleId !== fact.cognitiveRoleId || child.taskId === task.id ||
-              !Number.isFinite(Date.parse(child.requestedAtUtc)) || Date.parse(child.requestedAtUtc) > Date.parse(fact.decidedAtUtc))
-              throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a signed earlier same-source business dispatch by the cognition worker");
+              (child.division ? child.division.waitingDecisionId !== fact.decisionId :
+                child.requestedBy !== fact.actorId || !Number.isFinite(Date.parse(child.requestedAtUtc)) ||
+                Date.parse(child.requestedAtUtc) > Date.parse(fact.decidedAtUtc)))
+              throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs an exact signed business handoff for this cognition decision");
             handoffDispatchId = child.dispatchId;
             handoffTaskId = child.taskId;
           }

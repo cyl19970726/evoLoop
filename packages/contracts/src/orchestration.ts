@@ -158,7 +158,7 @@ export interface OrchestrationTaskScopeFact { projectId: string; taskId: string;
 export interface OrchestrationTaskRevisionFact { projectId: string; taskId: string; revisionId: string; version: number; ownerRoleId: string; actorId: string; reason: string }
 export interface OrchestrationGoalFact { projectId: string; id: string; state: string }
 export interface OrchestrationStageFact { projectId: string; id: string; goalId: string; state: string }
-export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown" }
+export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; nativeTurnId: string | null }
 export interface OrchestrationDeliveryFact { projectId: string; id: string; taskId: string; taskRevisionId: string; runId: string | null; actorId: string; artifactRef: string; artifactRevision: string; contentHash: string; technicalResult: "passed" | "failed"; technicalEvidence: string }
 /** Historical scope is the nearest TaskProposal at or before the Delivery's fixed TaskRevision, never today's Task head. */
 export interface OrchestrationObservationFact { projectId: string; id: string; taskId: string; deliveryId: string; actorId: string; result: "used" | "failed" | "notUsed"; taskRevisionId: string; stageId: string | null }

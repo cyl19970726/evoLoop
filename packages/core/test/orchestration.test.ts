@@ -83,7 +83,8 @@ function harness() {
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
-    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)! } : null,
+    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState,
+      nativeTurnId: draft.runState === "running" ? "fixture-bound-turn" : null } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)!, nativeTurnId: null } : null,
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
     getObservationFact: async id => draft.observationFact?.id === id ? draft.observationFact : null,
     getWorkflowOperationFact: async id => draft.workflowOp?.id === id ? draft.workflowOp : null,
@@ -777,7 +778,7 @@ test("controller reserves budget before Task transfer and confirms only its jour
   assert.equal((await f.h.service.execute(reviewer,confirm)).replayed,true);
   await assert.rejects(()=>f.h.service.execute(reviewer,consume()),failed("INVALID_CAUSALITY"));
   f.h.change(value=>{value.dispatches.set(dispatchId,{...value.dispatches.get(dispatchId)!,state:"accepted",
-    runtimeRunId:value.runId});value.runState="running";});
+    runtimeRunId:value.runId});value.runState="requested";});
   const receiver:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["read","write"]};
   f.h.setDelegatedWorkerScope({projectId,loopId,taskId,runId:f.h.data.runId,roleId:workerRoleId,kind:"business"});
   const deliveryDecision=cmd({type:"worker.decision",decisionId:randomUUID(),dispatchId,
@@ -791,6 +792,8 @@ test("controller reserves budget before Task transfer and confirms only its jour
     documentRevisionId:bindingFact.documentRevisionId,documentContentHash:bindingFact.documentContentHash,
     taskRevisionId:f.h.data.taskRevisionId,reason:"I read the fixed handoff original"});
   await assert.rejects(()=>f.h.service.execute(receiver,{...receipt,documentContentHash:"0".repeat(64)}),failed("HANDOFF_MISMATCH"));
+  await assert.rejects(()=>f.h.service.execute(receiver,receipt),failed("HANDOFF_MISMATCH"));
+  f.h.change(value=>{value.runState="running";});
   assert.equal((await f.h.service.execute(receiver,receipt)).entityType,"dispatch");
   assert.equal((await f.h.service.execute(receiver,receipt)).replayed,true);
   assert.equal((await f.h.service.execute(receiver,deliveryDecision)).entityType,"decision");

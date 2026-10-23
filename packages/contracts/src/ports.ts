@@ -72,6 +72,8 @@ export interface ChildHandoffFact {
   projectId: string; dispatchId: string; taskId: string; loopId: string; sourceEventId: string;
   parentDispatchId: string; recipientRoleId: string; cognitiveRoleId: string;
   requestedBy: string; requestedAtUtc: string; sourceInboxId: string;
+  /** Present only for a verified, historically completed Division transfer and receiving worker receipt. */
+  division?: { bindingId: string; waitingDecisionId: string; acknowledgedRunId: string };
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
