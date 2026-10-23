@@ -15,6 +15,7 @@ export interface WorkerGuardFacts {
   document(documentId: string): Promise<(Fact & { taskId: string | null; loopId: string | null }) | null>;
   fixedDocument(taskId: string, documentId: string, revisionId: string): Promise<boolean>;
   ownedDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
+  sourceIssueDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   fixedReference(taskId: string, kind: "git" | "wiki", referenceId: string, revisionId?: string): Promise<boolean>;
   operation(operationId: string): Promise<(Fact & { actorId: string }) | null>;
   dispatchForRun?(runId: string): Promise<(Fact & {id: string; loopId: string; taskId: string; sourceEventId: string; runtimeRunId: string | null}) | null>;
@@ -95,10 +96,16 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       if (scope.kind === "cognition" && parts.length >= 4 && id(parts[3]) &&
           (parts.length === 4 || parts.length === 5 && parts[4] === "original") &&
           await facts.recoveryDocument?.(parts[1], parts[3])) return true;
+      // The source issue belongs to the original business Task, not to the
+      // cognition Task. Grant only its frozen revision/original endpoint.
+      if (parts.length >= 4 && id(parts[3]) &&
+          (parts.length === 4 || parts.length === 5 && parts[4] === "original") &&
+          await facts.sourceIssueDocumentRevision?.(parts[1], parts[3]) === true) return true;
       const document = await facts.document(parts[1]);
       if (!same(document, scope.projectId)) return false;
       if (parts.length >= 4 && id(parts[3])) return parts.length === 4 || parts[4] === "original" ?
-        (await facts.fixedDocument(scope.taskId, parts[1], parts[3]) || await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true) : false;
+        (await facts.fixedDocument(scope.taskId, parts[1], parts[3]) ||
+          await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true) : false;
       // Every worker document read must bind a revision. A detail/list route can reveal a later
       // current body even when an older authored, linked, or delivered revision is authorized.
       return false;
@@ -157,7 +164,15 @@ export async function authorizeWorkerCommand(identity: WorkerIdentity, value: un
     }
     return true;
   };
-  if (command.type === "document.create") return ["issue", "report"].includes(String(command.kind)) && id(command.documentId);
+  if (command.type === "document.create") {
+    const origin = obj(command.origin), run = await facts.run(scope.runId);
+    return ["issue", "report"].includes(String(command.kind)) && id(command.documentId) &&
+      !!origin && origin.taskId === scope.taskId && origin.runId === scope.runId &&
+      same(run, scope.projectId) && run?.taskId === scope.taskId && run.sessionId === scope.sessionId;
+  }
+  if (command.type === "document.adopt" || command.type === "document.publish")
+    return scope.kind === "cognition" && id(command.documentId) && id(command.revisionId) &&
+      await facts.sourceIssueDocumentRevision?.(command.documentId, command.revisionId) === true;
   if (command.type === "worker.submit" || command.type === "worker.decision") {
     const dispatch = await facts.dispatchForRun?.(scope.runId);
     return !!dispatch && dispatch.id === command.dispatchId && dispatch.loopId === scope.loopId &&

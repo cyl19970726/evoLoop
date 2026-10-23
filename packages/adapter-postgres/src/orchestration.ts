@@ -54,11 +54,12 @@ class Reader implements OrchestrationReader {
       SELECT event_id AS id,created_at_utc,kind,entity_id AS subject_id,1 AS subject_version,
         loop_id AS source_loop_id,NULL::uuid AS origin_dispatch_id,
         NULL::uuid AS operation_id,NULL::text AS source_actor_id,NULL::uuid AS observation_id,
-        NULL::uuid AS delivery_id,NULL::text AS observation_result,NULL::uuid AS gap_run_id,NULL::integer AS gap_task_version
+        NULL::uuid AS delivery_id,NULL::text AS observation_result,NULL::uuid AS gap_run_id,NULL::integer AS gap_task_version,
+        NULL::uuid AS issue_revision_id,NULL::text AS issue_content_hash
         FROM orchestration_event WHERE project_id=$1 AND loop_id=$2 AND event_id=$3::uuid AND kind='loop.enrolled'
       UNION ALL
       SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,d.version,e.loop_id,d.dispatch_id,
-        NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer
+        NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer,NULL::uuid,NULL::text
         FROM orchestration_event e JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
         JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
         WHERE e.project_id=$1 AND e.loop_id=$2 AND e.kind='worker.outcome'
@@ -66,7 +67,7 @@ class Reader implements OrchestrationReader {
           AND d.data->>'recipientRoleId'<>l.data->>'cognitiveRoleId'
       UNION ALL
       SELECT e.event_id,e.created_at,e.kind,e.entity_id,e.version,NULL::uuid,NULL::uuid,
-        e.operation_id,j.actor_id,o.observation_id,o.delivery_id,o.result,NULL::uuid,NULL::integer
+        e.operation_id,j.actor_id,o.observation_id,o.delivery_id,o.result,NULL::uuid,NULL::integer,NULL::uuid,NULL::text
         FROM outbox_event e
         JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id
           AND j.command_type='observation.record' AND j.result->>'status'='applied'
@@ -87,7 +88,7 @@ class Reader implements OrchestrationReader {
       SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,(op.result->>'version')::integer,e.loop_id,d.dispatch_id,
         NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,
         COALESCE((e.detail->>'runId')::uuid,(d.data->>'runtimeRunId')::uuid),
-        COALESCE((e.detail->>'taskVersion')::integer,d.task_version)
+        COALESCE((e.detail->>'taskVersion')::integer,d.task_version),NULL::uuid,NULL::text
         FROM orchestration_event e
         JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
         JOIN orchestration_operation op ON op.project_id=e.project_id AND op.operation_id=e.operation_id
@@ -111,6 +112,31 @@ class Reader implements OrchestrationReader {
           AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
             AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
             AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))
+      UNION ALL
+      SELECT e.event_id,e.created_at,e.kind,e.entity_id,e.version,NULL::uuid,NULL::uuid,
+        e.operation_id,j.actor_id,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer,
+        r.revision_id,r.content_hash
+        FROM outbox_event e
+        JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id
+          AND j.command_type='document.create' AND j.result->>'status'='applied'
+          AND j.result->>'entityId'=e.entity_id::text AND j.result->>'version'='1'
+        JOIN process_document d ON d.project_id=e.project_id AND d.document_id=e.entity_id
+          AND d.kind='issue' AND d.origin_task_id IS NOT NULL
+        JOIN document_revision r ON r.project_id=d.project_id AND r.document_id=d.document_id
+          AND r.revision_id::text=j.result->>'revisionId' AND r.previous_revision_id IS NULL AND r.author=j.actor_id
+        JOIN task_revision tr ON tr.project_id=d.project_id AND tr.task_id=d.origin_task_id
+          AND tr.revision_id=d.origin_task_revision_id
+        JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision pr
+          ON pr.project_id=p.project_id AND pr.task_id=p.task_id AND pr.revision_id=p.task_revision_id
+          WHERE p.project_id=tr.project_id AND p.task_id=tr.task_id AND pr.version<=tr.version
+          ORDER BY pr.version DESC LIMIT 1) fixed_scope ON fixed_scope.stage_id IS NOT NULL
+        JOIN project_stage fixed_stage ON fixed_stage.project_id=tr.project_id AND fixed_stage.stage_id=fixed_scope.stage_id
+        LEFT JOIN runtime_run run ON run.project_id=d.project_id AND run.run_id=d.origin_run_id
+        WHERE e.project_id=$1 AND e.kind='document' AND e.version=1
+          AND (e.created_at>$4::timestamptz OR (e.created_at=$4::timestamptz AND ($5::uuid IS NULL OR e.event_id>$5::uuid)))
+          AND fixed_stage.goal_id=$9::uuid AND ($10::uuid IS NULL OR fixed_stage.stage_id=$10::uuid)
+          AND (d.origin_run_id IS NULL OR (run.task_id=d.origin_task_id AND
+            run.task_revision_id=d.origin_task_revision_id AND run.state<>'unknown'))
     ) SELECT * FROM sources WHERE ($6::timestamptz IS NULL OR (created_at_utc,id)>($6::timestamptz,$7::uuid))
       ORDER BY created_at_utc,id LIMIT $8`,[this.projectId,loopId,loop.bootstrapEventId,
         loop.sourceAfter.createdAtUtc,loop.sourceAfter.eventId,cursorTime??null,cursorId??null,limit+1,loop.goalId,loop.stageId]);
@@ -119,7 +145,8 @@ class Reader implements OrchestrationReader {
       sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,
       operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,
       deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,
-      gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null} as OrchestrationSourceFact));
+      gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,
+      issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null} as OrchestrationSourceFact));
     return {items:items.slice(0,limit),nextCursor:items.length>limit?`${items[limit-1]!.createdAtUtc}|${items[limit-1]!.id}`:null};
   }
 }
@@ -145,19 +172,30 @@ class Tx extends Reader implements OrchestrationTransaction {
   async appendEvent(x:OrchestrationEvent){await this.db.query("INSERT INTO orchestration_event VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)",[this.projectId,x.id,x.loopId,x.entityType,x.entityId,x.operationId,x.kind,x.actorId,JSON.stringify(x.detail),x.createdAtUtc]);}
   async getSourceFact(id:string):Promise<OrchestrationSourceFact|null>{const r=await this.db.query(`SELECT e.event_id,e.created_at AS created_at_utc,e.kind,e.entity_id AS subject_id,e.version AS subject_version,
       NULL::uuid AS source_loop_id,NULL::uuid AS origin_dispatch_id,e.operation_id,
-      CASE WHEN e.kind='observation.record' AND j.command_type='observation.record' AND j.result->>'status'='applied' THEN j.actor_id END AS source_actor_id,
-      o.observation_id,o.delivery_id,o.result AS observation_result,NULL::uuid AS gap_run_id,NULL::integer AS gap_task_version
+      CASE WHEN j.result->>'status'='applied' AND
+        (e.kind='observation.record' AND j.command_type='observation.record' OR
+         e.kind='document' AND j.command_type='document.create' AND issue.document_id IS NOT NULL)
+        THEN j.actor_id END AS source_actor_id,
+      o.observation_id,o.delivery_id,o.result AS observation_result,NULL::uuid AS gap_run_id,NULL::integer AS gap_task_version,
+      issue_revision.revision_id AS issue_revision_id,issue_revision.content_hash AS issue_content_hash
       FROM outbox_event e
-      LEFT JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id AND e.kind='observation.record'
+      LEFT JOIN operation_journal j ON j.project_id=e.project_id AND j.operation_id=e.operation_id
+        AND e.kind IN ('observation.record','document')
       LEFT JOIN consumer_observation o ON o.project_id=e.project_id AND o.observation_id::text=j.result->>'revisionId'
         AND o.task_id=e.entity_id AND o.actor_id=j.actor_id AND j.command_type='observation.record' AND j.result->>'status'='applied'
+      LEFT JOIN process_document issue ON issue.project_id=e.project_id AND issue.document_id=e.entity_id
+        AND issue.kind='issue' AND issue.origin_task_id IS NOT NULL AND e.version=1
+        AND j.command_type='document.create' AND j.result->>'status'='applied'
+      LEFT JOIN document_revision issue_revision ON issue_revision.project_id=issue.project_id
+        AND issue_revision.document_id=issue.document_id AND issue_revision.revision_id::text=j.result->>'revisionId'
+        AND issue_revision.previous_revision_id IS NULL AND issue_revision.author=j.actor_id
       WHERE e.project_id=$1 AND e.event_id=$2
     UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,e.entity_id,1,e.loop_id,NULL::uuid,
-      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer
+      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer,NULL::uuid,NULL::text
       FROM orchestration_event e JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
       WHERE e.project_id=$1 AND e.event_id=$2 AND e.event_id=(l.data->>'bootstrapEventId')::uuid AND e.kind='loop.enrolled'
     UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,d.version,e.loop_id,d.dispatch_id,
-      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer
+      NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,NULL::uuid,NULL::integer,NULL::uuid,NULL::text
       FROM orchestration_event e JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
       JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
       WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='worker.outcome'
@@ -166,7 +204,7 @@ class Tx extends Reader implements OrchestrationTransaction {
     UNION ALL SELECT e.event_id,e.created_at_utc,e.kind,d.task_id,(op.result->>'version')::integer,e.loop_id,d.dispatch_id,
       NULL::uuid,NULL::text,NULL::uuid,NULL::uuid,NULL::text,
       COALESCE((e.detail->>'runId')::uuid,(d.data->>'runtimeRunId')::uuid),
-      COALESCE((e.detail->>'taskVersion')::integer,d.task_version)
+      COALESCE((e.detail->>'taskVersion')::integer,d.task_version),NULL::uuid,NULL::text
       FROM orchestration_event e
       JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
       JOIN orchestration_operation op ON op.project_id=e.project_id AND op.operation_id=e.operation_id
@@ -178,7 +216,7 @@ class Tx extends Reader implements OrchestrationTransaction {
         AND NOT EXISTS (SELECT 1 FROM orchestration_decision w WHERE w.project_id=d.project_id AND w.dispatch_id=d.dispatch_id)
         AND NOT EXISTS (SELECT 1 FROM orchestration_event earlier WHERE earlier.project_id=e.project_id
           AND earlier.loop_id=e.loop_id AND earlier.entity_id=e.entity_id AND earlier.kind='dispatch.gap'
-        AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null}:null;}
+        AND (earlier.created_at_utc,earlier.event_id)<(e.created_at_utc,e.event_id))`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null}:null;}
   async getTaskFact(id:string):Promise<OrchestrationTaskFact|null>{const r=await this.db.query(`SELECT t.*,p.stage_id,s.goal_id FROM task t LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true LEFT JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.task_id,version:x.version,state:x.state,ownerRoleId:x.owner,goalId:x.goal_id??null,stageId:x.stage_id??null}:null;}
   async getTaskScopeAtVersion(taskId:string,taskVersion:number){const r=await this.db.query(`SELECT tr.version,p.stage_id,s.goal_id FROM task_revision tr
     LEFT JOIN LATERAL (SELECT proposal.stage_id FROM task_proposal proposal
@@ -204,6 +242,17 @@ class Tx extends Reader implements OrchestrationTransaction {
       ORDER BY pr.version DESC LIMIT 1) p ON true
     WHERE o.project_id=$1 AND o.observation_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.observation_id,taskId:x.task_id,deliveryId:x.delivery_id,actorId:x.actor_id,result:x.result,taskRevisionId:x.task_revision_id,stageId:x.stage_id??null}:null;}
   async getWorkflowOperationFact(id:string){const r=await this.db.query("SELECT operation_id,actor_id,command_type,command_hash,result FROM operation_journal WHERE project_id=$1 AND operation_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.operation_id,actorId:x.actor_id,commandType:x.command_type,commandHash:x.command_hash,status:x.result.status,resultRefId:x.result.revisionId??null,resultVersion:x.result.version??null}:null;}
+  async getIssueFact(documentId:string,revisionId:string){const r=await this.db.query(`SELECT d.document_id,d.origin_task_id,d.origin_task_revision_id,d.origin_run_id,
+      r.revision_id,r.content_hash,r.author,tr.version AS origin_task_version
+    FROM process_document d JOIN document_revision r ON r.project_id=d.project_id AND r.document_id=d.document_id
+      AND r.revision_id=$3 AND r.previous_revision_id IS NULL
+    JOIN task_revision tr ON tr.project_id=d.project_id AND tr.task_id=d.origin_task_id
+      AND tr.revision_id=d.origin_task_revision_id
+    WHERE d.project_id=$1 AND d.document_id=$2 AND d.kind='issue' AND d.origin_task_id IS NOT NULL`,
+    [this.projectId,documentId,revisionId]);const x=r.rows[0];return x?{projectId:this.projectId,documentId:x.document_id,
+      revisionId:x.revision_id,contentHash:x.content_hash,author:x.author,kind:"issue" as const,
+      originTaskId:x.origin_task_id,originTaskRevisionId:x.origin_task_revision_id,
+      originTaskVersion:x.origin_task_version,originRunId:x.origin_run_id??null}:null;}
 }
 /** Live grants are injected by the coordinator; this store never turns persisted role names into authority. */
 export class PgOrchestrationStore implements OrchestrationStore {

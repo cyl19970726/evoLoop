@@ -7,6 +7,7 @@ import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import { OrchestrationService } from "@evoloop/core/orchestration";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
+import { authorizeWorkerRequest, authorizeWorkerCommand } from "../../apps/coordinator/src/workers/guard.js";
 import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.js";
 
 const url=process.env.TEST_DATABASE_URL;
@@ -65,7 +66,12 @@ test("worker PG facts bind fixed Run sources and current Goal/Stage scope",async
       [projectId,taskId,slotId,decisionId]);
   }
   const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
-  const loopId=randomUUID(),store=new PgOrchestrationStore(pool,{getAuthorizationFact:async()=>null,canActAsRole:async()=>false,wasActorRole:async()=>false});
+  const loopId=randomUUID(),store=new PgOrchestrationStore(pool,{
+    getAuthorizationFact:async(project,scope)=>project===projectId&&scope==="fact-scope"?
+      {projectId,scopeId:scope,actorId:cognitiveActor,roleId:cognitiveRole,active:true}:null,
+    canActAsRole:async(project,actorId,role)=>project===projectId&&actorId===cognitiveActor&&role===cognitiveRole,
+    wasActorRole:async()=>false,
+  });
   const orchestration=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash});
   await orchestration.execute(principal(owner),{type:"loop.enroll",projectId,operationId:randomUUID(),loopId,goalId,stageId,
     cognitiveRoleId:cognitiveRole,allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:last.created_at.toISOString(),eventId:last.event_id},
@@ -122,4 +128,39 @@ test("worker PG facts bind fixed Run sources and current Goal/Stage scope",async
   assert.equal(await business.ownedDocumentRevision(ownReportId,revisedReport.revisionId!),false);
   assert.equal(await business.ownedDocumentRevision(otherReportId,otherReport.revisionId!),false);
   assert.equal(await business.ownedDocumentRevision(ownSpecId,ownSpec.revisionId!),false);
+
+  const issueId=randomUUID(),issueOperation=randomUUID();
+  const originalIssue=await workflow.execute(principal(worker),{type:"document.create",projectId,operationId:issueOperation,
+    documentId:issueId,kind:"issue",title:"Fixed failed preflight",body:"# Initial evidence",origin:{taskId,runId:businessRun.runId}});
+  assert.equal(originalIssue.status,"applied");
+  const issueEvent=(await pool.query("SELECT event_id FROM outbox_event WHERE project_id=$1 AND operation_id=$2 AND kind='document'",[projectId,issueOperation])).rows[0].event_id;
+  const accepted=await orchestration.execute(principal(cognitiveActor),{type:"inbox.accept",projectId,operationId:randomUUID(),
+    loopId,sourceEventId:issueEvent,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await orchestration.execute(principal(cognitiveActor),{type:"inbox.ack",projectId,operationId:randomUUID(),
+    inboxId:accepted.entityId,expectedVersion:1,reason:"Read original issue"});
+  const dispatchId=randomUUID(),claimToken=randomUUID();
+  await orchestration.execute(principal(cognitiveActor),{type:"dispatch.request",projectId,operationId:randomUUID(),
+    inboxId:accepted.entityId,expectedInboxVersion:2,dispatchId,parentDispatchId:null,
+    taskId:cognitiveTaskId,expectedTaskVersion:3,recipientRoleId:cognitiveRole,purpose:"cognition",
+    authorizationScopeId:"fact-scope",reason:"Review exact issue"});
+  await orchestration.execute(principal(cognitiveActor),{type:"dispatch.claim",projectId,operationId:randomUUID(),
+    dispatchId,claimToken,leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await orchestration.execute(principal(cognitiveActor),{type:"dispatch.start",projectId,operationId:randomUUID(),dispatchId,claimToken});
+  await orchestration.execute(principal(cognitiveActor),{type:"dispatch.resolve",projectId,operationId:randomUUID(),
+    dispatchId,claimToken,result:"accepted",runtimeRunId:cognitiveRun.runId,reason:"Bound existing fixture Run"});
+  const cognitiveIdentity=identity("cognition",cognitiveActor,cognitiveTaskId,cognitiveRun,cognitiveRole);
+  const exact=`/api/projects/${projectId}/documents/${issueId}/revisions/${originalIssue.revisionId}/original`;
+  assert.equal(await authorizeWorkerRequest(cognitiveIdentity,{method:"GET",path:exact},workerGuardFacts(pool,cognitiveIdentity)),true);
+  assert.equal(await authorizeWorkerRequest(cognitiveIdentity,{method:"GET",path:`/api/projects/${projectId}/documents/${issueId}`},workerGuardFacts(pool,cognitiveIdentity)),false);
+  assert.equal(await authorizeWorkerRequest(cognitiveIdentity,{method:"GET",path:`/api/projects/${projectId}/documents/${issueId}/revisions/${randomUUID()}/original`},workerGuardFacts(pool,cognitiveIdentity)),false);
+  assert.equal(await authorizeWorkerCommand(cognitiveIdentity,{type:"document.adopt",projectId,operationId:randomUUID(),
+    documentId:issueId,revisionId:originalIssue.revisionId},workerGuardFacts(pool,cognitiveIdentity)),true);
+  const adopted=await workflow.execute(principal(cognitiveActor),{type:"document.adopt",projectId,operationId:randomUUID(),
+    documentId:issueId,expectedVersion:1,revisionId:originalIssue.revisionId,reason:"Use fixed issue as input, not proof of repair"});
+  assert.equal(adopted.status,"applied",JSON.stringify(adopted));
+  assert.equal((await workflow.getDocument(principal(owner),projectId,issueId)).document.adoptedRevisionId,originalIssue.revisionId);
+  const laterIssue=await issue({type:"document.revise",documentId:issueId,expectedVersion:2,
+    body:"# Later evidence",reason:"Further review"},worker);
+  assert.equal(await authorizeWorkerRequest(cognitiveIdentity,{method:"GET",path:`/api/projects/${projectId}/documents/${issueId}/revisions/${laterIssue.revisionId}/original`},workerGuardFacts(pool,cognitiveIdentity)),false);
+  assert.equal(await authorizeWorkerRequest(cognitiveIdentity,{method:"GET",path:exact},workerGuardFacts(pool,cognitiveIdentity)),true);
 });

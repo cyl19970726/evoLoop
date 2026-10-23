@@ -62,6 +62,29 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("session close command requires project review and exact execution grant", async () => {
+  let calls = 0, granted = true;
+  const service = { ...workManagementQueries,
+    getRuntimeSession: async () => ({ id: sessionId, roleId: grant.roleId, authorizationScope: grant.authorizationScope,
+      cwd: grant.cwd, sandbox: grant.sandbox }),
+    execute: async () => { calls++; return { status: "applied", operationId, entityId: sessionId, version: 4 }; } } as unknown as WorkflowService;
+  const runtime = { status: () => ({ available: true, error: null }) } as RuntimeRunner;
+  const app = await buildServer({ service, credentials: credentials as never, runtime,
+    hasRuntimeGrant: scope => granted && scope.projectId === projectId && scope.actorId === "reviewer" &&
+      scope.roleId === grant.roleId && scope.authorizationScope === grant.authorizationScope && scope.cwd === cwd && scope.sandbox === grant.sandbox });
+  const payload = { type: "runtime.session.close", projectId, operationId, sessionId, expectedVersion: 3, reason: "Work complete" };
+  try {
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${"w".repeat(40)}` }, payload })).statusCode, 403);
+    granted = false;
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 403);
+    granted = true;
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload: { ...payload, projectId: randomUUID() } })).statusCode, 403);
+    assert.equal(calls, 0);
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 200);
+    assert.equal(calls, 1);
+  } finally { await app.close(); }
+});
+
 test("reviewer recovery endpoint is explicit and checks project authority", async () => {
   let recovered = 0;
   const service = { ...workManagementQueries, getProject: async () => ({ id: projectId }) } as unknown as WorkflowService;

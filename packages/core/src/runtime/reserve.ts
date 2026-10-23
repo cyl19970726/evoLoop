@@ -4,7 +4,7 @@ import type { Transaction } from "@evoloop/contracts/ports";
 import { validateDispatchBasis } from "./basis.js";
 import { canonicalEvaluationJson, nextAttemptOrdinal, taskSignature } from "../evaluation/index.js";
 
-type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
+type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
 export interface ReserveContext {
   tx: Transaction;
@@ -71,6 +71,20 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     await tx.insertRuntimeSession(session);
     await tx.appendRuntimeEvent(event(command.projectId, nextId(), null, session.id, "session.reserved", "Session reserved before external creation", null, principal.actorId, now));
     return { result: applied(command.operationId, session.id, 1), effects: [{ kind: "runtime.session.reserved", entityId: session.id, version: 1 }] };
+  }
+
+  if (command.type === "runtime.session.close") {
+    const session = required(await tx.getRuntimeSession(command.sessionId), "runtime session");
+    if (session.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "session changed", session.version);
+    if (session.state !== "ready" || !session.nativeThreadId || !session.nativeSessionId)
+      throw new DomainError("SESSION_NOT_READY", "only a bound ready session can close normally");
+    if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id && ["requested", "dispatching", "running", "unknown"].includes(run.state)))
+      throw new DomainError("SESSION_BUSY", "session has active or unresolved work");
+    const next = { ...session, state: "closing" as const, closeOperationId: command.operationId,
+      closeAttemptedAt: null, closeVerifiedAt: null, version: session.version + 1, updatedAt: now };
+    await tx.updateRuntimeSession(next, session.version);
+    await tx.appendRuntimeEvent(event(command.projectId, nextId(), null, session.id, "session.closeRequested", command.reason, null, principal.actorId, now));
+    return { result: applied(command.operationId, session.id, next.version), effects: [{ kind: "runtime.session.closeRequested", entityId: session.id, version: next.version }] };
   }
 
   const session = required(await tx.getRuntimeSession(command.sessionId), "runtime session");

@@ -14,6 +14,9 @@ const session = (r: QueryResultRow): RuntimeSessionRecord => ({
   approvalPolicy: r.approval_policy, state: r.state, version: r.version,
   nativeThreadId: r.native_thread_id, nativeSessionId: r.native_session_id,
   operationId: r.operation_id, actorId: r.actor_id,
+  closeOperationId: r.close_operation_id ?? null,
+  closeAttemptedAt: r.close_attempted_at ? iso(r.close_attempted_at) : null,
+  closeVerifiedAt: r.close_verified_at ? iso(r.close_verified_at) : null,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
 });
 const run = (r: QueryResultRow): RuntimeRunRecord => ({
@@ -76,9 +79,11 @@ export class PgRuntimeStore {
   }
   async updateRuntimeSession(item: RuntimeSessionRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
-    const result = await this.client.query(`UPDATE runtime_session SET state=$3,version=$4,native_thread_id=$5,native_session_id=$6,updated_at=$7
+    const result = await this.client.query(`UPDATE runtime_session SET state=$3,version=$4,native_thread_id=$5,native_session_id=$6,updated_at=$7,
+      close_operation_id=$9,close_attempted_at=$10,close_verified_at=$11
       WHERE project_id=$1 AND session_id=$2 AND version=$8`,
-      [item.projectId,item.id,item.state,item.version,item.nativeThreadId,item.nativeSessionId,item.updatedAt,expectedVersion]);
+      [item.projectId,item.id,item.state,item.version,item.nativeThreadId,item.nativeSessionId,item.updatedAt,expectedVersion,
+        item.closeOperationId ?? null,item.closeAttemptedAt ?? null,item.closeVerifiedAt ?? null]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime session version changed", (await this.getRuntimeSession(item.id))?.version);
   }
   async insertRuntimeRun(item: RuntimeRunRecord): Promise<void> {

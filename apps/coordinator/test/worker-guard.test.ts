@@ -116,3 +116,31 @@ test("recovery cognition reads only the gap's terminal Run and fixed Task and ba
   assert.equal(await authorizeWorkerRequest(worker,
     {method:"GET",path:`/api/projects/${projectId}/runtime/runs/${originalRunId}`},gapFacts),false);
 });
+test("worker issue provenance is bound to its own Run; cognition reads and adopts only the frozen source revision", async () => {
+  const issueId = u(), issueRevisionId = u(), laterRevisionId = u();
+  const thinker: WorkerIdentity = { ...worker, scope: { ...worker.scope, kind: "cognition", roleId: "planner" } };
+  const sourceFacts: WorkerGuardFacts = { ...facts,
+    document: async () => null,
+    sourceIssueDocumentRevision: async (doc, revision) => doc === issueId && revision === issueRevisionId,
+  };
+  assert.equal(await authorizeWorkerCommand(worker, command("document.create", {
+    documentId: issueId, kind: "issue", origin: { taskId, runId }, title: "Problem", body: "Evidence",
+  }), sourceFacts), true);
+  for (const origin of [undefined, { taskId: otherTaskId, runId }, { taskId, runId: u() }, { taskId, runId: null }]) {
+    assert.equal(await authorizeWorkerCommand(worker, command("document.create", {
+      documentId: issueId, kind: "issue", origin,
+    }), sourceFacts), false);
+  }
+  const fixed = `/api/projects/${projectId}/documents/${issueId}/revisions/${issueRevisionId}`;
+  assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: fixed }, sourceFacts), true);
+  assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path: `${fixed}/original` }, sourceFacts), true);
+  for (const path of [`/api/projects/${projectId}/documents/${issueId}`,
+    `/api/projects/${projectId}/documents/${issueId}/revisions`,
+    `/api/projects/${projectId}/documents/${issueId}/revisions/${laterRevisionId}/original`,
+    `/api/projects/${u()}/documents/${issueId}/revisions/${issueRevisionId}/original`])
+    assert.equal(await authorizeWorkerRequest(thinker, { method: "GET", path }, sourceFacts), false);
+  assert.equal(await authorizeWorkerCommand(thinker, command("document.adopt", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), true);
+  assert.equal(await authorizeWorkerCommand(thinker, command("document.publish", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), true);
+  assert.equal(await authorizeWorkerCommand(thinker, command("document.adopt", { documentId: issueId, revisionId: laterRevisionId }), sourceFacts), false);
+  assert.equal(await authorizeWorkerCommand(worker, command("document.adopt", { documentId: issueId, revisionId: issueRevisionId }), sourceFacts), false);
+});
