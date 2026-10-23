@@ -129,3 +129,29 @@ test("explicit terminal reconciliation requires review and the exact current ses
     assert.deepEqual(calls, [{ actorId: "reviewer", version: 4, reason: payload.reason }]);
   } finally { await app.close(); }
 });
+
+test("work trace route requires review and exact current session grant", async () => {
+  const runId = randomUUID();
+  let granted = true, reads = 0;
+  const service = { ...workManagementQueries,
+    getRuntimeRun: async () => ({ id: runId, sessionId }),
+    getRuntimeSession: async () => ({ id: sessionId, roleId: grant.roleId, authorizationScope: grant.authorizationScope,
+      cwd: grant.cwd, sandbox: grant.sandbox }) } as unknown as WorkflowService;
+  const runtime = { status: () => ({ available: true, error: null }),
+    trace: async (_principal: unknown, _projectId: string, _runId: string, cursor?: string) => {
+      reads++; return { runId, cursor: cursor ?? null, source: "owned-native-history" };
+    } } as unknown as RuntimeRunner;
+  const app = await buildServer({ service, credentials: credentials as never, runtime,
+    runtimeGrants: () => granted ? [grant] : [] });
+  try {
+    const url = `/api/projects/${projectId}/runtime/runs/${runId}/trace`;
+    assert.equal((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${"w".repeat(40)}` } })).statusCode, 403);
+    granted = false;
+    assert.equal((await app.inject({ method: "GET", url, headers })).statusCode, 403);
+    granted = true;
+    const accepted = await app.inject({ method: "GET", url: `${url}?cursor=page-2`, headers });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal(accepted.json().cursor, "page-2");
+    assert.equal(reads, 1);
+  } finally { await app.close(); }
+});

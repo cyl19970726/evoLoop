@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure } from "@evoloop/contracts/runtime";
+import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
+import { mapWorkItem } from "./work-trace.js";
 
 const OWNER = "evoloop-codex-app-server" as const;
 const SCHEMA_SHA256 = "f3487938786b729cb6773dbc9e83a7efab9c78c845db7094e8f539f373cbacc9";
@@ -380,6 +381,23 @@ export class CodexAppServerAdapter implements RuntimePort {
       return item;
     });
     return { data: items, nextCursor: nonempty(result.nextCursor) ? result.nextCursor : null };
+  }
+
+  async readWorkPage(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimeWorkPage> {
+    this.owned(binding);
+    if (!nonempty(turnId)) throw new RuntimeProtocolError("turn ID required");
+    const result = object(await this.request("thread/items/list", { threadId: binding.nativeThreadId, turnId, limit: 50, ...(cursor ? { cursor } : {}) }));
+    if (!Array.isArray(result?.data)) throw new RuntimeProtocolError("invalid work items page");
+    const data: RuntimeWorkPage["data"] = [];
+    let unsupportedCount = 0, truncated = false;
+    for (const entry of result.data) {
+      const wrapper = object(entry), item = object(wrapper?.item);
+      if (wrapper?.turnId !== turnId || !item || !nonempty(item.id) || !nonempty(item.type)) throw new RuntimeProtocolError("work item page does not match requested owned turn");
+      const mapped = mapWorkItem(item);
+      if (mapped) { data.push(mapped); truncated ||= mapped.truncated; }
+      else unsupportedCount++;
+    }
+    return { data, unsupportedCount, truncated, nextCursor: nonempty(result.nextCursor) ? result.nextCursor : null };
   }
 
   async startTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn> {

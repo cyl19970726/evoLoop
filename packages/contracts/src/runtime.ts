@@ -92,6 +92,39 @@ export interface RuntimePage<T> {
   nextCursor: string | null;
 }
 
+/** Read-only observed work. Null means the native history did not provide the fact. */
+export interface RuntimeWorkItem {
+  id: string;
+  kind: "command" | "tool" | "file_change" | "message" | "web_search" | "artifact";
+  name: string | null;
+  status: string | null;
+  exitCode: number | null;
+  text: string | null;
+  output: string | null;
+  error: string | null;
+  artifactRefs: string[];
+  startedAtUtc: string | null;
+  completedAtUtc: string | null;
+  durationMs: number | null;
+  truncated: boolean;
+}
+export interface RuntimeWorkPage extends RuntimePage<RuntimeWorkItem> {
+  unsupportedCount: number;
+  truncated: boolean;
+}
+export interface RuntimeWorkTrace {
+  runId: string;
+  source: "owned-native-history";
+  observedAt: string;
+  turn: RuntimeTurn;
+  items: RuntimeWorkItem[];
+  unsupportedCount: number;
+  truncated: boolean;
+  nextCursor: string | null;
+  completeness: "complete" | "partial";
+  limits: { maxPages: number; maxItems: number; maxFieldChars: number };
+}
+
 export interface RuntimeEvent {
   method: string;
   threadId?: string;
@@ -115,6 +148,8 @@ export interface RuntimePort {
   inspect(binding: RuntimeBinding): Promise<unknown>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
+  /** Optional classified trace capability. Absence means unsupported, never an empty complete trace. */
+  readWorkPage?(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimeWorkPage>;
   startTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn>;
   interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void>;
   onEvent(listener: (event: RuntimeEvent) => void): () => void;
