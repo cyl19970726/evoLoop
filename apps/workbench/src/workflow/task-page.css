@@ -1,4 +1,5 @@
 .task-page { color: #192338; }
+.task-page > [role="tabpanel"] { scroll-margin-top: 81px; }
 .task-page .back { color: #315ec7; margin-bottom: 20px; }
 .task-page-header { max-width: 920px; margin-bottom: 28px; }
 .task-page-header .eyebrow { color: #69758e; }
