@@ -30,6 +30,7 @@ import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
+import { workerGuardFacts } from "./workers/facts.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -94,6 +95,12 @@ const repositoryForPrincipal = (principal: Principal, projectId: string) => {
   });
 };
 const runtimeConfig = integrations.runtime;
+const runSessionAvailable = async (projectId: string, run: import("@evoloop/contracts").RuntimeRunRecord,
+  session: import("@evoloop/contracts").RuntimeSessionRecord) =>
+  !!runtimeConfig?.enabled && run.projectId === projectId && session.projectId === projectId && session.state === "ready" &&
+  integrations.hasRuntimeGrant({projectId, actorId: run.actorId, roleId: session.roleId,
+    authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox}) &&
+  await integrations.allowedRuntimeCwd(projectId, session.cwd);
 const mayStartManaged = integrations.orchestration?.enabled ? managedRuntimeAdmission(pool) : async () => true;
 const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
@@ -103,7 +110,8 @@ const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter(
   threadConfig: spec => runtimeThreadConfig(runtimeConfig.grants, spec),
 }) : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
-  readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal}),
+  workerTraceAuthority: (identity, targetRunId) => workerGuardFacts(pool, identity).fixedRunTrace!(targetRunId),
+  readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),
   readDocumentOriginal: (principal, revision) => readDocumentOriginal({ uow, blobsForPrincipal }, principal, revision),
   readEvaluationMaterial: (principal, projectId, source) => readEvaluationMaterial(principal, projectId, source, {
     workflow: service, gitForPrincipal, knowledgeForPrincipal: repositoryForPrincipal,
@@ -149,7 +157,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
     runner.readEvaluationPacket(principal, projectId, runId) } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
   allowedRuntimeCwds: integrations.allowedRuntimeCwds, hasRuntimeGrant: integrations.hasRuntimeGrant,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
-  references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId)},
+  references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId), runSessionAvailable},
   scheduling,
   schedulingGrants: (projectId, actorId) => integrations.scheduling?.enabled
     ? integrations.scheduling.grants.filter(g => g.projectId === projectId && g.actorId === actorId)

@@ -26,7 +26,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   const [referenceId, setReferenceId] = useState("");
   const [referenceRevision, setReferenceRevision] = useState("");
   const [referenceHash, setReferenceHash] = useState("");
-  const [kind, setKind] = useState<"git" | "wiki">("git");
+  const [kind, setKind] = useState<"git" | "wiki" | "run">("git");
   const [wikiEntry, setWikiEntry] = useState<"published" | "manual" | "history">("published");
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeSummary[]>([]);
   const [knowledgeId, setKnowledgeId] = useState("");
@@ -190,7 +190,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
       <p>采用后会生成新的任务修订，并冻结当前的过程文档与外部依据。</p>
       <p>{headVersion === 0 ? "正在采用一项新依据（新槽位）。" : `正在复核已有依据槽位 v${headVersion}；更换来源将改为「替换」。`}</p>
       {headVersion > 0 && <button type="button" onClick={startNewSlot}>改为采用另一项新依据</button>}
-      <label>来源<select value={kind} onChange={e => { setKind(e.target.value as "git" | "wiki"); setKnowledgeId(""); setFixedKnowledge(null); setReferenceId(""); setReferenceRevision(""); setReferenceHash(""); if (headVersion > 0) setDecision("replace"); }}><option value="git">Git</option><option value="wiki">Wiki</option></select></label>
+      <label>来源<select value={kind} onChange={e => { setKind(e.target.value as "git" | "wiki" | "run"); setKnowledgeId(""); setFixedKnowledge(null); setReferenceId(""); setReferenceRevision(""); setReferenceHash(""); if (headVersion > 0) setDecision("replace"); }}><option value="git">Git</option><option value="wiki">Wiki</option><option value="run">受管 Run</option></select></label>
       {kind === "wiki" && <>
         <label>知识来源方式<select value={wikiEntry} onChange={e => { setWikiEntry(e.target.value as typeof wikiEntry); setKnowledgeId(""); setFixedKnowledge(null); setReferenceId(""); setReferenceRevision(""); setReferenceHash(""); if (headVersion > 0 && e.target.value !== "history") setDecision("replace"); }}><option value="published">从已发布知识选择</option>{headVersion > 0 && <option value="history">当前槽位的固定依据</option>}<option value="manual">高级：手工输入固定版本</option></select></label>
         {wikiEntry === "history" && <p className="break-anywhere">当前槽位固定知识：{referenceId} @ {referenceRevision} · SHA-256 {referenceHash}</p>}
@@ -209,10 +209,10 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
           </div>}
         </>}
       </>}
-      {(kind === "git" || wikiEntry === "manual") && <details className="workflow-detail" open={kind === "git"}><summary>{kind === "git" ? "填写固定 Git 来源" : "高级：填写 Wiki 固定版本"}</summary>
-        <label>固定引用 ID<input value={referenceId} onChange={e => { setReferenceId(e.target.value); if (headVersion > 0) setDecision("replace"); }} /></label>
-        <label>固定 commit / Wiki 修订<input value={referenceRevision} onChange={e => { setReferenceRevision(e.target.value); if (headVersion > 0) setDecision("replace"); }} /></label>
-        <label>原文 SHA256<input value={referenceHash} onChange={e => { setReferenceHash(e.target.value); if (headVersion > 0) setDecision("replace"); }} /></label>
+      {(kind === "git" || kind === "run" || kind === "wiki" && wikiEntry === "manual") && <details className="workflow-detail" open={kind !== "wiki"}><summary>{kind === "git" ? "填写固定 Git 来源" : kind === "run" ? "填写已完成的受管 Run" : "高级：填写 Wiki 固定版本"}</summary>
+        <label>{kind === "run" ? "Run ID" : "固定引用 ID"}<input value={referenceId} onChange={e => { setReferenceId(e.target.value); if (headVersion > 0) setDecision("replace"); }} /></label>
+        <label>{kind === "run" ? "Run 的固定 TaskRevision ID" : "固定 commit / Wiki 修订"}<input value={referenceRevision} onChange={e => { setReferenceRevision(e.target.value); if (headVersion > 0) setDecision("replace"); }} /></label>
+        <label>{kind === "run" ? "Run.inputHash（固定输入身份，不是 trace 哈希）" : "原文 SHA256"}<input value={referenceHash} onChange={e => { setReferenceHash(e.target.value); if (headVersion > 0) setDecision("replace"); }} /></label>
       </details>}
       <label>决定<select value={decision} onChange={e => setDecision(e.target.value as typeof decision)}>{headVersion === 0 ? <option value="adopt">采用新依据</option> : <><option value="retain">保留同一依据</option><option value="replace">替换依据</option></>}</select></label>
       <details className="workflow-detail"><summary>高级：槽位与并发版本</summary><label>依据槽位 ID<input value={slotId} onChange={e => setSlotId(e.target.value)} /></label>

@@ -17,6 +17,7 @@ export interface WorkerGuardFacts {
   ownedDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   sourceIssueDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   fixedReference(taskId: string, kind: "git" | "wiki", referenceId: string, revisionId?: string): Promise<boolean>;
+  fixedRunTrace?(targetRunId: string): Promise<boolean>;
   operation(operationId: string): Promise<(Fact & { actorId: string }) | null>;
   dispatchForRun?(runId: string): Promise<(Fact & {id: string; loopId: string; taskId: string; sourceEventId: string; runtimeRunId: string | null}) | null>;
   dispatch?(dispatchId: string): Promise<(Fact & {loopId: string}) | null>;
@@ -90,6 +91,13 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
         (parts.length === 3 || parts.length === 4 && ["events", "result"].includes(parts[3] ?? ""))) {
       const gap = await facts.recoveryGap?.();
       return !!gap && same(gap, scope.projectId) && gap.loopId === scope.loopId && gap.runId === parts[2];
+    }
+    if (parts[0] === "runtime" && parts[1] === "runs" && id(parts[2]) &&
+        (parts.length === 3 || parts.length === 4 && parts[3] === "trace")) {
+      const params = new URLSearchParams(rawQuery ?? "");
+      if ([...params.keys()].some(key => key !== "cursor") || params.getAll("cursor").length > 1) return false;
+      if (parts.length === 3 && rawQuery) return false;
+      return !!facts.fixedRunTrace && await facts.fixedRunTrace(parts[2]);
     }
     if (parts[0] === "documents" && id(parts[1]) &&
         (parts.length === 2 || parts[2] === "revisions" && parts.length <= 5)) {

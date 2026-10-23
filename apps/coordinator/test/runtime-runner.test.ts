@@ -407,6 +407,41 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
   } finally { await runner.stop(); }
 });
 
+test("managed worker trace checks its own bound Run, exact fixed authority, and live source grant", async () => {
+  const target={...run,id:randomUUID(),state:"completed" as const,nativeTurnId:"turn-1"};
+  const readerSession={...session,id:randomUUID(),roleId:"researcher",nativeThreadId:"reader-thread",nativeSessionId:"reader-session"};
+  const reader={...run,id:randomUUID(),sessionId:readerSession.id,nativeTurnId:"reader-turn",state:"running" as const};
+  const worker={actorId:"worker-fixture",projectIds:[projectId],permissions:["read","write"] as ("read"|"write")[]};
+  const identity={principal:worker,scope:{projectId,loopId:randomUUID(),taskId:reader.taskId,runId:reader.id,
+    sessionId:readerSession.id,roleId:readerSession.roleId,kind:"business" as const,allowedRoleIds:[readerSession.roleId]}};
+  const runtime=new FakeRuntime() as FakeRuntime & Pick<RuntimePort,"readWorkPage">;
+  runtime.listTurns=async()=>({data:[{id:"turn-1",status:"completed",completedAtUtc:"2026-10-20T12:14:44.000Z"}],nextCursor:null});
+  runtime.readWorkPage=async()=>({data:[],nextCursor:null,unsupportedCount:0,truncated:false});
+  let fixed=true,sourceGrant=true,readerState=readerSession.state,readerTurn=reader.nativeTurnId;
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],listRuntimeRuns:async()=>[],
+    getRuntimeRun:async(_p:unknown,_project:string,id:string)=>id===reader.id?{...reader,nativeTurnId:readerTurn}:target,
+    getRuntimeSession:async(_p:unknown,_project:string,id:string)=>id===readerSession.id?{...readerSession,state:readerState}:session} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as RuntimePort & FakeRuntime,workflow,trusted,
+    principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,
+    hasGrant:scope=>scope.roleId===readerSession.roleId || sourceGrant,
+    workerTraceAuthority:async(_identity,targetId)=>fixed && targetId===target.id});
+  try {
+    await runner.start();
+    assert.equal((await runner.trace(worker,projectId,target.id,undefined,identity)).runId,target.id);
+    fixed=false;
+    await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/固定依据/);
+    fixed=true;readerTurn=null;
+    await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/固定依据/);
+    readerTurn=reader.nativeTurnId;readerState="closed" as typeof readerSession.state;
+    await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/固定依据/);
+    readerState=readerSession.state;sourceGrant=false;
+    await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/授权已失效/);
+    await assert.rejects(runner.trace(worker,projectId,target.id),/读取和复核权限/);
+  } finally {await runner.stop();}
+});
+
 test("native read rejection reports a read-specific error without private protocol text", async () => {
   const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
   const runtime = new FakeRuntime();

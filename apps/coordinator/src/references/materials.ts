@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import type { Principal } from "@evoloop/contracts";
+import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import type { ReferenceUnitOfWork, TaskExternalReferenceRecord } from "@evoloop/contracts/references";
 import type { DocumentSource } from "@evoloop/contracts/sources";
 import type { KnowledgeRepository, KnowledgeRevision } from "@evoloop/contracts/knowledge";
 import { DomainError } from "@evoloop/contracts/ports";
+import { fixedRunMatches } from "@evoloop/core/references";
 
 const maxMaterialBytes = 16 * 1024 * 1024;
 const maxContextBytes = 256 * 1024;
@@ -13,6 +14,7 @@ export interface ExternalMaterialOptions {
   uow: ReferenceUnitOfWork;
   gitForPrincipal(principal: Principal): DocumentSource | Promise<DocumentSource>;
   knowledgeForPrincipal(principal: Principal, projectId: string): KnowledgeRepository | Promise<KnowledgeRepository>;
+  runSessionAvailable?(projectId: string, run: RuntimeRunRecord, session: RuntimeSessionRecord): Promise<boolean>;
 }
 function fail(reason: string): never { throw new DomainError("BASIS_UNAVAILABLE", reason); }
 
@@ -35,7 +37,9 @@ export async function readExternalMaterials(
       fail("External reference snapshot scope or review baseline is invalid");
     const body = fixed.kind === "git"
       ? await readGit(options, git, projectId, fixed)
-      : await readWiki(options, principal, projectId, fixed, wiki ??= await options.knowledgeForPrincipal(principal, projectId));
+      : fixed.kind === "wiki"
+        ? await readWiki(options, principal, projectId, fixed, wiki ??= await options.knowledgeForPrincipal(principal, projectId))
+        : await readRun(options, projectId, fixed);
     total += Buffer.byteLength(body, "utf8");
     if (total > maxMaterialBytes) fail("Complete external reference originals exceed 16 MiB");
     materials.push({ kind: fixed.kind, slotId: fixed.slotId, referenceId: fixed.referenceId,
@@ -46,6 +50,18 @@ export async function readExternalMaterials(
   if (Buffer.byteLength(encoded, "utf8") > maxContextBytes)
     fail("Complete external reference context exceeds 256 KiB");
   return encoded;
+}
+
+async function readRun(options: ExternalMaterialOptions, projectId: string, fixed: TaskExternalReferenceRecord): Promise<string> {
+  const run = await options.uow.read(projectId, reader => reader.getRuntimeRun(fixed.referenceId));
+  const session = run ? await options.uow.read(projectId, reader => reader.getRuntimeSession(run.sessionId)) : null;
+  if (!fixedRunMatches(projectId, run, session, fixed.referenceId, fixed.revision, fixed.contentHash) ||
+      !options.runSessionAvailable || !await options.runSessionAvailable(projectId, run!, session!))
+    fail("Fixed Run is no longer a readable bound terminal owned session");
+  return JSON.stringify({ runId: run!.id, sourceTaskId: run!.taskId, sourceTaskRevisionId: run!.taskRevisionId,
+    inputHash: run!.inputHash, state: run!.state, nativeTurnBound: true,
+    evidenceRead: `read run ${run!.id} --project ${projectId} --trace`,
+    note: "The inputHash identifies the frozen Run input, not the transcript. Read the scoped trace when needed; check completeness and unavailable items." });
 }
 
 async function readGit(options: ExternalMaterialOptions, git: DocumentSource, projectId: string,
