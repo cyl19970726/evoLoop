@@ -766,7 +766,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     "the project transaction lock must serialize the mutually exclusive choices");
   const winner=race.findIndex(value=>value.status==="fulfilled");
   assert.equal((race[1-winner] as PromiseRejectedResult).reason?.code,
-    winner===0?"DIVISION_INTENT_PENDING":"ALREADY_EXISTS");
+    winner===0?"METHOD_TASK_MISMATCH":"ALREADY_EXISTS");
   const replay=await division.execute(principal(actor),(winner===0?methodRace:staticRace) as never);
   assert.equal(replay.replayed,true,"the winning original operation still replays from its journal");
   assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2 AND data->>'parentDispatchId'=$3",
