@@ -4,7 +4,7 @@ import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
 import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, submissionStateLabel } from "../src/orchestration/presentation.ts";
 import { inTaskContext, nextAction, orderDispatches, readableOutcome, relatedDispatches, storyNextAction } from "../src/orchestration/summary.ts";
-import { navigateTaskTab, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
 import type { OrchestrationDispatch, OrchestrationInbox, OrchestrationSourceFact, OrchestrationSubmission } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 
@@ -168,4 +168,18 @@ test("loop labels read exact Goal and Stage rather than guessing from UUIDs", as
     assert.equal((await client.stage(loopId)).deliverable,"Readable Stage");
     assert.deepEqual(paths,[`/api/projects/${projectId}/goals/${loopId}`,`/api/projects/${projectId}/stages/${loopId}`]);
   } finally {fetch.mock.restore();}
+});
+
+test("deep tab landing waits for its visible exact Task panel", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const expected=`task-panel-${projectId}-${taskId}-current-delivery`;
+  const scrolled:unknown[]=[];
+  const panel={hidden:true,scrollIntoView:(options:unknown)=>scrolled.push(options)} as unknown as HTMLElement;
+  const find=(id:string)=>id===expected ? panel : null;
+  assert.equal(scrollToTaskSection(projectId,taskId,"delivery",undefined,find),false);
+  assert.deepEqual(scrolled,[]);
+  panel.hidden=false;
+  assert.equal(scrollToTaskSection(projectId,taskId,"delivery",undefined,find),true);
+  assert.deepEqual(scrolled,[{block:"start",behavior:"auto"}]);
+  assert.equal(scrollToTaskSection(projectId,"other-task","delivery",undefined,find),false);
 });

@@ -10,7 +10,7 @@ import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { DeliveryArtifact, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
-import { navigateTaskTab, taskSectionFromHash } from "../orchestration/navigation";
+import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash } from "../orchestration/navigation";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -130,12 +130,16 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
+  const landingRef = useRef<TaskTab | null>(null);
   const [tab, setTab] = useState<TaskTab>(() => selectedRevision ? "history" :
     taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
   useEffect(() => {
     const onHash = () => {
       const requested = taskSectionFromHash(window.location.hash, projectId, id);
-      if (requested) setTab(selectedRevision ? "history" : requested);
+      if (requested) {
+        landingRef.current = requested === "overview" ? null : requested;
+        setTab(requested);
+      }
     };
     window.addEventListener("hashchange", onHash);
     onHash();
@@ -148,6 +152,15 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
     setTab(selectedRevision ? "history" : taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
     setDetail(null); setBasisDocuments({}); }, [id, projectId]);
+  useEffect(() => {
+    if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollToTaskSection(projectId, id, tab, selectedRevision, value => document.getElementById(value))) {
+        landingRef.current = null;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [detail, id, projectId, selectedRevision, tab]);
   useEffect(() => {
     let active = true;
     setError("");
