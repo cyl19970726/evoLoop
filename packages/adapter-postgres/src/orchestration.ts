@@ -410,6 +410,10 @@ class Tx extends Reader implements OrchestrationTransaction {
 /** Live grants are injected by the coordinator; this store never turns persisted role names into authority. */
 export class PgOrchestrationStore implements OrchestrationStore {
   constructor(private readonly pool:Pool,private readonly authorization:Authorization){}
-  async transaction<T>(projectId:string,action:(tx:OrchestrationTransaction)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN");const locked=await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[projectId]);if(!locked.rowCount)throw new Error("PROJECT_NOT_FOUND");const result=await action(new Tx(client,projectId,this.authorization));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
+  async transaction<T>(projectId:string,action:(tx:OrchestrationTransaction)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN");
+    // Workflow Task CAS takes this same project key. Acquire it before the project row
+    // so a division transaction cannot observe a Task version mid-update.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",[projectId]);
+    const locked=await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[projectId]);if(!locked.rowCount)throw new Error("PROJECT_NOT_FOUND");const result=await action(new Tx(client,projectId,this.authorization));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
   async read<T>(projectId:string,action:(reader:OrchestrationReader)=>Promise<T>):Promise<T>{const client=await this.pool.connect();try{await client.query("BEGIN TRANSACTION READ ONLY");const result=await action(new Reader(client,projectId));await client.query("COMMIT");return result;}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}}
 }
