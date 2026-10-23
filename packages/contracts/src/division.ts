@@ -7,9 +7,10 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 export const delegationTemplateSchema = z.strictObject({
   id, revision: z.number().int().positive(), projectId: id, goalId: id, loopId: id,
   existingRoleIds: z.array(id).max(20),
+  cognitionRoleIds: z.array(z.string().trim().min(1).max(4000)).max(1).default([]),
   newRoleAllocation: z.strictObject({ maxTotal: z.literal(1), requiredState: z.literal("trial") }).nullable(),
   firstTaskId: id, actorId: z.string().min(1).max(100), authorizationScopeId: z.string().min(1).max(4000),
-  decisionActorIds: z.array(z.string().min(1).max(100)).min(1).max(20),
+  decisionActorIds: z.array(z.string().min(1).max(100)).max(20).default([]),
   allowedChoices: z.array(z.enum(["same-role-instance", "temporary-assignment", "new-role"])).min(1).max(3),
   cwd: z.string().startsWith("/").max(1024), model: z.string().min(1).max(100),
   sandbox: z.enum(["read-only", "workspace-write"]), networkAccess: z.boolean(),

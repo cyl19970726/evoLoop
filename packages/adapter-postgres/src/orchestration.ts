@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { createHash } from "node:crypto";
 import type { LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
-import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationAuthorizationFact, OrchestrationDispatch, OrchestrationDivisionDecisionFact, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 
 type Row = Record<string, any>;
 type Authorization = {
@@ -108,9 +108,29 @@ class Reader implements OrchestrationReader {
   getDispatch(id:string){return this.one<OrchestrationDispatch>("orchestration_dispatch","dispatch_id",id);}
   listDispatches(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationDispatch>("orchestration_dispatch","dispatch_id",limit,cursor,loopId);}
   getSubmission(id:string){return this.one<OrchestrationSubmission>("orchestration_submission","submission_id",id);}
-  getDecision(id:string){return this.one<OrchestrationWorkerDecision>("orchestration_decision","decision_id",id);}
+  async getDecision(id:string){const decision=await this.one<OrchestrationWorkerDecision>("orchestration_decision","decision_id",id);
+    return decision ? {...decision,divisionDecisionId:decision.divisionDecisionId ?? null} : null;}
+  private divisionFact(row:Row|undefined):OrchestrationDivisionDecisionFact|null {
+    if(!row)return null;const detail=row.detail;
+    return {id:row.entity_id,loopId:row.loop_id,parentDispatchId:detail.parentDispatchId,
+      sourceEventId:detail.sourceEventId,firstTaskId:detail.firstTaskId,
+      firstTaskVersion:detail.firstTaskVersion,choice:detail.choice};
+  }
+  private async signedDivision(where:string,value:string){const r=await this.db.query(`SELECT e.entity_id,e.loop_id,e.detail
+    FROM orchestration_event e JOIN orchestration_operation o ON o.project_id=e.project_id
+      AND o.operation_id=e.operation_id AND o.actor_id=e.actor_id
+      AND o.result->>'entityId'=e.entity_id::text AND o.result->>'version'='1'
+    WHERE e.project_id=$1 AND e.kind='division.decided' AND ${where}
+      AND ((e.entity_type='decision' AND e.detail->>'choice'='method' AND o.result->>'entityType'='decision')
+        OR (e.entity_type='binding' AND e.detail->>'choice'<>'method' AND o.result->>'entityType'='binding'
+          AND EXISTS(SELECT 1 FROM runtime_role_binding b WHERE b.project_id=e.project_id
+            AND b.binding_id=e.entity_id AND b.decision_operation_id=e.operation_id)))`,[this.projectId,value]);
+    return this.divisionFact(r.rows[0]);}
+  async getDivisionDecisionFact(id:string){return this.signedDivision("e.entity_id=$2",id);}
+  async findDivisionDecisionForParent(dispatchId:string){return this.signedDivision("e.detail->>'parentDispatchId'=$2",dispatchId);}
   async findSubmissionByDispatch(dispatchId:string){const r=await this.db.query("SELECT data FROM orchestration_submission WHERE project_id=$1 AND dispatch_id=$2",[this.projectId,dispatchId]);return data<OrchestrationSubmission>(r.rows[0]);}
-  async findDecisionByDispatch(dispatchId:string){const r=await this.db.query("SELECT data FROM orchestration_decision WHERE project_id=$1 AND dispatch_id=$2",[this.projectId,dispatchId]);return data<OrchestrationWorkerDecision>(r.rows[0]);}
+  async findDecisionByDispatch(dispatchId:string){const r=await this.db.query("SELECT data FROM orchestration_decision WHERE project_id=$1 AND dispatch_id=$2",[this.projectId,dispatchId]);
+    const decision=data<OrchestrationWorkerDecision>(r.rows[0]);return decision ? {...decision,divisionDecisionId:decision.divisionDecisionId ?? null} : null;}
   async hasChildDispatch(parentDispatchId:string){const r=await this.db.query("SELECT 1 FROM orchestration_dispatch WHERE project_id=$1 AND data->>'parentDispatchId'=$2 LIMIT 1",[this.projectId,parentDispatchId]);return !!r.rowCount;}
   async hasWaitingResume(decisionId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='waiting.resumed' AND entity_id=$2 LIMIT 1",[this.projectId,decisionId]);return !!r.rowCount;}
   async hasUnsettledDispatchForSource(loopId:string,sourceEventId:string,exceptDispatchId:string){const r=await this.db.query(`SELECT 1 FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2

@@ -62,6 +62,7 @@ ALTER TABLE orchestration_event ADD CONSTRAINT orchestration_event_entity_type_c
   CHECK(entity_type IN ('loop','inbox','dispatch','submission','decision','binding'));
 CREATE UNIQUE INDEX orchestration_division_decision_id ON orchestration_event(project_id,entity_id) WHERE kind='division.decided';
 CREATE UNIQUE INDEX orchestration_division_source_task ON orchestration_event(project_id,loop_id,(detail->>'sourceEventId'),(detail->>'firstTaskId')) WHERE kind='division.decided';
+CREATE UNIQUE INDEX orchestration_division_parent_intent ON orchestration_event(project_id,(detail->>'parentDispatchId')) WHERE kind='division.decided';
 CREATE TRIGGER loop_policy_revision_immutable BEFORE UPDATE OR DELETE ON loop_policy_revision
   FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
 CREATE TRIGGER runtime_role_binding_immutable BEFORE UPDATE OR DELETE ON runtime_role_binding
@@ -125,16 +126,17 @@ END $$;
 CREATE FUNCTION valid_delegation_snapshot(g jsonb, decided_at jsonb) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
 BEGIN
   IF jsonb_typeof(g) IS DISTINCT FROM 'object' OR NOT coalesce(g ?& ARRAY[
-    'id','revision','projectId','goalId','loopId','existingRoleIds','newRoleAllocation','firstTaskId',
+    'id','revision','projectId','goalId','loopId','existingRoleIds','cognitionRoleIds','newRoleAllocation','firstTaskId',
     'actorId','authorizationScopeId','decisionActorIds','allowedChoices','cwd','model','sandbox',
     'networkAccess','approvalPolicy','expiresAtUtc'],false) OR
-    g - ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds','newRoleAllocation','firstTaskId',
+    g - ARRAY['id','revision','projectId','goalId','loopId','existingRoleIds','cognitionRoleIds','newRoleAllocation','firstTaskId',
       'actorId','authorizationScopeId','decisionActorIds','allowedChoices','cwd','model','sandbox',
       'networkAccess','approvalPolicy','expiresAtUtc'] <> '{}'::jsonb THEN RETURN false; END IF;
   IF jsonb_typeof(g->'id') IS DISTINCT FROM 'string' OR jsonb_typeof(g->'revision') IS DISTINCT FROM 'number' OR
     jsonb_typeof(g->'projectId') IS DISTINCT FROM 'string' OR jsonb_typeof(g->'goalId') IS DISTINCT FROM 'string' OR
     jsonb_typeof(g->'loopId') IS DISTINCT FROM 'string' OR jsonb_typeof(g->'firstTaskId') IS DISTINCT FROM 'string' OR
     jsonb_typeof(g->'existingRoleIds') IS DISTINCT FROM 'array' OR
+    jsonb_typeof(g->'cognitionRoleIds') IS DISTINCT FROM 'array' OR
     jsonb_typeof(g->'decisionActorIds') IS DISTINCT FROM 'array' OR
     jsonb_typeof(g->'allowedChoices') IS DISTINCT FROM 'array' OR
     jsonb_typeof(g->'actorId') IS DISTINCT FROM 'string' OR length(g->>'actorId') NOT BETWEEN 1 AND 100 OR
@@ -149,10 +151,14 @@ BEGIN
     g->>'approvalPolicy' NOT IN ('on-request','untrusted') OR
     (g->'newRoleAllocation'<>'null'::jsonb AND g->'newRoleAllocation'<>
       '{"maxTotal":1,"requiredState":"trial"}'::jsonb) OR
-    jsonb_array_length(g->'existingRoleIds')>20 OR jsonb_array_length(g->'decisionActorIds') NOT BETWEEN 1 AND 20 OR
+    jsonb_array_length(g->'existingRoleIds')>20 OR jsonb_array_length(g->'cognitionRoleIds')>1 OR
+    jsonb_array_length(g->'decisionActorIds')>20 OR
+    (jsonb_array_length(g->'decisionActorIds')=0 AND jsonb_array_length(g->'cognitionRoleIds')=0) OR
     jsonb_array_length(g->'allowedChoices') NOT BETWEEN 1 AND 3 THEN RETURN false; END IF;
   IF EXISTS(SELECT 1 FROM jsonb_array_elements(g->'existingRoleIds') x WHERE jsonb_typeof(x)<>'string' OR
       x #>> '{}' !~ '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$') OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements(g->'cognitionRoleIds') x WHERE jsonb_typeof(x)<>'string' OR
+      length(x #>> '{}') NOT BETWEEN 1 AND 4000) OR
     EXISTS(SELECT 1 FROM jsonb_array_elements(g->'decisionActorIds') x WHERE jsonb_typeof(x)<>'string' OR
       length(x #>> '{}') NOT BETWEEN 1 AND 100) OR
     EXISTS(SELECT 1 FROM jsonb_array_elements(g->'allowedChoices') x WHERE jsonb_typeof(x)<>'string' OR
@@ -230,7 +236,10 @@ BEGIN
     delegated_grant->>'firstTaskId' IS DISTINCT FROM NEW.first_task_id::text OR
     delegated_grant->>'actorId' IS DISTINCT FROM NEW.data->>'actorId' OR
     delegated_grant->>'authorizationScopeId' IS DISTINCT FROM NEW.data->>'authorizationScopeId' OR
-    NOT coalesce(delegated_grant->'decisionActorIds' ? (NEW.data->>'decidedBy'),false) OR
+    NOT (coalesce(delegated_grant->'decisionActorIds' ? (NEW.data->>'decidedBy'),false) OR
+      (NEW.data->>'decidedBy' LIKE 'worker-%' AND coalesce(delegated_grant->'cognitionRoleIds' ?
+        (SELECT data->>'cognitiveRoleId' FROM orchestration_loop
+          WHERE project_id=NEW.project_id AND loop_id=NEW.loop_id),false))) OR
     NOT coalesce(delegated_grant->'allowedChoices' ? NEW.choice,false) OR
     (CASE WHEN NEW.choice='new-role' THEN delegated_grant->'newRoleAllocation' IS DISTINCT FROM
         '{"maxTotal":1,"requiredState":"trial"}'::jsonb OR coalesce(delegated_grant->'existingRoleIds' ? NEW.role_id::text,false)
@@ -250,10 +259,10 @@ BEGIN
   IF owner_loop.loop_id IS NULL OR owner_loop.data->>'goalId' IS DISTINCT FROM NEW.goal_id::text OR
     parent.dispatch_id IS NULL OR parent.loop_id<>NEW.loop_id OR parent.data->>'sourceEventId' IS DISTINCT FROM NEW.source_event_id::text OR
     parent.data->>'recipientRoleId' IS DISTINCT FROM owner_loop.data->>'cognitiveRoleId' OR
-    parent.state NOT IN ('accepted','completed') OR
+    parent.state<>'accepted' OR
     NOT EXISTS(SELECT 1 FROM runtime_run r WHERE r.project_id=NEW.project_id
       AND r.run_id::text=parent.data->>'runtimeRunId' AND r.task_id=parent.task_id
-      AND r.state IN ('completed','failed','interrupted')) OR
+      AND r.state IN ('requested','dispatching','running')) OR
     NOT EXISTS(SELECT 1 FROM task_revision r WHERE r.project_id=NEW.project_id AND r.task_id=NEW.first_task_id
       AND r.version=NEW.first_task_version) OR observed_goal IS DISTINCT FROM NEW.goal_id OR
     (owner_loop.data->>'stageId' IS NOT NULL AND observed_stage::text IS DISTINCT FROM owner_loop.data->>'stageId') OR

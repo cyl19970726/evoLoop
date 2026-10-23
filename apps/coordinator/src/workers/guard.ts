@@ -9,7 +9,7 @@ export interface WorkerGuardFacts {
   recoveryGap?(): Promise<(Fact & {loopId: string; dispatchId: string; eventId: string; runId: string;
     taskId: string; taskRevisionId: string}) | null>;
   recoveryDocument?(documentId: string, revisionId: string): Promise<boolean>;
-  run(runId: string): Promise<(Fact & { taskId: string; sessionId: string }) | null>;
+  run(runId: string): Promise<(Fact & { taskId: string; sessionId: string; state?: string }) | null>;
   delivery(deliveryId: string): Promise<(Fact & { taskId: string; runId: string | null }) | null>;
   inbox(inboxId: string): Promise<(Fact & { loopId: string; state: "pending" | "acknowledged" | "disposed" }) | null>;
   document(documentId: string): Promise<(Fact & { taskId: string | null; loopId: string | null }) | null>;
@@ -186,7 +186,19 @@ export async function authorizeWorkerCommand(identity: WorkerIdentity, value: un
   if (command.type === "document.adopt" || command.type === "document.publish")
     return scope.kind === "cognition" && id(command.documentId) && id(command.revisionId) &&
       await facts.sourceIssueDocumentRevision?.(command.documentId, command.revisionId) === true;
+  if (command.type === "division.decide") {
+    if (scope.kind !== "cognition" || loop.state !== "active" || command.loopId !== scope.loopId ||
+        !id(command.firstTaskId) || !await task(command.firstTaskId)) return false;
+    const parent = await facts.dispatchForRun?.(scope.runId), run = await facts.run(scope.runId);
+    return !!parent && same(parent,scope.projectId) && parent.id === command.parentDispatchId &&
+      parent.loopId === scope.loopId && parent.taskId === scope.taskId && parent.runtimeRunId === scope.runId &&
+      parent.sourceEventId === command.sourceEventId && same(run,scope.projectId) &&
+      run?.taskId === scope.taskId && run.sessionId === scope.sessionId &&
+      ["requested","dispatching","running"].includes(run.state ?? "");
+  }
   if (command.type === "worker.submit" || command.type === "worker.decision") {
+    if (command.type === "worker.decision" && command.divisionDecisionId != null &&
+        (scope.kind !== "cognition" || command.kind !== "waiting" || !id(command.divisionDecisionId))) return false;
     const dispatch = await facts.dispatchForRun?.(scope.runId);
     return !!dispatch && dispatch.id === command.dispatchId && dispatch.loopId === scope.loopId &&
       dispatch.taskId === scope.taskId && command.runId === scope.runId && dispatch.runtimeRunId === scope.runId;

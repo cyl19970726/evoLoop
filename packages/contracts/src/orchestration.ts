@@ -20,7 +20,7 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
     sourceEventId: id, parentDispatchId: id, documentId: id, documentRevisionId: id,
     documentContentHash: z.string().regex(/^[a-f0-9]{64}$/), firstTaskId: id, expectedFirstTaskVersion: version,
     choice: z.enum(["method", "same-role-instance", "temporary-assignment", "new-role"]),
-    roleId: id, templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    roleId: role, templateId: id.nullable(), templateRevision: version.nullable(), templateHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
     reason }),
   z.strictObject({ ...common, type: z.literal("division.revoke"), loopId: id, expectedLoopVersion: version,
     bindingId: id, reason }),
@@ -33,7 +33,7 @@ export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("dispatch.start"), dispatchId: id, claimToken: id }),
   z.strictObject({ ...common, type: z.literal("dispatch.resolve"), dispatchId: id, claimToken: id, result: z.enum(["accepted", "unknown", "rejected"]), runtimeRunId: id.nullable(), reason }),
   z.strictObject({ ...common, type: z.literal("dispatch.reconcile"), dispatchId: id, expectedVersion: version, resolution: z.enum(["accepted", "rejected"]), runtimeRunId: id.nullable(), evidenceRef: short, reason }),
-  z.strictObject({ ...common, type: z.literal("worker.decision"), decisionId: id, dispatchId: id, runId: id, kind: z.enum(["no_action", "waiting", "failed", "stop"]), reason, evidenceRefs: z.array(short).max(20) }),
+  z.strictObject({ ...common, type: z.literal("worker.decision"), decisionId: id, dispatchId: id, runId: id, kind: z.enum(["no_action", "waiting", "failed", "stop"]), divisionDecisionId: id.nullable().optional(), reason, evidenceRefs: z.array(short).max(20) }),
   z.strictObject({ ...common, type: z.literal("worker.submit"), submissionId: id, dispatchId: id, runId: id, taskRevisionId: id, runInputHash: short, deliveryOperationId: id, deliveryIntent, agentObservation: reason.nullable(), evidenceRefs: z.array(short).max(20) }),
   z.strictObject({ ...common, type: z.literal("worker.beginSeal"), submissionId: id, expectedVersion: version, expectedTaskVersion: version, sealToken: id }),
   z.strictObject({ ...common, type: z.literal("worker.finishSeal"), submissionId: id, sealToken: id, result: z.enum(["sealed", "unknown", "rejected"]), deliveryId: id.nullable(), reason }),
@@ -74,7 +74,12 @@ export interface OrchestrationDispatch {
 export interface OrchestrationWorkerDecision {
   projectId: string; id: string; dispatchId: string; runId: string; taskId: string;
   kind: "no_action" | "waiting" | "failed" | "stop";
+  divisionDecisionId: string | null;
   reason: string; evidenceRefs: string[]; actorId: string; createdAtUtc: string;
+}
+export interface OrchestrationDivisionDecisionFact {
+  id: string; loopId: string; parentDispatchId: string; sourceEventId: string;
+  firstTaskId: string; firstTaskVersion: number; choice: string;
 }
 export interface OrchestrationSubmission {
   projectId: string; id: string; version: number; dispatchId: string; runId: string; taskId: string;
@@ -144,6 +149,8 @@ export interface OrchestrationTransaction {
   getDispatch(id: string): Promise<OrchestrationDispatch | null>;
   getSubmission(id: string): Promise<OrchestrationSubmission | null>;
   getDecision(id: string): Promise<OrchestrationWorkerDecision | null>;
+  getDivisionDecisionFact(id: string): Promise<OrchestrationDivisionDecisionFact | null>;
+  findDivisionDecisionForParent(dispatchId: string): Promise<OrchestrationDivisionDecisionFact | null>;
   findSubmissionByDispatch(dispatchId: string): Promise<OrchestrationSubmission | null>;
   findDecisionByDispatch(dispatchId: string): Promise<OrchestrationWorkerDecision | null>;
   hasChildDispatch(parentDispatchId: string): Promise<boolean>;

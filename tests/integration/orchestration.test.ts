@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
@@ -9,18 +12,23 @@ import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestr
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { DelegationTemplate } from "@evoloop/contracts/division";
+import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/credentials.js";
+import { authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard.js";
+import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
-const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole="cognitive-role",businessRole="business-role",scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
+const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole="cognition",businessRole="business-role",scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
 const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
 const runtime=new RuntimeWorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
 let businessGrantActive=true;
+let brokerForRole:WorkerCredentialBroker|null=null;
 const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&scope===scopeId?{projectId,scopeId,actorId:worker,roleId:businessRole,active:businessGrantActive}:project===projectId&&scope===cognitiveScope?{projectId,scopeId:cognitiveScope,actorId:actor,roleId:cognitiveRole,active:true}:null,
-  canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole),
+  canActAsRole:async(project,who,role)=>project===projectId&&(who===actor&&role===cognitiveRole||who===worker&&role===businessRole||
+    (await brokerForRole?.identityForActor(who))?.scope.roleId===role),
   wasActorRole:async(project,who,loop,role)=>project===projectId&&who===actor&&role===cognitiveRole});
 const orchestrator=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha});
 const issue=(who:string,command:Record<string,unknown>)=>orchestrator.execute(principal(who),{projectId,operationId:randomUUID(),...command} as never);
@@ -382,10 +390,21 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     acceptance:"Record an evidenced next decision",owner:cognitiveRole,consumer:"owner",evidence:`Gap ${gapEvent.event_id}`,
     stopCondition:"A decision is recorded"});
   assert.equal(recoveryTask.status,"applied",JSON.stringify(recoveryTask));
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:recoveryTaskId,expectedVersion:1,reason:"Freeze healthy cognition input"})).status,"applied");
   const recoveryDispatch=await issue(actor,{type:"dispatch.request",inboxId:recoveryInbox.entityId,expectedInboxVersion:2,
-    dispatchId:randomUUID(),parentDispatchId:null,taskId:recoveryTaskId,expectedTaskVersion:1,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:recoveryTaskId,expectedTaskVersion:2,
     recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Review fixed terminal gap"});
-  assert.equal((await orchestrator.getDispatch(principal(actor),projectId,recoveryDispatch.entityId))?.state,"pending");
+  const recoveryClaim=randomUUID(),recoveryRunId=randomUUID();
+  await issue(actor,{type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
+    leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await issue(actor,{type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
+  const recoveryRun=await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),
+    runId:recoveryRunId,taskId:recoveryTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Record bounded division intent"});
+  assert.equal(recoveryRun.status,"applied",JSON.stringify(recoveryRun));
+  await issue(actor,{type:"dispatch.resolve",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
+    result:"accepted",runtimeRunId:recoveryRunId,reason:"Bound active cognition Run"});
+  assert.equal((await orchestrator.getDispatch(principal(actor),projectId,recoveryDispatch.entityId))?.state,"accepted");
   assert.equal((await orchestrator.getDispatch(principal(actor),projectId,lateDispatch.entityId))?.state,"accepted");
   assert.equal((await orchestrator.listDispatches(principal(actor),projectId,loopId)).items.find(x=>x.id===requested.entityId)?.runtimeRunId,runId);
   await issue(actor,{type:"loop.state",loopId,expectedVersion:5,state:"stopped",reason:"Stop bounded work"});
@@ -421,25 +440,54 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     roleId:newRoleId,expectedVersion:1,decision:"accept-trial",reason:"Bounded Role trial"});
   assert.equal(acceptedRole.status,"applied",JSON.stringify(acceptedRole));
   const template:DelegationTemplate={id:randomUUID(),revision:1,projectId,goalId,loopId:lateLoopId,
-    existingRoleIds:[],newRoleAllocation:{maxTotal:1,requiredState:"trial"},firstTaskId:divisionTaskId,
-    actorId:"trial-worker",authorizationScopeId:"trial-scope",decisionActorIds:[actor],allowedChoices:["new-role"],
+    existingRoleIds:[],cognitionRoleIds:[cognitiveRole],newRoleAllocation:{maxTotal:1,requiredState:"trial"},firstTaskId:divisionTaskId,
+    actorId:"trial-worker",authorizationScopeId:"trial-scope",decisionActorIds:[],allowedChoices:["new-role"],
     cwd:"/tmp",model:"test-model",sandbox:"read-only",networkAccess:false,approvalPolicy:"on-request",
     expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
   const templateHash=sha(JSON.stringify(template));
   let templateCurrent=true;
+  const workerRoot=await mkdtemp(join(tmpdir(),"evoloop-m3-worker-"));
+  t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
+  const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:4318",
+    cliMain:fileURLToPath(new URL("../../apps/cli/dist/main.js",import.meta.url)),
+    nodeExecutable:"/Users/hhh0x/.nvm/versions/node/v24.21.0/bin/node",ttlMs:60_000});
+  brokerForRole=broker;
+  const issued=await broker.issue({projectId,loopId:lateLoopId,taskId:recoveryTaskId,
+    runId:recoveryRunId,sessionId:cognitiveSession,roleId:cognitiveRole,kind:"cognition",
+    allowedRoleIds:[cognitiveRole,newRoleId]});
+  const identity=await broker.identityForActor(issued.principal.actorId);
+  assert.ok(identity);
   const division=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha,
+    getWorkerScope:async actorId=>(await broker.identityForActor(actorId))?.scope ?? null,
     getDelegationTemplate:async(project,id)=>templateCurrent&&project===projectId&&id===template.id?{template,hash:templateHash}:null});
   const beforeDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
   const decisionOperationId=randomUUID(),decision={type:"division.decide",projectId,operationId:decisionOperationId,
     decisionId:randomUUID(),loopId:lateLoopId,expectedLoopVersion:beforeDivision.version,
-    sourceEventId:lateLoop.bootstrapEventId,parentDispatchId:lateDispatch.entityId,
+    sourceEventId:gapEvent.event_id,parentDispatchId:recoveryDispatch.entityId,
     documentId:materialId,documentRevisionId:material.revisionId,documentContentHash:sha(materialBody),
     firstTaskId:divisionTaskId,expectedFirstTaskVersion:2,choice:"new-role",roleId:newRoleId,
     templateId:template.id,templateRevision:template.revision,templateHash,reason:"One explicitly bounded trial"};
-  const decided=await division.execute(principal(actor),decision as never);
+  const request={method:"POST",path:"/api/orchestration/commands",body:decision};
+  assert.equal(await authorizeWorkerRequest(identity,request,workerGuardFacts(pool,identity)),true);
+  assert.equal(await authorizeWorkerRequest(identity,{...request,path:"/api/commands",
+    body:{type:"role.decide",projectId,operationId:randomUUID(),roleId:newRoleId}},workerGuardFacts(pool,identity)),false);
+  const wrongRunIdentity={...identity,scope:{...identity.scope,runId:randomUUID()}};
+  assert.equal(await authorizeWorkerRequest(wrongRunIdentity,request,workerGuardFacts(pool,wrongRunIdentity)),false);
+  const wrongRoleIdentity={...identity,scope:{...identity.scope,roleId:businessRole}};
+  assert.equal(await authorizeWorkerRequest(wrongRoleIdentity,request,workerGuardFacts(pool,wrongRoleIdentity)),false);
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:{...decision,parentDispatchId:lateDispatch.entityId}},workerGuardFacts(pool,identity)),false);
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:{...decision,firstTaskId:randomUUID()}},workerGuardFacts(pool,identity)),false);
+  const noCognitionDelegation={...template,cognitionRoleIds:[]};
+  const deniedDivision=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash:sha,
+    getWorkerScope:async actorId=>(await broker.identityForActor(actorId))?.scope ?? null,
+    getDelegationTemplate:async()=>({template:noCognitionDelegation,hash:sha(JSON.stringify(noCognitionDelegation))})});
+  await fails(deniedDivision.execute(issued.principal,{...decision,operationId:randomUUID(),
+    templateHash:sha(JSON.stringify(noCognitionDelegation))} as never),"DELEGATION_DENIED");
+  await fails(division.execute(principal(actor),{...decision,operationId:randomUUID()} as never),"DELEGATION_DENIED");
+  const decided=await division.execute(issued.principal,decision as never);
   assert.equal(decided.entityType,"binding");
-  assert.equal((await division.execute(principal(actor),decision as never)).replayed,true);
-  await fails(division.execute(principal(actor),{...decision,reason:"changed"} as never),"OPERATION_CONFLICT");
+  assert.equal((await division.execute(issued.principal,decision as never)).replayed,true);
+  await fails(division.execute(issued.principal,{...decision,reason:"changed"} as never),"OPERATION_CONFLICT");
   const afterDivision=(await division.getLoop(principal(actor),projectId,lateLoopId))!;
   assert.equal(afterDivision.dispatchCount,beforeDivision.dispatchCount);
   assert.equal(afterDivision.maxRuns,beforeDivision.maxRuns);
@@ -452,6 +500,14 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     finally { await client.query("ROLLBACK");client.release(); }
   });
   const unrelatedOperation=(await pool.query("SELECT operation_id FROM orchestration_operation WHERE project_id=$1 AND result->>'entityType'='dispatch' LIMIT 1",[projectId])).rows[0].operation_id;
+  const forgedMethodId=randomUUID();
+  await pool.query(`INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,
+    kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'decision',$4,$5,'division.decided',$6,$7::jsonb,$8)`,
+    [projectId,randomUUID(),lateLoopId,forgedMethodId,unrelatedOperation,actor,
+      JSON.stringify({choice:"method",parentDispatchId:lateDispatch.entityId,sourceEventId:lateLoop.bootstrapEventId,
+        firstTaskId:lateTaskId,firstTaskVersion:2}),new Date().toISOString()]);
+  assert.equal(await store.read(projectId,r=>r.getDivisionDecisionFact(forgedMethodId)),null,
+    "an unrelated operation cannot make an inserted method event a signed intent");
   await rejectsSql(client=>client.query(`INSERT INTO runtime_role_binding(project_id,binding_id,loop_id,goal_id,role_id,choice,
     template_id,template_revision,template_hash,decision_operation_id,source_event_id,parent_dispatch_id,
     first_task_id,first_task_version,document_id,document_revision_id,document_content_hash,data)
@@ -475,14 +531,46 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const otherGoalId=randomUUID();
   assert.equal((await workflow.execute(principal(actor),{type:"goal.create",projectId,operationId:randomUUID(),
     goalId:otherGoalId,outcome:"Unrelated",constraints:"Local",consumer:"owner",authority:"reviewer",scope:"pilot",owner:actor})).status,"applied");
+  const sqlLoopId=randomUUID(),sqlCognitionTaskId=randomUUID(),sqlRunId=randomUUID(),sqlSessionId=randomUUID();
+  assert.equal((await workflow.execute(principal(actor),{type:"task.create",projectId,operationId:randomUUID(),
+    taskId:sqlCognitionTaskId,stageId,title:"SQL cognition parent",content:"# Inspect",acceptance:"Decision",owner:cognitiveRole,
+    consumer:"owner",evidence:"Fixture",stopCondition:"One intent"})).status,"applied");
+  assert.equal((await workflow.execute(principal(actor),{type:"task.start",projectId,operationId:randomUUID(),
+    taskId:sqlCognitionTaskId,expectedVersion:1,reason:"Freeze SQL parent"})).status,"applied");
+  const sqlLast=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
+  await issue(actor,{type:"loop.enroll",loopId:sqlLoopId,goalId,stageId,cognitiveRoleId:cognitiveRole,
+    allowedBusinessRoleIds:[businessRole],sourceAfter:{createdAtUtc:sqlLast.created_at.toISOString(),eventId:sqlLast.event_id},
+    maxRuns:1,maxConcurrent:1,reason:"SQL provenance fixture"});
+  const sqlLoop=(await orchestrator.getLoop(principal(actor),projectId,sqlLoopId))!;
+  const sqlInbox=await issue(actor,{type:"inbox.accept",loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,
+    recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
+  await issue(actor,{type:"inbox.ack",inboxId:sqlInbox.entityId,expectedVersion:1,reason:"Fixture"});
+  const sqlParent=await issue(actor,{type:"dispatch.request",inboxId:sqlInbox.entityId,expectedInboxVersion:2,
+    dispatchId:randomUUID(),parentDispatchId:null,taskId:sqlCognitionTaskId,expectedTaskVersion:2,
+    recipientRoleId:cognitiveRole,purpose:"cognition",authorizationScopeId:cognitiveScope,reason:"Fixture"});
+  const sqlClaim=randomUUID();
+  await issue(actor,{type:"dispatch.claim",dispatchId:sqlParent.entityId,claimToken:sqlClaim,leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
+  await issue(actor,{type:"dispatch.start",dispatchId:sqlParent.entityId,claimToken:sqlClaim});
+  assert.equal((await workflow.execute(principal(actor),{type:"runtime.session.reserve",projectId,operationId:randomUUID(),
+    sessionId:sqlSessionId,roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
+    model:"test-model",sandbox:"read-only",approvalPolicy:"on-request"})).status,"applied");
+  await runtime.beginSessionCreate(projectId,sqlSessionId);
+  await runtime.bindSession(projectId,sqlSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:sqlSessionId,
+    roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
+    nativeThreadId:`fixture-${sqlSessionId}`,nativeSessionId:`fixture-${sqlSessionId}`});
+  assert.equal((await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),
+    runId:sqlRunId,taskId:sqlCognitionTaskId,sessionId:sqlSessionId,expectedVersion:2,input:"Fixture"})).status,"applied");
+  await issue(actor,{type:"dispatch.resolve",dispatchId:sqlParent.entityId,claimToken:sqlClaim,result:"accepted",
+    runtimeRunId:sqlRunId,reason:"Bound SQL fixture"});
   const originalBinding=(await division.getBinding(principal(actor),projectId,decided.entityId))!;
   const insertSignedFixture=async(client:pg.PoolClient,
     change:(b:typeof originalBinding,op:Record<string,unknown>,event:Record<string,unknown>)=>void=()=>{},
     changeData:(data:typeof originalBinding)=>void=()=>{})=>{
     const id=randomUUID(),operationId=randomUUID(),templateId=randomUUID(),createdAtUtc=new Date().toISOString();
-    const binding={...structuredClone(originalBinding),id,choice:"same-role-instance" as const,decisionOperationId:operationId,
+    const binding={...structuredClone(originalBinding),id,loopId:sqlLoopId,sourceEventId:sqlLoop.bootstrapEventId,
+      parentDispatchId:sqlParent.entityId,choice:"same-role-instance" as const,decisionOperationId:operationId,
       firstTaskId:sqlTaskId,firstTaskVersion:2,template:{...originalBinding.template,id:templateId},
-      grant:{...originalBinding.grant,id:templateId,firstTaskId:sqlTaskId,existingRoleIds:[newRoleId],
+      grant:{...originalBinding.grant,id:templateId,loopId:sqlLoopId,firstTaskId:sqlTaskId,existingRoleIds:[newRoleId],
         newRoleAllocation:null,allowedChoices:["same-role-instance"]},createdAtUtc};
     const operation:Record<string,unknown>={entityType:"binding",entityId:id,version:1,replayed:false};
     const detail:Record<string,unknown>={choice:binding.choice,sourceEventId:binding.sourceEventId,
@@ -562,12 +650,19 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   };
   await allowsSql(client=>insertRevokeFixture(client));
   await rejectsSql(client=>insertRevokeFixture(client,"dispatch"));
+  const waitingCommand={type:"worker.decision",projectId,operationId:randomUUID(),
+    decisionId:randomUUID(),dispatchId:recoveryDispatch.entityId,runId:recoveryRunId,kind:"waiting",
+    divisionDecisionId:decided.entityId,reason:"Wait for controlled continuation",evidenceRefs:[]};
+  assert.equal(await authorizeWorkerRequest(identity,{...request,body:waitingCommand},workerGuardFacts(pool,identity)),true);
+  await fails(division.execute(issued.principal,{...waitingCommand,operationId:randomUUID(),divisionDecisionId:randomUUID()} as never),"INVALID_CAUSALITY");
+  const waitingIntent=await division.execute(issued.principal,waitingCommand as never);
+  assert.equal((await division.getDecision(principal(actor),projectId,waitingIntent.entityId))?.divisionDecisionId,decided.entityId);
   const pendingInbox=await division.execute(principal(actor),{type:"inbox.accept",projectId,operationId:randomUUID(),
-    loopId:lateLoopId,sourceEventId:lateLoop.bootstrapEventId,recipientRoleId:cognitiveRole,purpose:"next_action"});
+    loopId:lateLoopId,sourceEventId:gapEvent.event_id,recipientRoleId:cognitiveRole,purpose:"next_action"});
   await division.execute(principal(actor),{type:"inbox.ack",projectId,operationId:randomUUID(),
     inboxId:pendingInbox.entityId,expectedVersion:1,reason:"Inspect decision"});
   const dynamicRequest={type:"dispatch.request",projectId,operationId:randomUUID(),inboxId:pendingInbox.entityId,
-    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:lateDispatch.entityId,taskId:divisionTaskId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:recoveryDispatch.entityId,taskId:divisionTaskId,
     expectedTaskVersion:2,recipientRoleId:newRoleId,purpose:"trial first Task",authorizationScopeId:"trial-scope",reason:"Pending continuation"};
   await fails(division.execute(principal(actor),dynamicRequest as never),"RUN_LIMIT");
   // This sealed SQL fixture models a future controlled child dispatch solely to
@@ -581,8 +676,8 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     await fixtureClient.query("UPDATE orchestration_inbox SET version=3,state='disposed',data=$3::jsonb WHERE project_id=$1 AND inbox_id=$2",
       [projectId,pendingInbox.entityId,JSON.stringify({...inboxRow.data,version:3,state:"disposed",disposition:"dispatch",dispatchId:historicalChildId})]);
     const childData={projectId,id:historicalChildId,loopId:lateLoopId,inboxId:pendingInbox.entityId,
-      sourceEventId:lateLoop.bootstrapEventId,taskId:divisionTaskId,taskVersion:2,
-      parentDispatchId:lateDispatch.entityId,recipientRoleId:newRoleId,purpose:"bounded trial",
+      sourceEventId:gapEvent.event_id,taskId:divisionTaskId,taskVersion:2,
+      parentDispatchId:recoveryDispatch.entityId,recipientRoleId:newRoleId,purpose:"bounded trial",
       authorizationScopeId:"trial-scope",state:"pending",requestedBy:actor,
       policyRevisionId:divisionPolicy.id,bindingId:decided.entityId};
     await fixtureClient.query(`INSERT INTO orchestration_dispatch(project_id,dispatch_id,loop_id,inbox_id,task_id,task_version,version,state,data,policy_revision_id,binding_id)
@@ -592,7 +687,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
       [projectId,historicalOperationId,actor,sha("historical-fixture"),JSON.stringify({entityType:"dispatch",entityId:historicalChildId,version:1,replayed:false})]);
     await fixtureClient.query("INSERT INTO orchestration_event(project_id,event_id,loop_id,entity_type,entity_id,operation_id,kind,actor_id,detail,created_at_utc) VALUES($1,$2,$3,'dispatch',$4,$5,'dispatch.requested',$6,$7::jsonb,now())",
       [projectId,historicalEventId,lateLoopId,historicalChildId,historicalOperationId,actor,
-        JSON.stringify({sourceEventId:lateLoop.bootstrapEventId,taskId:divisionTaskId,recipientRoleId:newRoleId})]);
+        JSON.stringify({sourceEventId:gapEvent.event_id,taskId:divisionTaskId,recipientRoleId:newRoleId})]);
     await fixtureClient.query("COMMIT");
   } catch(error) { await fixtureClient.query("ROLLBACK"); throw error; }
   finally { fixtureClient.release(); }

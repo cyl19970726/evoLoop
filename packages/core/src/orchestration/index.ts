@@ -7,7 +7,8 @@ export class OrchestrationError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "OrchestrationError"; }
 }
 export interface OrchestrationDependencies { store: OrchestrationStore; now(): string; nextId(): string; hash(value: string): string;
-  getDelegationTemplate?(projectId: string, templateId: string): Promise<{template: DelegationTemplate; hash: string} | null> }
+  getDelegationTemplate?(projectId: string, templateId: string): Promise<{template: DelegationTemplate; hash: string} | null>;
+  getWorkerScope?(actorId: string): Promise<{projectId: string; loopId: string; taskId: string; runId: string; roleId: string; kind: string} | null> }
 const fail = (code: string, message: string, currentVersion?: number): never => { throw new OrchestrationError(code, message, currentVersion); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const cursorAfter = (a: { createdAtUtc: string; eventId: string }, b: { createdAtUtc: string; eventId: string | null }): boolean => Date.parse(a.createdAtUtc) > Date.parse(b.createdAtUtc) || (Date.parse(a.createdAtUtc) === Date.parse(b.createdAtUtc) && a.eventId > (b.eventId ?? ""));
@@ -62,15 +63,21 @@ export class OrchestrationService {
 
   private async authorize(tx: OrchestrationTransaction, principal: Principal, command: OrchestrationCommand): Promise<void> {
     if (command.type === "division.decide") {
+      const workerScope = await this.divisionWorkerScope(principal);
+      const loop = await tx.getLoop(command.loopId);
+      if (workerScope && (!loop || workerScope.projectId !== command.projectId || workerScope.loopId !== loop.id ||
+        workerScope.roleId !== loop.cognitiveRoleId || workerScope.kind !== "cognition"))
+        return fail("FORBIDDEN", "worker must be the current Loop cognition Role");
       if (command.choice === "method") {
-        const loop = await tx.getLoop(command.loopId);
-        if (!loop || (!principal.permissions.includes("review") && !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId))))
+        if (!loop || (!workerScope && !principal.permissions.includes("review") && !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId))))
           return fail("FORBIDDEN", "method decision requires cognition Role or reviewer");
       } else {
         if (!command.templateId || !command.templateRevision || !command.templateHash) return fail("TEMPLATE_REQUIRED", "explicit delegation template required");
         const found = await this.deps.getDelegationTemplate?.(command.projectId, command.templateId);
         if (!found || found.hash !== command.templateHash || found.template.revision !== command.templateRevision ||
-          !found.template.decisionActorIds.includes(principal.actorId) || Date.parse(found.template.expiresAtUtc) <= Date.parse(this.deps.now()))
+          !(workerScope ? !!loop && found.template.cognitionRoleIds.includes(loop.cognitiveRoleId) :
+            found.template.decisionActorIds.includes(principal.actorId)) ||
+          Date.parse(found.template.expiresAtUtc) <= Date.parse(this.deps.now()))
           return fail("DELEGATION_DENIED", "current delegation template does not authorize the actor");
       }
       return;
@@ -90,7 +97,21 @@ export class OrchestrationService {
     }
     if (!loop || loop.projectId !== command.projectId) return fail("NOT_FOUND", "loop not found in project");
     const roleId = dispatch ? dispatch.recipientRoleId : loop.cognitiveRoleId;
+    if (command.type === "worker.decision" && principal.actorId.startsWith("worker-")) {
+      const scope = await this.deps.getWorkerScope?.(principal.actorId);
+      if (!scope || scope.projectId !== command.projectId || scope.loopId !== loop.id ||
+        scope.roleId !== roleId || scope.taskId !== dispatch?.taskId || scope.runId !== command.runId ||
+        (command.divisionDecisionId && scope.kind !== "cognition"))
+        return fail("FORBIDDEN", "worker decision must use its brokered Dispatch and Run");
+    }
     if (!(await tx.canActAsRole(principal.actorId, roleId))) return fail("FORBIDDEN", "actor is not bound to the required role");
+  }
+
+  private async divisionWorkerScope(principal: Principal) {
+    if (!principal.actorId.startsWith("worker-")) return null;
+    const identity = await this.deps.getWorkerScope?.(principal.actorId);
+    if (!identity || identity.kind !== "cognition") return fail("FORBIDDEN", "current cognition worker credential required");
+    return identity;
   }
 
   private async apply(tx: OrchestrationTransaction, principal: Principal, command: OrchestrationCommand, now: string): Promise<OrchestrationResult> {
@@ -122,8 +143,9 @@ export class OrchestrationService {
     }
     if (command.type === "division.decide") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
+      const workerScope = await this.divisionWorkerScope(principal);
       this.active(loop); this.version(loop.version, command.expectedLoopVersion);
-      if (command.choice === "method" && !principal.permissions.includes("review") &&
+      if (command.choice === "method" && !workerScope && !principal.permissions.includes("review") &&
         !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId)))
         return fail("FORBIDDEN", "method decision requires cognition Role or reviewer");
       if (!loop.currentPolicyRevisionId) return fail("POLICY_MISSING", "Loop policy revision required");
@@ -131,12 +153,17 @@ export class OrchestrationService {
       if (!current || current.loopId !== loop.id) return fail("POLICY_MISSING", "current Loop policy unavailable");
       const parent = await tx.getDispatch(command.parentDispatchId);
       if (!parent || parent.loopId !== loop.id || parent.sourceEventId !== command.sourceEventId ||
-        parent.recipientRoleId !== loop.cognitiveRoleId || !parent.runtimeRunId || !["accepted", "completed"].includes(parent.state))
+        parent.recipientRoleId !== loop.cognitiveRoleId || !parent.runtimeRunId || parent.state !== "accepted")
         return fail("INVALID_CAUSALITY", "same-source cognition parent required");
       const parentRun = await tx.getRunFact(parent.runtimeRunId);
-      if (!parentRun || !["completed", "failed", "interrupted"].includes(parentRun.state))
-        return fail("PARENT_NOT_READY", "cognition parent Run must be known terminal");
+      if (!parentRun || parentRun.taskId !== parent.taskId || !["requested", "dispatching", "running"].includes(parentRun.state))
+        return fail("PARENT_NOT_READY", "cognition parent Run must still be active");
+      if (workerScope && (workerScope.projectId !== loop.projectId || workerScope.loopId !== loop.id ||
+        workerScope.roleId !== loop.cognitiveRoleId || workerScope.taskId !== parent.taskId ||
+        workerScope.runId !== parentRun.id)) return fail("FORBIDDEN", "brokered cognition worker does not own this parent Run");
       if (await tx.findDecisionByDispatch(parent.id)) return fail("PARENT_DECIDED", "cognition parent already signed a terminal choice");
+      if (await tx.findDivisionDecisionForParent(parent.id) || await tx.hasChildDispatch(parent.id))
+        return fail("ALREADY_EXISTS", "cognition parent already has a division intent or child request");
       const source = await tx.getSourceFact(command.sourceEventId);
       if (!source || source.projectId !== loop.projectId) return fail("SOURCE_UNAVAILABLE", "fixed source unavailable");
       const material = await tx.getDocumentRevisionFact(command.documentId, command.documentRevisionId);
@@ -157,7 +184,8 @@ export class OrchestrationService {
       const template = found?.template;
       if (!template || found.hash !== command.templateHash || template.revision !== command.templateRevision ||
         template.projectId !== loop.projectId || template.goalId !== loop.goalId || template.loopId !== loop.id ||
-        template.firstTaskId !== task.id || !template.decisionActorIds.includes(principal.actorId) ||
+        template.firstTaskId !== task.id || !(workerScope ? template.cognitionRoleIds.includes(loop.cognitiveRoleId) :
+          template.decisionActorIds.includes(principal.actorId)) ||
         !template.allowedChoices.includes(command.choice) || Date.parse(template.expiresAtUtc) <= Date.parse(now))
         return fail("DELEGATION_DENIED", "current exact delegation template does not authorize this decision");
       if (command.choice === "new-role") {
@@ -417,8 +445,19 @@ export class OrchestrationService {
       if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId) return fail("RUN_MISMATCH", "decision Run must belong to this fixed project Task");
       if (!["requested", "dispatching", "running"].includes(run.state)) return fail("RUN_NOT_ACTIVE", "first worker decision must be recorded before the Run becomes terminal or unknown");
       if (await tx.findDecisionByDispatch(dispatch.id) || await tx.getDecision(command.decisionId) || await tx.findSubmissionByDispatch(dispatch.id)) return fail("ALREADY_EXISTS", "dispatch already has a worker intent or decision ID is used");
-      const decision: OrchestrationWorkerDecision = { projectId: command.projectId, id: command.decisionId, dispatchId: dispatch.id, runId: command.runId, taskId: dispatch.taskId, kind: command.kind, reason: command.reason, evidenceRefs: command.evidenceRefs, actorId: principal.actorId, createdAtUtc: now };
-      await tx.insertDecision(decision); await event(loop.id, "decision", decision.id, "worker.decision", { dispatchId: dispatch.id, runId: command.runId, kind: decision.kind, evidenceRefs: decision.evidenceRefs });
+      const intent = await tx.findDivisionDecisionForParent(dispatch.id);
+      if (command.divisionDecisionId && command.kind !== "waiting") return fail("INVALID_CAUSALITY", "only waiting may cite a division intent");
+      if (command.kind === "waiting" && (intent || command.divisionDecisionId)) {
+        if (command.kind !== "waiting" || !intent || command.divisionDecisionId !== intent.id ||
+          dispatch.recipientRoleId !== loop.cognitiveRoleId || intent.loopId !== loop.id ||
+          intent.parentDispatchId !== dispatch.id || intent.sourceEventId !== dispatch.sourceEventId ||
+          await tx.hasChildDispatch(dispatch.id)) return fail("INVALID_CAUSALITY", "waiting must cite its unique earlier division intent without a child");
+        const firstTask = await tx.getTaskScopeAtVersion(intent.firstTaskId, intent.firstTaskVersion);
+        if (!firstTask || firstTask.goalId !== loop.goalId || (loop.stageId !== null && firstTask.stageId !== loop.stageId))
+          return fail("TASK_CHANGED", "division intent's first Task must retain its fixed Loop scope");
+      }
+      const decision: OrchestrationWorkerDecision = { projectId: command.projectId, id: command.decisionId, dispatchId: dispatch.id, runId: command.runId, taskId: dispatch.taskId, kind: command.kind, divisionDecisionId: command.divisionDecisionId ?? null, reason: command.reason, evidenceRefs: command.evidenceRefs, actorId: principal.actorId, createdAtUtc: now };
+      await tx.insertDecision(decision); await event(loop.id, "decision", decision.id, "worker.decision", { dispatchId: dispatch.id, runId: command.runId, kind: decision.kind, divisionDecisionId: decision.divisionDecisionId, evidenceRefs: decision.evidenceRefs });
       return result("decision", decision.id, 1);
     }
     if (command.type === "worker.submit") {

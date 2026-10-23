@@ -90,7 +90,7 @@ test("delegation template is explicit, versioned, canonical and cannot inherit a
   try {
     const file = join(directory, "integration.json"), loopId = randomUUID(), goalId = randomUUID();
     const template = { id: randomUUID(), revision: 1, projectId, goalId, loopId,
-      existingRoleIds: [randomUUID()], newRoleAllocation: null, firstTaskId: randomUUID(),
+      existingRoleIds: [randomUUID()], cognitionRoleIds: [], newRoleAllocation: null, firstTaskId: randomUUID(),
       actorId: "trial-worker", authorizationScopeId: "trial:one", decisionActorIds: ["cognition"],
       allowedChoices: ["temporary-assignment"], cwd, model: "test-model", sandbox: "read-only",
       networkAccess: false, approvalPolicy: "on-request", expiresAtUtc: "2030-01-01T00:00:00.000Z" };
