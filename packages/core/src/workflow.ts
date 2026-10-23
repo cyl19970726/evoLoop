@@ -388,9 +388,9 @@ export async function applyWorkflow({
       if (c.acceptanceResult !== "met") throw new DomainError("ACCEPTANCE_UNMET", "task acceptance must be met before closure");
       if (!!c.deliveryId === !!c.decisionId) throw new DomainError("CLOSURE_EVIDENCE_REQUIRED", "choose exactly one Delivery or settled cognition Decision");
       const proposal = await tx.getTaskProposal(task.id);
-      let closureEvidence: Pick<TaskClosure,"deliveryId"|"decisionId"|"sourceInboxId"|"sourceEventId"|"sourceTaskId"|"waitingInboxId">;
+      let closureEvidence: Pick<TaskClosure,"deliveryId"|"decisionId"|"sourceInboxId"|"sourceEventId"|"sourceTaskId"|"waitingInboxId"|"handoffDispatchId"|"handoffTaskId">;
       if (c.deliveryId) {
-        if (c.waitingInboxId) throw new DomainError("CLOSURE_EVIDENCE_REQUIRED", "Delivery closure cannot cite a waiting Inbox");
+        if (c.waitingInboxId || c.handoffDispatchId) throw new DomainError("CLOSURE_EVIDENCE_REQUIRED", "Delivery closure cannot cite a cognition handoff");
         const deliveries = await tx.listDeliveries(task.id);
         const latest = deliveries.at(-1);
         if (!latest || latest.id !== c.deliveryId || latest.taskRevisionId !== task.currentRevisionId)
@@ -400,7 +400,7 @@ export async function applyWorkflow({
           const observations = (await tx.listObservations(task.id)).filter(x => x.deliveryId === latest.id && x.observer === proposal.consumer);
           if (observations.at(-1)?.result !== "used") throw new DomainError("USE_NOT_OBSERVED", "current delivery lacks declared-consumer use evidence");
         }
-        closureEvidence = {deliveryId:latest.id,decisionId:null,sourceInboxId:null,sourceEventId:null,sourceTaskId:null,waitingInboxId:null};
+        closureEvidence = {deliveryId:latest.id,decisionId:null,sourceInboxId:null,sourceEventId:null,sourceTaskId:null,waitingInboxId:null,handoffDispatchId:null,handoffTaskId:null};
       } else {
         if (proposal?.useRequired) throw new DomainError("USE_NOT_OBSERVED", "a cognition decision cannot replace required consumer use");
         const fact = await tx.getCognitiveClosureFact?.(c.decisionId!);
@@ -412,18 +412,34 @@ export async function applyWorkflow({
             fact.kind === "waiting" && fact.outcome === "waiting"))
           throw new DomainError("DECISION_UNSETTLED", "close requires a settled, signed cognition Decision for this fixed Task revision");
         let waitingInboxId: string | null = null;
+        let handoffDispatchId: string | null = null;
+        let handoffTaskId: string | null = null;
         if (fact.kind === "waiting") {
-          if (!c.waitingInboxId || !fact.sourceTaskId || fact.sourceTaskId === task.id || fact.sourceTaskIsCognition || !await tx.getTask(fact.sourceTaskId))
-            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a discoverable source business Task and same-source waiting Inbox; cognition Tasks are not business handoffs");
-          const waiting = await tx.getWaitingHandoffFact?.(c.waitingInboxId);
-          if (!waiting || waiting.projectId !== c.projectId || waiting.loopId !== fact.loopId ||
-            waiting.sourceEventId !== fact.sourceEventId || waiting.recipientRoleId !== fact.cognitiveRoleId ||
-            waiting.disposition !== "waiting" || waiting.actorId !== fact.actorId)
-            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a signed same-source Inbox disposition by the cognition worker");
-          waitingInboxId = waiting.inboxId;
-        } else if (c.waitingInboxId) throw new DomainError("WAITING_HANDOFF_UNEXPECTED", "only waiting decisions may cite a waiting Inbox");
+          if (!!c.waitingInboxId === !!c.handoffDispatchId)
+            throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting requires exactly one signed source Inbox disposition or child business dispatch");
+          if (c.waitingInboxId) {
+            if (!fact.sourceTaskId || fact.sourceTaskId === task.id || fact.sourceTaskIsCognition || !await tx.getTask(fact.sourceTaskId))
+              throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a discoverable source business Task; cognition Tasks are not business handoffs");
+            const waiting = await tx.getWaitingHandoffFact?.(c.waitingInboxId);
+            if (!waiting || waiting.projectId !== c.projectId || waiting.loopId !== fact.loopId ||
+              waiting.sourceEventId !== fact.sourceEventId || waiting.recipientRoleId !== fact.cognitiveRoleId ||
+              waiting.disposition !== "waiting" || waiting.actorId !== fact.actorId)
+              throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a signed same-source Inbox disposition by the cognition worker");
+            waitingInboxId = waiting.inboxId;
+          } else {
+            const child = await tx.getChildHandoffFact?.(c.handoffDispatchId!);
+            if (!child || child.projectId !== c.projectId || child.parentDispatchId !== fact.dispatchId ||
+              child.loopId !== fact.loopId || child.sourceEventId !== fact.sourceEventId ||
+              child.requestedBy !== fact.actorId || child.recipientRoleId === fact.cognitiveRoleId ||
+              child.cognitiveRoleId !== fact.cognitiveRoleId || child.taskId === task.id ||
+              !Number.isFinite(Date.parse(child.requestedAtUtc)) || Date.parse(child.requestedAtUtc) > Date.parse(fact.decidedAtUtc))
+              throw new DomainError("WAITING_HANDOFF_REQUIRED", "waiting needs a signed earlier same-source business dispatch by the cognition worker");
+            handoffDispatchId = child.dispatchId;
+            handoffTaskId = child.taskId;
+          }
+        } else if (c.waitingInboxId || c.handoffDispatchId) throw new DomainError("WAITING_HANDOFF_UNEXPECTED", "only waiting decisions may cite a handoff");
         closureEvidence = {deliveryId:null,decisionId:fact.decisionId,sourceInboxId:fact.sourceInboxId,
-          sourceEventId:fact.sourceEventId,sourceTaskId:fact.sourceTaskId,waitingInboxId};
+          sourceEventId:fact.sourceEventId,sourceTaskId:fact.sourceTaskId,waitingInboxId,handoffDispatchId,handoffTaskId};
       }
       const revision = await newTaskRevision(tx, task, actorId, now, nextId, "done", c.reason);
       const closure: TaskClosure = { projectId: c.projectId, id: nextId(), taskId: task.id,

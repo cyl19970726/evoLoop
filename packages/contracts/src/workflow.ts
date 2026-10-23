@@ -96,6 +96,7 @@ export const workflowCommands = [
     deliveryId: id.optional(),
     decisionId: id.optional(),
     waitingInboxId: id.optional(),
+    handoffDispatchId: id.optional(),
     acceptanceResult: z.enum(["met", "unmet"]),
     acceptanceEvidence: text,
     reason: text,
@@ -244,6 +245,8 @@ export interface TaskClosure {
   sourceEventId: string | null;
   sourceTaskId: string | null;
   waitingInboxId: string | null;
+  handoffDispatchId: string | null;
+  handoffTaskId: string | null;
   acceptanceResult: "met";
   acceptanceEvidence: string;
   reason: string;
