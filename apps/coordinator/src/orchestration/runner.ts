@@ -173,6 +173,10 @@ export class ManagedLoopRunner {
           d.sourceEventId === resumed.previousSourceEventId && d.runtimeRunId === resumed.waitingRunId &&
           d.state === "completed" && d.outcome === "waiting");
     }
+    if (fact.kind === "schedule.task.todo") return fact.sourceLoopId === loop.id &&
+      fact.scheduleTargetLoopId === loop.id && fact.scheduleTargetStageId === loop.stageId &&
+      !!fact.scheduleId && !!fact.scheduleRevisionId && !!fact.plannedAtUtc &&
+      !!fact.scheduleTaskRevisionId && !!fact.operationId && !!fact.sourceActorId;
     if (fact.kind === "dispatch.gap" && fact.sourceLoopId === loop.id && fact.originDispatchId && fact.gapRunId) {
       // A missing signed intent is a software recovery source even when the failed worker was cognition itself.
       return dispatches.some(d => d.id === fact.originDispatchId && d.taskId === fact.subjectId &&
@@ -239,10 +243,12 @@ export class ManagedLoopRunner {
       const resumedFrom = resume ? ` This is a new review after waiting Decision ${resume.waitingDecisionId};
         original Issue source ${resume.originalSourceEventId}, previous review source ${resume.previousSourceEventId}.
         Preserve the old Decision and rejected operations; do not replay their Run.` : "";
+      const scheduledTask = sourceFact?.kind === "schedule.task.todo" && sourceFact.scheduleId && sourceFact.plannedAtUtc
+        ? ` Schedule ${sourceFact.scheduleId} revision ${sourceFact.scheduleRevisionId} created existing todo Task ${sourceFact.subjectId} at ${sourceFact.plannedAtUtc}. Read that exact Task and reuse it for the next_action child dispatch if still eligible. Do not create a duplicate Task for this occurrence.` : "";
       applied(await this.deps.workflow.execute(cognitive.principal, { type: "task.create", projectId: loop.projectId,
         operationId: loopIntentId(taskId, "create"), taskId, stageId: loop.stageId,
         title: `Cognition: ${source}`, owner: loop.cognitiveRoleId, kind: "research",
-        content: `Review the verified ${source} for Goal ${loop.goalId}, Stage ${loop.stageId}. Read actual project state and decide a bounded next action. Inbox ${inbox.id}.${fixedIssue}${resumedFrom}`,
+        content: `Review the verified ${source} for Goal ${loop.goalId}, Stage ${loop.stageId}. Read actual project state and decide a bounded next action. Inbox ${inbox.id}.${fixedIssue}${resumedFrom}${scheduledTask}`,
         acceptance: "Record a grounded decision: create and dispatch a scoped business Task, wait, take no action, or stop.",
         consumer: loop.cognitiveRoleId, useRequired: false,
         evidence: `Source event ${inbox.sourceEventId}`, stopCondition: "A decision is recorded for this source." }));
@@ -426,6 +432,8 @@ export class ManagedLoopRunner {
         previousSourceEventId?: string | null } : null;
     const resumeContext = resumed?.issueRevisionId && resumed.issueContentHash
       ? ` New waiting-resume review from Decision ${resumed.waitingDecisionId}; original source ${resumed.originalSourceEventId}, previous source ${resumed.previousSourceEventId}. Read fixed Issue ${resumed.subjectId} revision ${resumed.issueRevisionId} at get /api/projects/${loop.projectId}/documents/${resumed.subjectId}/revisions/${resumed.issueRevisionId}/original and verify SHA-256 ${resumed.issueContentHash}. The old Run, Decision and rejected operations remain historical; use only this new Run's identity.` : "";
+    const scheduleContext = source?.kind === "schedule.task.todo" && source.scheduleTargetLoopId === loop.id
+      ? ` This source is a verified Schedule occurrence for existing todo Task ${source.subjectId}, Schedule ${source.scheduleId} revision ${source.scheduleRevisionId}, planned ${source.plannedAtUtc}. Reuse that exact Task if its current version, owner, Stage, and Run state remain eligible; do not create another Task for this occurrence.` : "";
     const businessScopes = kind === "cognition" ? (await Promise.all(loop.allowedBusinessRoleIds.map(async roleId => {
       const target = await this.deps.controller(loop.projectId, roleId);
       return target ? `${roleId}=${target.authorizationScopeId}` : `${roleId}=unavailable`;
@@ -434,7 +442,7 @@ export class ManagedLoopRunner {
       ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. To delegate, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
       : `Execute Task ${dispatch.taskId} from its fixed basis. Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
-    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
+    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}${scheduleContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
     if (input.length > 4000) throw new Error("WORKER_INPUT_TOO_LONG");
     return input;
   }

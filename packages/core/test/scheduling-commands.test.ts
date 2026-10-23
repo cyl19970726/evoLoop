@@ -39,3 +39,33 @@ test("expired authority may pause or stop but cannot activate or alter a definit
   await applySchedule(tx, principal, revise("stopped"), now);
   assert.equal(current.state, "stopped");
 });
+
+test("managed Schedule target is exact and cannot be changed while pausing", async () => {
+  const stageId = randomUUID(), loopId = randomUUID(), goalId = randomUUID();
+  const command = create();
+  command.authorization.expiresAtUtc = null;
+  command.authorization.roleId = "business-role";
+  command.template.owner = "business-role";
+  command.template.managedTarget = { loopId, stageId };
+  let current: ScheduleDefinition | null = null;
+  let stageState = "active", loopState = "paused";
+  const tx = {
+    getSchedule: async () => current,
+    getStage: async () => ({ projectId, id: stageId, goalId, state: stageState }),
+    getManagedScheduleLoop: async () => ({ projectId, id: loopId, goalId, stageId, state: loopState,
+      allowedBusinessRoleIds: ["business-role"] }),
+    insertSchedule: async (value: ScheduleDefinition) => { current = value; },
+    updateSchedule: async (value: ScheduleDefinition) => { current = value; },
+  } as unknown as SchedulingTransaction;
+  await applySchedule(tx, principal, command, now);
+  assert.equal(current!.revision.template.managedTarget?.loopId, loopId);
+  const revise = (state: "active" | "paused" | "stopped", template = command.template): Extract<ScheduleCommand, { type: "schedule.revise" }> =>
+    ({ ...command, type: "schedule.revise", state, expectedVersion: current!.version,
+      revisionId: randomUUID(), operationId: randomUUID(), template });
+  await assert.rejects(() => applySchedule(tx, principal, revise("paused",
+    { ...command.template, managedTarget: { loopId: randomUUID(), stageId } }), now), /cannot change a schedule definition/);
+  stageState = "reviewed"; loopState = "stopped";
+  await assert.rejects(() => applySchedule(tx, principal, revise("active"), now), /active Stage/);
+  await applySchedule(tx, principal, revise("stopped"), now);
+  assert.equal(current!.state, "stopped");
+});

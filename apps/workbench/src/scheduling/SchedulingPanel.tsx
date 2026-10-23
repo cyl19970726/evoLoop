@@ -4,6 +4,8 @@ import { errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { schedulingClient, type SchedulingGrant, type SchedulingStatus } from "./client";
 import { MarkdownBody } from "../ui/MarkdownBody";
+import { orchestrationClient } from "../orchestration/client";
+import { managedTargetProblem, scheduleTemplate, suspendSchedule } from "./managedTarget";
 
 const stamp = (value: string) => new Date(value).toLocaleString();
 const stateLabel = { active: "运行中", paused: "已暂停", stopped: "已停止" } as const;
@@ -49,7 +51,7 @@ function fromValues(values: Record<string, string>, context: MutationContext, gr
   const misfire: MisfirePolicy = values.misfireKind === "bounded" ? { kind: "bounded", maxCatchUp: Number(values.maxCatchUp) }
     : values.misfireKind === "skip" ? { kind: "skip" } : { kind: "latest" };
   return { state: values.state, timezone: values.timezone, rule, misfire, overlap: values.overlap,
-    template: { title: values.title, content: values.content, acceptance: values.acceptance, owner: values.owner },
+    template: scheduleTemplate(values, definition),
     authorization: { scopeId: grant?.scopeId ?? old!.scopeId, roleId: grant?.roleId ?? old!.roleId, authorizedBy: context.principal.actorId,
       expiresAtUtc: values.expiresAtUtc ? new Date(values.expiresAtUtc).toISOString() : null }, reason: values.reason };
 }
@@ -98,6 +100,23 @@ function ScheduleCard({ definition, context, refresh, grants }: { definition: Sc
   const [history, setHistory] = useState<{ revisions: ScheduleRevision[]; occurrences: Occurrence[] } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const target = definition.revision.template.managedTarget;
+  const [targetRead, setTargetRead] = useState<{ state: "checking" | "verified" | "invalid"; reason?: string;
+    stageName?: string; loopState?: string; goalId?: string }>(() => ({ state: target ? "checking" : "verified" }));
+  useEffect(() => {
+    if (!target) { setTargetRead({ state: "verified" }); return; }
+    let active = true;
+    setTargetRead({ state: "checking" });
+    const client = orchestrationClient(context.token, context.projectId);
+    void Promise.all([client.loop(target.loopId), client.stage(target.stageId)])
+      .then(([loop,stage]) => {
+        if (!active) return;
+        const reason = managedTargetProblem(context.projectId, definition, loop, stage);
+        setTargetRead(reason ? { state: "invalid", reason } : { state: "verified", stageName: stage.deliverable, loopState: loop.state, goalId: loop.goalId });
+      })
+      .catch(cause => { if (active) setTargetRead({ state: "invalid", reason: `目标读回失败：${errorText(cause)}` }); });
+    return () => { active = false; };
+  }, [context.token, context.projectId, definition, target?.loopId, target?.stageId]);
   async function readHistory() {
     setBusy(true); setError("");
     try {
@@ -114,10 +133,18 @@ function ScheduleCard({ definition, context, refresh, grants }: { definition: Sc
       <div><dt>重叠</dt><dd>{revision.overlap === "queue" ? "排队" : "跳过"}</dd></div>
       <div><dt>新任务正文</dt><dd><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}</p></dd></div>
       <div><dt>授权</dt><dd>{revision.authorization.scopeId} · 职责 {revision.authorization.roleId} · 授权人 {revision.authorization.authorizedBy} · 到期 {revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"}</dd></div>
+      {target && <div><dt>受管目标</dt><dd>{targetRead.state === "verified" ? `阶段产物：${targetRead.stageName} · 工作链 ${target.loopId.slice(0,8)}（${targetRead.loopState === "paused" ? "已暂停" : "运行中"}）` : targetRead.state === "checking" ? "正在核对绑定的工作链与阶段…" : "绑定暂不可核对"}
+        <details><summary>核对固定目标标识</summary><p>Loop <code>{target.loopId}</code> · Stage <code>{target.stageId}</code>{targetRead.goalId && <> · Goal <code>{targetRead.goalId}</code></>}</p></details></dd></div>}
       <div><dt>已检查至</dt><dd>{stamp(definition.watermarkUtc)}</dd></div></dl>
+    {target && targetRead.state === "invalid" && <Notice error>{targetRead.reason}。不能保存普通修订或恢复运行；可在下方保持原定义暂停或停止。</Notice>}
     {definition.state !== "stopped" && <details className="workflow-detail"><summary>修订规则、暂停或恢复</summary>
       <Notice>修订以当前版本为基线；已排队的旧修订时刻仍需单独核对，不会悄悄改写。</Notice>
-      <ActionForm context={context} review title="保存日程修订" fields={fields(grants,definition)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />
+      {targetRead.state === "verified" ? <ActionForm context={context} review title="保存日程修订" fields={fields(grants,definition)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />
+        : targetRead.state === "checking" ? <p>请等候固定目标核对完成，再编辑日程。</p>
+          : <ActionForm context={context} review title="保持原定义并暂停或停止" fields={[
+            { name: "state", label: "停用状态", kind: "select", value: definition.state === "active" ? "paused" : "stopped",
+              options: [option("paused", "暂停"), option("stopped", "停止（不能恢复）")] }, reasonField,
+          ]} build={v => suspendSchedule(definition, v.state as "paused" | "stopped", v.reason, context.principal.actorId)} />}
     </details>}
     <div className="actions"><button type="button" onClick={readHistory} disabled={busy}>{busy ? "读取中…" : "阅读修订与发生记录"}</button></div>{error && <Notice error>{error}</Notice>}
     {history && <><h3>日程修订</h3>{history.revisions.length === 0 && <p className="empty">尚无修订记录。</p>}{history.revisions.map(item => <article className="history" key={item.id}><strong>v{item.version} · {ruleText(item.rule)}</strong><p>{item.reason}</p><small>{item.actorId} · {stamp(item.createdAtUtc)}</small></article>)}
