@@ -10,7 +10,7 @@ import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { DeliveryArtifact, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
-import { scrollToTaskSection, taskSectionFromHash } from "../orchestration/navigation";
+import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash } from "../orchestration/navigation";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -137,7 +137,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     const onHash = () => {
       const requested = taskSectionFromHash(window.location.hash, projectId, id);
       if (requested) {
-        const target = selectedRevision ? "history" : requested;
+        const target = requested;
         landingRef.current = target === "overview" ? null : target;
         setTab(target);
       }
@@ -207,6 +207,13 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const instanceId = selectedRevision ?? "current";
   const tabId = (value: TaskTab) => `task-tab-${projectId}-${id}-${instanceId}-${value}`;
   const panelId = (value: TaskTab) => `task-panel-${projectId}-${id}-${instanceId}-${value}`;
+  function selectTab(value: TaskTab) {
+    if (selectedRevision && value === "history") return;
+    if (!navigateTaskTab(projectId, id, value, window.location)) {
+      landingRef.current = value === "overview" ? null : value;
+      setTab(value);
+    }
+  }
   return <div className="content task-page">
     <a className="back" href={taskListHref(projectId)}>← 返回任务列表</a>
     {selectedRevision && <Alert>正在查看固定历史任务修订 <ShortId value={selectedRevision} />。下方页首是当前任务摘要；历史面板单独列出当时状态与依据。<a href={href(projectId, "task", id)}>返回当前任务</a></Alert>}
@@ -215,17 +222,17 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <p><a href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(id)}`}>查看此任务的评价与后果 →</a></p>
       <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<span>责任者：{detail.task.owner}</span><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
     </header>
-    {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => setTab("history")}>查看历史时间线 →</button></Alert>}
+    {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => selectTab("history")}>查看历史时间线 →</button></Alert>}
     {error && <Alert kind="error">{error}</Alert>}
-    <div className="task-tabs" role="tablist" aria-label="任务详情">{taskTabs.map(item => <button key={item.id} type="button" role="tab" id={tabId(item.id)} aria-controls={panelId(item.id)} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => { if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return; event.preventDefault(); const index = taskTabs.findIndex(candidate => candidate.id === item.id); const next = taskTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + taskTabs.length) % taskTabs.length]; setTab(next.id); document.getElementById(tabId(next.id))?.focus(); }}>
+    <div className="task-tabs" role="tablist" aria-label="任务详情">{taskTabs.map(item => <button key={item.id} type="button" role="tab" id={tabId(item.id)} aria-controls={panelId(item.id)} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => selectTab(item.id)} onKeyDown={event => { if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return; event.preventDefault(); const index = taskTabs.findIndex(candidate => candidate.id === item.id); const next = taskTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + taskTabs.length) % taskTabs.length]; selectTab(next.id); document.getElementById(tabId(next.id))?.focus(); }}>
       {item.label}{item.id === "basis" && pending.length > 0 && <span className="task-tab-count">{pending.length}</span>}
     </button>)}</div>
     <section role="tabpanel" id={panelId("overview")} aria-labelledby={tabId("overview")} hidden={tab !== "overview"}>
       <div className="task-overview-grid">
         <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} /><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
         <section className="panel task-focus"><h2>验收条件</h2><p>{detail.task.acceptance}</p><p className="task-fineprint">任务状态、技术检查和实际使用分别记录；关闭决定见交付记录。</p></section>
-        <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => setTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
-        <section className="panel task-focus task-delivery-summary"><div className="panel-head"><h2>最新交付与使用</h2><button type="button" className="quiet" onClick={() => setTab("delivery")}>查看完整记录 →</button></div>
+        <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => selectTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
+        <section className="panel task-focus task-delivery-summary"><div className="panel-head"><h2>最新交付与使用</h2><button type="button" className="quiet" onClick={() => selectTab("delivery")}>查看完整记录 →</button></div>
           {!latest ? <p className="empty">尚无交付记录；执行状态不能代替交付。</p> : <><DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /><p><strong>技术检查：{latest.technicalResult === "passed" ? "通过" : "失败"}</strong></p><p className="task-use-summary"><strong>实际使用：</strong>{latestObservations.length ? latestObservations.map(o => `${o.observerKind === "human" ? "人类" : "Agent"} · ${useResults[o.result]}`).join("；") : "尚无本次交付的使用记录"}</p><details className="task-summary-evidence"><summary>阅读技术检查证据</summary><p className="task-evidence">{latest.technicalEvidence}</p></details>
             <div className="task-use-evidence"><strong>本次交付的实际使用</strong>{latestObservations.length ? latestObservations.map(observation => <p key={observation.id}>{observation.observer} · {useResults[observation.result]}：{observation.evidence}</p>) : <p>尚无本次交付的使用观察；旧交付的使用记录不沿用。</p>}</div></>}
         </section>

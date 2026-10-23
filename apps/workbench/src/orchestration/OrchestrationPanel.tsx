@@ -6,7 +6,7 @@ import type { WorkTaskStatus } from "../workflow/workStatusPresentation";
 import { Notice } from "../workflow/ActionForm";
 import { date } from "../ui/shared";
 import { mergePage, orchestrationClient, type LoopPart, type LoopPartItem, type OrchestrationStatus, type ResultPage, type TaskLoopContext } from "./client";
-import { deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "./presentation";
+import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "./presentation";
 import { currentChainSummary, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome } from "./summary";
 import { taskSectionHref } from "./navigation";
 import "./orchestration.css";
@@ -237,7 +237,7 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
             <div><dt>{later ? "当时的下一步" : "下一步"}</dt><dd>{later ? "已有正式来源或父子派发接续；继续读下方记录，勿把当时等待当作当前责任。" :
               item.outcome === "waiting" ? "当时记录为等待；当前条件请核对上方结论与完整署名理由。" :
               intentGap ? "缺口已保留；核因与后续处理见关联工作记录。" : nextAction(inbox,item,submission)}</dd></div>
-            <div><dt>署名判断</dt><dd>{decision ? `${dispositionLabel(decision.kind)} · ${decision.actorId}` : inbox?.acknowledgedBy ? `${dispositionLabel(inbox.disposition)} · ${inbox.acknowledgedBy}` : "尚未读回署名决定"}</dd></div></dl>
+            <div><dt>{decisionHeading(!!decision)}</dt><dd>{decision ? `${dispositionLabel(decision.kind)} · ${decision.actorId}` : inbox?.acknowledgedBy ? `${dispositionLabel(inbox.disposition)} · ${inbox.acknowledgedBy}` : "尚未读回派发决定"}</dd></div></dl>
           <p className="orch-story-links">{data.revisionIds[item.taskId]?.[item.taskVersion] ?
             <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>派发请求时任务修订 v{item.taskVersion}</a> :
             <span>派发请求时任务修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
@@ -248,6 +248,7 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
             <p><strong>派发理由：</strong>{item.reason || item.purpose}</p>
             {inbox?.reason && <p><strong>入站处理理由：</strong>{inbox.reason}</p>}
             {decision?.reason && <p><strong>署名决定理由：</strong>{decision.reason}</p>}
+            {title && item.purpose === "cognition" && <p><strong>完整目标与阶段：</strong>{title}</p>}
             {detail?.task.title && item.purpose === "cognition" && <p><strong>原任务现名称：</strong>{detail.task.title}</p>}
             {detail?.task.content && <details><summary>任务现正文</summary><p>{detail.task.content}</p></details>}
             <p>派发 <code>{item.id}</code> · 来源事件 <code>{item.sourceEventId}</code> · 入站 <code>{item.inboxId}</code></p>
