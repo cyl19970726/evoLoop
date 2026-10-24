@@ -45,41 +45,43 @@ function nextAction(stage: Stage, tasks: TaskDetail[]): string {
 }
 export function JourneyBoard({ context, refresh, propose = false }: { context: MutationContext; refresh: number; propose?: boolean }) {
   const hasLoaded = useRef(false);
+  const readPending = useRef(true);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [taskDetails, setTaskDetails] = useState<TaskDetail[] | null>(null);
-  const [relationError, setRelationError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [readRequest, setReadRequest] = useState(0);
+  const [readVersion, setReadVersion] = useState(0);
   useEffect(() => {
     let active = true; setLoading(true); setError("");
     const client = api(context.token);
     Promise.all([loadComplete("目标", cursor => client.goals(context.projectId, cursor)), client.stages(context.projectId),
-      loadComplete("过程文档", cursor => client.documents(context.projectId, cursor))])
-      .then(([g, s, d]) => { if (active) { setGoals(g); setStages(s); setDocuments(d); hasLoaded.current = true; } })
+      loadComplete("过程文档", cursor => client.documents(context.projectId, cursor)), loadTaskDetails(context.token, context.projectId)])
+      .then(([g, s, d, tasks]) => { if (active) {
+        setGoals(g); setStages(s); setDocuments(d); setTaskDetails(tasks);
+        hasLoaded.current = true; setReadVersion(value => value + 1);
+      } })
       .catch(cause => { if (active) setError(errorText(cause)); })
-      .finally(() => { if (active) setLoading(false); });
+      .finally(() => { if (active) { readPending.current = false; setLoading(false); } });
     return () => { active = false; };
-  }, [context.token, context.projectId, refresh]);
-  useEffect(() => {
-    let active = true; setTaskDetails(null); setRelationError("");
-    loadTaskDetails(context.token, context.projectId)
-      .then(value => { if (active) setTaskDetails(value); })
-      .catch(cause => { if (active) setRelationError(errorText(cause)); });
-    return () => { active = false; };
-  }, [context.token, context.projectId, refresh]);
+  }, [context.token, context.projectId, refresh, readRequest]);
+  const readCurrent = () => {
+    if (loading || readPending.current) return;
+    readPending.current = true;
+    setReadRequest(value => value + 1);
+  };
   if (loading && !hasLoaded.current) return <section className="panel"><p>正在读取目标与阶段…</p></section>;
-  if (error && !hasLoaded.current) return <section className="panel"><Notice error>{error}</Notice><button onClick={context.onChanged}>重试读取目标</button></section>;
+  if (error && !hasLoaded.current) return <section className="panel"><Notice error>回读失败：{error}。当前状态尚未读全，不能据此判断进度。</Notice><button type="button" onClick={readCurrent}>重试回读当前状态</button></section>;
   context = { ...context, blocked: context.blocked || loading || !!error };
   return <div className="journey-board">
-    {loading && <Notice>正在回读目标与阶段；草稿保留，读取完成后再提交。</Notice>}
-    {error && <Notice error>回读失败：{error}。下方保留上次读取与草稿，请重试读取。</Notice>}
+    <div className="actions"><button type="button" onClick={readCurrent} disabled={loading}>{loading ? "回读中…" : "回读当前状态"}</button></div>
+    {loading && <Notice>正在回读目标、阶段及任务关联；旧读取和草稿保留，完成前不能据此判断当前进度。</Notice>}
+    {error && <Notice error>回读失败：{error}。下方是上次读取，不能据此判断当前进度；草稿保留，请重试回读。</Notice>}
     <div hidden={propose}>
     <section className="panel"><div className="panel-head"><h2>目标 → 阶段 → 任务</h2><span>当前项目真实对象；不以工程里程碑推算完成百分比</span></div>
       <p className="muted">这里的“阶段”来自本项目的 Goal/Stage/Task 数据。产品旅程 J1–J6 见仓库 <code>docs/product/definition.md</code>；实施路线 M0–M4 见 <code>docs/roadmap.md</code>，两套编号不自动映射到本项目。</p>
-      {relationError && <Notice error>任务关联未完整读取：{relationError}。不能据此判断进度；请回读。</Notice>}
-      {taskDetails === null && !relationError && <p>正在核对任务与所属阶段…</p>}
       {taskDetails !== null && goals.map(goal => {
         const relatedStages = stages.filter(stage => stage.goalId === goal.id);
         return <div className="journey-goal" key={goal.id}><h3>{goal.outcome}</h3><p className="muted">目标负责人 {goal.owner} · v{goal.version}</p>
@@ -107,7 +109,7 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
     </section>
     <section className="panel"><div className="panel-head"><h2>阶段交付与学习问题</h2><span>阶段接受与结果回看分别记录</span></div>
       {!stages.length && <p className="empty">还没有阶段候选。阶段需回答交付什么、想弄清什么。</p>}
-      {stages.map(stage => <StageCard key={stage.id} stage={stage} context={{ ...context, draftScope: `stage:${stage.id}`, draftBaseline: String(stage.version) }} />)}
+      {stages.map(stage => <StageCard key={stage.id} stage={stage} readVersion={readVersion} context={{ ...context, draftScope: `stage:${stage.id}`, draftBaseline: String(stage.version) }} />)}
       {goals.length > 0 && <details className="workflow-detail"><summary>提议下一阶段</summary><ActionForm context={context} title="提出阶段" fields={[
         { name: "goalId", label: "对应目标", kind: "select", options: goals.map(g => option(g.id, g.outcome)) },
         { name: "deliverable", label: "阶段交付", kind: "textarea" }, { name: "learningQuestion", label: "学习问题", kind: "textarea" }, reasonField,
@@ -130,17 +132,25 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
   </div>;
 }
 
-function StageCard({ stage, context }: { stage: Stage; context: MutationContext }) {
+function StageCard({ stage, context, readVersion }: { stage: Stage; context: MutationContext; readVersion: number }) {
   const [history, setHistory] = useState<Awaited<ReturnType<ReturnType<typeof api>["stageReviews"]>> | null>(null);
   const [error, setError] = useState("");
-  async function readHistory() { setError(""); try { setHistory(await api(context.token).stageReviews(context.projectId, stage.id)); } catch (cause) { setError(errorText(cause)); } }
+  const [loading, setLoading] = useState(true);
+  async function readHistory() {
+    if (loading) return;
+    setLoading(true); setError("");
+    try { setHistory(await api(context.token).stageReviews(context.projectId, stage.id)); }
+    catch (cause) { setError(errorText(cause)); }
+    finally { setLoading(false); }
+  }
   useEffect(() => {
-    let active = true;
+    let active = true; setLoading(true); setError("");
     api(context.token).stageReviews(context.projectId, stage.id)
       .then(value => { if (active) setHistory(value); })
-      .catch(cause => { if (active) setError(errorText(cause)); });
+      .catch(cause => { if (active) setError(errorText(cause)); })
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [context.token, context.projectId, stage.id, stage.version]);
+  }, [context.token, context.projectId, stage.id, stage.version, readVersion]);
   const ordered = [...(history ?? [])].sort((a, b) => a.stageVersion - b.stageVersion || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const latest = ordered.at(-1);
   const reviewFields: Field[] = [
@@ -156,13 +166,13 @@ function StageCard({ stage, context }: { stage: Stage; context: MutationContext 
     {stage.state === "reviewed" && <>
       <p>阶段已回看。若新证据改变判断，请指明要纠正的最新记录；旧判断会保留。</p>
       {latest && <p className="history">纠正目标：{latest.nextChoice} · {latest.actorId} · {latest.createdAt}<br /><code>{latest.id}</code></p>}
-      {history === null && !error && <p>正在读取最新回看，读取前不能提交纠正。</p>}
+      {loading && <p>正在读取最新回看，读取前不能提交纠正。</p>}
       {history !== null && !latest && <Notice error>没有可纠正的回看记录，请先核对后端历史。</Notice>}
-      {latest && <ActionForm key={`correct:${latest.id}:${stage.version}`} context={context} review title="追加阶段回看纠正" fields={reviewFields.map(field => ({ ...field, value: field.name === "reason" ? "" : String(latest[field.name as keyof typeof latest] ?? "") }))}
+      {latest && <ActionForm key={`correct:${latest.id}:${stage.version}`} context={{ ...context, blocked: context.blocked || loading || !!error }} review title="追加阶段回看纠正" fields={reviewFields.map(field => ({ ...field, value: field.name === "reason" ? "" : String(latest[field.name as keyof typeof latest] ?? "") }))}
         build={v => ({ type: "stage.review.correct", stageId: stage.id, expectedVersion: stage.version, supersedesReviewId: latest.id, ...v })} />}
     </>}
-    <button onClick={readHistory}>阅读回看历史</button>{error && <Notice error>{error}</Notice>}
-    {ordered.map(review => <article className="decision" key={review.id}><strong>{review.nextChoice}{review.id === latest?.id ? " · 当前判断" : " · 已被后续回看替代"}</strong><p>采用：{review.adopted}</p><p>反例：{review.rejected}</p><p>差距：{review.gap}</p><p>依据：{review.evidence}</p><p>理由：{review.reason}</p>{review.supersedesReviewId && <p className="muted">纠正了回看 <code>{review.supersedesReviewId}</code></p>}<small>{review.actorId} · {review.createdAt}</small></article>)}
+    <button onClick={readHistory} disabled={loading}>阅读回看历史</button>{error && <Notice error>回看历史回读失败：{error}。下方保留旧读取，不能据此判断当前记录。</Notice>}
+    {ordered.map(review => <article className="decision" key={review.id}><strong>{review.nextChoice}{review.id === latest?.id ? loading || error ? " · 上次读取的判断" : " · 当前判断" : " · 已被后续回看替代"}</strong><p>采用：{review.adopted}</p><p>反例：{review.rejected}</p><p>差距：{review.gap}</p><p>依据：{review.evidence}</p><p>理由：{review.reason}</p>{review.supersedesReviewId && <p className="muted">纠正了回看 <code>{review.supersedesReviewId}</code></p>}<small>{review.actorId} · {review.createdAt}</small></article>)}
     {history?.length === 0 && <p>尚无阶段回看记录。</p>}
   </details>;
 }
