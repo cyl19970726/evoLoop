@@ -18,8 +18,13 @@
       "group": "产品与阶段"
     },
     {
-      "path": "docs/product/tasks-and-documents.md",
-      "title": "任务与过程文档",
+      "path": "docs/product/functional-scenarios.md",
+      "title": "功能场景与协作闭环",
+      "group": "产品与阶段"
+    },
+    {
+      "path": "docs/product/workbench.md",
+      "title": "项目工作台设计",
       "group": "产品与阶段"
     },
     {
@@ -28,18 +33,13 @@
       "group": "产品与阶段"
     },
     {
-      "path": "docs/product/functional-scenarios.md",
-      "title": "功能场景与协作闭环",
-      "group": "产品与阶段"
-    },
-    {
       "path": "docs/product/daily-loop.md",
       "title": "Dogfood 与日常工作",
       "group": "产品与阶段"
     },
     {
-      "path": "docs/product/workbench.md",
-      "title": "项目工作台设计",
+      "path": "docs/product/tasks-and-documents.md",
+      "title": "任务与过程文档",
       "group": "产品与阶段"
     },
     {
