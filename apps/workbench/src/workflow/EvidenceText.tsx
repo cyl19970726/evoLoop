@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 
 export function evidencePreview(value: string): string | null {
   const points = Array.from(value);
@@ -16,9 +16,9 @@ export function EvidenceText({ label, value }: { label: string; value: string })
   const preview = evidencePreview(value);
   return <div className="task-evidence-text">
     <strong>{label}</strong>
-    {preview === null ? <p>{value}</p> : <>
+    {preview === null ? <p>{value}</p> : <React.Fragment>
       <p>{preview}</p>
       <details className="task-evidence-disclosure"><summary>展开完整{label}</summary><p>{value}</p></details>
-    </>}
+    </React.Fragment>}
   </div>;
 }
