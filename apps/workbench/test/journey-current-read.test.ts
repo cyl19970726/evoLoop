@@ -93,12 +93,23 @@ test("Journey reads current Stage and Task together after a cached return, retai
   delayed = false; releaseRead();
   await board.getByText("reviewed · 1 项任务").waitFor();
   await board.getByText("done").waitFor();
+  await board.locator("summary", { hasText: "阶段甲 reviewed" }).click();
+  await board.getByText("stop · 当前判断").waitFor();
   assert.equal(await board.locator('textarea[name="outcome"]').last().inputValue(), "未提交草稿");
   assert.match(await browserPage.locator(".global-alert").first().innerText(), /结果尚未确认/);
+
+  delayed = true;
+  const secondReadStarted = new Promise(resolve => { readStarted = resolve; });
+  await board.getByRole("button", { name: "回读当前状态" }).click();
+  await secondReadStarted;
+  await board.getByText("stop · 上次读取的判断").waitFor();
+  delayed = false; releaseRead();
+  await board.getByText("stop · 当前判断").waitFor();
 
   failTasks = true;
   await board.getByRole("button", { name: "回读当前状态" }).click();
   await board.getByText(/回读失败：任务关联读取失败/).waitFor();
+  await board.getByText("stop · 上次读取的判断").waitFor();
   assert.match(await board.innerText(), /下方是上次读取，不能据此判断当前进度/);
   assert.match(await board.innerText(), /reviewed · 1 项任务/);
   assert.equal(await board.locator('textarea[name="outcome"]').last().inputValue(), "未提交草稿");

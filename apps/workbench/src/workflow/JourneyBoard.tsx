@@ -109,7 +109,7 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
     </section>
     <section className="panel"><div className="panel-head"><h2>阶段交付与学习问题</h2><span>阶段接受与结果回看分别记录</span></div>
       {!stages.length && <p className="empty">还没有阶段候选。阶段需回答交付什么、想弄清什么。</p>}
-      {stages.map(stage => <StageCard key={stage.id} stage={stage} readVersion={readVersion} context={{ ...context, draftScope: `stage:${stage.id}`, draftBaseline: String(stage.version) }} />)}
+      {stages.map(stage => <StageCard key={stage.id} stage={stage} readVersion={readVersion} mainReadStale={loading || !!error} context={{ ...context, draftScope: `stage:${stage.id}`, draftBaseline: String(stage.version) }} />)}
       {goals.length > 0 && <details className="workflow-detail"><summary>提议下一阶段</summary><ActionForm context={context} title="提出阶段" fields={[
         { name: "goalId", label: "对应目标", kind: "select", options: goals.map(g => option(g.id, g.outcome)) },
         { name: "deliverable", label: "阶段交付", kind: "textarea" }, { name: "learningQuestion", label: "学习问题", kind: "textarea" }, reasonField,
@@ -132,7 +132,7 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
   </div>;
 }
 
-function StageCard({ stage, context, readVersion }: { stage: Stage; context: MutationContext; readVersion: number }) {
+function StageCard({ stage, context, readVersion, mainReadStale }: { stage: Stage; context: MutationContext; readVersion: number; mainReadStale: boolean }) {
   const [history, setHistory] = useState<Awaited<ReturnType<ReturnType<typeof api>["stageReviews"]>> | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -172,7 +172,7 @@ function StageCard({ stage, context, readVersion }: { stage: Stage; context: Mut
         build={v => ({ type: "stage.review.correct", stageId: stage.id, expectedVersion: stage.version, supersedesReviewId: latest.id, ...v })} />}
     </>}
     <button onClick={readHistory} disabled={loading}>阅读回看历史</button>{error && <Notice error>回看历史回读失败：{error}。下方保留旧读取，不能据此判断当前记录。</Notice>}
-    {ordered.map(review => <article className="decision" key={review.id}><strong>{review.nextChoice}{review.id === latest?.id ? loading || error ? " · 上次读取的判断" : " · 当前判断" : " · 已被后续回看替代"}</strong><p>采用：{review.adopted}</p><p>反例：{review.rejected}</p><p>差距：{review.gap}</p><p>依据：{review.evidence}</p><p>理由：{review.reason}</p>{review.supersedesReviewId && <p className="muted">纠正了回看 <code>{review.supersedesReviewId}</code></p>}<small>{review.actorId} · {review.createdAt}</small></article>)}
+    {ordered.map(review => <article className="decision" key={review.id}><strong>{review.nextChoice}{review.id === latest?.id ? loading || error || mainReadStale ? " · 上次读取的判断" : " · 当前判断" : " · 已被后续回看替代"}</strong><p>采用：{review.adopted}</p><p>反例：{review.rejected}</p><p>差距：{review.gap}</p><p>依据：{review.evidence}</p><p>理由：{review.reason}</p>{review.supersedesReviewId && <p className="muted">纠正了回看 <code>{review.supersedesReviewId}</code></p>}<small>{review.actorId} · {review.createdAt}</small></article>)}
     {history?.length === 0 && <p>尚无阶段回看记录。</p>}
   </details>;
 }
