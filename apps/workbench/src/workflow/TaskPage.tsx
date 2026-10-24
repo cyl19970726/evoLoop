@@ -9,7 +9,9 @@ import { TaskWorkflow } from "./TaskWorkflow";
 import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
-import { DeliveryArtifact, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
+import { DeliveryArtifact, DeliveryObservation, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
+import { EvidenceText } from "./EvidenceText";
+import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash } from "../orchestration/navigation";
 import "./task-page.css";
 type UnknownCommand = Command;
@@ -19,7 +21,6 @@ const taskTabs: { id: TaskTab; label: string }[] = [
   { id: "delivery", label: "交付与使用" }, { id: "runtime", label: "运行与关联" },
   { id: "history", label: "历史" }, { id: "actions", label: "任务操作" },
 ];
-const useResults = { used: "已使用", failed: "使用失败", notUsed: "尚未使用" } as const;
 const emptyDeliveries: NonNullable<TaskDetail["deliveries"]> = [];
 function Basis({ basis, projectId, documents }: { basis: BasisSet | null; projectId: string; documents?: Record<string, DocumentDetail> }) {
   if (!basis) return <p className="empty">这个任务修订没有固定依据集合。</p>;
@@ -131,20 +132,24 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
   const landingRef = useRef<TaskTab | null>(null);
+  const [landingVersion, setLandingVersion] = useState(0);
   const [tab, setTab] = useState<TaskTab>(() => selectedRevision ? "history" :
     taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
   useEffect(() => {
-    const onHash = () => {
+    const onHash = (navigated: boolean) => {
       const requested = taskSectionFromHash(window.location.hash, projectId, id);
       if (requested) {
-        const target = requested;
-        landingRef.current = target === "overview" ? null : target;
-        setTab(target);
+        if (navigated || requested !== "overview") {
+          landingRef.current = requested;
+          setLandingVersion(value => value + 1);
+        }
+        setTab(requested);
       }
     };
-    window.addEventListener("hashchange", onHash);
-    onHash();
-    return () => window.removeEventListener("hashchange", onHash);
+    const onHashChange = () => onHash(true);
+    window.addEventListener("hashchange", onHashChange);
+    onHash(false);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, [projectId, id, selectedRevision]);
   const [basisDocuments, setBasisDocuments] = useState<Record<string, DocumentDetail>>({});
   const [basisError, setBasisError] = useState("");
@@ -161,7 +166,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [detail, id, projectId, selectedRevision, tab]);
+  }, [detail, id, projectId, selectedRevision, tab, landingVersion]);
   useEffect(() => {
     let active = true;
     setError("");
@@ -203,14 +208,16 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const selected = detail.impacts.find(i => i.id === selectedImpactId);
   const deliveries = detail.deliveries ?? [];
   const latest = deliveries.at(-1);
-  const latestObservations = (detail.observations ?? []).filter(observation => observation.deliveryId === latest?.id);
+  const latestObservations = latest ? observationsForDelivery(detail.observations ?? [], latest.id) : [];
   const instanceId = selectedRevision ?? "current";
   const tabId = (value: TaskTab) => `task-tab-${projectId}-${id}-${instanceId}-${value}`;
+  const tabsId = `task-tabs-${projectId}-${id}-${instanceId}`;
   const panelId = (value: TaskTab) => `task-panel-${projectId}-${id}-${instanceId}-${value}`;
   function selectTab(value: TaskTab) {
     if (selectedRevision && value === "history") return;
     if (!navigateTaskTab(projectId, id, value, window.location)) {
-      landingRef.current = value === "overview" ? null : value;
+      landingRef.current = value;
+      setLandingVersion(current => current + 1);
       setTab(value);
     }
   }
@@ -224,7 +231,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </header>
     {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => selectTab("history")}>查看历史时间线 →</button></Alert>}
     {error && <Alert kind="error">{error}</Alert>}
-    <div className="task-tabs" role="tablist" aria-label="任务详情">{taskTabs.map(item => <button key={item.id} type="button" role="tab" id={tabId(item.id)} aria-controls={panelId(item.id)} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => selectTab(item.id)} onKeyDown={event => { if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return; event.preventDefault(); const index = taskTabs.findIndex(candidate => candidate.id === item.id); const next = taskTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + taskTabs.length) % taskTabs.length]; selectTab(next.id); document.getElementById(tabId(next.id))?.focus(); }}>
+    <div className="task-tabs" role="tablist" id={tabsId} aria-label="任务详情">{taskTabs.map(item => <button key={item.id} type="button" role="tab" id={tabId(item.id)} aria-controls={panelId(item.id)} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => selectTab(item.id)} onKeyDown={event => { if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return; event.preventDefault(); const index = taskTabs.findIndex(candidate => candidate.id === item.id); const next = taskTabs[(index + (event.key === "ArrowRight" ? 1 : -1) + taskTabs.length) % taskTabs.length]; selectTab(next.id); document.getElementById(tabId(next.id))?.focus({ preventScroll: true }); }}>
       {item.label}{item.id === "basis" && pending.length > 0 && <span className="task-tab-count">{pending.length}</span>}
     </button>)}</div>
     <section role="tabpanel" id={panelId("overview")} aria-labelledby={tabId("overview")} hidden={tab !== "overview"}>
@@ -233,8 +240,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <section className="panel task-focus"><h2>验收条件</h2><p>{detail.task.acceptance}</p><p className="task-fineprint">任务状态、技术检查和实际使用分别记录；关闭决定见交付记录。</p></section>
         <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => selectTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
         <section className="panel task-focus task-delivery-summary"><div className="panel-head"><h2>最新交付与使用</h2><button type="button" className="quiet" onClick={() => selectTab("delivery")}>查看完整记录 →</button></div>
-          {!latest ? <p className="empty">尚无交付记录；执行状态不能代替交付。</p> : <><DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /><p><strong>技术检查：{latest.technicalResult === "passed" ? "通过" : "失败"}</strong></p><p className="task-use-summary"><strong>实际使用：</strong>{latestObservations.length ? latestObservations.map(o => `${o.observerKind === "human" ? "人类" : "Agent"} · ${useResults[o.result]}`).join("；") : "尚无本次交付的使用记录"}</p><details className="task-summary-evidence"><summary>阅读技术检查证据</summary><p className="task-evidence">{latest.technicalEvidence}</p></details>
-            <div className="task-use-evidence"><strong>本次交付的实际使用</strong>{latestObservations.length ? latestObservations.map(observation => <p key={observation.id}>{observation.observer} · {useResults[observation.result]}：{observation.evidence}</p>) : <p>尚无本次交付的使用观察；旧交付的使用记录不沿用。</p>}</div></>}
+          {!latest ? <p className="empty">尚无交付记录；执行状态不能代替交付。</p> : <><DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /><p><strong>技术检查：{latest.technicalResult === "passed" ? "通过" : "失败"}</strong> · 登记于 {date(latest.createdAt)}</p><p className="task-use-summary"><strong>使用观察：</strong>{latestObservations.length ? latestObservations.map(o => `${observerKindLabel[o.observerKind]} · ${observationResultLabel[o.result]}`).join("；") : "尚无本次交付的使用记录"}</p><EvidenceText label="技术检查证据" value={latest.technicalEvidence} />
+            <div className="task-use-evidence"><strong>本次交付的使用观察</strong>{latestObservations.length ? latestObservations.map(observation => <DeliveryObservation key={observation.id} observation={observation} />) : <p>尚无本次交付的使用观察；旧交付的使用记录不沿用。</p>}</div></>}
         </section>
       </div>
     </section>

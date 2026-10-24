@@ -102,15 +102,28 @@ test("three Task links select fixed history, runtime and delivery without crossi
   assert.equal(taskSectionFromHash(`${runtime}&tab=history`,projectId,taskId),"overview");
 });
 
-test("deep-linked delivery lands at its visible panel, while hidden or missing panels cannot claim a landing", () => {
+test("deep-linked delivery clears the header with its tab row, and hidden cached routes cannot scroll", () => {
   const taskId="33333333-3333-4333-8333-333333333333";
   const calls:string[]=[];
-  const deliveryPanel={hidden:false,scrollIntoView:(options:{block:string})=>calls.push(options.block)} as HTMLElement;
-  const getElement=(id:string)=>id === `task-panel-${projectId}-${taskId}-current-delivery` ? deliveryPanel : null;
+  let hidden=false;
+  const deliveryPanel={hidden:false,closest:()=>({hidden})} as unknown as HTMLElement;
+  const tabs={scrollLeft:0,scrollIntoView:(options:{block:string})=>calls.push(options.block),getBoundingClientRect:()=>({left:0,right:390})} as unknown as HTMLElement;
+  const selected={getBoundingClientRect:()=>({left:440,right:550})} as unknown as HTMLElement;
+  const elements:Record<string,HTMLElement>={
+    [`task-panel-${projectId}-${taskId}-current-delivery`]:deliveryPanel,
+    [`task-tabs-${projectId}-${taskId}-current`]:tabs,
+    [`task-tab-${projectId}-${taskId}-current-delivery`]:selected,
+  };
+  const getElement=(id:string)=>elements[id] ?? null;
   assert.equal(scrollToTaskSection(projectId,taskId,"delivery",undefined,getElement),true);
   assert.deepEqual(calls,["start"]);
+  assert.equal(tabs.scrollLeft,160,"the selected mobile tab becomes fully visible without another page scroll");
+  hidden=true;
+  assert.equal(scrollToTaskSection(projectId,taskId,"delivery",undefined,getElement),false);
+  assert.deepEqual(calls,["start"]);
+  hidden=false;
   assert.equal(scrollToTaskSection(projectId,taskId,"runtime",undefined,getElement),false);
-  assert.equal(scrollToTaskSection(projectId,taskId,"history",loopId,()=>({...deliveryPanel,hidden:true}) as HTMLElement),false);
+  assert.equal(scrollToTaskSection(projectId,taskId,"history",loopId,()=>null),false);
   assert.deepEqual(calls,["start"]);
 });
 

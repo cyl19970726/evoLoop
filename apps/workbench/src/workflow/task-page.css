@@ -6,7 +6,7 @@
 .task-page-header .task-header { margin: 14px 0 20px; gap: 10px 20px; color: #66718a; }
 .task-page .pill { background: #e9edff; color: #4f48a6; }
 .task-intro { font-size: 1.05rem; color: #35435d; white-space: pre-wrap; max-width: 900px; }
-.task-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid #dde3ef; margin-bottom: 22px; scrollbar-width: thin; }
+.task-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid #dde3ef; margin-bottom: 22px; scrollbar-width: thin; scroll-margin-top: 81px; }
 .task-tabs [role="tab"] { flex: 0 0 auto; min-height: 48px; padding: 11px 16px; color: #606d83; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; white-space: nowrap; }
 .task-tabs [role="tab"]:hover { background: #f2f5fc; color: #315ec7; }
 .task-tabs [role="tab"][aria-selected="true"] { color: #2459c8; border-bottom-color: #3167e3; }
@@ -40,6 +40,12 @@
 .task-attention { margin: 12px 0 0; padding: 11px 12px; border-radius: 7px; background: #f4f1ff; color: #6451a0; }
 .task-fineprint { color: #69768e; font-size: .84rem; line-height: 1.55; }
 .task-evidence { margin-top: 8px; }
+.task-evidence-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-evidence-disclosure { margin-top: 8px; }
+.task-evidence-disclosure summary { color: #315ec7; cursor: pointer; }
+.task-observation { min-width: 0; }
+.task-observation p { margin: 8px 0 0; }
+.task-observation small { display: block; margin-top: 8px; color: #66718a; }
 .task-use-evidence { border-top: 1px solid #e4e8f0; margin-top: 14px; padding-top: 14px; }
 .task-use-evidence p { margin: 7px 0 0; }
 .delivery-artifact { min-width: 0; margin: 12px 0; padding: 13px 14px; border: 1px solid #dfe5f2; border-radius: 8px; background: #f8faff; }
@@ -63,4 +69,5 @@
 .task-page .history { background: #f5f7fb; }
 .task-page .decision { border-color: #e5e9f1; }
 @media (max-width: 850px) { .task-overview-grid { grid-template-columns: 1fr; } .task-focus:first-child { grid-column: auto; } }
+@media (max-width: 760px) { .task-tabs { scroll-margin-top: 74px; } }
 @media (max-width: 600px) { .task-page .compare { grid-template-columns: 1fr; } .task-tabs [role="tab"] { padding: 10px 12px; } .task-page .panel-head { display: flex; flex-wrap: wrap; } }
