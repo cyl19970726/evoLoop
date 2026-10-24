@@ -17,7 +17,8 @@ const common = { projectId: id, operationId: id };
 export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), initialState: z.enum(["active", "paused"]).optional(), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
-  z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason }),
+  z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason,
+    continuation: z.strictObject({kind:z.literal("same-task-study"),declarationId:id,expectedTaskVersion:version}).optional() }),
   z.strictObject({ ...common, type: z.literal("loop.studyMaterial.declare"), loopId: id,
     expectedLoopVersion: version, declarationId: id, controllerActorId: role,
     sourceTaskId: id, sourceTaskRevisionId: id,
@@ -144,6 +145,11 @@ export interface OrchestrationSourceFact {
   /** A verified waiting.resumed chain back to the fixed original Issue. */
   waitingDecisionId?: string | null; previousSourceEventId?: string | null;
   originalSourceEventId?: string | null; waitingRunId?: string | null;
+  resumedEvidenceRef?: string | null; resumedReason?: string | null;
+  /** Signed same-Task study continuation; absent from historical Issue resumes. */
+  continuation?: {kind:"same-task-study";declarationId:string;originalTaskId:string;
+    expectedTaskVersion:number;originalInboxId:string;originalDispatchId:string;
+    originalRunId:string;rootSourceEventId:string;rootInboxId:string} | null;
   /** Fixed managed Schedule occurrence and creation Task revision. */
   scheduleId?: string | null; scheduleRevisionId?: string | null; plannedAtUtc?: string | null;
   scheduleTargetLoopId?: string | null; scheduleTargetStageId?: string | null; scheduleTaskRevisionId?: string | null;
@@ -202,7 +208,8 @@ export interface OrchestrationTransaction {
   hasWaitingResume(decisionId: string): Promise<boolean>;
   hasDivisionTransferConfirmed(dispatchId: string): Promise<boolean>;
   hasDivisionHandoffAck(dispatchId: string): Promise<boolean>;
-  hasInFlightRunForTask(taskId: string): Promise<boolean>;
+  hasInFlightRunForTask(taskId: string, ignoreDispatchId?: string): Promise<boolean>;
+  hasLaterDispatchForTask(taskId: string, dispatchId: string, allowedDispatchId?: string): Promise<boolean>;
   hasUnsettledDispatchForSource(loopId: string, sourceEventId: string, exceptDispatchId: string): Promise<boolean>;
   insertDecision(value: OrchestrationWorkerDecision): Promise<void>;
   insertSubmission(value: OrchestrationSubmission): Promise<void>;

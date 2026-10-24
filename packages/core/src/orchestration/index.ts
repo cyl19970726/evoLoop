@@ -2,7 +2,7 @@ import type { Operation, OutboxEvent, Principal } from "@evoloop/contracts";
 import { applyRole, RoleRuleError } from "../roles/index.js";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
-import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision, StudyMaterialDeclaration, StudyMaterialItem } from "@evoloop/contracts/orchestration";
+import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationRunFact, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision, StudyMaterialDeclaration, StudyMaterialItem } from "@evoloop/contracts/orchestration";
 
 export class OrchestrationError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "OrchestrationError"; }
@@ -496,7 +496,8 @@ export class OrchestrationService {
     if (command.type === "loop.resumeWaiting") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       this.version(loop.version, command.expectedLoopVersion);
-      this.active(loop);
+      if (loop.state === "stopped") return fail("LOOP_STOPPED", "stopped loop cannot resume");
+      if (!command.continuation) this.active(loop);
       if (!loop.stageId) return fail("STAGE_NOT_ACTIVE", "waiting resume requires an active enrolled Stage");
       const stage = await tx.getStageFact(loop.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
@@ -520,6 +521,41 @@ export class OrchestrationService {
         return fail("WAITING_UNAVAILABLE", "waiting cognition already has a child or unsettled dispatch");
       if (await tx.hasWaitingResume(decision.id)) return fail("ALREADY_RESUMED", "waiting decision has already been resumed");
       const previous = await tx.getSourceFact(dispatch.sourceEventId);
+      if (command.continuation) {
+        const continuation = command.continuation;
+        const rootId = previous?.kind === "loop.enrolled" ? previous.id :
+          previous?.kind === "waiting.resumed" ? previous.continuation?.rootSourceEventId : null;
+        const root = rootId ? await tx.getSourceFact(rootId) : null;
+        if (!previous || !root || rootId !== loop.bootstrapEventId ||
+          root.kind !== "loop.enrolled" || root.subjectId !== loop.id ||
+          previous.projectId !== loop.projectId ||
+          (previous.kind === "waiting.resumed" &&
+            (previous.sourceLoopId !== loop.id || previous.continuation?.originalTaskId !== dispatch.taskId)) ||
+          !["loop.enrolled", "waiting.resumed"].includes(previous.kind))
+          return fail("SOURCE_UNAVAILABLE", "study waiting must trace to this Loop bootstrap or its verified continuation");
+        const task = await tx.getTaskFact(dispatch.taskId);
+        if (!task || task.projectId !== loop.projectId || task.version !== continuation.expectedTaskVersion ||
+          task.state !== "in_progress" || task.ownerRoleId !== loop.cognitiveRoleId ||
+          task.goalId !== loop.goalId || task.stageId !== loop.stageId)
+          return fail("TASK_CHANGED", "original cognition Task must remain in progress at the explicit baseline");
+        if (await tx.hasLaterDispatchForTask(task.id,dispatch.id) ||
+          await tx.hasInFlightRunForTask(task.id) ||
+          await tx.findDivisionDecisionForParent(dispatch.id))
+          return fail("WAITING_UNAVAILABLE", "another Task dispatch, active Run or division intent prevents continuation");
+        await this.studyContinuationReady(tx,loop,task,dispatch,run,continuation.declarationId);
+        const next = { ...loop, version: loop.version + 1, updatedAtUtc: now };
+        await tx.updateLoop(next,loop.version);
+        await event(loop.id,"decision",decision.id,"waiting.resumed",{
+          previousSourceEventId:previous.id,originalSourceEventId:root.id,
+          decisionId:decision.id,dispatchId:dispatch.id,runId:run.id,
+          continuation:{kind:"same-task-study",declarationId:continuation.declarationId,
+            originalTaskId:task.id,expectedTaskVersion:task.version,originalInboxId:dispatch.inboxId,
+            originalDispatchId:dispatch.id,originalRunId:run.id,rootSourceEventId:root.id,
+            rootInboxId:previous.continuation?.rootInboxId ?? dispatch.inboxId},
+          resumedAtLoopVersion:next.version,evidenceRef:command.evidenceRef,reason:command.reason,
+        });
+        return result("loop",loop.id,next.version);
+      }
       const rootId = previous?.kind === "document" ? previous.id : previous?.kind === "waiting.resumed" ? previous.originalSourceEventId : null;
       const root = rootId ? await tx.getSourceFact(rootId) : null;
       if (!previous || !root || !rootId || root.kind !== "document" || root.projectId !== command.projectId ||
@@ -557,11 +593,21 @@ export class OrchestrationService {
         if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
           return fail("STAGE_NOT_ACTIVE", "resumed waiting source requires the same active enrolled Stage");
         const root = await tx.getSourceFact(source.originalSourceEventId!);
-        if (!root || root.kind !== "document" || root.projectId !== command.projectId || root.subjectId !== source.subjectId ||
-          root.issueRevisionId !== source.issueRevisionId || root.issueContentHash !== source.issueContentHash ||
-          !source.waitingDecisionId || !source.originDispatchId || !source.waitingRunId || !source.previousSourceEventId)
-          return fail("SOURCE_UNAVAILABLE", "resumed waiting source has no fixed Issue chain");
-        await this.fixedIssue(tx, loop, root, command.projectId);
+        if (source.continuation) {
+          const task=await tx.getTaskFact(source.subjectId);
+          if (!root || root.kind!=="loop.enrolled" || root.id!==loop.bootstrapEventId ||
+            !source.waitingDecisionId || !source.originDispatchId || !source.waitingRunId ||
+            !source.previousSourceEventId || !task)
+            return fail("SOURCE_UNAVAILABLE","study continuation has no fixed bootstrap and waiting chain");
+          if (command.purpose === "cognitive_review")
+            await this.continuationDispatchReady(tx,loop,task,source,principal.actorId);
+        } else {
+          if (!root || root.kind !== "document" || root.projectId !== command.projectId || root.subjectId !== source.subjectId ||
+            root.issueRevisionId !== source.issueRevisionId || root.issueContentHash !== source.issueContentHash ||
+            !source.waitingDecisionId || !source.originDispatchId || !source.waitingRunId || !source.previousSourceEventId)
+            return fail("SOURCE_UNAVAILABLE", "resumed waiting source has no fixed Issue chain");
+          await this.fixedIssue(tx, loop, root, command.projectId);
+        }
       }
       if (scheduled) {
         if (!source.scheduleId || !source.scheduleRevisionId || !source.plannedAtUtc ||
@@ -702,12 +748,16 @@ export class OrchestrationService {
         return fail("METHOD_TASK_MISMATCH", "method cannot reopen an in-progress first Task as an ordinary child");
       const stage = await tx.getStageFact(task.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage must be active under the loop goal");
-      if (cognitionRequest && !loop.currentStudyDeclarationId) {
+      const cognitiveSource = cognitionRequest ? await tx.getSourceFact(inbox.sourceEventId) : null;
+      const studyContinuation = cognitiveSource?.continuation;
+      if (studyContinuation && cognitiveSource)
+        await this.continuationDispatchReady(tx,loop,task,cognitiveSource,principal.actorId,command.dispatchId);
+      if (cognitionRequest && !studyContinuation && !loop.currentStudyDeclarationId) {
         const fixed = await tx.getTaskRevisionFact(task.id,task.version);
         if (fixed && (await tx.getStudyTaskSnapshot(task.id,fixed.revisionId)).some(item=>item.provenance))
           return fail("STUDY_DECLARATION_CHANGED", "Previously copied study material cannot dispatch after revocation");
       }
-      if (cognitionRequest && loop.currentStudyDeclarationId) {
+      if (cognitionRequest && !studyContinuation && loop.currentStudyDeclarationId) {
         const declaration = await tx.getStudyDeclaration(loop.currentStudyDeclarationId);
         if (!declaration || !await this.deps.hasCurrentStudyReviewer?.(loop.projectId,declaration.actorId) ||
           declaration.loopId !== loop.id || declaration.stageId !== task.stageId ||
@@ -837,6 +887,19 @@ export class OrchestrationService {
         if (!command.runtimeRunId) return fail("RUN_REQUIRED", "accepted dispatch requires a bound runtime Run");
         const run = await tx.getRunFact(command.runtimeRunId);
         if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId) return fail("RUN_MISMATCH", "runtime Run must belong to the fixed project Task");
+        if (dispatch.recipientRoleId === loop.cognitiveRoleId &&
+          (await tx.getSourceFact(dispatch.sourceEventId))?.continuation) {
+          const task = await tx.getTaskFact(dispatch.taskId);
+          const frozen = await tx.getTaskRevisionFact(dispatch.taskId, dispatch.taskVersion + 1);
+          const reserve = await tx.getWorkflowOperationFact(studyIntentId(this.deps.hash, dispatch.id, "run.reserve"));
+          if (command.runtimeRunId !== studyIntentId(this.deps.hash, dispatch.id, "run") ||
+            !task || task.version !== dispatch.taskVersion + 1 || !frozen ||
+            frozen.revisionId !== run.taskRevisionId ||
+            !reserve || reserve.commandType !== "runtime.run.reserve" || reserve.status !== "applied" ||
+            reserve.actorId !== principal.actorId || reserve.resultRefId !== run.taskRevisionId ||
+            reserve.resultVersion !== 1)
+            return fail("STUDY_CONTINUATION_CHANGED", "only the exact newly reserved Task revision and Run can resolve this continuation");
+        }
       } else if (command.runtimeRunId) return fail("RUN_MISMATCH", "only accepted dispatch may bind a runtime Run");
       const state = command.result === "accepted" ? "accepted" : command.result === "unknown" ? "unknown" : "rejected";
       const next: OrchestrationDispatch = { ...dispatch, version: dispatch.version + 1, state, runtimeRunId: command.runtimeRunId, reason: command.reason, updatedAtUtc: now };
@@ -992,6 +1055,79 @@ export class OrchestrationService {
     return initial.allowedBusinessRoleIds.includes(roleId);
   }
 
+  private async studyContinuationReady(tx: OrchestrationTransaction, loop: OrchestrationLoop,
+    task: OrchestrationTaskFact, original: OrchestrationDispatch, run: OrchestrationRunFact,
+    declarationId: string, controllerActorId?: string) {
+    const declaration = await tx.getStudyDeclaration(declarationId);
+    const originalSource=await tx.getSourceFact(original.sourceEventId);
+    const rootInboxId=originalSource?.continuation?.rootInboxId ?? original.inboxId;
+    const controller = declaration ? await this.deps.getTrialController?.(loop.projectId,declaration.controllerActorId) : null;
+    if (!declaration || loop.currentStudyDeclarationId !== declaration.id ||
+      declaration.projectId !== loop.projectId || declaration.loopId !== loop.id ||
+      declaration.goalId !== loop.goalId || declaration.stageId !== loop.stageId ||
+      declaration.controllerActorId !== original.requestedBy ||
+      (controllerActorId && declaration.controllerActorId !== controllerActorId) ||
+      !controller || controller.actorId !== declaration.controllerActorId ||
+      !controller.projectIds.includes(loop.projectId) || !controller.permissions.includes("write") ||
+      !await this.deps.hasCurrentStudyReviewer?.(loop.projectId,declaration.actorId) ||
+      !originalSource || (originalSource.kind!=="loop.enrolled" &&
+        (originalSource.kind!=="waiting.resumed" || !originalSource.continuation ||
+          originalSource.continuation.originalTaskId!==task.id ||
+          originalSource.continuation.rootSourceEventId!==loop.bootstrapEventId)) ||
+      !await tx.isAutoCognitionTask(loop.id,rootInboxId,task.id,declaration.controllerActorId,loop.stageId!))
+      return fail("STUDY_AUTHORITY_DENIED","current declaration, reviewer and original managed cognition Task are required");
+    const currentItems = await tx.resolveStudySource(declaration.sourceTaskId,
+      declaration.sourceTaskRevisionId,declaration.items.map(item=>item.sourceDecisionId));
+    if (!currentItems || currentItems.length !== declaration.items.length ||
+      currentItems.some((item,index)=>!sameStudyItem(item,declaration.items[index]!)) ||
+      !(await Promise.all(declaration.items.flatMap(item=>[
+        this.deps.canReadStudySourceRun?.({actorId:declaration.actorId,projectIds:[loop.projectId],permissions:["read","review"]},loop.projectId,item.runId),
+        this.deps.canReadStudySourceRun?.(controller,loop.projectId,item.runId),
+      ]))).every(Boolean))
+      return fail("STUDY_SOURCE_UNAVAILABLE","declared source heads, Run grants and Sessions must remain current");
+    const currentRevision = await tx.getTaskRevisionFact(task.id,task.version);
+    const snapshots = await Promise.all([
+      tx.getStudyTaskSnapshot(task.id,run.taskRevisionId),
+      currentRevision ? tx.getStudyTaskSnapshot(task.id,currentRevision.revisionId) : Promise.resolve([]),
+    ]);
+    for (const snapshot of snapshots) {
+      if (snapshot.length !== declaration.items.length || declaration.items.some(item=>{
+        const found=snapshot.find(value=>value.provenance?.sourceDecisionId===item.sourceDecisionId);
+        return !found || found.kind!=="run" || found.runId!==item.runId ||
+          found.targetTaskRevisionId!==item.targetTaskRevisionId || found.inputHash!==item.inputHash ||
+          found.slotId!==studyIntentId(this.deps.hash,declaration.id,rootInboxId,item.sourceDecisionId,"slot") ||
+          found.decisionId!==studyIntentId(this.deps.hash,declaration.id,rootInboxId,item.sourceDecisionId,"decision") ||
+          found.provenance?.declarationId!==declaration.id || found.provenance.loopId!==loop.id ||
+          found.provenance.inboxId!==rootInboxId;
+      })) return fail("STUDY_SNAPSHOT_INCOMPLETE","original Run and current Task must retain the exact full study snapshot");
+    }
+    return declaration;
+  }
+
+  private async continuationDispatchReady(tx: OrchestrationTransaction,loop: OrchestrationLoop,
+    task: OrchestrationTaskFact,source: OrchestrationSourceFact,actorId:string,allowedDispatchId?:string) {
+    const fixed=source.continuation;
+    if (source.kind!=="waiting.resumed" || !fixed || fixed.kind!=="same-task-study" ||
+      source.projectId!==loop.projectId || source.sourceLoopId!==loop.id ||
+      fixed.rootSourceEventId!==loop.bootstrapEventId || fixed.originalTaskId!==task.id ||
+      fixed.expectedTaskVersion!==task.version || task.state!=="in_progress" ||
+      task.ownerRoleId!==loop.cognitiveRoleId || task.goalId!==loop.goalId || task.stageId!==loop.stageId)
+      return fail("STUDY_CONTINUATION_CHANGED","fixed same-Task study source or baseline changed");
+    const original=await tx.getDispatch(fixed.originalDispatchId);
+    const decision=source.waitingDecisionId ? await tx.getDecision(source.waitingDecisionId) : null;
+    const run=await tx.getRunFact(fixed.originalRunId);
+    if (!original || !decision || !run || original.projectId!==loop.projectId ||
+      original.loopId!==loop.id || original.taskId!==task.id || original.inboxId!==fixed.originalInboxId ||
+      original.runtimeRunId!==run.id || original.state!=="completed" || original.outcome!=="waiting" ||
+      decision.id!==source.waitingDecisionId || decision.dispatchId!==original.id ||
+      decision.runId!==run.id || decision.kind!=="waiting" || run.taskId!==task.id ||
+      !["completed","failed","interrupted"].includes(run.state) ||
+      await tx.hasLaterDispatchForTask(task.id,original.id,allowedDispatchId) ||
+      await tx.hasInFlightRunForTask(task.id,allowedDispatchId))
+      return fail("STUDY_CONTINUATION_CHANGED","original settled waiting must remain the latest Task dispatch");
+    await this.studyContinuationReady(tx,loop,task,original,run,fixed.declarationId,actorId);
+  }
+
   private async freshTaskAndScope(tx: OrchestrationTransaction, dispatch: OrchestrationDispatch, loop: OrchestrationLoop, actorId: string) {
     if (dispatch.bindingId && !await tx.hasDivisionTransferConfirmed(dispatch.id))
       return fail("HANDOFF_NOT_CONFIRMED", "dynamic child cannot start before its journalled Task transfer");
@@ -1013,6 +1149,13 @@ export class OrchestrationService {
       return fail("SCOPE_NOT_AUTHORIZED", "worker scope changed before dispatch");
     const stage = await tx.getStageFact(task.stageId);
     if (!stage || stage.projectId !== dispatch.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage changed before dispatch");
+    if (dispatch.recipientRoleId===loop.cognitiveRoleId) {
+      const source=await tx.getSourceFact(dispatch.sourceEventId);
+      if (source?.continuation) {
+        if (!source?.continuation) return fail("STUDY_CONTINUATION_CHANGED","signed continuation source is unavailable");
+        await this.continuationDispatchReady(tx,loop,task,source,actorId,dispatch.id);
+      }
+    }
   }
   private claim(dispatch: OrchestrationDispatch, token: string, now: string, requireFreshLease = true) {
     if (dispatch.claimToken !== token) return fail("CLAIM_MISMATCH", "dispatch claim token changed");

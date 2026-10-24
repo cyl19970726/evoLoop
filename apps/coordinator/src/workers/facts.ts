@@ -297,7 +297,8 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
     },
     fixedRunTrace: async targetRunId => {
       const rows=await pool.query(`SELECT decision.study_provenance,decision.decision_id,
-        dispatch.inbox_id,dispatch.data->>'requestedBy' AS requested_by,snapshot.slot_id,
+        dispatch.inbox_id,dispatch.data->>'sourceEventId' AS source_event_id,
+        dispatch.data->>'requestedBy' AS requested_by,snapshot.slot_id,
         orchestration_loop.data->>'cognitiveRoleId' AS cognitive_role_id,
         EXISTS(SELECT 1 FROM operation_journal created
           JOIN task_revision initial ON initial.project_id=created.project_id
@@ -343,7 +344,13 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
         if(!row.study_provenance){if(scope.roleId!==row.cognitive_role_id ||
           scope.taskId!==loopIntentId(scope.loopId,row.inbox_id,"cognition-task") || !row.auto_created)return true;continue;}
         const provenance=row.study_provenance as Record<string,unknown>;
-        if(provenance.loopId!==scope.loopId || provenance.inboxId!==row.inbox_id ||
+        const source=await trustedSources.read(scope.projectId,reader=>reader.getSourceFact(row.source_event_id));
+        const rootInboxId=source?.continuation?.rootInboxId ?? row.inbox_id;
+        if(source?.continuation && (source.kind!=="waiting.resumed" ||
+          source.sourceLoopId!==scope.loopId || source.subjectId!==scope.taskId ||
+          source.continuation.originalTaskId!==scope.taskId ||
+          source.continuation.rootSourceEventId!== (await loop())?.bootstrapEventId))continue;
+        if(provenance.loopId!==scope.loopId || provenance.inboxId!==rootInboxId ||
           typeof provenance.declarationId!=="string" || typeof provenance.sourceDecisionId!=="string" ||
           typeof row.slot_id!=="string")continue;
         const [current,declaration]=await Promise.all([

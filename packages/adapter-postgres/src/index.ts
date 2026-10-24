@@ -7,6 +7,7 @@ import { PgRuntimeStore } from "./runtime.js";
 import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
 import { scheduledSourceFacts } from "./schedule-source.js";
+import { verifiedOrchestrationSource } from "./orchestration.js";
 import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
@@ -155,7 +156,8 @@ class PgReader implements Reader {
       dispatch.dispatch_id,dispatch.task_id,dispatch.loop_id,dispatch.inbox_id AS source_inbox_id,
       dispatch.data->>'purpose' AS purpose,dispatch.data->>'recipientRoleId' AS recipient_role_id,
       dispatch.data->>'outcome' AS outcome,loop.data->>'cognitiveRoleId' AS cognitive_role_id,loop.state AS loop_state,
-      source_inbox.source_event_id,source_out.kind AS source_out_kind,run.run_id,run.task_revision_id,run.state AS run_state,
+      source_inbox.source_event_id,source_out.kind AS source_out_kind,
+      source_event.kind AS source_event_kind,run.run_id,run.task_revision_id,run.state AS run_state,
       CASE WHEN source_out.kind='observation.record' AND source_delivery.delivery_id IS NOT NULL
              AND source_delivery.actor_id<>source_observation.actor_id THEN source_observation.task_id
            WHEN source_out.kind='document' AND source_doc.kind='issue' THEN source_doc.origin_task_id
@@ -216,9 +218,16 @@ class PgReader implements Reader {
       OR (source_event.kind IN ('worker.outcome','dispatch.gap') AND source_event.loop_id=dispatch.loop_id
         AND source_dispatch.dispatch_id IS NOT NULL)
       OR source_out.kind='schedule.task.todo'
+      OR (source_event.kind='waiting.resumed' AND source_event.loop_id=dispatch.loop_id)
     ) LIMIT 1`,[this.projectId,decisionId]);
     const x=r.rows[0];
     if (!x) return null;
+    if (x.source_event_kind === "waiting.resumed") {
+      const source=await verifiedOrchestrationSource(this.client,this.projectId,x.source_event_id);
+      if (!source || source.kind!=="waiting.resumed" || source.sourceLoopId!==x.loop_id ||
+        source.id!==x.source_event_id || source.originDispatchId==null || !source.waitingDecisionId ||
+        (source.continuation && source.subjectId!==x.task_id)) return null;
+    }
     let sourceTaskId: string | null = x.source_task_id ?? null;
     if (x.source_out_kind === "schedule.task.todo") {
       // The label only selects a candidate; the original schedule transaction must prove its provenance.
