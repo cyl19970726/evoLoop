@@ -112,7 +112,10 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
     if (scope.kind === "cognition" && parts[0] === "runtime" && parts[1] === "runs" && id(parts[2]) &&
         (parts.length === 3 || parts.length === 4 && ["events", "result"].includes(parts[3] ?? ""))) {
       const gap = await facts.recoveryGap?.();
-      return !!gap && same(gap, scope.projectId) && gap.loopId === scope.loopId && gap.runId === parts[2];
+      if (gap && same(gap, scope.projectId) && gap.loopId === scope.loopId && gap.runId === parts[2]) return true;
+      // The CLI reads fixed Run metadata to verify TaskRev/inputHash before offering its trace pointer.
+      // This exact Run detail has the same frozen-snapshot gate as trace; events/result remain denied.
+      return parts.length === 3 && !rawQuery && !!facts.fixedRunTrace && await facts.fixedRunTrace(parts[2]);
     }
     if (parts[0] === "runtime" && parts[1] === "runs" && id(parts[2]) &&
         (parts.length === 3 || parts.length === 4 && parts[3] === "trace")) {
