@@ -26,11 +26,18 @@ export function taskSectionFromHash(hash: string, projectId: string, taskId: str
   return tab && params.getAll("tab").length === 1 && sections.has(tab as TaskSection) ? tab as TaskSection : "overview";
 }
 
-/** Land at the visible panel after React has switched a deep-linked tab. */
+/** Land at the visible tab row after React has switched a deep-linked tab. */
 export function scrollToTaskSection(projectId: string, taskId: string, section: TaskSection,
   revisionId: string | undefined, getElement: (id: string) => HTMLElement | null): boolean {
-  const panel = getElement(`task-panel-${projectId}-${taskId}-${revisionId ?? "current"}-${section}`);
-  if (!panel || panel.hidden) return false;
-  panel.scrollIntoView({ block: "start", behavior: "auto" });
+  const prefix = `${projectId}-${taskId}-${revisionId ?? "current"}`;
+  const panel = getElement(`task-panel-${prefix}-${section}`);
+  const tabs = getElement(`task-tabs-${prefix}`);
+  const selected = getElement(`task-tab-${prefix}-${section}`);
+  if (!panel || panel.hidden || !tabs || !selected || panel.closest<HTMLElement>("[data-page-key]")?.hidden) return false;
+  tabs.scrollIntoView({ block: "start", behavior: "auto" });
+  const strip = tabs.getBoundingClientRect();
+  const button = selected.getBoundingClientRect();
+  if (button.left < strip.left) tabs.scrollLeft += button.left - strip.left;
+  else if (button.right > strip.right) tabs.scrollLeft += button.right - strip.right;
   return true;
 }

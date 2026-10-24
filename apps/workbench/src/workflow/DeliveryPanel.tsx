@@ -2,10 +2,23 @@ import { useEffect, useState } from "react";
 import type { RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
 import { api } from "../api";
 import { runtimeClient } from "../runtime/client";
+import { date } from "../ui/shared";
 import { deliveryTarget, verifiedDocumentTitle, type DeliveryArtifactInput, type DeliveryTarget } from "./deliveryPresentation";
+import { EvidenceText } from "./EvidenceText";
+import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 
 type Delivery = NonNullable<TaskDetail["deliveries"]>[number];
 type ArtifactName = { title: string | null; checked: boolean };
+type Observation = NonNullable<TaskDetail["observations"]>[number];
+
+export function DeliveryObservation({ observation }: { observation: Observation }) {
+  return <div className="history task-observation">
+    <strong>{observation.observer} · {observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]}</strong>
+    <small>观察登记于 {date(observation.createdAt)} · 登记者 {observation.actorId}</small>
+    <EvidenceText label="使用证据" value={observation.evidence} />
+    <EvidenceText label="记录理由" value={observation.reason} />
+  </div>;
+}
 
 export function useDeliveryNames(token: string, projectId: string, deliveries: Delivery[]): Record<string, ArtifactName> {
   const [names, setNames] = useState<Record<string, ArtifactName>>({});
@@ -75,17 +88,18 @@ export function DeliveryPanel({ detail, projectId, token, names, onChanged }: { 
     {runError && <p className="muted">{runError}</p>}
     {!deliveries.length && <p className="empty">还没有交付；任务状态不代替产物和使用证据。</p>}
     {[...deliveries].reverse().map(delivery => <article className="decision task-delivery-record" key={delivery.id}>
-      <h3>{delivery.id === latestId ? "最新交付" : "历史交付"} · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"}</h3>
+      <h3>{delivery.id === latestId ? "最新交付" : "历史交付"} · 技术检查{delivery.technicalResult === "passed" ? "通过" : "失败"}</h3>
+      <p className="muted">交付登记于 {date(delivery.createdAt)} · 登记者 {delivery.actorId}</p>
       <DeliveryArtifact delivery={delivery} projectId={projectId} name={names[delivery.id]} />
       <p>交付登记 Task 修订 <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}><code>{delivery.taskRevisionId}</code> ↗</a></p>
       <p>{delivery.runId ? <>明确归属 Run <code>{delivery.runId}</code>；{runs.find(run => run.id === delivery.runId)
         ? <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(runs.find(run => run.id === delivery.runId)!.taskRevisionId)}`}>实际执行 Task 修订 <code>{runs.find(run => run.id === delivery.runId)!.taskRevisionId}</code> ↗</a>
         : "实际执行修订待回读"}；<a href={`#/p/${projectId}/runtime`}>核对运行记录 →</a></> : "未声明来源 Run；旧交付不会自动归于任何评价尝试。"}</p>
-      <p><strong>技术检查证据</strong><br />{delivery.technicalEvidence}</p>
+      <EvidenceText label="技术检查证据" value={delivery.technicalEvidence} />
       <p className="muted">Run 归属由登记者声明；运行终态不代表交付合格，也不证明产物字节由模型生成。产物修订、哈希与实际内容仍须分别核对。</p>
       <h3>这次交付的使用观察</h3>
-      {(detail.observations ?? []).filter(item => item.deliveryId === delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
-      {(detail.observations ?? []).filter(item => item.deliveryId === delivery.id).map(item => <div className="history" key={item.id}><strong>{item.observer}（{item.observerKind}） · {item.result}</strong><p>{item.evidence}</p><p>记录理由：{item.reason}</p><small>登记者 {item.actorId} · {item.createdAt}</small></div>)}
+      {observationsForDelivery(detail.observations ?? [], delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
+      {observationsForDelivery(detail.observations ?? [], delivery.id).map(item => <DeliveryObservation observation={item} key={item.id} />)}
     </article>)}
     {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}><h3>任务验收决定</h3><p>{closure.acceptanceEvidence}</p><p>{closure.reason}</p><small>审阅者 {closure.actorId} · {closure.createdAt}</small></article>)}
   </section>;
