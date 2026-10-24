@@ -9,6 +9,7 @@ import {migrate,PostgresUnitOfWork} from "@evoloop/adapter-postgres";
 import {PgOrchestrationStore} from "@evoloop/adapter-postgres/orchestration";
 import {WorkflowService,RuntimeWorkflowService} from "@evoloop/core";
 import {OrchestrationService,OrchestrationError} from "@evoloop/core/orchestration";
+import type {DelegationTemplate} from "@evoloop/contracts/division";
 import {decideTaskExternalReference,applyDeclaredStudyReference} from "@evoloop/core/references";
 import {ManagedLoopRunner,loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
 import {RuntimeRunner} from "../../apps/coordinator/src/runtime/runner.js";
@@ -24,7 +25,7 @@ const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const failed=(promise:Promise<unknown>,code:string)=>assert.rejects(promise,
   error=>error instanceof OrchestrationError&&error.code===code);
 
-async function studyScenario(t:TestContext,ending:"child"|"no_action"){
+async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"){
   const schema=`el_study_wait_${randomUUID().replaceAll("-","").slice(0,16)}`;
   await migrate(url!,schema);
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
@@ -32,12 +33,13 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
   const controllerId="study-controller",reviewerId="study-reviewer",role="cognition",business="business";
-  const scope="study-cognition-scope",cwd="/tmp/evoloop-waiting-study-fixture";
+  const scope="study-cognition-scope",cwd=`/tmp/evoloop-waiting-study-${"c".repeat(180)}`;
   const principal=(actorId:string)=>({actorId,projectIds:[projectId],
     permissions:["read","write","review"] as Array<"read"|"write"|"review">});
   const controller=principal(controllerId),reviewer=principal(reviewerId);
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  let template:DelegationTemplate|null=null,templateHash="";
   let grant=true,reviewerCurrent=true;
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,id)=>project===projectId&&id===scope?
     {projectId,scopeId:scope,actorId:controllerId,roleId:role,active:true}:
@@ -45,6 +47,8 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
     canActAsRole:async(project,actor,required)=>project===projectId&&actor===controllerId&&[role,business].includes(required),
     wasActorRole:async()=>false});
   const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash,
+    getDelegationTemplate:async(project,id)=>template&&project===projectId&&id===template.id?
+      {template,hash:templateHash}:null,
     getTrialController:async(project,actor)=>project===projectId&&actor===controllerId?controller:null,
     hasCurrentStudyReviewer:async(project,actor)=>project===projectId&&actor===reviewerId&&reviewerCurrent,
     canReadStudySourceRun:async()=>grant});
@@ -58,6 +62,37 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
     authority:reviewerId,scope:"fixture",owner:controllerId});
   await wf({type:"stage.propose",stageId,goalId,deliverable:"Study",learningQuestion:"What changed?",reason:"Fixture"});
   await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Study"});
+  let divisionTaskId="",divisionRoleId="",divisionDocumentId="",divisionRevisionId="";
+  if(ending==="division"){
+    divisionTaskId=randomUUID();divisionRoleId=randomUUID();divisionDocumentId=randomUUID();
+    await wf({type:"task.create",taskId:divisionTaskId,stageId,title:"Trial first work",content:"# Trial",
+      acceptance:"One result",owner:"prior-role",consumer:controllerId,evidence:"Study",
+      stopCondition:"Trial once"});
+    const document=await wf({type:"document.create",documentId:divisionDocumentId,kind:"report",
+      title:"Fixed division diagnosis",body:"# Fixed handoff"});
+    divisionRevisionId=document.revisionId!;
+    const proposal={title:"Bounded specialist",goal:"One Task",independentResponsibility:"Own first trial Task",
+      ownerScope:"One Task",inputs:["Fixed document"],writableAssets:[],deliverables:["One result"],
+      triggers:["Observed gap"],workflow:"Inspect then deliver",handoffBoundary:"Return to owner",
+      evidence:[{kind:"backlog",observation:"Unowned work",sourceRef:`task:${divisionTaskId}`,observedAtUtc:clock.now()},
+        {kind:"effect",observation:"Current owner delayed",sourceRef:`task:${divisionTaskId}`,observedAtUtc:clock.now()},
+        {kind:"cost",observation:"One trial",sourceRef:`task:${divisionTaskId}`,observedAtUtc:clock.now()}],
+      alternatives:[{kind:"method",assessment:"Change method",estimatedCost:"One change"},
+        {kind:"knowledge",assessment:"Change guide",estimatedCost:"One update"},
+        {kind:"another-instance",assessment:"Add capacity",estimatedCost:"One instance"},
+        {kind:"temporary-assignment",assessment:"Trial Role",estimatedCost:"One trial"}],
+      firstTaskId:divisionTaskId,baseline:"Delayed",expectedEffect:"One result",costLimit:"One trial",
+      trialDays:7,reviewAtUtc:new Date(Date.now()+86_400_000).toISOString(),exitCriteria:"Review result"};
+    await wf({type:"role.propose",roleId:divisionRoleId,proposal});
+    await wf({type:"role.decide",roleId:divisionRoleId,expectedVersion:1,decision:"accept-trial",
+      reason:"Fixture accepted"});
+    template={id:randomUUID(),revision:1,projectId,goalId,loopId,existingRoleIds:[divisionRoleId],
+      cognitionRoleIds:[],newRoleAllocation:null,firstTaskId:divisionTaskId,actorId:controllerId,
+      authorizationScopeId:"division-scope",decisionActorIds:[controllerId],
+      allowedChoices:["temporary-assignment"],cwd,model:"fixture",sandbox:"read-only",networkAccess:false,
+      approvalPolicy:"on-request",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
+    templateHash=hash(JSON.stringify(template));
+  }
   const sourceTaskId=randomUUID(),carrierTaskId=randomUUID();
   await wf({type:"task.create",taskId:sourceTaskId,stageId,title:"Observed work",content:"# Source",
     acceptance:"One comparison",owner:business,consumer:controllerId,evidence:"Fixture",stopCondition:"Observed"});
@@ -106,13 +141,23 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
     declarationId,controllerActorId:controllerId,sourceTaskId:carrierTaskId,
     sourceTaskRevisionId:carrier.task.currentRevisionId,sourceDecisionIds:decisions,reason:"Three fixed Runs"});
   const credentials:string[]=[];
+  let loseReserveReply=false;
+  const runnerWorkflow=Object.create(workflow) as WorkflowService;
+  runnerWorkflow.execute=async(actor,command)=>{
+    const result=await workflow.execute(actor,command);
+    if(loseReserveReply&&command.type==="runtime.run.reserve"&&result.status==="applied"){
+      loseReserveReply=false;
+      throw new Error("FIXTURE_RESERVE_REPLY_LOST");
+    }
+    return result;
+  };
   const runner=new ManagedLoopRunner({projects:[projectId],reader:()=>controller,
-    orchestration,workflow,runtime:{pump:async()=>{}},canWrite:()=>true,now:clock.now,
+    orchestration,workflow:runnerWorkflow,runtime:{pump:async()=>{}},canWrite:()=>true,now:clock.now,
     controller:async(_project,requiredRole)=>[role,business].includes(requiredRole)?{principal:controller,
       authorizationScopeId:requiredRole===role?scope:"business-scope",cwd,model:"fixture",
       sandbox:"read-only",approvalPolicy:"on-request"}:null,
     credential:{lookup:async()=>null,issue:async(identity)=>{credentials.push(identity.runId);
-      return {principal:principal(`worker-${identity.runId}`),wrapperPath:"/fixture/wrapper"};}},
+      return {principal:principal(`worker-${identity.runId}`),wrapperPath:`/fixture/${"w".repeat(180)}`};}},
     applyStudyReference:async(actor,command,provenance)=>
       applyDeclaredStudyReference(referenceDeps as never,actor,command,provenance),
     sealSubmission:async()=>({status:"absent"})});
@@ -185,6 +230,9 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
   assert.equal(results.filter(value=>value.status==="fulfilled").length,1);
   const winning=results[0]!.status==="fulfilled"?op:second;
   assert.equal((await resume({},winning)).replayed,true);
+  await failed(resume({reason:"Different repair evidence"},winning),"OPERATION_CONFLICT");
+  loop=(await orchestration.getLoop(controller,projectId,loopId))!;
+  await failed(resume(),"ALREADY_RESUMED");
   const resumed=(await orchestration.listEvents(controller,projectId,loopId)).items.filter(x=>x.kind==="waiting.resumed");
   assert.equal(resumed.length,1);
   const source=(await store.read(projectId,reader=>reader.getSourceFact(resumed[0]!.id)))!;
@@ -211,6 +259,14 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
   await runtime.bindSession(projectId,newSession,{owner:"evoloop-codex-app-server",projectId,sessionId:newSession,
     roleId:role,cwd,authorizationScope:scope,nativeThreadId:`fixture-${newSession}`,
     nativeSessionId:`fixture-${newSession}`});
+  loseReserveReply=true;
+  await runner.pump();
+  assert.ok(runner.status().faults.some(fault=>fault.code==="FIXTURE_RESERVE_REPLY_LOST"));
+  assert.equal((await orchestration.getDispatch(controller,projectId,next.id))?.state,"dispatching");
+  assert.equal((await workflow.getRuntimeRun(controller,projectId,newRun)).taskId,taskId);
+  assert.equal((await workflow.getTask(controller,projectId,taskId)).task.version,repairedVersion+1);
+  assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,2);
+  assert.equal(credentials.filter(value=>value===newRun).length,1);
   await runner.pump();
   const continued=(await orchestration.getDispatch(controller,projectId,next.id))!;
   assert.equal(continued.state,"accepted");assert.equal(continued.runtimeRunId,newRun);
@@ -218,7 +274,7 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
   const reserved=await workflow.getRuntimeRun(controller,projectId,newRun);
   assert.equal(reserved.taskId,taskId);
   assert.match(reserved.input,new RegExp(oldRun));
-  assert.match(reserved.input,/Read this Run's fixed Task context and all three declared references/);
+  assert.match(reserved.input,/Read this Run's fixed Task context and all declared references/);
   const persistedSource=await store.read(projectId,reader=>reader.getSourceFact(resumed[0]!.id));
   assert.equal(persistedSource?.continuation?.expectedTaskVersion,repairedVersion,
     "valid consumed history stays readable after the new Run freezes a later Task revision");
@@ -278,7 +334,7 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
   loop=(await orchestration.getLoop(controller,projectId,loopId))!;
   await run(reviewer,{type:"loop.resumeWaiting",loopId,expectedLoopVersion:loop.version,
     decisionId:secondWaiting,dispatchId:next.id,evidenceRef:"repair:second-review",
-    reason:"Continue after verified review",continuation:{kind:"same-task-study",
+    reason:"R".repeat(4000),continuation:{kind:"same-task-study",
       declarationId,expectedTaskVersion:repairedVersion+1}});
   const secondResume=(await orchestration.listEvents(controller,projectId,loopId)).items
     .filter(event=>event.kind==="waiting.resumed").find(event=>event.entityId===secondWaiting)!;
@@ -301,9 +357,41 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
   await runner.pump();
   assert.equal((await orchestration.getDispatch(controller,projectId,third.id))?.runtimeRunId,thirdRun);
   assert.equal((await workflow.getTask(controller,projectId,taskId)).task.version,repairedVersion+2);
+  const thirdInput=(await workflow.getRuntimeRun(controller,projectId,thirdRun)).input;
+  assert.ok(thirdInput.length<4000,`bounded resume prompt length ${thirdInput.length}`);
+  assert.match(thirdInput,/partial; read the signed event/);
+  assert.match(thirdInput,new RegExp(secondResume.id));
   await runtime.beginDispatch(projectId,thirdRun);
   await runtime.bindTurn(projectId,thirdRun,{id:`fixture-${thirdRun}`,status:"inProgress"},
     {kind:"startReply",operationId:loopIntentId(third.id,"run.reserve")});
+  if(ending==="division"){
+    const binding=await run(controller,{type:"division.decide",decisionId:randomUUID(),loopId,
+      expectedLoopVersion:(await orchestration.getLoop(controller,projectId,loopId))!.version,
+      sourceEventId:secondResume.id,parentDispatchId:third.id,documentId:divisionDocumentId,
+      documentRevisionId:divisionRevisionId,documentContentHash:hash("# Fixed handoff"),
+      firstTaskId:divisionTaskId,expectedFirstTaskVersion:1,choice:"temporary-assignment",
+      roleId:divisionRoleId,templateId:template!.id,templateRevision:1,templateHash,
+      reason:"Bounded accepted Role follows resumed study"});
+    assert.equal(binding.entityType,"binding");
+    const finalDecision=randomUUID();
+    await run(controller,{type:"worker.decision",decisionId:finalDecision,dispatchId:third.id,
+      runId:thirdRun,kind:"waiting",divisionDecisionId:binding.entityId,
+      reason:"Hand over accepted first Task",evidenceRefs:[]});
+    await runtime.recordTurn(projectId,thirdRun,`fixture-${thirdRun}`,"completed","Decision complete");
+    await run(controller,{type:"worker.outcome",dispatchId:third.id,outcome:"waiting",deliveryId:null,
+      decisionId:finalDecision,evidenceRef:null,reason:"Hand over accepted first Task"});
+    const childId=randomUUID();
+    const consumed=await run(controller,{type:"division.consume",loopId,
+      expectedLoopVersion:(await orchestration.getLoop(controller,projectId,loopId))!.version,
+      bindingId:binding.entityId,waitingDecisionId:finalDecision,parentDispatchId:third.id,
+      dispatchId:childId,reason:"Consume exact resumed study choice"});
+    assert.equal(consumed.entityId,childId);
+    assert.equal((await orchestration.getDispatch(controller,projectId,childId))?.state,"pending");
+    assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,4);
+    assert.equal((await workflow.getTask(controller,projectId,divisionTaskId)).task.owner,"prior-role",
+      "consumption reserves budget before any normal Task transfer");
+    return;
+  }
   if(ending==="no_action"){
     const finalDecision=randomUUID();
     await run(controller,{type:"worker.decision",decisionId:finalDecision,dispatchId:third.id,runId:thirdRun,
@@ -348,3 +436,4 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"){
 }
 test("bootstrap study waiting continues twice on one Task and hands off a signed child",t=>studyScenario(t,"child"));
 test("same-Task resumed study closes on its own signed no-action Decision, not an old waiting",t=>studyScenario(t,"no_action"));
+test("resumed study consumes an accepted Role binding through its final waiting choice",t=>studyScenario(t,"division"));
