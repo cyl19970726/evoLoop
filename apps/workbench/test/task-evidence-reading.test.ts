@@ -19,7 +19,10 @@ test("short evidence stays visible; long Unicode original remains complete behin
   const collapsed = renderToStaticMarkup(createElement(EvidenceText, { label: "使用证据", value: long }));
   assert.match(collapsed, /<details[^>]*><summary>展开完整使用证据<\/summary>/);
   assert.ok(collapsed.includes(`<p>${long}</p>`), "disclosure preserves the exact original, including its last line");
-  assert.equal(evidencePreview("一\n".repeat(9)), "一\n".repeat(9) + "…", "many short lines are also folded");
+  const manyLines = "🧪\n".repeat(100) + "末行";
+  assert.equal(evidencePreview(manyLines), "🧪\n🧪\n🧪\n🧪…", "a short-line preview stays within four lines");
+  const expandedLines = renderToStaticMarkup(createElement(EvidenceText, { label: "记录理由", value: manyLines }));
+  assert.ok(expandedLines.includes(`<p>${manyLines}</p>`), "all original lines remain in the disclosure");
 });
 
 test("latest failed observation remains scoped to its delivery with registered kind, result, time and full reason", () => {
