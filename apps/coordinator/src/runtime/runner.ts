@@ -619,23 +619,38 @@ export class RuntimeRunner {
         observedAt: new Date().toISOString() };
     } catch (error) { throw this.readFailure(error); }
   }
+  /** Metadata for one frozen source Run, using the same current authority as worker trace. No native read. */
+  async workerFixedRunMetadata(principal: Principal, projectId: string, runId: string,
+    identity: WorkerIdentity): Promise<Pick<RuntimeRunRecord,
+      "projectId" | "id" | "taskId" | "taskRevisionId" | "inputHash" | "state" | "nativeTurnId">> {
+    const scope = identity.scope;
+    if (identity.principal.actorId !== principal.actorId || scope.projectId !== projectId ||
+        !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
+        !this.deps.workerTraceAuthority)
+      throw new DomainError("FORBIDDEN", "受管读取者身份或固定引用不可用。");
+    const reader = await this.deps.workflow.getRuntimeRun(principal, projectId, scope.runId);
+    const readerSession = await this.deps.workflow.getRuntimeSession(principal, projectId, scope.sessionId);
+    if (reader.taskId !== scope.taskId || reader.sessionId !== scope.sessionId || !reader.nativeTurnId ||
+        readerSession.roleId !== scope.roleId || readerSession.state !== "ready" ||
+        !await this.authorized(readerSession, reader.actorId) ||
+        !await this.deps.workerTraceAuthority(identity, runId))
+      throw new DomainError("FORBIDDEN", "目标运行未被本次受管运行的固定依据采纳。");
+    const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+    if (!run.nativeTurnId || !["completed","failed","interrupted"].includes(run.state) ||
+        session.projectId !== projectId || session.id !== run.sessionId || session.state !== "ready" ||
+        !await this.authorized(session, run.actorId))
+      throw new DomainError("FORBIDDEN", "此运行所属会话的授权已失效。");
+    return {projectId:run.projectId,id:run.id,taskId:run.taskId,taskRevisionId:run.taskRevisionId,
+      inputHash:run.inputHash,state:run.state,nativeTurnId:run.nativeTurnId};
+  }
   async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string,
     workerIdentity?: WorkerIdentity): Promise<RuntimeWorkTrace> {
     const reviewer = !!principal.actorId && principal.projectIds.includes(projectId) && principal.permissions.includes("read") &&
       principal.permissions.includes("review") && this.deps.principals.some(p => p.actorId === principal.actorId &&
         p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review"));
-    if (workerIdentity) {
-      const scope = workerIdentity.scope;
-      if (workerIdentity.principal.actorId !== principal.actorId || scope.projectId !== projectId ||
-          !principal.permissions.includes("read") || !this.deps.workerTraceAuthority)
-        throw new DomainError("FORBIDDEN", "受管读取者身份或固定引用不可用。");
-      const reader = await this.deps.workflow.getRuntimeRun(principal, projectId, scope.runId);
-      const readerSession = await this.deps.workflow.getRuntimeSession(principal, projectId, scope.sessionId);
-      if (reader.taskId !== scope.taskId || reader.sessionId !== scope.sessionId || !reader.nativeTurnId ||
-          readerSession.roleId !== scope.roleId || readerSession.state !== "ready" ||
-          !await this.authorized(readerSession, reader.actorId) || !await this.deps.workerTraceAuthority(workerIdentity, runId))
-        throw new DomainError("FORBIDDEN", "目标运行未被本次受管运行的固定依据采纳。");
-    } else if (!reviewer) throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+    if (workerIdentity) await this.workerFixedRunMetadata(principal, projectId, runId, workerIdentity);
+    else if (!reviewer) throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
     if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
     if (run.projectId !== projectId || !run.nativeTurnId)

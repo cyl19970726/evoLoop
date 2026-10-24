@@ -7,14 +7,16 @@ import test from "node:test";
 import pg from "pg";
 import {migrate,PostgresUnitOfWork} from "@evoloop/adapter-postgres";
 import {PgOrchestrationStore} from "@evoloop/adapter-postgres/orchestration";
-import {WorkflowService} from "@evoloop/core";
+import {WorkflowService,RuntimeWorkflowService} from "@evoloop/core";
 import {OrchestrationService,OrchestrationError} from "@evoloop/core/orchestration";
 import {applyDeclaredStudyReference,decideTaskExternalReference} from "@evoloop/core/references";
 import {ManagedLoopRunner,loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
+import {RuntimeRunner} from "../../apps/coordinator/src/runtime/runner.js";
 import {workerGuardFacts} from "../../apps/coordinator/src/workers/facts.js";
 import {WorkerCredentialBroker} from "../../apps/coordinator/src/workers/credentials.js";
 import {buildServer} from "../../apps/coordinator/src/server.js";
 import {hasCurrentStudyReviewer,type AuthConfig} from "../../apps/coordinator/src/auth.js";
+import {readTaskContext} from "../../apps/cli/src/materials.js";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("Dedicated test database required");
@@ -202,14 +204,44 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   await broker.issue({projectId,loopId,taskId,runId:readerRunId,sessionId:readerSessionId,
     roleId:role,kind:"cognition",allowedRoleIds:[role]});
   const token=await readFile(join(credentialRoot,readerRunId,"credential"),"utf8");
+  let readerGrant=true;
+  const metadataRunner=new RuntimeRunner({runtimeFactory:()=>({isReady:()=>true}) as never,
+    workflow,trusted:new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}}),
+    principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,
+    hasGrant:grant=>grant.roleId===sourceRole?sourceGrant:readerGrant,
+    workerTraceAuthority:(identity,targetRunId)=>workerGuardFacts(pool,identity,currentReviewer).fixedRunTrace!(targetRunId)});
   const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:controllerId,
     projectIds:[projectId],permissions:["read","write","review"]}],
+    references:{uow,gitForPrincipal:async()=>referenceDeps.git,knowledgeForPrincipal:async()=>({})} as never,
+    documents:{uow,blobsForPrincipal:async()=>({}) as never},
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity,currentReviewer)},
-    runtime:{status:()=>({available:true,error:null}),trace:async (_principal:unknown,_project:string,target:string)=>({runId:target,source:"fixture-owned-trace"})} as never});
+    runtime:{status:()=>({available:true,error:null}),trace:async (_principal:unknown,_project:string,target:string)=>({runId:target,source:"fixture-owned-trace"}),
+      workerFixedRunMetadata:metadataRunner.workerFixedRunMetadata.bind(metadataRunner)} as never});
   t.after(async()=>{await app.close();await rm(credentialRoot,{recursive:true,force:true});});
   const traceUrl=`/api/projects/${projectId}/runtime/runs/${sourceRunId}/trace`;
   const readTrace=()=>app.inject({method:"GET",url:traceUrl,headers:{authorization:`Bearer ${token}`}});
+  const readSourceMetadata=()=>app.inject({method:"GET",url:`/api/projects/${projectId}/runtime/runs/${sourceRunId}`,
+    headers:{authorization:`Bearer ${token}`}});
   assert.equal((await readTrace()).statusCode,200);
+  const sourceMetadata=await readSourceMetadata();
+  assert.equal(sourceMetadata.statusCode,200);
+  assert.deepEqual(Object.keys(sourceMetadata.json()).sort(),
+    ["projectId","id","taskId","taskRevisionId","inputHash","state","nativeTurnId"].sort(),
+    "fixed-source metadata exposes only identity and terminal binding, never input or result bodies");
+  assert.equal(sourceMetadata.json().inputHash,inputHash);
+  assert.equal(sourceMetadata.json().input,undefined);
+  assert.equal(sourceMetadata.json().resultSummary,undefined);
+  assert.equal(sourceMetadata.json().evaluationPacket,undefined);
+  assert.equal((await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime/runs/${randomUUID()}`,
+    headers:{authorization:`Bearer ${token}`}})).statusCode,403,"a worker cannot browse arbitrary Run metadata");
+  assert.equal((await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime/runs/${sourceRunId}/events`,
+    headers:{authorization:`Bearer ${token}`}})).statusCode,403,"fixed metadata does not grant Run events");
+  sourceGrant=false;
+  assert.equal((await readSourceMetadata()).statusCode,403,"revoked source grant cannot disclose fixed Run metadata");
+  sourceGrant=true;
+  readerGrant=false;
+  assert.equal((await readSourceMetadata()).statusCode,403,"revoked reader grant cannot disclose fixed Run metadata");
+  readerGrant=true;
   const originalReviewer={...reviewerCredentials[0]!,permissions:[...reviewerCredentials[0]!.permissions]};
   for(const withdrawn of [["read","write"],["write","review"],[]] as const){
     if(withdrawn.length)reviewerCredentials[0]!.permissions=[...withdrawn];
@@ -219,6 +251,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     assert.equal(await facts.fixedRunTrace!(sourceRunId),false,
       "current declaring reviewer authority is needed for new trace reads");
     assert.equal((await readTrace()).statusCode,403);
+    assert.equal((await readSourceMetadata()).statusCode,403);
     reviewerCredentials.splice(0,reviewerCredentials.length,{...originalReviewer,
       permissions:[...originalReviewer.permissions]},controllerCredential);
     assert.equal((await readTrace()).statusCode,200);
@@ -236,12 +269,14 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     actionImpact:"Current head is a new decision"});applied(replaced);
   assert.equal((await orchestration.getLoop(controller,projectId,loopId))!.currentStudyDeclarationId,declarationId);
   assert.equal((await readTrace()).statusCode,403,"replaced source decision cannot grant new trace reading");
+  assert.equal((await readSourceMetadata()).statusCode,403);
   const loopAfter=(await orchestration.getLoop(controller,projectId,loopId))!;
   await command(reviewer,{type:"loop.studyMaterial.revoke",loopId,expectedLoopVersion:loopAfter.version,
     declarationId,reason:"Withdraw future trace reading"});
   assert.equal((await orchestration.getLoop(controller,projectId,loopId))!.currentStudyDeclarationId,null);
   assert.equal(await facts.fixedRunTrace!(sourceRunId),false);
   assert.equal((await readTrace()).statusCode,403);
+  assert.equal((await readSourceMetadata()).statusCode,403);
 
   const secondLoopId=randomUUID(),secondDeclarationId=randomUUID();
   await command(reviewer,{type:"loop.enroll",loopId:secondLoopId,goalId,stageId,cognitiveRoleId:role,
@@ -385,10 +420,47 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const runCount=await pool.query(`SELECT count(*)::int AS n FROM runtime_run WHERE project_id=$1 AND task_id=$2`,
     [projectId,seededTaskId]);
   assert.equal(runCount.rows[0].n,0,"no native Run starts before the sealed Task dispatch");
+  applied(await business({type:"task.start",taskId:seededTaskId,expectedVersion:2,
+    reason:"Start the runner-created study Task"}));
+  const readerDetail=await workflow.getTask(controller,projectId,seededTaskId);
+  const signedSessionId=randomUUID(),signedRunId=randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/fixture','cognitive-scope','read-only','on-request','ready',1,$4,$5,$6,$7,now(),now())`,
+    [projectId,signedSessionId,role,randomUUID(),randomUUID(),randomUUID(),controllerId]);
+  await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
+    input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'runner study input',$8,'running',1,$9,$10,now(),now())`,
+    [projectId,signedRunId,seededTaskId,readerDetail.task.currentRevisionId,readerDetail.basis!.id,
+      signedSessionId,randomUUID(),hash("runner study input"),randomUUID(),controllerId]);
+  const seededDispatch=seededDispatches[0]!;
+  await store.transaction(projectId,tx=>tx.updateDispatch({...seededDispatch,
+    version:seededDispatch.version+1,state:"accepted",runtimeRunId:signedRunId},seededDispatch.version));
+  await broker.issue({projectId,loopId:pausedLoopId,taskId:seededTaskId,runId:signedRunId,
+    sessionId:signedSessionId,roleId:role,kind:"cognition",allowedRoleIds:[role]});
+  const signedToken=await readFile(join(credentialRoot,signedRunId,"credential"),"utf8");
+  const address=await app.listen({host:"127.0.0.1",port:0});
+  const signedClient={get:async(path:string)=>{const response=await fetch(new URL(path,address),
+    {headers:{authorization:`Bearer ${signedToken}`}});
+    const body=await response.json() as {code?:string};
+    if(!response.ok)throw new Error(`${body.code ?? "HTTP"} HTTP${response.status}`);
+    return body;}};
+  const signedContext=await readTaskContext(signedClient as never,projectId,seededTaskId);
+  assert.equal(signedContext.status,"complete",JSON.stringify(signedContext.failures));
+  assert.deepEqual(signedContext.failures.filter(failure=>failure.kind==="run"),[],
+    "the issued worker reads its own fixed source Run metadata through HTTP context");
+  assert.deepEqual(signedContext.externalReferences.map(item=>item.reference.referenceId),[sourceRunId]);
+  assert.match(signedContext.externalReferences[0]!.body, new RegExp(inputHash),
+    "context verifies the fixed Run input hash before offering a trace pointer");
+  sourceGrant=false;
+  const sourceRevokedContext=await readTaskContext(signedClient as never,projectId,seededTaskId);
+  assert.deepEqual(sourceRevokedContext.externalReferences,[]);
+  assert.match(sourceRevokedContext.failures.find(failure=>failure.kind==="run")?.reason ?? "",/FORBIDDEN HTTP403/);
+  sourceGrant=true;
   const taskRead=await app.inject({method:"GET",url:`/api/projects/${projectId}/tasks/${seededTaskId}`,
     headers:{authorization:`Bearer ${"o".repeat(40)}`}});
   assert.equal(taskRead.statusCode,200);
-  assert.equal(taskRead.json().task.version,2);
+  assert.equal(taskRead.json().task.version,3,"starting the sealed Task advances its inherited snapshot");
   const activeLoop=(await orchestration.getLoop(controller,projectId,pausedLoopId))!;
   await command(reviewer,{type:"loop.state",loopId:pausedLoopId,
     expectedVersion:activeLoop.version,state:"stopped",reason:"End study trial"});
@@ -398,4 +470,10 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     controllerActorId:controllerId,sourceTaskId,sourceTaskRevisionId:replaced.revisionId,
     sourceDecisionIds:[replaced.decisionId],reason:"Stopped loop cannot receive material"}),
     (error:unknown)=>error instanceof OrchestrationError&&error.code==="LOOP_STOPPED");
+  applied(await business({type:"runtime.session.close",sessionId:sourceSessionId,
+    expectedVersion:1,reason:"Withdraw source Session after the study"}));
+  const closingSourceContext=await readTaskContext(signedClient as never,projectId,seededTaskId);
+  assert.deepEqual(closingSourceContext.externalReferences,[]);
+  assert.match(closingSourceContext.failures.find(failure=>failure.kind==="run")?.reason ?? "",/FORBIDDEN HTTP403/,
+    "a source Session leaving ready cannot grant another context read");
 });
