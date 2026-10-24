@@ -55,6 +55,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
+    /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
+    browserRead: z.strictObject({scopePath:absolute,playwrightModulePath:absolute}).optional(),
     delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>
       new Set(values.map(value => value.id)).size === values.length, "Delegation template IDs must be unique" ).default([]),
     grants: z.array(grant).max(200).refine(values => new Set(values.map(value => JSON.stringify([

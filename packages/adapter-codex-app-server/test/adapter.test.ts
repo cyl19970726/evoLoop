@@ -274,6 +274,80 @@ test("read and resume reject a changed native session tree", async t => {
   await assert.rejects(() => adapter.resume(binding), /resumed thread does not match registered binding/);
 });
 
+test("experimental tool is declared only for the selected thread and dispatches a bounded result", async t => {
+  const calls:string[]=[];
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,"dynamic"],requestTimeoutMs:500,
+    dynamicTools:async session=>session.sessionId===spec.sessionId ? [{type:"function",name:"browser_snapshot",description:"Read approved view",inputSchema:{type:"object",properties:{},additionalProperties:false}}] : undefined,
+    callDynamicTool:async (call,binding)=>{calls.push(`${binding.nativeThreadId}:${call.turnId}:${call.tool}`);return {contentItems:[{type:"inputText",text:"approved text"}],success:true};},
+  });
+  t.after(()=>adapter.close());await adapter.open();
+  const binding=await adapter.create(spec);
+  const result=new Promise<unknown>(resolve=>adapter.onEvent(event=>{if(event.method==="fixture/toolDecision")resolve(event.params);}));
+  await adapter.startTurn(binding,"read","operation-1");
+  const decision=await result as {result:unknown};
+  assert.deepEqual(calls,["thread-owned:turn-1:browser_snapshot"]);
+  assert.deepEqual(decision.result,{contentItems:[{type:"inputText",text:"approved text"}],success:true});
+});
+
+test("experimental tool rejects foreign thread, unknown tool and replay", async t => {
+  for (const mode of ["dynamic-foreign","dynamic-unknown-tool","dynamic-replay"]) {
+    let calls=0;
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,mode],requestTimeoutMs:500,
+      dynamicTools:async()=>[{type:"function",name:"browser_snapshot",description:"Read approved view",inputSchema:{type:"object",properties:{},additionalProperties:false}}],
+      callDynamicTool:async()=>{calls++;return {contentItems:[{type:"inputText",text:"approved"}],success:true};},
+    });
+    t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(spec);
+    const results:unknown[]=[];
+    const done=new Promise<void>(resolve=>adapter.onEvent(event=>{
+      if(event.method==="fixture/toolDecision") {results.push((event.params as {result:unknown}).result);if(results.length===(mode==="dynamic-replay"?2:1))resolve();}
+    }));
+    await adapter.startTurn(binding,"read","operation-1");await done;
+    assert.equal(calls,mode==="dynamic-replay"?1:0,mode);
+    assert.equal((results.at(-1) as {success:boolean}).success,false,mode);
+  }
+});
+
+test("experimental tool deadline cancels its scope and sends one denial despite a late completion",async t=>{
+  let cancelled=0,aborted=false,calls=0;
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,"dynamic-hang"],
+    requestTimeoutMs:500,dynamicToolTimeoutMs:20,
+    dynamicTools:async()=>[{type:"function",name:"browser_snapshot",description:"Read approved view",inputSchema:{type:"object",properties:{},additionalProperties:false}}],
+    callDynamicTool:async call=>{calls++;await new Promise(resolve=>setTimeout(resolve,100));aborted=!!call.signal?.aborted;
+      return {contentItems:[{type:"inputText",text:"late success"}],success:true};},
+    cancelDynamicTool:async()=>{cancelled++;},
+  });
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(spec);
+  const results:unknown[]=[];
+  const done=new Promise<void>(resolve=>adapter.onEvent(event=>{
+    if(event.method==="fixture/toolDecision"){results.push((event.params as {result:unknown}).result);resolve();}
+  }));
+  await adapter.startTurn(binding,"read","operation-1");await done;
+  await new Promise(resolve=>setTimeout(resolve,150));
+  assert.equal(calls,1);assert.equal(cancelled,1);assert.equal(aborted,true);
+  assert.equal(results.length,1);
+  assert.deepEqual(results[0],{contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false});
+});
+
+test("restored native binding stays fail-closed when its tool declaration cannot be proven",async t=>{
+  let calls=0;
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,"dynamic-restore"],requestTimeoutMs:500,
+    verifyBinding:async()=>true,
+    dynamicTools:async()=>[{type:"function",name:"browser_snapshot",description:"Read approved view",inputSchema:{type:"object",properties:{},additionalProperties:false}}],
+    callDynamicTool:async()=>{calls++;return {contentItems:[{type:"inputText",text:"unexpected"}],success:true};},
+  });
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server"};
+  await adapter.registerBinding(binding);
+  await adapter.resume(binding);
+  const result=new Promise<unknown>(resolve=>adapter.onEvent(event=>{if(event.method==="fixture/toolDecision")resolve(event.params);}));
+  await adapter.startTurn(binding,"read","operation-1");
+  assert.deepEqual((await result as {result:unknown}).result,
+    {contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false});
+  assert.equal(calls,0);
+});
+
 test("owned read remains available when native resume is rejected", async t => {
   const adapter = await open("resume-rejected"); t.after(() => adapter.close());
   const binding = await adapter.create(spec);
