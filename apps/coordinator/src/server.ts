@@ -178,7 +178,15 @@ export async function buildServer(options: {
     return options.service.listRuntimeRuns(who(request.principal), projectId, query.taskId);
   });
   app.get("/api/projects/:projectId/runtime/runs/:id", async request => {
-    const p = params(request.params); return options.service.getRuntimeRun(who(request.principal), p.projectId!, p.id!);
+    const p = params(request.params), principal = who(request.principal);
+    if (request.workerIdentity && p.id !== request.workerIdentity.scope.runId) {
+      const gap = await options.workers?.facts(request.workerIdentity).recoveryGap?.();
+      if (gap && gap.projectId === p.projectId && gap.loopId === request.workerIdentity.scope.loopId && gap.runId === p.id)
+        return options.service.getRuntimeRun(principal, p.projectId!, p.id!);
+      if (!options.runtime?.workerFixedRunMetadata) throw new DomainError("FORBIDDEN", "受管固定运行读取不可用。");
+      return options.runtime.workerFixedRunMetadata(principal, p.projectId!, p.id!, request.workerIdentity);
+    }
+    return options.service.getRuntimeRun(principal, p.projectId!, p.id!);
   });
   app.get("/api/projects/:projectId/runtime/runs/:id/events", async request => {
     const p = params(request.params); return options.service.listRuntimeEvents(who(request.principal), p.projectId!, p.id!);
