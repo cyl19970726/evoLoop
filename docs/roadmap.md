@@ -33,7 +33,7 @@ S1a 只证明第一层的一小段：已采纳需求改版能让两个尚未运�
 | A 受管执行合同与持久化 | 独立 Loop/Inbox/因果 Dispatch；限定身份；Worker 署名意图、终态核对后封存；去重、预算、暂停与原操作恢复，保持 Task 四态。 | [PR40](https://github.com/cyl19970726/evoLoop/pull/40) 已审阅合入，合入后应用/文档 CI 通过；Git 合入、运行部署和产品验收分别记录。 |
 | B 首条认知闭合 | 固定来源→有据选择→业务承接/交付→独立使用反馈→认知再判断或停止。 | [PR41](https://github.com/cyl19970726/evoLoop/pull/41) 已审阅合入，主线应用/文档 CI 通过。正式第一条有界使用已完成真实认知、复用原待办的 child、署名交付、独立工作台使用及后续反馈判断；固定 Git 阅读及呈现经修复复测，原 Task 已关闭、阶段已回看并停止 Loop，旧 failed 与修正后的 used 保留。 |
 | C 执行变体与恢复 | 体验 issue→明确修复工作→真实修复→原路径复测；周期、等待/暂停/重叠/失败恢复，正常收束与责任接走。 | C1 [PR43](https://github.com/cyl19970726/evoLoop/pull/43)、C2 [PR44](https://github.com/cyl19970726/evoLoop/pull/44)、日程接续桥 [PR54](https://github.com/cyl19970726/evoLoop/pull/54) 与 owner 关闭修复 [PR59](https://github.com/cyl19970726/evoLoop/pull/59) 已合入。恢复后的新有限 Loop 已完成 issue→修复→独立使用→反馈认知关闭原 Task，原业务 Session 由 owner 正常归档并保留身份与历史。周期两期报告均被负责人代理使用，反馈关闭原任务；来源关闭缺口经 [PR61](https://github.com/cyl19970726/evoLoop/pull/61) 修复并沿原任务复验，9 个 Run 与各自 Session 全部收束，阶段已回看并停止，长期运行仍未证明。 |
-| D 真实工作驱动分工 | 授权 trace/负担/成果→比较替代→有据试行→首批工作→回看成本效果与退出。 | D1 [PR42](https://github.com/cyl19970726/evoLoop/pull/42) 与固定 Run 采纳 D2A [PR48](https://github.com/cyl19970726/evoLoop/pull/48) 已合入，提供受当前授权约束的有界工作轨迹及固定输入引用。此前单个真实终态 trace 曾核白名单映射且不输出 reasoning 正文；隔离原生研究停在 waiting，未读取 trace 或派出研究业务，不视为分工研究通过。PR48 D2、[PR67](https://github.com/cyl19970726/evoLoop/pull/67) method、[PR68](https://github.com/cyl19970726/evoLoop/pull/68) study、[PR70](https://github.com/cyl19970726/evoLoop/pull/70)、[PR71](https://github.com/cyl19970726/evoLoop/pull/71)、[PR72](https://github.com/cyl19970726/evoLoop/pull/72) 与 [PR73](https://github.com/cyl19970726/evoLoop/pull/73) 已合入。当前研究接续仍未开始首项业务工作，见[第三次分工研究接续](#2026-10-24-第三次分工研究接续)；M3 首项工作、Delivery、独立使用、成本效果与退出仍待验。 |
+| D 真实工作驱动分工 | 授权 trace/负担/成果→比较替代→有据试行→首批工作→回看成本效果与退出。 | D1 [PR42](https://github.com/cyl19970726/evoLoop/pull/42) 与固定 Run 采纳 D2A [PR48](https://github.com/cyl19970726/evoLoop/pull/48) 已合入，提供受当前授权约束的有界工作轨迹及固定输入引用。此前单个真实终态 trace 曾核白名单映射且不输出 reasoning 正文；隔离原生研究停在 waiting，未读取 trace 或派出研究业务，不视为分工研究通过。PR48 D2、[PR67](https://github.com/cyl19970726/evoLoop/pull/67) method、[PR68](https://github.com/cyl19970726/evoLoop/pull/68) study、[PR70](https://github.com/cyl19970726/evoLoop/pull/70)、[PR71](https://github.com/cyl19970726/evoLoop/pull/71)、[PR72](https://github.com/cyl19970726/evoLoop/pull/72)、[PR73](https://github.com/cyl19970726/evoLoop/pull/73) 与 [PR74](https://github.com/cyl19970726/evoLoop/pull/74) 已合入。首项业务工作已真实运行并形成 Delivery，但独立使用发现内容错误，返工因缺少固定原件等待；原 Loop 停在 9/12，本轮未通过。详见[第三次分工研究接续](#2026-10-24-第三次分工研究接续)；消费复测、成本效果与完整收束仍未完成。 |
 
 分工工程按三个包合入：[PR60](https://github.com/cyl19970726/evoLoop/pull/60) 固定模板授权、分工意图、绑定与策略修订；[PR62](https://github.com/cyl19970726/evoLoop/pull/62) 消费原意图、预留首项工作，经正式 Task 责任修订及接收方确认后才允许执行；[PR63](https://github.com/cyl19970726/evoLoop/pull/63) 在模板显式许可及累计额度内原子提出并接纳一个试行 Role，默认不允许创建。原身份、真实签署者和既有预算保留，接收确认不等于成果已交付或被采用。
 
@@ -51,7 +51,7 @@ S1a 只证明第一层的一小段：已采纳需求改版能让两个尚未运�
 
 读取证据也分层记录：完整响应下载且哈希一致、完整正文实际出现在模型工具结果中、消费者理解并采用内容，分别需要证据。第二期结果认知的一次原件响应被完整保存，但展示给模型的正文被截断，全文语义消费未证；后续反馈认知的工具结果包含完整正文，负责人代理自己的完整阅读与采用收口清单另有独立记录。这些有限证据不证明全天日程可靠性、Wiki 比较收益、真人体验或生产服务可用。
 
-第二条组合旅程整体尚未通过：工作台授权与浏览器使用路径仍须另验，局部修复闭环和两期 Agent 使用不能替代整体验收。
+第二条组合旅程整体尚未通过。后续独立负责人代理已沿正常工作台路径读回修复任务、固定交付与使用记录，以及日程修订、发生记录和对应任务链；这些前端读回不增加一次业务使用。业务 Session 的浏览器接入仍未验，局部修复闭环和两期 Agent 使用不能替代整体验收。
 
 实际使用也暴露出消费负担：前后报告从 9,419 增至 12,195 字节，业务固定正文从 6,896 增至 9,453 字节。负责人代理采用了第二期的收口清单，但没有观察到操作、耗时或成本减少；日程在第二期报告产生前已经停止，后来的停止建议不能倒算为决策贡献。后续应先比较直接引用固定原件、只写本次变化等方法改进，不为展示动态分工强行新增 Role；当前不据此宣布持续收益成立。
 
@@ -61,7 +61,19 @@ S1a 只证明第一层的一小段：已采纳需求改版能让两个尚未运�
 
 [PR70](https://github.com/cyl19970726/evoLoop/pull/70) 与 [PR71](https://github.com/cyl19970726/evoLoop/pull/71) 合入后，同 Task 研究续接已有软件与 PostgreSQL 证据；[PR72](https://github.com/cyl19970726/evoLoop/pull/72) 明确带来源 Issue 初稿可在创建时进入认知；[PR73](https://github.com/cyl19970726/evoLoop/pull/73) 合入后，当前完整候选已正常维护至 schema025、迁移账 24 次，本次维护没有 DDL。schema019 是旧正式基线，schema020 是另一项 D2A 实验，不与当前候选混记。
 
-独立负责人代理完成第三次研究 Run，生成本 Run 诊断报告并署名记录 method 决定；没有新建 Role 或 binding，method 也不等于首项工作。原首业务 Task 仍为 todo，child 请求已受理但未启动：runner 把可信的 study `waiting.resumed` 错误地要求为 Issue creation 来源。owner 已正常暂停原 Loop，保留原 child 与完整预算历史。来源分类的局部修复已通过隔离 PostgreSQL 回归，实际推进 runner 至业务 Task 开始、固定依据、Session 就绪与唯一 Run 接受，并覆盖丢回包后同操作恢复；运行时绑定是夹具，尚未部署或 native 复验。首项业务工作、Delivery、独立使用、成本效果与退出均未验。本轮主要诊断平台自身，即便未来完成有界工作，也不证明新增持续职责的需要或净收益。
+独立负责人代理完成第三次研究 Run，生成本 Run 诊断报告并署名记录 method 决定；没有新建 Role 或 binding。首业务 child 曾已受理却停在 Task 开始前：runner 把可信的 study `waiting.resumed` 误当作 Issue creation 来源。负责人正常暂停原 Loop 后，[PR74](https://github.com/cyl19970726/evoLoop/pull/74) 按已验证根来源纠正分类，保留普通业务授权、Task CAS 和固定依据；没有把研究者过去读过的所有 trace 权限变成业务 Task 的额外依赖。隔离回归实际推进到业务 Run 接受，并覆盖丢回包后原操作恢复；这些运行时绑定是夹具。
+
+修复已正常合入并完成本机前向维护，新停机备份、65 张表的完整字段与行指纹、24 条迁移记录及身份均经过独立核对；本次没有 DDL。随后负责人只激活原 Loop，原 child 在原职责下形成唯一真实业务 Run，署名交付报告并形成 Delivery；没有再次恢复研究、重发 child 或重置预算。后续自动认知选择了 `no_action`。
+
+首稿报告为 10,892 字节，负责人代理全文读取并核实固定哈希后，照交接指引实际使用，发现它混写核心命令与协调命令的操作回执入口，导致一次真实 404；正确入口仍可读到原操作成功。该内容缺陷不表示运行或封存失败，也不能据此重发原命令。消费者已签署 `failed`，没有签署 `used`。
+
+负责人正常重开并修订原业务 Task，关联已采用的旧报告后，沿同一职责派发返工。新 Run 的固定依据仍只有主正文和原周期报告，不含旧交付报告；业务 worker 读旧报告原件被 403 拒绝，遂署名 `waiting`，没有新报告或 Delivery。后续结果认知也选择等待，负责人正常暂停原 Loop，停在版本 25、累计 9/12。旧 Delivery、失败观察、所有 Run 与预算历史保留，业务 Task 仍未完成；没有倒填终态 Run、复制全文冒充读取原件或增发预算。
+
+该 403 符合当前固定输入边界，暴露的是重做前显式重选输入的衔接缺口：`task.update` 目前不能选择额外固定来源，`task.reviewBasis` 也不能加入从未选择的文档，受管 runner 有既有依据时只继承。修复候选 [PR77](https://github.com/cyl19970726/evoLoop/pull/77) 为正常任务修订补入显式选择，保留主正文、CAS、采用修订、审阅与在途检查；隔离 PostgreSQL 与 runner 已验证旧 worker 读取 403、重选并正常启动后新 worker 可读原件，尚未部署或沿原任务 native 复测。普通业务结果来源的认知等待也不在现有 `loop.resumeWaiting` 范围内，重选输入本身不能重新唤醒原链。剩余三次额度不保证返工、独立使用后的反馈和完整收束，本轮保持未通过；修复后仍须沿原失败要求复测，不能用这次负例代替。
+
+九次派发包括同一研究 Task 的三次 Run、额外 Issue 的一次认知、首业务与结果认知、失败反馈认知、返工业务和返工结果认知。修复、维护、等待及消费也是试用成本，不把这些派发都算作有效业务成果。场景主要诊断平台自身，实际使用、改变了原本未完成的行动、相较直接读原件是否降低总成本要分别判断；新增持续职责的需要、净收益及未知耗时与费用仍未证实。
+
+负责人代理另经已授权的新浏览器区实际读回任务、交付、失败观察、审计分页和周期来源；正常点击暴露了固定页眉遮住任务页签，长使用证据也挤占主要阅读区域。修复提案限于滚动落点和长证据展开，不重写历史原文。人类已授权业务 Session 在本机工作台只读导航，但当前原生接入与审批回调没有可用的限定入口；现有 grant 也不能强制站点和动作白名单。业务 GUI 仍未验，不能把负责人代理 QA 当作该 Session 实际使用，也不再记为人类尚未答复。
 
 一次模型终态、报告生成、署名 Delivery、独立消费者使用和真人使用分别核对。订阅独立使用观察时，以 Delivery 当时固定的 Task 修订、Stage 和 Goal 归属，不能被后来移动的任务改写；生产者自报及该 Loop 认知自身的反馈不充当独立消费。必需来源不可读时应明确等待和责任，配置开关为真不证明原文已读。
 
