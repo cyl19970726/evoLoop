@@ -173,6 +173,16 @@ export class ManagedLoopRunner {
       const resumed = fact as OrchestrationSourceFact & { waitingDecisionId?: string | null;
         waitingRunId?: string | null; previousSourceEventId?: string | null;
         originalSourceEventId?: string | null };
+      if (resumed.continuation) return fact.sourceLoopId===loop.id &&
+        resumed.continuation.kind==="same-task-study" &&
+        resumed.continuation.rootSourceEventId===loop.bootstrapEventId &&
+        resumed.continuation.originalTaskId===fact.subjectId &&
+        resumed.continuation.expectedTaskVersion===fact.subjectVersion &&
+        !!resumed.waitingDecisionId && !!resumed.waitingRunId && !!resumed.previousSourceEventId &&
+        dispatches.some(d=>d.id===resumed.continuation!.originalDispatchId &&
+          d.inboxId===resumed.continuation!.originalInboxId &&
+          d.taskId===fact.subjectId && d.runtimeRunId===resumed.waitingRunId &&
+          d.state==="completed" && d.outcome==="waiting");
       return fact.sourceLoopId === loop.id && fact.subjectVersion === 1 && !!fact.originDispatchId &&
         !!fact.operationId && !!fact.sourceActorId && !!fact.issueRevisionId && !!fact.issueContentHash &&
         !!resumed.waitingDecisionId && !!resumed.waitingRunId && !!resumed.previousSourceEventId &&
@@ -237,8 +247,11 @@ export class ManagedLoopRunner {
         disposition: "waiting", reason: "Managed loop run budget exhausted", evidenceRef: null });
       return;
     }
-    const taskId = loopIntentId(loop.id, inbox.id, "cognition-task");
+    const continuation=sourceFact?.kind==="waiting.resumed" ? sourceFact.continuation : null;
+    const taskId = continuation?.originalTaskId ?? loopIntentId(loop.id, inbox.id, "cognition-task");
     const existing = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId).catch(() => null);
+    if (continuation && (!existing || existing.task.state!=="in_progress" ||
+      existing.task.version!==continuation.expectedTaskVersion)) throw new Error("STUDY_CONTINUATION_TASK_CHANGED");
     if (!existing) {
       const source = inbox.sourceEventId === loop.bootstrapEventId ? "enrolled loop" : `verified source event ${inbox.sourceEventId}`;
       const fixedIssue = (sourceFact?.kind === "document" || sourceFact?.kind === "waiting.resumed") &&
@@ -260,7 +273,7 @@ export class ManagedLoopRunner {
         consumer: loop.cognitiveRoleId, useRequired: false,
         evidence: `Source event ${inbox.sourceEventId}`, stopCondition: "A decision is recorded for this source." }));
     }
-    if (current.currentStudyDeclarationId) {
+    if (current.currentStudyDeclarationId && !continuation) {
       if (!this.deps.applyStudyReference) throw new Error("STUDY_REFERENCE_UNAVAILABLE");
       const declaration = await this.deps.orchestration.getStudyDeclaration(cognitive.principal,
         loop.projectId,current.currentStudyDeclarationId);
@@ -294,11 +307,13 @@ export class ManagedLoopRunner {
         throw new Error("STUDY_RECEIVER_CHANGED");
     }
     const detail = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId);
+    if (continuation && (detail.task.state!=="in_progress" ||
+      detail.task.version!==continuation.expectedTaskVersion)) throw new Error("STUDY_CONTINUATION_TASK_CHANGED");
     await this.deps.orchestration.execute(cognitive.principal, { type: "dispatch.request", projectId: loop.projectId,
       operationId: loopIntentId(inbox.id, "cognition-dispatch-request"), inboxId: inbox.id,
       expectedInboxVersion: inbox.version, dispatchId: loopIntentId(inbox.id, "cognition-dispatch"),
       taskId, expectedTaskVersion: detail.task.version, recipientRoleId: loop.cognitiveRoleId,
-      purpose: "cognition", parentDispatchId: null, authorizationScopeId: cognitive.authorizationScopeId,
+      purpose: continuation ? "study-continuation" : "cognition", parentDispatchId: null, authorizationScopeId: cognitive.authorizationScopeId,
       reason: `Cognition for verified source ${inbox.sourceEventId}` });
   }
   private async claimIntent(profile: ManagedRoleProfile,
@@ -388,7 +403,15 @@ export class ManagedLoopRunner {
     const task = await this.deps.workflow.getTask(profile.principal, loop.projectId, dispatch.taskId);
     const startOperationId = loopIntentId(dispatch.id, "task.start");
     const startPrior = await this.deps.workflow.getOperation(profile.principal, loop.projectId, startOperationId);
-    if (!startPrior) {
+    const runId = loopIntentId(dispatch.id, "run");
+    const priorRun = await this.deps.workflow.getRuntimeRun(profile.principal, loop.projectId, runId).catch(() => null);
+    if (dispatch.purpose==="study-continuation") {
+      if (startPrior || task.task.state!=="in_progress" || (priorRun
+        ? priorRun.taskId!==dispatch.taskId || priorRun.operationId!==loopIntentId(dispatch.id,"run.reserve") ||
+          priorRun.taskRevisionId!==task.task.currentRevisionId || task.task.version!==dispatch.taskVersion+1
+        : task.task.version!==dispatch.taskVersion))
+        throw new Error("STUDY_CONTINUATION_TASK_CHANGED");
+    } else if (!startPrior) {
       if (task.task.state !== "todo" || task.task.version !== dispatch.taskVersion) throw new Error("TASK_CHANGED_AFTER_DISPATCH_START");
       const source = dispatch.parentDispatchId
         ? (await this.pages(cursor => this.deps.orchestration.listSourceFacts(profile.principal,
@@ -420,8 +443,6 @@ export class ManagedLoopRunner {
     }
     if (session.state === "reserved" || session.state === "creating") { await this.deps.runtime.pump(); return; }
     if (session.state !== "ready") throw new Error(`SESSION_${session.state.toUpperCase()}`);
-    const runId = loopIntentId(dispatch.id, "run");
-    const priorRun = await this.deps.workflow.getRuntimeRun(profile.principal, loop.projectId, runId).catch(() => null);
     if (!priorRun) {
       const scope: WorkerScope = { projectId: loop.projectId, loopId: loop.id, taskId: dispatch.taskId,
         runId, sessionId, roleId: dispatch.recipientRoleId,
@@ -430,6 +451,9 @@ export class ManagedLoopRunner {
           ? [loop.cognitiveRoleId, ...loop.allowedBusinessRoleIds] : [dispatch.recipientRoleId] };
       const credential = await this.deps.credential.lookup(runId) ?? await this.deps.credential.issue(scope);
       const currentTask = await this.deps.workflow.getTask(profile.principal, loop.projectId, dispatch.taskId);
+      if (dispatch.purpose==="study-continuation" &&
+        (currentTask.task.state!=="in_progress" || currentTask.task.version!==dispatch.taskVersion))
+        throw new Error("STUDY_CONTINUATION_TASK_CHANGED");
       const input = await this.workerInput(loop, dispatch, runId, credential.wrapperPath, profile);
       applied(await this.deps.workflow.execute(profile.principal, { type: "runtime.run.reserve", projectId: loop.projectId,
         operationId: loopIntentId(dispatch.id, "run.reserve"), runId, taskId: dispatch.taskId,
@@ -474,6 +498,8 @@ export class ManagedLoopRunner {
         previousSourceEventId?: string | null } : null;
     const resumeContext = resumed?.issueRevisionId && resumed.issueContentHash
       ? ` New waiting-resume review from Decision ${resumed.waitingDecisionId}; original source ${resumed.originalSourceEventId}, previous source ${resumed.previousSourceEventId}. Read fixed Issue ${resumed.subjectId} revision ${resumed.issueRevisionId} at get /api/projects/${loop.projectId}/documents/${resumed.subjectId}/revisions/${resumed.issueRevisionId}/original and verify SHA-256 ${resumed.issueContentHash}. The old Run, Decision and rejected operations remain historical; use only this new Run's identity.` : "";
+    const studyResumeContext = resumed?.continuation
+      ? ` Continue the same in-progress study Task ${resumed.continuation.originalTaskId} at fixed version ${resumed.continuation.expectedTaskVersion} from waiting Decision ${resumed.waitingDecisionId}, original Run ${resumed.continuation.originalRunId}, original Dispatch ${resumed.continuation.originalDispatchId}, and root source ${resumed.continuation.rootSourceEventId}. Controller repair evidence ${resumed.resumedEvidenceRef}: ${resumed.resumedReason}. Re-read the original Run's fixed Task revision and its complete declared references, then use this new Run and worker identity for any new finding. The old worker credential, Decision and Run remain historical.` : "";
     const scheduleContext = source?.kind === "schedule.task.todo" && source.scheduleTargetLoopId === loop.id
       ? ` This source is a verified Schedule occurrence for existing todo Task ${source.subjectId}, Schedule ${source.scheduleId} revision ${source.scheduleRevisionId}, planned ${source.plannedAtUtc}. Reuse that exact Task if its current version, owner, Stage, and Run state remain eligible; do not create another Task for this occurrence.` : "";
     const businessScopes = kind === "cognition" ? (await Promise.all(loop.allowedBusinessRoleIds.map(async roleId => {
@@ -487,7 +513,7 @@ export class ManagedLoopRunner {
       ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. For binding division choices read get /api/projects/${loop.projectId}/orchestration/loops/${loop.id}/delegation-choices; decide before your final worker decision. Method records an approach only: update content and consumer before fixing the first Task version; for a suitable todo Task request that exact Task and original Role through the ordinary same-source child path before signing waiting with divisionDecisionId=null. An in-progress cognition first Task can produce its own report through worker.submit; method alone is not a waiting handoff. Binding choices require their exact binding ID in waiting and cannot use an ordinary child. To delegate through the static path, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
       : `Execute Task ${dispatch.taskId} from its fixed basis.${handoffContext} Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
-    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}${scheduleContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
+    const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}${studyResumeContext}${scheduleContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
     if (input.length > 4000) throw new Error("WORKER_INPUT_TOO_LONG");
     return input;
   }

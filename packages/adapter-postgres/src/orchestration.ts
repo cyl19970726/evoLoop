@@ -58,15 +58,53 @@ class Reader implements OrchestrationReader {
       typeof detail.evidenceRef!=="string" || !detail.evidenceRef.trim() ||
       typeof detail.reason!=="string" || !detail.reason.trim() ||
       typeof detail.previousSourceEventId!=="string" || detail.previousSourceEventId!==dispatch.sourceEventId ||
-      typeof detail.originalSourceEventId!=="string" || typeof detail.issueDocumentId!=="string" ||
-      typeof detail.issueRevisionId!=="string" || typeof detail.issueContentHash!=="string")return null;
+      typeof detail.originalSourceEventId!=="string")return null;
+    const study=detail.continuation;
+    if(study===undefined ?
+      (typeof detail.issueDocumentId!=="string" || typeof detail.issueRevisionId!=="string" ||
+        typeof detail.issueContentHash!=="string") :
+      (typeof study!=="object" || study===null || Array.isArray(study)))return null;
     const command={projectId:this.projectId,operationId:x.operation_id,type:"loop.resumeWaiting",loopId:loop.id,
       expectedLoopVersion:Number(op.version)-1,decisionId:decision.id,dispatchId:dispatch.id,
-      evidenceRef:detail.evidenceRef,reason:detail.reason};
-    if(createHash("sha256").update(canonical(command)).digest("hex")!==x.command_hash)return null;
+      evidenceRef:detail.evidenceRef,reason:detail.reason,...(study===undefined?{}:{continuation:{
+        kind:(study as Record<string,unknown>).kind,
+        declarationId:(study as Record<string,unknown>).declarationId,
+        expectedTaskVersion:(study as Record<string,unknown>).expectedTaskVersion,
+      }})};
+    const parsed=orchestrationCommandSchema.safeParse(command);
+    if(!parsed.success || parsed.data.type!=="loop.resumeWaiting" ||
+      createHash("sha256").update(canonical(command)).digest("hex")!==x.command_hash)return null;
     const previous=await this.getSourceFactInternal(detail.previousSourceEventId,seen);
     const root=detail.originalSourceEventId===detail.previousSourceEventId?previous:
       await this.getSourceFactInternal(detail.originalSourceEventId,seen);
+    if(study!==undefined){
+      const fixed=parsed.data.continuation;
+      const stored=study as Record<string,unknown>;
+      const declared=fixed?await this.getStudyDeclaration(fixed.declarationId):null;
+      if(!fixed || !declared || declared.projectId!==this.projectId || declared.loopId!==loop.id ||
+        fixed.kind!=="same-task-study" || !previous || !root ||
+        root.kind!=="loop.enrolled" || root.id!==loop.bootstrapEventId || root.subjectId!==loop.id ||
+        (previous.kind!=="loop.enrolled" && previous.kind!=="waiting.resumed") ||
+        (previous.kind==="waiting.resumed" && (previous.sourceLoopId!==loop.id ||
+          previous.continuation?.originalTaskId!==dispatch.taskId ||
+          previous.continuation.rootSourceEventId!==root.id)) ||
+        detail.originalSourceEventId!==root.id ||
+        stored.declarationId!==fixed.declarationId ||
+        stored.originalTaskId!==dispatch.taskId ||
+        stored.expectedTaskVersion!==fixed.expectedTaskVersion ||
+        stored.originalInboxId!==dispatch.inboxId ||
+        stored.originalDispatchId!==dispatch.id ||
+        stored.originalRunId!==decision.runId ||
+        stored.rootSourceEventId!==root.id)return null;
+      return {projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:"waiting.resumed",
+        subjectId:dispatch.taskId,subjectVersion:fixed.expectedTaskVersion,sourceLoopId:loop.id,
+        originDispatchId:dispatch.id,operationId:x.operation_id,sourceActorId:x.actor_id,
+        observationId:null,deliveryId:null,observationResult:null,
+        waitingDecisionId:decision.id,previousSourceEventId:previous.id,
+        originalSourceEventId:root.id,waitingRunId:decision.runId,
+        resumedEvidenceRef:detail.evidenceRef as string,resumedReason:detail.reason as string,
+        continuation:stored as NonNullable<OrchestrationSourceFact["continuation"]>};
+    }
     if(!previous || !root || root.kind!=="document" || root.projectId!==this.projectId ||
       !root.operationId || !root.sourceActorId || root.subjectVersion!==1 || !root.issueRevisionId || !root.issueContentHash ||
       (previous.kind==="document" && previous.id!==root.id) ||
@@ -168,10 +206,26 @@ class Reader implements OrchestrationReader {
   async hasWaitingResume(decisionId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='waiting.resumed' AND entity_id=$2 LIMIT 1",[this.projectId,decisionId]);return !!r.rowCount;}
   async hasDivisionTransferConfirmed(dispatchId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='division.transferConfirmed' AND entity_type='dispatch' AND entity_id=$2 LIMIT 1",[this.projectId,dispatchId]);return !!r.rowCount;}
   async hasDivisionHandoffAck(dispatchId:string){const r=await this.db.query("SELECT 1 FROM orchestration_event WHERE project_id=$1 AND kind='division.handoffAcknowledged' AND entity_type='dispatch' AND entity_id=$2 LIMIT 1",[this.projectId,dispatchId]);return !!r.rowCount;}
-  async hasInFlightRunForTask(taskId:string){const r=await this.db.query(`SELECT 1 FROM runtime_run
+  async hasInFlightRunForTask(taskId:string,ignoreDispatchId?:string){const r=await this.db.query(`SELECT 1 FROM runtime_run
       WHERE project_id=$1 AND task_id=$2 AND state IN ('requested','dispatching','running','unknown')
       UNION ALL SELECT 1 FROM orchestration_dispatch WHERE project_id=$1 AND task_id=$2
-        AND state IN ('pending','claimed','dispatching','accepted','unknown') LIMIT 1`,[this.projectId,taskId]);return !!r.rowCount;}
+        AND ($3::uuid IS NULL OR dispatch_id<>$3)
+        AND state IN ('pending','claimed','dispatching','accepted','unknown') LIMIT 1`,
+      [this.projectId,taskId,ignoreDispatchId??null]);return !!r.rowCount;}
+  async hasLaterDispatchForTask(taskId:string,dispatchId:string,allowedDispatchId?:string){const r=await this.db.query(`SELECT 1
+      FROM orchestration_dispatch original JOIN orchestration_dispatch later
+        ON later.project_id=original.project_id AND later.task_id=original.task_id
+      LEFT JOIN LATERAL (SELECT min(e.created_at_utc) AS created_at_utc FROM orchestration_event e
+        WHERE e.project_id=later.project_id AND e.entity_type='dispatch' AND e.entity_id=later.dispatch_id
+          AND e.kind IN ('dispatch.requested','division.consumed')) later_event ON true
+      LEFT JOIN LATERAL (SELECT min(e.created_at_utc) AS created_at_utc FROM orchestration_event e
+        WHERE e.project_id=original.project_id AND e.entity_type='dispatch' AND e.entity_id=original.dispatch_id
+          AND e.kind IN ('dispatch.requested','division.consumed')) original_event ON true
+      WHERE original.project_id=$1 AND original.dispatch_id=$2 AND original.task_id=$3
+        AND later.dispatch_id<>original.dispatch_id AND ($4::uuid IS NULL OR later.dispatch_id<>$4)
+        AND (later_event.created_at_utc IS NULL OR original_event.created_at_utc IS NULL OR
+          later_event.created_at_utc>=original_event.created_at_utc) LIMIT 1`,
+      [this.projectId,dispatchId,taskId,allowedDispatchId??null]);return !!r.rowCount;}
   async hasUnsettledDispatchForSource(loopId:string,sourceEventId:string,exceptDispatchId:string){const r=await this.db.query(`SELECT 1 FROM orchestration_dispatch WHERE project_id=$1 AND loop_id=$2
     AND data->>'sourceEventId'=$3 AND dispatch_id<>$4 AND state IN ('pending','claimed','dispatching','accepted','unknown') LIMIT 1`,[this.projectId,loopId,sourceEventId,exceptDispatchId]);return !!r.rowCount;}
   listSubmissions(loopId:string,limit:number,cursor?:string){return this.listing<OrchestrationSubmission>("orchestration_submission","submission_id",limit,cursor,loopId);}
