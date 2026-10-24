@@ -112,6 +112,48 @@ Codex 适配基于本机核过的 **codex-cli 0.154.0** App Server 协议。受�
 
 App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
 
+## 受管 worker 只读浏览器候选
+
+这是为本机 GUI 体验任务增加的可选实验入口。常规任务仍使用业务 skill＋CLI；浏览器不替代 `worker.submit` 或独立消费者的 used 观察。当前 origin 固定为 `http://127.0.0.1:55431`，不是任意站点浏览能力。启用前核对安装的 Codex 0.154.0 稳定及实验 schema、实验初始化与动态工具声明，再按下表准备精确 scope；隔离检查通过后还须真实 worker 调用和原路径验收。
+
+在既有 runtime 配置中额外提供 `browserRead: { scopePath, playwrightModulePath }`。两者为绝对路径；scope 放仓库外、当前用户所有的普通 `0600` 文件，拒绝符号链接。`playwrightModulePath` 指向明确安装且核过的 Playwright 模块入口，Chromium 由该安装提供；未配置时不加载它，不为此全局安装技能、插件或依赖。
+
+| scope 字段 | 准备与核对 |
+| --- | --- |
+| `enabled`、`origin`、`expiresAtUtc` | 明确 true、上述精确本机 origin 和绝对 UTC 截止时间。 |
+| `projectId`、`taskId`、`contentRevisionId` | 原 GUI Task 及正常任务更新后已批准的主正文修订。不得用正文相同来跳过 TaskRevision 比较。 |
+| `sessionId`、`runId`、`runOperationId` | 唯一预选身份，可从已明确预分配的普通 child Dispatch ID 按 `loopIntentId` 推导；不用首次匹配或历史 Run。 |
+| `roleId`、`authorizationScope`、`authorizationKind`、`cwd`、`sandbox` | 当前候选只服务 `temporary-experience`，授权种类为 static 或 dynamic；其余字段与原执行 profile 精确一致。GUI 只读不要求把原 workspace-write 改成 read-only。 |
+| `readerActorId` | 派生新身份文件时保留所有原 actor/token，只新增一个恰好有本项目 `read` 的独立 reader；不覆写原身份文件。令牌只由宿主读取。 |
+| `entryRouteKey`、`routes` | 唯一普通入口与最多 32 个精确只读路由；每项有 `key`、`hash` 及最多 30 个必要 GET `apiPaths`，全部限同项目。先按普通 UI 观察所需路由和 API，不开放项目任意路径。 |
+
+保持原 Task、旧 Run、失败及预算历史。scope 身份只是预留资源，不承诺认知必派 child；原 todo Task 留给 runner 正常开始。实际调用还须核 ready owned Session、唯一 running Run/native Turn、无中断、当前 Task 修订等于该 Run 固定修订、主正文及 basis 相符、现行执行 grant/binding 和 reader。只读身份看不到的对象如实报告失败，不回退负责人令牌。
+
+worker 可见工具如下；除初始入口外，只能沿当前页面实际观察且 scope 允许的导航继续，不接受任意 URL、选择器、点击或脚本。
+
+| 工具 | 输入与阅读规则 |
+| --- | --- |
+| `browser_navigate` | `{ routeKey }`，先进入 `entryRouteKey`；后续 key 来自实际可见链接或明确只读页签。 |
+| `browser_snapshot` | `{}`，当前可见页面文本、获准导航及折叠/分页状态；排除隐藏路由缓存和未展开正文。 |
+| `browser_read_more` | `{}`，继续同一未改变页面的下一段；按 `partial`、`hasMore` 与硬上限判断未读范围，不能把截断当全文。 |
+| `browser_expand_details` | `{}`，只展开当前页面可见的折叠证据段；有剩余时继续核返回状态，重新读取页面。 |
+| `browser_screenshot` | `{}`，当前获准页面的视口截图及宿主私有 PNG/来源回执路径、哈希和字节数；登录字段和敏感输入不进入输出，截图不证明全文已读。 |
+
+截图回执留在 scope 所在私有目录的 `receipts/`，固定本次 Run/native Turn、调用、实际获准路由及 PNG 哈希，拒绝覆盖冲突内容。消费者可按报告中的精确路径核图和来源；这些文件是界面检查证据，不是业务 Delivery，仍须由 worker 自己署名提交报告。撤权或失败留下的诊断文件不能冒作成功使用。
+
+浏览器使用无持久资料的独立 Chromium context。仅获准 origin/路径的 GET 可达；拒绝写请求、每次重定向、跨站、WebSocket、service worker、下载、超限或压缩响应。宿主按流限长且有期限，令牌不进入工具参数、结果、截图或业务 trace。scope 在后续调用和网络读取时重新核验，当前授权也在工具调用时检查；这不等于数据库撤权能在任意时刻主动推送销毁上下文。停用时移除/关闭 scope、撤销 reader 并核后续工具被拒；需要立即停止在途体验时另按原 Run 中断流程，不把关闭 GUI 当作 Run 已终止。
+
+当前实验动态工具声明仅登记在新建 Thread 的本进程内。服务或原生连接重启后，恢复旧 binding 的动态工具保持拒绝；不要自动新开 Session/Run 重试或把该情形记成业务成功。按原身份核状态，重新授权与预算后再决定后续工作。超时同样返回失败并关闭上下文，晚结果不回报成功。
+
+实际 Chromium 回归可使用已核安装的模块入口，显式运行 opt-in 检查：
+
+```bash
+EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE='/absolute/path/to/playwright/index.js' \
+  node --import tsx --test apps/coordinator/test/browser-read-playwright.test.ts
+```
+
+它使用本机隔离 HTTP 夹具，不连接业务数据库或消费真实 Run。默认单元测试跳过该项时，报告应保留 skipped；本机后端探测、原生初始化成功或取得登录页截图不代表真实业务 worker 已体验。
+
 ## 停写备份与空目标恢复
 
 在保存真实不可重建材料前，先定备份周期、保留和恢复目标。脚本覆盖 **PostgreSQL + evoLoop 外部 Blob + 显式提供的 Wiki 外部快照**，不声称三者有原子快照。先停止 coordinator，并暂停 OpenViking/其他 Wiki 写者；按 Wiki 后端真实存储方式生成包含正文、修订、来源及 evoLoop `manifestRoot` 的完整外部导出。脚本持有与 coordinator 相同的 PostgreSQL advisory lock，拒绝仍在运行的 coordinator，但不能阻止旁路 SQL 或远端 Wiki 写者。`pg_dump` 给数据库自身一致快照；跨存储一致性依赖停写和后续核对。

@@ -10,6 +10,7 @@ import { mapWorkItem } from "./work-trace.js";
 
 const OWNER = "evoloop-codex-app-server" as const;
 const SCHEMA_SHA256 = "f3487938786b729cb6773dbc9e83a7efab9c78c845db7094e8f539f373cbacc9";
+const EXPERIMENTAL_SCHEMA_SHA256 = "7b9e7d385fffef8d428cc5490b56ce9c393bd3ed7bc7ccd730956387e723ec05";
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
 // The App Server and its probes must not inherit coordinator credentials or Node execution flags.
@@ -100,6 +101,7 @@ export interface CodexAppServerOptions {
   executable?: string;
   expectedVersion?: string;
   requestTimeoutMs?: number;
+  dynamicToolTimeoutMs?: number;
   clientVersion?: string;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
@@ -111,7 +113,17 @@ export interface CodexAppServerOptions {
   environment?: NodeJS.ProcessEnv;
   /** Trusted local profile configuration, never accepted from a worker's request. */
   threadConfig?: (spec: RuntimeSessionSpec) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
+  /** Experimental protocol, opt-in only. Declaration is checked before native thread creation. */
+  dynamicTools?: (spec: RuntimeSessionSpec) => Promise<DynamicToolSpec[] | undefined>;
+  /** The coordinator rechecks persisted Run and reader authority for every call. */
+  callDynamicTool?: (call: DynamicToolCall, binding: RuntimeBinding) => Promise<DynamicToolResult>;
+  /** Close the scoped backend if a native tool call exceeds its deadline. */
+  cancelDynamicTool?: (call: DynamicToolCall, binding: RuntimeBinding) => void | Promise<void>;
 }
+
+export interface DynamicToolSpec { type: "function"; name: string; description: string; inputSchema: Record<string, unknown> }
+export interface DynamicToolCall { threadId: string; turnId: string; callId: string; tool: string; arguments: Record<string, unknown>; signal?: AbortSignal }
+export interface DynamicToolResult { contentItems: ({type:"inputText";text:string}|{type:"inputImage";imageUrl:string})[]; success: boolean }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 
@@ -124,18 +136,23 @@ export class CodexAppServerAdapter implements RuntimePort {
   private pendingCreate: RuntimeSessionSpec | null = null;
   private events = new Set<(event: RuntimeEvent) => void>();
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
+  private declaredTools = new Map<string, Set<string>>();
+  private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
   private closed = false;
   private ready = false;
   private readonly executable: string;
   private readonly timeout: number;
+  private readonly dynamicToolTimeout: number;
   private readonly environment: NodeJS.ProcessEnv;
 
   constructor(private readonly options: CodexAppServerOptions = {}) {
     this.executable = options.executable ?? "codex";
     this.timeout = options.requestTimeoutMs ?? 15_000;
+    this.dynamicToolTimeout = options.dynamicToolTimeoutMs ?? 30_000;
     this.environment = childEnvironment(options.environment ?? process.env);
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
+    if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
   }
   isReady(): boolean { return this.ready && !!this.child; }
   onDisconnect(listener: (reason: string) => void): () => void { this.disconnects.add(listener); return () => this.disconnects.delete(listener); }
@@ -162,7 +179,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     lines.on("line", line => this.receive(line));
     lines.on("close", () => this.disconnect("stdout closed"));
     try {
-      const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" } }));
+      const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" },
+        ...(this.options.dynamicTools && this.options.callDynamicTool ? {capabilities:{experimentalApi:true}} : {}) }));
       if (!result || !nonempty(result.userAgent) || !nonempty(result.platformFamily)) throw new RuntimeProtocolError("invalid initialize response");
       this.send({ method: "initialized" });
       this.ready = true;
@@ -187,11 +205,13 @@ export class CodexAppServerAdapter implements RuntimePort {
   private async probeSchema(): Promise<void> {
     const directory = await mkdtemp(resolve(tmpdir(), "evoloop-codex-schema-"));
     try {
-      await execFileAsync(this.executable, ["app-server", "generate-json-schema", "--out", directory], {
+      const experimental=!!(this.options.dynamicTools && this.options.callDynamicTool);
+      await execFileAsync(this.executable, ["app-server", "generate-json-schema", ...(experimental ? ["--experimental"] : []), "--out", directory], {
         timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
       });
       const schema = await readFile(resolve(directory, "codex_app_server_protocol.v2.schemas.json"));
-      if (createHash("sha256").update(schema).digest("hex") !== SCHEMA_SHA256) throw new RuntimeProtocolError("Codex App Server stable schema changed; review capabilities before use");
+      const expected = experimental ? EXPERIMENTAL_SCHEMA_SHA256 : SCHEMA_SHA256;
+      if (createHash("sha256").update(schema).digest("hex") !== expected) throw new RuntimeProtocolError("Codex App Server schema changed; review capabilities before use");
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
 
@@ -258,7 +278,36 @@ export class CodexAppServerAdapter implements RuntimePort {
         creating ? { projectId: creating.projectId, sessionId: creating.sessionId } : {}),
       ...(nonempty(threadId) ? { threadId } : {}), ...(nonempty(params?.turnId) ? { turnId: params.turnId } : {}) };
     if (creating && this.approvals.size === 0) { this.disconnect("approval evidence observer unavailable"); return; }
-    if (binding || creating) {
+    if (message.method === "item/tool/call") {
+      const call = params;
+      const key = nonempty(call?.threadId) && nonempty(call?.callId) ? `${call.threadId}\0${call.callId}` : null;
+      const valid = !!binding && !!key && !this.seenToolCalls.has(key) && call?.namespace == null &&
+        nonempty(call?.turnId) && nonempty(call?.tool) && !!object(call?.arguments) &&
+        this.declaredTools.get(binding.nativeThreadId)?.has(call.tool) && !!this.options.callDynamicTool;
+      if (!valid) { this.send({id,result:{contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false}}); return; }
+      this.seenToolCalls.add(key!);
+      const failed: DynamicToolResult = {contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false};
+      const controller=new AbortController();
+      const request:DynamicToolCall={threadId:call!.threadId as string,turnId:call!.turnId as string,
+        callId:call!.callId as string,tool:call!.tool as string,arguments:call!.arguments as Record<string,unknown>,signal:controller.signal};
+      let timer:NodeJS.Timeout|undefined;
+      let result:DynamicToolResult=failed;
+      try {
+        result = await Promise.race([
+          this.options.callDynamicTool!(request,binding!),
+          new Promise<DynamicToolResult>(resolveTimedOut=>{timer=setTimeout(()=>{
+            controller.abort();
+            try { void Promise.resolve(this.options.cancelDynamicTool?.(request,binding!)).catch(()=>{}); }
+            catch { /* Timeout still returns a denial. */ }
+            resolveTimedOut(failed);
+          },this.dynamicToolTimeout);}),
+        ]);
+      } catch { /* Never expose raw browser, credential, or database errors to the model. */ }
+      finally { if(timer)clearTimeout(timer); }
+      if (controller.signal.aborted) result=failed;
+      this.send({id,result}); return;
+    }
+    if ((binding || creating) && APPROVAL_METHODS.has(message.method)) {
       try { for (const listener of this.approvals) await listener(request); }
       catch { this.disconnect("approval evidence unavailable"); return; }
     }
@@ -337,11 +386,13 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.pendingCreate = { ...spec };
     try {
       const config = await this.options.threadConfig?.(spec);
-      const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}) }));
+      const dynamicTools = this.options.dynamicTools && this.options.callDynamicTool ? await this.options.dynamicTools(spec) : undefined;
+      const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}), ...(dynamicTools?.length ? {dynamicTools} : {}) }));
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");
       const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER };
       this.rememberBinding(binding);
+      if (dynamicTools?.length) this.declaredTools.set(binding.nativeThreadId,new Set(dynamicTools.map(tool=>tool.name)));
       return binding;
     } finally { this.pendingCreate = null; }
   }

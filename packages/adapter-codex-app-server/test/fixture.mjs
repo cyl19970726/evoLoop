@@ -6,6 +6,7 @@ const thread = { id: "thread-owned", sessionId: "thread-owned", cwd: "/tmp/evolo
 const lines = createInterface({ input: process.stdin });
 let initialized = false;
 let approvalId = 800;
+let toolId = 801;
 let pendingCreateId = null;
 let turnListReads = 0;
 let archived = mode === "already-archived";
@@ -20,14 +21,24 @@ for await (const line of lines) {
     continue;
   }
   if (message.id === approvalId) { send({ method: "fixture/approvalDecision", params: { threadId: thread.id, decision: message.result?.decision ?? null } }); continue; }
+  if (message.id === toolId || message.id === toolId+1) {
+    send({method:"fixture/toolDecision",params:{threadId:thread.id,turnId:"turn-1",result:message.result}});
+    if (mode==="dynamic-replay" && message.id===toolId) send({id:toolId+1,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}});
+    continue;
+  }
   const { id, method, params } = message;
-  if (method === "initialize") { send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue; }
+  if (method === "initialize") {
+    if (mode.startsWith("dynamic") && params.capabilities?.experimentalApi !== true) process.exit(2);
+    if (!mode.startsWith("dynamic") && params.capabilities?.experimentalApi === true) process.exit(2);
+    send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
+  }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
   if (mode === "timeout" && method === "turn/start") continue;
   if (mode === "reject-start" && method === "turn/start") { send({ id, error: { code: -32602, message: "invalid params: private fixture detail" } }); continue; }
   if (method === "thread/start") {
+    if (mode.startsWith("dynamic") && (!Array.isArray(params.dynamicTools) || !params.dynamicTools.some(tool=>tool.name==="browser_snapshot"))) process.exit(2);
     if (mode.startsWith("prebind-")) {
       pendingCreateId = id;
       send({ id: approvalId, method: mode === "prebind-unsupported" ? "fixture/unsupportedRequest" : "item/commandExecution/requestApproval",
@@ -98,6 +109,10 @@ for await (const line of lines) {
     send({ method: "item/started", params: { threadId: "unowned", turnId: "x" } });
     send({ method: "turn/started", params: { threadId: thread.id, turn: { id: "turn-1", status: "inProgress" } } });
     if (mode === "approval") send({ id: approvalId, method: "item/commandExecution/requestApproval", params: { threadId: thread.id, turnId: "turn-1", command: "echo fixture" } });
+    if (mode.startsWith("dynamic")) send({id:toolId,method:"item/tool/call",params:{
+      threadId:mode==="dynamic-foreign"?"other-thread":thread.id,
+      turnId:mode==="dynamic-wrong-turn"?"other-turn":"turn-1",callId:"call-1",
+      tool:mode==="dynamic-unknown-tool"?"shell":"browser_snapshot",arguments:mode==="dynamic-url"?{url:"https://example.com"}:{}}});
     continue;
   }
   send({ id, error: { code: -32601, message: "unknown method" } });

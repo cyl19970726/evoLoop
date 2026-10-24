@@ -93,6 +93,18 @@ worker 文档路由仅接受显式修订及原件读取，拒绝无版本详情�
 
 这是第一条旅程的候选实现与验收边界；真实运行和负责人验收以对应版本证据为准。首片逐派发新建受管 Session，未做正常归档或池化复用；尚未完成持续业务巡检、真实跨职责研究、试行成本/效果回看与 Desktop 自动桥接。配置与操作见[本机运行](../development/local-run.md#受管自动循环候选)和[Agent CLI](../development/agent-cli.md#受管执行与自动接续)。
 
+## 业务 worker 的受限工作台阅读
+
+工作台主要供人阅读和判断；Agent 的常规业务入口仍是 skill＋CLI。只有明确的 GUI 体验任务需要受管 worker 亲自观察界面时，才按独立授权启用本机只读浏览器桥。它使用固定版本 App Server 的实验动态工具，不接管负责人的浏览器，也不把负责人代查算作 worker 已使用。启用时额外核对实验协议 schema 与握手；未配置时沿原稳定协议，不加载浏览器依赖。
+
+受信任的外部 scope 固定项目、原业务 Task、已批准的主正文修订、唯一 Session/Run/Run operation、职责、原 sandbox、只读 reader、入口和有限路由及截止时间。受管 Dispatch 的 Session/Run ID 可由明确预分配的 Dispatch ID 推导；这只是资源预留，不替认知决定派发，也不授权“第一个符合条件的 Run”。Task 开始会正常推进状态修订，因此每次调用既核已批准的主正文修订，也要求当前 Task 修订精确等于该 Run 固定的 TaskRevision、basis 相同；只比较正文未变不足以放行。native Thread/Turn、Run 状态、中断请求和现行执行授权也须逐次核验。
+
+GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原 worker 的 workspace-write 可继续用于获准目录中的 CLI 回执、报告和 `worker.submit`。宿主使用仅本项目 read 的独立 reader，令牌不交给模型；若该 reader 被拒，应报告实际失败，不能借负责人令牌补查。浏览器没有持久用户资料，只接受本机明确 origin 的获准 GET，拒绝跨站、重定向、写方法、WebSocket、service worker 和下载。它仍与协调服务同属本机用户，不宣称隔离恶意同用户进程或代替原生文件权限。
+
+动态工具只返回其实际观察到的页面内容、已观察且获准的导航与受限截图。隐藏缓存页、未展开正文和截断部分不能算已阅读；长材料须按工具返回的分页与 partial 状态继续，GUI 阅读本身不替代固定原件和哈希核验。scope 过期、移除或现行授权不符时拒绝后续调用并关闭上下文；超时中止工具并拒绝晚结果。当前实验只对本进程新建且登记了工具的 Thread 生效，重启后恢复 binding 不会恢复动态工具声明，应保持拒绝，不能以新 Session/Run 静默重试或称为透明恢复。重新授权与业务预算另按正常流程处理。
+
+截图另存宿主私有的不可变 PNG 与来源回执，固定原生调用、Run、获准路由和文件哈希，供消费者核图；它不替代 worker 的业务交付。实现检查、隔离 Chromium 检查、真实 native 工具调用、worker 交付和独立消费者使用分别记录。前两者不能证明原 GUI Task 已经通过；本机配置与撤销方法见[受限浏览器阅读](../development/local-run.md#受管-worker-只读浏览器候选)。
+
 ## 任务、职责与定时触发
 
 一条 PostgreSQL Task 可经历多个 Codex Turn、换 Thread 接续，甚至由多个业务 session 分工；一条 Thread 也可处理多个相关 Turn。关系通过 `taskId`、`roleId`、项目 `sessionId`、原生 `threadId`／`turnId`、操作 ID 和有效时间段串联，不能把任一外部 ID 当另一层的主键。新持续 Role 需要缺口证据、试行与回看；`thread/start` 和 `thread/fork` 只创建运行实例／历史分支。当前静态路径先将 Session 持久预留为 `reserved`，runner 从自己的 `thread/start` 回执保存原生 Thread、Session 与实际目录后才标为 `ready`；`role.bindSession` 仅能绑定同项目、同 Role、已有原生 Thread 的 ready owned Session，不接受任意 Desktop chat ID 或原生 session ID。绑定不会替自动 Loop 选用该 Session：当前自动派发按 Dispatch 创建新的受管 Session；普通 `runtime.run.reserve` 可在同一 ready Session 上另开 Turn，但仍须核在途／未知、Task 责任和固定输入与当前授权。评价尝试另有每次新建 Session 的要求。实际步骤见[Agent CLI 的首次业务任务路径](../development/agent-cli.md#建立常驻业务职责与首个受管任务)。

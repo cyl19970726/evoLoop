@@ -35,6 +35,11 @@ import { managedRuntimeAdmission } from "./orchestration/admission.js";
 import { workerGuardFacts } from "./workers/facts.js";
 import { currentSessionGrant, dynamicRuntimeAdmission, isBoundDynamicSession } from "./orchestration/dynamic-admission.js";
 import { staticRunSessionAvailable } from "./references/source-run.js";
+import { BrowserReadBridge, createPlaywrightBrowserBackend, matchesBrowserRun, readerTokenForScope } from "./runtime/browser-read.js";
+import type { BrowserReadScope } from "./runtime/browser-read.js";
+import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
+import type { RuntimeBinding } from "@evoloop/contracts/runtime";
+import { loopIntentId } from "./orchestration/runner.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -115,13 +120,94 @@ const sessionOrigin = {
   networkAccessForSession:(spec:Parameters<NonNullable<typeof dynamicAdmission>["networkAccessForSession"]>[0]) =>
     dynamicAdmission?.networkAccessForSession(spec) ?? Promise.resolve(null),
 };
-const runtimeFactory = runtimeConfig?.enabled ? () => new CodexAppServerAdapter({
+const browserRead = runtimeConfig?.enabled && runtimeConfig.browserRead ? new BrowserReadBridge({
+  scopePath:runtimeConfig.browserRead.scopePath,
+  backend:()=>createPlaywrightBrowserBackend(runtimeConfig.browserRead!.playwrightModulePath,runtimeConfig.browserRead!.scopePath),
+  authorize:async (scope:BrowserReadScope,binding:RuntimeBinding,call:DynamicToolCall) => {
+    try {
+      const currentIntegrations=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+      if (!currentIntegrations.runtime?.enabled ||
+        currentIntegrations.runtime.browserRead?.scopePath!==runtimeConfig.browserRead?.scopePath ||
+        currentIntegrations.runtime.browserRead?.playwrightModulePath!==runtimeConfig.browserRead?.playwrightModulePath) return null;
+      const currentAuth=authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
+      const readerToken=readerTokenForScope(scope,currentAuth);
+      if (!readerToken) return null;
+      const reader={actorId:scope.readerActorId,projectIds:[scope.projectId],permissions:["read"] as ("read"|"write"|"review")[]};
+      const session=await service.getRuntimeSession(reader,scope.projectId,scope.sessionId);
+      const run=await service.getRuntimeRun(reader,scope.projectId,scope.runId);
+      const currentTask=await service.getTask(reader,scope.projectId,scope.taskId);
+      if (!matchesBrowserRun(scope,binding,call,session,run,currentTask.task,currentTask.revision)) return null;
+      const registeredRole=await pool.query(`SELECT state FROM role_definition WHERE project_id=$1 AND role_id::text=$2`,
+        [scope.projectId,scope.roleId]);
+      if (registeredRole.rows.length && !["trial","active"].includes(registeredRole.rows[0].state)) return null;
+      const isDynamic=await isBoundDynamicSession(pool,scope.projectId,scope.sessionId);
+      if (scope.authorizationKind==="dynamic") {
+        if (!isDynamic) return null;
+        const rows=await pool.query(`SELECT d.dispatch_id,d.data AS dispatch,l.data AS loop,p.data AS policy,b.data AS binding,
+          EXISTS(SELECT 1 FROM role_definition role JOIN role_decision decision ON
+            decision.project_id=role.project_id AND decision.role_id=role.role_id AND decision.decision='accept-trial'
+            WHERE role.project_id=d.project_id AND role.role_id=b.role_id AND role.state IN ('trial','active')) AS role_accepted
+          FROM orchestration_dispatch d JOIN orchestration_loop l ON l.project_id=d.project_id AND l.loop_id=d.loop_id
+          JOIN runtime_role_binding b ON b.project_id=d.project_id AND b.binding_id=d.binding_id
+          LEFT JOIN loop_policy_revision p ON p.project_id=l.project_id AND p.policy_id=l.current_policy_revision_id
+          WHERE d.project_id=$1 AND d.task_id=$2 AND EXISTS (
+            SELECT 1 FROM orchestration_event e JOIN orchestration_operation o
+              ON o.project_id=e.project_id AND o.operation_id=e.operation_id AND o.actor_id=e.actor_id
+            WHERE e.project_id=d.project_id AND e.kind='division.consumed' AND e.entity_type='dispatch'
+              AND e.entity_id=d.dispatch_id AND o.result->>'entityType'='dispatch'
+              AND o.result->>'entityId'=d.dispatch_id::text)
+            AND EXISTS (SELECT 1 FROM orchestration_event e WHERE e.project_id=d.project_id
+              AND e.kind='division.transferConfirmed' AND e.entity_type='dispatch' AND e.entity_id=d.dispatch_id)`,
+          [scope.projectId,scope.taskId]);
+        const row=rows.rows.find(value=>loopIntentId(value.dispatch_id as string,"session")===scope.sessionId &&
+          loopIntentId(value.dispatch_id as string,"run")===scope.runId &&
+          loopIntentId(value.dispatch_id as string,"run.reserve")===scope.runOperationId);
+        if (!row || !row.role_accepted) return null;
+        const dispatch=row.dispatch as {state:string;id:string;projectId:string;loopId:string;taskId:string;
+          parentDispatchId:string|null;bindingId:string;recipientRoleId:string;authorizationScopeId:string;runtimeRunId:string|null};
+        const loop=row.loop as {state:string};
+        const policy=row.policy as {bindingByRole:Record<string,string>}|null;
+        const grant=row.binding as {id:string;projectId:string;loopId:string;firstTaskId:string;
+          parentDispatchId:string;roleId:string;actorId:string;authorizationScopeId:string;
+          template:{id:string;revision:number;hash:string};runtime:{cwd:string;model:string;sandbox:string;networkAccess:boolean;approvalPolicy:string;expiresAtUtc:string}};
+        const template=await currentIntegrations.getDelegationTemplate(scope.projectId,grant.template.id);
+        if (dispatch.state!=="accepted" || loop.state!=="active" ||
+          dispatch.projectId!==scope.projectId || dispatch.taskId!==scope.taskId ||
+          dispatch.runtimeRunId!==scope.runId || dispatch.loopId!==grant.loopId ||
+          dispatch.taskId!==grant.firstTaskId || dispatch.parentDispatchId!==grant.parentDispatchId ||
+          grant.projectId!==scope.projectId || dispatch.bindingId!==grant.id || dispatch.recipientRoleId!==scope.roleId ||
+          dispatch.authorizationScopeId!==scope.authorizationScope || policy?.bindingByRole[scope.roleId]!==grant.id ||
+          grant.roleId!==scope.roleId || grant.actorId!==session.actorId || grant.authorizationScopeId!==scope.authorizationScope ||
+          grant.runtime.cwd!==scope.cwd || grant.runtime.sandbox!==scope.sandbox ||
+          grant.runtime.model!==session.model || grant.runtime.approvalPolicy!==session.approvalPolicy ||
+          Date.parse(grant.runtime.expiresAtUtc)<=Date.now() || !template ||
+          template.hash!==grant.template.hash || template.template.revision!==grant.template.revision ||
+          template.template.actorId!==session.actorId || template.template.authorizationScopeId!==scope.authorizationScope ||
+          template.template.cwd!==scope.cwd || template.template.sandbox!==scope.sandbox ||
+          template.template.model!==session.model || template.template.approvalPolicy!==session.approvalPolicy ||
+          template.template.networkAccess!==grant.runtime.networkAccess ||
+          Date.parse(template.template.expiresAtUtc)<=Date.now()) return null;
+      } else if (isDynamic || !currentIntegrations.hasRuntimeGrant({projectId:scope.projectId,actorId:session.actorId,
+        roleId:scope.roleId,authorizationScope:scope.authorizationScope,cwd:scope.cwd,sandbox:scope.sandbox}) ||
+        !await currentIntegrations.allowedRuntimeCwd(scope.projectId,scope.cwd)) return null;
+      return readerToken;
+    } catch { return null; }
+  },
+}) : null;
+const runtimeFactory = runtimeConfig?.enabled ? () => {
+  const adapter = new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
   threadConfig: spec => runtimeThreadConfigForSession(runtimeConfig.grants,spec,sessionOrigin),
-}) : null;
+  ...(browserRead ? {dynamicTools:(spec:import("@evoloop/contracts/runtime").RuntimeSessionSpec)=>browserRead.tools(spec),
+    callDynamicTool:(call:DynamicToolCall,binding:RuntimeBinding)=>browserRead.call(call,binding),
+    cancelDynamicTool:()=>browserRead.close()} : {}),
+  });
+  if (browserRead) adapter.onDisconnect(() => { void browserRead.close(); });
+  return adapter;
+} : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
   workerTraceAuthority: (identity, targetRunId) =>
     workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
