@@ -37,6 +37,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 `task.start` 校验版本与实际授权，发布主正文并封存本轮依据，进入 in_progress；没有额外规格文档也能工作。服务自动把主 Document 加入依据，显式 `basis` 只列额外固定来源，不重复主 Document。省略 `basis` 会继承并校验原有固定来源；显式 `basis: []` 才表示移除其他来源、仅保留主正文。来源已经改版时须记录适用的保留决定，或明确选择所需固定修订，不能自动换成最新版。新写入口不再使用 task.propose/judge/accept/block/defer/resume/revise；以实际 schema 为准。
 
+若旧 Run 的封存输入缺少后来已采纳的关联报告，项目 reviewer 先核清旧 Run 和当前 Task；进行中须待 Run 确定终态，再 `task.reopen`。在 todo 状态用 `command schema task.update` 读取格式，以当前版本、完整 Task 字段和理由提交显式 `basis`（仅列额外 `documentId/revisionId`），可同次新增 `documentIds` 链接；只有链接不授 worker 原件读取。重选要求 read/write/review，不能由受管 worker 用普通更新白名单代签。保留已被新版取代的修订时，随本次显式 `basis` 提供逐项 `retentions` 的观察采纳版和理由；单独传 retentions 会拒绝。回读新 Task 修订和 sealed Basis，再正常启动。旧 Run 仍按旧固定集合读取；已受理派发若版本过期会在启动时拒绝，不可借重选复活。
+
 原 Task 关联的阶段已经回看时，`task.start` 会明确拒绝。需要同一任务承接新一轮工作，先读取 Task/阶段与 `command schema task.update`，核对正文、验收和权限，再以当前 expectedVersion、完整任务字段和理由提交 `task.update`：省略 `stageId` 保留原关联，显式 `stageId: null` 解除关联，或指定本项目的 active 阶段。显式调整要求 write＋review；实际变更限 todo，无在途或结果未知运行，新非空关联须有 consumer/evidence/stopCondition。旧阶段与旧关联保留。已确认 rejected 的启动记录不改写；范围或关联调整后的新启动是新意图，使用新 operationId，不能把它当作未知结果重试。
 
 任务类型可选实施、调研、验证，四态为 todo/in_progress/done/cancelled。交付与约定检查默认留在进行中的原任务内，标准通过后才 close；只有明确要求的消费者或真人使用才等待对应证据。受阻或暂缓说明原因、责任与下一步，不另开状态或默认验收子 Task。需要改变执行中的正文或验收时先核清在途，再 reopen→update→start；旧交付不可自动算新一轮通过。Task 主正文不能从通用 Document 编辑入口旁路改变。Document 用途、格式、发布/归档及正文写作见[任务与过程文档](../product/tasks-and-documents.md)。

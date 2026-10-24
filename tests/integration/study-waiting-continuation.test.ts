@@ -29,7 +29,7 @@ const failed=(promise:Promise<unknown>,code:string)=>assert.rejects(promise,
   error=>error instanceof OrchestrationError&&error.code===code);
 
 async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-missing-source"|"child-forged-source"|
-  "child-grant-revoked"|"child-task-changed"|"no_action"|"division"|"method"){
+  "child-grant-revoked"|"child-task-changed"|"child-basis"|"no_action"|"division"|"method"){
   const schema=`el_study_wait_${randomUUID().replaceAll("-","").slice(0,16)}`;
   await migrate(url!,schema);
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
@@ -150,6 +150,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     declarationId,controllerActorId:controllerId,sourceTaskId:carrierTaskId,
     sourceTaskRevisionId:carrier.task.currentRevisionId,sourceDecisionIds:decisions,reason:"Three fixed Runs"});
   const credentials:string[]=[];
+  let businessBroker:WorkerCredentialBroker|null=null;
   let loseReserveReply=false,loseStartReply=false;
   const runnerWorkflow=Object.create(workflow) as WorkflowService;
   runnerWorkflow.execute=async(actor,command)=>{
@@ -170,7 +171,8 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
       authorizationScopeId:requiredRole===role?scope:"business-scope",cwd,model:"fixture",
       sandbox:"read-only",approvalPolicy:"on-request"}:null,
     credential:{lookup:async()=>null,issue:async(identity)=>{credentials.push(identity.runId);
-      return {principal:principal(`worker-${identity.runId}`),wrapperPath:`/fixture/${"w".repeat(180)}`};}},
+      return businessBroker&&identity.kind==="business"?businessBroker.issue(identity):
+        {principal:principal(`worker-${identity.runId}`),wrapperPath:`/fixture/${"w".repeat(180)}`};}},
     applyStudyReference:async(actor,command,provenance)=>
       applyDeclaredStudyReference(referenceDeps as never,actor,command,provenance),
     sealSubmission:async()=>({status:"absent"})});
@@ -298,6 +300,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
   const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:1",
     cliMain:"/fixture/cli.js",nodeExecutable:process.execPath,ttlMs:60_000});
+  businessBroker=broker;
   workerScope=async actorId=>(await broker.identityForActor(actorId))?.scope??null;
   const workerEvidence=managedWorkerEvidence({pool,workflow,broker,controllerPrincipal:controller,
     currentStudyReviewer:async(_project,actor)=>actor===reviewerId&&reviewerCurrent,
@@ -504,13 +507,62 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
       origin:{taskId,runId:thirdRun}})});
   assert.equal(methodReport.status,200,await methodReport.text());
   const methodRevisionId=(await workflow.getDocument(controller,projectId,methodReportId)).document.currentRevisionId;
+  let firstTaskVersion=1;
+  let oldBusinessRun="",oldBusinessRevision="";
+  if(ending==="child-basis"){
+    await wf({type:"document.publish",documentId:methodReportId,expectedVersion:1,
+      revisionId:methodRevisionId,reason:"Review the exact report before selecting it"});
+    const oldStart=await wf({type:"task.start",taskId:businessTask,expectedVersion:1,
+      basis:[],reason:"First run has only the primary"});
+    oldBusinessRevision=oldStart.revisionId!;
+    const oldSession=randomUUID();oldBusinessRun=randomUUID();
+    await wf({type:"runtime.session.reserve",sessionId:oldSession,roleId:business,cwd,
+      authorizationScope:"business-scope",sandbox:"read-only",approvalPolicy:"on-request"});
+    await runtime.beginSessionCreate(projectId,oldSession);
+    await runtime.bindSession(projectId,oldSession,{owner:"evoloop-codex-app-server",projectId,
+      sessionId:oldSession,roleId:business,cwd,authorizationScope:"business-scope",
+      nativeThreadId:`fixture-${oldSession}`,nativeSessionId:`fixture-${oldSession}`});
+    const oldReserve=await wf({type:"runtime.run.reserve",runId:oldBusinessRun,taskId:businessTask,sessionId:oldSession,
+      expectedVersion:oldStart.version,input:"Old fixed input"});
+    const busyReopen=async()=>workflow.execute(controller,{type:"task.reopen",projectId,
+      operationId:randomUUID(),taskId:businessTask,
+      expectedVersion:(await workflow.getTask(controller,projectId,businessTask)).task.version,
+      reason:"Cannot reopen an uncertain run"} as never);
+    const requestedReopen=await busyReopen();
+    assert.equal(requestedReopen.status==="rejected"?requestedReopen.code:null,"TASK_BUSY");
+    await broker.issue({projectId,loopId,taskId:businessTask,runId:oldBusinessRun,sessionId:oldSession,
+      roleId:business,kind:"business",allowedRoleIds:[business]});
+    const oldToken=await readFile(join(workerRoot,oldBusinessRun,"credential"),"utf8");
+    const oldOriginal=`/api/projects/${projectId}/documents/${methodReportId}/revisions/${methodRevisionId}/original`;
+    const oldRead=await fetch(new URL(oldOriginal,address),{headers:{authorization:`Bearer ${oldToken}`}});
+    assert.equal(oldRead.status,403,"a linked or authored report is not in the old worker's sealed basis");
+    await runtime.beginDispatch(projectId,oldBusinessRun);
+    await runtime.bindTurn(projectId,oldBusinessRun,{id:`fixture-${oldBusinessRun}`,status:"inProgress"},
+      {kind:"startReply",operationId:oldReserve.operationId});
+    await runtime.markRunUnknown(projectId,oldBusinessRun,"Fixture uncertain response");
+    const unknownReopen=await busyReopen();
+    assert.equal(unknownReopen.status==="rejected"?unknownReopen.code:null,"TASK_BUSY");
+    await runtime.recordTurn(projectId,oldBusinessRun,`fixture-${oldBusinessRun}`,"failed",
+      "Fixture reconciled terminal Run");
+    const afterOldRun=await workflow.getTask(controller,projectId,businessTask);
+    const reopened=await wf({type:"task.reopen",taskId:businessTask,expectedVersion:afterOldRun.task.version,
+      reason:"Select the actual prior report"});
+    const selected=await wf({type:"task.update",taskId:businessTask,expectedVersion:reopened.version,
+      title:fixedFirst.task.title,content:fixedFirst.task.content,acceptance:fixedFirst.task.acceptance,
+      owner:business,documentIds:[methodReportId],basis:[{documentId:methodReportId,revisionId:methodRevisionId}],
+      reason:"Reviewer chose the exact report original"});
+    firstTaskVersion=selected.version!;
+    assert.equal((await workflow.getTask(controller,projectId,businessTask)).task.contentRevisionId,
+      fixedFirst.task.contentRevisionId,"unchanged content is not copied");
+    assert.equal((await workflow.getTaskRevision(controller,projectId,businessTask,oldBusinessRevision)).basis?.members.length,1);
+  }
   const methodChoice=await fetch(new URL("/api/orchestration/commands",address),{method:"POST",
     headers:{authorization:`Bearer ${thirdToken}`,"content-type":"application/json"},
     body:JSON.stringify({type:"division.decide",projectId,operationId:randomUUID(),decisionId:randomUUID(),
       loopId,expectedLoopVersion:(await orchestration.getLoop(controller,projectId,loopId))!.version,
       sourceEventId:secondResume.id,parentDispatchId:third.id,documentId:methodReportId,
       documentRevisionId:methodRevisionId,documentContentHash:hash(methodBody),firstTaskId:businessTask,
-      expectedFirstTaskVersion:1,choice:"method",roleId:business,templateId:null,
+      expectedFirstTaskVersion:firstTaskVersion,choice:"method",roleId:business,templateId:null,
       templateRevision:null,templateHash:null,reason:"Use original business Role for fixed first Task"})});
   assert.equal(methodChoice.status,200,await methodChoice.text());
   const nextInbox=await run(controller,{type:"inbox.accept",loopId,sourceEventId:secondResume.id,
@@ -519,7 +571,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     reason:"Current study chose follow-up"});
   const child=await run(controller,{type:"dispatch.request",inboxId:nextInbox.entityId,
     expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:third.id,taskId:businessTask,
-    expectedTaskVersion:1,recipientRoleId:business,purpose:"business",
+    expectedTaskVersion:firstTaskVersion,recipientRoleId:business,purpose:"business",
     authorizationScopeId:"business-scope",reason:"Study chose existing Role"});
   assert.equal(child.entityType,"dispatch");
   const finalWaiting=randomUUID();
@@ -533,9 +585,14 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   const childSession=loopIntentId(child.entityId,"session"),childRun=loopIntentId(child.entityId,"run");
   if(ending==="child-grant-revoked" || ending==="child-task-changed"){
     if(ending==="child-grant-revoked") businessGrant=false;
-    else await wf({type:"task.update",taskId:businessTask,expectedVersion:1,title:"Changed first work",
-      content:"# Changed after fixed method",acceptance:"One result",owner:business,
-      reason:"Reject a stale child Task version"});
+    else {
+      await wf({type:"document.publish",documentId:methodReportId,expectedVersion:1,
+        revisionId:methodRevisionId,reason:"Publish newly selected original"});
+      await wf({type:"task.update",taskId:businessTask,expectedVersion:1,title:"Bounded follow-up",
+        content:"# Follow-up",acceptance:"One result",owner:business,documentIds:[methodReportId],
+        basis:[{documentId:methodReportId,revisionId:methodRevisionId}],
+        reason:"A later reviewed input selection cannot alter an accepted unreserved child"});
+    }
     await runner.pump();
     assert.ok(runner.status().faults.some(fault=>fault.dispatchId===child.entityId &&
       fault.code.includes(ending==="child-grant-revoked"?"worker scope changed":"Task changed before dispatch")),
@@ -574,7 +631,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   assert.deepEqual(runner.status().faults,[],"the verified study source must not be treated as an Issue");
   const startedTask=await workflow.getTask(controller,projectId,businessTask);
   assert.equal(startedTask.task.state,"in_progress");
-  assert.equal(startedTask.task.version,2);
+  assert.equal(startedTask.task.version,firstTaskVersion+1);
   assert.equal(startedTask.task.contentRevisionId,fixedFirst.task.contentRevisionId);
   assert.equal(startedTask.basis?.members.find(member=>member.documentId===fixedFirst.task.contentDocumentId)?.revisionId,
     fixedFirst.task.contentRevisionId,"the normal Task start pins its original primary basis");
@@ -594,6 +651,19 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   assert.equal((await orchestration.getDispatch(controller,projectId,child.entityId))?.state,"accepted");
   assert.equal((await orchestration.getDispatch(controller,projectId,child.entityId))?.runtimeRunId,childRun);
   assert.equal((await workflow.getRuntimeRun(controller,projectId,childRun)).taskId,businessTask);
+  if(ending==="child-basis"){
+    const newToken=await readFile(join(workerRoot,childRun,"credential"),"utf8");
+    const original=`/api/projects/${projectId}/documents/${methodReportId}/revisions/${methodRevisionId}/original`;
+    const newRead=await fetch(new URL(original,address),{headers:{authorization:`Bearer ${newToken}`}});
+    assert.equal(newRead.status,200,await newRead.text());
+    const newContext=await readTaskContext({get:async(path:string)=>{
+      const response=await fetch(new URL(path,address),{headers:{authorization:`Bearer ${newToken}`}});
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      return response.json();}} as never,projectId,businessTask);
+    assert.equal(newContext.status,"complete",JSON.stringify(newContext.failures));
+    assert.ok(newContext.basis?.members.some(item=>item.documentId===methodReportId && item.revisionId===methodRevisionId));
+    assert.equal((await workflow.getTaskRevision(controller,projectId,businessTask,oldBusinessRevision)).basis?.members.length,1);
+  }
   assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,budgetBeforeStart);
   assert.equal(credentials.filter(value=>value===childRun).length,1,
     "reserve reply recovery must not issue a second worker credential");
@@ -608,6 +678,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   assert.equal((await workflow.getTask(controller,projectId,taskId)).task.state,"done");
 }
 test("bootstrap study waiting continues twice on one Task and hands off a signed child",t=>studyScenario(t,"child"));
+test("a reviewed fixed input reselection reaches the next managed business worker without changing its old Run",t=>studyScenario(t,"child-basis"));
 test("same-Task resumed study closes on its own signed no-action Decision, not an old waiting",t=>studyScenario(t,"no_action"));
 test("resumed study consumes an accepted Role binding through its final waiting choice",t=>studyScenario(t,"division"));
 test("resumed study worker uses only its current Run report for a method choice",t=>studyScenario(t,"method"));

@@ -16,7 +16,12 @@ test("an unauthenticated fresh Agent can discover help, IDs, exact command schem
   assert.ok(create.required.includes("acceptance"));
   assert.equal(create.properties.goal, undefined);
   const update = await run(["command", "schema", "task.update"]);
-  assert.ok(JSON.parse(update.stdout).required.includes("expectedVersion"));
+  const updateShape = JSON.parse(update.stdout);
+  assert.ok(updateShape.required.includes("expectedVersion"));
+  assert.equal(updateShape.required.includes("basis"), false);
+  assert.equal(updateShape.required.includes("retentions"), false);
+  assert.equal(updateShape.properties.basis.type, "array");
+  assert.equal(updateShape.properties.retentions.type, "array");
   const commands = JSON.parse((await run(["command", "types"])).stdout).types;
   assert.ok(commands.includes("task.start"));
   assert.ok(!commands.includes("task.accept"));
