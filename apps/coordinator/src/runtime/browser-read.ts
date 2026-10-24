@@ -15,7 +15,7 @@ const uuid = z.uuid();
 const uriSuffix = "[A-Za-z0-9._~!$&'()*+,;=:@/?%-]+";
 const route = z.strictObject({key:z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
   hash:z.string().max(2048).regex(new RegExp(`^#/p/[0-9a-f-]{36}/${uriSuffix}$`)),
-  apiPaths:z.array(z.string().max(2048).regex(new RegExp(`^/api/projects/[0-9a-f-]{36}/${uriSuffix}$`))).max(30)});
+  apiPaths:z.array(z.string().max(2048).regex(new RegExp(`^/api/projects/[0-9a-f-]{36}(?:/${uriSuffix})?$`))).max(30)});
 export const browserReadScopeSchema = z.strictObject({
   enabled:z.literal(true), projectId:uuid, taskId:uuid, contentRevisionId:uuid, sessionId:uuid, runId:uuid,
   runOperationId:uuid, roleId:z.literal("temporary-experience"), authorizationScope:z.string().min(1), cwd:z.string().startsWith("/"),
@@ -63,7 +63,8 @@ async function readBrowserScope(path:string,now:number,expectedOrigin=BROWSER_OR
     if (scope.origin!==expectedOrigin || Date.parse(scope.expiresAtUtc)<=now ||
       !scope.routes.some(route=>route.key===scope.entryRouteKey) ||
       scope.routes.some(route=>!route.hash.startsWith(`#/p/${scope.projectId}/`) ||
-        route.apiPaths.some(path=>!path.startsWith(`/api/projects/${scope.projectId}/`) ||
+        route.apiPaths.some(path=>(path!==`/api/projects/${scope.projectId}` &&
+          !path.startsWith(`/api/projects/${scope.projectId}/`)) ||
           new URL(path,scope.origin).pathname+new URL(path,scope.origin).search!==path)) ||
       new Set(scope.routes.map(route=>route.key)).size!==scope.routes.length ||
       new Set(scope.routes.map(route=>route.hash)).size!==scope.routes.length) return null;

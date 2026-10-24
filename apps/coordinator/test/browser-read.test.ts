@@ -245,3 +245,21 @@ test("exact project GET paths can include encoded Git names and cursor punctuati
   assert.equal(allowBrowserRequest(namedScope,BROWSER_ORIGIN+sourcePath,"GET","fetch"),true);
   assert.equal(allowBrowserRequest(namedScope,BROWSER_ORIGIN+sourcePath.replace("README","OTHER"),"GET","fetch"),false);
 });
+
+test("only an explicitly listed current-project root GET can bootstrap the workbench",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"evoloop-browser-project-root-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const projectRoot=`/api/projects/${projectId}`;
+  const otherRoot=`/api/projects/${runId}`;
+  const rootScope:BrowserReadScope={...scope,routes:[{...scope.routes[0]!,apiPaths:[projectRoot]}]};
+  const scopePath=join(dir,"scope.json");await writeFile(scopePath,JSON.stringify(rootScope),{mode:0o600});
+  const bridge=new BrowserReadBridge({scopePath,now:()=>Date.parse("2028-01-01T00:00:00Z"),
+    authorize:async()=>null,backend:async()=>{throw new Error("not called");}});
+  t.after(()=>bridge.close());
+  assert.ok(await bridge.tools(spec));
+  assert.equal(allowBrowserRequest(rootScope,BROWSER_ORIGIN+projectRoot,"GET","fetch"),true);
+  assert.equal(allowBrowserRequest(rootScope,BROWSER_ORIGIN+projectRoot,"POST","fetch"),false);
+  assert.equal(allowBrowserRequest(rootScope,BROWSER_ORIGIN+otherRoot,"GET","fetch"),false);
+  assert.equal(allowBrowserRequest(rootScope,BROWSER_ORIGIN+"/api/projects","GET","fetch"),false);
+  await writeFile(scopePath,JSON.stringify({...rootScope,routes:[{...scope.routes[0]!,apiPaths:[otherRoot]}]}));
+  assert.equal(await bridge.tools(spec),undefined);
+});

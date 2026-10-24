@@ -15,6 +15,8 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
   const taskId="22222222-2222-4222-8222-222222222222";
   const sessionId="33333333-3333-4333-8333-333333333333";
   const runId="44444444-4444-4444-8444-444444444444";
+  const projectRoot=`/api/projects/${projectId}`;
+  const foreignProjectRoot=`/api/projects/${runId}`;
   const taskPath=`/api/projects/${projectId}/tasks/${taskId}`;
   const reportHash=`#/p/${projectId}/reports`;
   const auditHash=`#/p/${projectId}/audit`;
@@ -36,7 +38,7 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
     const path=request.url??"";observed.push(`${request.method} ${path}`);
     if (path==="/") {
       response.setHeader("content-type","text/html; charset=utf-8");
-      response.end(`<!doctype html><html><body><form><input id="token" type="password"><button type="submit">Enter</button></form><main id="app"></main><span id="large"></span><span id="slow"></span><span id="compressed"></span>
+      response.end(`<!doctype html><html><body><form><input id="token" type="password"><button type="submit">Enter</button></form><main id="app"></main><span id="project-title"></span><span id="large"></span><span id="slow"></span><span id="compressed"></span>
         <a href="${reportHash}">Visible report link</a>
         <a href="${taskHash}">Return to overview</a>
         <div role="tablist"><button type="button" role="tab" id="task-tab-${projectId}-${taskId}-current-basis" aria-controls="task-panel-${projectId}-${taskId}-current-basis">Basis tab</button></div>
@@ -51,6 +53,9 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
           const result=await fetch('/api/session',{headers:{authorization:'Bearer '+token}});
           if(!result.ok)return;
           document.querySelector('form').remove();
+          fetch('${projectRoot}',{headers:{authorization:'Bearer '+token}})
+            .then(response=>response.json()).then(project=>{document.querySelector('#project-title').textContent=project.title;}).catch(()=>{});
+          fetch('${foreignProjectRoot}',{headers:{authorization:'Bearer '+token}}).catch(()=>{});
           fetch('${taskPath}',{method:'POST'}).catch(()=>{});
           fetch('http://127.0.0.1:${foreignPort}/foreign').catch(()=>{});
           fetch('${redirectPath}').catch(()=>{});
@@ -71,6 +76,9 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
     } else if(path==="/api/session") {
       response.writeHead(request.headers.authorization===`Bearer ${token}`?200:403,{"content-type":"application/json"});
       response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]}}));
+    } else if(path===projectRoot) {
+      response.writeHead(request.headers.authorization===`Bearer ${token}`?200:403,{"content-type":"application/json"});
+      response.end(JSON.stringify({id:projectId,title:"Fixture Project"}));
     } else if(path===taskPath && request.method==="GET") {
       response.writeHead(403,{"content-type":"application/json"});response.end('{"error":"Permission denied"}');
     } else if(path===redirectPath) {response.writeHead(302,{location:"/redirect-target"});response.end();}
@@ -88,7 +96,7 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
     sessionId,runId,runOperationId:"66666666-6666-4666-8666-666666666666",roleId:"temporary-experience",
     authorizationScope:"fixture",cwd:"/tmp/fixture",authorizationKind:"dynamic",sandbox:"workspace-write",readerActorId:"reader",
     origin,expiresAtUtc:new Date(Date.now()+60_000).toISOString(),entryRouteKey:"task",routes:[
-      {key:"task",hash:taskHash,apiPaths:[taskPath,redirectPath,downloadPath,largePath,slowPath,compressedPath]},
+      {key:"task",hash:taskHash,apiPaths:[projectRoot,taskPath,redirectPath,downloadPath,largePath,slowPath,compressedPath]},
       {key:"basis",hash:basisHash,apiPaths:[taskPath]},
       {key:"report",hash:reportHash,apiPaths:[taskPath]},
       {key:"audit",hash:auditHash,apiPaths:[taskPath]}]};
@@ -106,10 +114,11 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
   for(let attempt=0;attempt<15;attempt++){
     const read=await bridge.call({threadId:"owned",turnId:"turn",callId:`snapshot-${attempt}`,tool:"browser_snapshot",arguments:{}},binding);
     snapshot=read.contentItems[0]?.type==="inputText"?read.contentItems[0].text:"";
-    if(snapshot.includes("HTTP 403"))break;
+    if(snapshot.includes("HTTP 403") && snapshot.includes("Fixture Project"))break;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
   assert.match(snapshot,/HTTP 403 Permission denied/);
+  assert.match(snapshot,/Fixture Project/);
   assert.equal(snapshot.includes(token),false);
   const first=JSON.parse(snapshot) as {text:string;links:{routeKey:string}[];tabs:{routeKey:string}[];partial:boolean;hasMore:boolean;collapsedDetails:number};
   assert.equal(first.text.includes("HIDDEN OLD ROUTE"),false);
@@ -160,6 +169,8 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
   assert.equal((receiptText+JSON.stringify(provenance)).includes(token),false);
   await new Promise(resolve=>setTimeout(resolve,250));
   assert.ok(observed.includes(`GET ${taskPath}`));
+  assert.ok(observed.includes(`GET ${projectRoot}`));
+  assert.equal(observed.includes(`GET ${foreignProjectRoot}`),false);
   assert.ok(observed.includes(`GET ${redirectPath}`));
   assert.ok(observed.includes(`GET ${downloadPath}`));
   assert.ok(observed.includes(`GET ${largePath}`));
