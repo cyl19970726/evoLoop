@@ -120,6 +120,16 @@ test("PG method records a choice, then permits only its original todo Task throu
     headers:{authorization:`Bearer ${workerToken}`}});
   assert.equal(original.statusCode,200,original.body);
   assert.equal(original.json().body,reportBody);
+  const ownIssueId=randomUUID();
+  const ownIssue=await app.inject({method:"POST",url:"/api/commands",
+    headers:{authorization:`Bearer ${workerToken}`},payload:{type:"document.create",projectId,
+      operationId:randomUUID(),documentId:ownIssueId,kind:"issue",title:"Current Run note",body:"# Own issue",
+      origin:{taskId:parentTaskId,runId}}});
+  assert.equal(ownIssue.statusCode,200,ownIssue.body);
+  const ownIssueRevisionId=(ownIssue.json() as {revisionId:string}).revisionId;
+  const ownIssueOriginal=await app.inject({method:"GET",url:`/api/projects/${projectId}/documents/${ownIssueId}/revisions/${ownIssueRevisionId}/original`,
+    headers:{authorization:`Bearer ${workerToken}`}});
+  assert.equal(ownIssueOriginal.statusCode,200,ownIssueOriginal.body);
   const revised=await workflow.execute(worker.principal,{type:"document.revise",projectId,
     operationId:randomUUID(),documentId,expectedVersion:1,body:reportBody,reason:"Confirm exact evidence"} as never);
   assert.equal(revised.status,"applied",JSON.stringify(revised));
@@ -152,6 +162,7 @@ test("PG method records a choice, then permits only its original todo Task throu
   assert.equal(stale.statusCode,409,stale.body);
   assert.equal(stale.json().code,"VERSION_CONFLICT");
   for(const changes of [
+    {documentId:ownIssueId,documentRevisionId:ownIssueRevisionId,documentContentHash:hash("# Own issue")},
     {documentRevisionId:randomUUID()},
     {documentId:wrongWriter.entityId,documentRevisionId:wrongWriter.revisionId,documentContentHash:hash("# Other")},
     {documentId:wrongTask.entityId,documentRevisionId:wrongTask.revisionId,documentContentHash:hash("# Other")},

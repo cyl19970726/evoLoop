@@ -87,6 +87,39 @@ export async function readTaskContext(pool: Pool, workflow: Pick<WorkflowService
   return {items,nextCursor:result.rows.length>limit ? items.at(-1)!.loopId : null};
 }
 
+/** Share the exact worker evidence wiring between read routes and new division decisions. */
+export function managedWorkerEvidence(options: {
+  pool: Pool; workflow: WorkflowService; broker: WorkerCredentialBroker;
+  controllerPrincipal: Principal;
+  currentStudyReviewer(projectId: string, actorId: string): Promise<boolean>;
+  runSessionAvailable(projectId: string, run: RuntimeRunRecord, session: RuntimeSessionRecord): Promise<boolean>;
+  verifyProposalMaterial(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
+}) {
+  const currentStudySourceRun = async (projectId: string, runId: string) => {
+    if (!options.controllerPrincipal.projectIds.includes(projectId)) return false;
+    const run = await options.workflow.getRuntimeRun(options.controllerPrincipal,projectId,runId).catch(() => null);
+    const session = run ? await options.workflow.getRuntimeSession(options.controllerPrincipal,projectId,run.sessionId).catch(() => null) : null;
+    return !!run && !!session && await options.runSessionAvailable(projectId,run,session);
+  };
+  const factsForWorker = (identity: Parameters<typeof workerGuardFacts>[1]) =>
+    workerGuardFacts(options.pool,identity,options.currentStudyReviewer,currentStudySourceRun);
+  const canReadDivisionMaterial = async (actorId: string, documentId: string, revisionId: string) => {
+    const identity = await options.broker.identityForActor(actorId);
+    if (!identity || identity.scope.kind !== "cognition") return false;
+    if (!await canReadDivisionEvidence(identity, factsForWorker(identity), documentId, revisionId))
+      return false;
+    // The SQL fact identifies the exact authorized revision. Verify its original bytes under
+    // this worker's current authority before using it to create a durable division choice.
+    try {
+      const revision = await options.workflow.getDocumentPayloadRevision(identity.principal,
+        identity.scope.projectId, documentId, revisionId);
+      return await options.verifyProposalMaterial(identity.principal, identity.scope.projectId,
+        documentId, revisionId, revision.contentHash);
+    } catch { return false; }
+  };
+  return {factsForWorker,canReadDivisionMaterial};
+}
+
 export function setupManagedLoops(options: {
   pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
@@ -107,14 +140,6 @@ export function setupManagedLoops(options: {
   const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions]};
   const currentStudyReviewer = async (projectId: string, actorId: string) =>
     hasCurrentStudyReviewer(options.credentials,projectId,actorId);
-  const currentStudySourceRun = async (projectId: string, runId: string) => {
-    if (!controllerPrincipal.projectIds.includes(projectId)) return false;
-    const run = await options.workflow.getRuntimeRun(controllerPrincipal,projectId,runId).catch(() => null);
-    const session = run ? await options.workflow.getRuntimeSession(controllerPrincipal,projectId,run.sessionId).catch(() => null) : null;
-    return !!run && !!session && await options.runSessionAvailable(projectId,run,session);
-  };
-  const factsForWorker = (identity: Parameters<typeof workerGuardFacts>[1]) =>
-    workerGuardFacts(options.pool,identity,currentStudyReviewer,currentStudySourceRun);
   const grants = options.integrations.runtime.grants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId));
   const broker = new WorkerCredentialBroker({workerRoot: root, apiUrl: options.apiUrl,
     cliMain: options.cliMain, nodeExecutable: process.execPath, ttlMs: config.credentialTtlMs,
@@ -124,6 +149,9 @@ export function setupManagedLoops(options: {
       if (matches.length !== 1) throw new Error("Worker receipt workspace is ambiguous");
       return join(matches[0]!.cwd, ".local/worker-receipts", scope.runId);
     }});
+  const {factsForWorker,canReadDivisionMaterial} = managedWorkerEvidence({pool:options.pool,
+    workflow:options.workflow,broker,controllerPrincipal,currentStudyReviewer,
+    runSessionAvailable:options.runSessionAvailable,verifyProposalMaterial:options.verifyProposalMaterial});
   const controller = async (projectId: string, roleId: string) => {
     const matches = grants.filter(value => value.projectId === projectId && value.roleId === roleId);
     if (matches.length !== 1) return null;
@@ -158,20 +186,7 @@ export function setupManagedLoops(options: {
       const session = run ? await options.workflow.getRuntimeSession(principal, projectId, run.sessionId).catch(() => null) : null;
       return !!run && !!session && await options.runSessionAvailable(projectId, run, session);
     },
-    canReadDivisionMaterial: async (actorId, documentId, revisionId) => {
-      const identity = await broker.identityForActor(actorId);
-      if (!identity || identity.scope.kind !== "cognition") return false;
-      if (!await canReadDivisionEvidence(identity, factsForWorker(identity), documentId, revisionId))
-        return false;
-      // The SQL fact identifies the exact authorized revision. Verify its original bytes under
-      // this worker's current authority before using it to create a durable division choice.
-      try {
-        const revision = await options.workflow.getDocumentPayloadRevision(identity.principal,
-          identity.scope.projectId, documentId, revisionId);
-        return await options.verifyProposalMaterial(identity.principal, identity.scope.projectId,
-          documentId, revisionId, revision.contentHash);
-      } catch { return false; }
-    },
+    canReadDivisionMaterial,
     getTrialController: async (projectId, actorId) => actorId === controllerPrincipal.actorId &&
       controllerPrincipal.projectIds.includes(projectId) ? controllerPrincipal : null,
     verifyProposalMaterial: options.verifyProposalMaterial});

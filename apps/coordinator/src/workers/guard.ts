@@ -143,8 +143,8 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       if (!same(document, scope.projectId)) return false;
       if (parts.length >= 4 && id(parts[3])) return parts.length === 4 || parts[4] === "original" ?
         (await facts.fixedDocument(scope.taskId, parts[1], parts[3]) ||
-          (scope.kind === "cognition" ? await facts.ownRunReportEvidence?.(parts[1], parts[3]) === true :
-            await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true)) : false;
+          await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true ||
+          await facts.ownRunReportEvidence?.(parts[1], parts[3]) === true) : false;
       // Every worker document read must bind a revision. A detail/list route can reveal a later
       // current body even when an older authored, linked, or delivered revision is authorized.
       return false;
