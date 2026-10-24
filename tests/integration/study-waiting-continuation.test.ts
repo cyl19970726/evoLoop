@@ -28,7 +28,8 @@ const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const failed=(promise:Promise<unknown>,code:string)=>assert.rejects(promise,
   error=>error instanceof OrchestrationError&&error.code===code);
 
-async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"|"method"){
+async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-missing-source"|"child-forged-source"|
+  "child-grant-revoked"|"child-task-changed"|"no_action"|"division"|"method"){
   const schema=`el_study_wait_${randomUUID().replaceAll("-","").slice(0,16)}`;
   await migrate(url!,schema);
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
@@ -43,12 +44,12 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   let template:DelegationTemplate|null=null,templateHash="";
-  let grant=true,reviewerCurrent=true;
+  let grant=true,reviewerCurrent=true,businessGrant=true;
   let workerMaterial: (actorId:string,documentId:string,revisionId:string)=>Promise<boolean> = async()=>false;
   let workerScope: (actorId:string)=>Promise<WorkerScope|null> = async()=>null;
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,id)=>project===projectId&&id===scope?
     {projectId,scopeId:scope,actorId:controllerId,roleId:role,active:true}:
-    project===projectId&&id==="business-scope"?{projectId,scopeId:id,actorId:controllerId,roleId:business,active:true}:null,
+    project===projectId&&id==="business-scope"?{projectId,scopeId:id,actorId:controllerId,roleId:business,active:businessGrant}:null,
     canActAsRole:async(project,actor,required)=>project===projectId&&actor===controllerId&&[role,business].includes(required),
     wasActorRole:async()=>false});
   const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash,
@@ -149,13 +150,17 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
     declarationId,controllerActorId:controllerId,sourceTaskId:carrierTaskId,
     sourceTaskRevisionId:carrier.task.currentRevisionId,sourceDecisionIds:decisions,reason:"Three fixed Runs"});
   const credentials:string[]=[];
-  let loseReserveReply=false;
+  let loseReserveReply=false,loseStartReply=false;
   const runnerWorkflow=Object.create(workflow) as WorkflowService;
   runnerWorkflow.execute=async(actor,command)=>{
     const result=await workflow.execute(actor,command);
     if(loseReserveReply&&command.type==="runtime.run.reserve"&&result.status==="applied"){
       loseReserveReply=false;
       throw new Error("FIXTURE_RESERVE_REPLY_LOST");
+    }
+    if(loseStartReply&&command.type==="task.start"&&result.status==="applied"){
+      loseStartReply=false;
+      throw new Error("FIXTURE_TASK_START_REPLY_LOST");
     }
     return result;
   };
@@ -486,6 +491,28 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   const businessTask=randomUUID();
   await wf({type:"task.create",taskId:businessTask,stageId,title:"Bounded follow-up",content:"# Follow-up",
     acceptance:"One result",owner:business,consumer:controllerId,evidence:"Study",stopCondition:"One run"});
+  const fixedFirst=await workflow.getTask(controller,projectId,businessTask);
+  const thirdScope={projectId,loopId,taskId,runId:thirdRun,sessionId:thirdSession,roleId:role,
+    kind:"cognition" as const,allowedRoleIds:[role,business]};
+  await broker.issue(thirdScope);
+  const thirdToken=await readFile(join(workerRoot,thirdRun,"credential"),"utf8");
+  const methodReportId=randomUUID(),methodBody="# Fixed method after resumed study";
+  const methodReport=await fetch(new URL("/api/commands",address),{method:"POST",
+    headers:{authorization:`Bearer ${thirdToken}`,"content-type":"application/json"},
+    body:JSON.stringify({type:"document.create",projectId,operationId:randomUUID(),
+      documentId:methodReportId,kind:"report",title:"Method evidence",body:methodBody,
+      origin:{taskId,runId:thirdRun}})});
+  assert.equal(methodReport.status,200,await methodReport.text());
+  const methodRevisionId=(await workflow.getDocument(controller,projectId,methodReportId)).document.currentRevisionId;
+  const methodChoice=await fetch(new URL("/api/orchestration/commands",address),{method:"POST",
+    headers:{authorization:`Bearer ${thirdToken}`,"content-type":"application/json"},
+    body:JSON.stringify({type:"division.decide",projectId,operationId:randomUUID(),decisionId:randomUUID(),
+      loopId,expectedLoopVersion:(await orchestration.getLoop(controller,projectId,loopId))!.version,
+      sourceEventId:secondResume.id,parentDispatchId:third.id,documentId:methodReportId,
+      documentRevisionId:methodRevisionId,documentContentHash:hash(methodBody),firstTaskId:businessTask,
+      expectedFirstTaskVersion:1,choice:"method",roleId:business,templateId:null,
+      templateRevision:null,templateHash:null,reason:"Use original business Role for fixed first Task"})});
+  assert.equal(methodChoice.status,200,await methodChoice.text());
   const nextInbox=await run(controller,{type:"inbox.accept",loopId,sourceEventId:secondResume.id,
     recipientRoleId:role,purpose:"next_action"});
   await run(controller,{type:"inbox.ack",inboxId:nextInbox.entityId,expectedVersion:1,
@@ -501,6 +528,79 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   await runtime.recordTurn(projectId,thirdRun,`fixture-${thirdRun}`,"failed","Follow-up delegated");
   await run(controller,{type:"worker.outcome",dispatchId:third.id,outcome:"waiting",deliveryId:null,
     decisionId:finalWaiting,evidenceRef:null,reason:"Child owns the follow-up"});
+  const budgetBeforeStart=(await orchestration.getLoop(controller,projectId,loopId))!.dispatchCount;
+  const childStartId=loopIntentId(child.entityId,"task.start");
+  const childSession=loopIntentId(child.entityId,"session"),childRun=loopIntentId(child.entityId,"run");
+  if(ending==="child-grant-revoked" || ending==="child-task-changed"){
+    if(ending==="child-grant-revoked") businessGrant=false;
+    else await wf({type:"task.update",taskId:businessTask,expectedVersion:1,title:"Changed first work",
+      content:"# Changed after fixed method",acceptance:"One result",owner:business,
+      reason:"Reject a stale child Task version"});
+    await runner.pump();
+    assert.ok(runner.status().faults.some(fault=>fault.dispatchId===child.entityId &&
+      fault.code.includes(ending==="child-grant-revoked"?"worker scope changed":"Task changed before dispatch")),
+    JSON.stringify(runner.status().faults));
+    assert.equal(await workflow.getOperation(controller,projectId,childStartId),null);
+    assert.equal(await workflow.getRuntimeSession(controller,projectId,childSession).catch(()=>null),null);
+    assert.equal(await workflow.getRuntimeRun(controller,projectId,childRun).catch(()=>null),null);
+    assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,budgetBeforeStart);
+    return;
+  }
+  if(ending==="child-missing-source" || ending==="child-forged-source"){
+    const originalList=orchestration.listSourceFacts.bind(orchestration);
+    orchestration.listSourceFacts=async (...args)=>{
+      const page=await originalList(...args);
+      return {...page,items:ending==="child-missing-source"?
+        page.items.filter(fact=>fact.id!==secondResume.id):
+        page.items.map(fact=>fact.id===secondResume.id && fact.continuation?
+          {...fact,continuation:{...fact.continuation,rootSourceEventId:randomUUID()}}:fact)};
+    };
+    await runner.pump();
+    assert.ok(runner.status().faults.some(fault=>fault.dispatchId===child.entityId &&
+      fault.code.startsWith(ending==="child-missing-source"?"SOURCE_EVENT_UNAVAILABLE":"STUDY_SOURCE_UNVERIFIED")));
+    assert.equal(await workflow.getOperation(controller,projectId,childStartId),null);
+    assert.equal((await workflow.getTask(controller,projectId,businessTask)).task.state,"todo");
+    orchestration.listSourceFacts=originalList;
+  }
+  if(ending==="child-retry"){
+    loseStartReply=true;
+    await runner.pump();
+    assert.ok(runner.status().faults.some(fault=>fault.dispatchId===child.entityId &&
+      fault.code==="FIXTURE_TASK_START_REPLY_LOST"));
+    assert.equal((await workflow.getOperation(controller,projectId,childStartId))?.result.status,"applied");
+    assert.equal(await workflow.getRuntimeSession(controller,projectId,childSession).catch(()=>null),null);
+  }
+  await runner.pump();
+  assert.deepEqual(runner.status().faults,[],"the verified study source must not be treated as an Issue");
+  const startedTask=await workflow.getTask(controller,projectId,businessTask);
+  assert.equal(startedTask.task.state,"in_progress");
+  assert.equal(startedTask.task.version,2);
+  assert.equal(startedTask.task.contentRevisionId,fixedFirst.task.contentRevisionId);
+  assert.equal(startedTask.basis?.members.find(member=>member.documentId===fixedFirst.task.contentDocumentId)?.revisionId,
+    fixedFirst.task.contentRevisionId,"the normal Task start pins its original primary basis");
+  assert.equal((await workflow.getRuntimeSession(controller,projectId,childSession)).state,"reserved");
+  await runtime.beginSessionCreate(projectId,childSession);
+  await runtime.bindSession(projectId,childSession,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:childSession,roleId:business,cwd,authorizationScope:"business-scope",
+    nativeThreadId:`fixture-${childSession}`,nativeSessionId:`fixture-${childSession}`});
+  if(ending==="child-retry"){
+    loseReserveReply=true;
+    await runner.pump();
+    assert.ok(runner.status().faults.some(fault=>fault.dispatchId===child.entityId &&
+      fault.code==="FIXTURE_RESERVE_REPLY_LOST"));
+    assert.equal((await orchestration.getDispatch(controller,projectId,child.entityId))?.state,"dispatching");
+  }
+  await runner.pump();
+  assert.equal((await orchestration.getDispatch(controller,projectId,child.entityId))?.state,"accepted");
+  assert.equal((await orchestration.getDispatch(controller,projectId,child.entityId))?.runtimeRunId,childRun);
+  assert.equal((await workflow.getRuntimeRun(controller,projectId,childRun)).taskId,businessTask);
+  assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,budgetBeforeStart);
+  assert.equal(credentials.filter(value=>value===childRun).length,1,
+    "reserve reply recovery must not issue a second worker credential");
+  await runner.pump();
+  assert.equal((await orchestration.listDispatches(controller,projectId,loopId)).items
+    .filter(item=>item.id===child.entityId).length,1);
+  assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,budgetBeforeStart);
   const close=await wf({type:"task.close",taskId,expectedVersion:repairedVersion+2,
     decisionId:finalWaiting,handoffDispatchId:child.entityId,acceptanceResult:"met",
     acceptanceEvidence:"Verified signed child handoff",reason:"Cognition delivered bounded decision"});
@@ -511,3 +611,8 @@ test("bootstrap study waiting continues twice on one Task and hands off a signed
 test("same-Task resumed study closes on its own signed no-action Decision, not an old waiting",t=>studyScenario(t,"no_action"));
 test("resumed study consumes an accepted Role binding through its final waiting choice",t=>studyScenario(t,"division"));
 test("resumed study worker uses only its current Run report for a method choice",t=>studyScenario(t,"method"));
+test("study method child replays Task start and Run reserve after lost replies",t=>studyScenario(t,"child-retry"));
+test("study method child rejects a missing verified source before Task start",t=>studyScenario(t,"child-missing-source"));
+test("study method child rejects a forged bootstrap source chain",t=>studyScenario(t,"child-forged-source"));
+test("study method child respects the current business grant",t=>studyScenario(t,"child-grant-revoked"));
+test("study method child cannot start a changed first Task",t=>studyScenario(t,"child-task-changed"));

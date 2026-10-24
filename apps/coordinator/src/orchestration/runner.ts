@@ -421,12 +421,25 @@ export class ManagedLoopRunner {
           loop.projectId, loop.id, 100, cursor))).find(fact => fact.id === dispatch.sourceEventId)
         : undefined;
       if (dispatch.parentDispatchId && !source) throw new Error("SOURCE_EVENT_UNAVAILABLE: child source fact is missing");
-      if ((source?.kind === "document" || source?.kind === "waiting.resumed") &&
+      if (source?.kind === "waiting.resumed" && source.continuation) {
+        const parent = dispatch.parentDispatchId ? await this.deps.orchestration.getDispatch(
+          profile.principal, loop.projectId, dispatch.parentDispatchId) : null;
+        if (source.projectId !== loop.projectId || source.sourceLoopId !== loop.id ||
+          source.continuation.kind !== "same-task-study" ||
+          source.continuation.rootSourceEventId !== loop.bootstrapEventId ||
+          source.continuation.originalTaskId !== source.subjectId ||
+          source.continuation.expectedTaskVersion !== source.subjectVersion ||
+          !parent || parent.loopId !== loop.id || parent.sourceEventId !== source.id ||
+          parent.taskId !== source.subjectId || parent.recipientRoleId !== loop.cognitiveRoleId)
+          throw new Error("STUDY_SOURCE_UNVERIFIED: child source has no exact verified study parent");
+      }
+      const issueSource = source?.kind === "document" ||
+        (source?.kind === "waiting.resumed" && !source.continuation);
+      if (issueSource &&
         (source.projectId !== loop.projectId || source.subjectVersion !== 1 ||
         !source.issueRevisionId || !source.issueContentHash))
         throw new Error("SOURCE_ISSUE_UNVERIFIED: child source is not a fixed issue creation");
-      const sourceIssue = (source?.kind === "document" || source?.kind === "waiting.resumed") &&
-        source.issueRevisionId && source.issueContentHash
+      const sourceIssue = issueSource && source?.issueRevisionId && source.issueContentHash
         ? { documentId: source.subjectId, revisionId: source.issueRevisionId, contentHash: source.issueContentHash }
         : undefined;
       const basis = await this.initialTaskBasis(profile.principal, loop.projectId, task, sourceIssue);
