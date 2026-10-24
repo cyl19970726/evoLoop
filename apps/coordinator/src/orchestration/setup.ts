@@ -107,6 +107,14 @@ export function setupManagedLoops(options: {
   const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions]};
   const currentStudyReviewer = async (projectId: string, actorId: string) =>
     hasCurrentStudyReviewer(options.credentials,projectId,actorId);
+  const currentStudySourceRun = async (projectId: string, runId: string) => {
+    if (!controllerPrincipal.projectIds.includes(projectId)) return false;
+    const run = await options.workflow.getRuntimeRun(controllerPrincipal,projectId,runId).catch(() => null);
+    const session = run ? await options.workflow.getRuntimeSession(controllerPrincipal,projectId,run.sessionId).catch(() => null) : null;
+    return !!run && !!session && await options.runSessionAvailable(projectId,run,session);
+  };
+  const factsForWorker = (identity: Parameters<typeof workerGuardFacts>[1]) =>
+    workerGuardFacts(options.pool,identity,currentStudyReviewer,currentStudySourceRun);
   const grants = options.integrations.runtime.grants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId));
   const broker = new WorkerCredentialBroker({workerRoot: root, apiUrl: options.apiUrl,
     cliMain: options.cliMain, nodeExecutable: process.execPath, ttlMs: config.credentialTtlMs,
@@ -153,7 +161,16 @@ export function setupManagedLoops(options: {
     canReadDivisionMaterial: async (actorId, documentId, revisionId) => {
       const identity = await broker.identityForActor(actorId);
       if (!identity || identity.scope.kind !== "cognition") return false;
-      return canReadDivisionEvidence(identity, workerGuardFacts(options.pool, identity), documentId, revisionId);
+      if (!await canReadDivisionEvidence(identity, factsForWorker(identity), documentId, revisionId))
+        return false;
+      // The SQL fact identifies the exact authorized revision. Verify its original bytes under
+      // this worker's current authority before using it to create a durable division choice.
+      try {
+        const revision = await options.workflow.getDocumentPayloadRevision(identity.principal,
+          identity.scope.projectId, documentId, revisionId);
+        return await options.verifyProposalMaterial(identity.principal, identity.scope.projectId,
+          documentId, revisionId, revision.contentHash);
+      } catch { return false; }
     },
     getTrialController: async (projectId, actorId) => actorId === controllerPrincipal.actorId &&
       controllerPrincipal.projectIds.includes(projectId) ? controllerPrincipal : null,
@@ -200,7 +217,7 @@ export function setupManagedLoops(options: {
   return {runner, broker, service: orchestration,
     start: () => runner.start(config.pollIntervalMs), stop: () => runner.stop(),
     workers: {authenticate: (header: string | undefined) => broker.authenticate(header),
-      facts: (identity: Parameters<typeof workerGuardFacts>[1]) => workerGuardFacts(options.pool, identity,currentStudyReviewer)},
+      facts: factsForWorker},
     routes: {service: orchestration, status: () => runner.status(),
       delegationChoices: async (principal: Principal, projectId: string, loopId: string) => {
         const loop = await orchestration.getLoop(principal,projectId,loopId);

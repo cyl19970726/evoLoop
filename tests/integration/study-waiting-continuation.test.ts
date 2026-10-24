@@ -293,6 +293,28 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   assert.ok(identity);
   const facts=workerGuardFacts(pool,identity,async(_project,actor)=>actor===reviewerId&&reviewerCurrent);
   for(const sourceRun of sourceRuns)assert.equal(await facts.fixedRunTrace!(sourceRun),true);
+  if(ending==="division"){
+    const reportId=randomUUID();
+    const authored=await workflow.execute(identity.principal,{type:"document.create",projectId,
+      operationId:randomUUID(),documentId:reportId,kind:"report",title:"Current study diagnosis",
+      body:"# Fixed study evidence",origin:{taskId,runId:newRun}});
+    assert.equal(authored.status,"applied",JSON.stringify(authored));
+    const currentFacts=()=>workerGuardFacts(pool,identity,
+      async(_project,actor)=>actor===reviewerId&&reviewerCurrent,async()=>grant);
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),true);
+    const oldReportId=randomUUID();
+    const oldReport=await workflow.execute(identity.principal,{type:"document.create",projectId,
+      operationId:randomUUID(),documentId:oldReportId,kind:"report",title:"Prior Run report",
+      body:"# Old evidence",origin:{taskId,runId:oldRun}});
+    assert.equal(oldReport.status,"applied",JSON.stringify(oldReport));
+    assert.equal(await currentFacts().ownRunReportEvidence!(oldReportId,oldReport.revisionId!),false);
+    reviewerCurrent=false;
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),false);
+    reviewerCurrent=true;grant=false;
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),false);
+    grant=true;
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),true);
+  }
   const metadataRunner=new RuntimeRunner({runtimeFactory:()=>({isReady:()=>true}) as never,
     workflow,trusted:runtime,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,
     hasGrant:()=>grant,
