@@ -296,6 +296,44 @@ test("fixed basis read checks project authority and revision ownership before sh
       error instanceof DomainError && error.code === "FORBIDDEN");
 });
 
+test("reviewed todo update can replace external fixed inputs without rewriting the prior basis", async () => {
+  const f = fixture();
+  await seedTwoTasks(f, [documentId, secondDocumentId]);
+  const old = await f.service.getTask(principal, projectId, taskA);
+  assert.ok(old.basis);
+  const reopened = await f.service.execute(principal, { type: "task.reopen", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: old.task.version, reason: "New cycle" });
+  assert.equal(reopened.status, "applied");
+  const current = await f.service.getTask(principal, projectId, taskA);
+  const selected = await f.service.getDocument(principal, projectId, secondDocumentId);
+  const originalHash = f.uow.state.documentRevisions[selected.adopted!.id]!.contentHash;
+  f.uow.state.documentRevisions[selected.adopted!.id]!.contentHash = "0".repeat(64);
+  const badOriginal = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: current.task.version, title: current.task.title, content: current.task.content,
+    acceptance: current.task.acceptance, owner: current.task.owner, reason: "Corrupt original must fail",
+    basis: [{ documentId: secondDocumentId, revisionId: selected.adopted!.id }] });
+  assert.equal(badOriginal.status === "rejected" ? badOriginal.code : null, "BASIS_UNAVAILABLE");
+  f.uow.state.documentRevisions[selected.adopted!.id]!.contentHash = originalHash;
+  const fixedRevision = f.uow.state.documentRevisions[selected.adopted!.id]!;
+  f.uow.state.documentRevisions[selected.adopted!.id] = { ...fixedRevision, body: null,
+    payloadRef: "00000000-0000-4000-8000-000000009999" };
+  const missingBlob = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: current.task.version, title: current.task.title, content: current.task.content,
+    acceptance: current.task.acceptance, owner: current.task.owner, reason: "Missing registered original must fail",
+    basis: [{ documentId: secondDocumentId, revisionId: selected.adopted!.id }] });
+  assert.equal(missingBlob.status === "rejected" ? missingBlob.code : null, "BASIS_UNAVAILABLE");
+  f.uow.state.documentRevisions[selected.adopted!.id] = fixedRevision;
+  const changed = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
+    taskId: taskA, expectedVersion: current.task.version, title: current.task.title, content: current.task.content,
+    acceptance: current.task.acceptance, owner: current.task.owner, reason: "Use only the reviewed source",
+    basis: [{ documentId: secondDocumentId, revisionId: selected.adopted!.id }] });
+  assert.equal(changed.status, "applied", JSON.stringify(changed));
+  const next = await f.service.getTask(principal, projectId, taskA);
+  assert.deepEqual(next.basis?.members.map(item => item.documentId), [next.task.contentDocumentId, secondDocumentId]);
+  assert.deepEqual(old.basis.members.map(item => item.documentId), [old.task.contentDocumentId, documentId, secondDocumentId]);
+  assert.equal(next.task.contentRevisionId, old.task.contentRevisionId);
+});
+
 test("Task creation owns a primary Document and pins each changed body to an immutable revision", async () => {
   const f = fixture();
   await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });

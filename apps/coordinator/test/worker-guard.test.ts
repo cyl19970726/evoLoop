@@ -53,6 +53,14 @@ test("worker route guard denies foreign reads and every unlisted write", async (
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages/${wikiId}?revision=${revisionId}&revision=${u()}` }, facts), false);
 });
 
+test("a cognition worker may update its Task but cannot reselect fixed inputs", async () => {
+  const cognition: WorkerIdentity = { ...worker, scope: { ...worker.scope, kind: "cognition", roleId: "planner" } };
+  const update = command("task.update", { taskId, owner: "builder" });
+  assert.equal(await authorizeWorkerCommand(cognition, update, facts), true);
+  assert.equal(await authorizeWorkerCommand(cognition, { ...update, basis: [] }, facts), false);
+  assert.equal(await authorizeWorkerCommand(cognition, { ...update, retentions: [] }, facts), false);
+});
+
 test("dynamic handoff reads stay on the worker's own binding and fixed material",async()=>{
   const bindingId=u(),foreignBinding=u();
   const bounded:WorkerGuardFacts={...facts,

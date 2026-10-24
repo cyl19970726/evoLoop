@@ -40,6 +40,8 @@ issue/report 可带不可变 `origin`：Task ID、可空的 Run ID，以及服�
 
 待处理 Task 在上游改版时不会生成进行中任务的 Impact。`task.start.retentions` 为这条路径逐项提交旧文档修订、当前观察的已采纳修订和保留理由；核心核对同项目、已关联且已发布的所选来源，以服务端身份和时间写入新封存 BasisSet。检查和 TaskRevision、journal/outbox 同事务完成，既有拒绝操作不改写。省略 basis 时可继承仍有效的保留记录；显式重选 basis 时必须同时明确所需保留项。派发只接受与当前已采纳修订相符的记录，上游再次改版会使旧观察失效；进行中的 Impact/BasisDecision 路径继续独立工作。PostgreSQL 的封存约束保护保留记录，不能事后补写理由或改变观察版本。
 
+待处理 Task 也可在 `task.update` 显式重选本轮外部固定输入：`basis` 是完整替换集合，`[]` 只保留自动加入的主正文，省略则沿用旧集合与普通更新权限。`retentions` 只能随显式 `basis`；旧修订采用版、观察到的当前采纳版和逐项理由沿用 `task.start` 校验。此分支须同项目 read/write/review、当前 Task 版本、已发布且已关联的固定修订、无在途或结果未知 Run；进行中先正常重开。核心核 inline 原文 hash 或 Blob 注册清单/hash，Blob 实际字节仍须经既有 original 读取链核验，重选成功不证明字节已读。正文同次变更时以新主修订封存，正文相同则沿用原修订。操作在同一事务追加 TaskRevision、sealed BasisSet、journal/outbox；历史 Run 和旧集合不改。选择不会启动 Task，后续正常 `task.start` 继续核当前材料与派发权限；已经受理但尚未 reserve 的派发只可按原 Task CAS 失败，不能悄悄继承新输入。
+
 负责人讨论沿同一授权 Command/Query API 和 Journal/outbox 提交。准备时固定 Goal/Stage 版本、所选 Task 修订与已采用过程文档；承接观察和讨论决定追加到交接文档修订中，人工登记者与时间单独标明。修改须核对讨论版本与交接文档现行修订，避免覆盖在文档入口另做的修改。后续对象只建立固定链接，执行和亲用仍按各对象记录验证；决定纠正保留旧事件并要求重新核对后续链接。目标会话标签或引用不构成原生会话归属、送达或自动回写证明。
 
 若通用文档修订已推进所属 Document、而 Discussion 仍登记旧版，普通决定拒绝 `DOCUMENT_CHANGED`。`discussion.decision.record.documentRecovery` 提供显式受控接续：同时核对 Discussion 版本、最新决定、实际当前 Document 修订及 `expectedDocumentVersion`，要求同项目所属非归档 Markdown 原件及两版哈希可核。新修订以实际编辑版为 parent，追加旧/新固定修订、哈希、读入版本、确认者/时间和理由，再追加决定；Document 与 Discussion 同事务各推进一次。无需新增状态或迁移，不改写旧版、已采纳指针或评价冻结输入。不失配、过期或范围/权限不符均拒绝；确定拒绝后的重新判断属于新意图，未知回包仍先原 ID 对账。

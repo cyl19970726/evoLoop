@@ -253,7 +253,8 @@ export async function authorizeWorkerCommand(identity: WorkerIdentity, value: un
     return linkedDocuments();
   }
   if (command.type === "task.update" || command.type === "task.reviewBasis") return await task(command.taskId) &&
-    (command.type !== "task.update" || await linkedDocuments() && (command.stageId === undefined || command.stageId === loop.stageId) && scope.allowedRoleIds.includes(String(command.owner)));
+    (command.type !== "task.update" || command.basis === undefined && command.retentions === undefined &&
+      await linkedDocuments() && (command.stageId === undefined || command.stageId === loop.stageId) && scope.allowedRoleIds.includes(String(command.owner)));
   if (command.type === "task.close") return command.taskId !== scope.taskId && await task(command.taskId);
   if (command.type === "inbox.accept") {
     const dispatch = await facts.dispatchForRun?.(scope.runId);
