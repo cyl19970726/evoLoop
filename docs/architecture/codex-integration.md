@@ -4,7 +4,7 @@
 
 ## 位置与权威
 
-Codex App Server 是对话执行边界，不是 evoLoop 任务数据库、知识 Wiki 或调度器。第一切片由 evoLoop 启动并管理一个本地 stdio 子进程，按 `initialize`／`initialized` 握手，与其自己创建的 Thread 通信。每个 Thread 包含多个 Turn；Item 和事件说明过程与运行结果。适配器保存外部 ID 与本地对账检查点，不能用 Codex 的“Turn 已完成”替代 PostgreSQL 任务验收。文档说明的 `thread.sessionId` 是 Codex 会话树根；项目的 `RoleId` 和承载 `SessionId` 另立稳定 ID。
+Codex App Server 是对话执行边界，不是 evoLoop 任务数据库、知识 Wiki 或调度器。第一切片由 evoLoop 启动并管理一个本地 stdio 子进程，按 `initialize`／`initialized` 握手，与其自己创建的 Thread 通信。每个 Thread 包含多个 Turn；Item 和事件说明过程与运行结果。适配器保存外部 ID 与本地对账检查点，不能用 Codex 的“Turn 已完成”替代 PostgreSQL 任务验收。文档说明的 `thread.sessionId` 是 Codex 会话树根；项目的 `RoleId` 和承载 `SessionId` 另立稳定 ID。持续业务责任由 Role 的正式修订承担，owned RuntimeSession 是它的一次受管承载，Run 是该承载上的一次任务执行；Desktop 聊天不因新建或命名而成为上述任一对象。
 
 人类日常讨论可以继续在 Codex Desktop 中的分工／认知聊天发生。Agent 现可使用项目内 `evoloop-workflow` 业务技能与 CLI 读取固定依据、提交授权内的常规修改；MCP 是按需增加的同类工具入口。CLI 或将来的 MCP 变更操作先进入统一协调服务，由 core 核对身份、授权、状态和基线，再调用 TaskStore／KnowledgeRepository；工具不得自行实例化适配器直写。飞书原生人工编辑是 connector 的设计入口，真实租户接入已延后；受支持字段将经回读、身份／基线／状态校验后成为 core command，出站由 outbox 投影并回读确认。自动承接任务的 worker 使用 evoLoop 管理的 App Server Thread。两种宿主以任务 ID、知识修订和交接说明显式衔接；同一 Role 可在不同宿主有先后承载实例，却不能靠映射复制桌面聊天历史或推断其运行状态。这样无需先造第二个聊天前端，也不会让 Desktop 成为第二个任务或知识权威。桌面聊天的自动唤醒、sidebar 注册、状态监听与统一控制留给独立的宿主适配验证。
 
@@ -95,7 +95,7 @@ worker 文档路由仅接受显式修订及原件读取，拒绝无版本详情�
 
 ## 任务、职责与定时触发
 
-一条 PostgreSQL Task 可经历多个 Codex Turn、换 Thread 接续，甚至由多个业务 session 分工；一条 Thread 也可处理多个相关 Turn。关系通过 `taskId`、`roleId`、项目 `sessionId`、原生 `threadId`／`turnId`、操作 ID 和有效时间段串联，不能把任一外部 ID 当另一层的主键。新持续 Role 需要缺口证据、试行与回看；`thread/start` 和 `thread/fork` 只创建运行实例／历史分支。
+一条 PostgreSQL Task 可经历多个 Codex Turn、换 Thread 接续，甚至由多个业务 session 分工；一条 Thread 也可处理多个相关 Turn。关系通过 `taskId`、`roleId`、项目 `sessionId`、原生 `threadId`／`turnId`、操作 ID 和有效时间段串联，不能把任一外部 ID 当另一层的主键。新持续 Role 需要缺口证据、试行与回看；`thread/start` 和 `thread/fork` 只创建运行实例／历史分支。当前静态路径先将 Session 持久预留为 `reserved`，runner 从自己的 `thread/start` 回执保存原生 Thread、Session 与实际目录后才标为 `ready`；`role.bindSession` 仅能绑定同项目、同 Role、已有原生 Thread 的 ready owned Session，不接受任意 Desktop chat ID 或原生 session ID。绑定不会替自动 Loop 选用该 Session：当前自动派发按 Dispatch 创建新的受管 Session；普通 `runtime.run.reserve` 可在同一 ready Session 上另开 Turn，但仍须核在途／未知、Task 责任和固定输入与当前授权。评价尝试另有每次新建 Session 的要求。实际步骤见[Agent CLI 的首次业务任务路径](../development/agent-cli.md#建立常驻业务职责与首个受管任务)。
 
 需求与 dogfood 缺陷先说明复现、预期、实际结果、影响范围和证据；尚未决定的问题可留在 issue/spec 或讨论，明确的授权工作创建 todo Task。开始时固定主正文和必要材料，再进入 in_progress；验收默认留原任务内。飞书可作为协作入口，但入站编辑先转为受验证的 command。责任 session 可以自行修复所在领域问题、提交成果与知识候选；需要跨领域承接时协调者按 Role 范围派发并回收。专门认知 session 综合使用反馈、冲突与下一步，但不是局部行动的必经审批环节。任务的交付状态、派发操作状态和实际使用效果分别记录。
 

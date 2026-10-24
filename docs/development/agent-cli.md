@@ -51,7 +51,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 评价入口的首片针对**一个固定 Task、两组条件**。先读取 `evaluation-source TASK_UUID --project UUID`，取得进行中 Task 当前来源修订及服务端推导的签名；再查看 `command schema evaluation.create`，以固定协议/共同材料、同一指令与判据建立直接组和额外 Wiki 组。直接组要求 Task 本身没有必需 Wiki；两组声明相同模型和运行环境。修订定义用 `evaluation.revise` 追加新版本，既有尝试不搬到新版。`list evaluations --project UUID [--task UUID | --knowledge UUID]` 与 `evaluation EVALUATION_UUID --project UUID [--revision UUID]` 读取定义、全部真实尝试、判定、更正与结论。普通 `runtime.run.reserve` 不要求评价；只有声明为评价尝试的 Run 才须固定 `evaluation` 绑定，每次尝试使用新的受管 Session。成功预留才有真实 Attempt，派发前还须完成受控输入包绑定。用 `evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID` 回读实际包及固定来源，不能把定义中的材料清单当作已送达证明。
 
-Run 确认终态后，用 `delivery.record.runId` 显式登记产物，先核任务业务输入仍与执行时一致；交付登记修订不等于 Run 的执行修订。每个尝试用 `evaluation.assessment.record` 记录显式关联该 Run 的 Delivery/Observation、失败、采用、真人效果、证据与成本；旧无 Run 归因的交付不能推测为评价成果。没有成本回执填 `null`，不填零。更正指定 `supersedesId`；`evaluation.conclusion.record` 必须选取所有首次及重试尝试的当前判定，并明确比较限制和下一步选择。首片只允许 `with_limits` 或 `unknown`，不能把两组记录与局部成本标成完全可比。`nextActionRef` 可固定引用已有 Task 的 `{kind:"task",taskId,taskRevisionId}`，服务端校验同项目及修订归属，不自动创建或开始它。命令结构以 `command schema TYPE` 为准，读回包、Run、交付及观察后再下结论。评价不会自动关闭原 Task 或发布 Wiki。本轮已由授权的负责人 Agent 完成两组真实运行、完整输入包与产物回读，并登记有限评价；具体范围与阶段决定见[完整旅程接续试用](../roadmap.md#完整旅程接续试用)。Wiki 采用正确不代表增量收益，Agent 使用不代表真人效果。
+Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物，先核任务业务输入仍与执行时一致；交付登记修订不等于 Run 的执行修订。每个尝试用 `evaluation.assessment.record` 记录显式关联该 Run 的 Delivery/Observation、失败、采用、真人效果、证据与成本；旧无 Run 归因的交付不能推测为评价成果。没有成本回执填 `null`，不填零。更正指定 `supersedesId`；`evaluation.conclusion.record` 必须选取所有首次及重试尝试的当前判定，并明确比较限制和下一步选择。首片只允许 `with_limits` 或 `unknown`，不能把两组记录与局部成本标成完全可比。`nextActionRef` 可固定引用已有 Task 的 `{kind:"task",taskId,taskRevisionId}`，服务端校验同项目及修订归属，不自动创建或开始它。命令结构以 `command schema TYPE` 为准，读回包、Run、交付及观察后再下结论。评价不会自动关闭原 Task 或发布 Wiki。本轮已由授权的负责人 Agent 完成两组真实运行、完整输入包与产物回读，并登记有限评价；具体范围与阶段决定见[完整旅程接续试用](../roadmap.md#完整旅程接续试用)。Wiki 采用正确不代表增量收益，Agent 使用不代表真人效果。
 
 ## 未知结果与本地回执
 
@@ -65,6 +65,19 @@ CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show I
 npm run --silent cli -- receipts reconcile "$RECEIPT_ID"
 npm run --silent cli -- receipts retry "$RECEIPT_ID"
 ```
+
+## 建立常驻业务职责与首个受管任务
+
+以下是既有合同下的操作路径，不表示当前项目已登记目标 Role、配置所需授权或完成首次运行。缺少精确 grant 时保留待承接；不能套用其他职责的授权、替换原任务或绕过暂停与预算限制来启动新职责。
+
+1. **定职责和首项工作。** 现有负责人核清职责缺口、范围、替代办法、试行期限及回看条件。用 `task.create` 建 todo Task，写明真实工作、验收、首任 owner 和所需来源；已有正式 Role 时直接沿用。
+2. **接受试行并交接。** 按 `command schema role.propose` 引用未完成的首 Task 提案；有 review 权限者按 `command schema role.decide` 作 `accept-trial` 决定。回读 Role 修订；若首任 owner 不同，在 todo 状态按正式 Task 更新与交接规则转给新 Role，并回读新版本。交接记录不代替 Task owner 变更。
+3. **固定任务依据和授权。** 负责人读取 Task 正文与关联原件，按 `task.start` 封存本轮依据并进入 in_progress。另落实项目、Role、actor、scope 的当前精确 runtime grant，核目录、模型、沙箱、审批及所需网络能力；Role 文本和其他 Role 的 grant 不授执行权。
+4. **建立并绑定承载。** 按 `command schema runtime.session.reserve` 预留 Session；runner 创建 owned Thread 后，回读原生身份和实际目录，确认为 `ready`。再按 `command schema role.bindSession` 绑定同项目、同 Role 的项目 `sessionId`；不能填 Desktop chat ID 或原生 session ID。
+5. **派发并核运行。** 按 `command schema runtime.run.reserve` 提供当前 Task 版本、ready Session 与固定工作输入，回读 Turn 和终态。Task 须 in_progress 且 owner 与 Session Role 一致，Task 和 Session 均无在途或 unknown Run；普通后续 Turn 可复用空闲 ready Session，评价尝试须另建 Session。结果不明时按[原操作恢复](#未知结果与本地回执)核对。
+6. **核产物与交付。** 负责人亲验产物、检查、Run 终态与输入一致性后，以自身授权执行 `delivery.record`，提供 `runId`、真实产物引用、修订/hash 与检查证据，结构以命令 schema 为准。按原 Task 判据关闭；仅声明 `useRequired` 时才要求指定消费者真实 `used` 观察。
+
+普通 Run 不发 worker CLI 身份或自动生成 Delivery，控制者不能代签 `worker.submit` 或冒充 Agent 消费者亲用；外部真人消费仍按既有 reviewer attestation 合同记录。worker 自助报告须走[受管 Dispatch/broker 路径](#受管执行与自动接续)。自动 Loop 逐 Dispatch 新建 Session，绑定不触发复用；Desktop 自动桥接和侧栏注册没有已验证保证，普通业务长期自动巡检仍未实现。Role 与承载实例的合同见[RoleRegistry 与 SessionRuntime](../architecture/contracts.md#4-roleregistry-与-sessionruntime)。
 
 ## 配置周期工作的接续
 
