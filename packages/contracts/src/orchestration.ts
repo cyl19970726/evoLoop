@@ -17,8 +17,11 @@ const common = { projectId: id, operationId: id };
 export const orchestrationCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), initialState: z.enum(["active", "paused"]).optional(), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
+  z.strictObject({ ...common, type: z.literal("loop.extendBudget"), loopId:id, expectedLoopVersion:version,
+    expectedMaxRuns:boundedCount, maxRuns:boundedCount, evidenceRef:short, reason }),
   z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason,
-    continuation: z.strictObject({kind:z.literal("same-task-study"),declarationId:id,expectedTaskVersion:version}).optional() }),
+    continuation: z.strictObject({kind:z.literal("same-task-study"),declarationId:id,expectedTaskVersion:version}).optional(),
+    businessRecovery: z.strictObject({expectedTaskVersion:version,basisSetId:id}).optional() }),
   z.strictObject({ ...common, type: z.literal("loop.studyMaterial.declare"), loopId: id,
     expectedLoopVersion: version, declarationId: id, controllerActorId: role,
     sourceTaskId: id, sourceTaskRevisionId: id,
@@ -146,6 +149,8 @@ export interface OrchestrationSourceFact {
   waitingDecisionId?: string | null; previousSourceEventId?: string | null;
   originalSourceEventId?: string | null; waitingRunId?: string | null;
   resumedEvidenceRef?: string | null; resumedReason?: string | null;
+  /** Fixed business outcome and current repaired Task basis for a new cognitive review. */
+  businessRecovery?: {sourceEventId:string;sourceDispatchId:string;taskId:string;taskVersion:number;basisSetId:string} | null;
   /** Signed same-Task study continuation; absent from historical Issue resumes. */
   continuation?: {kind:"same-task-study";declarationId:string;originalTaskId:string;
     expectedTaskVersion:number;originalInboxId:string;originalDispatchId:string;
@@ -209,6 +214,7 @@ export interface OrchestrationTransaction {
   hasDivisionTransferConfirmed(dispatchId: string): Promise<boolean>;
   hasDivisionHandoffAck(dispatchId: string): Promise<boolean>;
   hasInFlightRunForTask(taskId: string, ignoreDispatchId?: string): Promise<boolean>;
+  hasOpenDispatch(loopId:string):Promise<boolean>;
   hasLaterDispatchForTask(taskId: string, dispatchId: string, allowedDispatchId?: string): Promise<boolean>;
   hasUnsettledDispatchForSource(loopId: string, sourceEventId: string, exceptDispatchId: string): Promise<boolean>;
   insertDecision(value: OrchestrationWorkerDecision): Promise<void>;
@@ -221,6 +227,8 @@ export interface OrchestrationTransaction {
   appendEvent(value: OrchestrationEvent): Promise<void>;
   getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
   getTaskFact(id: string): Promise<OrchestrationTaskFact | null>;
+  getSealedTaskBasis(taskId:string,taskVersion:number):Promise<{taskRevisionId:string;basisSetId:string}|null>;
+  getVerifiedBusinessOutcome(sourceEventId:string):Promise<{dispatchId:string;runId:string;taskId:string;taskVersion:number}|null>;
   /** Scope at the dispatch's fixed Task revision, never the current Task head. */
   getTaskScopeAtVersion(taskId: string, taskVersion: number): Promise<OrchestrationTaskScopeFact | null>;
   getTaskRevisionFact(taskId: string, taskVersion: number): Promise<OrchestrationTaskRevisionFact | null>;

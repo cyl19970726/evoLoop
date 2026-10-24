@@ -653,6 +653,38 @@ test("trusted waiting resume opens a new cognition Run with the unchanged fixed 
   assert.match(f.lastInput()!, new RegExp(`${issueId} revision ${revisionId}`));
 });
 
+test("business waiting resume opens a new cognition review without treating Task as Issue",async()=>{
+  const f=fixture(),runner=new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  const waiting=f.dispatches[0]!;
+  const outcomeSourceId=loopIntentId("business-outcome-source");
+  waiting.state="completed";waiting.outcome="waiting";
+  waiting.sourceEventId=outcomeSourceId;
+  waiting.runtimeRunId=loopIntentId(waiting.id,"run");
+  const sourceDispatchId=loopIntentId("business-recovery-dispatch");
+  const businessTaskId=loopIntentId("business-recovery-task"),resumeId=loopIntentId("business-resume");
+  f.dispatches.push({...waiting,id:sourceDispatchId,taskId:businessTaskId,taskVersion:1,
+    recipientRoleId:"builder",sourceEventId:sourceId,version:5,outcome:"failed"});
+  f.facts.push({projectId,id:resumeId,createdAtUtc:"2026-10-23T00:01:00.000Z",
+    kind:"waiting.resumed",subjectId:businessTaskId,subjectVersion:2,sourceLoopId:loopId,
+    originDispatchId:waiting.id,operationId:loopIntentId("business-resume-operation"),
+    sourceActorId:"review-owner",observationId:null,deliveryId:null,observationResult:null,
+    waitingDecisionId:loopIntentId("business-waiting-decision"),waitingRunId:waiting.runtimeRunId,
+    previousSourceEventId:outcomeSourceId,originalSourceEventId:outcomeSourceId,
+    businessRecovery:{sourceEventId:outcomeSourceId,sourceDispatchId,taskId:businessTaskId,
+      taskVersion:2,basisSetId:loopIntentId("repaired-basis")}});
+  await runner.pump();
+  assert.ok(f.taskCreates.some(item=>String(item.content).includes(resumeId)));
+  await runner.pump();
+  const session=[...f.sessions.values()][0];assert.ok(session);session.state="ready";
+  await runner.pump();
+  assert.match(f.lastInput()!,new RegExp(businessTaskId));
+  assert.match(f.lastInput()!,/inspect exact fixed originals only when this Run's scoped identity permits them/);
+  assert.match(f.lastInput()!,/Report any denied read as a missing input/);
+  assert.doesNotMatch(f.lastInput()!,/Read its current Task and fixed references/);
+  assert.doesNotMatch(f.lastInput()!,/Read fixed Issue/);
+});
+
 test("targeted scheduled todo enters cognition once with its existing Task identity", async () => {
   const f = fixture();
   const taskId = loopIntentId("scheduled-business-task"), eventId = loopIntentId("scheduled-source");

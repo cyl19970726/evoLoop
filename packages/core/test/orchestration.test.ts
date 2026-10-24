@@ -18,7 +18,7 @@ const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
 
-type Data = { roles: Map<string, RoleRecord>; roleOperationActors: string[]; loops: Map<string, OrchestrationLoop>; policies: Map<string, LoopPolicyRevision>; bindings: Map<string, RuntimeRoleBinding>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; enrolledStageFact?: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
+type Data = { businessSourceVerified:boolean; businessBasisId:string|null; runTaskId:string|null; roles: Map<string, RoleRecord>; roleOperationActors: string[]; loops: Map<string, OrchestrationLoop>; policies: Map<string, LoopPolicyRevision>; bindings: Map<string, RuntimeRoleBinding>; inbox: Map<string, OrchestrationInbox>; dispatches: Map<string, OrchestrationDispatch>; submissions: Map<string, OrchestrationSubmission>; decisions: Map<string, OrchestrationWorkerDecision>; parentRunStates: Map<string, "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown">; workflowOp: OrchestrationWorkflowOperationFact | null; observationFact: OrchestrationObservationFact | null; issueFact: OrchestrationIssueFact | null; extraDeliveryFact: OrchestrationDeliveryFact | null; extraStageFact: {projectId:string;id:string;goalId:string;state:string} | null; enrolledStageFact?: {projectId:string;id:string;goalId:string;state:string} | null; cognitiveActors: Set<string>; operations: Map<string, OrchestrationOperation>; events: OrchestrationEvent[]; source: Map<string, OrchestrationSourceFact>; taskVersion: number; extraTaskId: string | null; taskOwnerRoleId: string; taskState: "todo" | "in_progress"; taskStageId: string | null; scopeActive: boolean; runState: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; runId: string; deliveryId: string; taskRevisionId: string; runInputHash: string };
 function harness() {
   let currentTime = at;
   let delegation: {template: DelegationTemplate; hash: string} | null = null;
@@ -26,7 +26,7 @@ function harness() {
   let delegatedWorkerScope: {projectId:string;loopId:string;taskId:string;runId:string;roleId:string;kind:string}|null=null;
   let delegatedMaterialReadable = true;
   const roleStates = new Map<string, {state:string;firstTaskId:string;accepted:boolean}>();
-  let data: Data = { roles: new Map(), roleOperationActors: [], loops: new Map(), policies: new Map(), bindings: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
+  let data: Data = { businessSourceVerified:true,businessBasisId:null,runTaskId:null,roles: new Map(), roleOperationActors: [], loops: new Map(), policies: new Map(), bindings: new Map(), inbox: new Map(), dispatches: new Map(), submissions: new Map(), decisions: new Map(), parentRunStates: new Map(), workflowOp: null, observationFact: null, issueFact: null, extraDeliveryFact: null, extraStageFact: null, cognitiveActors: new Set(), operations: new Map(), events: [], source: new Map([
     [source0, { projectId, id: source0, createdAtUtc: at, kind: "delivery.record", subjectId: taskId, subjectVersion: 1, sourceLoopId: null, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
     [source1, { projectId, id: source1, createdAtUtc: after, kind: "worker.outcome", subjectId: taskId, subjectVersion: 5, sourceLoopId: loopId, originDispatchId: feedbackDispatchId, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }],
   ]), taskVersion: 1, extraTaskId: null, taskOwnerRoleId: workerRoleId, taskState: "in_progress", taskStageId: stageId, scopeActive: true, runState: "running", runId: randomUUID(), deliveryId: randomUUID(), taskRevisionId: randomUUID(), runInputHash: "f".repeat(64) };
@@ -61,14 +61,22 @@ function harness() {
     hasDivisionTransferConfirmed: async id => draft.events.some(item => item.kind === "division.transferConfirmed" && item.entityId === id),
     hasDivisionHandoffAck: async id => draft.events.some(item => item.kind === "division.handoffAcknowledged" && item.entityId === id),
     hasInFlightRunForTask: async () => false,
+    hasOpenDispatch: async loop => [...draft.dispatches.values()].some(item=>item.loopId===loop &&
+      (item.state!=="completed" && item.state!=="rejected" || item.runtimeRunId===draft.runId &&
+        ["requested","dispatching","running","unknown"].includes(draft.runState))),
+    hasLaterDispatchForTask: async (id,dispatchId) => [...draft.dispatches.values()].some(item=>item.taskId===id && item.id!==dispatchId && item.createdAtUtc>draft.dispatches.get(dispatchId)!.createdAtUtc),
     hasUnsettledDispatchForSource: async (loop, source, except) => [...draft.dispatches.values()].some(item => item.loopId === loop && item.sourceEventId === source && item.id !== except && ["pending", "claimed", "dispatching", "accepted", "unknown"].includes(item.state)),
     insertDecision: async value => { draft.decisions.set(value.id, value); },
     getDispatch: async id => draft.dispatches.get(id) ?? (id === feedbackDispatchId ? { projectId, id, version: 5, loopId, inboxId: randomUUID(), sourceEventId: source0, taskId, taskVersion: 1, parentDispatchId: randomUUID(), recipientRoleId: workerRoleId, purpose: "prior business", authorizationScopeId: scopeId, state: "completed", claimToken: randomUUID(), leaseUntilUtc: null, runtimeRunId: randomUUID(), outcome: "failed", deliveryId: null, evidenceRef: null, reason: "prior failure", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: after } : null), insertDispatch: async value => { draft.dispatches.set(value.id, value); }, updateDispatch: async (value, expected) => { assert.equal(draft.dispatches.get(value.id)?.version, expected); draft.dispatches.set(value.id, value); },
     countCapacityUsed: async id => [...draft.dispatches.values()].filter(item => item.loopId === id &&
       (["claimed", "dispatching", "unknown"].includes(item.state) ||
         item.state === "accepted" && !["completed", "failed", "interrupted"].includes(item.runtimeRunId === draft.runId ? draft.runState : draft.parentRunStates.get(item.runtimeRunId ?? "") ?? "unknown"))).length,
-    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } if (value.kind === "waiting.resumed") { const detail=value.detail; draft.source.set(value.id,{projectId,id:value.id,createdAtUtc:value.createdAtUtc,kind:value.kind,subjectId:detail.issueDocumentId as string,subjectVersion:1,sourceLoopId:value.loopId,originDispatchId:detail.dispatchId as string,operationId:value.operationId,sourceActorId:value.actorId,observationId:null,deliveryId:null,observationResult:null,issueRevisionId:detail.issueRevisionId as string,issueContentHash:detail.issueContentHash as string,waitingDecisionId:detail.decisionId as string,previousSourceEventId:detail.previousSourceEventId as string,originalSourceEventId:detail.originalSourceEventId as string,waitingRunId:detail.runId as string}); } }, getSourceFact: async id => draft.source.get(id) ?? null,
+    appendEvent: async value => { draft.events.push(value); if (value.kind === "loop.enrolled") draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: value.loopId, subjectVersion: 1, sourceLoopId: value.loopId, originDispatchId: null, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null }); if (value.kind === "dispatch.gap") { const dispatch = draft.dispatches.get(value.entityId)!; draft.source.set(value.id, { projectId, id: value.id, createdAtUtc: value.createdAtUtc, kind: value.kind, subjectId: dispatch.taskId, subjectVersion: dispatch.version, sourceLoopId: value.loopId, originDispatchId: dispatch.id, operationId: null, sourceActorId: null, observationId: null, deliveryId: null, observationResult: null, gapRunId: dispatch.runtimeRunId, gapTaskVersion: dispatch.taskVersion }); } if (value.kind === "waiting.resumed") { const detail=value.detail; draft.source.set(value.id,{projectId,id:value.id,createdAtUtc:value.createdAtUtc,kind:value.kind,subjectId:(detail.businessRecovery as any)?.taskId ?? detail.issueDocumentId as string,subjectVersion:(detail.businessRecovery as any)?.taskVersion ?? 1,sourceLoopId:value.loopId,originDispatchId:detail.dispatchId as string,operationId:value.operationId,sourceActorId:value.actorId,observationId:null,deliveryId:null,observationResult:null,issueRevisionId:detail.issueRevisionId as string,issueContentHash:detail.issueContentHash as string,waitingDecisionId:detail.decisionId as string,previousSourceEventId:detail.previousSourceEventId as string,originalSourceEventId:detail.originalSourceEventId as string,waitingRunId:detail.runId as string,businessRecovery:detail.businessRecovery as OrchestrationSourceFact["businessRecovery"]}); } }, getSourceFact: async id => draft.source.get(id) ?? null,
     getTaskFact: async id => id === taskId || id === draft.extraTaskId ? { projectId, id, version: draft.taskVersion, state: draft.taskState, ownerRoleId: draft.taskOwnerRoleId, goalId: draft.taskStageId ? goalId : null, stageId: draft.taskStageId } : null,
+    getSealedTaskBasis: async (id,version) => (id===taskId || id===draft.extraTaskId) && version===draft.taskVersion && draft.businessBasisId ? {taskRevisionId:draft.taskRevisionId,basisSetId:draft.businessBasisId}:null,
+    getVerifiedBusinessOutcome: async id => {const source=draft.source.get(id),origin=source?.originDispatchId?draft.dispatches.get(source.originDispatchId):null;
+      return draft.businessSourceVerified && source?.kind==="worker.outcome" && origin?.state==="completed" && origin.runtimeRunId
+        ? {dispatchId:origin.id,runId:origin.runtimeRunId,taskId:origin.taskId,taskVersion:origin.taskVersion}:null;},
     getTaskScopeAtVersion: async (id, taskVersion) => id === taskId && taskVersion === 1 ? { projectId, taskId: id, taskVersion, goalId, stageId } : null,
     getTaskRevisionFact: async (id, taskVersion) => id === taskId && taskVersion === 1 && draft.taskVersion === 2 ? {
       projectId, taskId: id, revisionId: taskId, version: 1, ownerRoleId: "prior-role",
@@ -83,7 +91,7 @@ function harness() {
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
-    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState,
+    getRunFact: async id => id === draft.runId ? { projectId, id, taskId:draft.runTaskId??taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState,
       nativeTurnId: draft.runState === "running" ? "fixture-bound-turn" : null } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)!, nativeTurnId: null } : null,
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
     getObservationFact: async id => draft.observationFact?.id === id ? draft.observationFact : null,
@@ -687,6 +695,142 @@ test("waiting resume requires the enrolled Stage to remain active, including at 
   await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
     sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("STAGE_NOT_ACTIVE"));
   assert.equal(f.h.data.source.get(resumed.id)?.kind,"waiting.resumed","historical source remains readable");
+});
+
+async function waitingBusinessFixture(){
+  const f=waitingIssueFixture();await f.make();
+  const sourceDispatchId=randomUUID(),businessRunId=randomUUID(),basisSetId=randomUUID(),cognitionTaskId=randomUUID(),parentId=randomUUID();
+  f.h.change(value=>{
+    value.runTaskId=cognitionTaskId;value.extraTaskId=cognitionTaskId;
+    value.dispatches.set(f.dispatchId,{...value.dispatches.get(f.dispatchId)!,taskId:cognitionTaskId});
+    value.decisions.set(f.decisionId,{...value.decisions.get(f.decisionId)!,taskId:cognitionTaskId});
+    value.taskVersion=2;value.taskState="todo";value.businessBasisId=basisSetId;
+    value.dispatches.set(parentId,{...value.dispatches.get(f.dispatchId)!,id:parentId,
+      sourceEventId:source0,runtimeRunId:randomUUID(),outcome:"delivered",deliveryId:randomUUID(),
+      createdAtUtc:at,updatedAtUtc:at});
+    value.source.set(f.eventId,{projectId,id:f.eventId,createdAtUtc:after,kind:"worker.outcome",
+      subjectId:taskId,subjectVersion:5,sourceLoopId:loopId,originDispatchId:sourceDispatchId,
+      operationId:null,sourceActorId:null,observationId:null,deliveryId:null,observationResult:null});
+    value.dispatches.set(sourceDispatchId,{projectId,id:sourceDispatchId,version:5,loopId,
+      inboxId:randomUUID(),sourceEventId:source0,taskId,taskVersion:1,parentDispatchId:parentId,
+      recipientRoleId:workerRoleId,purpose:"business",authorizationScopeId:scopeId,
+      state:"completed",claimToken:null,leaseUntilUtc:null,runtimeRunId:businessRunId,
+      outcome:"failed",deliveryId:null,evidenceRef:null,reason:"report correction needed",
+      requestedBy:cognition.actorId,createdAtUtc:at,updatedAtUtc:after});
+    value.loops.set(loopId,{...value.loops.get(loopId)!,dispatchCount:3,maxRuns:4});
+  });
+  const command=()=>({...f.command(),businessRecovery:{expectedTaskVersion:2,basisSetId}});
+  return {...f,command,sourceDispatchId,basisSetId};
+}
+
+test("terminal business outcome resumes one waiting review with fixed repaired Task basis",async()=>{
+  const f=await waitingBusinessFixture(),command=f.command();
+  const first=await f.h.service.execute(reviewer,command);
+  assert.equal(first.entityType,"loop");
+  const resumed=f.h.data.events.find(x=>x.kind==="waiting.resumed")!;
+  assert.equal((resumed.detail.businessRecovery as {sourceEventId:string}).sourceEventId,f.eventId);
+  assert.equal(f.h.data.source.get(resumed.id)?.businessRecovery?.basisSetId,f.basisSetId);
+  const accepted=await f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
+    sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"}));
+  assert.equal(accepted.entityType,"inbox");
+  assert.equal((await f.h.service.execute(reviewer,command)).replayed,true);
+  await assert.rejects(()=>f.h.service.execute(reviewer,f.command()),failed("ALREADY_RESUMED"));
+  assert.equal(f.h.data.events.filter(x=>x.kind==="waiting.resumed").length,1);
+});
+
+test("business recovery records while paused and consumes only after activation and fresh checks",async()=>{
+  const f=await waitingBusinessFixture();
+  f.h.change(value=>value.loops.set(loopId,{...value.loops.get(loopId)!,state:"paused"}));
+  await f.h.service.execute(reviewer,f.command());
+  const resumed=f.h.data.events.find(x=>x.kind==="waiting.resumed")!;
+  assert.equal(f.h.data.loops.get(loopId)?.state,"paused");
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,3);
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
+    sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("LOOP_PAUSED"));
+  f.h.change(value=>value.loops.set(loopId,{...value.loops.get(loopId)!,state:"active",version:value.loops.get(loopId)!.version+1}));
+  f.h.change(value=>{value.businessBasisId=randomUUID();});
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
+    sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"})),failed("BUSINESS_RECOVERY_CHANGED"));
+  f.h.change(value=>{value.businessBasisId=f.basisSetId;});
+  assert.equal((await f.h.service.execute(cognition,cmd({type:"inbox.accept",loopId,
+    sourceEventId:resumed.id,recipientRoleId:cognitiveRoleId,purpose:"cognitive_review"}))).entityType,"inbox");
+});
+
+test("business waiting resume rejects changed source, Task, basis, authorization and budget",async()=>{
+  for(const mutation of ["source","parent","terminal","child","budget","version","basis","grant","wrongKind"] as const){
+    const f=await waitingBusinessFixture();const command=f.command();
+    f.h.change(value=>{
+      const origin=value.dispatches.get(f.sourceDispatchId)!;
+      if(mutation==="source")value.businessSourceVerified=false;
+      if(mutation==="parent")value.dispatches.set(f.sourceDispatchId,{...origin,parentDispatchId:null});
+      if(mutation==="terminal")value.dispatches.set(f.sourceDispatchId,{...origin,state:"accepted"});
+      if(mutation==="child")value.dispatches.set(randomUUID(),{...origin,id:randomUUID(),parentDispatchId:f.dispatchId});
+      if(mutation==="budget")value.loops.set(loopId,{...value.loops.get(loopId)!,maxRuns:3});
+      if(mutation==="version")value.taskVersion=3;
+      if(mutation==="basis")value.businessBasisId=randomUUID();
+      if(mutation==="grant")value.scopeActive=false;
+      if(mutation==="wrongKind")value.source.set(f.eventId,{...value.source.get(f.eventId)!,kind:"document"});
+    });
+    const code=mutation==="budget"?"BUDGET_EXHAUSTED":mutation==="version"||mutation==="basis"?"TASK_CHANGED":mutation==="grant"?"SCOPE_NOT_AUTHORIZED":mutation==="child"?"WAITING_UNAVAILABLE":"SOURCE_UNAVAILABLE";
+    await assert.rejects(()=>f.h.service.execute(reviewer,command),failed(code),mutation);
+    assert.equal(f.h.data.events.filter(x=>x.kind==="waiting.resumed").length,0);
+  }
+});
+
+test("only the enrolled controller extends one paused settled Loop Run with CAS and operation replay",async()=>{
+  const h=harness();await h.enroll();
+  const otherLoopId=randomUUID(),before=h.data.loops.get(loopId)!;
+  h.change(value=>{
+    value.loops.set(loopId,{...before,state:"paused"});
+    value.loops.set(otherLoopId,{...before,id:otherLoopId,state:"paused"});
+  });
+  const other=structuredClone(h.data.loops.get(otherLoopId));
+  const policy=structuredClone(h.data.policies.get(before.currentPolicyRevisionId!));
+  const command=cmd({type:"loop.extendBudget",loopId,expectedLoopVersion:before.version,
+    expectedMaxRuns:before.maxRuns,maxRuns:before.maxRuns+1,evidenceRef:"owner:one-run",
+    reason:"One reviewed retry"});
+  const applied=await h.service.execute(reviewer,command);
+  assert.equal(applied.version,before.version+1);
+  assert.equal((await h.service.execute(reviewer,command)).replayed,true);
+  assert.equal(h.data.loops.get(loopId)?.maxRuns,before.maxRuns+1);
+  assert.equal(h.data.loops.get(loopId)?.dispatchCount,before.dispatchCount);
+  assert.deepEqual(h.data.loops.get(otherLoopId),other);
+  assert.deepEqual(h.data.policies.get(before.currentPolicyRevisionId!),policy);
+  assert.equal(h.data.events.filter(e=>e.kind==="loop.budgetExtended").length,1);
+  await assert.rejects(()=>h.service.execute(reviewer,{...command,operationId:randomUUID()}),failed("VERSION_CONFLICT"));
+  await assert.rejects(()=>h.service.execute(reviewer,{...command,maxRuns:before.maxRuns+2}),failed("OPERATION_CONFLICT"));
+});
+
+test("budget extension rejects wrong authority, state, expected max, size and open or unknown work",async()=>{
+  for(const mutation of ["actor","review","worker","active","stopped","stale","expected","plusTwo","decrease","open","unknown"] as const){
+    const h=harness();await h.enroll();
+    let principal=reviewer;
+    const initial=h.data.loops.get(loopId)!;
+    h.change(value=>value.loops.set(loopId,{...initial,state:"paused"}));
+    const command=cmd({type:"loop.extendBudget",loopId,expectedLoopVersion:initial.version,
+      expectedMaxRuns:initial.maxRuns,maxRuns:initial.maxRuns+1,evidenceRef:"owner:one-run",reason:"Bounded retry"});
+    if(mutation==="actor")principal={...reviewer,actorId:"other-reviewer"};
+    if(mutation==="review")principal={...reviewer,permissions:["write"]};
+    if(mutation==="worker")principal={...reviewer,actorId:"worker-fake"};
+    h.change(value=>{
+      if(mutation==="active"||mutation==="stopped")value.loops.set(loopId,{...value.loops.get(loopId)!,state:mutation});
+      if(mutation==="stale")value.loops.set(loopId,{...value.loops.get(loopId)!,version:initial.version+1});
+      if(mutation==="open"||mutation==="unknown")value.dispatches.set(randomUUID(),{
+        projectId,id:randomUUID(),version:1,loopId,inboxId:randomUUID(),sourceEventId:source0,
+        taskId,taskVersion:1,parentDispatchId:null,recipientRoleId:cognitiveRoleId,purpose:"cognition",
+        authorizationScopeId:scopeId,state:mutation==="open"?"pending":"unknown",claimToken:null,
+        leaseUntilUtc:null,runtimeRunId:null,outcome:null,deliveryId:null,evidenceRef:null,reason:"Test",
+        requestedBy:reviewer.actorId,createdAtUtc:at,updatedAtUtc:at});
+    });
+    if(mutation==="expected")command.expectedMaxRuns=initial.maxRuns-1;
+    if(mutation==="plusTwo")command.maxRuns=initial.maxRuns+2;
+    if(mutation==="decrease")command.maxRuns=initial.maxRuns-1;
+    const code=mutation==="actor"||mutation==="review"||mutation==="worker"?"FORBIDDEN":
+      mutation==="active"||mutation==="stopped"?"LOOP_NOT_PAUSED":mutation==="stale"?"VERSION_CONFLICT":
+      mutation==="expected"||mutation==="plusTwo"||mutation==="decrease"?"BUDGET_MISMATCH":"LOOP_BUSY";
+    await assert.rejects(()=>h.service.execute(principal,command),failed(code),mutation);
+    assert.equal(h.data.loops.get(loopId)?.maxRuns,initial.maxRuns,mutation);
+  }
 });
 
 function divisionFixture() {

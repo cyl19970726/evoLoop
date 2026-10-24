@@ -59,17 +59,22 @@ class Reader implements OrchestrationReader {
       typeof detail.reason!=="string" || !detail.reason.trim() ||
       typeof detail.previousSourceEventId!=="string" || detail.previousSourceEventId!==dispatch.sourceEventId ||
       typeof detail.originalSourceEventId!=="string")return null;
-    const study=detail.continuation;
-    if(study===undefined ?
+    const study=detail.continuation,business=detail.businessRecovery;
+    if(study!==undefined && business!==undefined)return null;
+    if(study===undefined && business===undefined &&
       (typeof detail.issueDocumentId!=="string" || typeof detail.issueRevisionId!=="string" ||
-        typeof detail.issueContentHash!=="string") :
-      (typeof study!=="object" || study===null || Array.isArray(study)))return null;
+        typeof detail.issueContentHash!=="string"))return null;
+    if(study!==undefined && (typeof study!=="object" || study===null || Array.isArray(study)))return null;
+    if(business!==undefined && (typeof business!=="object" || business===null || Array.isArray(business)))return null;
     const command={projectId:this.projectId,operationId:x.operation_id,type:"loop.resumeWaiting",loopId:loop.id,
       expectedLoopVersion:Number(op.version)-1,decisionId:decision.id,dispatchId:dispatch.id,
       evidenceRef:detail.evidenceRef,reason:detail.reason,...(study===undefined?{}:{continuation:{
         kind:(study as Record<string,unknown>).kind,
         declarationId:(study as Record<string,unknown>).declarationId,
         expectedTaskVersion:(study as Record<string,unknown>).expectedTaskVersion,
+      }}),...(business===undefined?{}:{businessRecovery:{
+        expectedTaskVersion:(business as Record<string,unknown>).taskVersion,
+        basisSetId:(business as Record<string,unknown>).basisSetId,
       }})};
     const parsed=orchestrationCommandSchema.safeParse(command);
     if(!parsed.success || parsed.data.type!=="loop.resumeWaiting" ||
@@ -77,6 +82,34 @@ class Reader implements OrchestrationReader {
     const previous=await this.getSourceFactInternal(detail.previousSourceEventId,seen);
     const root=detail.originalSourceEventId===detail.previousSourceEventId?previous:
       await this.getSourceFactInternal(detail.originalSourceEventId,seen);
+    if(business!==undefined){
+      const fixed=business as Record<string,unknown>;
+      const verified=previous?.kind==="worker.outcome"?await this.getVerifiedBusinessOutcome(previous.id):null;
+      const original=verified?await this.getDispatch(verified.dispatchId):null;
+      const parent=original?.parentDispatchId?await this.getDispatch(original.parentDispatchId):null;
+      const task=original?await this.getTaskFact(original.taskId):null;
+      const historic=typeof fixed.taskVersion==="number" && typeof fixed.taskId==="string" &&
+        typeof fixed.basisSetId==="string" ? await this.db.query(`SELECT tr.revision_id FROM task_revision tr
+          JOIN basis_set b ON b.project_id=tr.project_id AND b.task_id=tr.task_id
+            AND b.task_revision_id=tr.revision_id AND b.basis_set_id=tr.basis_set_id AND b.sealed
+          WHERE tr.project_id=$1 AND tr.task_id=$2 AND tr.version=$3 AND tr.basis_set_id=$4`,
+          [this.projectId,fixed.taskId,fixed.taskVersion,fixed.basisSetId]) : null;
+      if(!previous || !root || previous.id!==root.id || previous.sourceLoopId!==loop.id ||
+        !verified || !original || original.loopId!==loop.id || !parent ||
+        parent.loopId!==loop.id || parent.recipientRoleId!==loop.cognitiveRoleId ||
+        parent.sourceEventId!==original.sourceEventId ||
+        original.recipientRoleId===loop.cognitiveRoleId ||
+        fixed.sourceEventId!==previous.id || fixed.sourceDispatchId!==verified.dispatchId ||
+        fixed.taskId!==verified.taskId || !Number.isInteger(fixed.taskVersion) ||
+        Number(fixed.taskVersion)<=verified.taskVersion || !historic?.rowCount ||
+        !task)return null;
+      return {projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:"waiting.resumed",
+        subjectId:verified.taskId,subjectVersion:Number(fixed.taskVersion),sourceLoopId:loop.id,originDispatchId:dispatch.id,
+        operationId:x.operation_id,sourceActorId:x.actor_id,observationId:null,deliveryId:null,observationResult:null,
+        waitingDecisionId:decision.id,previousSourceEventId:previous.id,originalSourceEventId:root.id,
+        waitingRunId:decision.runId,resumedEvidenceRef:detail.evidenceRef as string,
+        resumedReason:detail.reason as string,businessRecovery:fixed as NonNullable<OrchestrationSourceFact["businessRecovery"]>};
+    }
     if(study!==undefined){
       const fixed=parsed.data.continuation;
       const stored=study as Record<string,unknown>;
@@ -136,6 +169,52 @@ class Reader implements OrchestrationReader {
       issueRevisionId:root.issueRevisionId,issueContentHash:root.issueContentHash,waitingDecisionId:decision.id,
       previousSourceEventId:previous.id,originalSourceEventId:root.id,waitingRunId:decision.runId};
   }
+  async getTaskFact(id:string):Promise<OrchestrationTaskFact|null>{const r=await this.db.query(`SELECT t.*,p.stage_id,s.goal_id FROM task t LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true LEFT JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.task_id,version:x.version,state:x.state,ownerRoleId:x.owner,goalId:x.goal_id??null,stageId:x.stage_id??null}:null;}
+  async getSealedTaskBasis(taskId:string,taskVersion:number){const r=await this.db.query(`SELECT tr.revision_id,tr.basis_set_id FROM task t
+    JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id
+      AND tr.revision_id=t.current_revision_id AND tr.version=t.version
+    JOIN basis_set b ON b.project_id=tr.project_id AND b.task_id=tr.task_id
+      AND b.task_revision_id=tr.revision_id AND b.basis_set_id=tr.basis_set_id AND b.sealed
+    WHERE t.project_id=$1 AND t.task_id=$2 AND t.version=$3`,[this.projectId,taskId,taskVersion]);
+    const x=r.rows[0];return x?{taskRevisionId:x.revision_id as string,basisSetId:x.basis_set_id as string}:null;}
+  async getVerifiedBusinessOutcome(sourceEventId:string){const r=await this.db.query(`SELECT e.*,op.actor_id AS operation_actor,op.result AS operation_result,op.command_hash,
+      d.data AS dispatch_data,run.state AS run_state,run.task_id AS run_task_id,l.data AS loop_data
+    FROM orchestration_event e
+    JOIN orchestration_operation op ON op.project_id=e.project_id AND op.operation_id=e.operation_id
+    JOIN orchestration_dispatch d ON d.project_id=e.project_id AND d.dispatch_id=e.entity_id
+    JOIN orchestration_loop l ON l.project_id=e.project_id AND l.loop_id=e.loop_id
+    JOIN runtime_run run ON run.project_id=d.project_id AND run.run_id=(d.data->>'runtimeRunId')::uuid
+    WHERE e.project_id=$1 AND e.event_id=$2 AND e.kind='worker.outcome' AND e.entity_type='dispatch'
+      AND NOT EXISTS (SELECT 1 FROM orchestration_event duplicate WHERE duplicate.project_id=e.project_id
+        AND duplicate.event_id<>e.event_id AND duplicate.kind=e.kind AND duplicate.entity_type=e.entity_type
+        AND duplicate.entity_id=e.entity_id AND duplicate.operation_id=e.operation_id
+        AND duplicate.actor_id=e.actor_id AND duplicate.detail=e.detail)`,
+    [this.projectId,sourceEventId]);
+    const x=r.rows[0];if(!x)return null;
+    const d=x.dispatch_data as OrchestrationDispatch,l=x.loop_data as OrchestrationLoop;
+    const detail=x.detail as Record<string,unknown>,result=x.operation_result as Record<string,unknown>;
+    const command={projectId:this.projectId,operationId:x.operation_id,type:"worker.outcome",dispatchId:d.id,
+      outcome:detail.outcome,deliveryId:detail.deliveryId,decisionId:detail.decisionId,
+      evidenceRef:detail.evidenceRef,reason:detail.reason};
+    if(!orchestrationCommandSchema.safeParse(command).success ||
+      createHash("sha256").update(canonical(command)).digest("hex")!==x.command_hash ||
+      x.actor_id!==x.operation_actor || result.entityType!=="dispatch" || result.entityId!==d.id ||
+      result.version!==d.version || d.projectId!==this.projectId || d.loopId!==l.id ||
+      d.recipientRoleId===l.cognitiveRoleId || d.state!=="completed" ||
+      d.outcome!==detail.outcome || d.deliveryId!==detail.deliveryId ||
+      d.evidenceRef!==detail.evidenceRef || d.reason!==detail.reason ||
+      !["delivered","no_action","waiting","failed"].includes(d.outcome??"") ||
+      x.run_task_id!==d.taskId || !["completed","failed","interrupted"].includes(x.run_state))return null;
+    if(d.outcome==="delivered"){
+      const submission=await this.findSubmissionByDispatch(d.id);
+      if(!d.deliveryId || detail.decisionId!==null || !submission || submission.state!=="sealed" ||
+        submission.deliveryId!==d.deliveryId || submission.runId!==d.runtimeRunId)return null;
+    }else{
+      const decision=typeof detail.decisionId==="string"?await this.getDecision(detail.decisionId):null;
+      if(!decision || decision.dispatchId!==d.id || decision.runId!==d.runtimeRunId ||
+        decision.taskId!==d.taskId || (decision.kind==="stop"?d.outcome!=="no_action":decision.kind!==d.outcome))return null;
+    }
+    return {dispatchId:d.id,runId:d.runtimeRunId!,taskId:d.taskId,taskVersion:d.taskVersion};}
   async getOperation(id:string){const r=await this.db.query("SELECT * FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[this.projectId,id]);const x=r.rows[0];return x?{projectId:x.project_id,id:x.operation_id,actorId:x.actor_id,commandHash:x.command_hash,result:x.result,createdAtUtc:iso(x.created_at_utc)} as OrchestrationOperation:null;}
   protected async one<T>(table:string,key:string,id:string):Promise<T|null> {
     const r=await this.db.query(`SELECT data FROM ${table} WHERE project_id=$1 AND ${key}=$2`,[this.projectId,id]);
@@ -213,6 +292,11 @@ class Reader implements OrchestrationReader {
         AND ($3::uuid IS NULL OR dispatch_id<>$3)
         AND state IN ('pending','claimed','dispatching','accepted','unknown') LIMIT 1`,
       [this.projectId,taskId,ignoreDispatchId??null]);return !!r.rowCount;}
+  async hasOpenDispatch(loopId:string){const r=await this.db.query(`SELECT 1 FROM orchestration_dispatch d
+    LEFT JOIN runtime_run r ON r.project_id=d.project_id AND r.run_id=(d.data->>'runtimeRunId')::uuid
+    WHERE d.project_id=$1 AND d.loop_id=$2 AND
+      (d.state NOT IN ('completed','rejected') OR r.state IN ('requested','dispatching','running','unknown'))
+    LIMIT 1`,[this.projectId,loopId]);return !!r.rowCount;}
   async hasLaterDispatchForTask(taskId:string,dispatchId:string,allowedDispatchId?:string){const r=await this.db.query(`SELECT 1
       FROM orchestration_dispatch original JOIN orchestration_dispatch later
         ON later.project_id=original.project_id AND later.task_id=original.task_id
@@ -533,7 +617,6 @@ class Tx extends Reader implements OrchestrationTransaction {
       OR (d.state='accepted' AND (r.run_id IS NULL OR r.state IN ('requested','dispatching','running','unknown'))))`,
     [this.projectId,loopId]);return r.rows[0].n as number;}
   async appendEvent(x:OrchestrationEvent){await this.db.query("INSERT INTO orchestration_event VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)",[this.projectId,x.id,x.loopId,x.entityType,x.entityId,x.operationId,x.kind,x.actorId,JSON.stringify(x.detail),x.createdAtUtc]);}
-  async getTaskFact(id:string):Promise<OrchestrationTaskFact|null>{const r=await this.db.query(`SELECT t.*,p.stage_id,s.goal_id FROM task t LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) p ON true LEFT JOIN project_stage s ON s.project_id=t.project_id AND s.stage_id=p.stage_id WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,id]);const x=r.rows[0];return x?{projectId:this.projectId,id:x.task_id,version:x.version,state:x.state,ownerRoleId:x.owner,goalId:x.goal_id??null,stageId:x.stage_id??null}:null;}
   async getTaskScopeAtVersion(taskId:string,taskVersion:number){const r=await this.db.query(`SELECT tr.version,p.stage_id,s.goal_id FROM task_revision tr
     LEFT JOIN LATERAL (SELECT proposal.stage_id FROM task_proposal proposal
       JOIN task_revision pr ON pr.project_id=proposal.project_id AND pr.task_id=proposal.task_id AND pr.revision_id=proposal.task_revision_id
