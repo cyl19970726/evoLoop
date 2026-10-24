@@ -8,7 +8,7 @@ import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runt
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Task } from "@evoloop/contracts";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
-import { allowBrowserRequest, allowBrowserResponse, BrowserReadBridge, BROWSER_ORIGIN, isApprovedPageUrl, matchesBrowserRun, readerTokenForScope, sanitizeBrowserText, validPngBase64, type BrowserReadScope } from "../src/runtime/browser-read.js";
+import { allowBrowserRequest, allowBrowserResponse, BrowserReadBridge, BROWSER_ORIGIN, isApprovedPageUrl, ListedDocumentReadGrants, ListedTaskReadGrants, matchesBrowserRun, readerTokenForScope, sanitizeBrowserText, validPngBase64, type BrowserReadScope } from "../src/runtime/browser-read.js";
 
 const projectId="11111111-1111-4111-8111-111111111111";
 const taskId="22222222-2222-4222-8222-222222222222";
@@ -262,4 +262,142 @@ test("only an explicitly listed current-project root GET can bootstrap the workb
   assert.equal(allowBrowserRequest(rootScope,BROWSER_ORIGIN+"/api/projects","GET","fetch"),false);
   await writeFile(scopePath,JSON.stringify({...rootScope,routes:[{...scope.routes[0]!,apiPaths:[otherRoot]}]}));
   assert.equal(await bridge.tools(spec),undefined);
+});
+
+const taskIdAt=(index:number)=>`00000000-0000-4000-8000-${index.toString(16).padStart(12,"0")}`;
+const taskListScope=(enabled=true):BrowserReadScope=>({...scope,followTaskList:enabled,
+  routes:[{...scope.routes[0]!,apiPaths:[`/api/projects/${projectId}/tasks?limit=50`]}]});
+const taskPage=(indexes:number[],nextCursor:string|null,project=projectId)=>Buffer.from(JSON.stringify({
+  items:indexes.map(index=>({id:taskIdAt(index),projectId:project,title:`Task ${index}`,state:"todo"})),nextCursor}));
+const jsonHeaders={"content-type":"application/json; charset=utf-8"};
+
+test("listed Task reads follow all page IDs in original status order, including cognition Tasks",()=>{
+  const current=taskListScope();
+  const grants=new ListedTaskReadGrants(current);
+  const first=grants.firstPath;
+  const page1=Array.from({length:50},(_,index)=>index+1);
+  const page2=Array.from({length:50},(_,index)=>index+51);
+  const page3=Array.from({length:20},(_,index)=>index+101);
+  const status=(ids:number[])=>`/api/projects/${projectId}/orchestration/work-status?taskIds=${ids.map(taskIdAt).join(",")}`;
+  assert.equal(grants.register(first,200,jsonHeaders,taskPage(page1,"cursor/+one")),true);
+  const second=`${first}&cursor=cursor%2F%2Bone`;
+  assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"GET","fetch",grants.allowedPaths),true);
+  assert.equal(grants.register(second,200,jsonHeaders,taskPage(page2,"cursor=two")),true);
+  const third=`${first}&cursor=cursor%3Dtwo`;
+  assert.equal(grants.register(third,200,jsonHeaders,taskPage(page3,null)),true);
+  for(const index of [...page1,...page2,...page3])
+    assert.equal(allowBrowserRequest(current,`${BROWSER_ORIGIN}/api/projects/${projectId}/tasks/${taskIdAt(index)}`,
+      "GET","fetch",grants.allowedPaths),true,`Task ${index}`);
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/tasks/${taskIdAt(50)}`),true,"cognition Task remains readable");
+  for(const ids of [page1,page2,page3])assert.equal(grants.allowedPaths.has(status(ids)),true);
+  assert.equal(grants.allowedPaths.has(status([1,51])),false,"no arbitrary seen-ID status combination");
+  assert.equal(grants.allowedPaths.has(status([...page1].reverse())),false,"no reordered status list");
+  for(const forbidden of [
+    `${second}&extra=1`,`${first}&cursor=cursor%2F%2Bone&cursor=again`,
+    `/api/projects/${runId}/tasks/${taskIdAt(1)}`,
+    `/api/projects/${projectId}/tasks/${taskIdAt(1)}/revisions`,
+    `/api/projects/${projectId}/tasks/${taskIdAt(1)}?tab=history`,
+    `/api/projects/${projectId}/tasks?limit=500`,
+  ])assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+forbidden,"GET","fetch",grants.allowedPaths),false,forbidden);
+  assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"POST","fetch",grants.allowedPaths),false);
+  assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"GET","document",grants.allowedPaths),false);
+  grants.clear();
+  assert.equal(grants.allowedPaths.size,0);
+});
+
+test("Task-list grants are opt-in, atomic on complete valid pages, and bounded across refresh",()=>{
+  const firstScope=taskListScope();
+  const first=`/api/projects/${projectId}/tasks?limit=50`;
+  const disabled=new ListedTaskReadGrants(taskListScope(false));
+  assert.equal(disabled.register(first,200,jsonHeaders,taskPage([1],null)),false);
+  const withoutApprovedStart=new ListedTaskReadGrants({...firstScope,routes:[scope.routes[0]!]});
+  assert.equal(withoutApprovedStart.register(first,200,jsonHeaders,taskPage([1],null)),false);
+  const grants=new ListedTaskReadGrants(firstScope);
+  const invalid=[
+    [206,jsonHeaders,taskPage([1],null)] as const,
+    [200,jsonHeaders,Buffer.from('{"items":[')] as const,
+    [200,jsonHeaders,taskPage([1],null,runId)] as const,
+    [200,jsonHeaders,taskPage([1,1],null)] as const,
+    [200,jsonHeaders,taskPage([1],"x".repeat(1025))] as const,
+    [200,jsonHeaders,taskPage([1]," bad-cursor ")] as const,
+    [200,jsonHeaders,Buffer.alloc(5_000_001,32)] as const,
+    [200,{"content-type":"text/html"},taskPage([1],null)] as const,
+  ];
+  for(const [status,headers,body] of invalid)assert.equal(grants.register(first,status,headers,body),false);
+  assert.equal(grants.allowedPaths.size,0);
+  const original=taskPage([1],"c1");
+  assert.equal(grants.register(first,200,jsonHeaders,original),true);
+  assert.equal(grants.register(first,200,jsonHeaders,original),true,"identical page is idempotent");
+  assert.equal(grants.register(`${first}&cursor=c1`,200,jsonHeaders,taskPage([2],"c1")),false,"cursor cycle");
+  assert.equal(grants.allowedPaths.has(`${first}&cursor=c1`),true);
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/tasks/${taskIdAt(2)}`),false);
+  assert.equal(grants.register(first,200,jsonHeaders,taskPage([3],"c1")),true,"changed first page consumes a new budget slot");
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/tasks/${taskIdAt(3)}`),true);
+  let path=`${first}&cursor=c1`;
+  for(let page=3;page<=9;page++){
+    const next=page===9?"c9":`c${page}`;
+    assert.equal(grants.register(path,200,jsonHeaders,taskPage([page+1],next)),true,`page ${page}`);
+    path=`${first}&cursor=${next}`;
+  }
+  assert.equal(grants.register(path,200,jsonHeaders,taskPage([11],"c10")),false,"10th page cannot announce an unread page");
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/tasks/${taskIdAt(11)}`),false);
+  assert.equal(grants.register(path,200,jsonHeaders,taskPage([11],null)),true,"terminal 10th page is complete");
+  assert.equal(grants.register(first,200,jsonHeaders,taskPage([12],null)),false,"refresh cannot reset cumulative page budget");
+});
+
+test("Task-list grants stop at ten complete pages and five hundred distinct Tasks",()=>{
+  const grants=new ListedTaskReadGrants(taskListScope());
+  let path=grants.firstPath;
+  for(let page=0;page<10;page++){
+    const ids=Array.from({length:50},(_,offset)=>page*50+offset+1);
+    const next=page===9?null:`page-${page+1}`;
+    assert.equal(grants.register(path,200,jsonHeaders,taskPage(ids,next)),true,`page ${page+1}`);
+    if(next)path=`${grants.firstPath}&cursor=${next}`;
+  }
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/tasks/${taskIdAt(500)}`),true);
+  assert.equal(grants.register(grants.firstPath,200,jsonHeaders,taskPage([501],null)),false);
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/tasks/${taskIdAt(501)}`),false);
+});
+
+test("Document-list opt-in follows only exact list pages, never Document bodies or Task grants",()=>{
+  const first=`/api/projects/${projectId}/documents?limit=50`;
+  const listScope:BrowserReadScope={...scope,followDocumentList:true,
+    routes:[{...scope.routes[0]!,apiPaths:[first]}]};
+  const docs=(indexes:number[],nextCursor:string|null,project=projectId)=>Buffer.from(JSON.stringify({
+    items:indexes.map(index=>({id:taskIdAt(index+1000),projectId:project,title:`Document ${index}`,
+      kind:"report",status:"published",primaryTaskId:null,currentRevisionId:taskIdAt(index+2000),
+      adoptedRevisionId:taskIdAt(index+2000),origin:{kind:"agent"}})),nextCursor}));
+  assert.equal(new ListedDocumentReadGrants({...listScope,followDocumentList:false})
+    .register(first,200,jsonHeaders,docs([1],null)),false);
+  const grants=new ListedDocumentReadGrants(listScope);
+  const firstIds=Array.from({length:50},(_,index)=>index+1);
+  assert.equal(grants.register(first,200,jsonHeaders,docs(firstIds,"doc/+cursor")),true);
+  const second=`${first}&cursor=doc%2F%2Bcursor`;
+  assert.equal(grants.allowedPaths.has(second),true);
+  assert.equal(grants.register(second,200,jsonHeaders,docs(Array.from({length:18},(_,index)=>index+51),null)),true);
+  assert.equal(grants.register(first,200,jsonHeaders,docs(firstIds,"doc/+cursor")),true);
+  assert.equal(grants.allowedPaths.size,1);
+  assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+second,"GET","fetch",grants.allowedPaths),true);
+  for(const denied of [
+    `${second}&extra=1`,`${first}&cursor=doc%2F%2Bcursor&cursor=again`,
+    `/api/projects/${runId}/documents?limit=50`,
+    `/api/projects/${projectId}/documents/${taskIdAt(1001)}`,
+    `/api/projects/${projectId}/documents/${taskIdAt(1001)}/revisions`,
+    `/api/projects/${projectId}/documents/${taskIdAt(1001)}/revisions/${taskIdAt(2001)}/original`,
+    `/api/projects/${projectId}/tasks/${taskIdAt(1)}`,
+    `/api/projects/${projectId}/orchestration/work-status?taskIds=${taskIdAt(1)}`,
+  ])assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+denied,"GET","fetch",grants.allowedPaths),false,denied);
+  assert.equal(grants.register(first,200,jsonHeaders,docs([1],null,runId)),false);
+  assert.equal(grants.register(second,200,jsonHeaders,docs([51],"doc/+cursor")),false,"cursor cycle");
+  grants.clear();assert.equal(grants.allowedPaths.size,0);
+  const bounded=new ListedDocumentReadGrants(listScope);
+  let pagePath=first;
+  for(let page=0;page<10;page++){
+    const next=page===9?null:`doc-page-${page+1}`;
+    const indexes=Array.from({length:50},(_,offset)=>page*50+offset+1);
+    assert.equal(bounded.register(pagePath,200,jsonHeaders,docs(indexes,next)),true);
+    if(next)pagePath=`${first}&cursor=${next}`;
+  }
+  assert.equal(bounded.register(first,200,jsonHeaders,docs([501],null)),false);
+  assert.equal(bounded.allowedPaths.has(`${first}&cursor=doc-page-10`),false);
 });

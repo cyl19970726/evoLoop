@@ -126,8 +126,12 @@ App Server、版本检查与协议探测使用同一份明确的子进程环境�
 | `roleId`、`authorizationScope`、`authorizationKind`、`cwd`、`sandbox` | 当前候选只服务 `temporary-experience`，授权种类为 static 或 dynamic；其余字段与原执行 profile 精确一致。GUI 只读不要求把原 workspace-write 改成 read-only。 |
 | `readerActorId` | 派生新身份文件时保留所有原 actor/token，只新增一个恰好有本项目 `read` 的独立 reader；不覆写原身份文件。令牌只由宿主读取。 |
 | `entryRouteKey`、`routes` | 唯一普通入口与最多 32 个精确只读路由；每项有 `key`、`hash` 及最多 30 个必要 GET `apiPaths`，全部限同项目。先按普通 UI 观察所需路由和 API，不开放项目任意路径。 |
+| `followTaskList` | 默认 false。确需工作列表与阶段关联时显式 true，并在 `apiPaths` 列明本项目精确 `tasks?limit=50` 起点；仅从实际成功页派生下一页、已见 Task 根详情及该页原顺序的精确工作状态 GET。 |
+| `followDocumentList` | 默认 false。阶段页确需完整文档列表时显式 true，并列明本项目精确 `documents?limit=50` 起点；只追随实际 `nextCursor` 读取下一列表页，不据此开放文档详情、修订或原件。 |
 
 保持原 Task、旧 Run、失败及预算历史。scope 身份只是预留资源，不承诺认知必派 child；原 todo Task 留给 runner 正常开始。实际调用还须核 ready owned Session、唯一 running Run/native Turn、无中断、当前 Task 修订等于该 Run 固定修订、主正文及 basis 相符、现行执行 grant/binding 和 reader。只读身份看不到的对象如实报告失败，不回退负责人令牌。
+
+上述两个选项只补当前页面的动态网络依赖，不增添导航 `routeKey`。每页须完整通过同项目、合法且不重复的对象 ID、游标及现行 scope/授权校验，才在返回页面前原子登记派生路径；额外参数、重复参数、未见 ID 和其他接口不据此放行。每个上下文对任务、文档分别累计最多 10 页、500 个不同对象，重复读取已批准页不重计，刷新第一页不清预算；异常或循环游标、超限须明确失败。阶段页自身可读取更多对象，本次试点上限不表示全项目完整，分页也不提供某一时刻的冻结快照。Task 根详情包含正文和业务关联；只有确需这些内容时才启用任务派生读取。Document 分支仅放行列表下一页，其条目含标题、类型、状态、修订 ID 与来源等，不含正文；目标及其他依赖继续使用各自精确 `apiPaths`。scope 改变或上下文关闭后，派生许可清除。
 
 worker 可见工具如下；除初始入口外，只能沿当前页面实际观察且 scope 允许的导航继续，不接受任意 URL、选择器、点击或脚本。
 

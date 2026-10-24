@@ -22,11 +22,14 @@ export const browserReadScopeSchema = z.strictObject({
   authorizationKind:z.enum(["static","dynamic"]),
   sandbox:z.enum(["read-only","workspace-write"]),
   readerActorId:z.string().min(1), origin:z.url(), expiresAtUtc:z.iso.datetime(),
+  followTaskList:z.boolean().optional(),
+  followDocumentList:z.boolean().optional(),
   entryRouteKey:z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
   routes:z.array(route).min(1).max(32),
 });
 export type BrowserReadScope = z.infer<typeof browserReadScopeSchema>;
 export interface BrowserReadBackend {
+  setRequestAuthority?(authorize:()=>Promise<boolean>):void;
   navigate(scope:BrowserReadScope,token:string,key:string):Promise<void>;
   snapshot(scope:BrowserReadScope):Promise<string>;
   readMore(scope:BrowserReadScope):Promise<string>;
@@ -114,15 +117,76 @@ export function sanitizeBrowserText(value:string,readerToken:string|null):string
   return redactBrowserSecrets(value,readerToken).slice(0,20000);
 }
 
-export function allowBrowserRequest(scope:BrowserReadScope,urlText:string,method:string,resourceType:string):boolean {
+export function allowBrowserRequest(scope:BrowserReadScope,urlText:string,method:string,resourceType:string,
+  derivedPaths?:Pick<ReadonlySet<string>,"has">):boolean {
   try {
     const url=new URL(urlText);
     const path=url.pathname+url.search;
     const apiPaths=scope.routes.flatMap(value=>value.apiPaths);
     return url.origin===scope.origin && !url.username && !url.password && method==="GET" &&
       ["document","script","stylesheet","image","font","fetch","xhr"].includes(resourceType) &&
-      (path==="/" || /^\/assets\/[a-zA-Z0-9._/-]+$/.test(path) || path==="/api/session" || apiPaths.includes(path));
+      (path==="/" || /^\/assets\/[a-zA-Z0-9._/-]+$/.test(path) || path==="/api/session" || apiPaths.includes(path) ||
+        !!derivedPaths?.has(path) && ["fetch","xhr"].includes(resourceType));
   } catch { return false; }
+}
+
+/** One context's bounded, exact GET paths derived from complete same-project list pages. */
+class ListedProjectPageGrants {
+  readonly firstPath:string;
+  private readonly pagePaths=new Set<string>();
+  private readonly derivedPaths=new Set<string>();
+  private readonly receivedPages=new Set<string>();
+  private readonly cursorOwners=new Map<string,string>();
+  private readonly objectIds=new Set<string>();
+  private pages=0;
+  constructor(private readonly scope:BrowserReadScope,private readonly kind:"tasks"|"documents",enabled:boolean) {
+    this.firstPath=`/api/projects/${scope.projectId}/${kind}?limit=50`;
+    if(enabled && scope.routes.some(route=>route.apiPaths.includes(this.firstPath)))
+      this.pagePaths.add(this.firstPath);
+  }
+  get allowedPaths():ReadonlySet<string> {return this.derivedPaths;}
+  isListPage(path:string):boolean {return this.pagePaths.has(path);}
+  clear():void {this.pagePaths.clear();this.derivedPaths.clear();this.receivedPages.clear();
+    this.cursorOwners.clear();this.objectIds.clear();this.pages=0;}
+  register(path:string,status:number,headers:Record<string,string>,body:Buffer):boolean {
+    if(!this.pagePaths.has(path) || status!==200 || body.length>5_000_000 ||
+      !/^application\/json(?:\s*;|$)/i.test(headers["content-type"]??""))return false;
+    const fingerprint=`${path}\0${createHash("sha256").update(body).digest("hex")}`;
+    if(this.receivedPages.has(fingerprint))return true;
+    let value:unknown;
+    try {value=JSON.parse(body.toString("utf8"));} catch{return false;}
+    const parsed=z.strictObject({items:z.array(z.object({id:uuid,projectId:z.literal(this.scope.projectId)})).max(50),
+      nextCursor:z.string().min(1).max(1024).nullable()}).safeParse(value);
+    if(!parsed.success)return false;
+    const ids=parsed.data.items.map(item=>item.id);
+    if(new Set(ids).size!==ids.length)return false;
+    const nextIds=new Set([...this.objectIds,...ids]);
+    const nextPages=this.pages+1;
+    if(nextPages>10 || nextIds.size>500 || parsed.data.nextCursor && (nextPages===10 || nextIds.size===500))return false;
+    let nextPath:string|null=null;
+    if(parsed.data.nextCursor){
+      const cursor=parsed.data.nextCursor;
+      if(cursor.trim()!==cursor || /[\u0000-\u001f\u007f]/.test(cursor))return false;
+      try {nextPath=`${this.firstPath}&cursor=${encodeURIComponent(cursor)}`;} catch{return false;}
+      if(nextPath.length>2048 || nextPath===path ||
+        this.cursorOwners.has(cursor) && this.cursorOwners.get(cursor)!==path)return false;
+    }
+    // Commit all grants together only after the entire page and cumulative budget have passed.
+    this.receivedPages.add(fingerprint);this.pages=nextPages;
+    for(const id of ids)this.objectIds.add(id);
+    if(this.kind==="tasks"){
+      for(const id of ids)this.derivedPaths.add(`/api/projects/${this.scope.projectId}/tasks/${id}`);
+      if(ids.length)this.derivedPaths.add(`/api/projects/${this.scope.projectId}/orchestration/work-status?taskIds=${ids.map(encodeURIComponent).join(",")}`);
+    }
+    if(nextPath){this.cursorOwners.set(parsed.data.nextCursor!,path);this.pagePaths.add(nextPath);this.derivedPaths.add(nextPath);}
+    return true;
+  }
+}
+export class ListedTaskReadGrants extends ListedProjectPageGrants {
+  constructor(scope:BrowserReadScope){super(scope,"tasks",scope.followTaskList===true);}
+}
+export class ListedDocumentReadGrants extends ListedProjectPageGrants {
+  constructor(scope:BrowserReadScope){super(scope,"documents",scope.followDocumentList===true);}
 }
 export function allowBrowserResponse(status:number,size:number,disposition:string|null):boolean {
   return status>=200 && status<=599 && !(status>=300 && status<400) &&
@@ -266,6 +330,7 @@ export class BrowserReadBridge {
       if (call.signal?.aborted || epoch!==this.epoch) throw new Error("cancelled");
       this.activeToken=token;
       this.activeScopeJson=scopeJson;
+      backend.setRequestAuthority?.(stillAuthorized);
       if (call.tool==="browser_navigate") { await backend.navigate(scope,token,args.routeKey as string);
         if(!await stillAuthorized())throw new Error("cancelled");this.activeRouteKey=args.routeKey as string;
         return text("Approved route opened"); }
@@ -381,6 +446,11 @@ export async function createPlaywrightBrowserBackend(modulePath:string,scopePath
     storageState:{cookies:[],origins:[]}});
   let page:any=null, approvedHash:string|null=null, readerToken:string|null=null;
   const activeRequests=new Set<ClientRequest>();
+  let requestAuthority:(()=>Promise<boolean>)|null=null;
+  let listedTasks:ListedTaskReadGrants|null=null;
+  let listedDocuments:ListedDocumentReadGrants|null=null;
+  const clearListed=()=>{listedTasks?.clear();listedDocuments?.clear();};
+  const derivedPaths={has:(path:string)=>!!listedTasks?.allowedPaths.has(path) || !!listedDocuments?.allowedPaths.has(path)};
   let lastSnapshot:{text:string;cursor:number;hash:string}|null=null;
   const readVisible=async(scope:BrowserReadScope)=>{
     if (!page || activeScope?.runId!==scope.runId || !isApprovedPageUrl(scope,page.url(),approvedHash)) throw new Error("no approved page");
@@ -419,25 +489,48 @@ export async function createPlaywrightBrowserBackend(modulePath:string,scopePath
   context.routeWebSocket("**/*",(socket:any)=>socket.close());
   await context.route("**/*",async (route:any)=>{
     const request=route.request();
+    let registeredListPage=false;
     try {
       const scope=activeScope;
+      const authority=requestAuthority;
       const current=await readBrowserScope(scopePath,Date.now(),expectedOrigin);
       if (!scope || !current || JSON.stringify(current)!==JSON.stringify(scope) ||
-        !allowBrowserRequest(scope,request.url(),request.method(),request.resourceType())) { await route.abort(); return; }
+        !authority || !await authority().catch(()=>false)) {
+        clearListed();await route.abort();return;
+      }
+      if(!allowBrowserRequest(scope,request.url(),request.method(),request.resourceType(),derivedPaths)){
+        await route.abort();return;
+      }
+      const path=new URL(request.url()).pathname+new URL(request.url()).search;
+      const listedPage=listedTasks?.isListPage(path)?listedTasks:
+        listedDocuments?.isListPage(path)?listedDocuments:null;
       const requestHeaders=await request.allHeaders();
       const authorization=requestHeaders.authorization??null;
       if (authorization && authorization!==`Bearer ${readerToken}`) {await route.abort();return;}
+      if((listedPage || derivedPaths.has(path)) &&
+        authorization!==`Bearer ${readerToken}`){await route.abort();return;}
       const response=await boundedLocalGet(request.url(),authorization,requestHeaders.accept??null,activeRequests,networkTimeoutMs);
       const latest=await readBrowserScope(scopePath,Date.now(),expectedOrigin);
       if (!latest || JSON.stringify(latest)!==JSON.stringify(scope) ||
+        !await authority().catch(()=>false) ||
         !allowBrowserResponse(response.status,response.body.length,response.headers["content-disposition"]??null)) {
-        await route.abort(); return;
+        clearListed();await route.abort();return;
       }
+      if(listedPage && !listedPage.register(path,response.status,response.headers,response.body)){
+        await route.abort();return;
+      }
+      registeredListPage=!!listedPage;
       await route.fulfill(response);
-    } catch { await route.abort().catch(()=>{}); }
+      if(registeredListPage){
+        const after=await readBrowserScope(scopePath,Date.now(),expectedOrigin);
+        if(!after || JSON.stringify(after)!==JSON.stringify(scope) || !await authority().catch(()=>false))
+          clearListed();
+      }
+    } catch {if(registeredListPage)clearListed();await route.abort().catch(()=>{});}
   });
   let activeScope:BrowserReadScope|null=null;
   return {
+    setRequestAuthority(authorize){requestAuthority=authorize;},
     async navigate(scope,token,key) {
       const selected=scope.routes.find(route=>route.key===key);
       if (!selected) throw new Error("route denied");
@@ -448,6 +541,7 @@ export async function createPlaywrightBrowserBackend(modulePath:string,scopePath
         if (!current.links.some(link=>link.routeKey===key) && !current.tabs.some(tab=>tab.routeKey===key))
           throw new Error("navigation target not observed");
       }
+      if(!activeScope){listedTasks=new ListedTaskReadGrants(scope);listedDocuments=new ListedDocumentReadGrants(scope);}
       activeScope=scope;
       if (!page) {
         readerToken=token;
@@ -504,6 +598,7 @@ export async function createPlaywrightBrowserBackend(modulePath:string,scopePath
       if (bytes.length>2_000_000) throw new Error("image too large");
       return bytes.toString("base64");
     },
-    async close(){for(const request of activeRequests)request.destroy();await context.close();await browser.close();},
+    async close(){requestAuthority=null;clearListed();for(const request of activeRequests)request.destroy();
+      await context.close();await browser.close();},
   };
 }
