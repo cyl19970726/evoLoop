@@ -15,6 +15,7 @@ export interface WorkerGuardFacts {
   document(documentId: string): Promise<(Fact & { taskId: string | null; loopId: string | null }) | null>;
   fixedDocument(taskId: string, documentId: string, revisionId: string): Promise<boolean>;
   ownedDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
+  ownRunReportEvidence?(documentId: string, revisionId: string): Promise<boolean>;
   sourceIssueDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   sourceIssueLinkedDocument?(documentId: string): Promise<boolean>;
   fixedReference(taskId: string, kind: "git" | "wiki", referenceId: string, revisionId?: string): Promise<boolean>;
@@ -34,7 +35,8 @@ export async function canReadDivisionEvidence(identity: WorkerIdentity, facts: W
   return identity.scope.kind === "cognition" &&
     (await facts.fixedDocument(identity.scope.taskId, documentId, revisionId) ||
       await facts.sourceIssueDocumentRevision?.(documentId, revisionId) === true ||
-      await facts.recoveryDocument?.(documentId, revisionId) === true);
+      await facts.recoveryDocument?.(documentId, revisionId) === true ||
+      await facts.ownRunReportEvidence?.(documentId, revisionId) === true);
 }
 export interface WorkerRequest { method: string; path: string; body?: unknown }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -141,7 +143,8 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       if (!same(document, scope.projectId)) return false;
       if (parts.length >= 4 && id(parts[3])) return parts.length === 4 || parts[4] === "original" ?
         (await facts.fixedDocument(scope.taskId, parts[1], parts[3]) ||
-          await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true) : false;
+          await facts.ownedDocumentRevision?.(parts[1], parts[3]) === true ||
+          await facts.ownRunReportEvidence?.(parts[1], parts[3]) === true) : false;
       // Every worker document read must bind a revision. A detail/list route can reveal a later
       // current body even when an older authored, linked, or delivered revision is authorized.
       return false;

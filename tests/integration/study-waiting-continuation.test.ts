@@ -14,8 +14,11 @@ import {decideTaskExternalReference,applyDeclaredStudyReference} from "@evoloop/
 import {ManagedLoopRunner,loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
 import {RuntimeRunner} from "../../apps/coordinator/src/runtime/runner.js";
 import {WorkerCredentialBroker} from "../../apps/coordinator/src/workers/credentials.js";
+import type {WorkerScope} from "../../apps/coordinator/src/workers/types.js";
 import {workerGuardFacts} from "../../apps/coordinator/src/workers/facts.js";
 import {buildServer} from "../../apps/coordinator/src/server.js";
+import {managedWorkerEvidence} from "../../apps/coordinator/src/orchestration/setup.js";
+import {readDocumentOriginal} from "../../apps/coordinator/src/documents/read-original.js";
 import {readTaskContext} from "../../apps/cli/src/materials.js";
 
 const url=process.env.TEST_DATABASE_URL;
@@ -25,7 +28,7 @@ const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const failed=(promise:Promise<unknown>,code:string)=>assert.rejects(promise,
   error=>error instanceof OrchestrationError&&error.code===code);
 
-async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"){
+async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"|"method"){
   const schema=`el_study_wait_${randomUUID().replaceAll("-","").slice(0,16)}`;
   await migrate(url!,schema);
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
@@ -41,6 +44,8 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   let template:DelegationTemplate|null=null,templateHash="";
   let grant=true,reviewerCurrent=true;
+  let workerMaterial: (actorId:string,documentId:string,revisionId:string)=>Promise<boolean> = async()=>false;
+  let workerScope: (actorId:string)=>Promise<WorkerScope|null> = async()=>null;
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,id)=>project===projectId&&id===scope?
     {projectId,scopeId:scope,actorId:controllerId,roleId:role,active:true}:
     project===projectId&&id==="business-scope"?{projectId,scopeId:id,actorId:controllerId,roleId:business,active:true}:null,
@@ -51,7 +56,10 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
       {template,hash:templateHash}:null,
     getTrialController:async(project,actor)=>project===projectId&&actor===controllerId?controller:null,
     hasCurrentStudyReviewer:async(project,actor)=>project===projectId&&actor===reviewerId&&reviewerCurrent,
-    canReadStudySourceRun:async()=>grant});
+    canReadStudySourceRun:async()=>grant,
+    getWorkerScope:workerActor=>workerScope(workerActor),
+    canReadDivisionMaterial:(actor,documentId,revisionId)=>actor===controllerId?Promise.resolve(true):
+      workerMaterial(actor,documentId,revisionId)});
   const wf=async(input:Record<string,unknown>)=>{const result=await workflow.execute(controller,
     {projectId,operationId:randomUUID(),...input} as never);
     assert.equal(result.status,"applied",JSON.stringify(result));return result;};
@@ -285,6 +293,16 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
   const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:1",
     cliMain:"/fixture/cli.js",nodeExecutable:process.execPath,ttlMs:60_000});
+  workerScope=async actorId=>(await broker.identityForActor(actorId))?.scope??null;
+  const workerEvidence=managedWorkerEvidence({pool,workflow,broker,controllerPrincipal:controller,
+    currentStudyReviewer:async(_project,actor)=>actor===reviewerId&&reviewerCurrent,
+    runSessionAvailable:async()=>grant,
+    verifyProposalMaterial:async(principal,project,documentId,revisionId,contentHash)=>{
+      const revision=await workflow.getDocumentPayloadRevision(principal,project,documentId,revisionId);
+      return revision.contentHash===contentHash &&
+        (await readDocumentOriginal({uow,blobsForPrincipal:async()=>({}) as never},principal,revision)).status==="available";
+    }});
+  workerMaterial=workerEvidence.canReadDivisionMaterial;
   const newScope={projectId,loopId,taskId,runId:newRun,sessionId:newSession,roleId:role,
     kind:"cognition" as const,allowedRoleIds:[role,business]};
   await broker.issue(newScope);
@@ -293,6 +311,28 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   assert.ok(identity);
   const facts=workerGuardFacts(pool,identity,async(_project,actor)=>actor===reviewerId&&reviewerCurrent);
   for(const sourceRun of sourceRuns)assert.equal(await facts.fixedRunTrace!(sourceRun),true);
+  if(ending==="division"){
+    const reportId=randomUUID();
+    const authored=await workflow.execute(identity.principal,{type:"document.create",projectId,
+      operationId:randomUUID(),documentId:reportId,kind:"report",title:"Current study diagnosis",
+      body:"# Fixed study evidence",origin:{taskId,runId:newRun}});
+    assert.equal(authored.status,"applied",JSON.stringify(authored));
+    const currentFacts=()=>workerGuardFacts(pool,identity,
+      async(_project,actor)=>actor===reviewerId&&reviewerCurrent,async()=>grant);
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),true);
+    const oldReportId=randomUUID();
+    const oldReport=await workflow.execute(identity.principal,{type:"document.create",projectId,
+      operationId:randomUUID(),documentId:oldReportId,kind:"report",title:"Prior Run report",
+      body:"# Old evidence",origin:{taskId,runId:oldRun}});
+    assert.equal(oldReport.status,"applied",JSON.stringify(oldReport));
+    assert.equal(await currentFacts().ownRunReportEvidence!(oldReportId,oldReport.revisionId!),false);
+    reviewerCurrent=false;
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),false);
+    reviewerCurrent=true;grant=false;
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),false);
+    grant=true;
+    assert.equal(await currentFacts().ownRunReportEvidence!(reportId,authored.revisionId!),true);
+  }
   const metadataRunner=new RuntimeRunner({runtimeFactory:()=>({isReady:()=>true}) as never,
     workflow,trusted:runtime,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,
     hasGrant:()=>grant,
@@ -302,8 +342,8 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
     projectIds:[projectId],permissions:["read","write","review"]}],
     references:{uow,gitForPrincipal:async()=>referenceDeps.git,knowledgeForPrincipal:async()=>({})} as never,
     documents:{uow,blobsForPrincipal:async()=>({}) as never},
-    workers:{authenticate:header=>broker.authenticate(header),facts:who=>workerGuardFacts(pool,who,
-      async(_project,actor)=>actor===reviewerId&&reviewerCurrent)},
+    orchestration:{service:orchestration},
+    workers:{authenticate:header=>broker.authenticate(header),facts:workerEvidence.factsForWorker},
     runtime:{status:()=>({available:true,error:null}),trace:async()=>({source:"fixture"}),
       workerFixedRunMetadata:metadataRunner.workerFixedRunMetadata.bind(metadataRunner)} as never});
   t.after(async()=>app.close());
@@ -325,6 +365,39 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
   await runner.pump();
   assert.equal((await orchestration.listDispatches(controller,projectId,loopId)).items.length,2);
   assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,2);
+  if(ending==="method"){
+    const reportId=randomUUID(),body="# Current resumed Run diagnosis";
+    const create=await fetch(new URL("/api/commands",address),{method:"POST",
+      headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},
+      body:JSON.stringify({type:"document.create",projectId,operationId:randomUUID(),documentId:reportId,
+        kind:"report",title:"Current Run diagnosis",body,origin:{taskId,runId:newRun}})});
+    assert.equal(create.status,200,await create.text());
+    const revisionId=(await workflow.getDocument(controller,projectId,reportId)).document.currentRevisionId;
+    const exactOriginal=`/api/projects/${projectId}/documents/${reportId}/revisions/${revisionId}/original`;
+    const readable=await fetch(new URL(exactOriginal,address),{headers:{authorization:`Bearer ${token}`}});
+    assert.equal(readable.status,200,await readable.text());
+    const loopVersion=(await orchestration.getLoop(controller,projectId,loopId))!.version;
+    const method={type:"division.decide",projectId,operationId:randomUUID(),decisionId:randomUUID(),loopId,
+      expectedLoopVersion:loopVersion,sourceEventId:resumed[0]!.id,parentDispatchId:next.id,
+      documentId:reportId,documentRevisionId:revisionId,documentContentHash:hash(body),firstTaskId:taskId,
+      expectedFirstTaskVersion:repairedVersion+1,choice:"method",roleId:role,templateId:null,
+      templateRevision:null,templateHash:null,reason:"Change method after fixed study"};
+    const decide=async()=>fetch(new URL("/api/orchestration/commands",address),{method:"POST",
+      headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},
+      body:JSON.stringify({...method,operationId:randomUUID(),decisionId:randomUUID()})});
+    reviewerCurrent=false;
+    const staleReviewer=await decide();assert.equal(staleReviewer.status,403,await staleReviewer.text());
+    reviewerCurrent=true;grant=false;
+    const staleSource=await decide();assert.equal(staleSource.status,403,await staleSource.text());
+    const historicalRead=await fetch(new URL(exactOriginal,address),{headers:{authorization:`Bearer ${token}`}});
+    assert.equal(historicalRead.status,200,await historicalRead.text(),
+      "a revoked new-use grant does not erase an authored revision's read history");
+    grant=true;
+    assert.equal((await orchestration.listEvents(controller,projectId,loopId)).items.filter(x=>x.kind==="division.decided").length,0);
+    const accepted=await decide();assert.equal(accepted.status,200,await accepted.text());
+    assert.equal((await orchestration.listEvents(controller,projectId,loopId)).items.filter(x=>x.kind==="division.decided").length,1);
+    return;
+  }
   const secondWaiting=randomUUID();
   await run(controller,{type:"worker.decision",decisionId:secondWaiting,dispatchId:next.id,runId:newRun,
     kind:"waiting",divisionDecisionId:null,reason:"Continue the same study",evidenceRefs:[]});
@@ -437,3 +510,4 @@ async function studyScenario(t:TestContext,ending:"child"|"no_action"|"division"
 test("bootstrap study waiting continues twice on one Task and hands off a signed child",t=>studyScenario(t,"child"));
 test("same-Task resumed study closes on its own signed no-action Decision, not an old waiting",t=>studyScenario(t,"no_action"));
 test("resumed study consumes an accepted Role binding through its final waiting choice",t=>studyScenario(t,"division"));
+test("resumed study worker uses only its current Run report for a method choice",t=>studyScenario(t,"method"));

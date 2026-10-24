@@ -6,7 +6,8 @@ import type { WorkerGuardFacts } from "./guard.js";
 
 /** Authorization facts are project-scoped reads of the authoritative records, not caller supplied labels. */
 export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
-  hasCurrentStudyReviewer?: (projectId: string, actorId: string) => Promise<boolean>): WorkerGuardFacts {
+  hasCurrentStudyReviewer?: (projectId: string, actorId: string) => Promise<boolean>,
+  hasCurrentStudySourceRun?: (projectId: string, runId: string) => Promise<boolean>): WorkerGuardFacts {
   const scope = identity.scope;
   // Only the public read contract is used here. No grant is supplied by this worker path.
   const trustedSources = new PgOrchestrationStore(pool, {
@@ -239,7 +240,7 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
   const sourceIssueLinkedDocument = async (documentId: string) => {
     return !!await sourceIssue(documentId);
   };
-  return {
+  const facts: WorkerGuardFacts = {
     loop: async id => id === scope.loopId ? loop() : null,
     task,
     recoveryGap,
@@ -273,6 +274,63 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
     fixedDocument,
     divisionBinding,
     divisionMaterial,
+    ownRunReportEvidence: async (documentId, revisionId) => {
+      if (scope.kind !== "cognition" || !await one(`SELECT 1
+      FROM process_document document
+      JOIN document_revision revision ON revision.project_id=document.project_id
+        AND revision.document_id=document.document_id AND revision.revision_id=$3
+        AND revision.author=$4
+      JOIN runtime_run run ON run.project_id=document.project_id AND run.run_id=document.origin_run_id
+        AND run.run_id=$5 AND run.task_id=$6 AND run.task_revision_id=document.origin_task_revision_id
+        AND run.session_id=$7
+      JOIN runtime_session session ON session.project_id=run.project_id AND session.session_id=run.session_id
+        AND session.role_id=$8 AND session.state='ready'
+        AND session.native_thread_id IS NOT NULL AND session.native_session_id IS NOT NULL
+      JOIN orchestration_dispatch dispatch ON dispatch.project_id=run.project_id AND dispatch.task_id=run.task_id
+        AND dispatch.loop_id=$9 AND dispatch.data->>'runtimeRunId'=run.run_id::text
+        AND dispatch.data->>'recipientRoleId'=$8 AND dispatch.data->>'purpose'='cognition'
+        AND dispatch.data->>'authorizationScopeId'=session.authorization_scope
+        AND dispatch.state IN ('accepted','completed')
+      JOIN operation_journal created ON created.project_id=document.project_id
+        AND created.command_type IN ('document.create','document.revise') AND created.actor_id=$4
+        AND created.result->>'status'='applied'
+        AND created.result->>'entityId'=document.document_id::text
+        AND created.result->>'revisionId'=revision.revision_id::text
+        AND ((created.command_type='document.create' AND revision.previous_revision_id IS NULL
+              AND created.result->>'version'='1') OR
+             (created.command_type='document.revise' AND revision.previous_revision_id IS NOT NULL))
+      JOIN outbox_event event ON event.project_id=created.project_id AND event.operation_id=created.operation_id
+        AND event.kind='document' AND event.entity_id=document.document_id
+        AND event.version::text=created.result->>'version'
+      WHERE document.project_id=$1 AND document.document_id=$2 AND document.kind='report'
+        AND document.origin_task_id=$6 AND document.origin_run_id=$5
+      LIMIT 1`, [documentId,revisionId,identity.principal.actorId,scope.runId,scope.taskId,
+      scope.sessionId,scope.roleId,scope.loopId])) return false;
+      const references=await pool.query(`SELECT decision.source_kind,decision.reference_id,decision.study_provenance
+        FROM runtime_run run JOIN task_external_ref_snapshot snapshot
+          ON snapshot.project_id=run.project_id AND snapshot.task_id=run.task_id
+          AND snapshot.task_revision_id=run.task_revision_id
+        JOIN task_external_ref_decision decision ON decision.project_id=snapshot.project_id
+          AND decision.decision_id=snapshot.decision_id
+        WHERE run.project_id=$1 AND run.run_id=$2`,[scope.projectId,scope.runId]);
+      const rows=references.rows as Array<{source_kind:string;reference_id:string;
+        study_provenance:Record<string,unknown>|null}>;
+      if (!rows.some(row=>row.study_provenance)) return true;
+      const current=await loop();
+      if (typeof current?.currentStudyDeclarationId!=="string" || !hasCurrentStudySourceRun) return false;
+      const declaration=await trustedSources.read(scope.projectId,
+        reader=>reader.getStudyDeclaration(current.currentStudyDeclarationId));
+      if (!declaration || declaration.loopId!==scope.loopId || rows.length!==declaration.items.length ||
+        !await hasCurrentStudyReviewer?.(scope.projectId,declaration.actorId)) return false;
+      for (const item of declaration.items) {
+        const row=rows.find(value=>value.study_provenance?.sourceDecisionId===item.sourceDecisionId);
+        if (!row || row.source_kind!=="run" || row.reference_id!==item.runId ||
+          row.study_provenance?.declarationId!==declaration.id ||
+          !await facts.fixedRunTrace?.(item.runId) ||
+          !await hasCurrentStudySourceRun(scope.projectId,item.runId)) return false;
+      }
+      return true;
+    },
     ownedDocumentRevision: async (documentId, revisionId) => !!await one(`SELECT 1 FROM document_revision r
       JOIN process_document d ON d.project_id=r.project_id AND d.document_id=r.document_id
       WHERE r.project_id=$1 AND r.document_id=$2 AND r.revision_id=$3 AND r.author=$4 AND d.kind IN ('report','issue')`,
@@ -383,4 +441,5 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
       return row ? {...row.data, loopId: row.loop_id} : null;
     },
   };
+  return facts;
 }

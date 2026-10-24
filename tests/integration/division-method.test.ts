@@ -13,6 +13,7 @@ import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/crede
 import { canReadDivisionEvidence } from "../../apps/coordinator/src/workers/guard.js";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { buildServer } from "../../apps/coordinator/src/server.js";
+import { RuntimeRunner } from "../../apps/coordinator/src/runtime/runner.js";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated PostgreSQL test database required");
@@ -64,8 +65,6 @@ test("PG method records a choice, then permits only its original todo Task throu
     content:"# Use the existing Role for the revised method",acceptance:"Report",owner:business,
     reason:"Fix the method and consumer before signing its observed Task version"});
   await wf({type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Cognition"});
-  const parentFixed=(await workflow.getTask(principal(owner,projectId),projectId,parentTaskId)).revision;
-  const documentId=parentFixed.contentDocumentId,documentRevisionId=parentFixed.contentRevisionId;
   const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
   await issue(owner,{type:"loop.enroll",loopId,goalId,stageId,cognitiveRoleId:cognition,
     allowedBusinessRoleIds:[business,other],sourceAfter:{createdAtUtc:last.created_at.toISOString(),eventId:last.event_id},
@@ -90,21 +89,92 @@ test("PG method records a choice, then permits only its original todo Task throu
     nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});
   const reserved=await wf({type:"runtime.run.reserve",runId,taskId:parentTaskId,sessionId,expectedVersion:2,input:"Review method"});
   await issue(owner,{type:"dispatch.resolve",dispatchId:parent.entityId,claimToken:token,result:"accepted",runtimeRunId:runId,reason:"Bound"});
+  await runtime.beginDispatch(projectId,runId);
+  await runtime.bindTurn(projectId,runId,{id:`fixture-${runId}`,status:"inProgress"},
+    {kind:"startReply",operationId:(await workflow.getRuntimeRun(principal(owner,projectId),projectId,runId)).operationId});
   const worker=await broker.issue({projectId,loopId,taskId:parentTaskId,runId,sessionId,roleId:cognition,
     kind:"cognition",allowedRoleIds:[cognition]});
   const beforeMethod=(await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!;
+  const metadataRunner=new RuntimeRunner({runtimeFactory:()=>({isReady:()=>true}) as never,
+    workflow,trusted:runtime,principals:[principal(owner,projectId)],canWrite:()=>true,
+    allowedCwd:async()=>true,hasGrant:()=>true});
   const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:owner,
     projectIds:[projectId],permissions:["read","write","review"]}] as never,
+    documents:{uow,blobsForPrincipal:async()=>({}) as never},runtime:metadataRunner,
     orchestration:{service:orchestration},workers:{authenticate:header=>broker.authenticate(header),
       facts:identity=>workerGuardFacts(pool,identity)}});
   t.after(async()=>app.close());
   const workerToken=(await readFile(join(workerRoot,runId,"credential"),"utf8")).trim();
+  const boundRun=await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime/runs/${runId}`,
+    headers:{authorization:`Bearer ${workerToken}`}});
+  assert.equal(boundRun.statusCode,200,boundRun.body);
+  assert.equal(boundRun.json().taskRevisionId,reserved.revisionId);
+  const documentId=randomUUID(),reportBody="# This Run's method diagnosis";
+  const created=await app.inject({method:"POST",url:"/api/commands",
+    headers:{authorization:`Bearer ${workerToken}`},payload:{type:"document.create",projectId,
+      operationId:randomUUID(),documentId,kind:"report",title:"Current Run diagnosis",body:reportBody,
+      origin:{taskId:parentTaskId,runId}}});
+  assert.equal(created.statusCode,200,created.body);
+  const initialRevisionId=(created.json() as {revisionId:string}).revisionId;
+  const original=await app.inject({method:"GET",url:`/api/projects/${projectId}/documents/${documentId}/revisions/${initialRevisionId}/original`,
+    headers:{authorization:`Bearer ${workerToken}`}});
+  assert.equal(original.statusCode,200,original.body);
+  assert.equal(original.json().body,reportBody);
+  const ownIssueId=randomUUID();
+  const ownIssue=await app.inject({method:"POST",url:"/api/commands",
+    headers:{authorization:`Bearer ${workerToken}`},payload:{type:"document.create",projectId,
+      operationId:randomUUID(),documentId:ownIssueId,kind:"issue",title:"Current Run note",body:"# Own issue",
+      origin:{taskId:parentTaskId,runId}}});
+  assert.equal(ownIssue.statusCode,200,ownIssue.body);
+  const ownIssueRevisionId=(ownIssue.json() as {revisionId:string}).revisionId;
+  const ownIssueOriginal=await app.inject({method:"GET",url:`/api/projects/${projectId}/documents/${ownIssueId}/revisions/${ownIssueRevisionId}/original`,
+    headers:{authorization:`Bearer ${workerToken}`}});
+  assert.equal(ownIssueOriginal.statusCode,200,ownIssueOriginal.body);
+  const revised=await workflow.execute(worker.principal,{type:"document.revise",projectId,
+    operationId:randomUUID(),documentId,expectedVersion:1,body:reportBody,reason:"Confirm exact evidence"} as never);
+  assert.equal(revised.status,"applied",JSON.stringify(revised));
+  const documentRevisionId=revised.revisionId!;
+  const revisedOriginal=await app.inject({method:"GET",url:`/api/projects/${projectId}/documents/${documentId}/revisions/${documentRevisionId}/original`,
+    headers:{authorization:`Bearer ${workerToken}`}});
+  assert.equal(revisedOriginal.statusCode,200,revisedOriginal.body);
+  const wrongWriter=await wf({type:"document.create",documentId:randomUUID(),kind:"report",
+    title:"Another author",body:"# Other",origin:{taskId:parentTaskId,runId}});
+  const wrongTask=await workflow.execute(worker.principal,{type:"document.create",projectId,
+    operationId:randomUUID(),documentId:randomUUID(),kind:"report",title:"Wrong Task",body:"# Other",
+    origin:{taskId:otherTaskId}} as never);
+  assert.equal(wrongTask.status,"applied",JSON.stringify(wrongTask));
+  const noOrigin=await workflow.execute(worker.principal,{type:"document.create",projectId,
+    operationId:randomUUID(),documentId:randomUUID(),kind:"report",title:"No origin",body:"# Other"} as never);
+  assert.equal(noOrigin.status,"applied",JSON.stringify(noOrigin));
+  const beforeState=(await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!;
+  await issue(owner,{type:"loop.state",loopId,expectedVersion:beforeState.version,state:"paused",reason:"Owner review"});
+  await issue(owner,{type:"loop.state",loopId,expectedVersion:beforeState.version+1,state:"active",reason:"Continue"});
   const methodCommand={type:"division.decide",projectId,operationId:randomUUID(),decisionId:randomUUID(),loopId,
     expectedLoopVersion:(await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!.version,
     sourceEventId:loop.bootstrapEventId,parentDispatchId:parent.entityId,documentId,
-    documentRevisionId,documentContentHash:hash("# Bounded task"),firstTaskId,
+    documentRevisionId,documentContentHash:hash(reportBody),firstTaskId,
     expectedFirstTaskVersion:2,choice:"method",roleId:business,templateId:null,templateRevision:null,
     templateHash:null,reason:"Use the existing business Role differently"};
+  const attempt=(changes:Record<string,unknown>)=>app.inject({method:"POST",url:"/api/orchestration/commands",
+    headers:{authorization:`Bearer ${workerToken}`},payload:{...methodCommand,
+      operationId:randomUUID(),decisionId:randomUUID(),...changes}});
+  const stale=await attempt({expectedLoopVersion:beforeState.version});
+  assert.equal(stale.statusCode,409,stale.body);
+  assert.equal(stale.json().code,"VERSION_CONFLICT");
+  for(const changes of [
+    {documentId:ownIssueId,documentRevisionId:ownIssueRevisionId,documentContentHash:hash("# Own issue")},
+    {documentRevisionId:randomUUID()},
+    {documentId:wrongWriter.entityId,documentRevisionId:wrongWriter.revisionId,documentContentHash:hash("# Other")},
+    {documentId:wrongTask.entityId,documentRevisionId:wrongTask.revisionId,documentContentHash:hash("# Other")},
+    {documentId:noOrigin.entityId,documentRevisionId:noOrigin.revisionId,documentContentHash:hash("# Other")},
+    {projectId:randomUUID()},
+  ]) {
+    const rejected=await attempt(changes);
+    assert.equal(rejected.statusCode,403,JSON.stringify({changes,response:rejected.body}));
+  }
+  const wrongHash=await attempt({documentContentHash:hash("wrong bytes")});
+  assert.equal(wrongHash.statusCode,409,wrongHash.body);
+  assert.equal(wrongHash.json().code,"MATERIAL_CHANGED");
   const wrongParent=await app.inject({method:"POST",url:"/api/orchestration/commands",
     headers:{authorization:`Bearer ${workerToken}`},payload:{...methodCommand,operationId:randomUUID(),
       decisionId:randomUUID(),parentDispatchId:randomUUID()}});
@@ -141,8 +211,12 @@ test("PG method records a choice, then permits only its original todo Task throu
   assert.equal(await orchestration.getDecisionForDispatch(principal(owner,projectId),projectId,parent.entityId),null);
   await issue(worker.principal.actorId,{type:"worker.decision",decisionId:randomUUID(),dispatchId:parent.entityId,
     runId,kind:"waiting",divisionDecisionId:null,reason:"Wait for ordinary child",evidenceRefs:[]});
+  const afterFinal=await attempt({expectedLoopVersion:
+    (await orchestration.getLoop(principal(owner,projectId),projectId,loopId))!.version});
+  assert.equal(afterFinal.statusCode,409,afterFinal.body);
+  assert.equal(afterFinal.json().code,"PARENT_DECIDED");
   await denied(issue(owner,{...request,dispatchId:randomUUID()}),"VERSION_CONFLICT");
-  await runtime.rejectDispatch(projectId,runId,"Fixture terminal, no native Turn");
+  await runtime.recordTurn(projectId,runId,`fixture-${runId}`,"completed","Fixture cognition Decision complete");
   await issue(owner,{type:"worker.outcome",dispatchId:parent.entityId,outcome:"waiting",deliveryId:null,
     decisionId:(await orchestration.getDecisionForDispatch(principal(owner,projectId),projectId,parent.entityId))!.id,
     evidenceRef:null,reason:"Wait for ordinary child"});
