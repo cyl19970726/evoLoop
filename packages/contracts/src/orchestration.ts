@@ -149,7 +149,7 @@ export interface OrchestrationSourceFact {
   /** Signed same-Task study continuation; absent from historical Issue resumes. */
   continuation?: {kind:"same-task-study";declarationId:string;originalTaskId:string;
     expectedTaskVersion:number;originalInboxId:string;originalDispatchId:string;
-    originalRunId:string;rootSourceEventId:string} | null;
+    originalRunId:string;rootSourceEventId:string;rootInboxId:string} | null;
   /** Fixed managed Schedule occurrence and creation Task revision. */
   scheduleId?: string | null; scheduleRevisionId?: string | null; plannedAtUtc?: string | null;
   scheduleTargetLoopId?: string | null; scheduleTargetStageId?: string | null; scheduleTaskRevisionId?: string | null;

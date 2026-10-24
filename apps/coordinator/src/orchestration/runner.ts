@@ -313,7 +313,7 @@ export class ManagedLoopRunner {
       operationId: loopIntentId(inbox.id, "cognition-dispatch-request"), inboxId: inbox.id,
       expectedInboxVersion: inbox.version, dispatchId: loopIntentId(inbox.id, "cognition-dispatch"),
       taskId, expectedTaskVersion: detail.task.version, recipientRoleId: loop.cognitiveRoleId,
-      purpose: continuation ? "study-continuation" : "cognition", parentDispatchId: null, authorizationScopeId: cognitive.authorizationScopeId,
+      purpose: "cognition", parentDispatchId: null, authorizationScopeId: cognitive.authorizationScopeId,
       reason: `Cognition for verified source ${inbox.sourceEventId}` });
   }
   private async claimIntent(profile: ManagedRoleProfile,
@@ -401,11 +401,14 @@ export class ManagedLoopRunner {
     }
     if (dispatch.state !== "dispatching") return;
     const task = await this.deps.workflow.getTask(profile.principal, loop.projectId, dispatch.taskId);
+    const continuation = dispatch.recipientRoleId===loop.cognitiveRoleId && dispatch.purpose==="cognition" &&
+      (await this.pages(cursor=>this.deps.orchestration.listSourceFacts(profile.principal,
+        loop.projectId,loop.id,100,cursor))).find(fact=>fact.id===dispatch.sourceEventId)?.continuation;
     const startOperationId = loopIntentId(dispatch.id, "task.start");
     const startPrior = await this.deps.workflow.getOperation(profile.principal, loop.projectId, startOperationId);
     const runId = loopIntentId(dispatch.id, "run");
     const priorRun = await this.deps.workflow.getRuntimeRun(profile.principal, loop.projectId, runId).catch(() => null);
-    if (dispatch.purpose==="study-continuation") {
+    if (continuation) {
       if (startPrior || task.task.state!=="in_progress" || (priorRun
         ? priorRun.taskId!==dispatch.taskId || priorRun.operationId!==loopIntentId(dispatch.id,"run.reserve") ||
           priorRun.taskRevisionId!==task.task.currentRevisionId || task.task.version!==dispatch.taskVersion+1
@@ -451,7 +454,7 @@ export class ManagedLoopRunner {
           ? [loop.cognitiveRoleId, ...loop.allowedBusinessRoleIds] : [dispatch.recipientRoleId] };
       const credential = await this.deps.credential.lookup(runId) ?? await this.deps.credential.issue(scope);
       const currentTask = await this.deps.workflow.getTask(profile.principal, loop.projectId, dispatch.taskId);
-      if (dispatch.purpose==="study-continuation" &&
+      if (continuation &&
         (currentTask.task.state!=="in_progress" || currentTask.task.version!==dispatch.taskVersion))
         throw new Error("STUDY_CONTINUATION_TASK_CHANGED");
       const input = await this.workerInput(loop, dispatch, runId, credential.wrapperPath, profile);
@@ -499,7 +502,7 @@ export class ManagedLoopRunner {
     const resumeContext = resumed?.issueRevisionId && resumed.issueContentHash
       ? ` New waiting-resume review from Decision ${resumed.waitingDecisionId}; original source ${resumed.originalSourceEventId}, previous source ${resumed.previousSourceEventId}. Read fixed Issue ${resumed.subjectId} revision ${resumed.issueRevisionId} at get /api/projects/${loop.projectId}/documents/${resumed.subjectId}/revisions/${resumed.issueRevisionId}/original and verify SHA-256 ${resumed.issueContentHash}. The old Run, Decision and rejected operations remain historical; use only this new Run's identity.` : "";
     const studyResumeContext = resumed?.continuation
-      ? ` Continue the same in-progress study Task ${resumed.continuation.originalTaskId} at fixed version ${resumed.continuation.expectedTaskVersion} from waiting Decision ${resumed.waitingDecisionId}, original Run ${resumed.continuation.originalRunId}, original Dispatch ${resumed.continuation.originalDispatchId}, and root source ${resumed.continuation.rootSourceEventId}. Controller repair evidence ${resumed.resumedEvidenceRef}: ${resumed.resumedReason}. Re-read the original Run's fixed Task revision and its complete declared references, then use this new Run and worker identity for any new finding. The old worker credential, Decision and Run remain historical.` : "";
+      ? ` Continue the same in-progress study Task ${resumed.continuation.originalTaskId} at fixed version ${resumed.continuation.expectedTaskVersion} from waiting Decision ${resumed.waitingDecisionId}, original Run ${resumed.continuation.originalRunId}, original Dispatch ${resumed.continuation.originalDispatchId}, and root source ${resumed.continuation.rootSourceEventId}. Repair evidence is in waiting.resumed event ${resumed.id}; summary: ${String(resumed.resumedReason ?? "").slice(0,160)}${(resumed.resumedReason?.length ?? 0)>160?"… (partial; read the signed event)":""}. Read this Run's fixed Task context and all three declared references using your new scoped identity. The old Run is causal history, not a separate read grant; never reuse its worker credential.` : "";
     const scheduleContext = source?.kind === "schedule.task.todo" && source.scheduleTargetLoopId === loop.id
       ? ` This source is a verified Schedule occurrence for existing todo Task ${source.subjectId}, Schedule ${source.scheduleId} revision ${source.scheduleRevisionId}, planned ${source.plannedAtUtc}. Reuse that exact Task if its current version, owner, Stage, and Run state remain eligible; do not create another Task for this occurrence.` : "";
     const businessScopes = kind === "cognition" ? (await Promise.all(loop.allowedBusinessRoleIds.map(async roleId => {

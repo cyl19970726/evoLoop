@@ -95,7 +95,8 @@ class Reader implements OrchestrationReader {
         stored.originalInboxId!==dispatch.inboxId ||
         stored.originalDispatchId!==dispatch.id ||
         stored.originalRunId!==decision.runId ||
-        stored.rootSourceEventId!==root.id)return null;
+        stored.rootSourceEventId!==root.id ||
+        stored.rootInboxId!==(previous.continuation?.rootInboxId ?? dispatch.inboxId))return null;
       return {projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:"waiting.resumed",
         subjectId:dispatch.taskId,subjectVersion:fixed.expectedTaskVersion,sourceLoopId:loop.id,
         originDispatchId:dispatch.id,operationId:x.operation_id,sourceActorId:x.actor_id,
@@ -421,6 +422,9 @@ class Reader implements OrchestrationReader {
     return x?{projectId:this.projectId,id:x.event_id,createdAtUtc:iso(x.created_at_utc),kind:x.kind,subjectId:x.subject_id,subjectVersion:x.subject_version,sourceLoopId:x.source_loop_id??null,originDispatchId:x.origin_dispatch_id??null,operationId:x.operation_id??null,sourceActorId:x.source_actor_id??null,observationId:x.observation_id??null,deliveryId:x.delivery_id??null,observationResult:x.observation_result??null,gapRunId:x.gap_run_id??null,gapTaskVersion:x.gap_task_version??null,issueRevisionId:x.issue_revision_id??null,issueContentHash:x.issue_content_hash??null}:null;}
 
 }
+/** Reuse the signed source projection inside a Workflow transaction without trusting an event kind alone. */
+export const verifiedOrchestrationSource = (db:PoolClient,projectId:string,id:string) =>
+  new Reader(db,projectId).getSourceFact(id);
 /** Reuse the exact declaration verifier on a caller-owned project transaction. */
 export function readStudyDeclaration(client:PoolClient,projectId:string,id:string){
   return new Reader(client,projectId).getStudyDeclaration(id);

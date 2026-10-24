@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import {createHash,randomUUID} from "node:crypto";
-import test from "node:test";
+import {mkdtemp,readFile,rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import test,{type TestContext} from "node:test";
 import pg from "pg";
 import {migrate,PostgresUnitOfWork} from "@evoloop/adapter-postgres";
 import {PgOrchestrationStore} from "@evoloop/adapter-postgres/orchestration";
@@ -8,15 +11,20 @@ import {WorkflowService,RuntimeWorkflowService} from "@evoloop/core";
 import {OrchestrationService,OrchestrationError} from "@evoloop/core/orchestration";
 import {decideTaskExternalReference,applyDeclaredStudyReference} from "@evoloop/core/references";
 import {ManagedLoopRunner,loopIntentId} from "../../apps/coordinator/src/orchestration/runner.js";
+import {RuntimeRunner} from "../../apps/coordinator/src/runtime/runner.js";
+import {WorkerCredentialBroker} from "../../apps/coordinator/src/workers/credentials.js";
+import {workerGuardFacts} from "../../apps/coordinator/src/workers/facts.js";
+import {buildServer} from "../../apps/coordinator/src/server.js";
+import {readTaskContext} from "../../apps/cli/src/materials.js";
 
 const url=process.env.TEST_DATABASE_URL;
-if(!url || new URL(url).pathname!=="/evoloop_waiting_study_test")
-  throw new Error("isolated waiting study database required");
+if(!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))
+  throw new Error("isolated evoloop test database required");
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const failed=(promise:Promise<unknown>,code:string)=>assert.rejects(promise,
   error=>error instanceof OrchestrationError&&error.code===code);
 
-test("bootstrap study waiting resumes once on the original Task with a fresh managed Run",async t=>{
+async function studyScenario(t:TestContext,ending:"child"|"no_action"){
   const schema=`el_study_wait_${randomUUID().replaceAll("-","").slice(0,16)}`;
   await migrate(url!,schema);
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
@@ -32,8 +40,9 @@ test("bootstrap study waiting resumes once on the original Task with a fresh man
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   let grant=true,reviewerCurrent=true;
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,id)=>project===projectId&&id===scope?
-    {projectId,scopeId:scope,actorId:controllerId,roleId:role,active:true}:null,
-    canActAsRole:async(project,actor,required)=>project===projectId&&actor===controllerId&&required===role,
+    {projectId,scopeId:scope,actorId:controllerId,roleId:role,active:true}:
+    project===projectId&&id==="business-scope"?{projectId,scopeId:id,actorId:controllerId,roleId:business,active:true}:null,
+    canActAsRole:async(project,actor,required)=>project===projectId&&actor===controllerId&&[role,business].includes(required),
     wasActorRole:async()=>false});
   const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash,
     getTrialController:async(project,actor)=>project===projectId&&actor===controllerId?controller:null,
@@ -99,8 +108,9 @@ test("bootstrap study waiting resumes once on the original Task with a fresh man
   const credentials:string[]=[];
   const runner=new ManagedLoopRunner({projects:[projectId],reader:()=>controller,
     orchestration,workflow,runtime:{pump:async()=>{}},canWrite:()=>true,now:clock.now,
-    controller:async(_project,requiredRole)=>requiredRole===role?{principal:controller,
-      authorizationScopeId:scope,cwd,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"}:null,
+    controller:async(_project,requiredRole)=>[role,business].includes(requiredRole)?{principal:controller,
+      authorizationScopeId:requiredRole===role?scope:"business-scope",cwd,model:"fixture",
+      sandbox:"read-only",approvalPolicy:"on-request"}:null,
     credential:{lookup:async()=>null,issue:async(identity)=>{credentials.push(identity.runId);
       return {principal:principal(`worker-${identity.runId}`),wrapperPath:"/fixture/wrapper"};}},
     applyStudyReference:async(actor,command,provenance)=>
@@ -208,10 +218,48 @@ test("bootstrap study waiting resumes once on the original Task with a fresh man
   const reserved=await workflow.getRuntimeRun(controller,projectId,newRun);
   assert.equal(reserved.taskId,taskId);
   assert.match(reserved.input,new RegExp(oldRun));
-  assert.match(reserved.input,/Re-read the original Run's fixed Task revision and its complete declared references/);
+  assert.match(reserved.input,/Read this Run's fixed Task context and all three declared references/);
   const persistedSource=await store.read(projectId,reader=>reader.getSourceFact(resumed[0]!.id));
   assert.equal(persistedSource?.continuation?.expectedTaskVersion,repairedVersion,
     "valid consumed history stays readable after the new Run freezes a later Task revision");
+  await runtime.beginDispatch(projectId,newRun);
+  await runtime.bindTurn(projectId,newRun,{id:`fixture-${newRun}`,status:"inProgress"},
+    {kind:"startReply",operationId:loopIntentId(next.id,"run.reserve")});
+  const workerRoot=await mkdtemp(join(tmpdir(),"evoloop-waiting-study-worker-"));
+  t.after(async()=>rm(workerRoot,{recursive:true,force:true}));
+  const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:1",
+    cliMain:"/fixture/cli.js",nodeExecutable:process.execPath,ttlMs:60_000});
+  const newScope={projectId,loopId,taskId,runId:newRun,sessionId:newSession,roleId:role,
+    kind:"cognition" as const,allowedRoleIds:[role,business]};
+  await broker.issue(newScope);
+  const token=await readFile(join(workerRoot,newRun,"credential"),"utf8");
+  const identity=await broker.authenticate(`Bearer ${token}`);
+  assert.ok(identity);
+  const facts=workerGuardFacts(pool,identity,async(_project,actor)=>actor===reviewerId&&reviewerCurrent);
+  for(const sourceRun of sourceRuns)assert.equal(await facts.fixedRunTrace!(sourceRun),true);
+  const metadataRunner=new RuntimeRunner({runtimeFactory:()=>({isReady:()=>true}) as never,
+    workflow,trusted:runtime,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,
+    hasGrant:()=>grant,
+    workerTraceAuthority:(who,target)=>workerGuardFacts(pool,who,async(_project,actor)=>
+      actor===reviewerId&&reviewerCurrent).fixedRunTrace!(target)});
+  const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:controllerId,
+    projectIds:[projectId],permissions:["read","write","review"]}],
+    references:{uow,gitForPrincipal:async()=>referenceDeps.git,knowledgeForPrincipal:async()=>({})} as never,
+    documents:{uow,blobsForPrincipal:async()=>({}) as never},
+    workers:{authenticate:header=>broker.authenticate(header),facts:who=>workerGuardFacts(pool,who,
+      async(_project,actor)=>actor===reviewerId&&reviewerCurrent)},
+    runtime:{status:()=>({available:true,error:null}),trace:async()=>({source:"fixture"}),
+      workerFixedRunMetadata:metadataRunner.workerFixedRunMetadata.bind(metadataRunner)} as never});
+  t.after(async()=>app.close());
+  const address=await app.listen({host:"127.0.0.1",port:0});
+  const signedClient={get:async(path:string)=>{const response=await fetch(new URL(path,address),
+    {headers:{authorization:`Bearer ${token}`}});
+    const body=await response.json() as {code?:string};
+    if(!response.ok)throw new Error(`${body.code??"HTTP"} HTTP${response.status}`);
+    return body;}};
+  const context=await readTaskContext(signedClient as never,projectId,taskId);
+  assert.equal(context.status,"complete",JSON.stringify(context.failures));
+  assert.deepEqual(context.externalReferences.map(item=>item.reference.referenceId).sort(),[...sourceRuns].sort());
   assert.equal((await workflow.getTask(controller,projectId,taskId)).task.version,repairedVersion+1,
     "normal Run reserve freezes the same Task at its next revision");
   assert.equal(await workflow.getOperation(controller,projectId,loopIntentId(next.id,"task.start")),null,
@@ -221,4 +269,82 @@ test("bootstrap study waiting resumes once on the original Task with a fresh man
   await runner.pump();
   assert.equal((await orchestration.listDispatches(controller,projectId,loopId)).items.length,2);
   assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,2);
-});
+  const secondWaiting=randomUUID();
+  await run(controller,{type:"worker.decision",decisionId:secondWaiting,dispatchId:next.id,runId:newRun,
+    kind:"waiting",divisionDecisionId:null,reason:"Continue the same study",evidenceRefs:[]});
+  await runtime.recordTurn(projectId,newRun,`fixture-${newRun}`,"failed","Study requires one more review");
+  await run(controller,{type:"worker.outcome",dispatchId:next.id,outcome:"waiting",deliveryId:null,
+    decisionId:secondWaiting,evidenceRef:null,reason:"Continue the same study"});
+  loop=(await orchestration.getLoop(controller,projectId,loopId))!;
+  await run(reviewer,{type:"loop.resumeWaiting",loopId,expectedLoopVersion:loop.version,
+    decisionId:secondWaiting,dispatchId:next.id,evidenceRef:"repair:second-review",
+    reason:"Continue after verified review",continuation:{kind:"same-task-study",
+      declarationId,expectedTaskVersion:repairedVersion+1}});
+  const secondResume=(await orchestration.listEvents(controller,projectId,loopId)).items
+    .filter(event=>event.kind==="waiting.resumed").find(event=>event.entityId===secondWaiting)!;
+  const secondSource=(await store.read(projectId,reader=>reader.getSourceFact(secondResume.id)))!;
+  assert.equal(secondSource.continuation?.rootInboxId,original.inboxId);
+  await runner.pump();
+  const third=(await orchestration.listDispatches(controller,projectId,loopId)).items
+    .find(item=>item.id!==original.id&&item.id!==next.id)!;
+  assert.ok(third,`second continuation must dispatch the root Task: ${JSON.stringify(runner.status())}`);
+  assert.equal(third.taskId,taskId);
+  assert.equal(third.taskVersion,repairedVersion+1);
+  assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,3);
+  const thirdSession=loopIntentId(third.id,"session"),thirdRun=loopIntentId(third.id,"run");
+  await wf({type:"runtime.session.reserve",sessionId:thirdSession,roleId:role,cwd,
+    authorizationScope:scope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await runtime.beginSessionCreate(projectId,thirdSession);
+  await runtime.bindSession(projectId,thirdSession,{owner:"evoloop-codex-app-server",projectId,
+    sessionId:thirdSession,roleId:role,cwd,authorizationScope:scope,nativeThreadId:`fixture-${thirdSession}`,
+    nativeSessionId:`fixture-${thirdSession}`});
+  await runner.pump();
+  assert.equal((await orchestration.getDispatch(controller,projectId,third.id))?.runtimeRunId,thirdRun);
+  assert.equal((await workflow.getTask(controller,projectId,taskId)).task.version,repairedVersion+2);
+  await runtime.beginDispatch(projectId,thirdRun);
+  await runtime.bindTurn(projectId,thirdRun,{id:`fixture-${thirdRun}`,status:"inProgress"},
+    {kind:"startReply",operationId:loopIntentId(third.id,"run.reserve")});
+  if(ending==="no_action"){
+    const finalDecision=randomUUID();
+    await run(controller,{type:"worker.decision",decisionId:finalDecision,dispatchId:third.id,runId:thirdRun,
+      kind:"no_action",divisionDecisionId:null,reason:"Study found no further bounded work",evidenceRefs:[]});
+    await runtime.recordTurn(projectId,thirdRun,`fixture-${thirdRun}`,"failed","Decision complete");
+    await run(controller,{type:"worker.outcome",dispatchId:third.id,outcome:"no_action",deliveryId:null,
+      decisionId:finalDecision,evidenceRef:null,reason:"Study found no further bounded work"});
+    const stale=await workflow.execute(controller,{projectId,operationId:randomUUID(),type:"task.close",
+      taskId,expectedVersion:repairedVersion+2,decisionId:secondWaiting,acceptanceResult:"met",
+      acceptanceEvidence:"Cannot close the new revision with old waiting",reason:"Stale decision"});
+    assert.equal(stale.status,"rejected");
+    const closed=await wf({type:"task.close",taskId,expectedVersion:repairedVersion+2,
+      decisionId:finalDecision,acceptanceResult:"met",
+      acceptanceEvidence:"Verified signed no-action decision",reason:"Study complete"});
+    assert.equal(closed.status,"applied");
+    assert.equal((await workflow.getTask(controller,projectId,taskId)).task.state,"done");
+    return;
+  }
+  const businessTask=randomUUID();
+  await wf({type:"task.create",taskId:businessTask,stageId,title:"Bounded follow-up",content:"# Follow-up",
+    acceptance:"One result",owner:business,consumer:controllerId,evidence:"Study",stopCondition:"One run"});
+  const nextInbox=await run(controller,{type:"inbox.accept",loopId,sourceEventId:secondResume.id,
+    recipientRoleId:role,purpose:"next_action"});
+  await run(controller,{type:"inbox.ack",inboxId:nextInbox.entityId,expectedVersion:1,
+    reason:"Current study chose follow-up"});
+  const child=await run(controller,{type:"dispatch.request",inboxId:nextInbox.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:third.id,taskId:businessTask,
+    expectedTaskVersion:1,recipientRoleId:business,purpose:"business",
+    authorizationScopeId:"business-scope",reason:"Study chose existing Role"});
+  assert.equal(child.entityType,"dispatch");
+  const finalWaiting=randomUUID();
+  await run(controller,{type:"worker.decision",decisionId:finalWaiting,dispatchId:third.id,runId:thirdRun,
+    kind:"waiting",divisionDecisionId:null,reason:"Child owns the follow-up",evidenceRefs:[]});
+  await runtime.recordTurn(projectId,thirdRun,`fixture-${thirdRun}`,"failed","Follow-up delegated");
+  await run(controller,{type:"worker.outcome",dispatchId:third.id,outcome:"waiting",deliveryId:null,
+    decisionId:finalWaiting,evidenceRef:null,reason:"Child owns the follow-up"});
+  const close=await wf({type:"task.close",taskId,expectedVersion:repairedVersion+2,
+    decisionId:finalWaiting,handoffDispatchId:child.entityId,acceptanceResult:"met",
+    acceptanceEvidence:"Verified signed child handoff",reason:"Cognition delivered bounded decision"});
+  assert.equal(close.status,"applied");
+  assert.equal((await workflow.getTask(controller,projectId,taskId)).task.state,"done");
+}
+test("bootstrap study waiting continues twice on one Task and hands off a signed child",t=>studyScenario(t,"child"));
+test("same-Task resumed study closes on its own signed no-action Decision, not an old waiting",t=>studyScenario(t,"no_action"));
