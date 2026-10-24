@@ -43,7 +43,17 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 任务类型可选实施、调研、验证，四态为 todo/in_progress/done/cancelled。交付与约定检查默认留在进行中的原任务内，标准通过后才 close；只有明确要求的消费者或真人使用才等待对应证据。受阻或暂缓说明原因、责任与下一步，不另开状态或默认验收子 Task。需要改变执行中的正文或验收时先核清在途，再 reopen→update→start；旧交付不可自动算新一轮通过。Task 主正文不能从通用 Document 编辑入口旁路改变。Document 用途、格式、发布/归档及正文写作见[任务与过程文档](../product/tasks-and-documents.md)。
 
-受管认知签署 waiting 且原 Run 已确认终态后，仅恢复 Loop 不会重新消费已处置来源。阻塞确已解除时，有项目 write＋review 的控制者可先查看 `command schema loop.resumeWaiting`，以当前 `expectedLoopVersion`、原 `decisionId`/`dispatchId`、解除证据 `evidenceRef` 和理由提交新意图。省略 `continuation` 保持原固定 Issue 恢复合同：active Loop/Stage、无 child 或同源未知/在途派发、余额充足；不支持其他来源类型，也不允许 worker 自行解除。若原来源是本 Loop bootstrap 或其已核实的同 Task 恢复链，可显式提交 `continuation: { kind: "same-task-study", declarationId, expectedTaskVersion }`。从当前 Task 回读版本，不沿用原 Dispatch 的旧版本；同时核对当前有效的完整 Run 声明、原 Run 固定材料、来源授权和 reviewer、原 Task 仍为同 Goal/active Stage/认知 Role 的 in_progress，且原 waiting 是该 Task 最新派发、无 child/division/未知或在途 Run。paused Loop 可先登记但不会派发；stopped 拒绝。一个 Decision 只能解除一次；原 operationId 的同身份同正文回读沿用既有操作账。成功只追加 `waiting.resumed` 因果事件并递增 Loop 版本，不改旧 Decision、拒绝记录或预算；后续认知由软件按原合同或同 Task 接续合同消耗原剩余额度。同 Task 接续复用原 Task，正常预留新 Session/Run、新 worker 身份并扣一次预算；旧 worker 凭证不得复用，旧 Run 不能当作修复后的结果。它不直接创建功能修复任务，也不证明修复完成。
+受管认知签署 waiting 且原 Run 已确认终态后，仅恢复 Loop 不会重新消费已处置来源。阻塞确已解除时，有项目 write＋review 的控制者先查看 `command schema loop.resumeWaiting`，以当前 `expectedLoopVersion`、原 `decisionId`/`dispatchId`、解除证据 `evidenceRef` 和理由提交新意图。worker 不能自行解除；以下恢复模式只选一种。
+
+- **固定 Issue**：同时省略 `continuation` 与 `businessRecovery`，保持原合同，要求 active Loop/Stage、无 child 或同源未知/在途派发及剩余预算；不把任意文档当作 Issue。
+- **同 Task 研究接续**：原来源为本 Loop bootstrap 或已核实的同 Task 恢复链时，提供 `continuation: { kind: "same-task-study", declarationId, expectedTaskVersion }`。从当前 Task 回读版本，同时核当前有效的完整 Run 声明、原固定材料、来源授权和 reviewer；原 Task 仍为同 Goal/active Stage/认知 Role 的 in_progress，原 waiting 是该 Task 最新派发，且无 child/division/未知或在途 Run。它复用原研究 Task。
+- **业务结果后的返工回看**：原 waiting 认知直接承接同 Loop 已确认终态的业务 `worker.outcome` 时，提供 `businessRecovery: { expectedTaskVersion, basisSetId }`。先通过正常任务规则把原业务 Task 准备为 todo；需要新原件时，由有权者显式重选依据并回读当前版本和 sealed basis。服务核原业务派发及其认知父派发、同 Goal/active Stage、原责任者、无后续派发或在途/未知 Run、当前业务授权及固定依据。成功只为这项原业务工作追加一次新的认知回看来源，不重用旧业务 Run，也不自动代做返工。恢复事件本身不增加原件权限；新认知按既有规则读取同 Goal/Stage 内获准 Task 的当前固定主正文、依据及获准规划候选，仍须指定明确修订并通过当前授权检查。后续业务执行者须按自己新 Run 的固定依据亲自读取，不能把认知可读当作业务执行者已经读过。
+
+同 Task 研究与业务返工恢复可在 paused Loop 登记，仍须由有权者显式激活后才派发；stopped 拒绝。来源接纳、派发请求与开始前会再次核任务版本、依据和现行授权；登记后材料改变时先核拒绝与新状态，不偷换为新版。一个 waiting Decision 只能解除一次；同 operationId、同身份同正文仍按既有操作账回读。
+
+成功只追加 `waiting.resumed` 因果事件并递增 Loop 版本，不改旧 Decision、拒绝记录、403 或预算。后续认知、业务返工及独立反馈按实际新 Dispatch 消耗原剩余额度；暂停、恢复登记和记录使用本身不增加额度。新 Session/Run 使用自己的 worker 身份读取固定原件，旧凭证、旧 Run 或把原文复制进提示都不能替代合法读取。恢复成功不证明返工、消费者使用或 Task 验收已经完成。
+
+若经明确的范围与成本决定仍需增加额度，由原登记控制者先读 Loop 和 `command schema loop.extendBudget`，以当前 `expectedLoopVersion`、`expectedMaxRuns`、只比原值多 1 的 `maxRuns`、批准依据 `evidenceRef` 和理由提交。该命令要求项目 write＋review、Loop paused 且无未结派发或在途/未知 Run；旧上限或版本不符、跨控制者、一次加多次、减额、active/stopped 都拒绝。成功追加预算变更事件并更新 Loop 版本，原 `dispatchCount`、策略、全部失败与其他 Loop 不变，也不会激活 Loop。原 operationId 同正文回读，不自动反复增额；worker 不能自行申请或通过新 Loop 重置计数。
 
 专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../roadmap.md#c5-taskdocument-模型简化)。
 

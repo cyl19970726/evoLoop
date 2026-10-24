@@ -41,8 +41,8 @@ export class OrchestrationService {
     if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
-    if ((command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer") && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot change a Loop's study authority");
+    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.extendBudget" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    if ((command.type === "loop.extendBudget" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer") && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot change a Loop's study authority");
     const now = this.deps.now();
     if (!Number.isFinite(Date.parse(now)) || !now.endsWith("Z")) return fail("INVALID_TIME", "clock must return UTC time");
     return this.deps.store.transaction(command.projectId, async tx => {
@@ -100,6 +100,12 @@ export class OrchestrationService {
           Date.parse(found.template.expiresAtUtc) <= Date.parse(this.deps.now()))
           return fail("DELEGATION_DENIED", "current delegation template does not authorize the actor");
       }
+      return;
+    }
+    if (command.type === "loop.extendBudget") {
+      const loop=await tx.getLoop(command.loopId);
+      if (!loop || loop.projectId!==command.projectId || loop.enrolledBy!==principal.actorId)
+        return fail("FORBIDDEN","only the enrolling Loop controller may extend its budget");
       return;
     }
     if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
@@ -493,11 +499,28 @@ export class OrchestrationService {
       await tx.updateLoop(next, loop.version); await event(loop.id, "loop", loop.id, "loop.state", { state: next.state, reason: command.reason });
       return result("loop", loop.id, next.version);
     }
+    if (command.type === "loop.extendBudget") {
+      const loop=await this.loop(tx,command.loopId,command.projectId);
+      this.version(loop.version,command.expectedLoopVersion);
+      if (loop.state!=="paused") return fail("LOOP_NOT_PAUSED","budget extension requires a paused Loop");
+      if (loop.maxRuns!==command.expectedMaxRuns || command.maxRuns!==loop.maxRuns+1)
+        return fail("BUDGET_MISMATCH","budget extension must match the current maximum and add exactly one Run");
+      if (await tx.hasOpenDispatch(loop.id))
+        return fail("LOOP_BUSY","all dispatches and Runs must be settled before extending the budget");
+      const next={...loop,maxRuns:command.maxRuns,version:loop.version+1,updatedAtUtc:now};
+      await tx.updateLoop(next,loop.version);
+      await event(loop.id,"loop",loop.id,"loop.budgetExtended",{
+        expectedMaxRuns:command.expectedMaxRuns,maxRuns:next.maxRuns,
+        evidenceRef:command.evidenceRef,reason:command.reason});
+      return result("loop",loop.id,next.version);
+    }
     if (command.type === "loop.resumeWaiting") {
+      if (command.continuation && command.businessRecovery)
+        return fail("INVALID_COMMAND", "waiting resume has one recovery mode");
       const loop = await this.loop(tx, command.loopId, command.projectId);
       this.version(loop.version, command.expectedLoopVersion);
       if (loop.state === "stopped") return fail("LOOP_STOPPED", "stopped loop cannot resume");
-      if (!command.continuation) this.active(loop);
+      if (!command.continuation && !command.businessRecovery) this.active(loop);
       if (!loop.stageId) return fail("STAGE_NOT_ACTIVE", "waiting resume requires an active enrolled Stage");
       const stage = await tx.getStageFact(loop.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
@@ -521,6 +544,42 @@ export class OrchestrationService {
         return fail("WAITING_UNAVAILABLE", "waiting cognition already has a child or unsettled dispatch");
       if (await tx.hasWaitingResume(decision.id)) return fail("ALREADY_RESUMED", "waiting decision has already been resumed");
       const previous = await tx.getSourceFact(dispatch.sourceEventId);
+      if (command.businessRecovery) {
+        const fixed=command.businessRecovery;
+        const business=previous?.kind==="worker.outcome" ? await tx.getVerifiedBusinessOutcome(previous.id) : null;
+        const origin=business ? await tx.getDispatch(business.dispatchId) : null;
+        const parent=origin?.parentDispatchId ? await tx.getDispatch(origin.parentDispatchId) : null;
+        const task=origin ? await tx.getTaskFact(origin.taskId) : null;
+        const basis=task && task.version===fixed.expectedTaskVersion
+          ? await tx.getSealedTaskBasis(task.id,task.version) : null;
+        if(!previous || previous.projectId!==loop.projectId || previous.sourceLoopId!==loop.id ||
+          !business || !origin || origin.projectId!==loop.projectId || origin.loopId!==loop.id ||
+          origin.id!==previous.originDispatchId || origin.taskId!==previous.subjectId ||
+          origin.version!==previous.subjectVersion || origin.recipientRoleId===loop.cognitiveRoleId ||
+          origin.state!=="completed" || !parent || parent.loopId!==loop.id ||
+          parent.recipientRoleId!==loop.cognitiveRoleId || parent.sourceEventId!==origin.sourceEventId ||
+          business.taskId!==origin.taskId || business.taskVersion!==origin.taskVersion ||
+          await tx.hasLaterDispatchForTask(origin.taskId,origin.id) ||
+          await tx.hasInFlightRunForTask(origin.taskId))
+          return fail("SOURCE_UNAVAILABLE","waiting must follow one settled business outcome in this Loop");
+        if(!task || task.projectId!==loop.projectId || task.version!==fixed.expectedTaskVersion ||
+          task.version<=origin.taskVersion ||
+          task.state!=="todo" || task.ownerRoleId!==origin.recipientRoleId ||
+          task.goalId!==loop.goalId || task.stageId!==loop.stageId ||
+          !basis || basis.basisSetId!==fixed.basisSetId)
+          return fail("TASK_CHANGED","business Task must have the observed current version and sealed basis");
+        await this.businessRecoveryAuthority(tx,loop,origin,now);
+        const next={...loop,version:loop.version+1,updatedAtUtc:now};
+        await tx.updateLoop(next,loop.version);
+        await event(loop.id,"decision",decision.id,"waiting.resumed",{
+          previousSourceEventId:previous.id,originalSourceEventId:previous.id,
+          decisionId:decision.id,dispatchId:dispatch.id,runId:run.id,
+          businessRecovery:{sourceEventId:previous.id,sourceDispatchId:origin.id,
+            taskId:task.id,taskVersion:task.version,basisSetId:basis.basisSetId},
+          resumedAtLoopVersion:next.version,evidenceRef:command.evidenceRef,reason:command.reason,
+        });
+        return result("loop",loop.id,next.version);
+      }
       if (command.continuation) {
         const continuation = command.continuation;
         const rootId = previous?.kind === "loop.enrolled" ? previous.id :
@@ -593,7 +652,9 @@ export class OrchestrationService {
         if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active")
           return fail("STAGE_NOT_ACTIVE", "resumed waiting source requires the same active enrolled Stage");
         const root = await tx.getSourceFact(source.originalSourceEventId!);
-        if (source.continuation) {
+        if (source.businessRecovery) {
+          await this.businessRecoveryReady(tx,loop,source);
+        } else if (source.continuation) {
           const task=await tx.getTaskFact(source.subjectId);
           if (!root || root.kind!=="loop.enrolled" || root.id!==loop.bootstrapEventId ||
             !source.waitingDecisionId || !source.originDispatchId || !source.waitingRunId ||
@@ -749,6 +810,7 @@ export class OrchestrationService {
       const stage = await tx.getStageFact(task.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage must be active under the loop goal");
       const cognitiveSource = cognitionRequest ? await tx.getSourceFact(inbox.sourceEventId) : null;
+      if(cognitiveSource?.businessRecovery) await this.businessRecoveryReady(tx,loop,cognitiveSource);
       const studyContinuation = cognitiveSource?.continuation;
       if (studyContinuation && cognitiveSource)
         await this.continuationDispatchReady(tx,loop,task,cognitiveSource,principal.actorId,command.dispatchId);
@@ -1151,10 +1213,66 @@ export class OrchestrationService {
     if (!stage || stage.projectId !== dispatch.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage changed before dispatch");
     if (dispatch.recipientRoleId===loop.cognitiveRoleId) {
       const source=await tx.getSourceFact(dispatch.sourceEventId);
+      if (source?.businessRecovery) await this.businessRecoveryReady(tx,loop,source);
       if (source?.continuation) {
         if (!source?.continuation) return fail("STUDY_CONTINUATION_CHANGED","signed continuation source is unavailable");
         await this.continuationDispatchReady(tx,loop,task,source,actorId,dispatch.id);
       }
+    }
+  }
+  private async businessRecoveryReady(tx:OrchestrationTransaction,loop:OrchestrationLoop,source:OrchestrationSourceFact){
+    const fixed=source.businessRecovery;
+    const business=fixed?await tx.getVerifiedBusinessOutcome(fixed.sourceEventId):null;
+    const origin=business?await tx.getDispatch(business.dispatchId):null;
+    const parent=origin?.parentDispatchId?await tx.getDispatch(origin.parentDispatchId):null;
+    const task=origin?await tx.getTaskFact(origin.taskId):null;
+    const basis=task?await tx.getSealedTaskBasis(task.id,task.version):null;
+    if(source.kind!=="waiting.resumed" || source.sourceLoopId!==loop.id || !fixed ||
+      source.previousSourceEventId!==fixed.sourceEventId || source.originalSourceEventId!==fixed.sourceEventId ||
+      !business || !origin || origin.loopId!==loop.id || origin.id!==fixed.sourceDispatchId ||
+      origin.recipientRoleId===loop.cognitiveRoleId || origin.state!=="completed" || !parent ||
+      parent.loopId!==loop.id || parent.recipientRoleId!==loop.cognitiveRoleId ||
+      parent.sourceEventId!==origin.sourceEventId ||
+      business.taskId!==fixed.taskId || !task || task.version!==fixed.taskVersion ||
+      task.version<=origin.taskVersion ||
+      task.state!=="todo" || task.ownerRoleId!==origin.recipientRoleId ||
+      task.goalId!==loop.goalId || task.stageId!==loop.stageId ||
+      !basis || basis.basisSetId!==fixed.basisSetId ||
+      await tx.hasLaterDispatchForTask(task.id,origin.id) || await tx.hasInFlightRunForTask(task.id))
+      return fail("BUSINESS_RECOVERY_CHANGED","business outcome, Task or sealed basis changed");
+    await this.businessRecoveryAuthority(tx,loop,origin,this.deps.now());
+  }
+  private async businessRecoveryAuthority(tx:OrchestrationTransaction,loop:OrchestrationLoop,
+    origin:OrchestrationDispatch,now:string){
+    if(origin.bindingId){
+      const policy=loop.currentPolicyRevisionId?await tx.getPolicy(loop.currentPolicyRevisionId):null;
+      const binding=await tx.getBinding(origin.bindingId);
+      const template=binding?await this.deps.getDelegationTemplate?.(loop.projectId,binding.template.id):null;
+      const role=binding?await tx.getRoleState(binding.roleId):null;
+      const runtime=template?.template?{
+        cwd:template.template.cwd,model:template.template.model,sandbox:template.template.sandbox,
+        networkAccess:template.template.networkAccess,approvalPolicy:template.template.approvalPolicy,
+        expiresAtUtc:template.template.expiresAtUtc}:null;
+      if(!policy || policy.loopId!==loop.id || !binding || binding.projectId!==loop.projectId ||
+        binding.loopId!==loop.id || binding.goalId!==loop.goalId || binding.roleId!==origin.recipientRoleId ||
+        binding.authorizationScopeId!==origin.authorizationScopeId ||
+        policy.bindingByRole[binding.roleId]!==binding.id ||
+        !policy.allowedBusinessRoleIds.includes(binding.roleId) ||
+        !template || template.hash!==binding.template.hash || template.template.revision!==binding.template.revision ||
+        canonical(template.template)!==canonical(binding.grant) || canonical(runtime)!==canonical(binding.runtime) ||
+        template.template.projectId!==loop.projectId || template.template.goalId!==loop.goalId ||
+        template.template.loopId!==loop.id || template.template.firstTaskId!==binding.firstTaskId ||
+        template.template.actorId!==binding.actorId ||
+        template.template.authorizationScopeId!==origin.authorizationScopeId ||
+        Date.parse(template.template.expiresAtUtc)<=Date.parse(now) ||
+        !role?.accepted || !["trial","active"].includes(role.state))
+        return fail("SCOPE_NOT_AUTHORIZED","current exact business binding and template are required");
+    }else{
+      const auth=await tx.getAuthorizationFact(origin.authorizationScopeId);
+      if(!auth || !auth.active || auth.projectId!==loop.projectId ||
+        auth.roleId!==origin.recipientRoleId || !auth.actorId ||
+        !await tx.canActAsRole(auth.actorId,origin.recipientRoleId))
+        return fail("SCOPE_NOT_AUTHORIZED","current business worker authorization is required");
     }
   }
   private claim(dispatch: OrchestrationDispatch, token: string, now: string, requireFreshLease = true) {
