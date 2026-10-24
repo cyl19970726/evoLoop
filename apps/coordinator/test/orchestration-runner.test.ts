@@ -167,6 +167,28 @@ function fixture() {
     lastScope: () => lastScope, lastInput: () => lastInput };
 }
 
+test("historical method-waiting stays pending without looking for a binding or starting a child", async () => {
+  const f=fixture(),parentId=loopIntentId("legacy-method-parent"),runId=loopIntentId("legacy-method-run");
+  const methodId=loopIntentId("legacy-method-decision"),firstTaskId=loopIntentId("legacy-method-task");
+  f.loop.dispatchCount=1;f.loop.maxRuns=1;
+  f.dispatches.push({projectId,id:parentId,version:5,loopId,inboxId:loopIntentId("legacy-method-inbox"),
+    sourceEventId:sourceId,taskId:loopIntentId("legacy-cognition-task"),taskVersion:2,parentDispatchId:null,
+    recipientRoleId:cognition,purpose:"cognition",authorizationScopeId:scopeId,state:"completed",
+    claimToken:null,leaseUntilUtc:null,runtimeRunId:runId,outcome:"waiting",deliveryId:null,evidenceRef:null,
+    reason:"Historical method waiting",requestedBy:principal.actorId,createdAtUtc:now,updatedAtUtc:now});
+  const orchestration=f.deps.orchestration as unknown as Record<string,unknown>;
+  orchestration.getDecisionForDispatch=async()=>({id:loopIntentId("legacy-waiting"),kind:"waiting",
+    divisionDecisionId:methodId,runId});
+  orchestration.getDivisionDecisionFact=async()=>({id:methodId,loopId,parentDispatchId:parentId,
+    sourceEventId:sourceId,firstTaskId,firstTaskVersion:1,choice:"method"});
+  orchestration.getBinding=async()=>{throw new Error("METHOD_MUST_NOT_READ_BINDING");};
+  const runner=new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  assert.equal(runner.status().faults.some(fault=>fault.code==="METHOD_MUST_NOT_READ_BINDING"),false);
+  assert.equal(f.dispatches.length,1);
+  assert.equal(f.commands.includes("division.consume"),false);
+});
+
 test("bootstrap seeds exactly one cognition Task and dispatch across repeated polls", async () => {
   const f = fixture(); const runner = new ManagedLoopRunner(f.deps);
   await runner.pump(); await runner.pump();
@@ -176,6 +198,48 @@ test("bootstrap seeds exactly one cognition Task and dispatch across repeated po
   assert.equal(f.dispatches.length, 1);
   assert.equal(f.dispatches[0]!.purpose, "cognition");
   assert.equal(f.commands.filter(type => type === "task.create").length, 1);
+});
+
+test("declared study copy recovers after a lost response and dispatches only the sealed Task version", async () => {
+  const f=fixture();
+  const declarationId=loopIntentId("study"),sourceDecisionId=loopIntentId("source-decision");
+  const sourceRunId=loopIntentId("source-run"),sourceRevisionId=loopIntentId("source-revision");
+  const initialRevisionId=loopIntentId("initial-task-revision"),copiedRevisionId=loopIntentId("copied-task-revision");
+  f.loop.currentStudyDeclarationId=declarationId;
+  (f.deps.orchestration as any).getStudyDeclaration=async()=>({id:declarationId,loopId,stageId,
+    controllerActorId:principal.actorId,items:[{sourceDecisionId,runId:sourceRunId,
+      targetTaskRevisionId:sourceRevisionId,inputHash:"a".repeat(64)}]});
+  const originalOperation=f.deps.workflow.getOperation.bind(f.deps.workflow);
+  (f.deps.workflow as any).getOperation=async (who:Principal,project:string,id:string)=>{
+    const existing=await originalOperation(who,project,id);
+    if(existing?.result?.status==="applied" && id===loopIntentId(loopIntentId(loopId,
+      loopIntentId(loopId,sourceId,"inbox"),"cognition-task"),"create"))
+      return {...existing,commandType:"task.create",result:{...existing.result,revisionId:initialRevisionId}};
+    return existing;
+  };
+  const originalTask=f.deps.workflow.getTask.bind(f.deps.workflow);
+  (f.deps.workflow as any).getTask=async(who:Principal,project:string,id:string)=>{
+    const detail=await originalTask(who,project,id);
+    return {...detail,task:{...detail.task,currentRevisionId:detail.task.version===1?initialRevisionId:copiedRevisionId}};
+  };
+  let copies=0,commits=0;
+  f.deps.applyStudyReference=async(_who,command,provenance)=>{
+    copies++;
+    assert.equal(provenance.declarationId,declarationId);
+    assert.equal(command.referenceId,sourceRunId);
+    assert.equal(command.expectedTaskVersion,1);
+    const task=f.tasks.get(command.taskId)!;
+    if(task.version===1){task.version=2;commits++;throw new Error("COPY_RESPONSE_LOST");}
+    return {status:"applied",operationId:command.operationId,entityId:command.taskId,
+      decisionId:command.decisionId,version:2,revisionId:copiedRevisionId};
+  };
+  const runner=new ManagedLoopRunner(f.deps);
+  await runner.pump();
+  assert.equal(commits,1);assert.equal(f.dispatches.length,0);
+  assert.equal(f.tasks.size,1);
+  await runner.pump();
+  assert.equal(copies,2);assert.equal(commits,1);
+  assert.equal(f.dispatches.length,1);assert.equal(f.dispatches[0]!.taskVersion,2);
 });
 
 test("pause blocks new claims while an accepted terminal Run can settle", async () => {

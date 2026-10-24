@@ -267,11 +267,41 @@ class PgReader implements Reader {
       JOIN orchestration_operation operation ON operation.project_id=requested.project_id
         AND operation.operation_id=requested.operation_id AND operation.actor_id=requested.actor_id
         AND operation.result->>'entityId'=child.dispatch_id::text
-      WHERE child.project_id=$1 AND child.dispatch_id=$2 AND child.state<>'rejected' LIMIT 1`,[this.projectId,dispatchId]);
-    const x=r.rows[0];return x?{projectId:this.projectId,dispatchId:x.dispatch_id,taskId:x.task_id,loopId:x.loop_id,
+      WHERE child.project_id=$1 AND child.dispatch_id=$2 AND child.state<>'rejected'
+        AND child.data->>'purpose'<>'division' LIMIT 1`,[this.projectId,dispatchId]);
+    const x=r.rows[0];
+    if(x)return {projectId:this.projectId,dispatchId:x.dispatch_id,taskId:x.task_id,loopId:x.loop_id,
       sourceEventId:x.source_event_id,parentDispatchId:x.parent_dispatch_id,recipientRoleId:x.recipient_role_id,
       cognitiveRoleId:x.cognitive_role_id,requestedBy:x.requested_by,requestedAtUtc:iso(x.requested_at_utc),
-      sourceInboxId:x.source_inbox_id} as ChildHandoffFact:null;
+      sourceInboxId:x.source_inbox_id} as ChildHandoffFact;
+    const delegated=await this.client.query(`SELECT child.dispatch_id,child.task_id,child.loop_id,child.inbox_id,
+      child.data->>'sourceEventId' AS source_event_id,child.data->>'parentDispatchId' AS parent_dispatch_id,
+      child.data->>'recipientRoleId' AS recipient_role_id,child.data->>'requestedBy' AS requested_by,
+      consumed.created_at_utc AS requested_at_utc,loop.data->>'cognitiveRoleId' AS cognitive_role_id,
+      binding.binding_id,waiting.decision_id AS waiting_decision_id,
+      (child.data->>'runtimeRunId')::uuid AS receiving_run_id
+      FROM orchestration_dispatch child
+      JOIN orchestration_loop loop ON loop.project_id=child.project_id AND loop.loop_id=child.loop_id
+      JOIN runtime_role_binding binding ON binding.project_id=child.project_id AND binding.binding_id=child.binding_id
+      JOIN orchestration_decision waiting ON waiting.project_id=child.project_id
+        AND waiting.dispatch_id=binding.parent_dispatch_id AND waiting.data->>'kind'='waiting'
+        AND waiting.data->>'divisionDecisionId'=binding.binding_id::text
+      JOIN orchestration_event consumed ON consumed.project_id=child.project_id
+        AND consumed.entity_id=child.dispatch_id AND consumed.kind='division.consumed'
+      WHERE child.project_id=$1 AND child.dispatch_id=$2 AND child.data->>'purpose'='division'
+        AND verified_division_closure_handoff(child.project_id,child.dispatch_id,waiting.decision_id)
+      LIMIT 2`,[this.projectId,dispatchId]).catch((error: unknown) => {
+      if (error && typeof error === "object" && "code" in error && error.code === "42883")
+        throw new DomainError("MIGRATION_REQUIRED", "Division closure requires database migration 023");
+      throw error;
+    });
+    if(delegated.rows.length!==1)return null;
+    const d=delegated.rows[0];
+    return {projectId:this.projectId,dispatchId:d.dispatch_id,taskId:d.task_id,loopId:d.loop_id,
+      sourceEventId:d.source_event_id,parentDispatchId:d.parent_dispatch_id,recipientRoleId:d.recipient_role_id,
+      cognitiveRoleId:d.cognitive_role_id,requestedBy:d.requested_by,requestedAtUtc:iso(d.requested_at_utc),
+      sourceInboxId:d.inbox_id,division:{bindingId:d.binding_id,waitingDecisionId:d.waiting_decision_id,
+        acknowledgedRunId:d.receiving_run_id}} as ChildHandoffFact;
   }
   async getWaitingHandoffFact(inboxId:string):Promise<WaitingHandoffFact|null> {
     const r=await this.client.query(`SELECT i.inbox_id,i.loop_id,i.source_event_id,i.recipient_role_id,e.actor_id
@@ -391,6 +421,8 @@ class PgTransaction extends PgReader implements Transaction {
   updateDiscussion(value: import("@evoloop/contracts").DiscussionRecord, expectedVersion: number, event: import("@evoloop/contracts").DiscussionEvent) { return this.discussions.updateDiscussion(value, expectedVersion, event); }
   insertFormalSourceDecision(value:FormalSourceDecision){return this.references.insertFormalSourceDecision(value);}
   insertTaskExternalDecision(value:TaskExternalReferenceRecord){return this.references.insertTaskExternalDecision(value);}
+  resolveStudyReferenceAuthority(provenance:import("@evoloop/contracts/references").StudyReferenceProvenance,
+    targetTaskId:string,actorId:string){return this.references.resolveStudyReferenceAuthority(provenance,targetTaskId,actorId);}
   advanceTaskExternalHead(value:TaskExternalReferenceHead,expectedVersion:number){return this.references.advanceTaskExternalHead(value,expectedVersion);}
 
   createRole(record: RoleRecord, revision: RoleRevision) { return this.roles.createRole(record, revision); }

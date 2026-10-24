@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import type { Principal, RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
+import type { CommandResult, Principal, RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact } from "@evoloop/contracts/orchestration";
+import type { StudyReferenceProvenance, TaskExternalReferenceCommand } from "@evoloop/contracts/references";
 import type { WorkflowService } from "@evoloop/core";
 import { OrchestrationError } from "@evoloop/core/orchestration";
 import type { OrchestrationService } from "@evoloop/core/orchestration";
@@ -36,6 +37,8 @@ export interface ManagedLoopDependencies {
   reader(projectId: string): Principal | null;
   orchestration: OrchestrationService;
   workflow: WorkflowService;
+  applyStudyReference?(principal: Principal, command: TaskExternalReferenceCommand,
+    provenance: StudyReferenceProvenance): Promise<CommandResult>;
   runtime: Pick<RuntimeRunner, "pump">;
   /** A live controller binding for the requested role and authorization scope. */
   controller(projectId: string, roleId: string): Promise<ManagedRoleProfile | null>;
@@ -257,6 +260,39 @@ export class ManagedLoopRunner {
         consumer: loop.cognitiveRoleId, useRequired: false,
         evidence: `Source event ${inbox.sourceEventId}`, stopCondition: "A decision is recorded for this source." }));
     }
+    if (current.currentStudyDeclarationId) {
+      if (!this.deps.applyStudyReference) throw new Error("STUDY_REFERENCE_UNAVAILABLE");
+      const declaration = await this.deps.orchestration.getStudyDeclaration(cognitive.principal,
+        loop.projectId,current.currentStudyDeclarationId);
+      if (!declaration || declaration.loopId !== loop.id || declaration.stageId !== loop.stageId ||
+        declaration.controllerActorId !== cognitive.principal.actorId) throw new Error("STUDY_DECLARATION_CHANGED");
+      const createOp = await this.deps.workflow.getOperation(cognitive.principal,loop.projectId,
+        loopIntentId(taskId,"create"));
+      if (!createOp || createOp.commandType !== "task.create" || createOp.result.status !== "applied" ||
+        createOp.result.entityId !== taskId || createOp.result.version !== 1 || !createOp.result.revisionId)
+        throw new Error("STUDY_RECEIVER_ORIGIN_UNVERIFIED");
+      let revisionId=createOp.result.revisionId, version=1;
+      for (const item of declaration.items) {
+        const prefix=[declaration.id,inbox.id,item.sourceDecisionId];
+        const provenance={declarationId:declaration.id,loopId:loop.id,inboxId:inbox.id,
+          sourceDecisionId:item.sourceDecisionId};
+        const command:TaskExternalReferenceCommand={projectId:loop.projectId,
+          operationId:loopIntentId(...prefix,"reference"),actorId:cognitive.principal.actorId,
+          decisionId:loopIntentId(...prefix,"decision"),taskId,taskRevisionId:revisionId,
+          expectedTaskVersion:version,slotId:loopIntentId(...prefix,"slot"),expectedHeadVersion:0,
+          decision:"adopt",kind:"run",referenceId:item.runId,revision:item.targetTaskRevisionId,
+          contentHash:item.inputHash,reason:`Declared trace study ${declaration.id}`,
+          actionImpact:"Review the fixed Run trace to compare actual work and choose a bounded next action."};
+        const result=await this.deps.applyStudyReference(cognitive.principal,command,provenance);
+        if (result.status!=="applied" || result.entityId!==taskId ||
+          result.decisionId!==command.decisionId || result.version!==version+1 || !result.revisionId)
+          throw new Error(`STUDY_COPY_${result.status === "rejected" ? result.code : "MISMATCH"}`);
+        revisionId=result.revisionId;version=result.version;
+      }
+      const copied=await this.deps.workflow.getTask(cognitive.principal,loop.projectId,taskId);
+      if (copied.task.version!==version || copied.task.currentRevisionId!==revisionId)
+        throw new Error("STUDY_RECEIVER_CHANGED");
+    }
     const detail = await this.deps.workflow.getTask(cognitive.principal, loop.projectId, taskId);
     await this.deps.orchestration.execute(cognitive.principal, { type: "dispatch.request", projectId: loop.projectId,
       operationId: loopIntentId(inbox.id, "cognition-dispatch-request"), inboxId: inbox.id,
@@ -448,7 +484,7 @@ export class ManagedLoopRunner {
     if (dispatch.bindingId && !handoff) throw new Error("DIVISION_BINDING_MISSING");
     const handoffContext = handoff ? ` Read fixed handoff binding ${handoff.id} at get /api/projects/${loop.projectId}/orchestration/bindings/${handoff.id}, then its original Document ${handoff.documentId} revision ${handoff.documentRevisionId} at get /api/projects/${loop.projectId}/documents/${handoff.documentId}/revisions/${handoff.documentRevisionId}/original; verify SHA-256 ${handoff.documentContentHash}. After this Run exists and you have read it, sign division.ackHandoff using dispatchId=${dispatch.id}, runId=${runId}, documentRevisionId=${handoff.documentRevisionId}, documentContentHash=${handoff.documentContentHash}, and the Run's taskRevisionId. You must sign this receipt yourself before worker.submit or worker.decision.` : "";
     const message = kind === "cognition"
-      ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. For bounded division choices read get /api/projects/${loop.projectId}/orchestration/loops/${loop.id}/delegation-choices; decide before your final worker decision and cite the resulting binding in waiting. To delegate through the static path, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
+      ? `Read Goal ${loop.goalId}, Stage ${loop.stageId}, your fixed context and relevant feedback with the scoped CLI. Review existing Stage Tasks; reuse a suitable todo Task without an in-flight or unknown Run, preserving its observed version, owner and fixed basis. Create one only for distinct work, not to bypass an active Task. Planning need not read business-only originals or trace; never claim those reads, and wait if your own required input or delegation authority is missing. Check exact same-parent/source children to avoid duplicate dispatch. For binding division choices read get /api/projects/${loop.projectId}/orchestration/loops/${loop.id}/delegation-choices; decide before your final worker decision. Method records an approach only: update content and consumer before fixing the first Task version; for a suitable todo Task request that exact Task and original Role through the ordinary same-source child path before signing waiting with divisionDecisionId=null. An in-progress cognition first Task can produce its own report through worker.submit; method alone is not a waiting handoff. Binding choices require their exact binding ID in waiting and cannot use an ordinary child. To delegate through the static path, accept the SAME source event as a next_action inbox, acknowledge it, then request the selected Stage-linked Task with parentDispatchId=${dispatch.id} and business role/scope: ${businessScopes}. Sign a worker submission or decision before this Turn ends.`
       : `Execute Task ${dispatch.taskId} from its fixed basis.${handoffContext} Record actual artifacts and checks using scoped worker.submit before this Turn ends. Do not invent a Delivery.`;
     const skillPath = profile.skillPath ?? `${profile.cwd}/.agents/skills/evoloop-workflow/SKILL.md`;
     const input = `Managed evoLoop ${kind} Run. Project ${loop.projectId}; loop ${loop.id}; dispatch ${dispatch.id}; Run ${runId}; Task ${dispatch.taskId}; source inbox ${dispatch.inboxId}; source event ${dispatch.sourceEventId}. Scoped CLI: ${wrapperPath}\n${message}${gapContext}${resumeContext}${scheduleContext}\nAuthorized writable workspace: ${profile.cwd}. Write command JSON files inside this directory, not /tmp or other external paths. Use the wrapper with command run FILE. Read this Run directly with get /api/projects/${loop.projectId}/runtime/runs/${runId} for its exact inputHash and taskRevisionId.\nProject skill: ${skillPath}`;
@@ -460,6 +496,9 @@ export class ManagedLoopRunner {
     if (parent.state !== "completed" || parent.outcome !== "waiting" || !parent.runtimeRunId) return;
     const decision = await this.deps.orchestration.getDecisionForDispatch(cognitive.principal, loop.projectId, parent.id);
     if (!decision || decision.kind !== "waiting" || !decision.divisionDecisionId || decision.runId !== parent.runtimeRunId) return;
+    const intent = await this.deps.orchestration.getDivisionDecisionFact(cognitive.principal,loop.projectId,decision.divisionDecisionId);
+    if (intent?.choice === "method" && intent.loopId === loop.id && intent.parentDispatchId === parent.id &&
+        intent.sourceEventId === parent.sourceEventId) return; // Legacy signed method-waiting has no binding or automatic child.
     const binding = await this.deps.orchestration.getBinding(cognitive.principal, loop.projectId, decision.divisionDecisionId);
     if (!binding || binding.parentDispatchId !== parent.id || binding.sourceEventId !== parent.sourceEventId ||
       binding.firstTaskId === parent.taskId || binding.loopId !== loop.id) throw new Error("DIVISION_BINDING_MISMATCH");

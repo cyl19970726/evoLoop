@@ -15,9 +15,15 @@ const cursor = z.strictObject({ createdAtUtc: utc, eventId: id.nullable() });
 const common = { projectId: id, operationId: id };
 
 export const orchestrationCommandSchema = z.discriminatedUnion("type", [
-  z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), reason }),
+  z.strictObject({ ...common, type: z.literal("loop.enroll"), loopId: id, goalId: id, stageId: id.nullable(), cognitiveRoleId: role, allowedBusinessRoleIds: z.array(role).min(1).max(20), sourceAfter: cursor, maxRuns: boundedCount, maxConcurrent: z.number().int().min(1).max(20), initialState: z.enum(["active", "paused"]).optional(), reason }),
   z.strictObject({ ...common, type: z.literal("loop.state"), loopId: id, expectedVersion: version, state: z.enum(["active", "paused", "stopped"]), reason }),
   z.strictObject({ ...common, type: z.literal("loop.resumeWaiting"), loopId: id, expectedLoopVersion: version, decisionId: id, dispatchId: id, evidenceRef: short, reason }),
+  z.strictObject({ ...common, type: z.literal("loop.studyMaterial.declare"), loopId: id,
+    expectedLoopVersion: version, declarationId: id, controllerActorId: role,
+    sourceTaskId: id, sourceTaskRevisionId: id,
+    sourceDecisionIds: z.array(id).min(1).max(10), reason }),
+  z.strictObject({ ...common, type: z.literal("loop.studyMaterial.revoke"), loopId: id,
+    expectedLoopVersion: version, declarationId: id, reason }),
   z.strictObject({ ...common, type: z.literal("division.decide"), decisionId: id, loopId: id, expectedLoopVersion: version,
     sourceEventId: id, parentDispatchId: id, documentId: id, documentRevisionId: id,
     documentContentHash: z.string().regex(/^[a-f0-9]{64}$/), firstTaskId: id, expectedFirstTaskVersion: version,
@@ -68,6 +74,21 @@ export interface OrchestrationLoop {
   maxRuns: number; maxConcurrent: number; dispatchCount: number; state: LoopState;
   enrolledBy: string; createdAtUtc: string; updatedAtUtc: string;
   currentPolicyRevisionId?: string;
+  currentStudyDeclarationId?: string | null;
+}
+export interface StudyMaterialItem {
+  sourceDecisionId: string; sourceSlotId: string; runId: string;
+  targetTaskRevisionId: string; inputHash: string;
+}
+export interface StudyMaterialDeclaration {
+  projectId: string; id: string; loopId: string; goalId: string; stageId: string;
+  sourceTaskId: string; sourceTaskRevisionId: string; items: StudyMaterialItem[];
+  actorId: string; controllerActorId: string; reason: string; operationId: string; createdAtUtc: string;
+}
+export interface StudyCopiedReference extends StudyMaterialItem {
+  kind: string; slotId: string; decisionId: string; provenance: {
+    declarationId: string; loopId: string; inboxId: string; sourceDecisionId: string;
+  } | null;
 }
 export interface OrchestrationInbox {
   projectId: string; id: string; version: number; loopId: string; sourceEventId: string;
@@ -137,7 +158,7 @@ export interface OrchestrationTaskScopeFact { projectId: string; taskId: string;
 export interface OrchestrationTaskRevisionFact { projectId: string; taskId: string; revisionId: string; version: number; ownerRoleId: string; actorId: string; reason: string }
 export interface OrchestrationGoalFact { projectId: string; id: string; state: string }
 export interface OrchestrationStageFact { projectId: string; id: string; goalId: string; state: string }
-export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown" }
+export interface OrchestrationRunFact { projectId: string; id: string; taskId: string; taskRevisionId: string; inputHash: string; state: "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown"; nativeTurnId: string | null }
 export interface OrchestrationDeliveryFact { projectId: string; id: string; taskId: string; taskRevisionId: string; runId: string | null; actorId: string; artifactRef: string; artifactRevision: string; contentHash: string; technicalResult: "passed" | "failed"; technicalEvidence: string }
 /** Historical scope is the nearest TaskProposal at or before the Delivery's fixed TaskRevision, never today's Task head. */
 export interface OrchestrationObservationFact { projectId: string; id: string; taskId: string; deliveryId: string; actorId: string; result: "used" | "failed" | "notUsed"; taskRevisionId: string; stageId: string | null }
@@ -149,6 +170,11 @@ export interface OrchestrationTransaction {
   getOperation(id: string): Promise<OrchestrationOperation | null>;
   insertOperation(value: OrchestrationOperation): Promise<void>;
   getLoop(id: string): Promise<OrchestrationLoop | null>;
+  getStudyDeclaration(id: string): Promise<StudyMaterialDeclaration | null>;
+  resolveStudySource(taskId: string, revisionId: string, decisionIds: string[]): Promise<StudyMaterialItem[] | null>;
+  getStudyTaskSnapshot(taskId: string, revisionId: string): Promise<StudyCopiedReference[]>;
+  isAutoCognitionTask(loopId: string, inboxId: string, taskId: string, controllerActorId: string,
+    stageId: string): Promise<boolean>;
   insertLoop(value: OrchestrationLoop): Promise<void>;
   updateLoop(value: OrchestrationLoop, expectedVersion: number): Promise<void>;
   getPolicy(id: string): Promise<LoopPolicyRevision | null>;
@@ -207,8 +233,10 @@ export interface OrchestrationReader {
   getOperation(id: string): Promise<OrchestrationOperation | null>;
   getSourceFact(id: string): Promise<OrchestrationSourceFact | null>;
   getLoop(id: string): Promise<OrchestrationLoop | null>;
+  getStudyDeclaration(id: string): Promise<StudyMaterialDeclaration | null>;
   getPolicy(id: string): Promise<LoopPolicyRevision | null>;
   getBinding(id: string): Promise<RuntimeRoleBinding | null>;
+  getDivisionDecisionFact(id: string): Promise<OrchestrationDivisionDecisionFact | null>;
   listLoops(limit: number, cursor?: string): Promise<{ items: OrchestrationLoop[]; nextCursor: string | null }>;
   getInbox(id: string): Promise<OrchestrationInbox | null>;
   listInbox(loopId: string, limit: number, cursor?: string): Promise<{ items: OrchestrationInbox[]; nextCursor: string | null }>;

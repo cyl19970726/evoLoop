@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Principal } from "@evoloop/contracts";
-import type { ReferenceUnitOfWork } from "@evoloop/contracts/references";
+import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import type { ExternalReferenceKind, ReferenceUnitOfWork } from "@evoloop/contracts/references";
 import type { DocumentSource } from "@evoloop/contracts/sources";
 import type { KnowledgeRepository } from "@evoloop/contracts/knowledge";
 import { DomainError } from "@evoloop/contracts/ports";
-import { decideTaskExternalReference, recordFormalSourceDecision, registerFixedGitReference } from "@evoloop/core/references";
+import { decideTaskExternalReference, fixedRunMatches, recordFormalSourceDecision, registerFixedGitReference } from "@evoloop/core/references";
 import type { ExternalReferenceObservation } from "@evoloop/core/references";
 
 const id = z.uuid();
@@ -20,13 +20,24 @@ export interface ReferenceRouteOptions {
   uow: ReferenceUnitOfWork;
   gitForPrincipal(principal: Principal): DocumentSource | Promise<DocumentSource>;
   knowledgeForPrincipal(principal: Principal, projectId: string): KnowledgeRepository | Promise<KnowledgeRepository>;
+  runSessionAvailable?(projectId: string, run: RuntimeRunRecord, session: RuntimeSessionRecord): Promise<boolean>;
+  hasCurrentStudyReviewer?(projectId: string, actorId: string): Promise<boolean>;
 }
-export function registerReferenceRoutes(app: FastifyInstance, options: ReferenceRouteOptions): void {
-  async function deps(principal: Principal) {
+export async function createReferenceDependencies(options: ReferenceRouteOptions, principal: Principal) {
     const git = await options.gitForPrincipal(principal);
     return { uow: options.uow, git, hashText: hash, nextId: randomUUID, now: () => new Date().toISOString(),
-      observeExternal: async (actor: Principal, projectId: string, kind: "git" | "wiki", referenceId: string,
+      ...(options.hasCurrentStudyReviewer ? {hasCurrentStudyReviewer:options.hasCurrentStudyReviewer} : {}),
+      observeExternal: async (actor: Principal, projectId: string, kind: ExternalReferenceKind, referenceId: string,
         revision: string, contentHash: string): Promise<ExternalReferenceObservation> => {
+        if (kind === "run") {
+          const run = await options.uow.read(projectId, reader => reader.getRuntimeRun(referenceId));
+          const session = run ? await options.uow.read(projectId, reader => reader.getRuntimeSession(run.sessionId)) : null;
+          const available = fixedRunMatches(projectId, run, session, referenceId, revision, contentHash) &&
+            !!options.runSessionAvailable && await options.runSessionAvailable(projectId, run!, session!);
+          return { status: available ? "reachable" : "unavailable", revision, contentHash,
+            currentRevision: run?.taskRevisionId ?? revision, currentHash: run?.inputHash ?? contentHash,
+            currentValidity: available ? "valid" : "unavailable" };
+        }
         if (kind === "git") {
           const registered = await options.uow.read(projectId, reader => reader.getGitSourceRef(referenceId));
           if (!registered || registered.ref.commit !== revision || registered.ref.contentHash !== contentHash)
@@ -50,10 +61,11 @@ export function registerReferenceRoutes(app: FastifyInstance, options: Reference
           currentRevision: current.revision, currentHash: current.contentHash, currentValidity };
       } };
   }
+export function registerReferenceRoutes(app: FastifyInstance, options: ReferenceRouteOptions): void {
   app.post("/api/projects/:projectId/references/git", async request => {
     const { projectId } = z.object({ projectId: id }).parse(request.params);
     const principal = scoped(request.principal, projectId, "write");
-    return registerFixedGitReference(await deps(principal), principal,
+    return registerFixedGitReference(await createReferenceDependencies(options, principal), principal,
       { ...z.record(z.string(), z.unknown()).parse(request.body), projectId, actorId: principal.actorId });
   });
   app.get("/api/projects/:projectId/references/git/:referenceId", async request => {
@@ -69,7 +81,7 @@ export function registerReferenceRoutes(app: FastifyInstance, options: Reference
   app.post("/api/projects/:projectId/references/formal-decisions", async request => {
     const { projectId } = z.object({ projectId: id }).parse(request.params);
     const principal = scoped(request.principal, projectId, "review");
-    return recordFormalSourceDecision(await deps(principal), principal,
+    return recordFormalSourceDecision(await createReferenceDependencies(options, principal), principal,
       { ...z.record(z.string(), z.unknown()).parse(request.body), projectId, actorId: principal.actorId });
   });
   app.get("/api/projects/:projectId/references/git/:referenceId/formal-decisions", async request => {
@@ -80,7 +92,7 @@ export function registerReferenceRoutes(app: FastifyInstance, options: Reference
   app.post("/api/projects/:projectId/references/tasks/:taskId/decisions", async request => {
     const { projectId, taskId } = z.object({ projectId: id, taskId: id }).parse(request.params);
     const principal = scoped(request.principal, projectId, "review");
-    return decideTaskExternalReference(await deps(principal), principal,
+    return decideTaskExternalReference(await createReferenceDependencies(options, principal), principal,
       { ...z.record(z.string(), z.unknown()).parse(request.body), projectId, taskId, actorId: principal.actorId });
   });
   app.get("/api/projects/:projectId/references/tasks/:taskId", async request => {

@@ -9,6 +9,13 @@ export const authConfigSchema = z.array(z.strictObject({
   permissions: z.array(z.enum(["read", "write", "review"])).min(1),
 })).min(1).refine(items => new Set(items.map(x => x.token)).size === items.length, "Tokens must be unique");
 export type AuthConfig = z.infer<typeof authConfigSchema>;
+/** A study declaration keeps authority only while its actual reviewer credential remains configured. */
+export function hasCurrentStudyReviewer(credentials: AuthConfig, projectId: string, actorId: string): boolean {
+  const entries = credentials.filter(entry => entry.actorId === actorId && entry.projectIds.includes(projectId));
+  // Equivalent tokens for one identity may overlap during rotation. Never combine partial grants.
+  return entries.length > 0 && entries.every(entry =>
+    (["read", "write", "review"] as const).every(permission => entry.permissions.includes(permission)));
+}
 export function authenticate(header: string | undefined, credentials: AuthConfig): Principal | null {
   if (!header?.startsWith("Bearer ")) return null;
   const token = Buffer.from(header.slice(7));

@@ -1,9 +1,9 @@
-import type { AppliedResult, CommandResult, Operation, OutboxEvent, Principal } from "@evoloop/contracts";
+import type { AppliedResult, CommandResult, Operation, OutboxEvent, Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { DocumentSource, GitSourceRef } from "@evoloop/contracts/sources";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { FormalSourceDecisionCommand, ReferenceTransaction, ReferenceUnitOfWork, RegisterGitReference,
-  TaskExternalReferenceCommand, TaskExternalReferenceRecord } from "@evoloop/contracts/references";
+  TaskExternalReferenceCommand, TaskExternalReferenceRecord, ExternalReferenceKind, StudyReferenceProvenance } from "@evoloop/contracts/references";
 import { currentRetentions } from "../runtime/basis.js";
 
 export interface ExternalReferenceObservation {
@@ -13,15 +13,28 @@ export interface ExternalReferenceObservation {
 }
 export interface ReferenceDependencies {
   uow: ReferenceUnitOfWork; git: DocumentSource;
-  observeExternal(principal: Principal, projectId: string, kind: "git" | "wiki", referenceId: string,
+  observeExternal(principal: Principal, projectId: string, kind: ExternalReferenceKind, referenceId: string,
     revision: string, contentHash: string): Promise<ExternalReferenceObservation>;
   hashText(value: string): string; nextId(): string; now(): string;
+  hasCurrentStudyReviewer?(projectId: string, actorId: string): Promise<boolean>;
+}
+/** A Run reference identifies the frozen input, not a hash of its mutable native transcript. */
+export function fixedRunMatches(projectId: string, run: RuntimeRunRecord | null, session: RuntimeSessionRecord | null,
+  referenceId: string, revision: string, contentHash: string): boolean {
+  return !!run && !!session && run.projectId === projectId && session.projectId === projectId &&
+    run.id === referenceId && run.taskRevisionId === revision && run.inputHash === contentHash &&
+    ["completed", "failed", "interrupted"].includes(run.state) && !!run.nativeTurnId &&
+    run.sessionId === session.id && session.state === "ready" && !!session.nativeThreadId && !!session.nativeSessionId;
 }
 type ReferenceCommand = RegisterGitReference | FormalSourceDecisionCommand | TaskExternalReferenceCommand;
 const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` :
   value && typeof value === "object" ? `{${Object.entries(value).filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}` : JSON.stringify(value);
 
+const studyIntentId = (hash: (value: string) => string, ...parts: string[]): string => {
+  const hex = hash(JSON.stringify(parts));
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex[16]!, 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
 function authority(principal: Principal, command: ReferenceCommand, permission: "write" | "review"): void {
   if (!principal.actorId || principal.actorId !== command.actorId || !principal.projectIds.includes(command.projectId) ||
       !principal.permissions.includes(permission)) throw new DomainError("FORBIDDEN", "Project reference authority is required");
@@ -33,8 +46,8 @@ function replay(prior: Operation, principal: Principal, hash: string): CommandRe
 }
 async function journal(deps: ReferenceDependencies, principal: Principal, command: ReferenceCommand,
   type: "reference.git" | "reference.formal" | "reference.task", entityId: string,
-  apply: (tx: ReferenceTransaction) => Promise<AppliedResult>): Promise<CommandResult> {
-  const commandHash = deps.hashText(canonical({ command, actorId: principal.actorId }));
+  apply: (tx: ReferenceTransaction) => Promise<AppliedResult>, provenance?: StudyReferenceProvenance): Promise<CommandResult> {
+  const commandHash = deps.hashText(canonical({ command, actorId: principal.actorId, ...(provenance ? {provenance} : {}) }));
   return deps.uow.transaction(command.projectId, async tx => {
     const prior = await tx.getOperation(command.operationId);
     if (prior) return replay(prior, principal, commandHash);
@@ -110,10 +123,31 @@ export async function recordFormalSourceDecision(deps: ReferenceDependencies, pr
 }
 
 export async function decideTaskExternalReference(deps: ReferenceDependencies, principal: Principal, input: unknown): Promise<CommandResult> {
+  return decideReference(deps, principal, input);
+}
+
+/** Managed runner entry; current authority is resolved from trusted PG facts in the reference transaction. */
+export async function applyDeclaredStudyReference(deps: ReferenceDependencies, principal: Principal,
+  input: unknown, provenance: StudyReferenceProvenance): Promise<CommandResult> {
+  return decideReference(deps, principal, input, provenance);
+}
+
+async function decideReference(deps: ReferenceDependencies, principal: Principal, input: unknown,
+  provenance?: StudyReferenceProvenance): Promise<CommandResult> {
   const command = taskExternalReferenceSchema.parse(input);
-  authority(principal, command, "review");
+  authority(principal, command, provenance ? "write" : "review");
+  if (provenance && (command.kind !== "run" || command.decision !== "adopt" ||
+    command.expectedHeadVersion !== 0 || !principal.permissions.includes("read")))
+    throw new DomainError("STUDY_AUTHORITY_DENIED", "Study material may only adopt one declared Run into a fresh slot");
+  if (provenance) {
+    const parts = [provenance.declarationId, provenance.inboxId, provenance.sourceDecisionId];
+    if (command.operationId !== studyIntentId(deps.hashText, ...parts, "reference") ||
+      command.decisionId !== studyIntentId(deps.hashText, ...parts, "decision") ||
+      command.slotId !== studyIntentId(deps.hashText, ...parts, "slot"))
+      throw new DomainError("STUDY_AUTHORITY_DENIED", "Study copy requires the runner's exact operation, decision and slot identities");
+  }
   const prior = await deps.uow.read(command.projectId, reader => reader.getOperation(command.operationId));
-  const commandHash = deps.hashText(canonical({ command, actorId: principal.actorId }));
+  const commandHash = deps.hashText(canonical({ command, actorId: principal.actorId, ...(provenance ? {provenance} : {}) }));
   if (prior) return replay(prior, principal, commandHash);
   const observed = await deps.observeExternal(principal, command.projectId, command.kind, command.referenceId,
     command.revision, command.contentHash);
@@ -121,8 +155,16 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
       observed.currentValidity !== "valid" ||
       command.decision !== "retain" && (observed.currentRevision !== command.revision || observed.currentHash !== command.contentHash))
     return journal(deps, principal, command, "reference.task", command.taskId,
-      async () => { throw new DomainError("BASIS_UNAVAILABLE", "External reference is changed, withdrawn or unavailable"); });
+      async () => { throw new DomainError("BASIS_UNAVAILABLE", "External reference is changed, withdrawn or unavailable"); }, provenance);
   return journal(deps, principal, command, "reference.task", command.taskId, async tx => {
+    if (provenance) {
+      const source = await tx.resolveStudyReferenceAuthority(provenance, command.taskId, principal.actorId);
+      if (!source || !await deps.hasCurrentStudyReviewer?.(command.projectId,source.declaringActorId) ||
+        source.source.kind !== "run" || source.source.id !== provenance.sourceDecisionId ||
+        source.source.referenceId !== command.referenceId || source.source.revision !== command.revision ||
+        source.source.contentHash !== command.contentHash)
+        throw new DomainError("STUDY_AUTHORITY_DENIED", "Current declaration, source and target Task do not match");
+    }
     const task = await tx.getTask(command.taskId);
     const revision = await tx.getTaskRevision(command.taskId, command.taskRevisionId);
     if (!task || !revision || task.currentRevisionId !== command.taskRevisionId || task.version !== command.expectedTaskVersion)
@@ -135,6 +177,12 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
       const git = await tx.getGitSourceRef(command.referenceId);
       if (!git || git.state !== "reachable" || git.ref.commit !== command.revision || git.ref.contentHash !== command.contentHash)
         throw new DomainError("BASIS_UNAVAILABLE", "Git reference is not the registered fixed original");
+    }
+    if (command.kind === "run") {
+      const run = await tx.getRuntimeRun(command.referenceId);
+      const session = run ? await tx.getRuntimeSession(run.sessionId) : null;
+      if (!fixedRunMatches(command.projectId, run, session, command.referenceId, command.revision, command.contentHash))
+        throw new DomainError("BASIS_UNAVAILABLE", "Run no longer has a bound terminal owned input");
     }
     const head = await tx.getTaskExternalHead(command.taskId, command.slotId);
     if ((head?.version ?? 0) !== command.expectedHeadVersion)
@@ -154,7 +202,7 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
       referenceId: command.referenceId, revision: command.revision, contentHash: command.contentHash,
       reason: command.reason, actionImpact: command.actionImpact, actorId: principal.actorId, createdAt: deps.now(),
       observedCurrentRevision: observed.currentRevision, observedCurrentHash: observed.currentHash,
-      observedCurrentValidity: "valid" };
+      observedCurrentValidity: "valid", ...(provenance ? {studyProvenance: provenance} : {}) };
     await tx.insertTaskExternalDecision(value);
     if (!await tx.advanceTaskExternalHead({ projectId: command.projectId, taskId: command.taskId,
       slotId: command.slotId, version: value.version, decisionId: value.id }, command.expectedHeadVersion))
@@ -176,5 +224,5 @@ export async function decideTaskExternalReference(deps: ReferenceDependencies, p
     await tx.updateTask({ ...task, version: nextRevision.version, currentRevisionId: nextRevisionId }, task.version);
     return { status: "applied", operationId: command.operationId, entityId: command.taskId,
       version: nextRevision.version, revisionId: nextRevisionId, decisionId: command.decisionId };
-  });
+  }, provenance);
 }

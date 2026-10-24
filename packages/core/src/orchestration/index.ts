@@ -2,7 +2,7 @@ import type { Operation, OutboxEvent, Principal } from "@evoloop/contracts";
 import { applyRole, RoleRuleError } from "../roles/index.js";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
-import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
+import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTransaction, OrchestrationWorkerDecision, StudyMaterialDeclaration, StudyMaterialItem } from "@evoloop/contracts/orchestration";
 
 export class OrchestrationError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "OrchestrationError"; }
@@ -13,6 +13,8 @@ export interface OrchestrationDependencies { store: OrchestrationStore; now(): s
   getTrialController?(projectId: string, actorId: string): Promise<Principal | null>;
   verifyProposalMaterial?(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
   canReadDivisionMaterial?(actorId: string, documentId: string, revisionId: string): Promise<boolean>;
+  canReadStudySourceRun?(principal: Principal, projectId: string, runId: string): Promise<boolean>;
+  hasCurrentStudyReviewer?(projectId: string, actorId: string): Promise<boolean>;
 }
 const fail = (code: string, message: string, currentVersion?: number): never => { throw new OrchestrationError(code, message, currentVersion); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
@@ -22,6 +24,13 @@ const scheduleIdFor = (hash: (value: string) => string, value: string): string =
   const hex = hash(value);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
+const studyIntentId = (hash: (value: string) => string, ...parts: string[]): string => {
+  const hex = hash(JSON.stringify(parts));
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex[16]!, 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+const sameStudyItem=(a:StudyMaterialItem,b:StudyMaterialItem)=>a.sourceDecisionId===b.sourceDecisionId &&
+  a.sourceSlotId===b.sourceSlotId && a.runId===b.runId &&
+  a.targetTaskRevisionId===b.targetTaskRevisionId && a.inputHash===b.inputHash;
 
 /** Only persists orchestration decisions. WorkflowService remains the sole Task/Run/Delivery writer. */
 export class OrchestrationService {
@@ -32,8 +41,8 @@ export class OrchestrationService {
     if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
-    if ((command.type === "loop.resumeWaiting" || command.type === "division.consume" || command.type === "division.confirmTransfer") && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot consume or resume waiting cognition");
+    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    if ((command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer") && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot change a Loop's study authority");
     const now = this.deps.now();
     if (!Number.isFinite(Date.parse(now)) || !now.endsWith("Z")) return fail("INVALID_TIME", "clock must return UTC time");
     return this.deps.store.transaction(command.projectId, async tx => {
@@ -55,8 +64,10 @@ export class OrchestrationService {
   async getInbox(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getInbox(id)); }
   async getDispatch(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getDispatch(id)); }
   async getLoop(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getLoop(id)); }
+  async getStudyDeclaration(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getStudyDeclaration(id)); }
   async getPolicy(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getPolicy(id)); }
   async getBinding(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getBinding(id)); }
+  async getDivisionDecisionFact(principal: Principal, projectId: string, id: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.getDivisionDecisionFact(id)); }
   async listLoops(principal: Principal, projectId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listLoops(this.limit(limit), cursor)); }
   async listInbox(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listInbox(loopId, this.limit(limit), cursor)); }
   async listDispatches(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listDispatches(loopId, this.limit(limit), cursor)); }
@@ -91,7 +102,7 @@ export class OrchestrationService {
       }
       return;
     }
-    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
+    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
     let loop: OrchestrationLoop | null = null;
     let dispatch: OrchestrationDispatch | null = null;
     if (command.type === "inbox.accept") loop = await tx.getLoop(command.loopId);
@@ -169,11 +180,55 @@ export class OrchestrationService {
       if (await tx.getLoop(command.loopId)) return fail("ALREADY_EXISTS", "loop ID already enrolled");
       const bootstrapEventId = this.deps.nextId();
       const policyId = this.deps.nextId();
-      const loop: OrchestrationLoop = { projectId: command.projectId, id: command.loopId, version: 1, goalId: goal.id, stageId: command.stageId, bootstrapEventId, cognitiveRoleId: command.cognitiveRoleId, allowedBusinessRoleIds: command.allowedBusinessRoleIds, sourceAfter: command.sourceAfter, maxRuns: command.maxRuns, maxConcurrent: command.maxConcurrent, dispatchCount: 0, state: "active", enrolledBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, currentPolicyRevisionId: policyId };
+      const loop: OrchestrationLoop = { projectId: command.projectId, id: command.loopId, version: 1, goalId: goal.id, stageId: command.stageId, bootstrapEventId, cognitiveRoleId: command.cognitiveRoleId, allowedBusinessRoleIds: command.allowedBusinessRoleIds, sourceAfter: command.sourceAfter, maxRuns: command.maxRuns, maxConcurrent: command.maxConcurrent, dispatchCount: 0, state: command.initialState ?? "active", enrolledBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, currentPolicyRevisionId: policyId, currentStudyDeclarationId: null };
       await tx.insertLoop(loop);
       await tx.insertPolicy({ projectId: command.projectId, id: policyId, loopId: loop.id, version: 1, previousId: null, allowedBusinessRoleIds: [...command.allowedBusinessRoleIds], bindingByRole: {}, changedBindingId: null, decisionOperationId: null, actorId: principal.actorId, createdAtUtc: now });
-      await event(loop.id, "loop", loop.id, "loop.enrolled", { goalId: loop.goalId, stageId: loop.stageId, sourceAfter: loop.sourceAfter, policyRevisionId: policyId }, bootstrapEventId);
+      await event(loop.id, "loop", loop.id, "loop.enrolled", { goalId: loop.goalId, stageId: loop.stageId, sourceAfter: loop.sourceAfter, policyRevisionId: policyId,
+        ...(command.initialState ? { initialState: command.initialState } : {}) }, bootstrapEventId);
       return result("loop", loop.id, 1);
+    }
+    if (command.type === "loop.studyMaterial.declare") {
+      const loop = await this.loop(tx, command.loopId, command.projectId);
+      if (loop.state === "stopped") return fail("LOOP_STOPPED", "stopped loop cannot accept study material");
+      this.version(loop.version, command.expectedLoopVersion);
+      if (!principal.permissions.includes("read") ||
+        !await this.deps.hasCurrentStudyReviewer?.(loop.projectId, principal.actorId) || !loop.stageId ||
+        new Set(command.sourceDecisionIds).size !== command.sourceDecisionIds.length ||
+        loop.currentStudyDeclarationId || await tx.getStudyDeclaration(command.declarationId))
+        return fail("STUDY_DECLARATION_DENIED", "one new bounded declaration and project read authority are required");
+      const stage = await tx.getStageFact(loop.stageId);
+      const controller = await this.deps.getTrialController?.(loop.projectId, command.controllerActorId);
+      if (!stage || stage.goalId !== loop.goalId || stage.state !== "active" ||
+        !controller || controller.actorId !== command.controllerActorId ||
+        !controller.projectIds.includes(loop.projectId) || !controller.permissions.includes("write"))
+        return fail("STUDY_DECLARATION_DENIED", "active Goal Stage and configured controller are required");
+      const items = await tx.resolveStudySource(command.sourceTaskId, command.sourceTaskRevisionId,
+        command.sourceDecisionIds);
+      if (!items || items.length !== command.sourceDecisionIds.length ||
+        !(await Promise.all(items.map(item => this.deps.canReadStudySourceRun?.(principal, loop.projectId, item.runId)))).every(Boolean))
+        return fail("STUDY_SOURCE_UNAVAILABLE", "each declared current Run reference must remain readable under its own grant");
+      const declaration: StudyMaterialDeclaration = { projectId: loop.projectId, id: command.declarationId,
+        loopId: loop.id, goalId: loop.goalId, stageId: loop.stageId,
+        sourceTaskId: command.sourceTaskId, sourceTaskRevisionId: command.sourceTaskRevisionId,
+        items, actorId: principal.actorId, controllerActorId: command.controllerActorId,
+        reason: command.reason, operationId: command.operationId, createdAtUtc: now };
+      await tx.updateLoop({ ...loop, version: loop.version + 1,
+        currentStudyDeclarationId: declaration.id, updatedAtUtc: now }, loop.version);
+      await event(loop.id, "decision", declaration.id, "loop.studyMaterial.declared", { declaration, command });
+      return result("decision", declaration.id, 1);
+    }
+    if (command.type === "loop.studyMaterial.revoke") {
+      const loop = await this.loop(tx, command.loopId, command.projectId);
+      this.version(loop.version, command.expectedLoopVersion);
+      if (loop.currentStudyDeclarationId !== command.declarationId ||
+        !await tx.getStudyDeclaration(command.declarationId))
+        return fail("STUDY_DECLARATION_CHANGED", "current study declaration is unavailable");
+      const next = { ...loop, version: loop.version + 1, currentStudyDeclarationId: null,
+        updatedAtUtc: now };
+      await tx.updateLoop(next, loop.version);
+      await event(loop.id, "decision", command.declarationId, "loop.studyMaterial.revoked", {
+        declarationId: command.declarationId, reason: command.reason });
+      return result("loop", loop.id, next.version);
     }
     if (command.type === "division.decide") {
       const loop = await this.loop(tx, command.loopId, command.projectId);
@@ -617,6 +672,7 @@ export class OrchestrationService {
       if (inbox.state !== "acknowledged") return fail("ACK_REQUIRED", "acknowledged inbox item required");
       if (loop.dispatchCount >= loop.maxRuns) return fail("RUN_LIMIT", "loop run budget exhausted");
       const cognitionRequest = command.recipientRoleId === loop.cognitiveRoleId;
+      let methodIntent = false;
       if (cognitionRequest) {
         if (command.purpose !== "cognition" || inbox.purpose !== "cognitive_review" || command.parentDispatchId !== null) return fail("INVALID_CAUSALITY", "cognition requires cognitive_review inbox without a parent dispatch");
       } else {
@@ -629,15 +685,57 @@ export class OrchestrationService {
         // A signed decision fixes the parent's choice. The project transaction lock orders
         // child requests and worker decisions even when their UTC timestamps are identical.
         if (await tx.findDecisionByDispatch(parent.id)) return fail("PARENT_DECIDED", "cognition decision is already signed; no later child dispatch can be attributed to it");
-        if (await tx.findDivisionDecisionForParent(parent.id))
-          return fail("DIVISION_INTENT_PENDING", "cognition parent already fixed a division intent; ordinary child dispatch cannot replace it");
+        const intent = await tx.findDivisionDecisionForParent(parent.id);
+        if (intent && intent.choice !== "method")
+          return fail("DIVISION_INTENT_PENDING", "cognition parent already fixed a binding intent; ordinary child dispatch cannot replace it");
+        methodIntent = !!intent;
+        if (intent && (intent.loopId !== loop.id || intent.parentDispatchId !== parent.id ||
+          intent.sourceEventId !== inbox.sourceEventId || intent.firstTaskId !== command.taskId ||
+          intent.firstTaskVersion !== command.expectedTaskVersion))
+          return fail("METHOD_TASK_MISMATCH", "method permits only its fixed first Task and source");
       }
       const auth = await tx.getAuthorizationFact(command.authorizationScopeId);
       if (!auth || auth.projectId !== command.projectId || !auth.active || auth.roleId !== command.recipientRoleId) return fail("SCOPE_NOT_AUTHORIZED", "active scoped worker authorization required");
       const task = await tx.getTaskFact(command.taskId);
       if (!task || task.projectId !== command.projectId || task.version !== command.expectedTaskVersion || (task.state !== "todo" && task.state !== "in_progress") || task.ownerRoleId !== command.recipientRoleId || task.goalId !== loop.goalId || !task.stageId || (loop.stageId !== null && task.stageId !== loop.stageId)) return fail("TASK_CHANGED", "Task current version, state, owner, and loop scope must match");
+      if (methodIntent && task.state !== "todo")
+        return fail("METHOD_TASK_MISMATCH", "method cannot reopen an in-progress first Task as an ordinary child");
       const stage = await tx.getStageFact(task.stageId);
       if (!stage || stage.projectId !== command.projectId || stage.goalId !== loop.goalId || stage.state !== "active") return fail("STAGE_NOT_ACTIVE", "Task stage must be active under the loop goal");
+      if (cognitionRequest && !loop.currentStudyDeclarationId) {
+        const fixed = await tx.getTaskRevisionFact(task.id,task.version);
+        if (fixed && (await tx.getStudyTaskSnapshot(task.id,fixed.revisionId)).some(item=>item.provenance))
+          return fail("STUDY_DECLARATION_CHANGED", "Previously copied study material cannot dispatch after revocation");
+      }
+      if (cognitionRequest && loop.currentStudyDeclarationId) {
+        const declaration = await tx.getStudyDeclaration(loop.currentStudyDeclarationId);
+        if (!declaration || !await this.deps.hasCurrentStudyReviewer?.(loop.projectId,declaration.actorId) ||
+          declaration.loopId !== loop.id || declaration.stageId !== task.stageId ||
+          declaration.controllerActorId !== principal.actorId ||
+          !await tx.isAutoCognitionTask(loop.id, inbox.id, task.id, principal.actorId, task.stageId))
+          return fail("STUDY_AUTHORITY_DENIED", "Cognition Task must be the verified software-created study receiver");
+        const currentItems = await tx.resolveStudySource(declaration.sourceTaskId,
+          declaration.sourceTaskRevisionId,declaration.items.map(item=>item.sourceDecisionId));
+        if (!currentItems || currentItems.length !== declaration.items.length ||
+          currentItems.some((item,index)=>!sameStudyItem(item,declaration.items[index]!)) ||
+          !(await Promise.all(declaration.items.map(item=>this.deps.canReadStudySourceRun?.(principal,loop.projectId,item.runId)))).every(Boolean))
+          return fail("STUDY_SOURCE_UNAVAILABLE", "Declared source head, Run or grant changed before dispatch");
+        const fixed = await tx.getTaskRevisionFact(task.id,task.version);
+        const snapshot = fixed ? await tx.getStudyTaskSnapshot(task.id,fixed.revisionId) : [];
+        if (!fixed || task.version !== declaration.items.length + 1 ||
+          snapshot.length !== declaration.items.length || declaration.items.some(item=>{
+            const provenance={declarationId:declaration.id,loopId:loop.id,inboxId:inbox.id,
+              sourceDecisionId:item.sourceDecisionId};
+            const found=snapshot.find(value=>value.provenance?.sourceDecisionId===item.sourceDecisionId);
+            return !found || found.kind!=="run" || found.runId!==item.runId ||
+              found.targetTaskRevisionId!==item.targetTaskRevisionId || found.inputHash!==item.inputHash ||
+              found.slotId!==studyIntentId(this.deps.hash,declaration.id,inbox.id,item.sourceDecisionId,"slot") ||
+              found.decisionId!==studyIntentId(this.deps.hash,declaration.id,inbox.id,item.sourceDecisionId,"decision") ||
+              found.provenance?.declarationId!==provenance.declarationId ||
+              found.provenance.loopId!==provenance.loopId ||
+              found.provenance.inboxId!==provenance.inboxId;
+          })) return fail("STUDY_SNAPSHOT_INCOMPLETE", "Complete exact declared snapshot is required before cognition dispatch");
+      }
       if (await tx.getDispatch(command.dispatchId)) return fail("ALREADY_EXISTS", "dispatch ID already used");
       const dispatch: OrchestrationDispatch = { projectId: command.projectId, id: command.dispatchId, version: 1, loopId: loop.id, inboxId: inbox.id, sourceEventId: inbox.sourceEventId, taskId: task.id, taskVersion: task.version, parentDispatchId: command.parentDispatchId, recipientRoleId: command.recipientRoleId, purpose: command.purpose, authorizationScopeId: auth.scopeId, state: "pending", claimToken: null, leaseUntilUtc: null, runtimeRunId: null, outcome: null, deliveryId: null, evidenceRef: null, reason: command.reason, requestedBy: principal.actorId, createdAtUtc: now, updatedAtUtc: now, policyRevisionId: policy.id, bindingId: null };
       await tx.insertDispatch(dispatch);
@@ -659,13 +757,12 @@ export class OrchestrationService {
         binding.documentRevisionId !== command.documentRevisionId ||
         binding.documentContentHash !== command.documentContentHash || !run ||
         run.projectId !== command.projectId || run.taskId !== dispatch.taskId ||
-        run.taskRevisionId !== command.taskRevisionId ||
-        !["requested","dispatching","running"].includes(run.state))
-        return fail("HANDOFF_MISMATCH", "receipt must cite the fixed material and receiving Run's Task revision");
+        run.taskRevisionId !== command.taskRevisionId || run.state !== "running" || !run.nativeTurnId)
+        return fail("HANDOFF_MISMATCH", "receipt requires the fixed material and a bound, running receiving Turn");
       await event(loop.id,"dispatch",dispatch.id,"division.handoffAcknowledged",{
         runId:command.runId,documentRevisionId:command.documentRevisionId,
         documentContentHash:command.documentContentHash,taskRevisionId:command.taskRevisionId,
-        declaration:command.reason});
+        nativeTurnId:run.nativeTurnId,declaration:command.reason});
       return result("dispatch",dispatch.id,dispatch.version);
     }
     if (command.type === "worker.decision") {
@@ -677,7 +774,10 @@ export class OrchestrationService {
       if (await tx.findDecisionByDispatch(dispatch.id) || await tx.getDecision(command.decisionId) || await tx.findSubmissionByDispatch(dispatch.id)) return fail("ALREADY_EXISTS", "dispatch already has a worker intent or decision ID is used");
       const intent = await tx.findDivisionDecisionForParent(dispatch.id);
       if (command.divisionDecisionId && command.kind !== "waiting") return fail("INVALID_CAUSALITY", "only waiting may cite a division intent");
-      if (command.kind === "waiting" && (intent || command.divisionDecisionId)) {
+      if (command.kind === "waiting" && intent?.choice === "method") {
+        if (command.divisionDecisionId || !await tx.hasChildDispatch(dispatch.id))
+          return fail("INVALID_CAUSALITY", "method has no binding; waiting needs an ordinary child and no divisionDecisionId");
+      } else if (command.kind === "waiting" && (intent || command.divisionDecisionId)) {
         if (command.kind !== "waiting" || !intent || command.divisionDecisionId !== intent.id ||
           dispatch.recipientRoleId !== loop.cognitiveRoleId || intent.loopId !== loop.id ||
           intent.parentDispatchId !== dispatch.id || intent.sourceEventId !== dispatch.sourceEventId ||

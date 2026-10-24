@@ -25,6 +25,8 @@ async function validateDefinition(tx: Transaction, definition: EvaluationDefinit
   const signature = await taskSignature(tx, task);
   if (!same(signature, definition.case.sourceSignature))
     throw new DomainError("EVALUATION_SIGNATURE_MISMATCH", "Frozen case signature does not match the current Task basis");
+  if (signature.external.some(item => item.kind === "run"))
+    throw new DomainError("RUN_REFERENCE_UNSUPPORTED", "This comparison cannot consume a Run trace reference as a fixed original");
   if (signature.external.some(item => item.kind === "wiki"))
     throw new DomainError("WIKI_REQUIRED_BY_TASK", "Direct condition cannot omit Wiki required by the source Task");
   const [direct, wiki] = definition.conditions;

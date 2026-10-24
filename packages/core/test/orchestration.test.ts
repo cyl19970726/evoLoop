@@ -5,6 +5,7 @@ import type { Principal } from "@evoloop/contracts";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import type { RoleRecord, RoleTransaction } from "@evoloop/contracts/roles";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationOperation, OrchestrationSubmission, OrchestrationWorkerDecision, OrchestrationWorkflowOperationFact, OrchestrationObservationFact, OrchestrationDeliveryFact, OrchestrationIssueFact, OrchestrationReader, OrchestrationSourceFact, OrchestrationStore, OrchestrationTransaction } from "@evoloop/contracts/orchestration";
+import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { OrchestrationError, OrchestrationService } from "../src/orchestration/index.js";
 
 const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), cognitiveRoleId = randomUUID(), workerRoleId = randomUUID(), taskId = randomUUID(), scopeId = randomUUID();
@@ -75,10 +76,15 @@ function harness() {
       projectId, taskId: id, revisionId: draft.taskRevisionId, version: taskVersion,
       ownerRoleId: draft.taskOwnerRoleId, actorId: reviewer.actorId,
       reason: draft.taskVersion === 2 && draft.bindings.size ? `division-transfer:${[...draft.bindings.keys()][0]}` : "fixture" } : null,
+    getStudyDeclaration: async () => null,
+    resolveStudySource: async () => null,
+    getStudyTaskSnapshot: async () => [],
+    isAutoCognitionTask: async () => false,
     getGoalFact: async id => id === goalId ? { projectId, id, state: "active" } : null,
     getStageFact: async id => id === draft.extraStageFact?.id ? draft.extraStageFact : id === stageId ? draft.enrolledStageFact === undefined ? { projectId, id, goalId, state: "active" } : draft.enrolledStageFact : null,
     getAuthorizationFact: async id => id === scopeId ? { projectId, scopeId: id, actorId: draft.taskOwnerRoleId === cognitiveRoleId ? cognition.actorId : worker.actorId, roleId: draft.taskOwnerRoleId, active: draft.scopeActive } : null,
-    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)! } : null,
+    getRunFact: async id => id === draft.runId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.runState,
+      nativeTurnId: draft.runState === "running" ? "fixture-bound-turn" : null } : draft.parentRunStates.has(id) ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, inputHash: draft.runInputHash, state: draft.parentRunStates.get(id)!, nativeTurnId: null } : null,
     getDeliveryFact: async id => id === draft.extraDeliveryFact?.id ? draft.extraDeliveryFact : id === draft.deliveryId ? { projectId, id, taskId, taskRevisionId: draft.taskRevisionId, runId: draft.runId, actorId: worker.actorId, artifactRef: "artifact", artifactRevision: "r1", contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "checks" } : null,
     getObservationFact: async id => draft.observationFact?.id === id ? draft.observationFact : null,
     getWorkflowOperationFact: async id => draft.workflowOp?.id === id ? draft.workflowOp : null,
@@ -393,6 +399,27 @@ test("operation replay rechecks actor binding and retains one immutable audit de
   assert.equal(first.replayed, false); assert.equal(replay.replayed, true); assert.equal(h.data.events.length, 1);
   await assert.rejects(() => h.service.execute({ ...reviewer, permissions: ["write"] }, command), failed("FORBIDDEN"));
   await assert.rejects(() => h.service.execute(reviewer, { ...command, reason: "different" }), failed("OPERATION_CONFLICT"));
+});
+
+test("optional paused enrollment preserves old active command bytes and its original replay", async () => {
+  const old=harness();
+  const command=cmd<Extract<OrchestrationCommand,{type:"loop.enroll"}>>({type:"loop.enroll",
+    loopId,goalId,stageId,cognitiveRoleId,allowedBusinessRoleIds:[workerRoleId],
+    sourceAfter:{createdAtUtc:at,eventId:source0},maxRuns:2,maxConcurrent:1,reason:"old active"});
+  assert.equal(Object.hasOwn(orchestrationCommandSchema.parse(command),"initialState"),false);
+  await old.service.execute(reviewer,command);
+  assert.equal(old.data.loops.get(loopId)?.state,"active");
+  assert.equal(Object.hasOwn(old.data.events[0]!.detail,"initialState"),false);
+  assert.equal((await old.service.execute(reviewer,command)).replayed,true);
+  const paused=harness();
+  await paused.service.execute(reviewer,{...command,operationId:op(),initialState:"paused"});
+  assert.equal(paused.data.loops.get(loopId)?.state,"paused");
+  assert.equal(paused.data.loops.get(loopId)?.dispatchCount,0);
+  assert.equal(paused.data.events[0]!.detail.initialState,"paused");
+  await paused.service.execute(reviewer,cmd({type:"loop.state",loopId,expectedVersion:1,
+    state:"active",reason:"material ready"}));
+  assert.equal(paused.data.loops.get(loopId)?.state,"active");
+  assert.equal(paused.data.loops.get(loopId)?.dispatchCount,0);
 });
 
 test("pause and explicit no_action or stop do not consume run budget; stopped loop cannot resume", async () => {
@@ -751,7 +778,7 @@ test("controller reserves budget before Task transfer and confirms only its jour
   assert.equal((await f.h.service.execute(reviewer,confirm)).replayed,true);
   await assert.rejects(()=>f.h.service.execute(reviewer,consume()),failed("INVALID_CAUSALITY"));
   f.h.change(value=>{value.dispatches.set(dispatchId,{...value.dispatches.get(dispatchId)!,state:"accepted",
-    runtimeRunId:value.runId});value.runState="running";});
+    runtimeRunId:value.runId});value.runState="requested";});
   const receiver:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["read","write"]};
   f.h.setDelegatedWorkerScope({projectId,loopId,taskId,runId:f.h.data.runId,roleId:workerRoleId,kind:"business"});
   const deliveryDecision=cmd({type:"worker.decision",decisionId:randomUUID(),dispatchId,
@@ -765,6 +792,8 @@ test("controller reserves budget before Task transfer and confirms only its jour
     documentRevisionId:bindingFact.documentRevisionId,documentContentHash:bindingFact.documentContentHash,
     taskRevisionId:f.h.data.taskRevisionId,reason:"I read the fixed handoff original"});
   await assert.rejects(()=>f.h.service.execute(receiver,{...receipt,documentContentHash:"0".repeat(64)}),failed("HANDOFF_MISMATCH"));
+  await assert.rejects(()=>f.h.service.execute(receiver,receipt),failed("HANDOFF_MISMATCH"));
+  f.h.change(value=>{value.runState="running";});
   assert.equal((await f.h.service.execute(receiver,receipt)).entityType,"dispatch");
   assert.equal((await f.h.service.execute(receiver,receipt)).replayed,true);
   assert.equal((await f.h.service.execute(receiver,deliveryDecision)).entityType,"decision");
@@ -842,6 +871,45 @@ test("method-only intent needs no delegated Role and a later stop leaves it unus
     dispatchId:f.parentDispatchId,runId:f.parentRunId,kind:"stop",divisionDecisionId:null,
     reason:"Stop after inspection",evidenceRefs:[]}));
   assert.equal((await f.h.service.getDecision({...reviewer,permissions:["read","write","review"]},projectId,stopped.entityId))?.divisionDecisionId,null);
+});
+
+test("method on the current in-progress cognition Task can submit its own work but cannot invent a waiting handoff", async () => {
+  const f=divisionFixture();await f.setup();
+  f.h.change(data=>{data.taskOwnerRoleId=cognitiveRoleId;data.taskState="in_progress";});
+  const before=f.h.data.loops.get(loopId)!;
+  const method=await f.h.service.execute(cognition,{...f.decision(),choice:"method",roleId:cognitiveRoleId,
+    templateId:null,templateRevision:null,templateHash:null});
+  assert.equal(method.entityType,"decision");
+  assert.equal(f.h.data.bindings.size,0);
+  assert.equal(f.h.data.loops.get(loopId)?.currentPolicyRevisionId,before.currentPolicyRevisionId);
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,before.dispatchCount);
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"worker.decision",decisionId:randomUUID(),
+    dispatchId:f.parentDispatchId,runId:f.parentRunId,kind:"waiting",divisionDecisionId:null,
+    reason:"No child yet",evidenceRefs:[]})),failed("INVALID_CAUSALITY"));
+  assert.equal(f.h.data.decisions.size,0);
+  const submission=await f.h.service.execute(cognition,cmd({type:"worker.submit",submissionId:randomUUID(),
+    dispatchId:f.parentDispatchId,runId:f.parentRunId,taskRevisionId:f.h.data.taskRevisionId,
+    runInputHash:f.h.data.runInputHash,deliveryOperationId:randomUUID(),
+    deliveryIntent:{artifactRef:"artifact:method-report",artifactRevision:"v1",contentHash:"a".repeat(64),
+      technicalResult:"passed",technicalEvidence:"Fixture report",reason:"Record actual method result"},
+    agentObservation:"Fixture report only",evidenceRefs:[]}));
+  assert.equal(submission.entityType,"submission");
+  assert.equal(f.h.data.submissions.size,1);
+});
+
+test("method cannot reopen its fixed in-progress first Task as an ordinary child", async () => {
+  const f=divisionFixture();await f.setup();
+  f.h.change(data=>{data.taskState="in_progress";});
+  await f.h.service.execute(cognition,{...f.decision(),choice:"method",roleId:workerRoleId,
+    templateId:null,templateRevision:null,templateHash:null});
+  const next=await f.h.accept();await f.h.ack(next.entityId);
+  const before=f.h.data.loops.get(loopId)!.dispatchCount;
+  await assert.rejects(()=>f.h.service.execute(cognition,cmd({type:"dispatch.request",inboxId:next.entityId,
+    expectedInboxVersion:2,dispatchId:randomUUID(),parentDispatchId:f.parentDispatchId,
+    taskId,expectedTaskVersion:1,recipientRoleId:workerRoleId,purpose:"First method work",
+    authorizationScopeId:scopeId,reason:"Must not reopen"})),failed("METHOD_TASK_MISMATCH"));
+  assert.equal(f.h.data.dispatches.size,1);
+  assert.equal(f.h.data.loops.get(loopId)?.dispatchCount,before);
 });
 
 test("division rejects text-only authority, foreign scope, changed material, outsider and revoked template", async () => {

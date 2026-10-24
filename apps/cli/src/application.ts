@@ -57,6 +57,7 @@ const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
   loop: { path: "loops", modes: ["events"] }, inbox: { path: "inbox", modes: [] },
   dispatch: { path: "dispatches", modes: [] }, submission: { path: "submissions", modes: [] },
   policy: { path: "policies", modes: [] }, binding: { path: "bindings", modes: [] },
+  study: { path: "study-declarations", modes: [] },
 };
 const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSchema.options];
 const help = {
@@ -69,6 +70,7 @@ const help = {
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
     `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor CURSOR for run --trace]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
+    "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
     "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
   readModes: reads,

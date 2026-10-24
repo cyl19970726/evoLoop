@@ -1,10 +1,12 @@
 import type { Pool } from "pg";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
+import { loopIntentId } from "../orchestration/runner.js";
 import type { WorkerIdentity } from "./types.js";
 import type { WorkerGuardFacts } from "./guard.js";
 
 /** Authorization facts are project-scoped reads of the authoritative records, not caller supplied labels. */
-export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGuardFacts {
+export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
+  hasCurrentStudyReviewer?: (projectId: string, actorId: string) => Promise<boolean>): WorkerGuardFacts {
   const scope = identity.scope;
   // Only the public read contract is used here. No grant is supplied by this worker path.
   const trustedSources = new PgOrchestrationStore(pool, {
@@ -292,6 +294,72 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity): WorkerGu
           AND d.source_kind=$4 AND d.reference_id=$5
           AND ($6::text IS NULL OR d.source_revision=$6) LIMIT 1`,
         [gap.taskId, gap.taskRevisionId, kind, referenceId, revisionId ?? null]);
+    },
+    fixedRunTrace: async targetRunId => {
+      const rows=await pool.query(`SELECT decision.study_provenance,decision.decision_id,
+        dispatch.inbox_id,dispatch.data->>'requestedBy' AS requested_by,snapshot.slot_id,
+        orchestration_loop.data->>'cognitiveRoleId' AS cognitive_role_id,
+        EXISTS(SELECT 1 FROM operation_journal created
+          JOIN task_revision initial ON initial.project_id=created.project_id
+            AND initial.task_id=reader_run.task_id AND initial.version=1
+            AND initial.revision_id::text=created.result->>'revisionId'
+            AND initial.actor_id=created.actor_id AND initial.kind='research'
+          JOIN task_proposal proposal ON proposal.project_id=initial.project_id
+            AND proposal.task_id=initial.task_id AND proposal.task_revision_id=initial.revision_id
+            AND proposal.stage_id=(orchestration_loop.data->>'stageId')::uuid
+          WHERE created.project_id=reader_run.project_id
+            AND created.operation_id=$8 AND created.command_type='task.create'
+            AND created.result->>'status'='applied'
+            AND created.result->>'entityId'=reader_run.task_id::text
+            AND created.actor_id=dispatch.data->>'requestedBy') AS auto_created
+        FROM runtime_run reader_run
+      JOIN runtime_session reader_session ON reader_session.project_id=reader_run.project_id
+        AND reader_session.session_id=reader_run.session_id
+      JOIN orchestration_dispatch dispatch ON dispatch.project_id=reader_run.project_id
+        AND dispatch.data->>'runtimeRunId'=reader_run.run_id::text
+      JOIN orchestration_loop ON orchestration_loop.project_id=dispatch.project_id
+        AND orchestration_loop.loop_id=dispatch.loop_id
+      JOIN task_external_ref_snapshot snapshot ON snapshot.project_id=reader_run.project_id
+        AND snapshot.task_id=reader_run.task_id AND snapshot.task_revision_id=reader_run.task_revision_id
+      JOIN task_external_ref_decision decision ON decision.project_id=snapshot.project_id
+        AND decision.decision_id=snapshot.decision_id AND decision.source_kind='run'
+      JOIN runtime_run target_run ON target_run.project_id=reader_run.project_id
+        AND target_run.run_id::text=decision.reference_id
+      JOIN runtime_session target_session ON target_session.project_id=target_run.project_id
+        AND target_session.session_id=target_run.session_id
+      WHERE reader_run.project_id=$1 AND reader_run.run_id=$2 AND reader_run.task_id=$3
+        AND reader_run.session_id=$4 AND reader_session.role_id=$5 AND reader_session.state='ready'
+        AND reader_run.native_turn_id IS NOT NULL AND dispatch.loop_id=$6
+        AND dispatch.data->>'recipientRoleId'=$5 AND target_run.run_id=$7
+        AND decision.source_revision=target_run.task_revision_id::text
+        AND decision.content_hash=target_run.input_hash
+        AND target_run.state IN ('completed','failed','interrupted') AND target_run.native_turn_id IS NOT NULL
+        AND target_session.state='ready' AND target_session.native_thread_id IS NOT NULL
+        AND target_session.native_session_id IS NOT NULL
+      LIMIT 101`, [scope.projectId,scope.runId,scope.taskId,scope.sessionId,scope.roleId,scope.loopId,targetRunId,
+        loopIntentId(scope.taskId,"create")]);
+      if(rows.rows.length>100)return false;
+      for(const row of rows.rows){
+        if(!row.study_provenance){if(scope.roleId!==row.cognitive_role_id ||
+          scope.taskId!==loopIntentId(scope.loopId,row.inbox_id,"cognition-task") || !row.auto_created)return true;continue;}
+        const provenance=row.study_provenance as Record<string,unknown>;
+        if(provenance.loopId!==scope.loopId || provenance.inboxId!==row.inbox_id ||
+          typeof provenance.declarationId!=="string" || typeof provenance.sourceDecisionId!=="string" ||
+          typeof row.slot_id!=="string")continue;
+        const [current,declaration]=await Promise.all([
+          loop(),trustedSources.read(scope.projectId,reader=>reader.getStudyDeclaration(provenance.declarationId as string)),
+        ]);
+        const item=declaration?.items.find(value=>value.sourceDecisionId===provenance.sourceDecisionId);
+        if(!item || current?.currentStudyDeclarationId!==declaration?.id ||
+          declaration?.loopId!==scope.loopId || declaration.controllerActorId!==row.requested_by ||
+          item.runId!==targetRunId ||
+          !await hasCurrentStudyReviewer?.(scope.projectId,declaration.actorId))continue;
+        const head=await one(`SELECT 1 FROM task_external_ref_head WHERE project_id=$1 AND task_id=$2
+          AND decision_id=$3 AND slot_id=$4 LIMIT 1`,
+          [declaration.sourceTaskId,item.sourceDecisionId,item.sourceSlotId]);
+        if(head)return true;
+      }
+      return false;
     },
     operation: async id => {
       const row = await one(`SELECT actor_id FROM operation_journal WHERE project_id=$1 AND operation_id=$2
