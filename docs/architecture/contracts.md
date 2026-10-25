@@ -145,6 +145,10 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 `RoleRegistry` 记录逻辑责任的稳定 ID、目标、范围、主要输入、可写资产、交付、触发条件、与其他 Role 的交接、试行状态和修订。Role 可处于候选、试行、活跃、调整中、撤回；这描述职责约定，不是 session 运行状态。一个 Role 可有先后多个 Session 或经批准的并行实例。会话换窗、上下文压缩、模型替换都不自动变成新 Role。
 
+正式 Role 的可选 `roleClass` 区分 system/business，旧未分类 Role 仍可读取；Lead、认知、分工、产品、架构、开发流程、功能开发是分类模板，不自动生成七个 Role。分类沿 Role 的不可变修订与 reviewer CAS 决定更新，模板键须与分类一致；持续新责任仍走原 `role.propose` 与试行审阅。BusinessDomain 有稳定 ID、标题、修订、Role 映射、路由选择理由和授权证据；Task 的可选 `domainId` 与 `kind` 独立并固定于 TaskRevision。只读领域路由仅对当前 trial/active Role 给出承载状态，不能凭显示名、领域或模板取得执行权。
+
+HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历史。owned 登记要求同项目、同 Role、ready、真实原生 Thread 与正式绑定；external 只可声称并经 reviewer 核实 open/read/manual-claim，核实能力、证据、观察者和时间分开保存，未核实显示未知。撤销、Role 退出或承载失效时不能沿旧验证继续派发。Desktop link 不是 RuntimeSession，也不提供 start/send/interrupt 自动控制；路由查询本身永不启动模型。已合入的登记合同与候选自动队列、实际部署分别核对。
+
 `SessionRuntime` 的能力按实际宿主逐项声明：创建/继续、查询状态、发送已授权任务、读取回复/产物、请求停止、恢复关联；某能力不存在就返回 unsupported。发送消息或唤醒并不等于接收、执行、完成。不能凭“创建请求已发出”就登记为已运行。运行时身份映射保留 `roleId ↔ sessionId ↔ taskId` 的时间范围和来源；同一任务因续做换 session 时保留交接链。
 
 分工管理者能读取任务负荷、结果、使用反馈和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 session 可提出，分工管理者不控制全部业务任务。[方向出处](../references/lineage.md)
@@ -166,6 +170,10 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 首期仍用单活协调者串行派发，租约、并发条件和失去独占后的停写行为在 PostgreSQL 上验证；不再把飞书记录字段当独占锁。数据库条件更新能约束内部抢占，却不提供跨 Codex、飞书和 Wiki 的恰好一次副作用。
 
 协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；运行状态可为待派发、派发中、运行中、待交付核对、结果未知、需人处理，实际名称待实现。
+
+本轮候选 ResidentQueue 让 Lead 明示条目顺序、依赖、理由、固定 Task 输入、owned Session、消费者、释放规则与累计 Run 预算，并采纳一个可执行版本。未领取的重排、Task 改版后的队列修订和重新采纳使用 CAS；不能只改正文便沿旧条目启动。领取在同项目事务内核当前 Task、正式绑定、精确 grant、Session ready 与原生 Thread、Task/Session 无在途或未知 Run，并原子记录 claim、Run 预留意图、Journal/outbox；同一 Session 的后项等前项释放，另一个领取不能抢占。所有后续尝试计入同一预算；终态只结束一次 Run，不释放 Task claim。默认核当前通过的 Delivery、Task 关闭及要求的消费者 `used` 后释放；有权 Lead 可对无依赖后项给出有界释放决定，保留未完任务下一责任。依赖项仍须真实验收。未知原生启动或封存按原操作与 Run 对账，不能重试造成第二次外部执行。候选源码在集成中，未部署、未完成队列独立运行验收。
+
+Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到同项目 TaskRevision、Run、Session 与 DocumentRevision；事件与 `received`、`read`、`adopted`、`resolved` 回执分开，发出不等于读到或采用。答复若改变范围，应先按 Task 版本规则修订；原 Turn 的输入不静默 steering。原 Run 已知终态后，控制者经显式 `queue.continue` 引用此前同一通道的问答，固定答复正文/hash 进入同一 Session 的新 Run 输入；实际采用回执再核新 Run 已完成且包含该答复。受限工程动作另有 request、review 决定和实际 executor 执行回执：请求固定原 Run 输入 hash、精确 repo/worktree/路径/commit/PR 范围、授权证据和到期；批准不等于外部动作已发生，执行时再核真实 actor 与现行精确 grant，unknown 沿原外部操作 ID 对账。缺配置或权限即阻断，不借 controller 身份代业务执行。上述通信合同亦为候选，不能当作已部署的消息投递保证。
 
 一次派发超时的恢复顺序是：按操作 ID 回读 PostgreSQL 中的任务、Journal 与 outbox → 查运行时是否有对应 Session/动作 → 需要外部协作投影时另查 connector 绑定和同步结果 → 能证实已派发则继续跟踪，能证实未派发才重发，仍不明则保留 `unknown` 并暂停重复执行。飞书投影同步成功不是默认派发前置条件；只有任务目标明确要求远端可见或远端协作时才按判据等待。重复创建、通知和外部副作用各自需要可查询的去重依据；TaskStore 的幂等键不能替代运行时幂等。重启先对账未结束动作、未复核交付和未决外部同步，之后才派发新任务。
 
