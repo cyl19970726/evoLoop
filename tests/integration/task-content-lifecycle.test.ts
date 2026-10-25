@@ -47,7 +47,22 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
   assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0);
+  await runner({databaseUrl:database!,dir:migrations,direction:"up",migrationsTable:"pgmigrations",schema,count:8,
+    createSchema:true,createMigrationsSchema:true,singleTransaction:true,log:()=>{}});
+  assert.equal((await pool.query("SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1")).rows[0].name,
+    "027_resident_session_queue");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname=$1 AND indexname='task_closure_once_idx'",
+    [schema])).rows[0].n,1);
   await migrate(database!,schema);
+  await migrate(database!,schema);
+  const ledger=(await pool.query("SELECT name FROM pgmigrations ORDER BY id")).rows.map(row=>row.name as string);
+  assert.equal(ledger.filter(name=>name.startsWith("029_task_closure_revisions")).length,1,
+    "a populated older migration ledger applies the new index migration once");
+  const indexes=(await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=$1 AND tablename='task_closure'",
+    [schema])).rows;
+  assert.equal(indexes.some(row=>row.indexname==="task_closure_once_idx"),false);
+  assert.ok(indexes.some(row=>row.indexname==="task_closure_revision_once_idx"&&
+    row.indexdef.includes("(project_id, task_id, task_revision_id)")));
   assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[projectId])).rows[0].n,0);
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[projectId])).rows[0].n,0);
   const preserved=(await pool.query("SELECT * FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
@@ -76,9 +91,9 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
     const admin = new pg.Client({ connectionString: database }); await admin.connect();
     try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); }
   });
-  const send = async (command: Record<string, unknown>) => {
+  const send = async (command: Record<string, unknown>,operationId=randomUUID()) => {
     const reply = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` },
-      payload: { projectId, operationId: randomUUID(), ...command } });
+      payload: { projectId, operationId, ...command } });
     return { reply, result: reply.json() as CommandResult };
   };
   const applied = (result: CommandResult) => { assert.equal(result.status, "applied", JSON.stringify(result)); return result as Extract<CommandResult, { status: "applied" }>; };
@@ -141,9 +156,13 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   const delivered = applied((await send({ type: "delivery.record", taskId, expectedVersion: failed.version,
     artifactRef: "repo://report", artifactRevision: "second", contentHash: "b".repeat(64),
     technicalResult: "passed", technicalEvidence: "Check passed", reason: "Corrected candidate" })).result);
+  const oldUse=applied((await send({type:"observation.record",taskId,deliveryId:delivered.revisionId,
+    observer:principal.actorId,observerKind:"agent",result:"used",evidence:"Inspected first report",
+    reason:"First use"})).result);
   const closed = applied((await send({ type: "task.close", taskId, expectedVersion: delivered.version,
     deliveryId: delivered.revisionId, acceptanceResult: "met", acceptanceEvidence: "Report and check inspected", reason: "Accepted" })).result);
   const done = await service.getTask(principal, projectId, taskId);
+  const firstClosure=done.closures[0]!;
   assert.equal(done.task.state, "done");
   assert.equal(done.task.content, revisedBody);
   assert.equal(done.task.acceptance, "The report exists and its check passes");
@@ -166,7 +185,37 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   const oldDelivery = await send({ type: "task.close", taskId, expectedVersion: restarted.version,
     deliveryId: delivered.revisionId, acceptanceResult: "met", acceptanceEvidence: "Old report", reason: "Stale result" });
   assert.equal(oldDelivery.result.status, "rejected", "a prior delivery cannot close the reopened Task");
+  if(oldDelivery.result.status==="rejected")assert.equal(oldDelivery.result.code,"STALE_DELIVERY");
   assert.equal((await service.getTask(principal, projectId, taskId)).task.state, "in_progress");
+  const secondDelivery=applied((await send({type:"delivery.record",taskId,expectedVersion:restarted.version,
+    artifactRef:"repo://report",artifactRevision:"third",contentHash:"c".repeat(64),
+    technicalResult:"passed",technicalEvidence:"New report checked",reason:"New reporting cycle"})).result);
+  const secondUse=applied((await send({type:"observation.record",taskId,deliveryId:secondDelivery.revisionId,
+    observer:principal.actorId,observerKind:"agent",result:"used",evidence:"Inspected new report",
+    reason:"Second use"})).result);
+  const secondCloseCommand={type:"task.close",taskId,expectedVersion:secondDelivery.version,
+    deliveryId:secondDelivery.revisionId,acceptanceResult:"met",acceptanceEvidence:"New report and check inspected",
+    reason:"Accepted second cycle"};
+  const secondCloseOperation=randomUUID();
+  const concurrent=await Promise.all([send(secondCloseCommand,secondCloseOperation),
+    send(secondCloseCommand,secondCloseOperation)]);
+  const secondClosed=applied(concurrent[0]!.result);
+  assert.deepEqual(concurrent[1]!.result,secondClosed,
+    "concurrent use of the same operation ID cannot append a second closure");
+  assert.deepEqual((await send(secondCloseCommand,secondCloseOperation)).result,secondClosed,
+    "replaying the same close operation returns its journalled result");
+  const twiceClosed=await service.getTask(principal,projectId,taskId);
+  assert.equal(twiceClosed.task.state,"done");
+  assert.equal(twiceClosed.closures.length,2);
+  assert.equal(twiceClosed.closures[0]?.id,firstClosure.id,"the first closure remains the same historical row");
+  assert.deepEqual(twiceClosed.closures.map(item=>item.deliveryId),[delivered.revisionId,secondDelivery.revisionId]);
+  assert.notEqual(twiceClosed.closures[0]?.taskRevisionId,twiceClosed.closures[1]?.taskRevisionId);
+  assert.ok(twiceClosed.deliveries.some(item=>item.id===delivered.revisionId));
+  assert.ok(twiceClosed.deliveries.some(item=>item.id===secondDelivery.revisionId));
+  assert.ok(twiceClosed.observations.some(item=>item.id===oldUse.revisionId));
+  assert.ok(twiceClosed.observations.some(item=>item.id===secondUse.revisionId));
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_closure WHERE project_id=$1 AND task_id=$2",
+    [projectId,taskId])).rows[0].n,2);
 
   const specId = randomUUID();
   const spec = applied((await send({ type: "document.create", documentId: specId, title: "Independent specification",
