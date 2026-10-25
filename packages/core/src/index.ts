@@ -30,7 +30,8 @@ export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFa
     actorForRole(projectId:string,roleId:string):Promise<string|null>;
     isAuthorizedRoleActor(projectId:string,actorId:string,roleId:string):Promise<boolean>;
     isProjectActor(projectId:string,actorId:string):Promise<boolean>;
-    hasEngineeringActionGrant(principal:Principal,action:Extract<TaskCollaborationPayload,{type:"action_request"}>):Promise<boolean>;
+    hasEngineeringActionGrant(principal:Principal,action:Extract<TaskCollaborationPayload,{type:"action_request"}>,
+      actualProjectId:string):Promise<boolean>;
   };
 }
 function fixedUuid(hash:string):string {
@@ -649,7 +650,8 @@ export class WorkflowService {
           return applyTaskCollaboration({tx,command:command as import("@evoloop/contracts/discussions").TaskCollaborationCommand,principal,now,nextId:()=>this.deps.ids.next(),hasher:this.deps.hasher,
             isAuthorizedRoleActor:authority?.isAuthorizedRoleActor??(async()=>false),
             isProjectActor:authority?.isProjectActor??(async()=>false),
-            hasEngineeringActionGrant:authority?.hasEngineeringActionGrant??(async()=>false)});
+            hasEngineeringActionGrant:async (actor,action,actualProjectId)=>actualProjectId===command.projectId&&
+              !!await authority?.hasEngineeringActionGrant(actor,action,command.projectId)});
         }
         if (command.type === "evaluation.create" || command.type === "evaluation.revise" ||
           command.type === "evaluation.assessment.record" || command.type === "evaluation.conclusion.record")

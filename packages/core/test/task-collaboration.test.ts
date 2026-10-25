@@ -49,6 +49,7 @@ function fixture() {
     previousRevisionId: null, reason: "Fixed" });
   let recipientValid = true;
   let actionGrant = true;
+  const grantProjects:string[]=[];
   let next = 200;
   const tx = {
     getDiscussion: async () => discussion,
@@ -76,7 +77,9 @@ function fixture() {
     return applyTaskCollaboration({ tx, command, principal, now, nextId: () => id(next++),
       hasher: { hash }, isAuthorizedRoleActor: async (project,actor) => project===projectId && recipientValid && actor === "worker",
       isProjectActor: async (project,actor) => project===projectId && (actor === "issuer" || actor === "worker"),
-      hasEngineeringActionGrant: async () => actionGrant });
+      hasEngineeringActionGrant: async (_principal,_action,actualProjectId) => {
+        grantProjects.push(actualProjectId);return actionGrant;
+      } });
   }
   async function open() {
     return apply({ type: "discussion.openTask", projectId, operationId: id(100), discussionId,
@@ -109,6 +112,7 @@ function fixture() {
       externalByRevision.set(id(70), items),
     setRecipientValid: (value: boolean) => { recipientValid = value; },
     setActionGrant: (value: boolean) => { actionGrant = value; },
+    grantProjects,
     get discussion() { return discussion; } };
 }
 const base = (type: string, version: number, n: number) => ({ type, projectId, operationId: id(n), discussionId, expectedVersion: version });
@@ -220,6 +224,7 @@ test("bounded action requires approval, actual executor, expiry and stable recon
   await rejects(f.apply({ ...execute, expectedVersion: f.version(), decisionEventId }, executor), "ACTION_HELD");
   f.setActionGrant(true);
   await f.apply({ ...execute, expectedVersion: f.version(), decisionEventId }, executor);
+  assert.equal(f.grantProjects.at(-1),projectId,'grant callback receives the actual action command project');
   await f.apply({ ...execute, expectedVersion: f.version(), decisionEventId, state: "unknown", artifact: ref(23) }, executor);
   await rejects(f.apply({ ...execute, expectedVersion: f.version(), decisionEventId,
     externalOperationId: id(131) }, executor), "OPERATION_MISMATCH");

@@ -6,7 +6,8 @@ import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 interface Context { tx: Transaction; command: TaskCollaborationCommand; principal: Principal; now: string;
   nextId(): string; hasher: ContentHasher; isAuthorizedRoleActor(projectId: string, actorId: string, roleId: string): Promise<boolean>;
   isProjectActor(projectId: string, actorId: string): Promise<boolean>;
-  hasEngineeringActionGrant(principal: Principal, action: Extract<TaskCollaborationPayload, { type: "action_request" }>): Promise<boolean> }
+  hasEngineeringActionGrant(principal: Principal, action: Extract<TaskCollaborationPayload, { type: "action_request" }>,
+    actualProjectId:string): Promise<boolean> }
 const fail = (code: string, message: string, version?: number): never => { throw new DomainError(code, message, version); };
 const need = <T>(value: T | null, label: string): T => value ?? fail("NOT_FOUND", `${label} was not found`);
 const expired = (expiresAt: string, now: string): boolean => Date.parse(expiresAt) <= Date.parse(now);
@@ -199,7 +200,7 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
       fail("EXECUTOR_HELD", "Actual executor lacks this action's review authority");
     const prior = events.filter(item => item.collaborationPayload?.type === "action_execution" && item.collaborationPayload.requestEventId === requested.id);
     if (!prior.length && expired(action.expiresAt, now)) fail("ACTION_EXPIRED", "Action approval has expired");
-    if (!prior.length && !(await ctx.hasEngineeringActionGrant(principal, action)))
+    if (!prior.length && !(await ctx.hasEngineeringActionGrant(principal, action, ctx.command.projectId)))
       fail("ACTION_HELD", "No verified grant covers the exact engineering action scope");
     if (prior.some(item => item.collaborationPayload?.type === "action_execution" && item.collaborationPayload.externalOperationId !== command.externalOperationId))
       fail("OPERATION_MISMATCH", "External operation ID is fixed for this action");

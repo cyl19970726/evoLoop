@@ -25,7 +25,7 @@ import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { loadIntegrations, runtimeThreadConfigForSession } from "./configuration.js";
+import { hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfigForSession } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
@@ -115,14 +115,9 @@ const service = new WorkflowService({
       return role.rows.length>0;
     },
     isProjectActor: currentProjectWriter,
-    hasEngineeringActionGrant: async (principal,action) => {
+    hasEngineeringActionGrant: async (principal,action,actualProjectId) => {
       const config=await currentQueueConfiguration();
-      return !!config?.enabled&&config.actionGrants.some(g=>g.actorId===principal.actorId&&
-        principal.projectIds.includes(g.projectId)&&g.actionType===action.actionType&&
-        g.repository===action.scope.repository&&g.worktree===action.scope.worktree&&
-        (g.commit??null)===(action.scope.commit??null)&&(g.pullRequest??null)===(action.scope.pullRequest??null)&&
-        g.inputHash===action.inputHash&&Date.parse(g.expiresAt)>=Date.parse(action.expiresAt)&&Date.parse(g.expiresAt)>Date.now()&&
-        g.paths.length===action.scope.paths.length&&g.paths.every((p,i)=>p===action.scope.paths[i]));
+      return !!config?.enabled&&hasExactEngineeringActionGrant(config.actionGrants,principal,action,actualProjectId);
     },
   },
 });
