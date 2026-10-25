@@ -112,7 +112,7 @@ Codex 适配基于本机核过的 **codex-cli 0.154.0** App Server 协议。受�
 
 App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
 
-重启或恢复已有 owned Session 前，核持久 Session 的 actor、Role、scope、cwd、model、sandbox、approvalPolicy 及其静态或动态现行 grant，先对账在途和未知 Run。恢复会将完整执行配置重新传入原 `thread/resume`；`workspace-write` 的联网设置显式传 `true` 或 `false`，不沿用旧 Thread 的残留设置。动态授权失效不能借静态授权继续。缺完整 profile 的旧 binding 只供历史读取；修复授权后仍沿原 Session、Thread 和操作对账，不换身份掩盖失败。
+重启或恢复已有 owned Session 前，核持久 Session 的 actor、Role、scope、cwd、model、sandbox、approvalPolicy 及其静态或动态现行 grant，先对账在途和未知 Run。恢复请求会将完整执行配置重新传入原 `thread/resume`；`workspace-write` 的联网设置显式传 `true` 或 `false`，原生降权效果仍须在有 Turn 的原 Session 回读验证。动态授权失效不能借静态授权继续。缺完整 profile 的旧 binding 只供历史读取；修复授权后仍沿原 Session、Thread 和操作对账，不换身份掩盖失败。
 
 验证要分三层记录：fixture 回归检查参数与拒权分支；固定安装版本的无推理协议实验核参数接受及返回策略；部署后在原 Task、Session、Thread 上执行真实 CLI 并回读服务端产物。前两层不证明原业务故障已恢复，Turn 结束或本地报告文件也不等于已提交、验收或使用。
 
