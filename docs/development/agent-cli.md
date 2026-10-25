@@ -63,6 +63,14 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物，先核任务业务输入仍与执行时一致；交付登记修订不等于 Run 的执行修订。每个尝试用 `evaluation.assessment.record` 记录显式关联该 Run 的 Delivery/Observation、失败、采用、真人效果、证据与成本；旧无 Run 归因的交付不能推测为评价成果。没有成本回执填 `null`，不填零。更正指定 `supersedesId`；`evaluation.conclusion.record` 必须选取所有首次及重试尝试的当前判定，并明确比较限制和下一步选择。首片只允许 `with_limits` 或 `unknown`，不能把两组记录与局部成本标成完全可比。`nextActionRef` 可固定引用已有 Task 的 `{kind:"task",taskId,taskRevisionId}`，服务端校验同项目及修订归属，不自动创建或开始它。命令结构以 `command schema TYPE` 为准，读回包、Run、交付及观察后再下结论。评价不会自动关闭原 Task 或发布 Wiki。本轮已由授权的负责人 Agent 完成两组真实运行、完整输入包与产物回读，并登记有限评价；具体范围与阶段决定见[完整旅程接续试用](../roadmap.md#完整旅程接续试用)。Wiki 采用正确不代表增量收益，Agent 使用不代表真人效果。
 
+## 仓库工程任务与动作交接
+
+收到代码或正式文档任务，先以实际 `session` 身份、Task 当前版本、固定 `context` 和必要原件确认问题、预期结果、边界、验收及消费者；核对仓库当前基线和已有修改。形成与复杂度相称的方案，在隔离 worktree 完成变更与必要回归，审阅集成差异，再按[贡献流程](../../CONTRIBUTING.md#提出与完成变更)完成聚焦 PR、自审、当前 head 必要检查、独立审阅和正常合并。报告型任务没有仓库改动时说明不适用，不制造空 PR。`session`、Task owner、承载 Role、broker 身份、仓库提交者和合并者须分别核实；业务 CLI 身份不能代替 Git 或外部平台授权。
+
+若 skill 目录、Git common dir、PR 或合并等动作超出当前执行环境/授权，留下持久的精确动作请求或现有受控交接：关联 Task/固定修订和 Run、请求者、预期有权执行者、具体动作及 repo/worktree/path/commit/PR 范围、理由、输入版本、截止/验收与当前阻塞。记录批准或拒绝、实际执行 actor、操作 ID、结果及证据；请求本身不是批准。若尚无对应业务命令，先核 `help`、`command types`、`request types` 和 schema，使用当前已授权的交接路径并明确待接续，不编造命令或声称消息已自动送达。自动审批拒绝后不换身份、借 owner 凭据、放大沙箱或关闭检查重试；结果未知先以原 ID 对账。收到实际动作回执后，原执行者须在自己的后续运行中读取，核对固定输入、产物和未完成项。
+
+工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态 Run 由有权 Lead 核终态和产物后登记 Delivery；broker worker 按下文签真实提交意图，封存者另留身份。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。当前通用常驻队列及 Desktop 自动唤醒未在此文档声明为可用；后项接续按实际已部署能力和授权核验。
+
 ## 未知结果与本地回执
 
 CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show ID`、`receipts reconcile ID` 用于找回原始目标、请求和已知结果。`EVOLOOP_STATE_DIR` 可指定仓库外或明确被 Git 忽略的私有本机目录；本机实现按 0700 目录、0600 文件创建且不覆盖已有回执，但不会强制目录位于仓库外。回执不能进入公开 Git。服务端确认的同一 actor、项目权限与 API origin 允许合法令牌轮换后继续核对；旧回执若没有 actor 记录，只能用原令牌。不同 actor 不可据此换身份接管。`EVOLOOP_TIMEOUT_MS` 仅控制等待，不使写入失败变成未提交证明。CLI 将 JSON 结果写 stdout、诊断写 stderr，失败或冲突退出非零；它不自动重试 POST。
