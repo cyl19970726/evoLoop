@@ -105,7 +105,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
   await fetch(`${base}/__fixture/foreign-session`);
   await owner.getByRole("link",{name:/已登记 Session 20000006/}).click();
   const focus=pageBrowser.getByRole("region",{name:"目标 Session"});
-  await focus.getByText(/开发流程职责 · 就绪 · Session 20000006/).waitFor({timeout:5000}).catch(async()=>{
+  await focus.getByText(/开发流程职责 20000002 · 就绪 · Session 20000006/).waitFor({timeout:5000}).catch(async()=>{
     assert.fail(`target session missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
   });
   await focus.locator(`#runtime-session-${sessionId}[open]`).waitFor();
