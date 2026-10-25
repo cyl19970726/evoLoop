@@ -10,7 +10,7 @@ Codex App Server 是对话执行边界，不是 evoLoop 任务数据库、知识
 
 自动认知回看和分工检查沿已登记、可派发的自管 App Server 承载实例运行；桌面宿主桥接作为另一路能力单独登记和验证，不能默认提供给独立 coordinator。Role 的 system/business 分类及七个初始模板只帮助辨认责任，模板不创建实例。BusinessDomain 的稳定 ID 可映射已试行或活跃的正式 Role；Task 的可选领域固定在其修订中，与实施/调研/验证类型独立。Role 的 HostLink 分开登记 owned Session 与 external Codex Desktop 引用：前者须有同项目真实 ready/bound Thread，后者只可核 open/read/manual-claim 及证据、观察者和时间。只读领域路由显示状态，不会自动启动模型；只有 Desktop 实例而无可用自动入口时，任务保留“待承接”及人工领取入口。为同一 Role 增设自动工作实例时，工作说明区分“后台证据准备/已授权回看”和“人类日常讨论/目标取舍”，每个任务有一个当前责任实例；重大结论更新仍走同一知识维护与任务接受入口。日常讨论产生的新决定有明确修订，受影响的自动任务重新核对，不能两端各自覆盖当前方向。
 
-候选常驻队列在一个已采纳顺序内复用同一 owned Session/Thread，逐项预留 Run；当前执行 grant、Role 绑定、Task 固定输入、Session 空闲及预算每次重核。领取保留 Task/Session 占用到独立验收或 Lead 明确有界释放，Run 结束不能自动放行下项；结果未知保留原 Run/操作 ID 等待回读。执行者与派出者的 Task 通道固定 question/answer 等消息及收件、阅读、实际采用回执；新答复只在原 Turn 已知终态后通过新 Run 的固定输入接续，不依赖 `turn/steer`。受限工程动作的请求、批准和实际有权者执行分别留证，CLI actor、队列控制者和原生执行者不互借身份。此队列/通信接线仍是候选源码，须经集成、部署和真实同 Session 使用验证，不能从本页推定已支持 Desktop 自动唤醒。
+本机受限常驻队列在一个已采纳顺序内复用同一 owned Session/Thread，逐项预留 Run；当前执行 grant、Role 绑定、Task 固定输入、Session 空闲及预算每次重核。领取保留 Task/Session 占用到独立验收或 Lead 明确有界释放，Run 结束不能自动放行下项；结果未知保留原 Run/操作 ID 等待回读。执行者与派出者的 Task 通道固定 question/answer 等消息及收件、阅读、实际采用回执；新答复只在原 Turn 已知终态后通过新 Run 的固定输入接续，不依赖 `turn/steer`。受限工程动作的请求、批准和实际有权者执行分别留证，CLI actor、队列控制者和原生执行者不互借身份。同 Session 的真实顺序、问答与交付实跑范围统一见[当前基线](../roadmap.md#当前基线)。Desktop external 仍只核 open/read/manual-claim，不支持自动唤醒或由 HostLink 代替 owned Session；工作台打开请求的环境限制见[工作台](../product/workbench.md#对象关系与能力职责)。隔离故障回归和真实原生 Turn 分别留证。
 
 下面的时序图用于核对**拟议 App Server 线程怎样承接一次已接受任务，以及运行事件何时回到主数据和验收**。它画的是自管 Thread 路径；Desktop 的人工讨论入口与限制见上文。若只需理解工作目的，先读[总览的工作回路](overview.md#3-沿一轮工作理解系统)。
 
