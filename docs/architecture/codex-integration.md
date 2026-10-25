@@ -99,6 +99,8 @@ worker 文档路由仅接受显式修订及原件读取，拒绝无版本详情�
 
 受信任的外部 scope 固定项目、原业务 Task、已批准的主正文修订、唯一 Session/Run/Run operation、职责、原 sandbox、只读 reader、入口和有限路由及截止时间。受管 Dispatch 的 Session/Run ID 可由明确预分配的 Dispatch ID 推导；这只是资源预留，不替认知决定派发，也不授权“第一个符合条件的 Run”。Task 开始会正常推进状态修订，因此每次调用既核已批准的主正文修订，也要求当前 Task 修订精确等于该 Run 固定的 TaskRevision、basis 相同；只比较正文未变不足以放行。native Thread/Turn、Run 状态、中断请求和现行执行授权也须逐次核验。
 
+scope 须在目标 Thread 创建前就绪，创建后补文件不会为既有 Thread 增加工具。运行页依赖的 Loop、派发任务、判断及工作状态 GET 也须按实际记录逐项核定；预选 child ID 不能推出尚未产生的 Inbox 或 worker 判断 ID。需要等待首认知产物时，可沿已有暂停与结算流程，在实际 child 已请求且尚未创建线程时完成准备，再恢复承接；暂停前后的明确边界见[本机准备顺序](../development/local-run.md#受管-worker-只读浏览器候选)。这不增加通用 Loop 跟随权限，也不允许在 GUI 在途时静默替换 scope。
+
 GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原 worker 的 workspace-write 可继续用于获准目录中的 CLI 回执、报告和 `worker.submit`。宿主使用仅本项目 read 的独立 reader，令牌不交给模型；若该 reader 被拒，应报告实际失败，不能借负责人令牌补查。浏览器没有持久用户资料，只接受本机明确 origin 的获准 GET，拒绝跨站、重定向、写方法、WebSocket、service worker 和下载。它仍与协调服务同属本机用户，不宣称隔离恶意同用户进程或代替原生文件权限。
 
 工作列表会随新任务产生而变化，阶段页还须逐页读取任务及其详情，不能靠预先猜任务 ID 支撑完整页面。scope 可显式开启默认关闭的 `followTaskList`：仅从白名单内本项目的 `tasks?limit=50` 开始，宿主完整验证成功响应中的项目、任务 ID 和分页游标后，派生精确下一页、已见任务的根详情，以及该页按响应顺序组成的精确工作状态 GET。根详情含现有完整 TaskDetail，并非只有 ID 或状态。独立的 `followDocumentList` 同样默认关闭，只从明确批准的 `documents?limit=50` 追随实际游标读取文档列表页，不派生 Document 详情、修订或原件权限。
