@@ -94,7 +94,7 @@ test("Task Discussion and fixed-reference events survive PostgreSQL readback, CA
   await assert.rejects(pool.query("UPDATE discussion_event SET actor_id='forged' WHERE project_id=$1 AND event_id=$2", [projectId, messageId]), /immutable/);
 });
 
-async function continuationScenario(withExternalChange: boolean) {
+async function continuationScenario(withExternalChange: boolean, adoptionTiming: "running" | "completed" = "running") {
   const projectId = randomUUID();
   const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
@@ -197,9 +197,14 @@ async function continuationScenario(withExternalChange: boolean) {
     continuation: { runId: run2Id, taskRevisionId: run2.revisionId } }), error =>
     (error as { code?: string }).code === "CONTINUATION_MISMATCH", "reserved Run alone is not actual adoption");
   await runtime.beginDispatch(projectId, run2Id);
+  await assert.rejects(apply(worker, { type: "discussion.receipt.record", expectedVersion: 5,
+    messageEventId: answerEvent.id, stage: "adopted", evidence: { documentId: answerId, revisionId: answer.revisionId },
+    continuation: { runId: run2Id, taskRevisionId: run2.revisionId } }), error =>
+    (error as { code?: string }).code === "CONTINUATION_MISMATCH", "dispatching without a bound Turn is not adoption");
   await runtime.bindTurn(projectId, run2Id, { id: `turn2-${projectId}`, status: "running" },
     { kind: "startReply", operationId: run2.operationId });
-  await runtime.recordTurn(projectId, run2Id, `turn2-${projectId}`, "completed", "Answer consumed");
+  if (adoptionTiming === "completed")
+    await runtime.recordTurn(projectId, run2Id, `turn2-${projectId}`, "completed", "Answer consumed");
   const adopt = () => apply(worker, { type: "discussion.receipt.record", expectedVersion: 5,
     messageEventId: answerEvent.id, stage: "adopted", evidence: { documentId: answerId, revisionId: answer.revisionId },
     continuation: { runId: run2Id, taskRevisionId: run2.revisionId } });
@@ -209,13 +214,25 @@ async function continuationScenario(withExternalChange: boolean) {
     return;
   }
   await adopt();
+  if (adoptionTiming === "running")
+    await runtime.recordTurn(projectId, run2Id, `turn2-${projectId}`, "completed", "Answer consumed");
   const adopted = (await uow.read(projectId, tx => tx.listDiscussionEvents(discussionId))).at(-1)!;
   assert.deepEqual((adopted.collaborationPayload as { continuation: unknown }).continuation,
     { runId: run2Id, taskRevisionId: run2.revisionId });
   assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run1Id)))?.input, "Original Run1 input");
+  assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run2Id)))?.state, "completed");
+  const taskBeforeDelivery = await uow.read(projectId, tx => tx.getTask(taskId));
+  const delivery = await execute(worker, { type: "delivery.record", taskId, runId: run2Id,
+    expectedVersion: taskBeforeDelivery!.version, artifactRef: "artifact:continuation-result",
+    artifactRevision: "v1", contentHash: hash("Result after answer adoption"),
+    technicalResult: "passed", technicalEvidence: "Fixed answer consumed in terminal Turn",
+    reason: "Deliver continuation result" });
+  assert.ok(delivery.revisionId, "Delivery remains possible after the Turn settles");
 }
 
-test("real WorkflowService Run2 reserve advances Task revision; original answer can be adopted only after fixed input is read", () =>
-  continuationScenario(false));
+test("real WorkflowService Run2 reserve, bind running Turn, worker adoption, terminal Turn and Delivery", () =>
+  continuationScenario(false, "running"));
+test("completed continuation Turn still permits historical worker adoption and Delivery", () =>
+  continuationScenario(false, "completed"));
 test("legitimate new external Run source in Run2 input blocks adoption of the older answer baseline", () =>
   continuationScenario(true));

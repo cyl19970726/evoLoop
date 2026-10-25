@@ -146,9 +146,9 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
       if (continued.projectId !== command.projectId || continued.id === original.id ||
         continued.taskId !== old.task!.id || continued.sessionId !== old.collaboration!.sessionId ||
         continued.taskRevisionId !== command.continuation!.taskRevisionId ||
-        continued.state !== "completed" || !continued.nativeTurnId ||
+        (continued.state !== "running" && continued.state !== "completed") || !continued.nativeTurnId ||
         Date.parse(continued.createdAt) < Date.parse(message.createdAt))
-        fail("CONTINUATION_MISMATCH", "Adoption requires a completed later Run in the original Task and Session");
+        fail("CONTINUATION_MISMATCH", "Adoption requires a bound running or completed later Run in the original Task and Session");
       const task = need(await tx.getTask(old.task!.id), "Task");
       const originalInput = await taskInputSignature(tx, task, original.taskRevisionId);
       const continuedInput = await taskInputSignature(tx, task, continued.taskRevisionId);

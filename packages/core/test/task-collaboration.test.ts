@@ -24,7 +24,7 @@ function fixture() {
     kind: null, acceptance: task.acceptance, owner: task.owner, state: "in_progress",
     basisSetId: id(60), actorId: "issuer", reason: "Fixed", createdAt: "2026-10-25T00:00:00Z" };
   const run = { projectId, id: runId, taskId, taskRevisionId, sessionId, basisSetId: id(60),
-    input: "Original input", inputHash: hash("Original input"), state: "completed", nativeTurnId: "turn-1",
+    input: "Original input", inputHash: hash("Original input"), state: "completed", nativeTurnId: "turn-1" as string | null,
     createdAt: "2026-10-25T00:00:00Z" };
   let continuation: typeof run | null = null;
   let continuationRevision: TaskRevision | null = null;
@@ -100,6 +100,11 @@ function fixture() {
   }
   return { apply, open, version, events, documents, revisions, task, run,
     continueWithAnswer,
+    setContinuationState: (state: string, nativeTurnId: string | null = "turn-2") => {
+      assert.ok(continuation);
+      continuation.state = state;
+      continuation.nativeTurnId = nativeTurnId;
+    },
     setContinuationExternal: (items: NonNullable<ReturnType<typeof externalByRevision.get>>) =>
       externalByRevision.set(id(70), items),
     setRecipientValid: (value: boolean) => { recipientValid = value; },
@@ -141,6 +146,15 @@ test("fixed Task question, answer and actual adoption preserve the original Run 
   await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
     stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand), "TASK_INPUT_CHANGED");
   f.setContinuationExternal([]);
+  for (const state of ["requested", "dispatching", "unknown", "failed", "interrupted"]) {
+    f.setContinuationState(state);
+    await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
+      stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand), "CONTINUATION_MISMATCH");
+  }
+  f.setContinuationState("running", null);
+  await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
+    stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand), "CONTINUATION_MISMATCH");
+  f.setContinuationState("completed");
   await f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
     stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand);
   assert.equal(question.result.version, 2);
