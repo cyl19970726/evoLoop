@@ -42,4 +42,9 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
   app.get("/api/projects/:projectId/schedules", request => service.listSchedules(principal(request), params(request.params).projectId));
   app.get("/api/projects/:projectId/schedules/:id/revisions", request => { const p = params(request.params); return service.listScheduleRevisions(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/schedules/:id/occurrences", request => { const p = params(request.params); return service.listScheduleOccurrences(principal(request), p.projectId, p.id!); });
+  app.get("/api/projects/:projectId/documents/:id/tasks", request => {
+    const p = params(request.params);
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.uuid().optional() }).parse(request.query);
+    return service.listDocumentTaskReferences(principal(request), p.projectId, p.id!, q.limit, q.cursor);
+  });
 }

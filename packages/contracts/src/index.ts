@@ -128,6 +128,9 @@ export interface OutboxEvent {
   kind: string; entityId: string; version: number; createdAt: string;
 }
 export interface Page<T> { items: T[]; nextCursor: string | null }
+export interface DocumentTaskReference extends Pick<Task, "projectId" | "id" | "title" | "state" | "owner" | "kind" | "version" | "currentRevisionId"> {
+  relations: Array<"content" | "link" | "basis">;
+}
 export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[]; proposal?: import("./workflow.js").TaskProposal | null; judgements?: import("./workflow.js").TaskJudgement[]; deliveries?: import("./workflow.js").Delivery[]; observations?: import("./workflow.js").ConsumerObservation[]; closures?: import("./workflow.js").TaskClosure[] }
 export interface DocumentDetail { document: Document; current: DocumentRevision; adopted: DocumentRevision | null }
 export const capabilities = { processMarkdown: true, basisReview: true, git: false, html: false, feishu: false, wiki: false, runtime: false } as const;
