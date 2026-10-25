@@ -72,7 +72,7 @@ async function readSnapshot(token: string, projectId: string, scope: string, sig
 function ActiveTaskItem({ task, snapshot, projectId }: { task: Task; snapshot: Snapshot; projectId: string }) {
   const role = isRoleOwnerId(task.owner) ? snapshot.roles[task.owner] : undefined;
   const owner = role?.proposal.title?.trim() || (isRoleOwnerId(task.owner) ? `职责 ${short(task.owner)}` : task.owner || "负责人未登记");
-  return <li><a href={href(projectId, "task", task.id)}>{task.title?.trim() || `任务 ${short(task.id)}`}</a> · 负责人 {owner}
+  return <li><a href={href(projectId, "task", task.id)}>{task.title?.trim() || `任务 ${short(task.id)}`}</a> · 负责人 {role ? <a href={href(projectId, "roles")}>{owner}</a> : owner}
     {role && role.state !== "active" && role.state !== "trial" && <span> · 职责当前为 {role.state}，请核对分工</span>}
     <div className="muted">Task 状态：进行中；是否在原 Session 执行，请进入任务核对。</div>
   </li>;
@@ -153,6 +153,6 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
       {!!selection?.omittedByKind.held && <p role="status">另有 {selection.omittedByKind.held} 项暂停事项未展开；请看<a href={href(projectId, "runtime")}>完整队列</a>。</p>}
       <p>任务协作中的待答问题尚无项目级精确汇总；请从<a href={href(projectId, "work")}>任务列表</a>进入原任务的“协作与待处理问题”核对。</p>
     </section>
-    <p className="muted">范围：读取项目已登记驻留队列列表；每轮最多展示并核对 12 项的任务与职责名称。{selection?.omitted ? `另有 ${selection.omitted} 项未展开。` : "其他任务不计入此摘要。"}完整任务与队列请分别进入任务列表和分工与承载。</p>
+    <p className="muted">队列摘要范围：读取项目已登记驻留队列列表；每轮最多展示并核对 12 个队列条目的任务与职责名称。{selection?.omitted ? `另有 ${selection.omitted} 个队列条目未展开。` : "未入队任务请看上方进行中的任务。"}完整任务与队列请分别进入任务列表和分工与承载。</p>
   </div>;
 }
