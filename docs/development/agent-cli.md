@@ -103,7 +103,7 @@ Task 写清问题、希望改变的结果和唯一当前责任后，Lead 按实�
 
 | 交接时点 | 谁做什么 | 回读什么才能继续 |
 | --- | --- | --- |
-| 选择责任 | Lead 读现有 Role；适合就沿用。没有合适职责时先说明缺口与临时承接办法，需新持续职责再走试行。 | Task owner 与已接受的 Role 匹配；consumer 是实际使用者身份，不拿 Role ID 代填。 |
+| 选择责任 | Lead 读现有 Role；适合就沿用。没有合适职责时先说明缺口与临时承接办法，需新持续职责再走试行。 | 正式 Role 承接时核对 Task owner；临时逻辑 owner 则写明实际执行者、权限和人工交接，不推定已绑定承载。consumer 是实际使用者身份，不拿 Role ID 代填。 |
 | 选择承载 | 有执行授权者核 Role 绑定和 Session。已有空闲 ready owned Session 可供普通 Run 复用；无可用实例再按上节建立。 | 真实 project sessionId、roleId、原生 Thread 和 cwd，以及 Task/Session 上无在途或 unknown Run。ready 只表明可用，不证明正在工作。 |
 | 固定并启动 | Lead 核正文、验收和所需固定来源，正常 start 后显式 reserve Run；执行者读自己的身份与固定 context。 | TaskRevision、basis 与 Run 输入一致；wrapper 仅是入口，不据此推定 worker 权限。普通静态 Run 不调用 worker.submit。 |
 | 接收交付 | 执行者交实际差异、产物、检查与限制；普通 Run 已知终态后，Lead 核实再关联 runId 登记 Delivery。 | 固定产物修订/hash 与实际检查；Run 完成、Delivery、使用观察和 Task 关闭分别核对。要求使用时由声明消费者实际使用并记录。 |
