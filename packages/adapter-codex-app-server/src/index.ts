@@ -34,7 +34,9 @@ function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 const finite = (value: number): boolean => Number.isFinite(value) && value > 0;
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
-  (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]);
+  (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
+  (["actorId","model","sandbox","approvalPolicy"] as const).every(key =>
+    (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const safeProviderCode = (value: unknown): string | null => typeof value === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : null;
 function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
@@ -390,16 +392,32 @@ export class CodexAppServerAdapter implements RuntimePort {
       const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}), ...(dynamicTools?.length ? {dynamicTools} : {}) }));
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");
-      const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER };
+      const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER,
+        ...(spec.actorId ? {resumeProfile:{actorId:spec.actorId,model:spec.model??null,sandbox:spec.sandbox,approvalPolicy:spec.approvalPolicy}} : {}) };
       this.rememberBinding(binding);
       if (dynamicTools?.length) this.declaredTools.set(binding.nativeThreadId,new Set(dynamicTools.map(tool=>tool.name)));
       return binding;
     } finally { this.pendingCreate = null; }
   }
 
-  async resume(binding: RuntimeBinding): Promise<RuntimeBinding> {
+  async resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
     this.owned(binding);
-    const result = object(await this.request("thread/resume", { threadId: binding.nativeThreadId, excludeTurns: true }));
+    if (!spec || !nonempty(spec.actorId) || spec.sessionId !== binding.sessionId || spec.roleId !== binding.roleId ||
+      spec.projectId !== binding.projectId || spec.authorizationScope !== binding.authorizationScope ||
+      spec.cwd !== binding.cwd || resolve(spec.cwd) !== spec.cwd ||
+      (spec.sandbox !== "read-only" && spec.sandbox !== "workspace-write") ||
+      (spec.approvalPolicy !== "on-request" && spec.approvalPolicy !== "untrusted") ||
+      !binding.resumeProfile || binding.resumeProfile.actorId !== spec.actorId ||
+      binding.resumeProfile.model !== (spec.model??null) || binding.resumeProfile.sandbox !== spec.sandbox ||
+      binding.resumeProfile.approvalPolicy !== spec.approvalPolicy)
+      throw new RuntimeProtocolError("resume profile does not match registered binding");
+    const config = await this.options.threadConfig?.(spec);
+    if (spec.sandbox === "workspace-write" &&
+      typeof config?.["sandbox_workspace_write.network_access"] !== "boolean")
+      throw new RuntimeProtocolError("workspace resume lacks an exact current network grant");
+    const result = object(await this.request("thread/resume", { threadId: binding.nativeThreadId,
+      excludeTurns: true, cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}),
+      sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
     const thread = object(result?.thread);
     if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("resumed thread does not match registered binding");
     return binding;

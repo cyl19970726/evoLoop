@@ -198,10 +198,10 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     approvalPolicy:template.approvalPolicy}),true);
   const collidingStatic=[{projectId:pid,actorId:owner,roleId,authorizationScope:scope,cwd,
     sandbox:"workspace-write" as const,networkAccess:true}];
-  assert.equal(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
+  assert.deepEqual(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
     roleId,authorizationScope:scope,cwd,sandbox:template.sandbox,model:template.model,
-    approvalPolicy:template.approvalPolicy},admission),undefined,
-    "the binding's networkAccess=false overrides a colliding static true grant");
+    approvalPolicy:template.approvalPolicy},admission),{"sandbox_workspace_write.network_access":false},
+    "the binding's networkAccess=false is explicit and overrides a colliding static true grant");
   await wf(owner,{type:"task.start",taskId:firstTaskId,expectedVersion:taskVersion,reason:"Start child"});
   await wf(owner,{type:"runtime.session.reserve",sessionId,roleId,cwd,authorizationScope:scope,
     model:template.model,sandbox:template.sandbox,approvalPolicy:template.approvalPolicy});

@@ -44,7 +44,7 @@ sequenceDiagram
     A-->>C: thread.id、sessionId、instructionSources
     C->>R: 登记本次承载与外部 ID
   else 已登记 Thread
-    C->>A: thread/resume(threadId, excludeTurns=true)
+    C->>A: thread/resume(threadId, excludeTurns=true, 当前执行配置)
     A-->>C: 当前元数据／状态
   end
   C->>A: turn/start(threadId, task brief 与固定依据)
@@ -125,6 +125,8 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 
 断线或超时后按 `operationId` 回读 PostgreSQL Journal、Task 与 outbox → 对已知 `threadId` 用 `thread/read`／分页历史定位 Turn／Item → 将证据落到操作状态。能证实效果已发生则续跟踪；能证实未发生才考虑重发；没有足够 ID 或证据则保持 `unknown`，不盲重试。App Server 的请求 ID 仅用于连接上的请求／响应匹配；本机 schema 中可选的 `clientUserMessageId` 未经验证为跨重试的去重机制。重启先处理未知派发和待验收成果，再领取新任务。通知无已验证全局重放游标；持久历史分页与 PostgreSQL 本体对账是恢复依据；飞书绑定按需另行对账。
 
+恢复写入前，runner 从持久 Session 重建 actor、项目、Role、scope、cwd、model、sandbox 与 approval profile，并重新核对现行授权；适配器再核它与已登记原生绑定一致。静态和动态来源分别查各自授权，动态授权已撤销时不得借同名静态 grant 恢复。`thread/resume` 显式传入当前 `cwd`、`model`、`sandbox`、`approvalPolicy` 与获准的配置，不能只恢复 Thread ID 而继承旧执行权限。`workspace-write` 的 `sandbox_workspace_write.network_access` 必须是现行 grant 的明确布尔值：禁止联网传 `false`，缺少授权则拒绝恢复，不以省略配置代替降权。旧式 binding 缺少完整 profile 时可保留只读历史，不能恢复写入。这里的恢复校验不授予新 Task 或工程动作的执行权。
+
 第一版只管理该适配器自己创建、登记的 Thread。本页固定实验已观察到独立 App Server 可读桌面线程元数据、桌面可读新建线程历史及一次宿主通知的真实消费；UI 同步、自动控制、跨进程审批及多写行为仍**未验证**。`thread/list` 提供发现能力，但不授权扫描或接管用户全部历史。部署形态从本地 stdio 改为远程、需要修改账号认证或使用实验 API 时，先做版本固定、权限与协议验证，再扩大承诺。
 
 ## 端口合同（拟议）
@@ -132,7 +134,7 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 | evoLoop 能力（跨运行时） | Codex 适配器内部方法与观察 | 项目侧必须保存／判断 |
 | --- | --- | --- |
 | `create(spec)` | `thread/start`；接 `thread/started`，保存返回 `thread.id`、`thread.sessionId`、`instructionSources` | `RoleId`、项目、任务、实例目标、输入修订、权限、交接／退出条件；仅实际回执后标“已建”。原生 ID 放在适配器的 `nativeIds`。 |
-| `resume(sessionId)` | 从映射取 `threadId`，`thread/resume(excludeTurns: true)` | 不因续窗或恢复生成新 Role；检查宿主、权限和已知在途 Turn。 |
+| `resume(sessionId)` | 从映射取 `threadId`，按当前完整执行 profile 调用 `thread/resume(excludeTurns: true)` | 不因续窗或恢复生成新 Role；核 actor、现行授权、绑定、配置降权与已知在途 Turn；只读历史可达不代表可恢复写入。 |
 | `inspect(sessionId)` | `thread/read`、分页 `thread/turns/list` 与 `thread/items/list` | 授权读范围、历史锚点、去重 ID；若后端不支持分页或历史不可达，返回 `unsupported`／`unknown`。 |
 | `run(sessionId, taskId, brief, operationId)` | `turn/start` 返回初始 `turn.id`；通知 `item/*`、`turn/completed` | 派发意图与唯一操作 ID、任务和知识基线、请求 ID／时间、返回的 Turn ID、实际终态；重复请求无强幂等保证。 |
 | 运行中修正（Codex 扩展） | `turn/steer(expectedTurnId)` | 仅针对已确认仍进行的 Turn；新任务走 `turn/start`。该能力是宿主可选扩展，不强制所有运行时实现。 |

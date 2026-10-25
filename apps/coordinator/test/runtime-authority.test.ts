@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
-import { delegationTemplateHash, loadIntegrations, runtimeThreadConfigForSession } from "../src/configuration.js";
+import { delegationTemplateHash, loadIntegrations, runtimeThreadConfig, runtimeThreadConfigForSession } from "../src/configuration.js";
 import { currentSessionGrant, isBoundDynamicSession } from "../src/orchestration/dynamic-admission.js";
 import { loopIntentId } from "../src/orchestration/runner.js";
 
@@ -123,16 +123,44 @@ test("orchestration disabled still classifies a persisted dynamic Session before
 
 test("dynamic network access follows the exact Session binding despite a colliding static or expired template",async()=>{
   const spec={...grant,sessionId,model:"model",approvalPolicy:"on-request" as const};
-  const staticTrue=[{...grant,sandbox:"workspace-write" as const,networkAccess:true}];
+  const staticTrue=[{...grant,sandbox:"workspace-write" as const,model:"model",approvalPolicy:"on-request" as const,networkAccess:true}];
   assert.deepEqual(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},null),
     {"sandbox_workspace_write.network_access":true});
+  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,model:"other-model",sandbox:"workspace-write"},null),undefined);
+  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,approvalPolicy:"untrusted",sandbox:"workspace-write"},null),undefined);
   const dynamic={isDynamicSession:async()=>true,networkAccessForSession:async()=>false};
-  assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},dynamic),undefined);
+  assert.deepEqual(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},dynamic),
+    {"sandbox_workspace_write.network_access":false});
   assert.equal(await runtimeThreadConfigForSession(staticTrue,{...spec,sandbox:"workspace-write"},
     {...dynamic,networkAccessForSession:async()=>null}),undefined,
     "an expired other template or revoked binding cannot supply network permission");
   assert.deepEqual(await runtimeThreadConfigForSession([], {...spec,sandbox:"workspace-write"},
     {...dynamic,networkAccessForSession:async()=>true}),{"sandbox_workspace_write.network_access":true});
+  assert.deepEqual(runtimeThreadConfig([{...staticTrue[0]!,networkAccess:false}],{...spec,sandbox:"workspace-write"}),
+    {"sandbox_workspace_write.network_access":false});
+  assert.equal(runtimeThreadConfig([],{...spec,sandbox:"workspace-write"}),undefined);
+});
+
+test("reloaded static profile downgrades workspace network and rejects withdrawn or changed grants",async()=>{
+  const directory=await mkdtemp(join(tmpdir(),"evoloop-resume-profile-"));
+  try {
+    const file=join(directory,"integrations.json");
+    const profile={...grant,sandbox:"workspace-write" as const,model:"fixture-model",
+      approvalPolicy:"on-request" as const,networkAccess:true};
+    const spec={...profile,sessionId,actorId:profile.actorId};
+    const load=async (grants:unknown[])=>{await writeFile(file,JSON.stringify({runtime:{enabled:true,grants}}));return loadIntegrations(file);};
+    const allowed=await load([profile]);
+    assert.equal(allowed.hasRuntimeGrant(spec),true);
+    assert.deepEqual(runtimeThreadConfig(allowed.runtime!.grants,spec),{"sandbox_workspace_write.network_access":true});
+    const downgraded=await load([{...profile,networkAccess:false}]);
+    assert.equal(downgraded.hasRuntimeGrant(spec),true);
+    assert.deepEqual(runtimeThreadConfig(downgraded.runtime!.grants,spec),{"sandbox_workspace_write.network_access":false});
+    assert.equal(downgraded.hasRuntimeGrant({...spec,model:"other-model"}),false);
+    assert.equal(downgraded.hasRuntimeGrant({...spec,approvalPolicy:"untrusted"}),false);
+    const revoked=await load([]);
+    assert.equal(revoked.hasRuntimeGrant(spec),false);
+    assert.equal(runtimeThreadConfig(revoked.runtime!.grants,spec),undefined);
+  } finally {await rm(directory,{recursive:true,force:true});}
 });
 
 test("session close requires project review but no requester execution grant", async () => {

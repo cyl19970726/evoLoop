@@ -52,7 +52,13 @@ export function bindingOf(session: RuntimeSessionRecord): RuntimeBinding {
   if (!session.nativeThreadId || !session.nativeSessionId) throw new Error("Owned native binding is not available");
   return { sessionId: session.id, roleId: session.roleId, projectId: session.projectId, cwd: session.cwd,
     authorizationScope: session.authorizationScope, nativeThreadId: session.nativeThreadId,
-    nativeSessionId: session.nativeSessionId, owner: "evoloop-codex-app-server" };
+    nativeSessionId: session.nativeSessionId, owner: "evoloop-codex-app-server",
+    resumeProfile:{actorId:session.actorId,model:session.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy} };
+}
+function specOf(session: RuntimeSessionRecord): RuntimeSessionSpec {
+  return { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
+    cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
+    approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}) };
 }
 async function collect<T>(load: (cursor?: string) => Promise<RuntimePage<T>>, maxPages: number): Promise<T[]> {
   const items: T[] = [];
@@ -131,7 +137,8 @@ export class RuntimeRunner {
     return this.deps.principals.some(p => p.actorId === actorId && p.projectIds.includes(session.projectId) &&
       p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")) &&
       await this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
-        authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox }, session);
+        authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox,
+        model: session.model, approvalPolicy: session.approvalPolicy }, session);
   }
   private async owned(session: RuntimeSessionRecord, run?: RuntimeRunRecord): Promise<boolean> {
     return !!this.deps.canSettleOwned && !!await this.deps.canSettleOwned(session, run) &&
@@ -276,10 +283,7 @@ export class RuntimeRunner {
     if (this.deps.mayCreateSession && !await this.deps.mayCreateSession(session)) return;
     await this.deps.trusted.beginSessionCreate(session.projectId, session.id);
     try {
-      const spec: RuntimeSessionSpec = { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
-        cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
-        approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}) };
-      const binding = await this.runtime.create(spec);
+      const binding = await this.runtime.create(specOf(session));
       await this.deps.trusted.bindSession(session.projectId, session.id, binding);
       this.registered.add(session.id);
       this.clearFault(session.projectId,session.id);
@@ -293,7 +297,7 @@ export class RuntimeRunner {
     const binding = bindingOf(session);
     if (!this.registered.has(session.id)) {
       await this.runtime.registerBinding(binding);
-      await this.runtime.resume(binding);
+      await this.runtime.resume(binding, specOf(session));
       this.registered.add(session.id);
     }
     return binding;

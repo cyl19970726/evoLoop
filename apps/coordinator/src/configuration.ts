@@ -16,13 +16,15 @@ const grant = z.strictObject({
   networkAccess: z.boolean().default(false),
   approvalPolicy: z.enum(["on-request", "untrusted"]).default("on-request"),
 });
-export type RuntimeGrant = Omit<z.infer<typeof grant>, "networkAccess" | "approvalPolicy"> &
-  Partial<Pick<z.infer<typeof grant>, "networkAccess" | "approvalPolicy">>;
+export type RuntimeGrant = Omit<z.infer<typeof grant>, "networkAccess" | "approvalPolicy" | "model"> &
+  Partial<Pick<z.infer<typeof grant>, "networkAccess" | "approvalPolicy">> & {model?: string | null | undefined};
 export function runtimeThreadConfig(grants: RuntimeGrant[], spec: RuntimeSessionSpec): Record<string, unknown> | undefined {
-  return grants.some(value => value.actorId === spec.actorId && value.projectId === spec.projectId &&
+  const current=grants.find(value => value.actorId === spec.actorId && value.projectId === spec.projectId &&
     value.roleId === spec.roleId && value.authorizationScope === spec.authorizationScope && value.cwd === spec.cwd &&
-    value.sandbox === spec.sandbox && value.networkAccess && spec.sandbox === "workspace-write")
-    ? {"sandbox_workspace_write.network_access": true} : undefined;
+    value.sandbox === spec.sandbox && (value.model ?? null) === (spec.model ?? null) &&
+    (value.approvalPolicy ?? "on-request") === spec.approvalPolicy);
+  return current && spec.sandbox === "workspace-write"
+    ? {"sandbox_workspace_write.network_access": current.networkAccess === true} : undefined;
 }
 /** A dynamic Session's exact binding takes precedence over every static or other-template profile. */
 export async function runtimeThreadConfigForSession(grants: RuntimeGrant[], spec: RuntimeSessionSpec,
@@ -34,8 +36,8 @@ export async function runtimeThreadConfigForSession(grants: RuntimeGrant[], spec
     const network=await dynamic.networkAccessForSession({projectId:spec.projectId,sessionId:spec.sessionId,
       actorId:spec.actorId,roleId:spec.roleId,authorizationScope:spec.authorizationScope,
       cwd:spec.cwd,sandbox:spec.sandbox,model:spec.model??null,approvalPolicy:spec.approvalPolicy});
-    return network===true && spec.sandbox==="workspace-write"
-      ? {"sandbox_workspace_write.network_access":true} : undefined;
+    return network!==null && spec.sandbox==="workspace-write"
+      ? {"sandbox_workspace_write.network_access":network===true} : undefined;
   }
   return runtimeThreadConfig(grants,spec);
 }
@@ -78,7 +80,9 @@ export async function loadIntegrations(path?: string) {
   const allowedRuntimeCwds = (projectId: string): string[] => [...new Set(grants.filter(g => g.projectId === projectId).map(g => g.cwd))];
   const hasRuntimeGrant = (scope: RuntimeGrant): boolean => grants.some(g =>
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
-    g.authorizationScope === scope.authorizationScope && g.cwd === scope.cwd && g.sandbox === scope.sandbox);
+    g.authorizationScope === scope.authorizationScope && g.cwd === scope.cwd && g.sandbox === scope.sandbox &&
+    (scope.model === undefined || (g.model ?? null) === scope.model) &&
+    (scope.approvalPolicy === undefined || (g.approvalPolicy ?? "on-request") === scope.approvalPolicy));
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
     if (!allowedRuntimeCwds(projectId).includes(cwd) &&
       !(runtime?.enabled && runtime.delegationTemplates.some(t => t.projectId === projectId && t.cwd === cwd))) return false;
