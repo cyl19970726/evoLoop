@@ -4,7 +4,7 @@ import { OriginalDocumentReader } from "../documents/OriginalDocumentReader";
 import { MarkdownBody } from "./MarkdownBody";
 import { isProjectRoute } from "./returnRoute";
 export type Section = "overview" | "work" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations";
-export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string };
+export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
 
 
 export function readRoute(): Route {
@@ -15,10 +15,11 @@ export function readRoute(): Route {
   const section = parts[2];
   const action = new URLSearchParams(search).get("action") || undefined;
   const revision = new URLSearchParams(search).get("revision") || undefined;
+  const session = new URLSearchParams(search).get("session") || undefined;
   if (section === "tasks" && parts[3]) return { projectId: parts[1], section: "task", id: parts[3], revision };
   if (section === "documents" && parts[3]) return { projectId: parts[1], section: "document", id: parts[3], revision };
   if (section === "evaluations") return { projectId: parts[1], section: "evaluations", id: parts[3], revision };
-  if (["work", "knowledge", "documents", "inbox", "journey", "discussions", "collaboration", "runtime", "schedules", "roles", "repository", "operations"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action };
+  if (["work", "knowledge", "documents", "inbox", "journey", "discussions", "collaboration", "runtime", "schedules", "roles", "repository", "operations"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(section === "runtime" ? { session } : {}) };
   return { projectId: parts[1], section: "overview" };
 }
 
