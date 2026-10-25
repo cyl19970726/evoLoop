@@ -12,6 +12,7 @@ const a = "30000001-0000-4000-8000-000000000001", b = "30000002-0000-4000-8000-0
 const role = "30000003-0000-4000-8000-000000000003", session = "30000004-0000-4000-8000-000000000004";
 const current = "30000005-0000-4000-8000-000000000005", next = "30000006-0000-4000-8000-000000000006";
 const held = "30000007-0000-4000-8000-000000000007", queueId = "30000008-0000-4000-8000-000000000008";
+const outside = "30000009-0000-4000-8000-000000000009";
 const stamp = "2026-10-25T00:00:00.000Z";
 function item(projectId: string, id: string, position: number, state: string, holdCode: string | null = null) {
   return { projectId, queueId, id, taskId:id, taskRevisionId:id, sourceInputJson:"{}", sessionId:session, roleId:role, position,
@@ -26,14 +27,22 @@ function crowdedQueues(projectId: string) { return [{projectId,id:queueId,versio
   {...item(projectId,held,12,"held","manual_review"),sessionId:"30000040-0000-4000-8000-000000000040"},
   {...item(projectId,next,13,"queued"),sessionId:"30000041-0000-4000-8000-000000000041"},
 ]}]; }
+function listedTask(projectId:string,id:string,title:string,owner:string,state:"todo"|"in_progress") {
+  return {projectId,id,version:1,currentRevisionId:id,title,content:"正文",contentDocumentId:id,contentRevisionId:id,
+    kind:"implementation",acceptance:"验收",owner,state};
+}
 
 test("overview shows scoped queue evidence, preserves stale read and refreshes on return", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const { chromium } = (await import(pathToFileURL(playwrightModule!).href)).default;
-  let mode: "normal" | "empty" | "fail" | "crowded" = "normal", reads = 0, holdB = false, releaseB: (()=>void) | null = null;
+  let mode: "normal" | "empty" | "fail" | "crowded" | "released" = "normal";
+  let taskMode: "none" | "active" | "later" | "logical" | "truncated" | "pagefail" = "none";
+  let reads = 0, roleReads = 0, holdB = false, releaseB: (()=>void) | null = null;
   const server = createServer(async (req,res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/mode") { mode = url.searchParams.get("value") as typeof mode; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/task-mode") { taskMode = url.searchParams.get("value") as typeof taskMode; res.end("ok"); return; }
     if (url.pathname === "/__fixture/reads") { res.end(String(reads)); return; }
+    if (url.pathname === "/__fixture/role-reads") { res.end(String(roleReads)); return; }
     if (url.pathname === "/__fixture/hold-b") { holdB = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/release-b") { releaseB?.(); res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
@@ -47,7 +56,23 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
         reads++;
         if (projectId === b && holdB) await new Promise<void>(resolve => { releaseB = resolve; });
         if (mode === "fail" && projectId === a) { status=503; value={message:"队列暂不可读"}; }
-        else value=mode === "empty" && projectId === a ? [] : mode === "crowded" && projectId === a ? crowdedQueues(projectId) : queues(projectId);
+        else value=mode === "empty" && projectId === a ? [] : mode === "crowded" && projectId === a ? crowdedQueues(projectId)
+          : mode === "released" && projectId === a ? queues(projectId).map(queue=>({...queue,entries:queue.entries.map(entry=>({...entry,state:"released",holdCode:null,holdReason:null}))})) : queues(projectId);
+      }
+      else if (url.pathname === `${base}/tasks`) {
+        const cursor=url.searchParams.get("cursor");
+        const todos=Array.from({length:50},(_,index)=>listedTask(projectId,`30000100-0000-4000-8000-${String(index).padStart(12,"0")}`,`待办 ${index}`,role,"todo"));
+        if (projectId === b || taskMode === "none") value={items:[],nextCursor:null};
+        else if (taskMode === "active") value={items:[listedTask(projectId,outside,"P1a 持续改进",role,"in_progress")],nextCursor:null};
+        else if (taskMode === "logical") value={items:[listedTask(projectId,held,"外部人工任务","logicalactor:lead","in_progress")],nextCursor:null};
+        else if (taskMode === "later") value=cursor ? {items:[listedTask(projectId,next,"后页进行中",role,"in_progress")],nextCursor:null} : {items:todos,nextCursor:"page-2"};
+        else if (taskMode === "pagefail") {
+          if (cursor) { status=503; value={message:"后页暂不可读"}; }
+          else value={items:todos,nextCursor:"page-2"};
+        } else {
+          const pageIndex=cursor ? Number(cursor.replace("page-","")) : 1;
+          value={items:todos.map((task,index)=>({...task,id:`300001${String(pageIndex).padStart(2,"0")}-0000-4000-8000-${String(index).padStart(12,"0")}`})),nextCursor:`page-${pageIndex+1}`};
+        }
       }
       else if (url.pathname.startsWith(`${base}/tasks/`)) {
         const id = url.pathname.split("/").at(-1)!;
@@ -55,7 +80,7 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
           content:"正文",contentDocumentId:id,contentRevisionId:id,kind:"implementation",acceptance:"验收",owner:role,state:"in_progress"};
         value={task,revision:{...task,taskId:id,actorId:"reader",reason:"夹具",createdAt:stamp},basis:null,links:[],impacts:[],decisions:[]};
       }
-      else if (url.pathname === `${base}/roles/${role}`) value={projectId,id:role,version:1,currentRevisionId:role,state:"active",proposal:{title:"开发职责"},proposedBy:"reader",createdAtUtc:stamp,trialStartedAtUtc:stamp,reviewAtUtc:stamp,mergeTargetRoleId:null};
+      else if (url.pathname === `${base}/roles/${role}`) { roleReads++;value={projectId,id:role,version:1,currentRevisionId:role,state:"active",proposal:{title:"开发职责"},proposedBy:"reader",createdAtUtc:stamp,trialStartedAtUtc:stamp,reviewAtUtc:stamp,mergeTargetRoleId:null}; }
       res.writeHead(status,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
     const file=join(dist,url.pathname === "/" ? "index.html" : url.pathname);
@@ -112,6 +137,42 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   assert.equal(await heldSection.getByText("已读队列范围内没有暂停项。").count(),0);
   assert.equal(await nextSection.getByRole("link",{name:"完整队列"}).count(),1);
   await fetch(`${base}/__fixture/mode?value=normal`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await page.getByRole("link",{name:"当前任务"}).waitFor();
+  await fetch(`${base}/__fixture/mode?value=released`);
+  await fetch(`${base}/__fixture/task-mode?value=active`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  const activeSection=page.getByRole("heading",{name:"进行中的任务"}).locator("..");
+  await activeSection.getByRole("link",{name:"P1a 持续改进"}).waitFor();
+  assert.equal(await activeSection.getByRole("link",{name:"P1a 持续改进"}).getAttribute("href"),`#/p/${a}/tasks/${outside}`);
+  assert.match(await activeSection.innerText(),/负责人 开发职责/);
+  assert.match(await activeSection.innerText(),/是否在原 Session 执行/);
+  assert.equal(await page.getByRole("heading",{name:"现在由谁承接"}).locator("..").getByText("已读队列范围内没有确认的领取占用。").count(),1);
+  await fetch(`${base}/__fixture/task-mode?value=later`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await activeSection.getByRole("link",{name:"后页进行中"}).waitFor();
+  assert.match(await activeSection.innerText(),/已读 2 页任务/);
+  await fetch(`${base}/__fixture/mode?value=empty`);
+  await fetch(`${base}/__fixture/task-mode?value=logical`);
+  const rolesBefore=Number(await (await fetch(`${base}/__fixture/role-reads`)).text());
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await activeSection.getByRole("link",{name:"外部人工任务"}).waitFor();
+  assert.match(await activeSection.innerText(),/负责人 logicalactor:lead/);
+  assert.equal(Number(await (await fetch(`${base}/__fixture/role-reads`)).text()),rolesBefore);
+  await fetch(`${base}/__fixture/task-mode?value=truncated`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await activeSection.getByText(/已达 10 页或 500 项上限/).waitFor();
+  assert.equal(await activeSection.getByText("已读完整任务列表中没有进行中的任务。").count(),0);
+  await fetch(`${base}/__fixture/task-mode?value=later`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await activeSection.getByRole("link",{name:"后页进行中"}).waitFor();
+  await fetch(`${base}/__fixture/task-mode?value=pagefail`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await page.getByText(/摘要读取失败：后页暂不可读/).waitFor();
+  assert.equal(await activeSection.getByRole("link",{name:"后页进行中"}).count(),1);
+  assert.match(await page.locator("body").innerText(),/上次读回，不能视为当前状态/);
+  await fetch(`${base}/__fixture/mode?value=normal`);
+  await fetch(`${base}/__fixture/task-mode?value=none`);
   await page.getByRole("button",{name:"重新读取"}).click();
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   await fetch(`${base}/__fixture/hold-b`);

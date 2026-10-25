@@ -1,4 +1,4 @@
-import type { Task } from "@evoloop/contracts";
+import type { Page, Task } from "@evoloop/contracts";
 import type { ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts/queues";
 
 export interface SummaryItem { queue: ResidentQueue; entry: ResidentQueueEntry }
@@ -6,6 +6,35 @@ type SummaryCounts = { current: number; next: number; held: number };
 export interface SummarySelection {
   current: SummaryItem[]; next: SummaryItem[]; held: SummaryItem[];
   total: SummaryCounts; omittedByKind: SummaryCounts; omitted: number;
+}
+
+export async function scanProjectTasks(
+  projectId: string,
+  read: (cursor?: string) => Promise<Page<Task>>,
+  signal: AbortSignal,
+  maxPages = 10,
+): Promise<{ items: Task[]; truncated: boolean; pages: number }> {
+  const items: Task[] = [];
+  const ids = new Set<string>(), cursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let pages = 1; pages <= maxPages; pages++) {
+    const result = await read(cursor);
+    if (signal.aborted) throw new Error("读取已取消");
+    if (!Array.isArray(result.items) || result.items.length > 50 || items.length + result.items.length > 500 ||
+      result.items.some(task => task.projectId !== projectId || !task.id) ||
+      result.nextCursor !== null && typeof result.nextCursor !== "string")
+      throw new Error("任务分页响应与当前项目或读取上限不符");
+    for (const task of result.items) {
+      if (ids.has(task.id)) throw new Error("任务分页含重复对象，无法确认当前状态");
+      ids.add(task.id); items.push(task);
+    }
+    if (!result.nextCursor) return { items, truncated: false, pages };
+    if (result.nextCursor === cursor || cursors.has(result.nextCursor)) throw new Error("任务分页游标重复，无法确认当前状态");
+    cursors.add(result.nextCursor);
+    if (pages === maxPages || items.length === 500) return { items, truncated: true, pages };
+    cursor = result.nextCursor;
+  }
+  throw new Error("任务分页超出读取上限");
 }
 
 /** Queue claims are occupancy evidence; only the Task itself can confirm its current revision. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts/queues";
-import { selectSummary, taskMatchesQueue } from "../src/overview/summary";
+import { scanProjectTasks, selectSummary, taskMatchesQueue } from "../src/overview/summary";
 
 const queueId = "q", projectId = "p", sessionId = "s", roleId = "r";
 function entry(id: string, position: number, state: ResidentQueueEntry["state"], holdCode: ResidentQueueEntry["holdCode"] = null): ResidentQueueEntry {
@@ -49,4 +49,21 @@ test("claimed queue entry is not accepted as a current Task when owner or revisi
   assert.equal(taskMatchesQueue(task, claimed), true);
   assert.equal(taskMatchesQueue({ ...task, owner:"other" }, claimed), false);
   assert.equal(taskMatchesQueue({ ...task, currentRevisionId:"new" }, claimed), false);
+});
+
+test("project tasks scan reaches later pages and marks a capped scan incomplete", async () => {
+  const make = (id: string, state: "todo" | "in_progress") => ({ id, projectId, state, title:id, owner:"logicalactor" } as Parameters<typeof taskMatchesQueue>[0]);
+  const pages = new Map<string | undefined, {items: ReturnType<typeof make>[]; nextCursor:string|null}>([
+    [undefined, {items:Array.from({length:50},(_,n)=>make(`todo-${n}`,"todo")),nextCursor:"next"}],
+    ["next", {items:[make("active-later","in_progress")],nextCursor:null}],
+  ]);
+  const read = async (cursor?: string) => pages.get(cursor)!;
+  const complete = await scanProjectTasks(projectId, read, new AbortController().signal);
+  assert.equal(complete.items.find(task=>task.id === "active-later")?.state,"in_progress");
+  assert.equal(complete.truncated,false);
+  const capped = await scanProjectTasks(projectId, read, new AbortController().signal, 1);
+  assert.equal(capped.truncated,true);
+  assert.equal(capped.items.some(task=>task.state === "in_progress"),false);
+  await assert.rejects(scanProjectTasks(projectId, async () => ({items:[{...make("foreign","in_progress"),projectId:"foreign"}],nextCursor:null}), new AbortController().signal), /当前项目/);
+  await assert.rejects(scanProjectTasks(projectId, async () => ({items:[],nextCursor:"same"}), new AbortController().signal), /游标重复/);
 });
