@@ -9,6 +9,9 @@
 .resident-queue-meta span:first-child{flex:1 1 220px}
 .resident-queue-session{margin:14px 0;min-width:0}
 .resident-queue-session h4{margin:0 0 8px;color:#344b73;overflow-wrap:anywhere}
+.resident-queue-session p{overflow-wrap:anywhere}
+.resident-queue-id{font-size:12px;color:#657490}
+.resident-queue-id code{overflow-wrap:anywhere;word-break:break-all}
 .resident-queue-session ol{list-style:none;padding:0;margin:0;display:grid;gap:8px}
 .resident-queue-session li{padding:10px 12px;border:1px solid #d8e0ef;border-left:3px solid #8499bf;border-radius:6px;background:white;min-width:0;overflow-wrap:anywhere}
 .resident-queue-session li.queue-current-task{border-left-color:#355eaa}

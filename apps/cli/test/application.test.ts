@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { test, mock } from "node:test";
 import { runCli } from "../src/application.ts";
 
@@ -97,4 +99,46 @@ test("run trace CLI uses a named read and optional cursor", async () => {
     assert.equal((await run(["read", "run", runId, "--cursor", "page-2"],
       { EVOLOOP_TOKEN: "private-fixture", EVOLOOP_PROJECT: project })).code, 2);
   } finally { mocked.mock.restore(); }
+});
+
+test("the CLI entry point reads resident queue attempts and preserves ordinary reads", async () => {
+  const project = "00000000-0000-4000-8000-000000000001", queue = "00000000-0000-4000-8000-000000000002";
+  const paths: string[] = [];
+  const server = createServer((request, response) => {
+    paths.push(request.url ?? "");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(request.url?.endsWith("/attempts") ? { items: [{ id: "attempt-1" }] } : { id: queue }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const entry = new URL("../src/main.ts", import.meta.url).pathname;
+  const invoke = (...args: string[]) => new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", "tsx", entry, ...args], {
+      env: { ...process.env, EVOLOOP_API_URL: `http://127.0.0.1:${address.port}`, EVOLOOP_TOKEN: "local-fixture", EVOLOOP_PROJECT: project },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.setEncoding("utf8").on("data", chunk => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", chunk => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", code => resolve({ code: code ?? -1, stdout, stderr }));
+  });
+  try {
+    const help = await invoke("help");
+    assert.equal(help.code, 0);
+    assert.match(help.stdout, /--attempts/);
+    const attempts = await invoke("read", "resident-queue", queue, "--project", project, "--attempts");
+    assert.equal(attempts.code, 0, attempts.stderr);
+    assert.deepEqual(JSON.parse(attempts.stdout), { items: [{ id: "attempt-1" }] });
+    const ordinary = await invoke("read", "resident-queue", queue, "--project", project);
+    assert.equal(ordinary.code, 0, ordinary.stderr);
+    assert.deepEqual(JSON.parse(ordinary.stdout), { id: queue });
+    const unknown = await invoke("read", "resident-queue", queue, "--project", project, "--not-a-mode");
+    assert.equal(unknown.code, 2);
+    assert.equal(JSON.parse(unknown.stderr).error.code, "INVALID_INPUT");
+    assert.deepEqual(paths, [
+      `/api/projects/${project}/resident-queues/${queue}/attempts`,
+      `/api/projects/${project}/resident-queues/${queue}`,
+    ]);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
