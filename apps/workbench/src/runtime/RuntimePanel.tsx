@@ -18,18 +18,21 @@ export function RuntimePanel({ context, refresh, task }: { context: MutationCont
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
   const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
+  const [runsForTask, setRunsForTask] = useState<string | undefined>(undefined);
+  const [runtimePoll, setRuntimePoll] = useState<{taskId: string | undefined; sequence: number} | null>(null);
   const [error, setError] = useState("");
   const [epoch, setEpoch] = useState(0);
   const [recovering, setRecovering] = useState(false);
   useEffect(() => {
-    let active = true, fetching = false;
+    let active = true, fetching = false, sequence = 0;
     const client = runtimeClient(context.token, context.projectId);
     async function load() {
       if (fetching) return;
       fetching = true;
       try {
         const [s, list, work] = await Promise.all([client.status(), client.sessions(), client.runs(task?.id)]);
-        if (active) { setStatus(s); setSessions(list); setRuns(work); setError(""); }
+        if (active) { setStatus(s); setSessions(list); setRuns(work); setRunsForTask(task?.id); setError("");
+          sequence += 1; if (sequence > 1) setRuntimePoll({taskId:task?.id,sequence}); }
       } catch (cause) { if (active) setError(errorText(cause)); }
       finally { fetching = false; }
     }
@@ -49,7 +52,7 @@ export function RuntimePanel({ context, refresh, task }: { context: MutationCont
     {error && <Notice error>{error}</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}
     {status && !status.available && context.principal.permissions.includes("review") && <button disabled={recovering} onClick={recover}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</button>}
-    <OrchestrationPanel key={`${context.projectId}:${context.principal.actorId}`} token={context.token} projectId={context.projectId} refresh={refresh + epoch} taskId={task?.id} />
+    <OrchestrationPanel key={`${context.projectId}:${context.principal.actorId}:${task?.id ?? "project"}`} token={context.token} projectId={context.projectId} refresh={refresh + epoch} taskId={task?.id} verifiedRuns={!error && runsForTask === task?.id ? runs : null} runtimePoll={runtimePoll && runtimePoll.taskId === task?.id ? runtimePoll.sequence : 0} />
     {visibleSessions.length === 0 && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
     {visibleSessions.map(session => <details className="workflow-detail" key={session.id}><summary>{session.roleId} · {session.state}</summary>
       <dl><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>权限</dt><dd>{session.sandbox}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
