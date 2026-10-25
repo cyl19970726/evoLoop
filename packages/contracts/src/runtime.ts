@@ -58,6 +58,9 @@ export interface RuntimeBinding {
   cwd: string;
   authorizationScope: string;
   owner: "evoloop-codex-app-server";
+  /** Persisted Session profile for an exact native resume; omitted only for legacy read-only inspection. */
+  resumeProfile?: { actorId: string; model: string | null; sandbox: "read-only" | "workspace-write";
+    approvalPolicy: "on-request" | "untrusted" };
 }
 
 export interface RuntimeSessionSpec {
@@ -146,7 +149,7 @@ export interface RuntimeApprovalRequest {
 
 export interface RuntimePort {
   create(spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
-  resume(binding: RuntimeBinding): Promise<RuntimeBinding>;
+  resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
   inspect(binding: RuntimeBinding): Promise<unknown>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;

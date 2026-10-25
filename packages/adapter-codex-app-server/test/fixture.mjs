@@ -10,6 +10,7 @@ let toolId = 801;
 let pendingCreateId = null;
 let turnListReads = 0;
 let archived = mode === "already-archived";
+let transitionResumes = 0;
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") { initialized = true; continue; }
@@ -48,6 +49,21 @@ for await (const line of lines) {
     send({ id, result: { thread } }); continue;
   }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
+  if (method === "thread/resume" && mode === "resume-profile") {
+    if (params.threadId !== thread.id || params.cwd !== thread.cwd || params.model !== "gpt-6-astra" ||
+      params.sandbox !== "workspace-write" || params.approvalPolicy !== "on-request" ||
+      params.config?.["sandbox_workspace_write.network_access"] !== true || params.excludeTurns !== true) {
+      send({ id, error: { code: -32602, message: "resume lost the authorized profile" } }); continue;
+    }
+  }
+  if (method === "thread/resume" && mode === "resume-network-transition") {
+    const expected = transitionResumes++ === 0;
+    if (params.threadId !== thread.id || params.cwd !== thread.cwd || params.model !== "gpt-6-astra" ||
+      params.sandbox !== "workspace-write" || params.approvalPolicy !== "on-request" ||
+      params.config?.["sandbox_workspace_write.network_access"] !== expected || params.excludeTurns !== true) {
+      send({id,error:{code:-32602,message:"resume did not apply current network profile"}}); continue;
+    }
+  }
   if (method === "thread/archive") {
     if (params.threadId !== thread.id) { send({ id, error: { code: -32602, message: "foreign thread" } }); continue; }
     archived = true;

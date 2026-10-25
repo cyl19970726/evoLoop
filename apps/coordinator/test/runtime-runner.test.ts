@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
-import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -43,7 +43,7 @@ class FakeRuntime {
   async create() { this.creates++; return { sessionId: session.id, projectId, roleId: session.roleId,
     cwd: session.cwd, authorizationScope: session.authorizationScope, nativeThreadId: "owned-thread",
     nativeSessionId: "owned-session", owner: "evoloop-codex-app-server" as const }; }
-  async resume(binding: RuntimeBinding) { return binding; }
+  async resume(binding: RuntimeBinding, _spec: RuntimeSessionSpec) { return binding; }
   async inspect(_binding: RuntimeBinding): Promise<unknown> { return { thread: { id: session.nativeThreadId, sessionId: session.nativeSessionId, cwd: session.cwd, source: "appServer" } }; }
   async listTurns(): Promise<RuntimePage<RuntimeTurn>> { return { data: [], nextCursor: null }; }
   async listItems(): Promise<RuntimePage<unknown>> { return { data: [], nextCursor: null }; }
@@ -239,7 +239,7 @@ test("only an exact running Turn readback clears a transient reconcile fault bef
 
 test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
   const originalGrant = { projectId, actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
-    cwd: session.cwd, sandbox: session.sandbox };
+    cwd: session.cwd, sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy };
   const cases = [
     { name: "original grant", grant: originalGrant, archive: true },
     { name: "missing grant", grant: null },
@@ -256,7 +256,8 @@ test("close uses the original actor and exact grant, refusing missing authority 
     const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
     const binding: RuntimeBinding = { owner: "evoloop-codex-app-server", projectId, sessionId: session.id,
       roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd,
-      nativeThreadId: session.nativeThreadId!, nativeSessionId: session.nativeSessionId! };
+      nativeThreadId: session.nativeThreadId!, nativeSessionId: session.nativeSessionId!,
+      resumeProfile:{actorId:session.actorId,model:session.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy} };
     const calls: string[] = [];
     class ArchiveRuntime extends FakeRuntime {
       archived = false;
@@ -468,6 +469,73 @@ test("transient interrupted history without completion time cannot settle a boun
     assert.deepEqual(recorded, ["completed"]);
     assert.equal(runtime.starts, 0);
   } finally { await runner.stop(); }
+});
+
+test("restart dispatches a reserved Run with the original Session profile and never replays it", async () => {
+  const persisted = { ...session, model: "gpt-6-astra", sandbox: "workspace-write" as const };
+  const active: RuntimeRunRecord = { ...run, state: "requested", nativeTurnId: null };
+  const runtime = new FakeRuntime();
+  const profiles: unknown[] = [];
+  runtime.resume = async (binding, profile) => { profiles.push(profile); return binding; };
+  runtime.startTurn = async () => { runtime.starts++; return { id: "owned-turn", status: "inProgress" }; };
+  runtime.listTurns = async () => ({ data: [{ id: "owned-turn", status: "inProgress", completedAtUtc: null }], nextCursor: null });
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [persisted],
+    listRuntimeRuns: async () => [active], getRuntimeSession: async () => persisted } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }), beginDispatch: async () => {},
+    bindTurn: async () => { active.state = "running"; active.nativeTurnId = "owned-turn"; return active; } } as unknown as RuntimeWorkflowService;
+  let granted = true;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true,
+    hasGrant: (scope) => granted && scope.actorId === actorId && scope.roleId === persisted.roleId &&
+      scope.authorizationScope === persisted.authorizationScope && scope.cwd === persisted.cwd &&
+      scope.sandbox === persisted.sandbox && scope.model === persisted.model &&
+      scope.approvalPolicy === persisted.approvalPolicy,
+    mayDispatchRun: async () => granted });
+  (runner as unknown as { input: () => Promise<{ input: string }> }).input = async () => ({ input: "fixed task input" });
+  try {
+    await runner.start();
+    assert.deepEqual(profiles, [{ actorId, sessionId: persisted.id, roleId: persisted.roleId,
+      projectId, cwd: persisted.cwd, authorizationScope: persisted.authorizationScope,
+      sandbox: persisted.sandbox, approvalPolicy: persisted.approvalPolicy, model: persisted.model }]);
+    assert.equal(runtime.starts, 1);
+    granted = false;
+    await runner.recover();
+    assert.equal(profiles.length, 1, "revocation cannot open another writer");
+    assert.equal(runtime.starts, 1);
+  } finally { await runner.stop(); }
+});
+
+test("rehydration of a bound dynamic Session ignores a colliding static grant until current dynamic authority returns",async()=>{
+  const dispatchId=randomUUID(),dynamicSession={...session,id:loopIntentId(dispatchId,"session"),
+    model:"gpt-6-astra",sandbox:"workspace-write" as const};
+  const requested={...run,id:loopIntentId(dispatchId,"run"),sessionId:dynamicSession.id,state:"requested" as const,nativeTurnId:null};
+  const persisted={query:async()=>({rows:[{dispatch_id:dispatchId}]})} as never;
+  let current=false;
+  const runtime=new FakeRuntime();
+  const profiles:RuntimeSessionSpec[]=[];
+  runtime.resume=async (binding,profile)=>{profiles.push(profile);return binding;};
+  runtime.startTurn=async()=>{runtime.starts++;return {id:"dynamic-turn",status:"inProgress"};};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[dynamicSession],
+    listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>dynamicSession} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),beginDispatch:async()=>{},
+    bindTurn:async()=>{requested.state="running";requested.nativeTurnId="dynamic-turn";return requested;}} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,
+    hasGrant:(_scope,record)=>currentSessionGrant(persisted,record!,()=>true,async()=>current),
+    mayDispatchRun:async()=>current});
+  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:"fixed task input"});
+  try {
+    await runner.start();
+    assert.equal(runtime.starts,0);assert.deepEqual(profiles,[],"the matching static writer must not rehydrate a revoked dynamic Session");
+    current=true;
+    await runner.pump();
+    assert.equal(runtime.starts,1);
+    assert.deepEqual(profiles,[{actorId,sessionId:dynamicSession.id,roleId:dynamicSession.roleId,projectId,
+      cwd:dynamicSession.cwd,authorizationScope:dynamicSession.authorizationScope,sandbox:"workspace-write",
+      approvalPolicy:dynamicSession.approvalPolicy,model:dynamicSession.model}]);
+  } finally {await runner.stop();}
 });
 
 test("admission denial does not block terminal reconciliation of an unknown bound Turn", async () => {

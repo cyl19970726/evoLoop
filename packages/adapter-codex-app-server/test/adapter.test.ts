@@ -6,7 +6,8 @@ import { mapWorkItem } from "../src/work-trace.js";
 import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 
 const fixture = resolve(import.meta.dirname, "fixture.mjs");
-const spec: RuntimeSessionSpec = { sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", sandbox: "read-only", approvalPolicy: "on-request" };
+const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", sandbox: "read-only", approvalPolicy: "on-request" };
+const restoreSpec: RuntimeSessionSpec = { ...spec, actorId: "original-actor" };
 const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapter> => {
   const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, mode], requestTimeoutMs: timeout });
   await adapter.open(); return adapter;
@@ -72,7 +73,7 @@ test("correlates RPCs, filters foreign events, and reads owned history", async t
     events.push(event.method);
     if (event.method === "turn/completed") resolveCompleted();
   }));
-  assert.deepEqual(await adapter.resume(binding), binding);
+  assert.deepEqual(await adapter.resume(binding, restoreSpec), binding);
   assert.equal((await adapter.inspect(binding) as { thread: { id: string } }).thread.id, binding.nativeThreadId);
   const [turns, items] = await Promise.all([adapter.listTurns(binding), adapter.listItems(binding, "turn-1")]);
   assert.equal(turns.data[0]?.id, "turn-1"); assert.equal(items.data.length, 1);
@@ -159,7 +160,7 @@ test("approval during thread creation is recorded before denial without granting
     assert.equal(request.turnId, undefined);
     await assert.rejects(() => adapter.resume({ sessionId: spec.sessionId, roleId: spec.roleId,
       projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd,
-      nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", owner: "evoloop-codex-app-server" }), RuntimeProtocolError);
+      nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", owner: "evoloop-codex-app-server" }, restoreSpec), RuntimeProtocolError);
     await new Promise(resolve => setTimeout(resolve, 20));
     persisted = true;
   });
@@ -253,7 +254,7 @@ test("rejects malformed native completion time instead of inventing terminal pro
 test("rejects unregistered Desktop binding and invalid scope", async t => {
   const adapter = await open(); t.after(() => adapter.close());
   const desktop: RuntimeBinding = { sessionId: "desktop", roleId: "role", projectId: "project", nativeThreadId: "desktop-thread", nativeSessionId: "desktop-thread", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", owner: "evoloop-codex-app-server" };
-  await assert.rejects(() => adapter.resume(desktop), RuntimeProtocolError);
+  await assert.rejects(() => adapter.resume(desktop, restoreSpec), RuntimeProtocolError);
   await assert.rejects(() => adapter.create({ ...spec, cwd: "relative" }), RuntimeProtocolError);
   await assert.rejects(() => adapter.registerBinding(desktop), RuntimeProtocolError);
 });
@@ -261,17 +262,65 @@ test("rejects unregistered Desktop binding and invalid scope", async t => {
 test("restores only a binding accepted by the trusted store", async t => {
   const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, "normal"], verifyBinding: async binding => binding.nativeThreadId === "thread-owned" && binding.authorizationScope === "task:fixture" });
   t.after(() => adapter.close()); await adapter.open();
-  const binding: RuntimeBinding = { sessionId: "session-1", roleId: "role-1", projectId: "project-1", nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd, authorizationScope: "task:fixture", owner: "evoloop-codex-app-server" };
+  const binding: RuntimeBinding = { sessionId: "session-1", roleId: "role-1", projectId: "project-1", nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd, authorizationScope: "task:fixture", owner: "evoloop-codex-app-server",
+    resumeProfile:{actorId:"original-actor",model:null,sandbox:"read-only",approvalPolicy:"on-request"} };
   await adapter.registerBinding(binding);
-  assert.deepEqual(await adapter.resume(binding), binding);
+  assert.deepEqual(await adapter.resume(binding, restoreSpec), binding);
   await assert.rejects(() => adapter.registerBinding({ ...binding, nativeThreadId: "desktop-thread" }), RuntimeProtocolError);
+});
+
+test("resuming a persisted Session reapplies its exact native profile", async t => {
+  const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, "resume-profile"],
+    verifyBinding: async () => true,
+    threadConfig: async session => session.actorId === "original-actor" && session.roleId === spec.roleId &&
+      session.model === "gpt-6-astra" ? {"sandbox_workspace_write.network_access": true} : undefined });
+  t.after(() => adapter.close()); await adapter.open();
+  const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId,
+    nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd,
+    authorizationScope: spec.authorizationScope, owner: "evoloop-codex-app-server",
+    resumeProfile:{actorId:"original-actor",model:"gpt-6-astra",sandbox:"workspace-write",approvalPolicy:"on-request"} };
+  await adapter.registerBinding(binding);
+  const profile = { ...spec, actorId: "original-actor", model: "gpt-6-astra", sandbox: "workspace-write" as const };
+  assert.deepEqual(await adapter.resume(binding, profile), binding);
+  await assert.rejects(() => adapter.resume(binding, { ...profile, roleId: "other-role" }), RuntimeProtocolError);
+  await assert.rejects(() => adapter.resume(binding, { ...profile, cwd: "/tmp/other" }), RuntimeProtocolError);
+  await assert.rejects(() => adapter.resume(binding, { ...profile, actorId: "other-actor" }), RuntimeProtocolError);
+  await assert.rejects(() => adapter.resume(binding, { ...profile, model: "other-model" }), RuntimeProtocolError);
+  await assert.rejects(() => adapter.resume(binding, { ...profile, sandbox: "read-only" }), RuntimeProtocolError);
+  await assert.rejects(() => adapter.resume(binding, { ...profile, approvalPolicy: "untrusted" }), RuntimeProtocolError);
+});
+
+test("resume explicitly revokes inherited workspace network access on the same Thread", async t => {
+  let network:boolean|null = true;
+  const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs:[fixture,"resume-network-transition"],
+    verifyBinding:async()=>true, threadConfig:async()=>network===null ? undefined : {"sandbox_workspace_write.network_access":network} });
+  t.after(()=>adapter.close()); await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
+    resumeProfile:{actorId:"original-actor",model:"gpt-6-astra",sandbox:"workspace-write",approvalPolicy:"on-request"}};
+  await adapter.registerBinding(binding);
+  const profile={...restoreSpec,model:"gpt-6-astra",sandbox:"workspace-write" as const};
+  await adapter.resume(binding,profile);
+  network=false;
+  await adapter.resume(binding,profile);
+  network=null;
+  await assert.rejects(()=>adapter.resume(binding,profile),RuntimeProtocolError);
+  await assert.rejects(()=>adapter.resume(binding,{...profile,sandbox:"read-only"}),RuntimeProtocolError);
+  await assert.rejects(()=>adapter.resume(binding,{...profile,actorId:"other-actor"}),RuntimeProtocolError);
+});
+
+test("a read-only bound Session cannot resume as a workspace writer",async t=>{
+  const adapter=await open();t.after(()=>adapter.close());
+  const binding=await adapter.create(spec);
+  await assert.rejects(()=>adapter.resume(binding,{...restoreSpec,sandbox:"workspace-write"}),RuntimeProtocolError);
 });
 
 test("read and resume reject a changed native session tree", async t => {
   const adapter = await open("changed-session"); t.after(() => adapter.close());
   const binding = await adapter.create(spec);
   await assert.rejects(() => adapter.inspect(binding), /read thread does not match binding/);
-  await assert.rejects(() => adapter.resume(binding), /resumed thread does not match registered binding/);
+  await assert.rejects(() => adapter.resume(binding, restoreSpec), /resumed thread does not match registered binding/);
 });
 
 test("experimental tool is declared only for the selected thread and dispatches a bounded result", async t => {
@@ -338,9 +387,10 @@ test("restored native binding stays fail-closed when its tool declaration cannot
   t.after(()=>adapter.close());await adapter.open();
   const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
     nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
-    authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server"};
+    authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
+    resumeProfile:{actorId:"original-actor",model:null,sandbox:"read-only",approvalPolicy:"on-request"}};
   await adapter.registerBinding(binding);
-  await adapter.resume(binding);
+  await adapter.resume(binding, restoreSpec);
   const result=new Promise<unknown>(resolve=>adapter.onEvent(event=>{if(event.method==="fixture/toolDecision")resolve(event.params);}));
   await adapter.startTurn(binding,"read","operation-1");
   assert.deepEqual((await result as {result:unknown}).result,
@@ -351,7 +401,7 @@ test("restored native binding stays fail-closed when its tool declaration cannot
 test("owned read remains available when native resume is rejected", async t => {
   const adapter = await open("resume-rejected"); t.after(() => adapter.close());
   const binding = await adapter.create(spec);
-  await assert.rejects(() => adapter.resume(binding), RuntimeServerError);
+  await assert.rejects(() => adapter.resume(binding, restoreSpec), RuntimeServerError);
   assert.equal((await adapter.inspect(binding) as { thread: { id: string } }).thread.id, binding.nativeThreadId);
   assert.equal((await adapter.listTurns(binding)).data.length, 1);
   assert.equal((await adapter.listItems(binding, "turn-1")).data.length, 1);
@@ -362,7 +412,9 @@ test("owned read remains available when native resume is rejected", async t => {
   const binding = await adapter.create(spec);
   const restored: RuntimeBinding = { owner: binding.owner, nativeSessionId: binding.nativeSessionId,
     nativeThreadId: binding.nativeThreadId, authorizationScope: binding.authorizationScope, cwd: binding.cwd,
-    projectId: binding.projectId, roleId: binding.roleId, sessionId: binding.sessionId };
+    projectId: binding.projectId, roleId: binding.roleId, sessionId: binding.sessionId,
+    resumeProfile: binding.resumeProfile ? {approvalPolicy:binding.resumeProfile.approvalPolicy,
+      sandbox:binding.resumeProfile.sandbox,model:binding.resumeProfile.model,actorId:binding.resumeProfile.actorId} : undefined };
   assert.equal((await adapter.startTurn(restored, "read only", "reordered-op")).id, "turn-1");
   await assert.rejects(() => adapter.startTurn({...restored, roleId:"other"}, "read", "other-op"), RuntimeProtocolError);
 });
