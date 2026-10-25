@@ -24,7 +24,7 @@ evoLoop 因而维护稳定的对象身份与关系，让一次查询能得到相
 
 Task 主正文的唯一权威是 DocumentRevision。Task 与每个 TaskRevision 保存 `contentDocumentId/contentRevisionId`，`content` 是按固定修订读取的投影，数据库不再另存可编辑 goal 正文。验收 acceptance 仍由 Task 及其修订保存；项目 Goal 不更名。`task.create` 在一个事务创建 todo Task、task 类型主文档和固定正文，`task.start` 原子发布主正文、封存本轮依据并进入 in_progress，不需要单独的规格文档前置。工作状态只用 todo/in_progress/done/cancelled。Task 可选稳定业务领域 ID，并在 TaskRevision 中固定该关联；更换领域须在 todo 且无在途 Run 时经受控修订，历史修订不随领域或 Role 后续变化改写。`Task.kind` 仍表达工作类型，不充当领域键。
 
-Role 的 `system` / `business` 分类与七种初始职责模板已有合同和查询入口；模板只是参考，不自动建 Role、绑定 Session 或分配任务。领域映射记录所见 Role 版本、理由与授权依据。受管承载以同项目、ready、原生 Thread 存在且正式绑定的 Session 为准；外部 Desktop host link 则分别登记声称能力、核实证据和撤销状态，已核的人工领取能力不等于自动启动或 owned writer。只读领域路由返回承载状态与建议，`automaticStart` 为 false，不能代替当前 Run 的授权校验。未登记的 Desktop 聊天不构成 owned Role 承载；队列与跨 Session 通信仍在实施中，不从这些登记关系推定已可自动接续。
+Role 的 `system` / `business` 分类与七种初始职责模板已有合同和查询入口；模板只是参考，不自动建 Role、绑定 Session 或分配任务。领域映射更新时核对所见 Role 版本、理由与授权依据。受管承载以同项目、ready、原生 Thread 存在且正式绑定的 Session 为准；外部 Desktop host link 则分别登记声称能力、核实证据和撤销状态，已核的人工领取能力不等于自动启动或 owned writer。只读领域路由返回承载状态与建议，`automaticStart` 为 false，不能代替当前 Run 的授权校验。未登记的 Desktop 聊天不构成 owned Role 承载；队列与跨 Session 通信仍在实施中，不从这些登记关系推定已可自动接续。
 
 用途类型与 format 分开；未分类可为空，Document 生命周期使用 draft/published/archived。已发布 r3 与新草稿 r4 可以共存，归档不删历史或越过权限。初期验收留原任务内，正文写作与使用语义见[任务与过程文档](../product/tasks-and-documents.md)。
 
