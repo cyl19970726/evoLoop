@@ -134,7 +134,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
       {target !== null && !validTarget && <Notice error>链接中的目标职责 ID 无效；没有定位到其他职责。</Notice>}
       {validTarget && !foundTarget && <Notice error={Boolean(error || moreError || !loading && !nextCursor || targetPages.current >= 20)}>{error ? `目标职责暂不可核对：${error}`
         : moreError ? `目标职责后续页未读回：${moreError}` : loading || loadingMore || nextCursor && targetPages.current < 20 ? `正在定位目标职责 ${target}…`
-        : nextCursor ? `目标职责尚未定位；自动读取已到 20 页上限，可继续手动加载并核对 ${target}。`
+        : nextCursor ? `目标职责尚未定位；自动追加读取已到 20 页上限，可继续手动加载并核对 ${target}。`
         : `当前项目已读完职责，未找到目标 ${target}；没有定位到其他职责。`}</Notice>}
       {loading && <p>正在读取职责…</p>}{error && <Notice error>职责暂不可读：{error}</Notice>}
       {!loading && !error && roles.length === 0 && <p className="empty">本项目还没有职责提案；不会自动创建常设角色。</p>}
