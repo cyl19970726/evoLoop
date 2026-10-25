@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DocumentDetail, DocumentRevision, Task } from "@evoloop/contracts";
+import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
 import { api, errorText } from "../api";
 import { Alert, ShortId, RevisionBody, documentReturnHref, href } from "../ui/shared";
 import { ActionForm, type MutationContext } from "../workflow/ActionForm";
@@ -8,6 +8,7 @@ import { DocumentOrigin } from "./DocumentOrigin";
 import "./document.css";
 const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告" } as const;
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
+const relationLabel = { content: "任务正文", link: "已关联", basis: "当前固定依据" } as const;
 export function DocumentPage({ token, projectId, id, selectedRevision, context, refresh }: { token: string; projectId: string; id: string; selectedRevision?: string; context: MutationContext; refresh: number }) {
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [revision, setRevision] = useState<DocumentRevision | null>(null);
@@ -17,9 +18,10 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
   const [uploadGeneration, setUploadGeneration] = useState(0);
   const [readVersion, setReadVersion] = useState(0);
   const [observedAt, setObservedAt] = useState<Date | null>(null);
-  const [relatedTasks, setRelatedTasks] = useState<Task[]>([]);
+  const [relatedTasks, setRelatedTasks] = useState<DocumentTaskReference[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(true);
   const [relatedError, setRelatedError] = useState("");
+  const [relatedPartial, setRelatedPartial] = useState(false);
   useEffect(() => { setUploadBaselineVersion(null); setUploadGeneration(0); }, [projectId, id]);
   useEffect(() => {
     let active = true;
@@ -37,36 +39,32 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
   }, [id, projectId]);
   useEffect(() => {
     let active = true;
-    setRelatedTasks([]); setRelatedLoading(true); setRelatedError("");
+    const controller = new AbortController();
+    setRelatedTasks([]); setRelatedLoading(true); setRelatedError(""); setRelatedPartial(false);
     const client = api(token);
-    // The current read API exposes links on Task detail only. Scan every page
-    // and show incompleteness on failure, rather than inventing an empty result.
     void (async () => {
       let cursor: string | undefined;
       const seen = new Set<string>();
-      const matches: Task[] = [];
+      const matches = new Map<string, DocumentTaskReference>();
+      let pages = 0;
       do {
-        const page = await client.tasks(projectId, cursor);
-        const detailed = [];
-        for (let offset = 0; offset < page.items.length; offset += 6) {
-          detailed.push(...await Promise.all(page.items.slice(offset, offset + 6).map(task => client.task(projectId, task.id))));
-          if (!active) return;
-        }
+        const page = await client.documentTasks(projectId, id, cursor, controller.signal);
         if (!active) return;
-        for (let index = 0; index < page.items.length; index++) {
-          const task = page.items[index];
-          const detail = detailed[index];
-          if (task.contentDocumentId === id || detail.links.some(link => link.documentId === id)
-            || detail.basis?.members.some(member => member.documentId === id)) matches.push(task);
-        }
-        setRelatedTasks([...matches]);
-        if (page.nextCursor && seen.has(page.nextCursor)) throw new Error("分页游标重复，关联任务读取未完成");
+        if (page.items.length > 50 || page.items.some(item => item.projectId !== projectId)) throw new Error("关联任务分页响应无效");
+        for (const task of page.items) matches.set(task.id, task);
+        setRelatedTasks([...matches.values()]);
+        pages++;
+        if (page.nextCursor && (page.nextCursor === cursor || seen.has(page.nextCursor))) throw new Error("分页游标重复，关联任务读取未完成");
         if (page.nextCursor) seen.add(page.nextCursor);
         cursor = page.nextCursor ?? undefined;
+        if (cursor && (pages >= 20 || matches.size >= 1000)) {
+          if (active) { setRelatedPartial(true); setRelatedLoading(false); }
+          return;
+        }
       } while (cursor);
       if (active) setRelatedLoading(false);
     })().catch(cause => { if (active) { setRelatedLoading(false); setRelatedError(errorText(cause)); } });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [token, projectId, id, refresh, readVersion]);
   if (!detail || !revision || detail.document.id !== id || revision.documentId !== id || selectedRevision && revision.id !== selectedRevision) {
     return <div className="content"><p>正在读取文档…</p>{error && <Alert kind="error">{error}</Alert>}</div>;
@@ -98,8 +96,8 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
       {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
     </div>
     <RevisionBody token={token} revision={revision} />
-    <section className="panel doc-related-tasks"><h2>引用此文档的任务</h2>{relatedLoading && <p role="status">正在核对所有任务页面与关联…</p>}{relatedError && <Alert kind="error">任务关联未读完整：{relatedError}。下列只含已核对的任务。</Alert>}
-      {relatedTasks.length ? <ul>{relatedTasks.map(task => <li key={task.id}><a href={href(projectId, "task", task.id)}>{task.title}</a><span>{task.state === "todo" ? "待办" : task.state === "in_progress" ? "进行中" : task.state === "done" ? "已完成" : "已取消"} · 责任者 {task.owner}</span></li>)}</ul> : !relatedLoading && !relatedError && <p className="empty">当前没有任务引用此文档。</p>}
+    <section className="panel doc-related-tasks"><h2>引用此文档的任务</h2>{relatedLoading && <p role="status">正在读取当前关联任务…</p>}{relatedError && <Alert kind="error">任务关联未读完整：{relatedError}。下列只含已核对的任务。</Alert>}{relatedPartial && <Alert>已达 20 页或 1000 项读取上限；下列任务未必完整。</Alert>}
+      {relatedTasks.length ? <ul>{relatedTasks.map(task => <li key={task.id}><a href={href(projectId, "task", task.id)}>{task.title}</a><span>{task.relations.map(relation => relationLabel[relation]).join(" · ")} · {task.state === "todo" ? "待办" : task.state === "in_progress" ? "进行中" : task.state === "done" ? "已完成" : "已取消"} · 责任者 {task.owner}</span></li>)}</ul> : !relatedLoading && !relatedError && !relatedPartial && <p className="empty">当前没有任务引用此文档。</p>}
     </section>
     {!taskOwned && <details className="workflow-detail"><summary>修订与发布</summary>{!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订" fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]} build={v => ({ type: "document.revise", documentId: id, expectedVersion: detail.document.version, ...v })} />}
     {!archived && <>

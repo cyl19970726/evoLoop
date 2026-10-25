@@ -14,6 +14,15 @@ const states: Record<Task["state"], string> = { todo: "待办", in_progress: "�
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
 const documentKinds = { issue: "问题", spec: "规范", discussion: "讨论", report: "报告", task: "任务正文" } as const;
 const documentStatuses = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
+const searchPageLimit = 10;
+const searchItemLimit = 500;
+
+function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const seen = new Set(current.map(item => item.id));
+  const merged = [...current];
+  for (const item of incoming) if (!seen.has(item.id)) { seen.add(item.id); merged.push(item); }
+  return merged;
+}
 
 export function WorkIndex({ context, refresh, view }: { context: MutationContext; refresh: number; view: "work" | "inbox" | "documents" }) {
   const { token, projectId } = context;
@@ -35,11 +44,17 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [documentStatus, setDocumentStatus] = useState("active");
   const [create, setCreate] = useState(false);
   const epoch = useRef(0);
+  const pages = useRef<{ tasks: Page<Task>; documents: Page<Document> }>({
+    tasks: { items: [], nextCursor: null }, documents: { items: [], nextCursor: null },
+  });
+  const pendingPage = useRef<{ tasks?: Promise<boolean>; documents?: Promise<boolean> }>({});
+  const cursorHistory = useRef<{ tasks: Set<string>; documents: Set<string> }>({ tasks: new Set(), documents: new Set() });
+  const pageCount = useRef({ tasks: 0, documents: 0 });
   useEffect(() => {
-    let active = true; ++epoch.current; setLoading(true); setError(""); setStatuses({}); setStatusError("");
+    let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; setLoading(true); setError(""); setStatuses({}); setStatusError("");
     const client = api(token);
     Promise.all([client.tasks(projectId), client.documents(projectId), client.impacts(projectId)]).then(async ([t, d, i]) => {
-      if (active) { setTasks(t); setDocuments(d); setImpacts(i); setObservedAt(new Date()); }
+      if (active) { pages.current = { tasks: t, documents: d }; pageCount.current = { tasks: 1, documents: 1 }; setTasks(t); setDocuments(d); setImpacts(i); setObservedAt(new Date()); }
       if (t.items.length) try {
         const work = await client.workStatuses(projectId,t.items.map(item => item.id));
         if (active) {setStatuses(Object.fromEntries(work.items.map(item => [item.taskId,item])));
@@ -53,63 +68,76 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     window.addEventListener("focus", reread);
     return () => window.removeEventListener("focus", reread);
   }, [projectId]);
+  function nextPage(kind: "tasks" | "documents"): Promise<boolean> {
+    const inFlight = pendingPage.current[kind];
+    if (inFlight) return inFlight;
+    const cursor = pages.current[kind].nextCursor;
+    if (!cursor) return Promise.resolve(false);
+    const readEpoch = epoch.current;
+    const client = api(token);
+    const request = (async () => {
+      if (kind === "documents") {
+        const page = await client.documents(projectId, cursor);
+        if (readEpoch !== epoch.current || pages.current.documents.nextCursor !== cursor) return false;
+        if (page.items.length > 50) throw new Error("文档分页响应超过每页上限");
+        if (page.nextCursor && (page.nextCursor === cursor || cursorHistory.current.documents.has(page.nextCursor))) throw new Error("文档分页游标重复，无法确认后续结果");
+        cursorHistory.current.documents.add(cursor);
+        const merged = { items: mergeById(pages.current.documents.items, page.items), nextCursor: page.nextCursor };
+        pages.current.documents = merged; pageCount.current.documents++; setDocuments(merged);
+      } else {
+        const page = await client.tasks(projectId, cursor);
+        if (readEpoch !== epoch.current || pages.current.tasks.nextCursor !== cursor) return false;
+        if (page.items.length > 50) throw new Error("任务分页响应超过每页上限");
+        if (page.nextCursor && (page.nextCursor === cursor || cursorHistory.current.tasks.has(page.nextCursor))) throw new Error("任务分页游标重复，无法确认后续结果");
+        cursorHistory.current.tasks.add(cursor);
+        const known = new Set(pages.current.tasks.items.map(item => item.id));
+        const added = mergeById<Task>([], page.items.filter(item => !known.has(item.id)));
+        const merged = { items: [...pages.current.tasks.items, ...added], nextCursor: page.nextCursor };
+        pages.current.tasks = merged; pageCount.current.tasks++; setTasks(merged);
+        if (added.length) try {
+          const work = await client.workStatuses(projectId, added.map(item => item.id));
+          if (readEpoch === epoch.current) {
+            setStatuses(current => ({ ...current, ...Object.fromEntries(work.items.map(item => [item.taskId, item])) }));
+            if (work.items.length !== added.length) setStatusError("部分任务的工作状态尚未读回；缺少状态的任务仍可直接阅读。");
+          }
+        } catch (cause) { if (readEpoch === epoch.current) setStatusError(`工作状态暂不可读：${errorText(cause)}。已载入任务仍可直接阅读。`); }
+      }
+      return true;
+    })();
+    pendingPage.current[kind] = request;
+    void request.then(() => { if (pendingPage.current[kind] === request) delete pendingPage.current[kind]; },
+      () => { if (pendingPage.current[kind] === request) delete pendingPage.current[kind]; });
+    return request;
+  }
   // Search through later server pages before presenting a complete result.
   useEffect(() => {
     if (loading || !query.trim()) { setSearching(false); setSearchError(""); return; }
-    const source = view === "documents" ? documents : tasks;
-    if (!source.nextCursor) { setSearching(false); return; }
+    const kind = view === "documents" ? "documents" : "tasks";
+    if (!pages.current[kind].nextCursor) { setSearching(false); setSearchError(""); return; }
     let active = true;
     const readEpoch = epoch.current;
-    const client = api(token);
     setSearching(true); setSearchError("");
     const timer = window.setTimeout(async () => {
       try {
-        let cursor: string | null = source.nextCursor;
         const seen = new Set<string>();
-        while (active && readEpoch === epoch.current && cursor) {
+        while (active && readEpoch === epoch.current && pages.current[kind].nextCursor) {
+          const source = pages.current[kind];
+          if (pageCount.current[kind] >= searchPageLimit || source.items.length + 50 > searchItemLimit)
+            throw new Error(`自动搜索已达 ${searchPageLimit} 页或 ${searchItemLimit} 项上限；结果未完整。可继续手动加载，或缩小范围。`);
+          const cursor = source.nextCursor!;
           if (seen.has(cursor)) throw new Error("分页游标重复，无法确认搜索完整性");
           seen.add(cursor);
-          if (view === "documents") {
-            const page = await client.documents(projectId, cursor);
-            if (!active || readEpoch !== epoch.current) return;
-            setDocuments(current => ({ items: [...current.items, ...page.items], nextCursor: page.nextCursor }));
-            cursor = page.nextCursor;
-          } else {
-            const page = await client.tasks(projectId, cursor);
-            if (!active || readEpoch !== epoch.current) return;
-            setTasks(current => ({ items: [...current.items, ...page.items], nextCursor: page.nextCursor }));
-            if (page.items.length) {
-              try {
-                const work = await client.workStatuses(projectId, page.items.map(item => item.id));
-                if (!active || readEpoch !== epoch.current) return;
-                setStatuses(current => ({ ...current, ...Object.fromEntries(work.items.map(item => [item.taskId, item])) }));
-                if (work.items.length !== page.items.length) setStatusError("部分任务的工作状态尚未读回；缺少状态的任务仍可直接阅读。");
-              } catch (cause) { if (active) setStatusError(`工作状态暂不可读：${errorText(cause)}。已载入任务仍可直接阅读。`); }
-            }
-            cursor = page.nextCursor;
-          }
+          if (!await nextPage(kind)) return;
         }
         if (active) setSearching(false);
       } catch (cause) { if (active) { setSearching(false); setSearchError(errorText(cause)); } }
     }, 180);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [token, projectId, refresh, recheck, view, query, loading]);
+  }, [token, projectId, refresh, recheck, view, query, loading, tasks.nextCursor, documents.nextCursor]);
   async function more() {
     if (busy) return; setBusy(true); const readEpoch = epoch.current;
     try {
-      const client = api(token);
-      if (view === "documents" && documents.nextCursor) {
-        const page = await client.documents(projectId, documents.nextCursor);
-        if (readEpoch === epoch.current) setDocuments(v => ({ items: [...v.items, ...page.items], nextCursor: page.nextCursor }));
-      } else if (tasks.nextCursor) {
-        const page = await client.tasks(projectId, tasks.nextCursor);
-        if (readEpoch === epoch.current) setTasks(v => ({ items: [...v.items, ...page.items], nextCursor: page.nextCursor }));
-        if (page.items.length) try {
-          const work = await client.workStatuses(projectId,page.items.map(item => item.id));
-          if (readEpoch === epoch.current) {setStatuses(current => ({...current,...Object.fromEntries(work.items.map(item => [item.taskId,item]))}));
-            if (work.items.length !== page.items.length) setStatusError("部分任务的工作状态尚未读回；缺少状态的任务仍可直接阅读。");}
-        } catch (cause) {if (readEpoch === epoch.current) setStatusError(`工作状态暂不可读：${errorText(cause)}。已载入任务仍可直接阅读。`);}
-      }
+      await nextPage(view === "documents" ? "documents" : "tasks");
     } catch (cause) { if (readEpoch === epoch.current) setError(errorText(cause)); }
     finally { setBusy(false); }
   }
@@ -142,7 +170,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       {loading && <p className="list-message" role="status">正在读取{title}…</p>}
       {error && <div className="list-message"><Alert kind="error">读取失败：{error}</Alert><button onClick={context.onChanged}>重试读取</button></div>}
       {searching && <p className="list-message" role="status">正在搜索后续页面；结果尚未完整。</p>}
-      {searchError && <div className="list-message"><Alert kind="error">后续页面读取失败：{searchError}。当前结果只覆盖已载入项目。</Alert></div>}
+      {searchError && <div className="list-message"><Alert kind="error">搜索未完成：{searchError}。当前结果只覆盖已载入项目。</Alert></div>}
       {!loading && !error && <>{view === "documents" ? <div className="table-wrap"><table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table></div> : view === "work" ? <>
         {statusError && <div className="work-status-warning"><Alert>{statusError}</Alert></div>}
         <div className="work-status-section"><h2>{primaryKind === "unclassified" ? "已载入任务 · 状态分类暂不可用" : "业务工作"} <span>{primaryTasks.length} 项已载入</span></h2>

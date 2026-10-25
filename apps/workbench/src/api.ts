@@ -1,6 +1,6 @@
 import type {
   Command, CommandResult, Document, DocumentDetail, DocumentRevision,
-  Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, Goal, GoalRevision, Stage, StageRevision, StageReview,
+  Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, DocumentTaskReference, Goal, GoalRevision, Stage, StageRevision, StageReview,
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
 } from "@evoloop/contracts";
@@ -24,7 +24,7 @@ export async function request<T>(token: string, path: string, timeoutMs: number,
     const response = await fetch(path, {
       ...init,
       headers: { Authorization: `Bearer ${token}`, ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
-      signal: controller.signal,
+      signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
     });
     let body: unknown;
     try { body = await response.json(); }
@@ -79,6 +79,8 @@ export function api(token: string, timeoutMs = 15000) {
     discussionEvents: (p: string, id: string) => call<DiscussionEvent[]>(`${projectPath(p)}/discussions/${key(id)}/events`),
     documents: (p: string, cursor?: string) => call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     document: (p: string, id: string) => call<DocumentDetail>(`${projectPath(p)}/documents/${key(id)}`),
+    documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
+      `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
