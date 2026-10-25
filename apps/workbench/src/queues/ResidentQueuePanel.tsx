@@ -102,7 +102,7 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
     if (selectedIds.has(entry.id)) return false;
     selectedIds.add(entry.id); return true;
   }).slice(0, maxNamedEntries);
-  const nameScope = `${projectId}|${queue.id}|${sessionId ?? ""}|${listReadVersion}|${readVersion}|${namedEntries.map(entry => `${entry.id}:${entry.taskId}:${entry.roleId}`).join("|")}`;
+  const nameScope = `${projectId}|${queue.id}|${sessionId ?? ""}|${listReadVersion}|${readVersion}|${namedEntries.map(entry => `${entry.id}:${entry.taskId}:${entry.roleId}`).join("|")}|priority:${lookupEntries.map(entry => entry.id).join(",")}`;
   useEffect(() => {
     if (!open) return;
     let active = true;

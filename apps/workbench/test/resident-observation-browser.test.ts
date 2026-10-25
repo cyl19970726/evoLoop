@@ -79,6 +79,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   let holdNextRole = false, heldRoleReads = 0, releaseHeldRole: (() => void) | null = null, failRoleReads = 0;
   let currentAttempts = [{entryId:taskA,claimId:taskA,attempts:[{projectId,claimId:taskA,sequence:1,runId:runA,operationId:runA,taskRevisionId:taskA,actualRunTaskRevisionId:taskA,reservedAt:stamp}]},{entryId:taskB,claimId:null,attempts:[]},{entryId:taskC,claimId:null,attempts:[]}];
   let holdNextDetail = false, heldDetails = 0, releaseHeldDetail: (() => void) | null = null;
+  let priorityDetail: typeof queue | null = null, heldPriorityDetails = 0, releasePriorityDetail: (() => void) | null = null;
   let currentHosts = [external,owned];
   let currentRoute = {domain,role,status:"external-manual",link:external,session:null,automaticStart:false};
   let holdNextRoute = false, heldRoutes = 0, releaseHeldRoute: (() => void) | null = null, failPresenceList = false;
@@ -99,7 +100,15 @@ test("resident observation keeps acceptance, host authority and task replies dis
       taskReads = []; res.end("ok"); return;
     }
     if (url.pathname === "/__fixture/task-reads") { res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify(taskReads));return; }
-    if (url.pathname === "/__fixture/restore-queue") { currentQueue = queue; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/reset-task-reads") { taskReads = []; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/priority-detail") {
+      priorityDetail = {...currentQueue,entries:currentQueue.entries.map(entry => entry.id === taskA ? {...entry,state:"released",holdCode:null,holdReason:null}
+        : entry.id === taskB ? {...entry,state:"claimed",claimId:taskB} : entry.id === taskC ? {...entry,state:"queued",holdCode:null,holdReason:null} : entry)};
+      res.end("ok"); return;
+    }
+    if (url.pathname === "/__fixture/held-priority-detail-count") { res.end(String(heldPriorityDetails)); return; }
+    if (url.pathname === "/__fixture/release-priority-detail") { releasePriorityDetail?.(); res.end("ok"); return; }
+    if (url.pathname === "/__fixture/restore-queue") { currentQueue = queue; priorityDetail = null; res.end("ok"); return; }
     if (url.pathname === "/__fixture/held-detail-count") { res.end(String(heldDetails)); return; }
     if (url.pathname === "/__fixture/release-held-detail") { releaseHeldDetail?.(); res.end("ok"); return; }
     if (url.pathname === "/__fixture/advance-queue") {
@@ -137,7 +146,9 @@ test("resident observation keeps acceptance, host authority and task replies dis
       }
       else if (url.pathname === `${p}/resident-queues`) value = [currentQueue];
       else if (url.pathname === `${p}/resident-queues/${queueId}`) {
-        value = currentQueue;
+        value = priorityDetail ?? currentQueue;
+        if (priorityDetail) { heldPriorityDetails++;
+          await new Promise<void>(resolve => { releasePriorityDetail = resolve; }); }
         if (holdNextDetail) { holdNextDetail = false; heldDetails++;
           await new Promise<void>(resolve => { releaseHeldDetail = resolve; }); }
       }
@@ -145,8 +156,8 @@ test("resident observation keeps acceptance, host authority and task replies dis
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
       else if (url.pathname === `${p}/runtime/sessions`) value = [session];
       else if (url.pathname === `${p}/runtime/runs`) value = url.searchParams.get("taskId") === taskB ? [] : [currentRun];
-      else if (url.pathname === `${p}/tasks/${taskA}` || url.pathname === `${p}/tasks/${taskB}`) {
-        const item = url.pathname.endsWith(taskA) ? task(taskA,"先完成 A 的实际使用") : task(taskB,"验收后才启动 B");
+      else if (url.pathname === `${p}/tasks/${taskA}` || url.pathname === `${p}/tasks/${taskB}` || url.pathname === `${p}/tasks/${taskC}`) {
+        const item = url.pathname.endsWith(taskA) ? task(taskA,"先完成 A 的实际使用") : url.pathname.endsWith(taskB) ? task(taskB,"验收后才启动 B") : task(taskC,"核对下一顺位 C");
         taskReads.push(item.id);
         value = {task:item,revision:{...item,id:item.id,taskId:item.id,actorId:"lead",reason:"夹具",createdAt:stamp},basis:null,links:[],impacts:[],decisions:[],deliveries:[],observations:[],closures:[]};
       }
@@ -281,9 +292,22 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await deepItems.nth(25).getByRole("link",{name:"验收后才启动 B"}).waitFor();
   await deepItems.nth(21).getByRole("link",{name:"历史任务 21"}).waitFor();
   const lookedUp = await (await fetch(`${base}/__fixture/task-reads`)).json() as string[];
-  assert.ok(lookedUp.includes(taskA) && lookedUp.includes(taskB));
-  assert.equal(new Set(lookedUp).size,24);
-  assert.equal(lookedUp.includes(oldEntries[22]!.id) || lookedUp.includes(oldEntries[23]!.id),false);
+  const deepLookups = lookedUp.filter(id => id === taskA || id === taskB || oldEntries.some(entry => entry.id === id));
+  assert.ok(deepLookups.includes(taskA) && deepLookups.includes(taskB));
+  assert.equal(new Set(deepLookups).size,24);
+  assert.equal(deepLookups.includes(oldEntries[22]!.id) || deepLookups.includes(oldEntries[23]!.id),false);
+  await fetch(`${base}/__fixture/reset-task-reads`);
+  await fetch(`${base}/__fixture/priority-detail`);
+  await pageBrowser.getByRole("button",{name:"回读详情与尝试"}).click();
+  for (let attempt=0; attempt<30 && await (await fetch(`${base}/__fixture/held-priority-detail-count`)).text() !== "1"; attempt++)
+    await new Promise(resolve=>setTimeout(resolve,25));
+  assert.equal(await (await fetch(`${base}/__fixture/held-priority-detail-count`)).text(),"1");
+  await deepItems.nth(21).getByRole("link",{name:"历史任务 21"}).waitFor();
+  assert.equal((await (await fetch(`${base}/__fixture/task-reads`)).json() as string[]).includes(taskC),false);
+  await fetch(`${base}/__fixture/release-priority-detail`);
+  await pageBrowser.getByText(/后续顺位：核对下一顺位 C/).waitFor();
+  await deepItems.nth(26).getByRole("link",{name:"核对下一顺位 C"}).waitFor();
+  assert.ok((await (await fetch(`${base}/__fixture/task-reads`)).json() as string[]).includes(taskC));
   await fetch(`${base}/__fixture/restore-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
   await pageBrowser.locator(".resident-queue-session li").nth(3).waitFor({state:"detached"});
