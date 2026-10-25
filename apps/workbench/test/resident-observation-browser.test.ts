@@ -180,7 +180,8 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.match(await pageBrowser.locator(`#role-${roleId} .role-presence`).innerText(),/读取失败：承载暂不可读/);
   await pageBrowser.getByRole("link",{name:"打开 Session 与原线程历史"}).click();
   await pageBrowser.locator(`#runtime-session-${sessionId}[open]`).waitFor();
-  await pageBrowser.locator(".resident-queue-card > summary").click();
+  if (await pageBrowser.locator(".resident-queue-card").getAttribute("open") === null)
+    await pageBrowser.locator(".resident-queue-card > summary").click();
   await pageBrowser.locator(".resident-queue-meta").getByText(/累计尝试 1/).waitFor();
   const queueItems=pageBrowser.locator(".resident-queue-session li");
   assert.equal(await queueItems.count(),3);

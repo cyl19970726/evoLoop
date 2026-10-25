@@ -17,8 +17,8 @@ const holdLabel: Record<QueueHoldCode, string> = {
   manual_review: "等待人工复核",
 };
 
-export function ResidentQueuePanel({ token, projectId, refresh, task, runs, sessions }: {
-  token: string; projectId: string; refresh: number; task?: Task; runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
+export function ResidentQueuePanel({ token, projectId, refresh, task, sessionId, runs, sessions }: {
+  token: string; projectId: string; refresh: number; task?: Task; sessionId?: string; runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const [queues, setQueues] = useState<ResidentQueue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,28 +43,30 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, runs, sess
     window.addEventListener("focus", reread);
     return () => window.removeEventListener("focus", reread);
   }, []);
-  const visible = task ? queues.filter(queue => queue.entries.some(entry => entry.taskId === task.id)) : queues;
+  const visible = task || sessionId ? queues.filter(queue => queue.entries.some(entry => (!task || entry.taskId === task.id) && (!sessionId || entry.sessionId === sessionId))) : queues;
   return <section className="resident-queues" ref={rootRef} aria-label="驻留 Session 队列">
     <div className="resident-queues-head"><h3>驻留 Session 队列</h3><button type="button" onClick={() => setReadVersion(value => value + 1)}>重新读取队列</button></div>
     <p className="resident-queue-observed">{loading ? "正在核对队列…" : observedAt ? `队列读于 ${observedAt}` : "队列尚未读回"}</p>
     {error && <p role="alert" className="resident-queue-error">队列回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
-    {!loading && !error && visible.length === 0 && <p className="empty">{task ? "此任务尚未见于已登记驻留队列。" : "尚无已登记驻留队列。"}</p>}
+    {!loading && !error && visible.length === 0 && <p className="empty">{sessionId ? "此 Session 尚未见于已登记驻留队列。" : task ? "此任务尚未见于已登记驻留队列。" : "尚无已登记驻留队列。"}</p>}
     {visible.map(queue => <QueueCard key={queue.id} token={token} projectId={projectId} queue={queue} refresh={refresh} listReadVersion={listReadVersion}
-      task={task} runs={runs} sessions={sessions} />)}
+      task={task} sessionId={sessionId} runs={runs} sessions={sessions} />)}
   </section>;
 }
 
-function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, runs, sessions }: {
-  token: string; projectId: string; queue: ResidentQueue; refresh: number; listReadVersion: number; task?: Task;
+function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, sessionId, runs, sessions }: {
+  token: string; projectId: string; queue: ResidentQueue; refresh: number; listReadVersion: number; task?: Task; sessionId?: string;
   runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const [open, setOpen] = useState(false);
+  const cardRef = useRef<HTMLDetailsElement>(null);
   const [detail, setDetail] = useState<ResidentQueue | null>(null);
   const [attemptRows, setAttemptRows] = useState<EntryAttempts[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [readVersion, setReadVersion] = useState(0);
   const [observedAt, setObservedAt] = useState("");
+  useEffect(() => { if (sessionId && cardRef.current) { cardRef.current.open = true; setOpen(true); } }, [sessionId]);
   useEffect(() => {
     if (!open) return;
     let active = true;
@@ -81,12 +83,12 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, ru
   }, [open, token, projectId, queue.id, queue.version, refresh, listReadVersion, readVersion]);
   const shown = detail ?? queue;
   const groups = new Map<string, ResidentQueueEntry[]>();
-  for (const entry of [...shown.entries].sort((a, b) => a.position - b.position)) {
+  for (const entry of shown.entries.filter(item => !sessionId || item.sessionId === sessionId).sort((a, b) => a.position - b.position)) {
     groups.set(entry.sessionId, [...(groups.get(entry.sessionId) ?? []), entry]);
   }
   const attempts = new Map(attemptRows?.map(row => [row.entryId, row.attempts]) ?? []);
   const total = attemptRows?.reduce((sum, row) => sum + row.attempts.length, 0);
-  return <details className="resident-queue-card" onToggle={event => setOpen(event.currentTarget.open)}>
+  return <details ref={cardRef} className="resident-queue-card" onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>队列 {short(queue.id)} · v{queue.version} · {queue.adoptedVersion === null ? "未采纳" : `已采纳 v${queue.adoptedVersion}`} · {queue.entries.length} 项</summary>
     {open && <>
       <div className="resident-queue-meta"><span>排序理由：{shown.reason}</span><span>总运行上限 {shown.maxRuns}；累计尝试 {total ?? "待读回"}</span><span>{observedAt ? `详情读于 ${observedAt}` : "详情尚未读回"}</span><button type="button" onClick={() => setReadVersion(value => value + 1)}>回读详情与尝试</button></div>

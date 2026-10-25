@@ -1,0 +1,10 @@
+.runtime-session-focus { min-width: 0; padding: 12px 14px; margin: 12px 0 18px; border: 1px solid #cedaeb; border-radius: 9px; background: #f7faff; }
+.runtime-session-focus h3 { margin: 0 0 8px; color: #233b62; }
+.runtime-session-focus-key { margin: 0 0 5px; overflow-wrap: anywhere; }
+.runtime-session-focus-key code { white-space: normal; overflow-wrap: anywhere; }
+.runtime-session-focus .runtime-session-card { margin: 8px 0; }
+.runtime-session-focus .resident-queues { margin-bottom: 0; }
+.runtime-session-card { min-width: 0; overflow-wrap: anywhere; }
+.runtime-session-card summary { overflow-wrap: anywhere; }
+.runtime-session-card dd { overflow-wrap: anywhere; }
+@media (max-width: 420px) { .runtime-session-focus { padding: 10px; } }
