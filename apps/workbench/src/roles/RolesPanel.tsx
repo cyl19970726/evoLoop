@@ -4,6 +4,18 @@ import { errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
+import { RoleTemplateSummary } from "./RoleTemplateSummary";
+import { href } from "../ui/shared";
+
+const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function roleQuery(projectId: string): string | null {
+  const [path, query = ""] = window.location.hash.split("?");
+  if (path !== href(projectId,"roles")) return null;
+  const params = new URLSearchParams(query);
+  if (!params.has("role")) return null;
+  const values = params.getAll("role");
+  return values.length === 1 ? values[0]! : "";
+}
 
 const lines = (value: string) => value.split(/\r?\n/).map(part => part.trim()).filter(Boolean);
 const stamp = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
@@ -61,6 +73,17 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
   const [moreError, setMoreError] = useState("");
   const epochRef = useRef(0);
   const moreInFlightRef = useRef(false);
+  const targetPages = useRef(0);
+  const [targetRoute, setTargetRoute] = useState(() => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:0}));
+  useEffect(() => {
+    const reread = () => setTargetRoute(previous => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:previous.tick+1}));
+    reread(); window.addEventListener("hashchange",reread);
+    return () => window.removeEventListener("hashchange",reread);
+  }, [context.projectId]);
+  const target = targetRoute.projectId === context.projectId ? targetRoute.value : roleQuery(context.projectId);
+  const validTarget = target !== null && roleIdPattern.test(target);
+  const foundTarget = validTarget ? roles.find(role => role.id === target && role.projectId === context.projectId) : undefined;
+  useEffect(() => { targetPages.current = 0; }, [target, context.projectId, refresh]);
   useEffect(() => {
     let active = true; const epoch = ++epochRef.current;
     moreInFlightRef.current = false;
@@ -88,9 +111,31 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
     } catch (cause) { if (epochRef.current === epoch) setMoreError(errorText(cause)); }
     finally { if (epochRef.current === epoch) { moreInFlightRef.current = false; setLoadingMore(false); } }
   }
+  useEffect(() => {
+    if (!validTarget || foundTarget || loading || loadingMore || moreError || !nextCursor || targetPages.current >= 20) return;
+    targetPages.current += 1;
+    void loadMore();
+  }, [target, validTarget, foundTarget, loading, loadingMore, moreError, nextCursor, roles.length]);
+  useEffect(() => {
+    if (!target || !foundTarget) return;
+    const frame = requestAnimationFrame(() => {
+      if (roleQuery(context.projectId) !== target) return;
+      const card = document.getElementById(`role-${target}`);
+      if (card instanceof HTMLDetailsElement && card.getClientRects().length) {
+        card.open = true; card.scrollIntoView({block:"start"}); card.focus({preventScroll:true});
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [context.projectId, target, targetRoute.tick, foundTarget?.id, foundTarget?.version]);
   return <div className="journey-board">
+    <RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh} />
     <section className="panel"><div className="panel-head"><h2>职责试行</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
       <p>新会话仍可沿用已有职责。只有反复出现的独立责任缺口，才进入有边界、有成本上限的试行。</p>
+      {target !== null && !validTarget && <Notice error>链接中的目标职责 ID 无效；没有定位到其他职责。</Notice>}
+      {validTarget && !foundTarget && <Notice error={Boolean(error || moreError || !loading && !nextCursor || targetPages.current >= 20)}>{error ? `目标职责暂不可核对：${error}`
+        : moreError ? `目标职责后续页未读回：${moreError}` : loading || loadingMore || nextCursor && targetPages.current < 20 ? `正在定位目标职责 ${target}…`
+        : nextCursor ? `目标职责尚未定位；自动追加读取已到 20 页上限，可继续手动加载并核对 ${target}。`
+        : `当前项目已读完职责，未找到目标 ${target}；没有定位到其他职责。`}</Notice>}
       {loading && <p>正在读取职责…</p>}{error && <Notice error>职责暂不可读：{error}</Notice>}
       {!loading && !error && roles.length === 0 && <p className="empty">本项目还没有职责提案；不会自动创建常设角色。</p>}
       {roles.map(role => <RoleCard key={`${role.id}:${role.version}`} context={context} role={role} refresh={refresh} />)}
@@ -119,8 +164,8 @@ function RoleCard({ context, role, refresh }: { context: MutationContext; role: 
   useEffect(() => { setHistory(null); }, [refresh, role.version]);
   const base = { roleId: role.id, expectedVersion: role.version };
   const p = role.proposal;
-  return <details className="workflow-detail" id={`role-${role.id}`}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
-    <RolePresenceCard token={context.token} projectId={context.projectId} roleId={role.id} refresh={refresh} />
+  return <details className="workflow-detail" id={`role-${role.id}`} tabIndex={-1}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
+    <RolePresenceCard token={context.token} projectId={context.projectId} roleId={role.id} roleState={role.state} refresh={refresh} />
     <dl><div><dt>目标</dt><dd>{p.goal}</dd></div><div><dt>独立判断</dt><dd>{p.independentResponsibility}</dd></div><div><dt>范围</dt><dd>{p.ownerScope}</dd></div><div><dt>输入</dt><dd>{p.inputs.join("；")}</dd></div><div><dt>可写资产</dt><dd>{p.writableAssets.join("；") || "未列出"}</dd></div><div><dt>交付</dt><dd>{p.deliverables.join("；")}</dd></div><div><dt>触发</dt><dd>{p.triggers.join("；")}</dd></div><div><dt>流程</dt><dd>{p.workflow}</dd></div><div><dt>交接边界</dt><dd>{p.handoffBoundary}</dd></div><div><dt>首项任务</dt><dd><code>{p.firstTaskId}</code></dd></div><div><dt>试行与回看</dt><dd>{p.trialDays} 天 · {stamp(role.reviewAtUtc)}</dd></div><div><dt>退出判据</dt><dd>{p.exitCriteria}</dd></div></dl>
     <h3>提出依据与比较</h3>{p.evidence.map((item, i) => <article className="decision" key={i}><strong>{item.kind}</strong><p>{item.observation}</p><small className="break-anywhere">{item.sourceRef} · {stamp(item.observedAtUtc)}</small></article>)}
     <p>当前基线：{p.baseline}。期望：{p.expectedEffect}。成本上限：{p.costLimit}。</p>

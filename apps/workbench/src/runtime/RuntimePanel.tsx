@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { Task } from "@evoloop/contracts";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
-import type { RoleRecord } from "@evoloop/contracts/roles";
-import { ApiError, errorText, request } from "../api";
+import { ApiError, errorText } from "../api";
+import { href } from "../ui/shared";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
+import { isRoleOwnerId, readOwnerRole } from "../workflow/ownerRole";
 import { runtimeClient, type NativeResult, type RuntimeStatus } from "./client";
 import { OrchestrationPanel } from "../orchestration/OrchestrationPanel";
 import { ResidentQueuePanel } from "../queues/ResidentQueuePanel";
 import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread";
+import { RoleTemplateSummary } from "../roles/RoleTemplateSummary";
 import "./session-focus.css";
 
 function readErrorText(cause: unknown): string {
@@ -21,6 +23,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sessionState: Record<RuntimeSessionRecord["state"], string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
 };
+type RoleName = { title?: string; error?: string };
 const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox]);
 export function RuntimePanel({ context, refresh, task, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; targetSessionId?: string }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
@@ -32,7 +35,8 @@ export function RuntimePanel({ context, refresh, task, targetSessionId }: { cont
   const [epoch, setEpoch] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
-  const sessionScope = `${context.projectId}:${targetSessionId ?? ""}`;
+  const [roleNames, setRoleNames] = useState<{scope:string; values:Record<string,RoleName>}>({scope:"",values:{}});
+  const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? ""]);
   useEffect(() => {
     let active = true, fetching = false, sequence = 0;
     const client = runtimeClient(context.token, context.projectId);
@@ -58,25 +62,36 @@ export function RuntimePanel({ context, refresh, task, targetSessionId }: { cont
     finally { setRecovering(false); }
   }
   const grants = (status?.grants ?? []).filter(grant => !task || grant.roleId === task.owner);
-  const visibleSessions = task ? sessions.filter(session => runs.some(run => run.sessionId === session.id)) : sessions;
+  const visibleSessions = loadedScope === sessionScope ? task ? sessions.filter(session => runs.some(run => run.sessionId === session.id)) : sessions : [];
   const hasTarget = !task && !!targetSessionId;
   const validTarget = !!targetSessionId && uuid.test(targetSessionId);
   const focusedSession = hasTarget && validTarget && loadedScope === sessionScope ? visibleSessions.find(session => session.id === targetSessionId && session.projectId === context.projectId) : undefined;
-  const [roleInfo, setRoleInfo] = useState<{sessionId:string;roleId:string;title:string|null;error:string}|null>(null);
+  const roleIds = [...new Set(visibleSessions.map(session => session.roleId).filter(isRoleOwnerId))];
+  const roleSignature = roleIds.join(",");
+  const roleScope = JSON.stringify([context.token, context.projectId, refresh, epoch, roleSignature]);
   useEffect(() => {
+    const controller = new AbortController();
     let active = true;
-    setRoleInfo(null);
-    if (!focusedSession) return () => { active = false; };
-    const {id:sessionId,roleId} = focusedSession;
-    void request<RoleRecord>(context.token, `/api/projects/${encodeURIComponent(context.projectId)}/roles/${encodeURIComponent(roleId)}`, 15000)
-      .then(role => {
-        if (!active) return;
-        if (role.projectId !== context.projectId || role.id !== roleId || !role.proposal?.title?.trim()) throw new Error("职责响应与目标会话不符");
-        setRoleInfo({sessionId,roleId,title:role.proposal.title,error:""});
-      }).catch(cause => { if (active) setRoleInfo({sessionId,roleId,title:null,error:errorText(cause)}); });
-    return () => { active = false; };
-  }, [context.token, context.projectId, focusedSession?.id, focusedSession?.roleId]);
-  const focusedRole = focusedSession && roleInfo?.sessionId === focusedSession.id && roleInfo.roleId === focusedSession.roleId ? roleInfo : null;
+    setRoleNames({scope:roleScope,values:{}});
+    const queue = roleSignature ? roleSignature.split(",") : [];
+    const read = async () => {
+      while (active && queue.length) {
+        const roleId = queue.shift()!;
+        let value:RoleName;
+        try { value = {title:(await readOwnerRole(context.token,context.projectId,roleId,controller.signal)).proposal.title.trim()}; }
+        catch (cause) {
+          if (!active) return;
+          value = {error:cause instanceof ApiError && cause.status===404 ? "未找到已登记职责" : `职责暂不可核对：${errorText(cause)}`};
+        }
+        if (active) setRoleNames(current => current.scope===roleScope
+          ? {scope:roleScope,values:{...current.values,[roleId]:value}} : current);
+      }
+    };
+    void Promise.all(Array.from({length:Math.min(4,queue.length)},()=>read()));
+    return () => {active=false;controller.abort();};
+  }, [context.token,context.projectId,refresh,epoch,roleSignature,roleScope]);
+  const resolvedRoles = roleNames.scope===roleScope ? roleNames.values : {};
+  const focusedRole = focusedSession ? resolvedRoles[focusedSession.roleId] : undefined;
   useEffect(() => {
     const reveal = () => {
       const [path, query = ""] = window.location.hash.split("?");
@@ -96,26 +111,26 @@ export function RuntimePanel({ context, refresh, task, targetSessionId }: { cont
     window.addEventListener("hashchange", reveal);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
   }, [context.projectId, task?.id, runs]);
-  return <section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
+  return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}
     {status && !status.available && context.principal.permissions.includes("review") && <button disabled={recovering} onClick={recover}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</button>}
     {hasTarget && <section className="runtime-session-focus" aria-label="目标 Session">
       {!validTarget ? <Notice error>链接中的 Session ID 无效，无法定位会话。</Notice> : loadedScope !== sessionScope ? error ? <Notice error>目标 Session 暂不可核对：{error}；没有定位到其他会话。</Notice> : <p>正在核对目标 Session {targetSessionId}…</p> :
         !focusedSession ? <Notice error>当前项目未读到目标 Session {targetSessionId}；没有定位到其他会话。</Notice> : <>
-          <h3>目标 Session · {focusedRole?.title || `职责 ${focusedSession.roleId.slice(0, 8)}`} · {sessionState[focusedSession.state]}</h3>
+          <h3>目标 Session · <SessionRoleLabel projectId={context.projectId} roleId={focusedSession.roleId} role={focusedRole} /> · {sessionState[focusedSession.state]}</h3>
           <p className="runtime-session-focus-key">Session ID <code>{focusedSession.id}</code> · 授权范围 {focusedSession.authorizationScope}</p>
-          {focusedRole?.error && <Notice error>职责名称暂不可核对：{focusedRole.error}；当前仅显示登记 ID。</Notice>}
+          {focusedRole?.error && <Notice error>{focusedRole.error}；当前仅显示登记 ID。</Notice>}
           <p className="muted">会话与职责的登记不表示任何任务正在此处运行；请核对队列与具体 Run。</p>
           <ResidentQueuePanel token={context.token} projectId={context.projectId} refresh={refresh + epoch} sessionId={focusedSession.id} runs={runs} sessions={sessions} />
-          <SessionCard context={context} session={focusedSession} focused anchor roleName={focusedRole?.title ?? null} />
+          <SessionCard context={context} session={focusedSession} focused anchor role={focusedRole} />
         </>}
     </section>}
     <OrchestrationPanel key={`${context.projectId}:${context.principal.actorId}:${task?.id ?? "project"}`} token={context.token} projectId={context.projectId} refresh={refresh + epoch} taskId={task?.id} verifiedRuns={!error && runsForTask === task?.id ? runs : null} runtimePoll={runtimePoll && runtimePoll.taskId === task?.id ? runtimePoll.sequence : 0} />
     {!hasTarget && <ResidentQueuePanel token={context.token} projectId={context.projectId} refresh={refresh + epoch} task={task} runs={runs} sessions={sessions} />}
     {task && <TaskCollaborationThread token={context.token} projectId={context.projectId} taskId={task.id} refresh={refresh + epoch} />}
-    {visibleSessions.length === 0 && !hasTarget && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
-    {visibleSessions.filter(session => !focusedSession || session.id !== focusedSession.id).map(session => <SessionCard key={session.id} context={context} session={session} focused={false} anchor={!task} />)}
+    {loadedScope === sessionScope && visibleSessions.length === 0 && !hasTarget && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
+    {visibleSessions.filter(session => !focusedSession || session.id !== focusedSession.id).map(session => <SessionCard key={session.id} context={context} session={session} focused={false} anchor={!task} role={resolvedRoles[session.roleId]} />)}
     {status?.available && grants.length > 0 && <details className="workflow-detail"><summary>创建授权范围内的新会话</summary><ActionForm context={context} review title="登记并创建会话" fields={[
       { name: "grant", label: "已配置的授权", kind: "select", options: grants.map(g => option(grantKey(g), `${g.roleId} · ${g.authorizationScope} · ${g.sandbox} · ${g.cwd}`)) },
       { name: "model", label: "模型（可留空沿用 Codex 配置）", optional: true },
@@ -132,14 +147,19 @@ export function RuntimePanel({ context, refresh, task, targetSessionId }: { cont
     <h3>运行记录</h3>{runs.length === 0 && <p className="empty">没有已登记运行。</p>}
     {runs.map(run => <RunCard key={`${run.id}:${run.version}`} context={context} run={run} anchorId={task?.id === run.taskId ? `runtime-run-${task.id}-${run.id}` : undefined} mayAbandon={sessions.some(s=>s.id===run.sessionId && s.sandbox==="read-only")} />)}
     <p className="muted">收到通知、读取材料、采用判断与真实效果分别留证。原生完成状态不会自动关闭任务。</p>
-  </section>;
+  </section></>;
 }
-function SessionCard({context,session,focused,anchor,roleName}:{context:MutationContext;session:RuntimeSessionRecord;focused:boolean;anchor:boolean;roleName?:string|null}) {
+function SessionRoleLabel({projectId,roleId,role}:{projectId:string;roleId:string;role?:RoleName}) {
+  return role?.title ? <span className="runtime-session-role"><a href={href(projectId,"roles")} onClick={event=>event.stopPropagation()}>{role.title}</a> <code title={roleId}>{roleId.slice(0,8)}</code></span>
+    : <span className="runtime-session-role">职责 <code>{roleId}</code>{isRoleOwnerId(roleId) && <small>{role?.error ? " · 名称暂不可核对" : " · 正在核对名称"}</small>}</span>;
+}
+function SessionCard({context,session,focused,anchor,role}:{context:MutationContext;session:RuntimeSessionRecord;focused:boolean;anchor:boolean;role?:RoleName}) {
   const ref = useRef<HTMLDetailsElement>(null);
   useEffect(() => { if (focused && ref.current) ref.current.open = true; }, [focused,session.id]);
   return <details ref={ref} className="workflow-detail runtime-session-card" id={anchor ? `runtime-session-${session.id}` : undefined}>
-    <summary>{roleName || `职责 ${session.roleId.slice(0, 8)}`} · {sessionState[session.state]} · Session {session.id.slice(0, 8)}</summary>
+    <summary><SessionRoleLabel projectId={context.projectId} roleId={session.roleId} role={role} /> · {sessionState[session.state]} · Session {session.id.slice(0, 8)}</summary>
     <dl><div><dt>职责 ID</dt><dd>{session.roleId}</dd></div><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>权限</dt><dd>{session.sandbox}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
+    {role?.error && <Notice error>{role.error}；当前仅显示登记 ID。</Notice>}
     {session.state === "unknown" && <Notice error>创建结果未知，不能用新 ID 重复创建来代替核对。</Notice>}
     <SessionHistory context={context} sessionId={session.id} />
     <RuntimeEvidence load={() => runtimeClient(context.token, context.projectId).sessionEvents(session.id)} label="阅读会话与审批回执" />
