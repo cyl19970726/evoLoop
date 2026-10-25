@@ -1,4 +1,4 @@
-// Built-app fixture. It becomes runnable when the shared summary is wired into overview and Roles.
+// Built-app fixture. It becomes runnable when the shared summary is wired into runtime and Roles.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
@@ -22,7 +22,7 @@ const role = { projectId, id: roleId, version: 2, currentRevisionId: roleId, sta
 const templates = initialRoleTemplates.map(item => ({ ...item, state: item.key === "functional-development" ? "established" : "not-established",
   roleIds: item.key === "functional-development" ? [roleId] : [] }));
 
-test("seven template states appear in overview and Roles with truthful refresh and target link", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after integration" }, async t => {
+test("seven template states appear in runtime and Roles with truthful refresh and target link", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after integration" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let mode: "normal" | "fail" | "partial" = "normal";
   const server = createServer(async (req, res) => {
@@ -33,6 +33,9 @@ test("seven template states appear in overview and Roles with truthful refresh a
       const root = `/api/projects/${projectId}`;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "模板项目", createdAt: stamp };
+      else if (url.pathname === `${root}/runtime`) value = { available: true, error: null, allowedCwds: [], grants: [] };
+      else if ([`${root}/runtime/sessions`, `${root}/runtime/runs`, `${root}/resident-queues`].includes(url.pathname)) value = [];
+      else if (url.pathname === `${root}/orchestration/status`) value = { state: "active", running: false, busy: false, faults: [], lastError: null };
       else if (url.pathname === `${root}/role-templates`) {
         if (mode === "fail") { status = 503; value = { message: "暂不可读" }; }
         else value = { templates: mode === "partial" ? templates.map(item => item.key === "cognition" ? { ...item, state: "unknown" } : item) : templates,
@@ -51,10 +54,10 @@ test("seven template states appear in overview and Roles with truthful refresh a
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${base}/#/p/${projectId}/overview`);
+  await page.goto(`${base}/#/p/${projectId}/runtime`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  const summary = page.locator(".role-template-summary");
+  const summary = page.locator(".role-template-summary:visible");
   await summary.getByText("真实功能开发职责").waitFor();
   assert.equal(await summary.locator("li").count(), 7);
   assert.match(await summary.innerText(), /认知.*未建立/s);
@@ -68,9 +71,9 @@ test("seven template states appear in overview and Roles with truthful refresh a
   await summary.getByText(/Role 列表尚有未读页/).waitFor();
   assert.match(await summary.innerText(), /认知.*未知/s);
   await summary.getByRole("link", { name: /真实功能开发职责/ }).click();
-  await page.waitForURL(new RegExp(`roles\\?role=${roleId}`));
+  await page.waitForURL(url => url.hash === `#/p/${projectId}/roles?role=${roleId}`);
   await page.locator(`#role-${roleId}[open]`).waitFor();
-  const rolesSummary = page.locator(".role-template-summary");
+  const rolesSummary = page.locator(".role-template-summary:visible");
   await rolesSummary.getByText("真实功能开发职责").waitFor();
   assert.equal(await rolesSummary.locator("li").count(), 7);
   assert.equal(errors.length, 0, errors.join(" | "));

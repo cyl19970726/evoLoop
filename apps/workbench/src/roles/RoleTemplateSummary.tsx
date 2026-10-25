@@ -90,7 +90,7 @@ export function RoleTemplateSummary({ token, projectId, refresh }: { token: stri
 
   return <section className="panel role-template-summary" aria-label="基础职责状态">
     <div className="section-title"><h2>基础职责</h2><button type="button" onClick={() => setManualRefresh(value => value + 1)} disabled={loading}>回读当前状态</button></div>
-    <p>初始组合只作参考；试行中的正式职责才算已建立。承载和执行权限需另核。</p>
+    <p>初始组合只作参考；试行或持续生效的正式职责对应“已建立”。承载和执行权限需另核。</p>
     {(loading || !current && !currentError) && <p role="status">正在读取基础职责…{current ? "下列仍是上次观察。" : ""}</p>}
     {currentError && <p role="alert">基础职责读取失败：{currentError}{current ? "；保留上次观察，不能视为当前状态。" : "；尚无可信状态。"}</p>}
     {current && <>

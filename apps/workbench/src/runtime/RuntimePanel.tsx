@@ -9,6 +9,7 @@ import { runtimeClient, type NativeResult, type RuntimeStatus } from "./client";
 import { OrchestrationPanel } from "../orchestration/OrchestrationPanel";
 import { ResidentQueuePanel } from "../queues/ResidentQueuePanel";
 import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread";
+import { RoleTemplateSummary } from "../roles/RoleTemplateSummary";
 import "./session-focus.css";
 
 function readErrorText(cause: unknown): string {
@@ -110,7 +111,7 @@ export function RuntimePanel({ context, refresh, task, targetSessionId }: { cont
     window.addEventListener("hashchange", reveal);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
   }, [context.projectId, task?.id, runs]);
-  return <section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
+  return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}
     {status && !status.available && context.principal.permissions.includes("review") && <button disabled={recovering} onClick={recover}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</button>}
@@ -146,7 +147,7 @@ export function RuntimePanel({ context, refresh, task, targetSessionId }: { cont
     <h3>运行记录</h3>{runs.length === 0 && <p className="empty">没有已登记运行。</p>}
     {runs.map(run => <RunCard key={`${run.id}:${run.version}`} context={context} run={run} anchorId={task?.id === run.taskId ? `runtime-run-${task.id}-${run.id}` : undefined} mayAbandon={sessions.some(s=>s.id===run.sessionId && s.sandbox==="read-only")} />)}
     <p className="muted">收到通知、读取材料、采用判断与真实效果分别留证。原生完成状态不会自动关闭任务。</p>
-  </section>;
+  </section></>;
 }
 function SessionRoleLabel({projectId,roleId,role}:{projectId:string;roleId:string;role?:RoleName}) {
   return role?.title ? <span className="runtime-session-role"><a href={href(projectId,"roles")} onClick={event=>event.stopPropagation()}>{role.title}</a> <code title={roleId}>{roleId.slice(0,8)}</code></span>

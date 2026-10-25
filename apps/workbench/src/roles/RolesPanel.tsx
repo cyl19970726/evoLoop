@@ -4,6 +4,7 @@ import { errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
+import { RoleTemplateSummary } from "./RoleTemplateSummary";
 import { href } from "../ui/shared";
 
 const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -127,6 +128,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
     return () => cancelAnimationFrame(frame);
   }, [context.projectId, target, targetRoute.tick, foundTarget?.id, foundTarget?.version]);
   return <div className="journey-board">
+    <RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh} />
     <section className="panel"><div className="panel-head"><h2>职责试行</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
       <p>新会话仍可沿用已有职责。只有反复出现的独立责任缺口，才进入有边界、有成本上限的试行。</p>
       {target !== null && !validTarget && <Notice error>链接中的目标职责 ID 无效；没有定位到其他职责。</Notice>}
