@@ -14,6 +14,7 @@
     "./scheduling": "./dist/scheduling.js",
     "./process-documents": "./dist/process-documents.js",
     "./roles": "./dist/roles.js",
+    "./resident-hosts": "./dist/resident-hosts.js",
     "./delivery": "./dist/delivery.js",
     "./discussions": "./dist/discussions.js",
     "./references": "./dist/references.js",

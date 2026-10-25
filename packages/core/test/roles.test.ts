@@ -36,3 +36,21 @@ test("proposal may come from writer; decisions require project reviewer", async 
   await assert.rejects(() => applyRole(tx, { ...writer, projectIds: [] }, command(), { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
   await assert.rejects(() => applyRole(tx, writer, { type: "role.decide", projectId, operationId: randomUUID(), roleId, expectedVersion: 1, decision: "accept-trial", reason: "reviewed" }, { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
 });
+
+test("reviewer classification appends a Role revision with CAS and keeps proposal evidence", async () => {
+  let current: any = { projectId, id: roleId, version: 2, currentRevisionId: randomUUID(), state: "active",
+    proposal, proposedBy: "manager", createdAtUtc: nowUtc, trialStartedAtUtc: nowUtc,
+    reviewAtUtc: proposal.reviewAtUtc, mergeTargetRoleId: null };
+  const history: any[] = [];
+  const store = { getRole: async () => current, advanceRole: async (value: typeof current, _expected: number, revision: unknown) => {
+    current=value; history.push(revision);
+  } } as unknown as RoleTransaction;
+  const classify: RoleCommand={type:"role.classify",projectId,operationId:randomUUID(),roleId,
+    expectedVersion:2,roleClass:"business",reason:"reviewed responsibility"};
+  const result=await applyRole(store,principal,classify,{nowUtc,nextId:randomUUID});
+  assert.equal(result.version,3);
+  assert.equal(current.proposal.roleClass,"business");
+  assert.deepEqual(history[0].proposal.evidence,proposal.evidence);
+  await assert.rejects(()=>applyRole(store,principal,classify,{nowUtc,nextId:randomUUID}),
+    (error:unknown)=>error instanceof RoleRuleError&&error.code==="VERSION_CONFLICT");
+});

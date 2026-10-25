@@ -50,7 +50,8 @@ test("current todo context exposes linked planning pointers separately from read
   const primaryBody = "Todo planning task";
   const task = { projectId, id: taskId, version: 3, currentRevisionId: taskRevisionId,
     state: "todo", contentDocumentId: primary, contentRevisionId: primaryRevision };
-  const current = { projectId, taskId, id: taskRevisionId, version: 3, state: "todo", basisSetId: null,
+  const domainId=id(84), roleId=id(85), linkId=id(86);
+  const current = { projectId, taskId, id: taskRevisionId, version: 3, state: "todo", basisSetId: null, domainId,
     content: primaryBody, contentDocumentId: primary, contentRevisionId: primaryRevision };
   const planningPath = `${root}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${taskRevisionId}`;
   const candidate = {sourceTaskId: taskId, sourceTaskRevisionId: taskRevisionId, documentId: linked,
@@ -66,12 +67,20 @@ test("current todo context exposes linked planning pointers separately from read
         body: primaryBody, payloadRef: null, contentHash: sha(primaryBody), assetsManifest: [] } },
     [planningPath]: {projectId, taskId, observedTaskRevisionId: taskRevisionId, observedAtUtc: "2026-10-24T00:00:00.000Z", sealed: false,
       observedPlanningCandidates: [candidate], unavailableLinks: []},
+    [`${root}/domains/${domainId}/route`]: {domain:{projectId,id:domainId,version:2,title:"Product"},
+      role:{id:roleId,version:4,proposal:{goal:"private role body"}},status:"external-manual",
+      link:{id:linkId,host:{kind:"external",provider:"codex-desktop",ref:"chat:123"},
+        verifiedCapabilities:["open","read","manual-claim"],evidence:"private check"},session:null,automaticStart:false},
   };
   const api = client(responses);
   const result = await readTaskContext(api, projectId, taskId);
   assert.equal(result.status, "complete");
   assert.equal(result.task?.state, "todo");
   assert.equal(result.basis, null);
+  assert.equal(result.routing.fixedDomainId,domainId);
+  assert.equal(result.routing.current?.status,"external-manual");
+  assert.deepEqual(result.routing.current?.verifiedCapabilities,["open","read","manual-claim"]);
+  assert.equal(JSON.stringify(result.routing).includes("private role body"),false);
   assert.deepEqual(result.observedPlanningCandidates, [candidate]);
   assert.equal(result.documents.length, 1);
   assert.equal(api.seen.includes(planningPath), true);

@@ -20,6 +20,11 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
   if (!Number.isFinite(date(context.nowUtc))) return fail("INVALID_TIME", "nowUtc must be a valid instant");
 
   if (command.type === "role.propose") {
+    if (command.proposal.templateKey && !command.proposal.roleClass)
+      return fail("INVALID_CLASS", "template association requires an explicit Role class");
+    if (command.proposal.templateKey && command.proposal.roleClass &&
+      (["lead","cognition","division"].includes(command.proposal.templateKey) ? "system" : "business") !== command.proposal.roleClass)
+      return fail("INVALID_CLASS", "template class and Role class differ");
     if (date(command.proposal.reviewAtUtc) <= date(context.nowUtc) || date(command.proposal.reviewAtUtc) > date(context.nowUtc) + command.proposal.trialDays * 86_400_000) return fail("INVALID_TRIAL", "review date must fall inside the bounded trial");
     const first = await tx.getTask(command.proposal.firstTaskId);
     if (!first || first.state === "done" || first.state === "cancelled") return fail("INVALID_FIRST_TASK", "first trial task must exist and remain open");
@@ -76,6 +81,14 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
     const session = await tx.getRuntimeSession(command.sessionId);
     if (!session || session.roleId !== command.roleId || session.state !== "ready" || !session.nativeThreadId) return fail("SESSION_UNOWNED", "only a ready project-owned runtime session already reserved for this role may be bound");
     reason = "runtime session binding";
+  } else if (command.type === "role.classify") {
+    if (state === "retired" || state === "rejected") return fail("INVALID_STATE", "closed role cannot be classified");
+    if (command.templateKey && (["lead","cognition","division"].includes(command.templateKey) ? "system" : "business") !== command.roleClass)
+      return fail("INVALID_CLASS", "template class and Role class differ");
+    if (previous.proposal.roleClass === command.roleClass &&
+        (command.templateKey === undefined || (previous.proposal.templateKey ?? null) === command.templateKey))
+      return fail("UNCHANGED", "role classification is already current");
+    reason = command.reason;
   } else {
     if (state !== "retirement-pending") return fail("INVALID_STATE", "review must request retirement or merge first");
     const handoffs = await tx.listUnacknowledgedHandoffs(command.roleId);
@@ -85,7 +98,15 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
     state = "retired";
     reason = `${command.reason}; knowledge: ${command.knowledgeDisposition}; runtime: ${command.runtimeDisposition}`;
   }
-  const next: RoleRecord = { ...previous, version: previous.version + 1, currentRevisionId: context.nextId(), state, reviewAtUtc, mergeTargetRoleId, trialStartedAtUtc: command.type === "role.decide" && command.decision === "accept-trial" ? context.nowUtc : previous.trialStartedAtUtc };
+  const nextProposal = { ...previous.proposal };
+  if (command.type === "role.classify") {
+    nextProposal.roleClass = command.roleClass;
+    if (command.templateKey === null) delete nextProposal.templateKey;
+    else if (command.templateKey !== undefined) nextProposal.templateKey = command.templateKey;
+  }
+  const next: RoleRecord = { ...previous, version: previous.version + 1, currentRevisionId: context.nextId(), state, reviewAtUtc, mergeTargetRoleId,
+    proposal: nextProposal,
+    trialStartedAtUtc: command.type === "role.decide" && command.decision === "accept-trial" ? context.nowUtc : previous.trialStartedAtUtc };
   const revision = makeRevision(next, principal.actorId, reason, context.nowUtc);
   await tx.advanceRole(next, previous.version, revision);
   if (command.type === "role.decide") {

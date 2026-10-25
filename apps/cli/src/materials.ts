@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { ApiClient } from "./client.js";
 import type { BasisSet, DocumentRevision, RuntimeRunRecord, TaskDetail, TaskRevision } from "@evoloop/contracts";
+import type { DomainRoute, HostCapability } from "@evoloop/contracts/resident-hosts";
 import type { TaskExternalReferenceRecord } from "@evoloop/contracts/references";
 
 const MAX_BUNDLE = 16 * 1024 * 1024;
@@ -32,6 +33,11 @@ export interface TaskContext {
     documentId: string; adoptedRevisionId: string; contentHash: string; status: "published"; originalPath: string }>;
   planningUnavailableLinks: Array<{ documentId: string; reason: "archived" | "not_published" }>;
   planningObservedAtUtc: string | null;
+  routing: { fixedDomainId: string | null; current: {
+    domainVersion: number; domainTitle: string; roleId: string | null; roleVersion: number | null;
+    status: DomainRoute["status"]; linkId: string | null; hostKind: "owned" | "external" | null;
+    sessionId: string | null; verifiedCapabilities: HostCapability[]; automaticStart: false;
+  } | null; observedAtUtc: string | null };
 }
 function obj(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new MaterialError(`${label} is invalid`);
@@ -181,6 +187,7 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
   catch (error) { return { status: "partial", projectId, taskId, taskRevisionId: revisionId ?? "", task: null, revision: null,
     basis: null, history: null, documents: [], externalReferences: [], observedPlanningCandidates: [],
     planningUnavailableLinks: [], planningObservedAtUtc: null,
+    routing: { fixedDomainId: null, current: null, observedAtUtc: null },
     failures: [{ kind: "task", id: taskId, revisionId: revisionId ?? null, reason: reason(error) }] }; }
   if (detail.task?.projectId !== projectId || detail.task?.id !== taskId || detail.revision?.id !== detail.task.currentRevisionId)
     throw new MaterialError("Task detail scope or current revision is inconsistent");
@@ -196,6 +203,21 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
         (basis && (basis.projectId !== projectId || basis.taskId !== taskId || basis.taskRevisionId !== selectedId || basis.id !== revision.basisSetId || basis.sealed !== true)))
       throw new MaterialError("Selected Task revision or sealed basis scope is inconsistent");
   } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: reason(error) }); }
+  let routing: TaskContext["routing"] = { fixedDomainId: revision?.domainId ?? null, current: null, observedAtUtc: null };
+  if (revision?.domainId) {
+    try {
+      const current = obj(await client.get(`${fixedPath(projectId)}/domains/${revision.domainId}/route`), "Domain route") as unknown as DomainRoute;
+      if (current.domain?.projectId !== projectId || current.domain.id !== revision.domainId)
+        throw new MaterialError("Domain route does not match fixed Task domain");
+      routing = { fixedDomainId: revision.domainId, current: {
+        domainVersion: current.domain.version, domainTitle: current.domain.title,
+        roleId: current.role?.id ?? null, roleVersion: current.role?.version ?? null,
+        status: current.status, linkId: current.link?.id ?? null, hostKind: current.link?.host.kind ?? (current.session ? "owned" : null),
+        sessionId: current.session?.id ?? null, verifiedCapabilities: current.link?.verifiedCapabilities ?? [],
+        automaticStart: false,
+      }, observedAtUtc: new Date().toISOString() };
+    } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: `Domain route: ${reason(error)}` }); }
+  }
   const observedPlanningCandidates: TaskContext["observedPlanningCandidates"] = [];
   const planningUnavailableLinks: TaskContext["planningUnavailableLinks"] = [];
   let planningObservedAtUtc: string | null = null;
@@ -334,7 +356,7 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
   }
   return { status: failures.length ? "partial" : "complete", projectId, taskId, taskRevisionId: selectedId,
     task: detail.task, revision, basis, history, documents, externalReferences,
-    observedPlanningCandidates, planningUnavailableLinks, planningObservedAtUtc, failures };
+    observedPlanningCandidates, planningUnavailableLinks, planningObservedAtUtc, routing, failures };
 }
 async function readRun(client: ReadClient, projectId: string, fixed: TaskExternalReferenceRecord): Promise<string> {
   const run = obj(await client.get(`${fixedPath(projectId)}/runtime/runs/${uuid(fixed.referenceId, "Run ID")}`), "Fixed Run") as unknown as RuntimeRunRecord;

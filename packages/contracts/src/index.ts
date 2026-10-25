@@ -5,6 +5,7 @@ import { roleCommands } from "./roles.js";
 import { scheduleCommands } from "./scheduling.js";
 import { discussionCommands } from "./discussions.js";
 import { evaluationCommands } from "./evaluation.js";
+import { residentCommands } from "./resident-hosts.js";
 export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
@@ -32,8 +33,8 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.archive"), documentId: idSchema, expectedVersion: version, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.restore"), documentId: idSchema, expectedVersion: version, reason: text }),
-  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, evidence: text.optional(), stopCondition: text.optional() }),
-  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, evidence: text.optional(), stopCondition: text.optional(), reason: text,
+  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, evidence: text.optional(), stopCondition: text.optional() }),
+  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, evidence: text.optional(), stopCondition: text.optional(), reason: text,
     basis: z.array(z.strictObject({ documentId: idSchema, revisionId: idSchema })).max(19).optional(),
     retentions: z.array(z.strictObject({ documentId: idSchema, revisionId: idSchema,
       observedAdoptedRevisionId: idSchema, reason: text })).max(19).optional() }),
@@ -41,6 +42,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...workflowCommands,
   ...runtimeCommands,
   ...roleCommands,
+  ...residentCommands,
   ...scheduleCommands,
   ...discussionCommands,
   ...evaluationCommands,
@@ -77,13 +79,13 @@ export interface LegacyTaskDecision {
 }
 export interface Task {
   projectId: string; id: string; version: number; currentRevisionId: string;
-  title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null;
+  title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null; domainId?: string | null;
   acceptance: string; owner: string; state: TaskState;
   legacyDecision?: LegacyTaskDecision | null;
 }
 export interface TaskRevision {
   projectId: string; taskId: string; id: string; version: number;
-  title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null;
+  title: string; content: string; contentDocumentId: string; contentRevisionId: string; kind: TaskKind | null; domainId?: string | null;
   acceptance: string; owner: string; state: TaskRevisionState;
   basisSetId: string | null; actorId: string; reason: string; createdAt: string;
 }
