@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { evaluateQueueEntry, evaluateQueueRelease } from "../src/queues/index.ts";
 import type { ResidentQueueEntry, QueueSourceFacts, QueueReleaseEvidence } from "../../contracts/src/queues.ts";
-const entry:ResidentQueueEntry={projectId:'p',queueId:'q',id:'e',taskId:'t',taskRevisionId:'r',sessionId:'s',roleId:'role',position:0,dependsOn:[],consumerId:'consumer',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1};
-const facts:QueueSourceFacts={currentTaskRevisionId:'r',taskState:'in_progress',sessionReady:true,nativeThreadId:'thread',bindingCurrent:true,grantCurrent:true,conflictingRun:false};
-const evidence:QueueReleaseEvidence={taskRevisionId:'r',taskState:'done',deliveryId:'d',deliveryCurrent:true,deliveryPassed:true,observationId:'o',observationConsumerId:'consumer',observationUsed:true,closureId:'c',closureCurrent:true,boundedDecisionId:null,boundedDecisionActorId:null,boundedDecisionReason:null,nextResponsibility:null};
+const entry:ResidentQueueEntry={projectId:'p',queueId:'q',id:'e',taskId:'t',taskRevisionId:'r',sourceInputJson:'same',sessionId:'s',roleId:'role',position:0,dependsOn:[],consumerId:'consumer',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1};
+const facts:QueueSourceFacts={currentTaskRevisionId:'r',taskState:'in_progress',sessionReady:true,nativeThreadId:'thread',bindingCurrent:true,grantCurrent:true,conflictingRun:false,currentInputJson:'same'};
+const evidence:QueueReleaseEvidence={currentTaskRevisionId:'done-revision',currentInputJson:'same',taskState:'done',deliveryId:'d',deliveryCurrent:true,deliveryPassed:true,observationId:'o',observationConsumerId:'consumer',observationUsed:true,closureId:'c',closureCurrent:true,boundedDecisionId:null,boundedDecisionActorId:null,boundedDecisionReason:null,nextResponsibility:null};
 test('continuation is executable, but current revision, dependency, grant and unknown Run are gates',()=>{
   assert.equal(evaluateQueueEntry(entry,facts,true).ready,true);
   assert.equal(evaluateQueueEntry(entry,facts,false).code,'dependency');
-  assert.equal(evaluateQueueEntry(entry,{...facts,currentTaskRevisionId:'new'},true).code,'task_changed');
+  assert.equal(evaluateQueueEntry(entry,{...facts,currentTaskRevisionId:'new'},true).ready,true);
+  assert.equal(evaluateQueueEntry(entry,{...facts,currentInputJson:'changed'},true).code,'task_changed');
   assert.equal(evaluateQueueEntry(entry,{...facts,grantCurrent:false},true).code,'grant_revoked');
   assert.equal(evaluateQueueEntry(entry,{...facts,conflictingRun:true},true).code,'run_in_flight');
 });
