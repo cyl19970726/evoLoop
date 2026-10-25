@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
-import { delegationTemplateHash, loadIntegrations, runtimeThreadConfig, runtimeThreadConfigForSession } from "../src/configuration.js";
+import { delegationTemplateHash, hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfig, runtimeThreadConfigForSession } from "../src/configuration.js";
 import { currentSessionGrant, isBoundDynamicSession } from "../src/orchestration/dynamic-admission.js";
 import { loopIntentId } from "../src/orchestration/runner.js";
 
@@ -39,6 +39,33 @@ test("resident queue business actor bindings have one actor per project and Role
       {...binding,actorId:"worker-b"}]}}));
     await assert.rejects(loadIntegrations(file),/Invalid integration configuration/);
   } finally { await rm(directory,{recursive:true,force:true}); }
+});
+test("engineering action grant matches the actual project as well as scope, hash and expiry",()=>{
+  const otherProjectId=randomUUID();
+  const principal={actorId:"executor",projectIds:[projectId,otherProjectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const action={type:"action_request" as const,requestId:randomUUID(),executorActorId:principal.actorId,
+    actionType:"pr.create" as const,scope:{repository:"evoLoop",worktree:"/tmp/evoloop-action",
+      paths:["packages/core/src/index.ts"],commit:"abc123"},inputHash:"a".repeat(64),
+    reason:"Create reviewed PR",authorityEvidence:"Current grant",expiresAt:"2026-10-26T00:00:00Z",
+    acceptance:"PR URL",detail:{documentId:randomUUID(),revisionId:randomUUID()}};
+  const grant={projectId:otherProjectId,actorId:principal.actorId,actionType:action.actionType,
+    repository:action.scope.repository,worktree:action.scope.worktree,paths:action.scope.paths,
+    commit:action.scope.commit,inputHash:action.inputHash,expiresAt:"2026-10-27T00:00:00Z"};
+  const now=Date.parse("2026-10-25T00:00:00Z");
+  assert.equal(hasExactEngineeringActionGrant([grant],principal,action,projectId,now),false,
+    "a B-only grant cannot approve an A action for a multi-project executor");
+  const current={...grant,projectId};
+  assert.equal(hasExactEngineeringActionGrant([current],principal,action,projectId,now),true);
+  assert.equal(hasExactEngineeringActionGrant([current],{...principal,projectIds:[otherProjectId]},action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,repository:"other"}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,worktree:"/tmp/other"}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,commit:"different"}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,pullRequest:"pr-1"}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,inputHash:"b".repeat(64)}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,paths:["other.ts"]}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,expiresAt:"2026-10-25T00:00:00Z"}],principal,action,projectId,now),false);
+  assert.equal(hasExactEngineeringActionGrant([{...current,expiresAt:"2026-10-25T12:00:00Z"}],principal,action,projectId,now),false,
+    "grant must also outlive the fixed action request");
 });
 const workManagementQueries = {
   listRoles: async () => ({ items: [], nextCursor: null }), listRoleRevisions: async () => [],

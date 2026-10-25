@@ -1,10 +1,10 @@
 import type { Principal } from '@evoloop/contracts';
-import { queueCommandSchema } from '../../../contracts/src/queues.js';
-import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence,QueueHoldCode } from '../../../contracts/src/queues.js';
+import { queueCommandSchema } from '@evoloop/contracts/queues';
+import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence,QueueHoldCode } from '@evoloop/contracts/queues';
 import { canonicalTaskInputJson,taskInputSignature } from '../task-input.js';
 import type { Reader } from '@evoloop/contracts/ports';
 
-export type { ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence } from '../../../contracts/src/queues.js';
+export type { ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence } from '@evoloop/contracts/queues';
 export interface QueueDecision {ready:boolean;code:QueueHoldCode|null;reason:string|null}
 const held=(code:QueueHoldCode,reason:string):QueueDecision=>({ready:false,code,reason});
 export function evaluateQueueEntry(entry:ResidentQueueEntry,facts:QueueSourceFacts,dependencyReleased:boolean):QueueDecision{

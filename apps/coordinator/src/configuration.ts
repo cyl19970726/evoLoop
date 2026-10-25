@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { delegationTemplateSchema, type DelegationTemplate } from "@evoloop/contracts/division";
+import type { Principal } from "@evoloop/contracts";
+import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
@@ -83,6 +85,17 @@ const integrationSchema = z.strictObject({
     pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
   }).optional(),
 });
+type EngineeringActionGrant=NonNullable<z.infer<typeof integrationSchema>["residentQueue"]>["actionGrants"][number];
+type EngineeringActionRequest=Extract<TaskCollaborationPayload,{type:"action_request"}>;
+export function hasExactEngineeringActionGrant(grants:EngineeringActionGrant[],principal:Principal,
+  action:EngineeringActionRequest,actualProjectId:string,nowMs=Date.now()):boolean {
+  return principal.projectIds.includes(actualProjectId)&&grants.some(g=>g.projectId===actualProjectId&&
+    g.actorId===principal.actorId&&
+    g.actionType===action.actionType&&g.repository===action.scope.repository&&g.worktree===action.scope.worktree&&
+    (g.commit??null)===(action.scope.commit??null)&&(g.pullRequest??null)===(action.scope.pullRequest??null)&&
+    g.inputHash===action.inputHash&&Date.parse(g.expiresAt)>=Date.parse(action.expiresAt)&&Date.parse(g.expiresAt)>nowMs&&
+    g.paths.length===action.scope.paths.length&&g.paths.every((p,i)=>p===action.scope.paths[i]));
+}
 export async function loadIntegrations(path?: string) {
   let configuration: z.infer<typeof integrationSchema>;
   try { configuration = integrationSchema.parse(path ? JSON.parse(await readFile(path, "utf8")) : {}); }
