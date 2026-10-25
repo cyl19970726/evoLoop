@@ -16,6 +16,7 @@ const taskB = "10000005-0000-4000-8000-000000000005";
 const taskC = "10000010-0000-4000-8000-000000000016";
 const queueId = "10000006-0000-4000-8000-000000000006";
 const runA = "10000007-0000-4000-8000-000000000007";
+const runB = "10000017-0000-4000-8000-000000000023";
 const discussionId = "10000008-0000-4000-8000-000000000008";
 const domainId = "10000009-0000-4000-8000-000000000009";
 const documentId = "1000000a-0000-4000-8000-000000000010";
@@ -67,10 +68,22 @@ const events = [
 test("resident observation keeps acceptance, host authority and task replies distinct at 390px", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const {chromium} = (await import(pathToFileURL(playwrightModule!).href)).default;
   let failDiscussions = false, longDiscussions = false;
+  let currentQueue = queue;
+  let currentAttempts = [{entryId:taskA,claimId:taskA,attempts:[{projectId,claimId:taskA,sequence:1,runId:runA,operationId:runA,taskRevisionId:taskA,actualRunTaskRevisionId:taskA,reservedAt:stamp}]},{entryId:taskB,claimId:null,attempts:[]},{entryId:taskC,claimId:null,attempts:[]}];
+  let holdNextDetail = false, heldDetails = 0, releaseHeldDetail: (() => void) | null = null;
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,"http://127.0.0.1");
     if (url.pathname === "/__fixture/fail-discussions") { failDiscussions = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/long-discussions") { failDiscussions = false; longDiscussions = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/hold-next-detail") { holdNextDetail = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/held-detail-count") { res.end(String(heldDetails)); return; }
+    if (url.pathname === "/__fixture/release-held-detail") { releaseHeldDetail?.(); res.end("ok"); return; }
+    if (url.pathname === "/__fixture/advance-queue") {
+      currentQueue = {...queue,entries:queue.entries.map(entry => entry.id === taskA ? {...entry,state:"released",holdCode:null,holdReason:null}
+        : entry.id === taskB ? {...entry,state:"claimed",claimId:taskB} : entry)};
+      currentAttempts = [{...currentAttempts[0]},{entryId:taskB,claimId:taskB,attempts:[{projectId,claimId:taskB,sequence:1,runId:runB,operationId:runB,taskRevisionId:taskB,actualRunTaskRevisionId:taskB,reservedAt:stamp}]},{...currentAttempts[2]}];
+      res.end("ok"); return;
+    }
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value:unknown = page([]);
@@ -80,9 +93,13 @@ test("resident observation keeps acceptance, host authority and task replies dis
       else if (url.pathname === `${p}/roles/${roleId}/hosts`) value = [external,owned];
       else if (url.pathname === `${p}/domains`) value = [domain];
       else if (url.pathname === `${p}/domains/${domainId}/route`) value = {domain,role,status:"external-manual",link:external,session:null,automaticStart:false};
-      else if (url.pathname === `${p}/resident-queues`) value = [queue];
-      else if (url.pathname === `${p}/resident-queues/${queueId}`) value = queue;
-      else if (url.pathname === `${p}/resident-queues/${queueId}/attempts`) value = [{entryId:taskA,claimId:taskA,attempts:[{projectId,claimId:taskA,sequence:1,runId:runA,operationId:runA,taskRevisionId:taskA,actualRunTaskRevisionId:taskA,reservedAt:stamp}]},{entryId:taskB,claimId:null,attempts:[]},{entryId:taskC,claimId:null,attempts:[]}];
+      else if (url.pathname === `${p}/resident-queues`) value = [currentQueue];
+      else if (url.pathname === `${p}/resident-queues/${queueId}`) {
+        value = currentQueue;
+        if (holdNextDetail) { holdNextDetail = false; heldDetails++;
+          await new Promise<void>(resolve => { releaseHeldDetail = resolve; }); }
+      }
+      else if (url.pathname === `${p}/resident-queues/${queueId}/attempts`) value = currentAttempts;
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
       else if (url.pathname === `${p}/runtime/sessions`) value = [session];
       else if (url.pathname === `${p}/runtime/runs`) value = url.searchParams.get("taskId") === taskB ? [] : [run];
@@ -136,6 +153,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   const queueItems=pageBrowser.locator(".resident-queue-session li");
   assert.equal(await queueItems.count(),3);
   assert.match(await queueItems.nth(0).innerText(),/已领取／占用.*等待消费者使用与验收/s);
+  assert.match(await queueItems.nth(0).innerText(),/本轮运行已结束，仍占用 Session；等待交付／验收或明确接续/);
   assert.match(await queueItems.nth(1).innerText(),/等待前项放行/);
   assert.doesNotMatch(await queueItems.nth(1).innerText(),/running|已读运行状态/);
   assert.match(await queueItems.nth(2).innerText(),/暂停.*运行结果未知.*原操作 ID 尚待核对/s);
@@ -144,6 +162,22 @@ test("resident observation keeps acceptance, host authority and task replies dis
     await pageBrowser.addStyleTag({content:".workspace-header{position:static!important}"});
     await pageBrowser.locator(".resident-queues").screenshot({path:process.env.EVOLOOP_RESIDENT_QUEUE_SCREENSHOT});
   }
+  await fetch(`${base}/__fixture/hold-next-detail`);
+  await pageBrowser.getByRole("button",{name:"回读详情与尝试"}).click();
+  for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-detail-count`)).text() !== "1"; attempt++)
+    await new Promise(resolve=>setTimeout(resolve,25));
+  assert.equal(await (await fetch(`${base}/__fixture/held-detail-count`)).text(),"1");
+  await fetch(`${base}/__fixture/advance-queue`);
+  await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
+  await pageBrowser.locator(".resident-queue-meta").getByText(/累计尝试 2/).waitFor();
+  await pageBrowser.getByText(/当前占用：任务 10000005/).waitFor();
+  assert.match(await queueItems.nth(0).innerText(),/已放行/);
+  assert.match(await queueItems.nth(1).innerText(),/已领取／占用/);
+  assert.equal(await pageBrowser.locator(".resident-queue-card").getAttribute("open"),"");
+  await fetch(`${base}/__fixture/release-held-detail`);
+  await pageBrowser.waitForTimeout(100);
+  assert.match(await queueItems.nth(1).innerText(),/已领取／占用/);
+  assert.match(await pageBrowser.locator(".resident-queue-meta").innerText(),/累计尝试 2/);
   await queueItems.nth(0).getByRole("link",{name:/最近 Run/}).click();
   await pageBrowser.locator(`#runtime-run-${taskA}-${runA}[open]`).waitFor();
   await pageBrowser.locator(".task-collaboration-thread > summary").waitFor({timeout:5000}).catch(async () => {

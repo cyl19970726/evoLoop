@@ -25,6 +25,7 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, runs, sess
   const [error, setError] = useState("");
   const [observedAt, setObservedAt] = useState("");
   const [readVersion, setReadVersion] = useState(0);
+  const [listReadVersion, setListReadVersion] = useState(0);
   const rootRef = useRef<HTMLElement>(null);
   useEffect(() => {
     let active = true;
@@ -32,7 +33,7 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, runs, sess
     void queueClient(token, projectId).list().then(items => {
       if (!active) return;
       if (items.some(item => item.projectId !== projectId)) throw new Error("队列响应与当前项目不符");
-      setQueues(items); setObservedAt(new Date().toLocaleString("zh-CN"));
+      setQueues(items); setListReadVersion(value => value + 1); setObservedAt(new Date().toLocaleString("zh-CN"));
     }).catch(cause => { if (active) setError(errorText(cause)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -48,13 +49,13 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, runs, sess
     <p className="resident-queue-observed">{loading ? "正在核对队列…" : observedAt ? `队列读于 ${observedAt}` : "队列尚未读回"}</p>
     {error && <p role="alert" className="resident-queue-error">队列回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
     {!loading && !error && visible.length === 0 && <p className="empty">{task ? "此任务尚未见于已登记驻留队列。" : "尚无已登记驻留队列。"}</p>}
-    {visible.map(queue => <QueueCard key={queue.id} token={token} projectId={projectId} queue={queue} refresh={refresh}
+    {visible.map(queue => <QueueCard key={queue.id} token={token} projectId={projectId} queue={queue} refresh={refresh} listReadVersion={listReadVersion}
       task={task} runs={runs} sessions={sessions} />)}
   </section>;
 }
 
-function QueueCard({ token, projectId, queue, refresh, task, runs, sessions }: {
-  token: string; projectId: string; queue: ResidentQueue; refresh: number; task?: Task;
+function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, runs, sessions }: {
+  token: string; projectId: string; queue: ResidentQueue; refresh: number; listReadVersion: number; task?: Task;
   runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const [open, setOpen] = useState(false);
@@ -67,7 +68,7 @@ function QueueCard({ token, projectId, queue, refresh, task, runs, sessions }: {
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setDetail(null); setAttemptRows(null); setObservedAt("");
     const client = queueClient(token, projectId);
     void Promise.all([client.detail(queue.id), client.attempts(queue.id)]).then(([current, rows]) => {
       if (!active) return;
@@ -77,7 +78,7 @@ function QueueCard({ token, projectId, queue, refresh, task, runs, sessions }: {
     }).catch(cause => { if (active) setError(errorText(cause)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [open, token, projectId, queue.id, queue.version, refresh, readVersion]);
+  }, [open, token, projectId, queue.id, queue.version, refresh, listReadVersion, readVersion]);
   const shown = detail ?? queue;
   const groups = new Map<string, ResidentQueueEntry[]>();
   for (const entry of [...shown.entries].sort((a, b) => a.position - b.position)) {
@@ -113,6 +114,7 @@ function QueueCard({ token, projectId, queue, refresh, task, runs, sessions }: {
               {entry.dependsOn.length > 0 && <p>依赖放行：{entry.dependsOn.map(short).join("、")}</p>}
               {entry.holdCode && <p className="resident-queue-hold">{holdLabel[entry.holdCode]}{entry.holdReason ? `：${entry.holdReason}` : ""}</p>}
               {entry.state === "claimed" && <p>此项占用当前 Session；后项即使已有序号也不表示已启动。</p>}
+              {entry.state === "claimed" && run && ["completed", "failed", "interrupted"].includes(run.state) && <p>本轮运行已结束，仍占用 Session；等待交付／验收或明确接续，不代表后项已经运行。</p>}
               {entry.state === "queued" && before && shown.adoptedVersion !== null && <p>还需核对当前任务修订、依赖、授权、会话及占用；这里只表示顺位。</p>}
               {last ? <p>累计尝试 {currentAttempts.length} 次 · <a href={`${href(projectId, "task", entry.taskId)}?tab=runtime&run=${key(last.runId)}`}>最近 Run {short(last.runId)}</a> · {run ? `已读运行状态 ${run.state}` : "Run 状态尚未在此视图读到"}</p> : <p>累计尝试 {attemptRows ? 0 : "待读回"} 次；没有已读到的 Run。</p>}
             </li>;
