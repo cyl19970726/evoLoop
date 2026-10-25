@@ -2,13 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import type { ResidentQueue, ResidentQueueEntry, QueueHoldCode } from "@evoloop/contracts/queues";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Task } from "@evoloop/contracts";
-import { errorText } from "../api";
+import type { TaskDetail } from "@evoloop/contracts";
+import type { RoleRecord } from "@evoloop/contracts/roles";
+import { errorText, request } from "../api";
 import { href } from "../ui/shared";
 import { queueClient, type EntryAttempts } from "./client";
 import "./residentQueue.css";
 
 const key = encodeURIComponent;
 const short = (id: string) => id.slice(0, 8);
+const maxNamedEntries = 24;
+const sessionStateLabel: Record<RuntimeSessionRecord["state"], string> = {
+  reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态待核对", closed: "已关闭",
+};
 const holdLabel: Record<QueueHoldCode, string> = {
   not_adopted: "队列尚未采纳", task_changed: "任务修订已变化", task_unavailable: "任务不可承接",
   dependency: "依赖尚未放行", session_unready: "会话尚未就绪", binding_changed: "职责绑定已变化",
@@ -21,6 +27,7 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, sessionId,
   token: string; projectId: string; refresh: number; task?: Task; sessionId?: string; runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const [queues, setQueues] = useState<ResidentQueue[]>([]);
+  const [queueScope, setQueueScope] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [observedAt, setObservedAt] = useState("");
@@ -33,7 +40,7 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, sessionId,
     void queueClient(token, projectId).list().then(items => {
       if (!active) return;
       if (items.some(item => item.projectId !== projectId)) throw new Error("队列响应与当前项目不符");
-      setQueues(items); setListReadVersion(value => value + 1); setObservedAt(new Date().toLocaleString("zh-CN"));
+      setQueues(items); setQueueScope(`${projectId}:${token}`); setListReadVersion(value => value + 1); setObservedAt(new Date().toLocaleString("zh-CN"));
     }).catch(cause => { if (active) setError(errorText(cause)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -43,13 +50,14 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, sessionId,
     window.addEventListener("focus", reread);
     return () => window.removeEventListener("focus", reread);
   }, []);
-  const visible = task || sessionId ? queues.filter(queue => queue.entries.some(entry => (!task || entry.taskId === task.id) && (!sessionId || entry.sessionId === sessionId))) : queues;
+  const currentQueues = queueScope === `${projectId}:${token}` ? queues : [];
+  const visible = task || sessionId ? currentQueues.filter(queue => queue.entries.some(entry => (!task || entry.taskId === task.id) && (!sessionId || entry.sessionId === sessionId))) : currentQueues;
   return <section className="resident-queues" ref={rootRef} aria-label="驻留 Session 队列">
     <div className="resident-queues-head"><h3>驻留 Session 队列</h3><button type="button" onClick={() => setReadVersion(value => value + 1)}>重新读取队列</button></div>
-    <p className="resident-queue-observed">{loading ? "正在核对队列…" : observedAt ? `队列读于 ${observedAt}` : "队列尚未读回"}</p>
+    <p className="resident-queue-observed">{loading || queueScope !== `${projectId}:${token}` && !error ? "正在核对队列…" : queueScope === `${projectId}:${token}` && observedAt ? `队列读于 ${observedAt}` : "队列尚未读回"}</p>
     {error && <p role="alert" className="resident-queue-error">队列回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
-    {!loading && !error && visible.length === 0 && <p className="empty">{sessionId ? "此 Session 尚未见于已登记驻留队列。" : task ? "此任务尚未见于已登记驻留队列。" : "尚无已登记驻留队列。"}</p>}
-    {visible.map(queue => <QueueCard key={queue.id} token={token} projectId={projectId} queue={queue} refresh={refresh} listReadVersion={listReadVersion}
+    {!loading && !error && queueScope === `${projectId}:${token}` && visible.length === 0 && <p className="empty">{sessionId ? "此 Session 尚未见于已登记驻留队列。" : task ? "此任务尚未见于已登记驻留队列。" : "尚无已登记驻留队列。"}</p>}
+    {visible.map(queue => <QueueCard key={`${projectId}:${queue.id}`} token={token} projectId={projectId} queue={queue} refresh={refresh} listReadVersion={listReadVersion}
       task={task} sessionId={sessionId} runs={runs} sessions={sessions} />)}
   </section>;
 }
@@ -66,6 +74,7 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
   const [error, setError] = useState("");
   const [readVersion, setReadVersion] = useState(0);
   const [observedAt, setObservedAt] = useState("");
+  const [names, setNames] = useState<{ scope: string; tasks: Record<string, string>; roles: Record<string, string>; failed: string[] }>({ scope: "", tasks: {}, roles: {}, failed: [] });
   useEffect(() => { if (sessionId && cardRef.current) { cardRef.current.open = true; setOpen(true); } }, [sessionId]);
   useEffect(() => {
     if (!open) return;
@@ -82,8 +91,50 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
     return () => { active = false; };
   }, [open, token, projectId, queue.id, queue.version, refresh, listReadVersion, readVersion]);
   const shown = detail ?? queue;
+  const namedEntries = shown.entries.filter(item => !sessionId || item.sessionId === sessionId).sort((a, b) => a.position - b.position);
+  const nameScope = `${projectId}|${queue.id}|${sessionId ?? ""}|${listReadVersion}|${readVersion}|${namedEntries.map(entry => `${entry.id}:${entry.taskId}:${entry.roleId}`).join("|")}`;
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    const controller = new AbortController();
+    setNames({ scope: nameScope, tasks: {}, roles: {}, failed: [] });
+    const tasks = [...new Set(namedEntries.slice(0, maxNamedEntries).map(entry => entry.taskId))].filter(id => id !== task?.id);
+    const roles = [...new Set(namedEntries.slice(0, maxNamedEntries).map(entry => entry.roleId))];
+    const work: Array<{ kind: "task" | "role"; id: string }> = [
+      ...tasks.map(id => ({ kind: "task" as const, id })), ...roles.map(id => ({ kind: "role" as const, id })),
+    ];
+    let cursor = 0;
+    const base = `/api/projects/${key(projectId)}`;
+    async function worker() {
+      while (active && cursor < work.length) {
+        const item = work[cursor++]!;
+        try {
+          const record = item.kind === "task"
+            ? (await request<TaskDetail>(token, `${base}/tasks/${key(item.id)}`, 15000, { signal: controller.signal })).task
+            : await request<RoleRecord>(token, `${base}/roles/${key(item.id)}`, 15000, { signal: controller.signal });
+          if (!active) return;
+          if (record.projectId !== projectId || record.id !== item.id) throw new Error("名称响应与当前项目或对象不符");
+          const title = item.kind === "task" ? (record as Task).title : (record as RoleRecord).proposal.title;
+          if (!title?.trim()) throw new Error("名称尚未登记");
+          setNames(previous => previous.scope === nameScope ? {
+            ...previous, [item.kind === "task" ? "tasks" : "roles"]: {
+              ...previous[item.kind === "task" ? "tasks" : "roles"], [item.id]: title,
+            },
+          } : previous);
+        } catch {
+          if (active) setNames(previous => previous.scope === nameScope ? { ...previous, failed: [...previous.failed, item.id] } : previous);
+        }
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(4, work.length) }, () => worker()));
+    return () => { active = false; controller.abort(); };
+  }, [open, token, projectId, nameScope, task?.id]);
+  const currentNames: { tasks: Record<string, string>; roles: Record<string, string>; failed: string[] } =
+    names.scope === nameScope ? names : { tasks: {}, roles: {}, failed: [] };
+  const taskName = (id: string) => task?.id === id ? task.title : currentNames.tasks[id] ?? `任务 ${short(id)}`;
+  const roleName = (id: string) => currentNames.roles[id] ?? `职责 ${short(id)}`;
   const groups = new Map<string, ResidentQueueEntry[]>();
-  for (const entry of shown.entries.filter(item => !sessionId || item.sessionId === sessionId).sort((a, b) => a.position - b.position)) {
+  for (const entry of namedEntries) {
     groups.set(entry.sessionId, [...(groups.get(entry.sessionId) ?? []), entry]);
   }
   const attempts = new Map(attemptRows?.map(row => [row.entryId, row.attempts]) ?? []);
@@ -94,14 +145,17 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
       <div className="resident-queue-meta"><span>排序理由：{shown.reason}</span><span>总运行上限 {shown.maxRuns}；累计尝试 {total ?? "待读回"}</span><span>{observedAt ? `详情读于 ${observedAt}` : "详情尚未读回"}</span><button type="button" onClick={() => setReadVersion(value => value + 1)}>回读详情与尝试</button></div>
       {loading && <p>正在读取队列详情与尝试…</p>}
       {error && <p role="alert" className="resident-queue-error">详情回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
+      {namedEntries.length > maxNamedEntries && <p className="resident-queue-observed">仅核对前 {maxNamedEntries} 项名称；其余条目保留 ID，请打开任务核实。</p>}
+      {currentNames.failed.length > 0 && <p className="resident-queue-observed">部分名称未读回，已保留对象 ID 供核对。</p>}
       {[...groups].map(([sessionId, entries]) => {
         const session = sessions.find(value => value.id === sessionId);
         let priorReleased = true;
         const current = entries.find(entry => entry.state === "claimed");
         const next = entries.find(entry => entry.state === "queued");
         return <div className="resident-queue-session" key={sessionId}>
-          <h4>原 Session <a href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>{short(sessionId)}</a> <small>{session ? `· ${session.state}` : "· 会话状态未在此视图读到"}</small></h4>
-          <p>当前占用：{current ? `任务 ${short(current.taskId)}` : "无已确认占用项"}；后续顺位：{next ? `任务 ${short(next.taskId)}（不代表可启动）` : "无"}</p>
+          <h4>原 Session <a href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>{short(sessionId)}</a> <small>{session ? `· ${sessionStateLabel[session.state] ?? session.state}` : "· 会话状态未在此视图读到"}</small></h4>
+          <p className="resident-queue-id">Session ID <code>{sessionId}</code></p>
+          <p>当前占用：{current ? <>{taskName(current.taskId)} <code>{short(current.taskId)}</code></> : "无已确认占用项"}；后续顺位：{next ? <>{taskName(next.taskId)} <code>{short(next.taskId)}</code>（不代表可启动）</> : "无"}</p>
           <ol>{entries.map(entry => {
             const state = entry.state === "released" ? "已放行" : entry.state === "held" ? "暂停" : entry.state === "claimed" ? "已领取／占用" :
               shown.adoptedVersion === null ? "未采纳，不能派发" : priorReleased ? "后续顺位，待调度校验" : "等待前项放行";
@@ -111,8 +165,9 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
             const last = currentAttempts.at(-1);
             const run = last ? runs.find(value => value.id === last.runId && value.taskId === entry.taskId) : undefined;
             return <li key={entry.id} className={task?.id === entry.taskId ? "queue-current-task" : ""}>
-              <div><strong>第 {entry.position + 1} 项 · {state}</strong> <a href={`${href(projectId, "task", entry.taskId)}?tab=runtime${last ? `&run=${key(last.runId)}` : ""}`}>{task?.id === entry.taskId ? task.title : `任务 ${short(entry.taskId)}`}</a></div>
-              <p>固定任务修订 <code>{short(entry.taskRevisionId)}</code> · 承接职责 <code>{short(entry.roleId)}</code> · 消费者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "消费者实际使用并验收" : "消费者验收" : "有界人工决定"}</p>
+              <div><strong>第 {entry.position + 1} 项 · {state}</strong> <a href={`${href(projectId, "task", entry.taskId)}?tab=runtime${last ? `&run=${key(last.runId)}` : ""}`}>{taskName(entry.taskId)}</a></div>
+              <p className="resident-queue-id">任务 ID <code>{entry.taskId}</code> · 固定修订 <code>{short(entry.taskRevisionId)}</code></p>
+              <p>承接职责 <a href={href(projectId, "roles")}>{roleName(entry.roleId)}</a> <code>{short(entry.roleId)}</code> · 消费者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "消费者实际使用并验收" : "消费者验收" : "有界人工决定"}</p>
               {entry.dependsOn.length > 0 && <p>依赖放行：{entry.dependsOn.map(short).join("、")}</p>}
               {entry.holdCode && <p className="resident-queue-hold">{holdLabel[entry.holdCode]}{entry.holdReason ? `：${entry.holdReason}` : ""}</p>}
               {entry.state === "claimed" && <p>此项占用当前 Session；后项即使已有序号也不表示已启动。</p>}
