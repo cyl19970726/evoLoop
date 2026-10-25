@@ -57,7 +57,9 @@ const integrationSchema = z.strictObject({
   }).optional(),
   residentQueue: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
-    roleActors: z.array(z.strictObject({projectId:z.uuid(),roleId:z.uuid(),actorId:z.string().min(1).max(100)})).max(200),
+    roleActors: z.array(z.strictObject({projectId:z.uuid(),roleId:z.uuid(),actorId:z.string().min(1).max(100)})).max(200)
+      .refine(values=>new Set(values.map(value=>JSON.stringify([value.projectId,value.roleId]))).size===values.length,
+        'Resident queue business actor bindings must be unique per project and Role'),
     actionGrants: z.array(z.strictObject({projectId:z.uuid(),actorId:z.string().min(1).max(100),
       actionType:z.enum(["worktree.write","git.commit","git.push","pr.create","pr.review","pr.merge","deployment"]),
       repository:z.string().min(1).max(240),worktree:absolute,

@@ -314,4 +314,63 @@ test('central queue claim journals claim, Run, channel and outbox atomically; re
   assert.equal(afterB.state,'claimed');
   await new ResidentQueuePump(pumpOptions).tick();
   assert.equal((await central.listResidentQueueAttempts(lead,p,afterB.claimId!)).length,1);
+  const filler=await pool.connect();try{
+    await filler.query('BEGIN');
+    const store=new PgResidentQueue(filler,p,grant,input,leader,binding);
+    for(let n=0;n<199;n++)await store.createResidentQueue({projectId:p,id:randomUUID(),version:1,
+      adoptedVersion:null,maxRuns:1,reason:'Capacity boundary fixture',actorId:'lead',entries:[]});
+    await filler.query('COMMIT');
+  }catch(error){await filler.query('ROLLBACK');throw error;}finally{filler.release();}
+  assert.equal((await central.listResidentQueues(lead,p)).length,200);
+  const beforeLimit=await pool.query(`SELECT
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs,
+    (SELECT count(*)::int FROM resident_queue_attempt WHERE project_id=$1) AS attempts`,[p]);
+  const currentB=(await central.getTask(lead,p,taskBId)).task;
+  const overId=randomUUID(),overOperationId=randomUUID();
+  const over=await central.execute(lead,{type:'queue.create',projectId:p,operationId:overOperationId,queueId:overId,
+    maxRuns:1,reason:'Must report full project capacity',entries:[{id:randomUUID(),taskId:taskBId,
+      taskRevisionId:currentB.currentRevisionId,sessionId,roleId:role,dependsOn:[],consumerId:'lead',
+      useRequired:false,releaseRule:'accepted'}]});
+  assert.equal(over.status,'rejected');if(over.status==='rejected')assert.equal(over.code,'QUEUE_LIMIT_REACHED');
+  assert.equal((await central.listResidentQueues(lead,p)).length,200);
+  const afterLimit=await pool.query(`SELECT
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs,
+    (SELECT count(*)::int FROM resident_queue_attempt WHERE project_id=$1) AS attempts`,[p]);
+  assert.deepEqual(afterLimit.rows[0],beforeLimit.rows[0]);
+  assert.equal((await pool.query('SELECT 1 FROM resident_queue WHERE project_id=$1 AND queue_id=$2',[p,overId])).rowCount,0);
+  const limitedJournal=await pool.query('SELECT result FROM operation_journal WHERE project_id=$1 AND operation_id=$2',[p,overOperationId]);
+  assert.equal(limitedJournal.rows[0]?.result?.code,'QUEUE_LIMIT_REACHED');
+  // A preexisting overflow must fail visibly instead of silently omitting its 201st queue.
+  await pool.query(`INSERT INTO resident_queue(project_id,queue_id,version,max_runs,reason,actor_id)
+    VALUES($1,$2,1,1,'legacy overflow','lead')`,[p,randomUUID()]);
+  await assert.rejects(central.listResidentQueues(lead,p),error=>
+    error instanceof Error && 'code' in error && error.code==='QUEUE_LIMIT_EXCEEDED');
+});
+
+test('two concurrent creators cannot both take the 200th project queue slot',async()=>{
+  const p=randomUUID();
+  await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,now())',[p,'Queue limit race']);
+  const queue=(id:string)=>({projectId:p,id,version:1,adoptedVersion:null,maxRuns:1,
+    reason:'Capacity test',actorId:'lead',entries:[]});
+  const fill=await pool.connect();try{
+    await fill.query('BEGIN');const store=new PgResidentQueue(fill,p,grant,input,leader,binding);
+    for(let n=0;n<199;n++)await store.createResidentQueue(queue(randomUUID()));
+    await fill.query('COMMIT');
+  }catch(error){await fill.query('ROLLBACK');throw error;}finally{fill.release();}
+  const attempt=async()=>{
+    const client=await pool.connect();try{
+      await client.query('BEGIN');
+      await new PgResidentQueue(client,p,grant,input,leader,binding).createResidentQueue(queue(randomUUID()));
+      await client.query('COMMIT');return 'created';
+    }catch(error){await client.query('ROLLBACK');
+      if(error instanceof Error && 'code' in error && error.code==='QUEUE_LIMIT_REACHED')return error.code;
+      throw error;
+    }finally{client.release();}
+  };
+  assert.deepEqual((await Promise.all([attempt(),attempt()])).sort(),['QUEUE_LIMIT_REACHED','created'].sort());
+  const counts=await pool.query(`SELECT
+    (SELECT count(*)::int FROM resident_queue WHERE project_id=$1) AS queues,
+    (SELECT count(*)::int FROM resident_queue_attempt WHERE project_id=$1) AS attempts,
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs`,[p]);
+  assert.deepEqual(counts.rows[0],{queues:200,attempts:0,runs:0});
 });

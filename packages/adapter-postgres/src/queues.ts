@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import type { ResidentQueue,ResidentQueueEntry,QueueClaim,QueueAttempt,QueueHoldCode } from '../../contracts/src/queues.js';
+import { DomainError } from '@evoloop/contracts/ports';
 
 /** Use the caller's transaction; existing reserve and Loop must call assertQueueVacant under the same task/Session locks. */
 export type QueueGrantCheck=(client:PoolClient,projectId:string,roleId:string,sessionId:string,taskId:string)=>Promise<boolean>;
@@ -10,14 +11,20 @@ const iso=(v:Date|string|null):string|null=>v===null?null:new Date(v).toISOStrin
 const entryOf=(r:any):ResidentQueueEntry=>({projectId:r.project_id,queueId:r.queue_id,id:r.entry_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,sourceInputJson:r.source_input_json,sessionId:r.session_id,roleId:r.role_id,position:r.position,dependsOn:r.depends_on,consumerId:r.consumer_id,useRequired:r.use_required,releaseRule:r.release_rule,state:r.state,holdCode:r.hold_code,holdReason:r.hold_reason,claimId:r.claim_id,version:r.version});
 const claimOf=(r:any):QueueClaim=>({projectId:r.project_id,queueId:r.queue_id,entryId:r.entry_id,claimId:r.claim_id,taskId:r.task_id,sessionId:r.session_id,roleId:r.role_id,releasedAt:iso(r.released_at),releaseKind:r.release_kind});
 const attemptOf=(r:any):QueueAttempt=>({projectId:r.project_id,claimId:r.claim_id,sequence:r.sequence,runId:r.run_id,operationId:r.operation_id,taskRevisionId:r.task_revision_id,actualRunTaskRevisionId:r.actual_run_task_revision_id??null,reservedAt:iso(r.reserved_at)!});
+const projectQueueLimit=200;
 export class PgResidentQueue {
   constructor(private readonly client:PoolClient,private readonly projectId:string,private readonly grant:QueueGrantCheck,private readonly input:QueueInputRead,private readonly lead:QueueLeadCheck,private readonly binding:QueueBindingCheck){}
   queueControllerCurrent(actorId:string){return this.lead(this.client,this.projectId,actorId);}
   exactQueueGrant(roleId:string,sessionId:string,taskId:string){return this.grant(this.client,this.projectId,roleId,sessionId,taskId);}
   queueBindingCurrent(roleId:string,sessionId:string){return this.binding(this.client,this.projectId,roleId,sessionId);}
   async listResidentQueues():Promise<ResidentQueue[]>{
-    const rows=await this.client.query('SELECT queue_id FROM resident_queue WHERE project_id=$1 ORDER BY created_at,queue_id LIMIT 200',[this.projectId]);
-    return Promise.all(rows.rows.map(async row=>(await this.getResidentQueue(row.queue_id))!));
+    const rows=await this.client.query('SELECT queue_id FROM resident_queue WHERE project_id=$1 ORDER BY created_at,queue_id LIMIT $2',
+      [this.projectId,projectQueueLimit+1]);
+    if(rows.rows.length>projectQueueLimit)throw new DomainError('QUEUE_LIMIT_EXCEEDED',
+      'Project has more than 200 resident queues; listing and dispatch require reconciliation');
+    const queues:ResidentQueue[]=[];
+    for(const row of rows.rows)queues.push((await this.getResidentQueue(row.queue_id))!);
+    return queues;
   }
   async getResidentQueue(id:string):Promise<ResidentQueue|null>{
     const q=await this.client.query('SELECT * FROM resident_queue WHERE project_id=$1 AND queue_id=$2',[this.projectId,id]);if(!q.rows[0])return null;
@@ -33,6 +40,11 @@ export class PgResidentQueue {
   async createResidentQueue(q:ResidentQueue):Promise<void>{
     if(q.projectId!==this.projectId||q.version!==1||q.adoptedVersion!==null||!await this.lead(this.client,this.projectId,q.actorId))throw new Error('QUEUE_AUTHORIZATION');
     if(q.entries.some((e,i)=>e.projectId!==this.projectId||e.queueId!==q.id||e.position!==i||e.dependsOn.some(d=>!q.entries.slice(0,i).some(x=>x.id===d))))throw new Error('QUEUE_ORDER');
+    const project=await this.client.query('SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE',[this.projectId]);
+    if(!project.rows[0])throw new DomainError('PROJECT_NOT_FOUND','Project was not found');
+    const count=await this.client.query('SELECT count(*)::int AS total FROM resident_queue WHERE project_id=$1',[this.projectId]);
+    if(count.rows[0].total>=projectQueueLimit)throw new DomainError('QUEUE_LIMIT_REACHED',
+      'Project already has 200 resident queues; create no more until capacity is increased explicitly');
     await this.client.query('INSERT INTO resident_queue(project_id,queue_id,version,max_runs,reason,actor_id) VALUES($1,$2,1,$3,$4,$5)',[this.projectId,q.id,q.maxRuns,q.reason,q.actorId]);
     for(const e of q.entries)await this.client.query(`INSERT INTO resident_queue_entry(project_id,queue_id,entry_id,task_id,task_revision_id,source_input_json,session_id,role_id,position,depends_on,consumer_id,use_required,release_rule)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[this.projectId,q.id,e.id,e.taskId,e.taskRevisionId,e.sourceInputJson,e.sessionId,e.roleId,e.position,e.dependsOn,e.consumerId,e.useRequired,e.releaseRule]);
