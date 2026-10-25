@@ -71,6 +71,9 @@ test("resident observation keeps acceptance, host authority and task replies dis
   let currentQueue = queue;
   let currentAttempts = [{entryId:taskA,claimId:taskA,attempts:[{projectId,claimId:taskA,sequence:1,runId:runA,operationId:runA,taskRevisionId:taskA,actualRunTaskRevisionId:taskA,reservedAt:stamp}]},{entryId:taskB,claimId:null,attempts:[]},{entryId:taskC,claimId:null,attempts:[]}];
   let holdNextDetail = false, heldDetails = 0, releaseHeldDetail: (() => void) | null = null;
+  let currentHosts = [external,owned];
+  let currentRoute = {domain,role,status:"external-manual",link:external,session:null,automaticStart:false};
+  let holdNextRoute = false, heldRoutes = 0, releaseHeldRoute: (() => void) | null = null, failPresenceList = false;
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,"http://127.0.0.1");
     if (url.pathname === "/__fixture/fail-discussions") { failDiscussions = true; res.end("ok"); return; }
@@ -84,15 +87,27 @@ test("resident observation keeps acceptance, host authority and task replies dis
       currentAttempts = [{...currentAttempts[0]},{entryId:taskB,claimId:taskB,attempts:[{projectId,claimId:taskB,sequence:1,runId:runB,operationId:runB,taskRevisionId:taskB,actualRunTaskRevisionId:taskB,reservedAt:stamp}]},{...currentAttempts[2]}];
       res.end("ok"); return;
     }
+    if (url.pathname === "/__fixture/hold-next-route") { holdNextRoute = true; currentRoute = {...currentRoute,status:"owned-ready",link:owned,session,automaticStart:true}; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/held-route-count") { res.end(String(heldRoutes)); return; }
+    if (url.pathname === "/__fixture/release-held-route") { releaseHeldRoute?.(); res.end("ok"); return; }
+    if (url.pathname === "/__fixture/revoke-route") { currentHosts = [{...external,state:"revoked"},{...owned,state:"revoked"}]; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/fail-presence-list") { failPresenceList = true; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value:unknown = page([]);
       if (url.pathname === "/api/session") value = {principal:{actorId:"lead",projectIds:[projectId],permissions:["read"]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"夹具项目",createdAt:stamp};
       else if (url.pathname === `${p}/roles`) value = page([role,systemRole,legacyRole]);
-      else if (url.pathname === `${p}/roles/${roleId}/hosts`) value = [external,owned];
+      else if (url.pathname === `${p}/roles/${roleId}/hosts`) {
+        if (failPresenceList) { res.writeHead(503,{"content-type":"application/json"}); res.end(JSON.stringify({message:"承载暂不可读"})); return; }
+        value = currentHosts;
+      }
       else if (url.pathname === `${p}/domains`) value = [domain];
-      else if (url.pathname === `${p}/domains/${domainId}/route`) value = {domain,role,status:"external-manual",link:external,session:null,automaticStart:false};
+      else if (url.pathname === `${p}/domains/${domainId}/route`) {
+        value = currentRoute;
+        if (holdNextRoute) { holdNextRoute = false; heldRoutes++;
+          await new Promise<void>(resolve => { releaseHeldRoute = resolve; }); }
+      }
       else if (url.pathname === `${p}/resident-queues`) value = [currentQueue];
       else if (url.pathname === `${p}/resident-queues/${queueId}`) {
         value = currentQueue;
@@ -146,6 +161,23 @@ test("resident observation keeps acceptance, host authority and task replies dis
     await pageBrowser.addStyleTag({content:".workspace-header{position:static!important}"});
     await pageBrowser.locator(".role-presence").screenshot({path:process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT});
   }
+  await fetch(`${base}/__fixture/hold-next-route`);
+  await pageBrowser.getByRole("button",{name:"核对当前路由"}).click();
+  for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-route-count`)).text() !== "1"; attempt++)
+    await new Promise(resolve=>setTimeout(resolve,25));
+  assert.equal(await (await fetch(`${base}/__fixture/held-route-count`)).text(),"1");
+  await fetch(`${base}/__fixture/revoke-route`);
+  await pageBrowser.locator(".role-presence-head button").click();
+  await pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"}).getByText("已撤权").waitFor();
+  await fetch(`${base}/__fixture/fail-presence-list`);
+  await pageBrowser.locator(".role-presence-head button").click();
+  await pageBrowser.getByText(/读取失败：承载暂不可读/).waitFor();
+  const delayedRouteResponse = pageBrowser.waitForResponse(response => response.url().endsWith(`/domains/${domainId}/route`) && response.status() === 200, {timeout:3000});
+  await fetch(`${base}/__fixture/release-held-route`);
+  await delayedRouteResponse;
+  await pageBrowser.waitForTimeout(100);
+  assert.equal(await pageBrowser.getByText(/自有会话可承接/).count(),0);
+  assert.match(await pageBrowser.locator(`#role-${roleId} .role-presence`).innerText(),/读取失败：承载暂不可读/);
   await pageBrowser.getByRole("link",{name:"打开 Session 与原线程历史"}).click();
   await pageBrowser.locator(`#runtime-session-${sessionId}[open]`).waitFor();
   await pageBrowser.locator(".resident-queue-card > summary").click();

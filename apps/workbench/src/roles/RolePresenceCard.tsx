@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BusinessDomain, DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { errorText, request } from "../api";
 import { href } from "../ui/shared";
@@ -16,14 +16,19 @@ export function RolePresenceCard({ token, projectId, roleId, refresh }: { token:
   const [hosts, setHosts] = useState<HostLink[]>([]);
   const [domains, setDomains] = useState<BusinessDomain[]>([]);
   const [routes, setRoutes] = useState<Record<string, DomainRoute>>({});
+  const [routeErrors, setRouteErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [observedAt, setObservedAt] = useState("");
   const [readVersion, setReadVersion] = useState(0);
+  const routeEpoch = useRef(0);
+  const routeRequests = useRef<Record<string, number>>({});
   const base = `/api/projects/${key(projectId)}`;
   useEffect(() => {
     if (!expanded) return;
     let active = true;
+    routeEpoch.current += 1;
+    routeRequests.current = {};
     setLoading(true); setError("");
     void Promise.all([
       request<HostLink[]>(token, `${base}/roles/${key(roleId)}/hosts`, 15000),
@@ -32,23 +37,31 @@ export function RolePresenceCard({ token, projectId, roleId, refresh }: { token:
       if (!active) return;
       if (links.some(link => link.projectId !== projectId || link.roleId !== roleId) || allDomains.some(domain => domain.projectId !== projectId))
         throw new Error("职责承载响应与当前项目不符");
-      setHosts(links); setDomains(allDomains.filter(domain => domain.roleId === roleId)); setRoutes({});
+      setHosts(links); setDomains(allDomains.filter(domain => domain.roleId === roleId)); setRoutes({}); setRouteErrors({});
       setObservedAt(new Date().toLocaleString("zh-CN"));
     }).catch(cause => { if (active) setError(errorText(cause)); })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    return () => { active = false; routeEpoch.current += 1; };
   }, [expanded, token, projectId, roleId, refresh, readVersion]);
   async function readRoute(domainId: string) {
+    const epoch = routeEpoch.current;
+    const requestId = (routeRequests.current[domainId] ?? 0) + 1;
+    routeRequests.current[domainId] = requestId;
+    const current = () => routeEpoch.current === epoch && routeRequests.current[domainId] === requestId;
+    setRoutes(previous => { const next = { ...previous }; delete next[domainId]; return next; });
+    setRouteErrors(previous => { const next = { ...previous }; delete next[domainId]; return next; });
     try {
       const route = await request<DomainRoute>(token, `${base}/domains/${key(domainId)}/route`, 15000);
+      if (!current()) return;
       if (route.domain.projectId !== projectId || route.domain.id !== domainId) throw new Error("业务领域路由响应不匹配");
-      setRoutes(current => ({ ...current, [domainId]: route })); setError("");
-    } catch (cause) { setError(errorText(cause)); }
+      setRoutes(previous => ({ ...previous, [domainId]: route }));
+      setRouteErrors(previous => { const next = { ...previous }; delete next[domainId]; return next; });
+    } catch (cause) { if (current()) setRouteErrors(previous => ({ ...previous, [domainId]: errorText(cause) })); }
   }
   return <details className="role-presence" onToggle={event => setExpanded(event.currentTarget.open)}>
     <summary>承载与业务领域</summary>
     {expanded && <>
-      <div className="role-presence-head"><span>{observedAt ? `读于 ${observedAt}` : "尚未读回"}</span><button type="button" onClick={() => setReadVersion(value => value + 1)}>重新读取</button></div>
+      <div className="role-presence-head"><span>{observedAt ? `读于 ${observedAt}` : "尚未读回"}</span><button type="button" onClick={() => { routeEpoch.current += 1; setReadVersion(value => value + 1); }}>重新读取</button></div>
       {loading && <p>正在核对承载与领域…</p>}
       {error && <p role="alert" className="role-presence-error">读取失败：{error}；所示内容是上次读回，不能视为当前状态。</p>}
       {!loading && !error && hosts.length === 0 && domains.length === 0 && <p>尚无已登记宿主或业务领域。</p>}
@@ -63,6 +76,7 @@ export function RolePresenceCard({ token, projectId, roleId, refresh }: { token:
         <strong>业务领域 · {domain.title} · {domain.state === "active" ? "使用中" : "已停用"}</strong>
         <p>{domain.routingReason}</p>
         <button type="button" onClick={() => void readRoute(domain.id)}>核对当前路由</button>
+        {routeErrors[domain.id] && <p role="alert" className="role-presence-error">路由读取失败：{routeErrors[domain.id]}；当前路由尚待核对。</p>}
         {routes[domain.id] && <p>路由观察：{statusLabel[routes[domain.id]!.status]}。{routes[domain.id]!.session ? `Session ${routes[domain.id]!.session!.id}` : ""}{routes[domain.id]!.status === "external-manual" ? "需要人工领取。" : ""}</p>}
       </article>)}
     </>}
