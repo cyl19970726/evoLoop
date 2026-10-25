@@ -22,12 +22,14 @@ function fixture() {
   const taskRevision: TaskRevision = { projectId, taskId, id: taskRevisionId, version: 2, title: task.title,
     content: task.content, contentDocumentId: task.contentDocumentId, contentRevisionId: task.contentRevisionId,
     kind: null, acceptance: task.acceptance, owner: task.owner, state: "in_progress",
-    basisSetId: null, actorId: "issuer", reason: "Fixed", createdAt: "2026-10-25T00:00:00Z" };
+    basisSetId: id(60), actorId: "issuer", reason: "Fixed", createdAt: "2026-10-25T00:00:00Z" };
   const run = { projectId, id: runId, taskId, taskRevisionId, sessionId, basisSetId: id(60),
     input: "Original input", inputHash: hash("Original input"), state: "completed", nativeTurnId: "turn-1",
     createdAt: "2026-10-25T00:00:00Z" };
   let continuation: typeof run | null = null;
   let continuationRevision: TaskRevision | null = null;
+  const externalByRevision = new Map<string, Array<{
+    slotId: string; kind: "git" | "wiki" | "run"; referenceId: string; revision: string; contentHash: string }>>();
   let discussion: DiscussionRecord | null = null;
   const events: DiscussionEvent[] = [];
   const documents = new Map<string, Document>();
@@ -41,6 +43,10 @@ function fixture() {
       payloadRef: null, entrypoint: null, assetsManifest: [], author: "worker", createdAt: "2026-10-25T00:00:00Z",
       previousRevisionId: null, reason: "Evidence" });
   }
+  revisions.set(id(81), { projectId, documentId: id(80), id: id(81), body: "Task body",
+    contentHash: hash("Task body"), format: "markdown", mediaType: "text/markdown", originalName: "task.md",
+    payloadRef: null, entrypoint: null, assetsManifest: [], author: "issuer", createdAt: "2026-10-25T00:00:00Z",
+    previousRevisionId: null, reason: "Fixed" });
   let recipientValid = true;
   let actionGrant = true;
   let next = 200;
@@ -54,7 +60,10 @@ function fixture() {
     getTaskRevision: async (value: string, revisionId: string) => value === taskId && revisionId === taskRevisionId ? taskRevision :
       value === taskId && revisionId === continuationRevision?.id ? continuationRevision : null,
     getRuntimeRun: async (value: string) => value === runId ? run : value === continuation?.id ? continuation : null,
-    getBasisSet: async () => ({ members: [{ documentId: id(80), revisionId: id(81) }] }),
+    getBasisSet: async (_taskId: string, revisionId: string, basisSetId: string) => ({
+      projectId, taskId, taskRevisionId: revisionId, id: basisSetId, sealed: true,
+      members: [{ documentId: id(80), revisionId: id(81) }] }),
+    listTaskExternalSnapshot: async (_taskId: string, revisionId: string) => externalByRevision.get(revisionId) ?? [],
     getRuntimeSession: async (value: string) => value === sessionId ? { projectId, id: sessionId, roleId: id(50) } : null,
     listSessionBindings: async () => [{ sessionId }],
     listDiscussionEvents: async () => events,
@@ -91,6 +100,8 @@ function fixture() {
   }
   return { apply, open, version, events, documents, revisions, task, run,
     continueWithAnswer,
+    setContinuationExternal: (items: NonNullable<ReturnType<typeof externalByRevision.get>>) =>
+      externalByRevision.set(id(70), items),
     setRecipientValid: (value: boolean) => { recipientValid = value; },
     setActionGrant: (value: boolean) => { actionGrant = value; },
     get discussion() { return discussion; } };
@@ -125,6 +136,11 @@ test("fixed Task question, answer and actual adoption preserve the original Run 
   await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
     stage: "adopted", evidence: ref(26), continuation: falseContinuation } as TaskCollaborationCommand), "ANSWER_NOT_IN_RUN");
   const continuation = f.continueWithAnswer(answer);
+  f.setContinuationExternal([{ slotId: id(90), kind: "run", referenceId: id(91), revision: id(92),
+    contentHash: hash("new fixed source") }]);
+  await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
+    stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand), "TASK_INPUT_CHANGED");
+  f.setContinuationExternal([]);
   await f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
     stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand);
   assert.equal(question.result.version, 2);

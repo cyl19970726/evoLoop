@@ -1,6 +1,7 @@
 import type { TaskCollaborationCommand, DiscussionEvent, DiscussionRecord, TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import type { AppliedResult, DocumentRevision, Principal } from "@evoloop/contracts";
 import { DomainError, type ContentHasher, type Transaction } from "@evoloop/contracts/ports";
+import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 
 interface Context { tx: Transaction; command: TaskCollaborationCommand; principal: Principal; now: string;
   nextId(): string; hasher: ContentHasher; isAuthorizedRoleActor(actorId: string, roleId: string): Promise<boolean>;
@@ -14,10 +15,6 @@ export function taskAnswerInputBlock(discussionId: string, messageEventId: strin
   body: { documentId: string; revisionId: string; contentHash: string; text: string }): string {
   return `[evoloop-task-answer ${discussionId} ${messageEventId} ${body.documentId} ${body.revisionId} ${body.contentHash}]\n${body.text}\n[/evoloop-task-answer]`;
 }
-const sameTaskBusinessInput = (a: import("@evoloop/contracts").TaskRevision,
-  b: import("@evoloop/contracts").TaskRevision): boolean =>
-  a.title === b.title && a.contentDocumentId === b.contentDocumentId && a.contentRevisionId === b.contentRevisionId &&
-  a.content === b.content && a.kind === b.kind && a.acceptance === b.acceptance && a.owner === b.owner;
 const ref = async (ctx: Context, value: { documentId: string; revisionId: string }): Promise<DocumentRevision> => {
   const document = need(await ctx.tx.getDocument(value.documentId), "Document");
   const revision = need(await ctx.tx.getDocumentRevision(value.documentId, value.revisionId), "Document revision");
@@ -152,14 +149,11 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
         continued.state !== "completed" || !continued.nativeTurnId ||
         Date.parse(continued.createdAt) < Date.parse(message.createdAt))
         fail("CONTINUATION_MISMATCH", "Adoption requires a completed later Run in the original Task and Session");
-      const sourceRevision = need(await tx.getTaskRevision(old.task!.id, old.task!.revisionId), "Source Task revision");
-      const continuedRevision = need(await tx.getTaskRevision(old.task!.id, continued.taskRevisionId), "Continuation Task revision");
-      if (!sameTaskBusinessInput(sourceRevision, continuedRevision))
-        fail("TASK_INPUT_CHANGED", "Continuation changed the Task business input");
-      const originalBasis = need(await tx.getBasisSet(old.task!.id, original.taskRevisionId, original.basisSetId), "Original basis");
-      const continuedBasis = need(await tx.getBasisSet(old.task!.id, continued.taskRevisionId, continued.basisSetId), "Continuation basis");
-      const members = (basis: typeof originalBasis) => basis.members.map(item => `${item.documentId}:${item.revisionId}`).sort().join("|");
-      if (members(originalBasis) !== members(continuedBasis)) fail("TASK_INPUT_CHANGED", "Continuation changed the fixed Task basis");
+      const task = need(await tx.getTask(old.task!.id), "Task");
+      const originalInput = await taskInputSignature(tx, task, original.taskRevisionId);
+      const continuedInput = await taskInputSignature(tx, task, continued.taskRevisionId);
+      if (canonicalTaskInputJson(originalInput) !== canonicalTaskInputJson(continuedInput))
+        fail("TASK_INPUT_CHANGED", "Continuation changed the full fixed Task input");
       const answer = await ref(ctx, messagePayload.body);
       const block = taskAnswerInputBlock(old.id, message.id, { documentId: answer.documentId,
         revisionId: answer.id, contentHash: answer.contentHash, text: answer.body! });

@@ -5,6 +5,7 @@ import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { applyTaskCollaboration, taskAnswerInputBlock } from "../../core/src/task-collaboration.ts";
+import { decideTaskExternalReference } from "../../core/src/references/index.ts";
 import type { DiscussionEvent, DiscussionRecord, TaskCollaborationCommand } from "@evoloop/contracts/discussions";
 import type { Command, Document, DocumentRevision, Principal } from "@evoloop/contracts";
 
@@ -93,7 +94,7 @@ test("Task Discussion and fixed-reference events survive PostgreSQL readback, CA
   await assert.rejects(pool.query("UPDATE discussion_event SET actor_id='forged' WHERE project_id=$1 AND event_id=$2", [projectId, messageId]), /immutable/);
 });
 
-test("real WorkflowService Run2 reserve advances Task revision; original answer can be adopted only after fixed input is read", async () => {
+async function continuationScenario(withExternalChange: boolean) {
   const projectId = randomUUID();
   const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
@@ -171,6 +172,21 @@ test("real WorkflowService Run2 reserve advances Task revision; original answer 
   const answerRevision = await uow.read(projectId, tx => tx.getDocumentRevision(answerId, answer.revisionId!));
   const block = taskAnswerInputBlock(discussionId, answerEvent.id, { documentId: answerId,
     revisionId: answer.revisionId!, contentHash: answerRevision!.contentHash, text: answerRevision!.body! });
+  if (withExternalChange) {
+    const original = (await uow.read(projectId, tx => tx.getRuntimeRun(run1Id)))!;
+    const task = (await uow.read(projectId, tx => tx.getTask(taskId)))!;
+    const decision = await decideTaskExternalReference({ uow, git: { read: async () => { throw new Error("Git not used"); } },
+      observeExternal: async () => ({ status: "reachable", revision: original.taskRevisionId,
+        contentHash: original.inputHash, currentRevision: original.taskRevisionId,
+        currentHash: original.inputHash, currentValidity: "valid" }),
+      hashText: hash, nextId: randomUUID, now: () => currentTime }, issuer, {
+      projectId, operationId: randomUUID(), actorId: issuer.actorId, decisionId: randomUUID(), taskId,
+      taskRevisionId: task.currentRevisionId, expectedTaskVersion: task.version, slotId: randomUUID(),
+      expectedHeadVersion: 0, decision: "adopt", kind: "run", referenceId: original.id,
+      revision: original.taskRevisionId, contentHash: original.inputHash,
+      reason: "Add legitimate completed Run source", actionImpact: "New fixed external input" });
+    assert.equal(decision.status, "applied", JSON.stringify(decision));
+  }
   const run2Id = randomUUID();
   const taskBeforeRun2 = await uow.read(projectId, tx => tx.getTask(taskId));
   const run2 = await execute(issuer, { type: "runtime.run.reserve", runId: run2Id, taskId, sessionId,
@@ -184,11 +200,22 @@ test("real WorkflowService Run2 reserve advances Task revision; original answer 
   await runtime.bindTurn(projectId, run2Id, { id: `turn2-${projectId}`, status: "running" },
     { kind: "startReply", operationId: run2.operationId });
   await runtime.recordTurn(projectId, run2Id, `turn2-${projectId}`, "completed", "Answer consumed");
-  await apply(worker, { type: "discussion.receipt.record", expectedVersion: 5,
+  const adopt = () => apply(worker, { type: "discussion.receipt.record", expectedVersion: 5,
     messageEventId: answerEvent.id, stage: "adopted", evidence: { documentId: answerId, revisionId: answer.revisionId },
     continuation: { runId: run2Id, taskRevisionId: run2.revisionId } });
+  if (withExternalChange) {
+    await assert.rejects(adopt(), error => (error as { code?: string }).code === "TASK_INPUT_CHANGED");
+    assert.equal((await uow.read(projectId, tx => tx.listDiscussionEvents(discussionId))).length, 5);
+    return;
+  }
+  await adopt();
   const adopted = (await uow.read(projectId, tx => tx.listDiscussionEvents(discussionId))).at(-1)!;
   assert.deepEqual((adopted.collaborationPayload as { continuation: unknown }).continuation,
     { runId: run2Id, taskRevisionId: run2.revisionId });
   assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run1Id)))?.input, "Original Run1 input");
-});
+}
+
+test("real WorkflowService Run2 reserve advances Task revision; original answer can be adopted only after fixed input is read", () =>
+  continuationScenario(false));
+test("legitimate new external Run source in Run2 input blocks adoption of the older answer baseline", () =>
+  continuationScenario(true));
