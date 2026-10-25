@@ -26,6 +26,7 @@ export interface QueueAttempt {projectId:string;claimId:string;sequence:number;r
 export interface QueueSourceFacts {currentTaskRevisionId:string|null;taskState:'todo'|'in_progress'|'done'|'cancelled'|'other';sessionReady:boolean;nativeThreadId:string|null;bindingCurrent:boolean;grantCurrent:boolean;conflictingRun:boolean;currentInputJson:string|null}
 export interface QueueReleaseEvidence {currentTaskRevisionId:string;currentInputJson:string;taskState:'done'|'in_progress';deliveryId:string|null;deliveryCurrent:boolean;deliveryPassed:boolean;observationId:string|null;observationConsumerId:string|null;observationUsed:boolean;closureId:string|null;closureCurrent:boolean;boundedDecisionId:string|null;boundedDecisionActorId:string|null;boundedDecisionReason:string|null;nextResponsibility:string|null}
 export interface QueueReader {
+  queueControllerCurrent(actorId:string):Promise<boolean>;
   listResidentQueues():Promise<ResidentQueue[]>;
   getResidentQueue(id:string):Promise<ResidentQueue|null>;
   listResidentQueueAttempts(claimId:string):Promise<QueueAttempt[]>;

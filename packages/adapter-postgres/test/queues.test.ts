@@ -162,8 +162,8 @@ test('central queue claim journals claim, Run, channel and outbox atomically; re
   let runId=queueIntentId('run',p,queueId,entryId,'1','1','1');
   let operationId=queueIntentId('run.reserve',p,queueId,entryId,'1','1','1');
   const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
-  let grantEnabled=true;
-  const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>grantEnabled,binding:async()=>true,lead:async()=>true,
+  let grantEnabled=true,leadEnabled=true;
+  const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>grantEnabled,binding:async()=>true,lead:async()=>leadEnabled,
     input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
   const central=new WorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash},
     collaborationAuthority:{actorForRole:async()=> 'worker',isAuthorizedRoleActor:async()=>true,
@@ -218,6 +218,12 @@ test('central queue claim journals claim, Run, channel and outbox atomically; re
   claimId=queueIntentId('claim',p,queueId,entryId,'1',generation);
   runId=queueIntentId('run',p,queueId,entryId,'1',generation,'1');
   operationId=queueIntentId('run.reserve',p,queueId,entryId,'1',generation,'1');
+  leadEnabled=false;
+  const revoked=await central.execute(lead,{type:'queue.claim',projectId:p,operationId:randomUUID(),queueId,entryId,
+    expectedVersion:1,claimId,runId,runOperationId:operationId});
+  assert.equal(revoked.status,'rejected');if(revoked.status==='rejected')assert.equal(revoked.code,'QUEUE_AUTHORIZATION');
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries[0]?.state,'queued');
+  leadEnabled=true;
   await Promise.all([new ResidentQueuePump(pumpOptions).tick(),new ResidentQueuePump(pumpOptions).tick()]);
   const command={type:'queue.claim' as const,projectId:p,operationId,queueId,entryId,expectedVersion:1,claimId,runId,runOperationId:operationId};
   const first=await apply(command);

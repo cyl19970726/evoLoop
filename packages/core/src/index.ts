@@ -634,6 +634,8 @@ export class WorkflowService {
               queue:{claimId:applied.claimId,runId:applied.runId,held:applied.held}},effects};
           } catch(error) {
             if(error instanceof DomainError) throw error;
+            if(error instanceof Error && "code" in error && typeof error.code==="string" && /^[A-Z_]+$/.test(error.code))
+              throw new DomainError(error.code,error.message);
             if(error instanceof Error && /^[A-Z_]+$/.test(error.message)) throw new DomainError(error.message,error.message);
             throw error;
           }

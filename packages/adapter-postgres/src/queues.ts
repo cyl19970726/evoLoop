@@ -12,6 +12,7 @@ const claimOf=(r:any):QueueClaim=>({projectId:r.project_id,queueId:r.queue_id,en
 const attemptOf=(r:any):QueueAttempt=>({projectId:r.project_id,claimId:r.claim_id,sequence:r.sequence,runId:r.run_id,operationId:r.operation_id,taskRevisionId:r.task_revision_id,actualRunTaskRevisionId:r.actual_run_task_revision_id??null,reservedAt:iso(r.reserved_at)!});
 export class PgResidentQueue {
   constructor(private readonly client:PoolClient,private readonly projectId:string,private readonly grant:QueueGrantCheck,private readonly input:QueueInputRead,private readonly lead:QueueLeadCheck,private readonly binding:QueueBindingCheck){}
+  queueControllerCurrent(actorId:string){return this.lead(this.client,this.projectId,actorId);}
   exactQueueGrant(roleId:string,sessionId:string,taskId:string){return this.grant(this.client,this.projectId,roleId,sessionId,taskId);}
   queueBindingCurrent(roleId:string,sessionId:string){return this.binding(this.client,this.projectId,roleId,sessionId);}
   async listResidentQueues():Promise<ResidentQueue[]>{
@@ -104,7 +105,8 @@ export class PgResidentQueue {
     return f.current_revision_id;
   }
   async claimResidentQueue(queueId:string,entryId:string,expectedVersion:number,claimId:string,attempt:Omit<QueueAttempt,'projectId'|'claimId'|'sequence'|'reservedAt'|'actualRunTaskRevisionId'>):Promise<QueueClaim|null>{
-    const q=await this.client.query('SELECT version,adopted_version FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,queueId]);if(!q.rows[0])throw new Error('QUEUE_NOT_FOUND');
+    const q=await this.client.query('SELECT version,adopted_version,actor_id FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,queueId]);if(!q.rows[0])throw new Error('QUEUE_NOT_FOUND');
+    if(!await this.lead(this.client,this.projectId,q.rows[0].actor_id))throw new Error('QUEUE_AUTHORIZATION');
     if(q.rows[0].version!==expectedVersion)throw new Error('QUEUE_VERSION_CONFLICT');
     const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,queueId,entryId]);
     if(!er.rows[0])throw new Error('ENTRY_UNAVAILABLE');const e=entryOf(er.rows[0]);

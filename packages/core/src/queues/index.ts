@@ -39,6 +39,7 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
   const parsed=queueCommandSchema.safeParse(input);if(!parsed.success)return fail('INVALID_COMMAND',parsed.error.message);
   const c=parsed.data;
   if(!principal.actorId||!principal.projectIds.includes(c.projectId)||!principal.permissions.includes('review'))return fail('FORBIDDEN','project review permission required');
+  if(!await tx.queueControllerCurrent(principal.actorId))return fail('QUEUE_AUTHORIZATION','current queue controller authority required');
   const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.hold','queue.unhold'];
   if(leadOnly.includes(c.type)&&!principal.permissions.includes('write'))return fail('FORBIDDEN','Lead write permission required');
   const result=(queue:ResidentQueue|null,claimId:string|null=null,runId:string|null=null,hold:QueueHoldCode|null=null):QueueResult=>({queueId:c.queueId,version:queue?.version??0,claimId,runId,held:hold});
