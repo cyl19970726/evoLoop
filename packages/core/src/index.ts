@@ -1,7 +1,7 @@
 import { commandSchema } from "@evoloop/contracts";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandResult, Document, DocumentDecision,
-  DocumentDetail, DocumentRevision, Impact, Operation, OutboxEvent, Page, Principal, Project,
+  DocumentDetail, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -678,6 +678,15 @@ export class WorkflowService {
   }
   listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Document>> {
     return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor));
+  }
+  listDocumentTaskReferences(principal: Principal, projectId: string, documentId: string, limit?: number, cursor?: string): Promise<Page<DocumentTaskReference>> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getDocument(documentId), "Document");
+      const boundedLimit = pageLimit(limit);
+      if (!reader.listDocumentTaskReferences)
+        throw new DomainError("UNSUPPORTED_QUERY", "Document Task references are not supported by this reader");
+      return reader.listDocumentTaskReferences(documentId, boundedLimit, cursor);
+    });
   }
   listImpacts(principal: Principal, projectId: string, taskId?: string): Promise<Impact[]> {
     return this.read(principal, projectId, (reader) => reader.listImpacts(taskId));

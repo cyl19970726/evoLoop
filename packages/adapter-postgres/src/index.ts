@@ -18,7 +18,7 @@ import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
 import type {
-  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, Impact,
+  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentTaskReference, Impact,
   Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
@@ -399,6 +399,39 @@ class PgReader implements Reader {
       legacy_judgement.reason AS legacy_judgement_reason ${taskReadProjection}
       WHERE t.project_id=$1 AND ($2::uuid IS NULL OR t.task_id>$2::uuid) ORDER BY t.task_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1]);
     return page(r.rows, limit, rowTask, (x) => x.task_id);
+  }
+  async listDocumentTaskReferences(documentId: string, limit: number, cursor?: string): Promise<Page<DocumentTaskReference>> {
+    pageLimit(limit);
+    const r = await this.client.query(`WITH matching AS (
+      SELECT t.task_id, 'content'::text AS relation
+      FROM task t WHERE t.project_id=$1 AND t.content_document_id=$2
+      UNION
+      SELECT t.task_id, 'link'::text AS relation
+      FROM task_document_link l JOIN task t ON t.project_id=l.project_id AND t.task_id=l.task_id
+      WHERE t.project_id=$1 AND l.document_id=$2
+      UNION
+      SELECT t.task_id, 'basis'::text AS relation
+      FROM task t
+      JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id
+        AND tr.revision_id=t.current_revision_id
+      JOIN basis_set bs ON bs.project_id=tr.project_id AND bs.task_id=tr.task_id
+        AND bs.task_revision_id=tr.revision_id AND bs.basis_set_id=tr.basis_set_id AND bs.sealed
+      JOIN basis_member bm ON bm.project_id=bs.project_id AND bm.task_id=bs.task_id
+        AND bm.task_revision_id=bs.task_revision_id AND bm.basis_set_id=bs.basis_set_id
+      WHERE t.project_id=$1 AND bm.document_id=$2
+    ), grouped AS (
+      SELECT task_id, array_agg(DISTINCT relation ORDER BY relation) AS relations
+      FROM matching GROUP BY task_id
+    )
+    SELECT t.project_id,t.task_id,t.title,t.state,t.owner,t.kind,t.version,t.current_revision_id,g.relations
+    FROM task t JOIN grouped g ON g.task_id=t.task_id
+    WHERE t.project_id=$1 AND ($3::uuid IS NULL OR t.task_id>$3::uuid)
+    ORDER BY t.task_id LIMIT $4`, [this.projectId, documentId, cursor ?? null, limit + 1]);
+    return page(r.rows, limit, (x) => ({
+      projectId: x.project_id, id: x.task_id, title: x.title, state: x.state,
+      owner: x.owner, kind: x.kind, version: x.version,
+      currentRevisionId: x.current_revision_id, relations: x.relations,
+    }), (x) => x.task_id);
   }
   async listLinks(taskId: string): Promise<TaskDocumentLink[]> {
     const r = await this.client.query("SELECT * FROM task_document_link WHERE project_id=$1 AND task_id=$2 ORDER BY link_id LIMIT $3", [this.projectId, taskId, maxDetailRows + 1]);

@@ -16,8 +16,13 @@ function Diagram({ source, id }: { source: string; id: string }) {
       const document = new DOMParser().parseFromString(result.svg, "image/svg+xml");
       const svg = document.documentElement;
       const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number) ?? [];
-      const width = viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2]! > 0 ? Math.min(20000, Math.max(240, viewBox[2]!)) : 640;
-      const height = viewBox.length === 4 && Number.isFinite(viewBox[3]) ? Math.max(240, Math.min(760, viewBox[3]! + 32)) : 420;
+      const intrinsicWidth = viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2]! > 0 ? viewBox[2]! : null;
+      const intrinsicHeight = viewBox.length === 4 && Number.isFinite(viewBox[3]) && viewBox[3]! > 0 ? viewBox[3]! : null;
+      const width = intrinsicWidth === null ? 640 : Math.min(20000, Math.max(240, intrinsicWidth));
+      // The SVG is drawn at `width`, which can enlarge narrow diagrams. Size the
+      // frame to that rendered height so its final arrow and node remain on page.
+      const height = intrinsicWidth !== null && intrinsicHeight !== null
+        ? Math.ceil(intrinsicHeight * width / intrinsicWidth + 32) : 420;
       const csp = "default-src 'none'; script-src 'none'; connect-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'";
       setRendered({ html: `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style>body{margin:0;padding:12px;overflow:auto}svg{width:${width}px!important;height:auto;max-width:none!important}</style>${result.svg}`, height });
     }).catch(() => { if (active) setError(true); });

@@ -1,5 +1,5 @@
 import type { ReferenceReader, ReferenceTransaction } from "./references.js";
-import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
+import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageRevision, StageReview, TaskClosure, TaskJudgement, TaskProposal } from "./workflow.js";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "./runtime.js";
 import type { RoleReader, RoleTransaction } from "./roles.js";
@@ -48,6 +48,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listTaskRevisions(taskId: string): Promise<TaskRevision[]>;
   getBasisSet(taskId: string, taskRevisionId: string, basisSetId: string): Promise<BasisSet | null>;
   listTasks(limit: number, cursor?: string): Promise<Page<Task>>;
+  listDocumentTaskReferences?(documentId: string, limit: number, cursor?: string): Promise<Page<DocumentTaskReference>>;
   listLinks(taskId: string): Promise<TaskDocumentLink[]>;
   getImpact(id: string): Promise<Impact | null>;
   listImpacts(taskId?: string): Promise<Impact[]>;
