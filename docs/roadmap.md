@@ -14,7 +14,7 @@ S1a 只证明第一层的一小段：已采纳需求改版能让两个尚未运�
 
 ## 当前基线
 
-**本轮常驻协作仍分片验证。** 已合入的 Role 分类、业务领域与 owned/external 承载登记尚未随本机服务部署；原 owned Session 的一次受控恢复、报告交付与独立 Agent 使用已有实证，不能代替新队列验收。跨 Task 队列、Task 问答及动作回执正在独立源码集成；项目 skill/CLI 工程交接指引已合入，工作台列表/反向链接候选仍在独立审阅和检查。完整的“Lead 排序→同 Session 逐项执行→问答→交付→独立使用→下项”尚未实跑，Desktop 仍只按已核能力人工承接。各片合入、部署及用户实读须分别留证。
+**本轮常驻协作已有本机有界实跑证据。** [PR #88](https://github.com/cyl19970726/evoLoop/pull/88) 的职责分类、业务领域与 owned/external 承载登记，以及 [PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的同一 owned Session 队列、Task 问答与动作回执已部署；四个正式 Role、三个 HostLink 和三个 BusinessDomain 已实际核回。原 Session 先后完成两项真实任务：各自通道中的问题得到固定答复并实际采用，消费者使用并关闭前项后，调度器自动且仅一次把后项交给原 Thread。受限仓库动作由实际有权者承接，[PR #96](https://github.com/cyl19970726/evoLoop/pull/96) 正常合并，保留真实执行者。[PR #90](https://github.com/cyl19970726/evoLoop/pull/90)、[PR #97](https://github.com/cyl19970726/evoLoop/pull/97) 与 [PR #98](https://github.com/cyl19970726/evoLoop/pull/98) 的本机工作台已由独立代理沿普通入口核对任务与负责人、未入队工作、七模板状态、原会话历史、固定交付与来源 Run 返回路径；具体范围及宿主限制见[工作台](product/workbench.md#对象关系与能力职责)。[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的故障与并发证据来自隔离数据库和替身宿主回归。实跑仅覆盖这两项任务和已记录页面路径，不扩大为其他任务、所有失败分支或长期无人值守保证。领域路由不授权自动启动，外部聊天保持已核人工承接；飞书实连和完整角色探索讨论仍后置。源码检查、合入、本机部署、任务使用和最终验收分别留证。
 
 - **2026-10-21 有限试用基线：**11 个 npm 工作区，该旧环境迁移至 015；共同 API、CLI 与 React 工作台覆盖目标→阶段→待处理 Task 与主 Document→开始时固定依据→交付→使用观察→完成，并有 Role、Schedule、操作回执与恢复记录。[PR36](https://github.com/cyl19970726/evoLoop/pull/36) 对应 Node 24 构建和类型检查通过；单元 209 项（208 通过、1 项外置服务 opt-in 跳过），统一 PostgreSQL 入口的 22 个测试文件共 45 项通过。该 PR 及合入提交的应用与文档 CI 通过；测试是工程证据，不替代实际使用。
 - 过程 Document 的 Markdown/HTML 与资源经受控 Blob 保存和完整回读；Git 正式文档按白名单路径、完整 commit 与 SHA256 固定，只在 PostgreSQL 记录引用和审核决定。真实浏览器已核静态 HTML/CSS/SVG 预览的背景、SVG 与空 sandbox；脚本内容不执行，也不能据此说交互页面已被完整理解。
