@@ -4,3 +4,4 @@
 .doc-origin-task{display:block;width:fit-content;max-width:100%;padding:8px 0;font-weight:650;color:#315bb1;overflow-wrap:anywhere}
 .doc-origin-limit{color:#754c2a!important}.doc-origin-run,.doc-origin-ids{margin-top:8px;font-size:.88rem;color:#54627a}
 .doc-origin summary{cursor:pointer;color:#315bb1}.doc-origin code{overflow-wrap:anywhere;white-space:normal}
+.doc-read-status{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;color:#69768e;font-size:.82rem;margin:0 0 18px}.doc-read-status button{min-height:32px;padding:5px 8px}.doc-related-tasks{min-width:0}.doc-related-tasks ul{list-style:none;margin:14px 0 0;padding:0}.doc-related-tasks li{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 0;border-top:1px solid #e4e8ef}.doc-related-tasks li a{overflow-wrap:anywhere}.doc-related-tasks li span{color:#69768e;font-size:.82rem}
