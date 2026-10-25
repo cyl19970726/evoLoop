@@ -21,6 +21,7 @@ const discussionId = "10000008-0000-4000-8000-000000000008";
 const domainId = "10000009-0000-4000-8000-000000000009";
 const documentId = "1000000a-0000-4000-8000-000000000010";
 const externalId = "1000000b-0000-4000-8000-000000000011";
+const externalRef = "01a158d7-f842-7ca3-9899-ce1efc33c030";
 const questionId = "1000000c-0000-4000-8000-000000000012";
 const answerId = "1000000d-0000-4000-8000-000000000013";
 const stamp = "2026-10-25T00:00:00.000Z";
@@ -47,7 +48,7 @@ const entries = [
 ];
 const queue = {projectId,id:queueId,version:2,adoptedVersion:2,maxRuns:6,reason:"A 使用验收后再启动 B",actorId:"lead",entries};
 const domain = {projectId,id:domainId,version:1,currentRevisionId:domainId,title:"功能开发",roleId,routingReason:"实际开发流程负责",authorizationEvidence:"负责人确认",state:"active",actorId:"lead",createdAtUtc:stamp};
-const external = {projectId,id:externalId,roleId,version:2,host:{kind:"external",provider:"codex-desktop",ref:"Desktop 人工会话"},
+const external = {projectId,id:externalId,roleId,version:2,host:{kind:"external",provider:"codex-desktop",ref:externalRef},
   claimedCapabilities:["open","read","start","send"],verifiedCapabilities:["open","read","manual-claim"],evidence:"人工核实",observer:"lead",observedAtUtc:stamp,state:"verified",actorId:"lead",createdAtUtc:stamp};
 const owned = {...external,id:sessionId,host:{kind:"owned",sessionId},verifiedCapabilities:["open","read","start","send"],claimedCapabilities:["open","read","start","send"]};
 const discussion = {projectId,id:discussionId,version:6,kind:"task_collaboration",status:"prepared",documentId,preparedDocumentRevisionId:documentId,
@@ -187,6 +188,12 @@ test("resident observation keeps acceptance, host authority and task replies dis
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const browser=await chromium.launch({headless:true}); t.after(()=>browser.close());
   const pageBrowser=await browser.newPage({viewport:process.env.EVOLOOP_RESIDENT_VIEWPORT === "desktop" ? {width:1280,height:900} : {width:390,height:844}});
+  await pageBrowser.addInitScript(() => {
+    Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async (value:string) => {
+      if ((window as Window & {fixtureCopyFail?:boolean}).fixtureCopyFail) throw new Error("clipboard denied");
+      (window as Window & {fixtureCopied?:string}).fixtureCopied=value;
+    }}});
+  });
   const pageErrors:string[]=[]; pageBrowser.on("pageerror", error=>pageErrors.push(error.stack ?? error.message));
   await pageBrowser.goto(`${base}/#/p/${projectId}/roles`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
@@ -198,13 +205,26 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
   await pageBrowser.getByText("外部 Codex Desktop 宿主").waitFor();
   const externalCard=pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"});
+  assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).getAttribute("href"),`codex://threads/${externalRef}`);
+  await pageBrowser.evaluate(() => document.addEventListener("click", event => {
+    if ((event.target as Element).closest('a[href^="codex://threads/"]')) event.preventDefault();
+  },true));
+  await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).click();
+  await externalCard.getByText(/已尝试请求打开.*如未打开/).waitFor();
+  await externalCard.getByRole("button",{name:"复制完整引用"}).click();
+  await externalCard.getByText(/已复制完整引用/).waitFor();
+  assert.equal(await pageBrowser.evaluate(() => (window as Window & {fixtureCopied?:string}).fixtureCopied),externalRef);
+  await pageBrowser.evaluate(() => { (window as Window & {fixtureCopyFail?:boolean}).fixtureCopyFail=true; });
+  await externalCard.getByRole("button",{name:"复制完整引用"}).click();
+  await externalCard.getByText(/复制失败；可选中上方完整引用手工复制/).waitFor();
+  assert.match(await externalCard.innerText(),new RegExp(externalRef));
   assert.match(await externalCard.innerText(),/声称能力：.*启动/);
   assert.equal(await externalCard.locator("p").filter({hasText:"已核能力："}).innerText(),"已核能力：打开、读取、人工领取");
   await pageBrowser.getByRole("button",{name:"核对当前路由"}).click();
   await pageBrowser.getByText(/外部宿主需人工领取/).waitFor();
   if (process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT) {
     await pageBrowser.addStyleTag({content:".workspace-header{position:static!important}"});
-    await pageBrowser.locator(".role-presence").screenshot({path:process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT});
+    await pageBrowser.locator(`#role-${roleId} .role-presence`).screenshot({path:process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/hold-next-route`);
   await pageBrowser.getByRole("button",{name:"核对当前路由"}).click();
@@ -213,7 +233,8 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await (await fetch(`${base}/__fixture/held-route-count`)).text(),"1");
   await fetch(`${base}/__fixture/revoke-route`);
   await pageBrowser.locator(".role-presence-head button").click();
-  await pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"}).getByText("已撤权").waitFor();
+  await pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"}).locator("strong").getByText("已撤权").waitFor();
+  assert.equal(await pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"}).getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
   await fetch(`${base}/__fixture/fail-presence-list`);
   await pageBrowser.locator(".role-presence-head button").click();
   await pageBrowser.getByText(/读取失败：承载暂不可读/).waitFor();

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { BusinessDomain, DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
+import type { RoleRecord } from "@evoloop/contracts/roles";
 import { errorText, request } from "../api";
 import { href } from "../ui/shared";
+import { externalHostOpenHref, externalHostOpenReason } from "./externalHostEntry";
 import "./presence.css";
 
 const key = encodeURIComponent;
@@ -11,7 +13,7 @@ const statusLabel: Record<DomainRoute["status"], string> = {
 };
 const capabilityLabel = { open: "打开", read: "读取", "manual-claim": "人工领取", start: "启动", send: "发送", interrupt: "中断" };
 
-export function RolePresenceCard({ token, projectId, roleId, refresh }: { token: string; projectId: string; roleId: string; refresh: number }) {
+export function RolePresenceCard({ token, projectId, roleId, roleState, refresh }: { token: string; projectId: string; roleId: string; roleState: RoleRecord["state"]; refresh: number }) {
   const [expanded, setExpanded] = useState(false);
   const [hosts, setHosts] = useState<HostLink[]>([]);
   const [domains, setDomains] = useState<BusinessDomain[]>([]);
@@ -66,8 +68,9 @@ export function RolePresenceCard({ token, projectId, roleId, refresh }: { token:
       {error && <p role="alert" className="role-presence-error">读取失败：{error}；所示内容是上次读回，不能视为当前状态。</p>}
       {!loading && !error && hosts.length === 0 && domains.length === 0 && <p>尚无已登记宿主或业务领域。</p>}
       {hosts.map(host => <article className="role-presence-item" key={host.id}>
-        <strong>{host.host.kind === "owned" ? "自有受管 Session" : "外部 Codex Desktop 宿主"} · {host.state === "verified" ? "已核实" : host.state === "revoked" ? "已撤权" : "仅登记"}</strong>
-        <p className="break-anywhere">{host.host.kind === "owned" ? <><a href={`${href(projectId, "runtime")}?session=${key(host.host.sessionId)}`}>打开 Session 与原线程历史</a> · <code>{host.host.sessionId}</code></> : <>人工宿主引用：<code>{host.host.ref}</code></>}</p>
+        <strong>{host.host.kind === "owned" ? "自有受管 Session" : host.host.provider === "codex-desktop" ? "外部 Codex Desktop 宿主" : "外部宿主（类型未支持）"} · {host.state === "verified" ? "已核实" : host.state === "revoked" ? "已撤权" : "仅登记"}</strong>
+        {host.host.kind === "owned" ? <p className="break-anywhere"><a href={`${href(projectId, "runtime")}?session=${key(host.host.sessionId)}`}>打开 Session 与原线程历史</a> · <code>{host.host.sessionId}</code></p>
+          : <ExternalHostEntry key={`${host.id}:${host.version}:${host.host.ref}`} host={host} roleState={roleState} currentRead={!loading && !error} />}
         <p>声称能力：{host.claimedCapabilities.map(capability => capabilityLabel[capability]).join("、") || "未声明"}</p>
         <p>已核能力：{host.state === "verified" ? host.verifiedCapabilities.map(capability => capabilityLabel[capability]).join("、") || "无" : "未核实"}</p>
         {host.host.kind === "external" && <p>外部宿主仅按已核能力人工操作；这里不宣称可自动启动或写入。</p>}
@@ -81,4 +84,30 @@ export function RolePresenceCard({ token, projectId, roleId, refresh }: { token:
       </article>)}
     </>}
   </details>;
+}
+
+function ExternalHostEntry({host,roleState,currentRead}:{host:HostLink;roleState:RoleRecord["state"];currentRead:boolean}) {
+  const [copyStatus,setCopyStatus] = useState<""|"copied"|"failed">("");
+  const [openRequested,setOpenRequested] = useState(false);
+  if (host.host.kind !== "external") return null;
+  const ref = host.host.ref;
+  const openHref = currentRead ? externalHostOpenHref(host,roleState) : null;
+  const reason = externalHostOpenReason(host,roleState,currentRead);
+  async function copy() {
+    setCopyStatus("");
+    try { await navigator.clipboard.writeText(ref); setCopyStatus("copied"); }
+    catch { setCopyStatus("failed"); }
+  }
+  return <div className="external-host-entry">
+    <p className="break-anywhere">人工宿主引用：<code>{ref}</code></p>
+    <div className="external-host-actions">
+      {openHref && <a href={openHref} target="_blank" rel="noopener noreferrer" onClick={() => setOpenRequested(true)}>请求在 Codex Desktop 打开聊天</a>}
+      <button type="button" onClick={() => void copy()}>复制完整引用</button>
+    </div>
+    {reason && <p className="role-presence-error">{reason}</p>}
+    {copyStatus === "copied" && <p role="status">已复制完整引用；请在 Codex 中核对目标聊天。</p>}
+    {copyStatus === "failed" && <p role="alert" className="role-presence-error">复制失败；可选中上方完整引用手工复制。</p>}
+    {openHref && <p>{openRequested ? "已尝试请求打开。" : "点击会向本机 Codex Desktop 请求打开。"}如未打开，请在 Codex 中按完整引用查找或人工交接；这里不能确认已打开或已送达。</p>}
+    {!openHref && <p>可选中上方完整引用手工查找或交接；不要据此推定当前宿主可承接。</p>}
+  </div>;
 }
