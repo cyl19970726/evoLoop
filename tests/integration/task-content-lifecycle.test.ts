@@ -18,6 +18,9 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   await runner({databaseUrl:database!,dir:migrations,direction:"up",migrationsTable:"pgmigrations",schema,count:18,
     createSchema:true,createMigrationsSchema:true,singleTransaction:true,log:()=>{}});
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
+  // Current Task writes need nullable domain fields during seeding; remove both
+  // before upgrading the populated historical 018 schema to exercise 019 and 026.
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),taskId=randomUUID(),actorId="legacy-reviewer";
@@ -40,7 +43,13 @@ test("migration 019 preserves an existing Delivery closure without changing its 
     VALUES($1,$2,$3,$4,$5,'met','Original evidence','Original reason',$6,'2026-10-20T00:00:00Z')`,
     [projectId,closureId,taskId,current.currentRevisionId,delivery.revisionId,actorId]);
   const original=(await pool.query("SELECT project_id,closure_id,task_id,task_revision_id,delivery_id,acceptance_result,acceptance_evidence,reason,actor_id,created_at FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[projectId])).rows[0].n>0,true);
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
+    AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0);
   await migrate(database!,schema);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[projectId])).rows[0].n,0);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[projectId])).rows[0].n,0);
   const preserved=(await pool.query("SELECT * FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
   for(const [key,value] of Object.entries(original)) assert.deepEqual(preserved[key],value,key);
   assert.equal(preserved.decision_id,null);

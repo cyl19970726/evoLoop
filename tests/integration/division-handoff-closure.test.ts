@@ -30,6 +30,9 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     migrationsTable:"pgmigrations",schema,createSchema:true,createMigrationsSchema:true,
     direction:"up",singleTransaction:true,count:beforeClosureCount,log:()=>{}});
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+  // Current Task writes include domain_id. Add nullable seed-only columns, then remove
+  // them before the historical migration so 023..026 still upgrade the real old schema.
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   let frozenNow:string|null=null;
@@ -118,9 +121,16 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   await assert.rejects(uow.read(pid,reader=>reader.getChildHandoffFact!(randomUUID())),
     error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="MIGRATION_REQUIRED"),
     "the new Division closure reader requires 023 before it can evaluate a handoff");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[pid])).rows[0].n>0,true);
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
+    AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0,
+    "the pre-migration schema must have no domain columns");
   await migrate(url!,schema);
   await migrate(url!,schema);
   assert.deepEqual((await rowCounts()).rows[0],beforeMigration,"023 and its rerun add no business facts");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
   const childId=randomUUID();
   for(const [label,changes] of [
     ["binding",{bindingId:randomUUID()}],
