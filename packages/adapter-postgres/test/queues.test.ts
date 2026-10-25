@@ -11,6 +11,7 @@ import { canonicalTaskInputJson, taskInputSignature } from '../../core/src/task-
 import { reserveRuntime } from '../../core/src/runtime/reserve.ts';
 import { ResidentQueuePump, queueIntentId } from '../../../apps/coordinator/src/resident-queue/pump.ts';
 import { loopIntentId } from '../../../apps/coordinator/src/orchestration/runner.ts';
+import type { Reader, Transaction, UnitOfWork } from '@evoloop/contracts/ports';
 import { createHash } from 'node:crypto';
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(url).pathname)) throw new Error('dedicated evoloop_*_test database required');
@@ -419,6 +420,104 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
     VALUES($1,$2,1,1,'legacy overflow','lead')`,[p,randomUUID()]);
   await assert.rejects(central.listResidentQueues(lead,p),error=>
     error instanceof Error && 'code' in error && error.code==='QUEUE_LIMIT_EXCEEDED');
+});
+
+test('first queue claim and old Loop reserve serialize on an idle shared Session in either order',async()=>{
+  for(const first of ['queue','loop'] as const){
+    const p=randomUUID(),role=randomUUID(),roleRevision=randomUUID(),sessionId=randomUUID();
+    const queuedTask=randomUUID(),loopTask=randomUUID(),queueId=randomUUID(),entryId=randomUUID();
+    const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+    const authority={grant:async()=>true,binding:async()=>true,lead:async()=>true,
+      input:async(reader:Reader,id:string)=>
+        canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))};
+    const raceUow=new PostgresUnitOfWork(pool,authority);
+    const deps={clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash},
+      collaborationAuthority:{actorForRole:async()=> 'worker',isAuthorizedRoleActor:async()=>true,
+        isProjectActor:async()=>true,hasEngineeringActionGrant:async()=>false}};
+    const service=new WorkflowService({uow:raceUow,...deps});
+    const trusted=new RuntimeWorkflowService({uow:raceUow,clock:deps.clock,ids:deps.ids});
+    const apply=async(command:Parameters<typeof service.execute>[1])=>{
+      const result=await service.execute(lead,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
+    await apply({type:'project.create',projectId:p,operationId:randomUUID(),title:`First ${first} wins`});
+    const roleClient=await pool.connect();try{
+      await roleClient.query('BEGIN');
+      await roleClient.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+        VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`,[p,role,roleRevision]);
+      await roleClient.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+        VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','trial',now(),now()+interval '1 day')`,[p,role,roleRevision]);
+      await roleClient.query('COMMIT');
+    }catch(error){await roleClient.query('ROLLBACK');throw error;}finally{roleClient.release();}
+    for(const [taskId,title] of [[queuedTask,'Queue Task'],[loopTask,'Loop Task']] as const){
+      await apply({type:'task.create',projectId:p,operationId:randomUUID(),taskId,title,
+        content:`Fixed ${title}`,acceptance:'One Run',owner:role});
+      await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Seal input'});
+    }
+    await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,
+      cwd:'/tmp/queue-race',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+    await trusted.beginSessionCreate(p,sessionId);
+    await trusted.bindSession(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
+      cwd:'/tmp/queue-race',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+    await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
+      VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRevision]);
+    const queued=(await service.getTask(lead,p,queuedTask)).task;
+    await apply({type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:1,
+      reason:'One initial queue claim',entries:[{id:entryId,taskId:queuedTask,taskRevisionId:queued.currentRevisionId,
+        sessionId,roleId:role,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'}]});
+    await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1});
+    assert.equal((await service.listRuntimeRuns(lead,p)).length,0);
+    assert.equal((await service.getResidentQueue(lead,p,queueId)).entries[0]?.state,'queued');
+    const queueClaim=queueIntentId('claim',p,queueId,entryId,'1','1');
+    const queueRun=queueIntentId('run',p,queueId,entryId,'1','1','1');
+    const queueOperation=queueIntentId('run.reserve',p,queueId,entryId,'1','1','1');
+    const dispatch=randomUUID(),loopRun=loopIntentId(dispatch,'run'),loopOperation=loopIntentId(dispatch,'run.reserve');
+    const claim={type:'queue.claim' as const,projectId:p,operationId:queueOperation,queueId,entryId,
+      expectedVersion:1,claimId:queueClaim,runId:queueRun,runOperationId:queueOperation};
+    const reserve={type:'runtime.run.reserve' as const,projectId:p,operationId:loopOperation,
+      runId:loopRun,taskId:loopTask,sessionId,expectedVersion:(await service.getTask(lead,p,loopTask)).task.version,
+      input:'Old Loop fixed dispatch'};
+    let entered!:()=>void,release!:()=>void;
+    const acquired=new Promise<void>(resolve=>{entered=resolve;});
+    const allowed=new Promise<void>(resolve=>{release=resolve;});
+    const gatedUow:UnitOfWork={read:raceUow.read.bind(raceUow),
+      transaction:<T>(projectId:string,action:(tx:Transaction)=>Promise<T>)=>
+        raceUow.transaction(projectId,async tx=>{entered();await allowed;return action(tx);})};
+    const gated=new WorkflowService({uow:gatedUow,...deps});
+    const firstCommand=first==='queue'?claim:reserve,secondCommand=first==='queue'?reserve:claim;
+    const firstPromise=gated.execute(lead,firstCommand);
+    await acquired; // the first command owns the actual project transaction lock
+    const secondPromise=service.execute(lead,secondCommand);
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    release();
+    const [firstResult,secondResult]=await Promise.all([firstPromise,secondPromise]);
+    assert.equal(firstResult.status,'applied');
+    const runs=await pool.query('SELECT run_id FROM runtime_run WHERE project_id=$1',[p]);
+    assert.equal(runs.rowCount,1,'one shared Session has at most one initial Run');
+    if(first==='queue'){
+      assert.equal(runs.rows[0]?.run_id,queueRun);
+      assert.equal(secondResult.status,'rejected');
+      if(secondResult.status==='rejected')assert.equal(secondResult.code,'QUEUE_OCCUPIED');
+      assert.equal((await pool.query('SELECT 1 FROM resident_queue_claim WHERE project_id=$1',[p])).rowCount,1);
+      assert.equal((await pool.query('SELECT 1 FROM resident_queue_attempt WHERE project_id=$1',[p])).rowCount,1);
+      assert.equal((await pool.query('SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,loopOperation])).rowCount,0);
+      assert.equal((await pool.query('SELECT result FROM operation_journal WHERE project_id=$1 AND operation_id=$2',
+        [p,loopOperation])).rows[0]?.result?.status,'rejected');
+    }else{
+      assert.equal(runs.rows[0]?.run_id,loopRun);
+      assert.equal(secondResult.status,'applied');
+      if(secondResult.status==='applied')assert.equal(secondResult.queue?.held,'run_in_flight');
+      assert.equal((await service.getResidentQueue(lead,p,queueId)).entries[0]?.state,'held');
+      assert.equal((await pool.query('SELECT 1 FROM resident_queue_claim WHERE project_id=$1',[p])).rowCount,0);
+      assert.equal((await pool.query('SELECT 1 FROM resident_queue_attempt WHERE project_id=$1',[p])).rowCount,0);
+      assert.equal((await pool.query(`SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2
+        AND kind='runtime.run.requested'`,[p,queueOperation])).rowCount,0);
+      const queueJournal=await pool.query('SELECT result FROM operation_journal WHERE project_id=$1 AND operation_id=$2',
+        [p,queueOperation]);
+      assert.equal(queueJournal.rows[0]?.result?.status,'applied');
+      assert.equal(queueJournal.rows[0]?.result?.queue?.held,'run_in_flight');
+    }
+    assert.equal((await pool.query('SELECT 1 FROM runtime_run WHERE project_id=$1 AND run_id=$2',
+      [p,first==='queue'?loopRun:queueRun])).rowCount,0,'losing entry creates no Run');
+  }
 });
 
 test('failed consumer use can continue the same claim from amended input without inventing a question',async()=>{

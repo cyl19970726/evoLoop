@@ -47,7 +47,9 @@ class FakeManagedRuntime {
   async interruptTurn(){throw new Error('No interrupt expected');}
 }
 
-test('queue native start reply unknown survives runner restart and reconciles original Run without another start',async t=>{
+for(const lostReply of [false,true]) test(lostReply ?
+  'queue native start reply unknown survives runner restart and reconciles original Run without another start' :
+  'queue native start reply binds and settles original Run on its original Session',async t=>{
   const schema=`el_queue_runner_${randomUUID().replaceAll('-','').slice(0,16)}`;
   await migrate(database!,schema);
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
@@ -118,7 +120,7 @@ test('queue native start reply unknown survives runner restart and reconciles or
     AND kind='runtime.run.requested'`,[projectId,attempt.operationId])).rowCount,1);
   const channel=(await workflow.listDiscussions(controller,projectId)).items.find(x=>x.collaboration?.runId===attempt.runId)!;
   assert.equal(channel?.collaboration?.recipientActorId,businessActor);
-  const fake=new FakeManagedRuntime(true);
+  const fake=new FakeManagedRuntime(lostReply);
   const makeRunner=()=>new RuntimeRunner({runtimeFactory:()=>fake as unknown as RuntimePort & FakeManagedRuntime,
     workflow,trusted,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   const runner=makeRunner();
@@ -135,27 +137,30 @@ test('queue native start reply unknown survives runner restart and reconciles or
     assert.match(nativeStart.input,/Produce one test artifact/);
     assert.ok(nativeStart.input.includes(runBefore.input));
     assert.match(nativeStart.input,new RegExp(`Task channel ${channel.id}`));
-    const unknown=await workflow.getRuntimeRun(controller,projectId,attempt.runId);
-    assert.equal(unknown.state,'unknown');
-    assert.equal(unknown.nativeTurnId,null);
-    await queuePump.tick();
-    assert.equal((await workflow.getResidentQueue(controller,projectId,queueId)).entries[0]?.state,'claimed');
-    assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,1);
-    await runner.stop();
-    const restarted=makeRunner();
+    let settledRunner=runner;
+    if(lostReply){
+      const unknown=await workflow.getRuntimeRun(controller,projectId,attempt.runId);
+      assert.equal(unknown.state,'unknown');
+      assert.equal(unknown.nativeTurnId,null);
+      await queuePump.tick();
+      assert.equal((await workflow.getResidentQueue(controller,projectId,queueId)).entries[0]?.state,'claimed');
+      assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,1);
+      await runner.stop();
+      settledRunner=makeRunner();
+    }
     try{
-      await restarted.start();
-      assert.deepEqual(restarted.status(projectId).faults,[]);
+      if(lostReply)await settledRunner.start();
+      assert.deepEqual(settledRunner.status(projectId).faults,[]);
       const completed=await workflow.getRuntimeRun(controller,projectId,attempt.runId);
       assert.equal(completed.state,'completed');
       assert.equal(completed.nativeTurnId,'fake-turn-1');
       assert.match(completed.resultSummary??'',/Fixed Task result/);
       assert.equal((await pool.query(`SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2
         AND kind='runtime.run.completed'`,[projectId,attempt.operationId])).rowCount,1);
-      await restarted.pump();
+      await settledRunner.pump();
       await queuePump.tick();
       assert.equal(fake.starts.length,1,'a settled Run never starts a second native Turn');
       assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,1);
-    }finally{await restarted.stop();}
+    }finally{if(settledRunner!==runner)await settledRunner.stop();}
   }finally{await runner.stop();}
 });
