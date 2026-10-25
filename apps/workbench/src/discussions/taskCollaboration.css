@@ -1,0 +1,13 @@
+.task-collaboration{margin:18px 0;border:1px solid #dce3f0;border-radius:8px;padding:16px;min-width:0;background:#f8faff;color:#34425b}
+.task-collaboration-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.task-collaboration-head h3{margin:0;color:#20365d}
+.task-collaboration-observed{font-size:12px;color:#657490}
+.task-collaboration-error{color:#923f47}
+.task-collaboration-thread{border-top:1px solid #dce3f0;padding:12px 0;min-width:0}
+.task-collaboration-thread summary{cursor:pointer;font-weight:600;overflow-wrap:anywhere}
+.task-collaboration-thread p{overflow-wrap:anywhere}
+.task-collaboration-thread ol{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.task-collaboration-thread li{background:white;border:1px solid #d8e0ef;border-left:3px solid #8499bf;border-radius:6px;padding:10px 12px;min-width:0;overflow-wrap:anywhere}
+.task-collaboration-thread li p{margin:6px 0}
+.task-collaboration-thread li small{color:#657490}
+@media(max-width:420px){.task-collaboration{padding:12px}.task-collaboration-thread li{padding:9px}}
