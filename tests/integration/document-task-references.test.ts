@@ -85,7 +85,6 @@ test("document reverse Task lookup returns current exact references in UUID page
   assert.equal(firstPage.items.length, 50);
   assert.ok(firstPage.nextCursor);
   assert.deepEqual(firstPage.items.map(item => item.id), [...ids].sort().slice(0, 50));
-  assert.deepEqual(firstPage.items.find(item => item.id === ids[0])?.relations, ["basis", "link"]);
   for (const item of firstPage.items) assert.equal("content" in item, false);
 
   const second = await app.inject({ url: `${endpoint(sourceDocumentId)}?limit=50&cursor=${firstPage.nextCursor}`, headers });
@@ -93,9 +92,11 @@ test("document reverse Task lookup returns current exact references in UUID page
   const secondPage = second.json() as { items: Array<Record<string, unknown>>; nextCursor: string | null };
   assert.equal(secondPage.items.length, 2);
   assert.equal(secondPage.nextCursor, null);
-  assert.deepEqual([...firstPage.items, ...secondPage.items].map(item => item.id), [...ids].sort());
-  assert.equal(new Set([...firstPage.items, ...secondPage.items].map(item => item.id)).size, 52);
-  assert.deepEqual([...firstPage.items, ...secondPage.items].find(item => item.id === historyOnlyBasisTaskId)?.relations, ["link"]);
+  const allItems = [...firstPage.items, ...secondPage.items];
+  assert.deepEqual(allItems.map(item => item.id), [...ids].sort());
+  assert.equal(new Set(allItems.map(item => item.id)).size, 52);
+  assert.deepEqual(allItems.find(item => item.id === ids[0])?.relations, ["basis", "link"]);
+  assert.deepEqual(allItems.find(item => item.id === historyOnlyBasisTaskId)?.relations, ["link"]);
 
   const content = await app.inject({ url: endpoint(contentTask.task.contentDocumentId), headers });
   assert.equal(content.statusCode, 200, content.body);
