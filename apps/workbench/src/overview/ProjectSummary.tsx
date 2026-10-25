@@ -117,15 +117,18 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
     {error && <Alert kind="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Alert>}
     {current?.failedNames ? <Alert>有 {current.failedNames} 个名称未读回；仅显示登记 ID，并保留原任务与承载入口。</Alert> : null}
     <section className="panel"><h2>现在由谁承接</h2>
-      {selection?.current.length ? <ul>{selection.current.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="current" />)}</ul> : current && !stale ? <p className="empty">已读队列范围内没有确认的领取占用。</p> : <p>当前占用待读回。</p>}
+      {selection?.current.length ? <ul>{selection.current.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="current" />)}</ul> : selection?.total.current === 0 && !stale ? <p className="empty">已读队列范围内没有确认的领取占用。</p> : !selection?.omittedByKind.current ? <p>当前占用待读回。</p> : null}
+      {!!selection?.omittedByKind.current && <p role="status">另有 {selection.omittedByKind.current} 项当前占用未展开；请看<a href={href(projectId, "runtime")}>完整队列</a>。</p>}
     </section>
     <section className="panel"><h2>下一项</h2>
-      {selection?.next.length ? <ul>{selection.next.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="next" />)}</ul> : current && !stale ? <p className="empty">已采纳队列中没有读到下一顺位。</p> : <p>下一顺位待读回。</p>}
+      {selection?.next.length ? <ul>{selection.next.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="next" />)}</ul> : selection?.total.next === 0 && !stale ? <p className="empty">已采纳队列中没有读到下一顺位。</p> : !selection?.omittedByKind.next ? <p>下一顺位待读回。</p> : null}
+      {!!selection?.omittedByKind.next && <p role="status">另有 {selection.omittedByKind.next} 项下一顺位未展开；请看<a href={href(projectId, "runtime")}>完整队列</a>。</p>}
     </section>
     <section className="panel"><h2>哪里需要判断</h2>
-      {selection?.held.length ? <ul>{selection.held.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="held" />)}</ul> : current && !stale ? <p className="empty">已读队列范围内没有暂停项。</p> : <p>暂停事项待读回。</p>}
+      {selection?.held.length ? <ul>{selection.held.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="held" />)}</ul> : selection?.total.held === 0 && !stale ? <p className="empty">已读队列范围内没有暂停项。</p> : !selection?.omittedByKind.held ? <p>暂停事项待读回。</p> : null}
+      {!!selection?.omittedByKind.held && <p role="status">另有 {selection.omittedByKind.held} 项暂停事项未展开；请看<a href={href(projectId, "runtime")}>完整队列</a>。</p>}
       <p>任务协作中的待答问题尚无项目级精确汇总；请从<a href={href(projectId, "work")}>任务列表</a>进入原任务的“协作与待处理问题”核对。</p>
     </section>
-    <p className="muted">范围：项目已登记驻留队列，每轮最多展示 12 项占用、暂停与顺位；{selection?.omitted ? `另有 ${selection.omitted} 项未展开。` : "其他任务不计入此摘要。"}完整任务与队列请分别进入任务列表和分工与承载。</p>
+    <p className="muted">范围：读取项目已登记驻留队列列表；每轮最多展示并核对 12 项的任务与职责名称。{selection?.omitted ? `另有 ${selection.omitted} 项未展开。` : "其他任务不计入此摘要。"}完整任务与队列请分别进入任务列表和分工与承载。</p>
   </div>;
 }

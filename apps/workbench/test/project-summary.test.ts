@@ -29,6 +29,20 @@ test("summary name-read scope remains bounded", () => {
   assert.equal(result.omitted, 8);
 });
 
+test("a full current slice does not turn undisplayed held and next items into empty categories", () => {
+  const claimed = Array.from({ length: 12 }, (_, n) => ({ ...entry(`current-${n}`, n, "claimed"), sessionId:`session-${n}` }));
+  const rows = [...claimed,
+    { ...entry("held-13", 12, "held", "manual_review"), sessionId:"session-13" },
+    { ...entry("next-14", 13, "queued"), sessionId:"session-14" }];
+  const result = selectSummary([queue(rows)]);
+  assert.equal(result.current.length, 12);
+  assert.equal(result.held.length, 0);
+  assert.equal(result.next.length, 0);
+  assert.deepEqual(result.total, { current:12, held:1, next:1 });
+  assert.deepEqual(result.omittedByKind, { current:0, held:1, next:1 });
+  assert.equal(result.omitted, 2);
+});
+
 test("claimed queue entry is not accepted as a current Task when owner or revision changed", () => {
   const claimed = entry("a", 0, "claimed");
   const task = { id:"a", projectId, currentRevisionId:"a", state:"in_progress", owner:roleId } as Parameters<typeof taskMatchesQueue>[0];

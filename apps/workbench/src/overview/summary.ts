@@ -2,7 +2,11 @@ import type { Task } from "@evoloop/contracts";
 import type { ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts/queues";
 
 export interface SummaryItem { queue: ResidentQueue; entry: ResidentQueueEntry }
-export interface SummarySelection { current: SummaryItem[]; next: SummaryItem[]; held: SummaryItem[]; omitted: number }
+type SummaryCounts = { current: number; next: number; held: number };
+export interface SummarySelection {
+  current: SummaryItem[]; next: SummaryItem[]; held: SummaryItem[];
+  total: SummaryCounts; omittedByKind: SummaryCounts; omitted: number;
+}
 
 /** Queue claims are occupancy evidence; only the Task itself can confirm its current revision. */
 export function selectSummary(queues: ResidentQueue[], limit = 12): SummarySelection {
@@ -19,14 +23,29 @@ export function selectSummary(queues: ResidentQueue[], limit = 12): SummarySelec
       for (const entry of ordered) if (entry.state === "held" || entry.holdCode) held.push({ queue, entry });
     }
   }
-  const ordered = [...current, ...held, ...next];
+  const categorized = {
+    current: current.filter(item => !item.entry.holdCode),
+    held,
+    next: next.filter(item => !item.entry.holdCode),
+  };
+  const ordered = [...categorized.current, ...categorized.held, ...categorized.next];
   const unique = [...new Map(ordered.map(item => [item.entry.id, item])).values()];
   const shown = unique.slice(0, limit);
   const ids = new Set(shown.map(item => item.entry.id));
+  const visible = {
+    current: categorized.current.filter(item => ids.has(item.entry.id)),
+    held: categorized.held.filter(item => ids.has(item.entry.id)),
+    next: categorized.next.filter(item => ids.has(item.entry.id)),
+  };
+  const total = { current: categorized.current.length, held: categorized.held.length, next: categorized.next.length };
   return {
-    current: current.filter(item => ids.has(item.entry.id) && !item.entry.holdCode),
-    next: next.filter(item => ids.has(item.entry.id) && !item.entry.holdCode),
-    held: held.filter(item => ids.has(item.entry.id)),
+    ...visible,
+    total,
+    omittedByKind: {
+      current: total.current - visible.current.length,
+      held: total.held - visible.held.length,
+      next: total.next - visible.next.length,
+    },
     omitted: unique.length - shown.length,
   };
 }

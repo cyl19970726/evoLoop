@@ -21,10 +21,15 @@ function item(projectId: string, id: string, position: number, state: string, ho
 function queues(projectId: string) { return [{projectId,id:queueId,version:2,adoptedVersion:2,maxRuns:6,reason:"先验收当前项",actorId:"lead",entries:[
   item(projectId,current,0,"claimed"), item(projectId,next,1,"queued"), item(projectId,held,2,"held","awaiting_acceptance"),
 ]}]; }
+function crowdedQueues(projectId: string) { return [{projectId,id:queueId,version:2,adoptedVersion:2,maxRuns:6,reason:"先验收当前项",actorId:"lead",entries:[
+  ...Array.from({length:12},(_,index)=>({ ...item(projectId,`30000020-0000-4000-8000-${String(index+20).padStart(12,"0")}`,index,"claimed"),sessionId:`30000030-0000-4000-8000-${String(index+30).padStart(12,"0")}` })),
+  {...item(projectId,held,12,"held","manual_review"),sessionId:"30000040-0000-4000-8000-000000000040"},
+  {...item(projectId,next,13,"queued"),sessionId:"30000041-0000-4000-8000-000000000041"},
+]}]; }
 
 test("overview shows scoped queue evidence, preserves stale read and refreshes on return", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const { chromium } = (await import(pathToFileURL(playwrightModule!).href)).default;
-  let mode: "normal" | "empty" | "fail" = "normal", reads = 0, holdB = false, releaseB: (()=>void) | null = null;
+  let mode: "normal" | "empty" | "fail" | "crowded" = "normal", reads = 0, holdB = false, releaseB: (()=>void) | null = null;
   const server = createServer(async (req,res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/mode") { mode = url.searchParams.get("value") as typeof mode; res.end("ok"); return; }
@@ -42,7 +47,7 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
         reads++;
         if (projectId === b && holdB) await new Promise<void>(resolve => { releaseB = resolve; });
         if (mode === "fail" && projectId === a) { status=503; value={message:"队列暂不可读"}; }
-        else value=mode === "empty" && projectId === a ? [] : queues(projectId);
+        else value=mode === "empty" && projectId === a ? [] : mode === "crowded" && projectId === a ? crowdedQueues(projectId) : queues(projectId);
       }
       else if (url.pathname.startsWith(`${base}/tasks/`)) {
         const id = url.pathname.split("/").at(-1)!;
@@ -97,6 +102,18 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   const focused=Number(await (await fetch(`${base}/__fixture/reads`)).text());
   await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
   await page.waitForFunction(async ({base,count})=>Number(await (await fetch(`${base}/__fixture/reads`)).text())>count,{base,count:focused});
+  await fetch(`${base}/__fixture/mode?value=crowded`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  const nextSection=page.getByRole("heading",{name:"下一项"}).locator("..");
+  const heldSection=page.getByRole("heading",{name:"哪里需要判断"}).locator("..");
+  await nextSection.getByText(/另有 1 项下一顺位未展开/).waitFor();
+  await heldSection.getByText(/另有 1 项暂停事项未展开/).waitFor();
+  assert.equal(await nextSection.getByText("已采纳队列中没有读到下一顺位。").count(),0);
+  assert.equal(await heldSection.getByText("已读队列范围内没有暂停项。").count(),0);
+  assert.equal(await nextSection.getByRole("link",{name:"完整队列"}).count(),1);
+  await fetch(`${base}/__fixture/mode?value=normal`);
+  await page.getByRole("button",{name:"重新读取"}).click();
+  await page.getByRole("link",{name:"当前任务"}).waitFor();
   await fetch(`${base}/__fixture/hold-b`);
   await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/overview`;},b);
   await page.getByText(/正在读取项目摘要/).waitFor();
