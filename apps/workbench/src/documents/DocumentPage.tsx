@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
 import { api, errorText } from "../api";
-import { Alert, ShortId, RevisionBody, documentReturnHref, href } from "../ui/shared";
+import { Alert, ShortId, RevisionBody, documentReturnHref, href, readRoute } from "../ui/shared";
 import { ActionForm, type MutationContext } from "../workflow/ActionForm";
 import { UploadDocument } from "./UploadDocument";
 import { DocumentOrigin } from "./DocumentOrigin";
@@ -33,10 +33,15 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     return () => { active = false; };
   }, [token, projectId, id, selectedRevision, refresh, readVersion]);
   useEffect(() => {
-    const reread = () => { if (document.visibilityState === "visible") setReadVersion(value => value + 1); };
+    const isCurrent = () => { const route = readRoute(); return route.section === "document" && route.projectId === projectId &&
+      route.id === id && route.revision === selectedRevision; };
+    let wasCurrent = isCurrent();
+    const returned = () => { const current = isCurrent(); if (current && !wasCurrent) setReadVersion(value => value + 1); wasCurrent = current; };
+    const reread = () => { if (document.visibilityState === "visible" && isCurrent()) setReadVersion(value => value + 1); };
+    window.addEventListener("hashchange", returned);
     window.addEventListener("focus", reread);
-    return () => window.removeEventListener("focus", reread);
-  }, [id, projectId]);
+    return () => { window.removeEventListener("hashchange", returned); window.removeEventListener("focus", reread); };
+  }, [id, projectId, selectedRevision]);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -81,7 +86,8 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     {loading && <Alert>正在核对当前修订；保存与采纳暂不可用。</Alert>}
     {error && <Alert kind="error">当前文档回读未完成：{error}。页首保留上次读回内容，不能视为当前状态；草稿仍留在本页。</Alert>}
     <div className="eyebrow">{detail.document.kind ? kindLabel[detail.document.kind] : "过程文档"} · {statusLabel[detail.document.status]}</div><h1>{detail.document.title}</h1>
-    {detail.document.origin && <DocumentOrigin token={token} projectId={projectId} origin={detail.document.origin} />}
+    {detail.document.origin && <DocumentOrigin token={token} projectId={projectId} documentId={id} revisionId={revision.id}
+      refreshKey={`${refresh}:${readVersion}`} origin={detail.document.origin} />}
     {taskOwned && <Alert>这是任务主文档。此处只阅读固定修订；请从{detail.document.primaryTaskId
       ? <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a> : "所属任务页"}修改正文。</Alert>}
     <div className="doc-version-status" aria-label="文档修订状态">
