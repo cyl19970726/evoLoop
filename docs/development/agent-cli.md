@@ -69,6 +69,8 @@ Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物
 
 若 skill 目录、Git common dir、PR 或合并等动作超出当前执行环境/授权，留下持久的精确动作请求或现有受控交接：关联 Task/固定修订和 Run、请求者、预期有权执行者、具体动作及 repo/worktree/path/commit/PR 范围、理由、输入版本、截止/验收与当前阻塞。记录批准或拒绝、实际执行 actor、操作 ID、结果及证据；请求本身不是批准。若尚无对应业务命令，先核 `help`、`command types`、`request types` 和 schema，使用当前已授权的交接路径并明确待接续，不编造命令或声称消息已自动送达。自动审批拒绝后不换身份、借 owner 凭据、放大沙箱或关闭检查重试；结果未知先以原 ID 对账。收到实际动作回执后，原执行者须在自己的后续运行中读取，核对固定输入、产物和未完成项。
 
+通过当前 Task 协作通道提交 `discussion.action.request` 时，`inputHash` 逐字取该通道原 Run 的 `inputHash`；补丁、正文或产物的 hash 应固定在 `detail` 报告中，不能替代 Run 输入 hash。先回读 Run、通道、报告的固定修订和 `command schema discussion.action.request`；JSON 形状通过只说明结构有效，仍须核 Run 状态、参与者、版本和来源语义。原 Run 确认终态后，若仍需工程动作，先形成新的真实 Run 与自己的通道、Run 输入 hash 和同 Run 来源的报告，再在新答复指导下形成新意图；保留旧拒绝，不由 Lead 代造 worker 签名。具体命令和动作回执仍按本节的正式工程入口处理。
+
 工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态 Run 由有权 Lead 核终态和产物后登记 Delivery；broker worker 按下文签真实提交意图，封存者另留身份。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。当前通用常驻队列及 Desktop 自动唤醒未在此文档声明为可用；后项接续按实际已部署能力和授权核验。
 
 ## 未知结果与本地回执
