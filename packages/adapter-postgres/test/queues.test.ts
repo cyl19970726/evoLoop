@@ -422,7 +422,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
     error instanceof Error && 'code' in error && error.code==='QUEUE_LIMIT_EXCEEDED');
 });
 
-test('first queue claim and old Loop reserve serialize on an idle shared Session in either order',async()=>{
+test('first queue claim and old Loop reserve serialize on an idle shared Session in either order',async t=>{
   for(const first of ['queue','loop'] as const){
     const p=randomUUID(),role=randomUUID(),roleRevision=randomUUID(),sessionId=randomUUID();
     const queuedTask=randomUUID(),loopTask=randomUUID(),queueId=randomUUID(),entryId=randomUUID();
@@ -486,9 +486,36 @@ test('first queue claim and old Loop reserve serialize on an idle shared Session
     const firstPromise=gated.execute(lead,firstCommand);
     await acquired; // the first command owns the actual project transaction lock
     const secondPromise=service.execute(lead,secondCommand);
-    await new Promise<void>(resolve=>setImmediate(resolve));
-    release();
-    const [firstResult,secondResult]=await Promise.all([firstPromise,secondPromise]);
+    const waitingSql=`SELECT waiter.pid AS waiter_pid, blocker.pid AS holder_pid
+      FROM pg_locks waiter
+      JOIN pg_locks blocker ON blocker.locktype=waiter.locktype AND blocker.database=waiter.database
+        AND blocker.classid=waiter.classid AND blocker.objid=waiter.objid AND blocker.objsubid=waiter.objsubid
+        AND blocker.granted AND blocker.pid<>waiter.pid
+      JOIN pg_stat_activity activity ON activity.pid=waiter.pid
+      WHERE waiter.locktype='advisory' AND NOT waiter.granted
+        AND waiter.database=(SELECT oid FROM pg_database WHERE datname=current_database())
+        AND waiter.classid::text::bigint=((hashtextextended($1,0) >> 32) & 4294967295)
+        AND waiter.objid::text::bigint=(hashtextextended($1,0) & 4294967295)
+        AND waiter.objsubid=1 AND activity.wait_event_type='Lock' AND activity.wait_event='advisory'
+        AND blocker.pid=ANY(pg_blocking_pids(waiter.pid))`;
+    let waiting:{waiter_pid:number;holder_pid:number}|undefined;
+    let waitError:unknown;
+    try{
+      const deadline=Date.now()+3000;
+      while(Date.now()<deadline){
+        waiting=(await pool.query(waitingSql,[p])).rows[0];
+        if(waiting)break;
+      }
+      assert.ok(waiting,`${first} first: second command never waited on this project's advisory lock`);
+      t.diagnostic(`${first} first: PG project advisory lock holder=${waiting.holder_pid} waiter=${waiting.waiter_pid}`);
+    }catch(error){waitError=error;}
+    finally{release();}
+    const outcomes=await Promise.allSettled([firstPromise,secondPromise]);
+    if(waitError)throw waitError;
+    assert.equal(outcomes[0].status,'fulfilled');
+    assert.equal(outcomes[1].status,'fulfilled');
+    if(outcomes[0].status!=='fulfilled'||outcomes[1].status!=='fulfilled')throw new Error('racing command failed');
+    const firstResult=outcomes[0].value,secondResult=outcomes[1].value;
     assert.equal(firstResult.status,'applied');
     const runs=await pool.query('SELECT run_id FROM runtime_run WHERE project_id=$1',[p]);
     assert.equal(runs.rowCount,1,'one shared Session has at most one initial Run');
