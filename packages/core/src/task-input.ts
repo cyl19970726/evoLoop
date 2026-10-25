@@ -29,6 +29,8 @@ export async function taskInputSignature(tx: Reader, task: Task,
   return { title: revision.title, content: revision.content,
     contentDocumentId: revision.contentDocumentId, contentRevisionId: revision.contentRevisionId,
     acceptance: revision.acceptance, owner: revision.owner, kind: revision.kind ?? "unclassified",
+    // Keep the legacy serialized shape when no domain was selected; persisted evaluations omit this key.
+    ...(revision.domainId ? { domainId: revision.domainId } : {}),
     basis: fixedOrder(members, item => item.documentId),
     retentions: fixedOrder(basis.retentions ?? [], item => item.documentId),
     external: fixedOrder(external.map(item => ({ slotId: item.slotId, kind: item.kind,
