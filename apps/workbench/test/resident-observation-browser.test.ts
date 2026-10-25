@@ -195,13 +195,15 @@ test("resident observation keeps acceptance, host authority and task replies dis
     }}});
   });
   const pageErrors:string[]=[]; pageBrowser.on("pageerror", error=>pageErrors.push(error.stack ?? error.message));
-  await pageBrowser.goto(`${base}/#/p/${projectId}/roles`);
+  await pageBrowser.goto(`${base}/#/p/${projectId}/roles?role=${roleId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
   await pageBrowser.locator(`#role-${roleId} > summary`).getByText("业务职责").waitFor();
   await pageBrowser.locator(`#role-${systemRoleId} > summary`).getByText("系统职责").waitFor();
   await pageBrowser.locator(`#role-${legacyRoleId} > summary`).getByText("分类未登记").waitFor();
-  await pageBrowser.locator(`#role-${roleId} > summary`).click();
+  await pageBrowser.locator(`#role-${roleId}[open]`).waitFor({timeout:3000});
+  const targetRoleBox=await pageBrowser.locator(`#role-${roleId} > summary`).boundingBox();
+  assert.ok(targetRoleBox && targetRoleBox.y >= 0 && targetRoleBox.y < 844,`target Role outside first viewport: ${JSON.stringify(targetRoleBox)}`);
   await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
   await pageBrowser.getByText("外部 Codex Desktop 宿主").waitFor();
   const externalCard=pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"});
@@ -373,4 +375,10 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.evaluate(({projectId,taskB})=>{location.hash=`#/p/${projectId}/tasks/${taskB}?tab=runtime`;},{projectId,taskB});
   await pageBrowser.getByText(/协作列表已达 20 页或 20 个关联频道上限/).waitFor();
   assert.equal(await pageBrowser.getByText("当前没有已登记的任务协作频道。").count(),0);
+  await pageBrowser.evaluate(({projectId})=>{location.hash=`#/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});
+  await pageBrowser.getByText(/目标职责 ID 无效；没有定位到其他职责/).waitFor();
+  await pageBrowser.evaluate(({projectId})=>{location.hash=`#/p/${projectId}/roles?role=ffffffff-ffff-ffff-ffff-ffffffffffff`;},{projectId});
+  await pageBrowser.getByText(/当前项目已读完职责，未找到目标 ffffffff/).waitFor();
+  await pageBrowser.evaluate(({projectId,roleId})=>{location.hash=`#/p/${projectId}/roles?role=${roleId}`;},{projectId,roleId});
+  await pageBrowser.locator(`#role-${roleId}[open]`).waitFor();
 });
