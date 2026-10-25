@@ -54,3 +54,38 @@ test("reviewer classification appends a Role revision with CAS and keeps proposa
   await assert.rejects(()=>applyRole(store,principal,classify,{nowUtc,nextId:randomUUID}),
     (error:unknown)=>error instanceof RoleRuleError&&error.code==="VERSION_CONFLICT");
 });
+
+test("class change rejects an inherited incompatible template until explicitly cleared", async () => {
+  const originalProposal: RoleProposal = { ...proposal, roleClass: "system", templateKey: "lead" };
+  let current: any = { projectId, id: roleId, version: 2, currentRevisionId: randomUUID(), state: "active",
+    proposal: originalProposal, proposedBy: "manager", createdAtUtc: nowUtc, trialStartedAtUtc: nowUtc,
+    reviewAtUtc: proposal.reviewAtUtc, mergeTargetRoleId: null };
+  const originalRevisionId = current.currentRevisionId;
+  const history: any[] = [];
+  const store = { getRole: async () => current, advanceRole: async (value: typeof current, _expected: number, revision: unknown) => {
+    current=value; history.push(revision);
+  } } as unknown as RoleTransaction;
+  const change: RoleCommand={type:"role.classify",projectId,operationId:randomUUID(),roleId,
+    expectedVersion:2,roleClass:"business",reason:"responsibility review"};
+  await assert.rejects(()=>applyRole(store,principal,change,{nowUtc,nextId:randomUUID}),
+    (error:unknown)=>error instanceof RoleRuleError&&error.code==="INVALID_CLASS");
+  assert.equal(current.version,2);
+  assert.equal(current.currentRevisionId,originalRevisionId);
+  assert.equal(history.length,0);
+  const applied=await applyRole(store,principal,{...change,templateKey:null},{nowUtc,nextId:randomUUID});
+  assert.equal(applied.version,3);
+  assert.equal(current.proposal.roleClass,"business");
+  assert.equal(current.proposal.templateKey,undefined);
+  assert.deepEqual(history[0].proposal.evidence,originalProposal.evidence);
+  assert.equal(originalProposal.roleClass,"system");
+  assert.equal(originalProposal.templateKey,"lead");
+});
+
+test("proposal cannot associate a template without a matching class", async () => {
+  const context={nowUtc,nextId:randomUUID};
+  for (const invalid of [{...proposal,templateKey:"lead" as const},
+    {...proposal,roleClass:"business" as const,templateKey:"lead" as const}]) {
+    await assert.rejects(()=>applyRole(tx,principal,command({proposal:invalid}),context),
+      (error:unknown)=>error instanceof RoleRuleError&&error.code==="INVALID_CLASS");
+  }
+});

@@ -83,8 +83,9 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
     reason = "runtime session binding";
   } else if (command.type === "role.classify") {
     if (state === "retired" || state === "rejected") return fail("INVALID_STATE", "closed role cannot be classified");
-    if (command.templateKey && (["lead","cognition","division"].includes(command.templateKey) ? "system" : "business") !== command.roleClass)
-      return fail("INVALID_CLASS", "template class and Role class differ");
+    const effectiveTemplateKey = command.templateKey === undefined ? previous.proposal.templateKey : command.templateKey;
+    if (effectiveTemplateKey && (["lead","cognition","division"].includes(effectiveTemplateKey) ? "system" : "business") !== command.roleClass)
+      return fail("INVALID_CLASS", "template class and Role class differ; clear or replace the template key explicitly");
     if (previous.proposal.roleClass === command.roleClass &&
         (command.templateKey === undefined || (previous.proposal.templateKey ?? null) === command.templateKey))
       return fail("UNCHANGED", "role classification is already current");
