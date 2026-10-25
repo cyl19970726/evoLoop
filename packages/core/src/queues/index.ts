@@ -90,12 +90,27 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
     if(c.type==='queue.continue'&&(!claim||claim.entryId!==entry.id||claim.releasedAt))return fail('CLAIM_MISMATCH','active Task claim required');
     if(c.type==='queue.claim'&&entry.state!=='queued')return fail('ENTRY_UNAVAILABLE','entry is not queued');
     const attempts=claim?await tx.listResidentQueueAttempts(claim.claimId):[];
-    if(await tx.countResidentQueueAttempts(c.queueId)>=queue.maxRuns){await tx.holdResidentQueueEntry(c.queueId,entry.id,'budget_exhausted','adopted queue run budget exhausted');return result(queue,claim?.claimId??null,null,'budget_exhausted');}
+    if(c.type==='queue.claim'&&await tx.countResidentQueueAttempts(c.queueId)>=queue.maxRuns){
+      await tx.holdResidentQueueEntry(c.queueId,entry.id,'budget_exhausted','adopted queue run budget exhausted');
+      return result(queue,null,null,'budget_exhausted');
+    }
     if(attempts.length){const previous=await reader.getRuntimeRun(attempts.at(-1)!.runId);if(!previous||!terminal.has(previous.state))return fail('RUN_UNSETTLED','previous Run must be confirmed terminal; unknown requires original operation reconciliation');}
     const task=await reader.getTask(entry.taskId),session=await reader.getRuntimeSession(entry.sessionId);
     const dependencyFacts=await Promise.all(entry.dependsOn.map(async id=>{const d=queue.entries.find(x=>x.id===id);const c=d?.claimId?await tx.getResidentQueueClaim(d.claimId):null;return d?.state==='released'&&c?.releaseKind==='accepted';}));
     const dependencies=dependencyFacts.every(Boolean);
     const currentInputJson=task?canonicalTaskInputJson(await taskInputSignature(reader,task)):null;
+    if(c.type==='queue.continue'&&c.answeredQuestions.length===0){
+      const previousAttempt=attempts.at(-1);
+      if(!task||!previousAttempt)return fail('CONTINUATION_SOURCE_MISSING','previous fixed Task input is required');
+      const previousInputJson=canonicalTaskInputJson(await taskInputSignature(reader,task,
+        previousAttempt.actualRunTaskRevisionId??previousAttempt.taskRevisionId));
+      if(currentInputJson===previousInputJson)
+        return fail('CONTINUATION_INPUT_UNCHANGED','continuation without an answer requires amended, readopted business input');
+    }
+    if(c.type==='queue.continue'&&await tx.countResidentQueueAttempts(c.queueId)>=queue.maxRuns){
+      await tx.holdResidentQueueEntry(c.queueId,entry.id,'budget_exhausted','adopted queue run budget exhausted');
+      return result(queue,claim!.claimId,null,'budget_exhausted');
+    }
     const grantCurrent=await tx.exactQueueGrant(entry.roleId,entry.sessionId,entry.taskId);
     const bindingCurrent=await tx.queueBindingCurrent(entry.roleId,entry.sessionId);
     const runBusy=(await reader.listRuntimeRuns()).some(r=>(r.taskId===entry.taskId||r.sessionId===entry.sessionId)&&!terminal.has(r.state)) || session?.state==='unknown';

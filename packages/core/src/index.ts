@@ -1,6 +1,6 @@
 import { commandSchema } from "@evoloop/contracts";
 import type {
-  AppliedResult, BasisDecision, BasisSet, Command, CommandResult, Document, DocumentDecision,
+  AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
   DocumentDetail, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
@@ -95,7 +95,7 @@ function pageLimit(limit = 50): number {
 export class WorkflowService {
   constructor(private readonly deps: WorkflowDependencies) {}
 
-  async execute(principal: Principal, input: Command): Promise<CommandResult> {
+  async execute(principal: Principal, input: CommandInput): Promise<CommandResult> {
     const parsed = commandSchema.safeParse(input);
     if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
@@ -591,9 +591,10 @@ export class WorkflowService {
                 if(!prior)throw new DomainError("CONTINUATION_SOURCE_MISSING","previous Run intent is required");
                 const sourceChannelId=fixedUuid(this.deps.hasher.hash(`queue-channel:${command.projectId}:${prior.runId}`));
                 const channel=required(await tx.getDiscussion(sourceChannelId),"Previous Task channel");
-                if(channel.collaboration?.runId!==prior.runId||channel.task?.id!==task.id)
+                if(channel.projectId!==command.projectId||channel.collaboration?.runId!==prior.runId||
+                  channel.collaboration.sessionId!==entry.sessionId||channel.task?.id!==task.id)
                   throw new DomainError("CONTINUATION_SOURCE_MISMATCH","question and answer must belong to the previous Task Run");
-                const messages=await tx.listDiscussionEvents(sourceChannelId);
+                const messages=command.answeredQuestions.length?await tx.listDiscussionEvents(sourceChannelId):[];
                 const lines:string[]=[];
                 for(const pair of command.answeredQuestions){
                   const question=messages.find(x=>x.id===pair.questionEventId);
@@ -613,7 +614,8 @@ export class WorkflowService {
                     taskAnswerInputBlock(sourceChannelId,answer.id,{documentId:answerRevision.documentId,revisionId:answerRevision.id,
                       contentHash:answerRevision.contentHash,text:answerRevision.body}));
                 }
-                answeredContext=`\nPrevious Run ${prior.runId}; fixed answered messages in channel ${sourceChannelId}:\n${lines.join("\n")}`;
+                answeredContext=`\nContinuation reason: ${command.reason}\nPrevious Run ${prior.runId}; previous Task channel ${sourceChannelId}.`+
+                  (lines.length?`\nFixed answered messages:\n${lines.join("\n")}`:"\nContinue from the newly amended fixed Task input; no answered question is claimed.");
               }
               const input=`Task ${entry.taskId} fixed source ${entry.taskRevisionId}\n${task.title}\n${task.content}\nAcceptance: ${task.acceptance}${answeredContext}\nTask channel ${discussionId} (Run ${command.runId}). Read with evoLoop CLI: read discussion ${discussionId} --project ${command.projectId}; post question/progress/results with your own CLI identity using discussion.message.post and a fixed Document revision. Keep this Run bound to its fixed scope.`;
               const reserved=await reserveRuntime({tx,principal:{...principal,actorId:session.actorId},now,nextId:()=>this.deps.ids.next(),hash:value=>this.deps.hasher.hash(value),

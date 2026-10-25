@@ -11,7 +11,7 @@ export const queueCommandSchema=z.discriminatedUnion('type',[
   z.strictObject({...base,type:z.literal('queue.unhold'),entryId:id,expectedEntryVersion:z.number().int().positive(),reason:note}),
   z.strictObject({...base,type:z.literal('queue.claim'),entryId:id,expectedVersion:z.number().int().positive(),claimId:id,runId:id,runOperationId:id}),
   z.strictObject({...base,type:z.literal('queue.continue'),entryId:id,claimId:id,runId:id,runOperationId:id,reason:note,
-    answeredQuestions:z.array(z.strictObject({questionEventId:id,answerEventId:id})).min(1).max(20)}),
+    answeredQuestions:z.array(z.strictObject({questionEventId:id,answerEventId:id})).max(20).default([])}),
   z.strictObject({...base,type:z.literal('queue.release'),entryId:id,claimId:id,decisionId:id.optional(),reason:note.optional(),nextResponsibility:note.optional()}),
   z.strictObject({...base,type:z.literal('queue.hold'),entryId:id,reason:note}),
 ]);

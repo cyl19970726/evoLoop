@@ -6,6 +6,7 @@ import { migrate } from '../src/index.ts';
 import { PgResidentQueue } from '../src/queues.ts';
 import { PostgresUnitOfWork } from '../src/index.ts';
 import { RuntimeWorkflowService, WorkflowService } from '@evoloop/core';
+import { queueCommandSchema } from '@evoloop/contracts/queues';
 import { canonicalTaskInputJson, taskInputSignature } from '../../core/src/task-input.ts';
 import { reserveRuntime } from '../../core/src/runtime/reserve.ts';
 import { ResidentQueuePump, queueIntentId } from '../../../apps/coordinator/src/resident-queue/pump.ts';
@@ -345,6 +346,106 @@ test('central queue claim journals claim, Run, channel and outbox atomically; re
     VALUES($1,$2,1,1,'legacy overflow','lead')`,[p,randomUUID()]);
   await assert.rejects(central.listResidentQueues(lead,p),error=>
     error instanceof Error && 'code' in error && error.code==='QUEUE_LIMIT_EXCEEDED');
+});
+
+test('failed consumer use can continue the same claim from amended input without inventing a question',async()=>{
+  const p=randomUUID(),role=randomUUID(),roleRev=randomUUID(),taskId=randomUUID(),sessionId=randomUUID();
+  const queueId=randomUUID(),entryId=randomUUID(),claimId=randomUUID(),firstRunId=randomUUID(),firstOperationId=randomUUID();
+  const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+  const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
+    input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
+  const central=new WorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash},
+    collaborationAuthority:{actorForRole:async()=> 'worker',isAuthorizedRoleActor:async()=>true,
+      isProjectActor:async()=>true,hasEngineeringActionGrant:async()=>false}});
+  const native=new RuntimeWorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+  const apply=async(command:Parameters<typeof central.execute>[1])=>{
+    const result=await central.execute(lead,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
+  await apply({type:'project.create',projectId:p,operationId:randomUUID(),title:'Queue remediation'});
+  const client=await pool.connect();try{await client.query('BEGIN');
+    await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`,[p,role,roleRev]);
+    await client.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','trial',now(),now()+interval '1 day')`,[p,role,roleRev]);
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  await apply({type:'task.create',projectId:p,operationId:randomUUID(),taskId,title:'Build A',
+    content:'Initial fixed work',acceptance:'Consumer can use the result',owner:role});
+  await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Seal A input'});
+  await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,
+    cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+  await native.beginSessionCreate(p,sessionId);
+  await native.bindSession(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
+    cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+  await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
+    VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRev]);
+  const initial=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:2,
+    reason:'One remediation attempt after failed use',entries:[{id:entryId,taskId,
+      taskRevisionId:initial.currentRevisionId,sessionId,roleId:role,dependsOn:[],consumerId:'lead',
+      useRequired:true,releaseRule:'accepted'}]});
+  await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1});
+  await apply({type:'queue.claim',projectId:p,operationId:firstOperationId,queueId,entryId,expectedVersion:1,
+    claimId,runId:firstRunId,runOperationId:firstOperationId});
+  const sourceChannel=(await central.listDiscussions(lead,p)).items.find(x=>x.collaboration?.runId===firstRunId)!;
+  assert.ok(sourceChannel);
+  assert.equal((await central.listDiscussionEvents(lead,p,sourceChannel.id)).filter(x=>
+    x.collaborationPayload?.type==='message'&&x.collaborationPayload.kind==='question').length,0,
+  'the first Run asked no question');
+  await native.beginDispatch(p,firstRunId);
+  await native.bindTurn(p,firstRunId,{id:`turn-${firstRunId}`},{kind:'startReply',operationId:firstOperationId});
+  await native.recordTurn(p,firstRunId,`turn-${firstRunId}`,'completed','Delivered an output that consumer could not use');
+  const afterRun=(await central.getTask(lead,p,taskId)).task;
+  const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId,runId:firstRunId,
+    expectedVersion:afterRun.version,artifactRef:'repo:task-a',artifactRevision:'first',contentHash:hash('first result'),
+    technicalResult:'passed',technicalEvidence:'Build passed',reason:'Present first result'});
+  await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId,deliveryId:delivery.revisionId!,
+    observer:'lead',observerKind:'agent',result:'failed',evidence:'Consumer found a missing use case',reason:'Failed use'});
+  const lifecycle=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'task.reopen',projectId:p,operationId:randomUUID(),taskId,expectedVersion:lifecycle.version,
+    reason:'Prepare remediation'});
+  const reopened=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:reopened.version,
+    reason:'Lifecycle-only restart cannot buy another Run'});
+  const sameInput=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'queue.amend',projectId:p,operationId:randomUUID(),queueId,entryId,expectedVersion:1,
+    taskRevisionId:sameInput.currentRevisionId,reason:'Record lifecycle-only revision'});
+  await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:2});
+  const rejectedOperationId=randomUUID(),rejectedRunId=randomUUID();
+  const noNewInput=await central.execute(lead,{type:'queue.continue',projectId:p,operationId:rejectedOperationId,
+    queueId,entryId,claimId,runId:rejectedRunId,runOperationId:rejectedOperationId,
+    reason:'Attempt to repeat unchanged work',answeredQuestions:[]});
+  assert.equal(noNewInput.status,'rejected');
+  if(noNewInput.status==='rejected')assert.equal(noNewInput.code,'CONTINUATION_INPUT_UNCHANGED');
+  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,1);
+  assert.equal((await pool.query('SELECT 1 FROM runtime_run WHERE project_id=$1 AND run_id=$2',[p,rejectedRunId])).rowCount,0);
+  assert.equal((await pool.query('SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,rejectedOperationId])).rowCount,0);
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries[0]?.holdCode,null);
+  const beforeFix=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'task.reopen',projectId:p,operationId:randomUUID(),taskId,expectedVersion:beforeFix.version,
+    reason:'Revise failed use case'});
+  const beforeUpdate=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'task.update',projectId:p,operationId:randomUUID(),taskId,expectedVersion:beforeUpdate.version,
+    title:beforeUpdate.title,content:'Initial fixed work\n\nRemediation: cover the missing consumer use case.',
+    acceptance:beforeUpdate.acceptance,owner:beforeUpdate.owner,reason:'Fix failed consumer use'});
+  const updated=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:updated.version,
+    reason:'Seal corrected input'});
+  const fixed=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'queue.amend',projectId:p,operationId:randomUUID(),queueId,entryId,expectedVersion:2,
+    taskRevisionId:fixed.currentRevisionId,reason:'Adopt corrected business input'});
+  await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:3});
+  const secondRunId=randomUUID(),secondOperationId=randomUUID(),reason='Repair the failed consumer use case';
+  const withoutAnswers={type:'queue.continue' as const,projectId:p,operationId:secondOperationId,queueId,entryId,
+    claimId,runId:secondRunId,runOperationId:secondOperationId,reason};
+  assert.deepEqual(queueCommandSchema.parse(withoutAnswers).answeredQuestions,[]);
+  await apply(withoutAnswers);
+  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,2);
+  const resumed=await central.getRuntimeRun(lead,p,secondRunId);
+  assert.equal(resumed.sessionId,sessionId);
+  assert.match(resumed.input,new RegExp(`Continuation reason: ${reason}`));
+  assert.match(resumed.input,new RegExp(`Previous Run ${firstRunId}; previous Task channel ${sourceChannel.id}`));
+  assert.match(resumed.input,/Remediation: cover the missing consumer use case/);
+  assert.match(resumed.input,/no answered question is claimed/);
 });
 
 test('two concurrent creators cannot both take the 200th project queue slot',async()=>{

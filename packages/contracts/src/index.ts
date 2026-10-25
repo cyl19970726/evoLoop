@@ -53,6 +53,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...evaluationCommands,
 ]);
 export type Command = z.infer<typeof commandSchema>;
+export type CommandInput = z.input<typeof commandSchema>;
 export type Permission = "read" | "write" | "review";
 export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[] }
 export interface Project { id: string; title: string; createdAt: string }
