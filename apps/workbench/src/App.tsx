@@ -252,9 +252,9 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     return () => window.removeEventListener("evoloop:will-navigate", remember);
   }, [key]);
   const { projectId, token, principal } = context;
-  function page(r: Route) {
+  function page(r: Route, active: boolean) {
     if (["work", "inbox", "documents"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox" | "documents"} />;
-    if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} />;
+    if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} active={active} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
     if (r.section === "knowledge") return <div className="content knowledge-page"><h1 tabIndex={-1}>知识空间</h1><KnowledgePanel context={context} refresh={refresh} /></div>;
     if (r.section === "evaluations") {
@@ -268,5 +268,5 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     const components = { journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <DiscussionPanel context={context} refresh={refresh} />, runtime: <RuntimePanel context={context} refresh={refresh} />, schedules: <SchedulingPanel context={context} refresh={refresh} />, roles: <RolesPanel context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     return <div className="content"><h1 tabIndex={-1}>{sectionNames[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
-  return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>{page(r)}</div>)}</>;
+  return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>{page(r, pageKey === key)}</div>)}</>;
 }

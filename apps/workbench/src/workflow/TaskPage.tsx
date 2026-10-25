@@ -124,10 +124,10 @@ function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, 
   </div>;
 }
 
-export function TaskPage({ context, token, projectId, id, selectedRevision, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview }: {
+export function TaskPage({ context, token, projectId, id, selectedRevision, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview, active }: {
   context: MutationContext; token: string; projectId: string; id: string; refresh: number;
   selectedRevision?: string;
-  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean;
+  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean; active: boolean;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
@@ -156,6 +156,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [basisError, setBasisError] = useState("");
   const [error, setError] = useState("");
   const [readVersion, setReadVersion] = useState(0);
+  const wasActive = useRef(active);
   const [observedAt, setObservedAt] = useState<Date | null>(null);
   const [reading, setReading] = useState(false);
   const historyRequestRef = useRef(0);
@@ -186,6 +187,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     window.addEventListener("focus", reread);
     return () => window.removeEventListener("focus", reread);
   }, [id, projectId]);
+  useEffect(() => {
+    if (active && !wasActive.current) setReadVersion(value => value + 1);
+    wasActive.current = active;
+  }, [active]);
   useEffect(() => {
     if (!detail || detail.task.id !== id) return;
     let active = true;

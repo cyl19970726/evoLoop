@@ -9,8 +9,13 @@ import type { Reader, UnitOfWork } from "@evoloop/contracts/ports";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 
 const database = process.env.TEST_DATABASE_URL;
-if (!database || !/\/evoloop_document_reference_test(?:\?|$)/.test(database))
-  throw new Error("Use the dedicated evoloop_document_reference_test database");
+let databaseName = "";
+try {
+  const parsed = new URL(database ?? "");
+  if (parsed.protocol === "postgres:" || parsed.protocol === "postgresql:") databaseName = decodeURIComponent(parsed.pathname.slice(1));
+} catch { /* An invalid URL cannot pass the dedicated test database check. */ }
+if (!/^evoloop(?:_[a-z0-9]+)*_test$/.test(databaseName))
+  throw new Error("Use a dedicated evoloop_*_test database");
 
 test("document reverse Task lookup returns current exact references in UUID pages", async t => {
   const schema = `document_task_refs_${randomUUID().replaceAll("-", "")}`;
