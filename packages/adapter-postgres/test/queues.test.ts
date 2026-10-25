@@ -63,17 +63,26 @@ test('one intent survives duplicate dispatch and holds the Session after termina
       VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','trial',now(),now()+interval '1 day')`,[p,role,roleRev]);
     await setup.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
       VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,session,roleRev]);
-    const store=new PgResidentQueue(setup,p,grant,input,leader,binding);await store.createResidentQueue({projectId:p,id:q,version:1,adoptedVersion:null,maxRuns:3,reason:'one bounded Task',actorId:'lead',entries:[{projectId:p,queueId:q,id:entry,taskId:task,taskRevisionId:rev,sourceInputJson:'{\"fixed\":true}',sessionId:session,roleId:role,position:0,dependsOn:[],consumerId:'consumer',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1}]});await store.adoptResidentQueue(q,1,'lead');
+    const store=new PgResidentQueue(setup,p,grant,input,leader,binding);await store.createResidentQueue({projectId:p,id:q,version:1,adoptedVersion:null,maxRuns:3,reason:'one bounded Task',actorId:'lead',entries:[{projectId:p,queueId:q,id:entry,taskId:task,taskRevisionId:rev,sourceInputJson:'{\"fixed\":true}',sessionId:session,roleId:role,position:0,dependsOn:[],consumerId:'consumer',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1}]});await store.adoptResidentQueue(q,1,'lead');await store.reorderResidentQueue(q,1,[entry],'lead','new adopted order');await store.adoptResidentQueue(q,2,'lead');await store.holdResidentQueueEntry(q,entry,'manual_review','Lead review required');
     await setup.query('COMMIT');
   }catch(e){await setup.query('ROLLBACK');throw e;}finally{setup.release();}
   const ids={claimId:randomUUID(),runId:randomUUID(),operationId:randomUUID()};
   const a=await pool.connect(),b=await pool.connect();try{
-    await a.query('BEGIN');const sa=new PgResidentQueue(a,p,grant,input,leader,binding);const first=await sa.claimResidentQueue(q,entry,ids.claimId,{runId:ids.runId,operationId:ids.operationId,taskRevisionId:rev});assert.equal(first?.claimId,ids.claimId);
-    const competing=(async()=>{await b.query('BEGIN');const sb=new PgResidentQueue(b,p,grant,input,leader,binding);const result=await sb.claimResidentQueue(q,entry,ids.claimId,{runId:ids.runId,operationId:ids.operationId,taskRevisionId:rev});await b.query('COMMIT');return result;})();
+    await a.query('BEGIN');const sa=new PgResidentQueue(a,p,grant,input,leader,binding);
+    await assert.rejects(sa.claimResidentQueue(q,entry,1,ids.claimId,{runId:ids.runId,operationId:ids.operationId,taskRevisionId:rev}),/QUEUE_VERSION_CONFLICT/);
+    await assert.rejects(sa.claimResidentQueue(q,entry,2,ids.claimId,{runId:ids.runId,operationId:ids.operationId,taskRevisionId:rev}),/QUEUE_HOLD_REQUIRES_DECISION/);
+    const held=(await sa.list(q))!.entries[0]!;await sa.unholdResidentQueueEntry(q,entry,held.version,randomUUID(),'lead','Review complete');
+    const first=await sa.claimResidentQueue(q,entry,2,ids.claimId,{runId:ids.runId,operationId:ids.operationId,taskRevisionId:rev});assert.equal(first?.claimId,ids.claimId);
+    const competing=(async()=>{await b.query('BEGIN');const sb=new PgResidentQueue(b,p,grant,input,leader,binding);const result=await sb.claimResidentQueue(q,entry,2,ids.claimId,{runId:ids.runId,operationId:ids.operationId,taskRevisionId:rev});await b.query('COMMIT');return result;})();
     await a.query('COMMIT');assert.equal((await competing)?.claimId,ids.claimId);
     await a.query('BEGIN');assert.equal((await sa.listReconcile()).length,1);assert.equal((await sa.listResidentQueueAttempts(ids.claimId)).length,1);
+    await assert.rejects(sa.claimResidentQueue(q,entry,2,ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev}),/OPERATION_CONFLICT/);
+    assert.equal((await sa.listResidentQueueAttempts(ids.claimId)).length,1);
     await a.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,interrupt_requested,actor_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,'fixed',repeat('b',64),'completed',1,$8,false,'lead',now(),now())`,[p,ids.runId,task,rev,basis,session,ids.operationId,'turn-'+ids.runId]);
+    await sa.holdResidentQueueEntry(q,entry,'manual_review','Question awaiting Lead');
+    await assert.rejects(sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3),/QUEUE_HOLD_REQUIRES_DECISION/);
+    const claimedHold=(await sa.list(q))!.entries[0]!;await sa.unholdResidentQueueEntry(q,entry,claimedHold.version,randomUUID(),'lead','Question answered');
     const secondIds={runId:randomUUID(),operationId:randomUUID()};
     const next=await sa.appendResidentQueueAttempt(ids.claimId,{...secondIds,taskRevisionId:rev},3);
     assert.equal(next?.sequence,2);
@@ -114,8 +123,8 @@ test('official Task and Run lifecycle releases A only after current consumer acc
       {projectId:p,queueId:q,id:entryA,taskId:taskA,taskRevisionId:revisionA,sourceInputJson:signatures.get(taskA)!,sessionId:session,roleId:role,position:0,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1},
       {projectId:p,queueId:q,id:entryB,taskId:taskB,taskRevisionId:revisionB,sourceInputJson:signatures.get(taskB)!,sessionId:session,roleId:role,position:1,dependsOn:[entryA],consumerId:'lead',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1}]});
     await queue.adoptResidentQueue(q,1,'lead');
-    const claimId=randomUUID();assert.equal((await queue.claimResidentQueue(q,entryA,claimId,{runId,operationId:randomUUID(),taskRevisionId:revisionA}))?.claimId,claimId);
-    assert.equal(await queue.claimResidentQueue(q,entryB,randomUUID(),{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:revisionB}),null);
+    const claimId=randomUUID();assert.equal((await queue.claimResidentQueue(q,entryA,1,claimId,{runId,operationId:randomUUID(),taskRevisionId:revisionA}))?.claimId,claimId);
+    assert.equal(await queue.claimResidentQueue(q,entryB,1,randomUUID(),{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:revisionB}),null);
     await work.query('COMMIT');
     const task=(await uow.read(p,r=>r.getTask(taskA)))!;
     await apply({type:'runtime.run.reserve',projectId:p,operationId:randomUUID(),runId,taskId:taskA,sessionId:session,expectedVersion:task.version,input:'Execute fixed Task A'});
@@ -129,7 +138,10 @@ test('official Task and Run lifecycle releases A only after current consumer acc
     await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId:taskA,deliveryId:delivery.revisionId!,observer:'lead',observerKind:'agent',result:'used',evidence:'Read and applied output',reason:'Consumer used A'});
     const beforeClose=(await uow.read(p,r=>r.getTask(taskA)))!;
     await apply({type:'task.close',projectId:p,operationId:randomUUID(),taskId:taskA,expectedVersion:beforeClose.version,deliveryId:delivery.revisionId!,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'A accepted'});
-    await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),true);const second=await queue.claimResidentQueue(q,entryB,randomUUID(),{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:revisionB});assert.ok(second);await work.query('COMMIT');
+    await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),true);
+    assert.equal((await queue.list(q))!.entries[0]!.claimId,claimId,'released entry retains claim provenance for dependency checks');
+    assert.equal((await queue.getResidentQueueClaim(claimId))?.releaseKind,'accepted');
+    const second=await queue.claimResidentQueue(q,entryB,1,randomUUID(),{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:revisionB});assert.ok(second);await work.query('COMMIT');
     assert.equal(await queue.countResidentQueueAttempts(q),2);
     await assert.rejects(pool.query('INSERT INTO resident_queue_attempt(project_id,claim_id,sequence,run_id,operation_id,task_revision_id) VALUES($1,$2,2,$3,$4,$5)',[p,second!.claimId,randomUUID(),randomUUID(),revisionB]),/run budget exhausted/);
   }catch(e){await work.query('ROLLBACK');throw e;}finally{work.release();}

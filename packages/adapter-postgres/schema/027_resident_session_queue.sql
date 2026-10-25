@@ -33,6 +33,11 @@ CREATE TABLE resident_queue_entry (
   CHECK((state IN ('claimed','released'))=(claim_id IS NOT NULL)), CHECK((hold_code IS NULL)=(hold_reason IS NULL))
 );
 CREATE INDEX resident_queue_entry_next ON resident_queue_entry(project_id,queue_id,state,position);
+CREATE TABLE resident_queue_unhold_decision (
+  project_id uuid NOT NULL,decision_id uuid NOT NULL,queue_id uuid NOT NULL,entry_id uuid NOT NULL,
+  actor_id text NOT NULL,reason text NOT NULL CHECK(length(btrim(reason))>0),created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(project_id,decision_id),FOREIGN KEY(project_id,queue_id,entry_id) REFERENCES resident_queue_entry(project_id,queue_id,entry_id)
+);
 CREATE TABLE resident_queue_entry_amendment (
   project_id uuid NOT NULL,queue_id uuid NOT NULL,entry_id uuid NOT NULL,queue_version integer NOT NULL,
   old_task_revision_id uuid NOT NULL,new_task_revision_id uuid NOT NULL,
@@ -71,6 +76,7 @@ CREATE TABLE resident_queue_release_decision (
 );
 CREATE TRIGGER resident_queue_revision_immutable BEFORE UPDATE OR DELETE ON resident_queue_revision FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
 CREATE TRIGGER resident_queue_amendment_immutable BEFORE UPDATE OR DELETE ON resident_queue_entry_amendment FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
+CREATE TRIGGER resident_queue_unhold_immutable BEFORE UPDATE OR DELETE ON resident_queue_unhold_decision FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
 CREATE TRIGGER resident_queue_attempt_immutable BEFORE UPDATE OR DELETE ON resident_queue_attempt FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
 CREATE TRIGGER resident_queue_release_decision_immutable BEFORE UPDATE OR DELETE ON resident_queue_release_decision FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
 CREATE FUNCTION protect_resident_queue() RETURNS trigger LANGUAGE plpgsql AS $$

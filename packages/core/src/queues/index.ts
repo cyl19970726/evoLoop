@@ -2,6 +2,7 @@ import type { Principal } from '@evoloop/contracts';
 import { queueCommandSchema } from '../../../contracts/src/queues.js';
 import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence,QueueHoldCode } from '../../../contracts/src/queues.js';
 import { canonicalTaskInputJson,taskInputSignature } from '../task-input.js';
+import type { Reader } from '@evoloop/contracts/ports';
 
 export type { ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence } from '../../../contracts/src/queues.js';
 export interface QueueDecision {ready:boolean;code:QueueHoldCode|null;reason:string|null}
@@ -27,11 +28,11 @@ export interface QueueResult {queueId:string;version:number;claimId:string|null;
 const fail=(code:string,message:string):never=>{throw Object.assign(new Error(message),{code});};
 const terminal=new Set(['completed','failed','interrupted']);
 /** Business checks run inside the caller's journalled transaction. The PG adapter still locks authority rows atomically. */
-export async function applyQueue(tx:QueueTransaction,principal:Principal,input:QueueCommand,ctx:QueueContext):Promise<QueueResult>{
+export async function applyQueue(tx:QueueTransaction & Reader,principal:Principal,input:QueueCommand,ctx:QueueContext):Promise<QueueResult>{
   const parsed=queueCommandSchema.safeParse(input);if(!parsed.success)return fail('INVALID_COMMAND',parsed.error.message);
   const c=parsed.data;
   if(!principal.actorId||!principal.projectIds.includes(c.projectId)||!principal.permissions.includes('review'))return fail('FORBIDDEN','project review permission required');
-  const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.hold'];
+  const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.hold','queue.unhold'];
   if(leadOnly.includes(c.type)&&!principal.permissions.includes('write'))return fail('FORBIDDEN','Lead write permission required');
   const result=(queue:ResidentQueue|null,claimId:string|null=null,runId:string|null=null,hold:QueueHoldCode|null=null):QueueResult=>({queueId:c.queueId,version:queue?.version??0,claimId,runId,held:hold});
   if(c.type==='queue.create'){
@@ -61,7 +62,16 @@ export async function applyQueue(tx:QueueTransaction,principal:Principal,input:Q
   if(c.type==='queue.adopt'){if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');await tx.adoptResidentQueue(c.queueId,c.expectedVersion,principal.actorId);return result(queue);}
   const entry=queue.entries.find(x=>x.id===c.entryId);if(!entry)return fail('NOT_FOUND','entry missing');
   if(c.type==='queue.hold'){await tx.holdResidentQueueEntry(c.queueId,c.entryId,'manual_review',c.reason);return result(queue,null,null,'manual_review');}
+  if(c.type==='queue.unhold'){
+    if(entry.version!==c.expectedEntryVersion)return fail('VERSION_CONFLICT','entry changed');
+    if(entry.holdCode!=='manual_review')return fail('HOLD_NOT_MANUAL','only manual review holds can be lifted');
+    await tx.unholdResidentQueueEntry(c.queueId,c.entryId,c.expectedEntryVersion,c.operationId,principal.actorId,c.reason);
+    return result(queue);
+  }
   if(c.type==='queue.claim'||c.type==='queue.continue'){
+    if(entry.holdCode==='manual_review')return fail('MANUAL_REVIEW_REQUIRED','Lead must explicitly unhold this entry');
+    if(entry.holdCode==='budget_exhausted')return fail('BUDGET_EXHAUSTED','adopted queue run budget exhausted');
+    if(c.type==='queue.claim'&&queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue order changed');
     if(queue.adoptedVersion!==queue.version)return fail('QUEUE_NOT_ADOPTED','Lead must adopt current order');
     const claim=c.type==='queue.continue'?await tx.getResidentQueueClaim(c.claimId):null;
     if(c.type==='queue.continue'&&(!claim||claim.entryId!==entry.id||claim.releasedAt))return fail('CLAIM_MISMATCH','active Task claim required');
@@ -81,7 +91,7 @@ export async function applyQueue(tx:QueueTransaction,principal:Principal,input:Q
     if(!gate.ready){await tx.holdResidentQueueEntry(c.queueId,entry.id,gate.code!,gate.reason!);return result(queue,claim?.claimId??null,null,gate.code);}
     const attempt={runId:c.runId,operationId:c.runOperationId,taskRevisionId:task!.currentRevisionId};
     if(c.type==='queue.claim'){
-      const claimed=await tx.claimResidentQueue(c.queueId,entry.id,c.claimId,attempt);return result(queue,claimed?.claimId??null,claimed?c.runId:null,claimed?null:'occupied');
+      const claimed=await tx.claimResidentQueue(c.queueId,entry.id,c.expectedVersion,c.claimId,attempt);return result(queue,claimed?.claimId??null,claimed?c.runId:null,claimed?null:'occupied');
     }
     const next=await tx.appendResidentQueueAttempt(c.claimId,attempt,queue.maxRuns);return result(queue,c.claimId,next?c.runId:null,next?null:'budget_exhausted');
   }

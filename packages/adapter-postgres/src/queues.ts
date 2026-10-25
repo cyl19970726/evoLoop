@@ -58,6 +58,12 @@ export class PgResidentQueue {
   }
   async adoptResidentQueue(id:string,expected:number,actor:string):Promise<void>{if(!await this.lead(this.client,this.projectId,actor))throw new Error('QUEUE_AUTHORIZATION');const r=await this.client.query('UPDATE resident_queue SET adopted_version=version,adopted_by=$4,adopted_at=now(),updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND version=$3 RETURNING version',[this.projectId,id,expected,actor]);if(!r.rowCount)throw new Error('QUEUE_VERSION_CONFLICT');}
   async holdResidentQueueEntry(queueId:string,entryId:string,code:QueueHoldCode,reason:string):Promise<void>{await this.client.query("UPDATE resident_queue_entry SET state=CASE WHEN state='claimed' THEN 'claimed' ELSE 'held' END,hold_code=$4,hold_reason=$5,version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 AND state IN ('queued','held','claimed')",[this.projectId,queueId,entryId,code,reason]);}
+  async unholdResidentQueueEntry(queueId:string,entryId:string,expectedVersion:number,decisionId:string,actor:string,reason:string):Promise<void>{
+    if(!reason.trim()||!await this.lead(this.client,this.projectId,actor))throw new Error('QUEUE_AUTHORIZATION');
+    const r=await this.client.query("UPDATE resident_queue_entry SET state=CASE WHEN state='held' THEN 'queued' ELSE state END,hold_code=NULL,hold_reason=NULL,version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 AND version=$4 AND hold_code='manual_review' RETURNING entry_id",[this.projectId,queueId,entryId,expectedVersion]);
+    if(!r.rowCount)throw new Error('QUEUE_HOLD_CONFLICT');
+    await this.client.query('INSERT INTO resident_queue_unhold_decision(project_id,decision_id,queue_id,entry_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,$6)',[this.projectId,decisionId,queueId,entryId,actor,reason]);
+  }
   async assertQueueVacant(taskId:string,sessionId:string):Promise<void>{
     await this.client.query('SELECT task_id FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE',[this.projectId,taskId]);
     await this.client.query('SELECT session_id FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,sessionId]);
@@ -75,11 +81,19 @@ export class PgResidentQueue {
     if(!continuation){const prior=await this.client.query("SELECT 1 FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND session_id=$3 AND position<$4 AND state<>'released' LIMIT 1",[this.projectId,e.queueId,e.sessionId,e.position]);if(prior.rows[0])return null;}
     return f.current_revision_id;
   }
-  async claimResidentQueue(queueId:string,entryId:string,claimId:string,attempt:Omit<QueueAttempt,'projectId'|'claimId'|'sequence'|'reservedAt'|'actualRunTaskRevisionId'>):Promise<QueueClaim|null>{
+  async claimResidentQueue(queueId:string,entryId:string,expectedVersion:number,claimId:string,attempt:Omit<QueueAttempt,'projectId'|'claimId'|'sequence'|'reservedAt'|'actualRunTaskRevisionId'>):Promise<QueueClaim|null>{
     const q=await this.client.query('SELECT version,adopted_version FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,queueId]);if(!q.rows[0])throw new Error('QUEUE_NOT_FOUND');
-    const prior=await this.getResidentQueueClaim(claimId);if(prior){if(prior.queueId!==queueId||prior.entryId!==entryId)throw new Error('OPERATION_CONFLICT');return prior;}
+    if(q.rows[0].version!==expectedVersion)throw new Error('QUEUE_VERSION_CONFLICT');
+    const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,queueId,entryId]);
+    if(!er.rows[0])throw new Error('ENTRY_UNAVAILABLE');const e=entryOf(er.rows[0]);
+    if(e.holdCode==='manual_review'||e.holdCode==='budget_exhausted')throw new Error('QUEUE_HOLD_REQUIRES_DECISION');
+    const prior=await this.getResidentQueueClaim(claimId);if(prior){
+      const first=(await this.listResidentQueueAttempts(claimId))[0];
+      if(prior.queueId!==queueId||prior.entryId!==entryId||!first||first.runId!==attempt.runId||first.operationId!==attempt.operationId||first.taskRevisionId!==attempt.taskRevisionId)throw new Error('OPERATION_CONFLICT');
+      return prior;
+    }
     if(q.rows[0].version!==q.rows[0].adopted_version)throw new Error('QUEUE_NOT_ADOPTED');
-    const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,queueId,entryId]);if(!er.rows[0]||!['queued','held'].includes(er.rows[0].state))return null;const e=entryOf(er.rows[0]);
+    if(!['queued','held'].includes(er.rows[0].state))return null;
     const deps=await this.client.query(`SELECT d.entry_id,d.state,c.release_kind FROM resident_queue_entry d LEFT JOIN resident_queue_claim c ON c.project_id=d.project_id AND c.queue_id=d.queue_id AND c.entry_id=d.entry_id WHERE d.project_id=$1 AND d.queue_id=$2 AND d.entry_id=ANY($3::uuid[])`,[this.projectId,queueId,e.dependsOn]);
     if(deps.rows.length!==e.dependsOn.length||deps.rows.some(x=>x.state!=='released'||x.release_kind!=='accepted')){await this.holdResidentQueueEntry(queueId,entryId,'dependency','prerequisite not accepted');return null;}
     await this.assertQueueVacant(e.taskId,e.sessionId);
@@ -91,11 +105,14 @@ export class PgResidentQueue {
   }
   private async insertAttempt(claimId:string,sequence:number,a:Omit<QueueAttempt,'projectId'|'claimId'|'sequence'|'reservedAt'|'actualRunTaskRevisionId'>):Promise<QueueAttempt>{const r=await this.client.query('INSERT INTO resident_queue_attempt(project_id,claim_id,sequence,run_id,operation_id,task_revision_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[this.projectId,claimId,sequence,a.runId,a.operationId,a.taskRevisionId]);return attemptOf(r.rows[0]);}
   async appendResidentQueueAttempt(claimId:string,a:Omit<QueueAttempt,'projectId'|'claimId'|'sequence'|'reservedAt'|'actualRunTaskRevisionId'>,maxRuns:number):Promise<QueueAttempt|null>{
+    const key=await this.client.query('SELECT queue_id FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2',[this.projectId,claimId]);if(!key.rows[0])return null;
+    await this.client.query('SELECT queue_id FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,key.rows[0].queue_id]);
     const c=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2 FOR UPDATE',[this.projectId,claimId]);if(!c.rows[0]||c.rows[0].released_at)return null;
+    const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,c.rows[0].queue_id,c.rows[0].entry_id]);const e=entryOf(er.rows[0]);
+    if(e.holdCode==='manual_review'||e.holdCode==='budget_exhausted')throw new Error('QUEUE_HOLD_REQUIRES_DECISION');
     const replay=await this.client.query('SELECT * FROM resident_queue_attempt WHERE project_id=$1 AND operation_id=$2',[this.projectId,a.operationId]);if(replay.rows[0]){const x=attemptOf(replay.rows[0]);if(x.claimId!==claimId||x.runId!==a.runId||x.taskRevisionId!==a.taskRevisionId)throw new Error('OPERATION_CONFLICT');return x;}
     const attempts=await this.listResidentQueueAttempts(claimId);if(await this.countResidentQueueAttempts(c.rows[0].queue_id)>=maxRuns)return null;
     const last=attempts.at(-1);if(!last)return null;const run=await this.client.query('SELECT state FROM runtime_run WHERE project_id=$1 AND run_id=$2',[this.projectId,last.runId]);if(!run.rows[0]||!['completed','failed','interrupted'].includes(run.rows[0].state))return null;
-    const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3',[this.projectId,c.rows[0].queue_id,c.rows[0].entry_id]);const e=entryOf(er.rows[0]);
     const revision=await this.assertCurrent(e,true);if(!revision||revision!==a.taskRevisionId)return null;
     return this.insertAttempt(claimId,attempts.length+1,a);
   }
