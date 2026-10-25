@@ -8,6 +8,7 @@ import { RolePresenceCard } from "./RolePresenceCard";
 const lines = (value: string) => value.split(/\r?\n/).map(part => part.trim()).filter(Boolean);
 const stamp = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
 const stateLabel: Record<RoleRecord["state"], string> = { candidate: "待判断", trial: "试行中", active: "持续职责", "retirement-pending": "待交接关闭", retired: "已撤回", rejected: "未采纳", deferred: "待重看" };
+const classLabel = (role: RoleRecord) => role.proposal.roleClass === "system" ? "系统职责" : role.proposal.roleClass === "business" ? "业务职责" : "分类未登记";
 const evidenceKinds = [{ kind: "gap", label: "积压、遗漏或返工" }, { kind: "effect", label: "实际效果" }, { kind: "cost", label: "已付成本" }] as const;
 const alternativeKinds = [
   { kind: "method", label: "改方法或工具" }, { kind: "knowledge", label: "补知识或输入" },
@@ -118,7 +119,7 @@ function RoleCard({ context, role, refresh }: { context: MutationContext; role: 
   useEffect(() => { setHistory(null); }, [refresh, role.version]);
   const base = { roleId: role.id, expectedVersion: role.version };
   const p = role.proposal;
-  return <details className="workflow-detail" id={`role-${role.id}`}><summary>{p.title} <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
+  return <details className="workflow-detail" id={`role-${role.id}`}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
     <RolePresenceCard token={context.token} projectId={context.projectId} roleId={role.id} refresh={refresh} />
     <dl><div><dt>目标</dt><dd>{p.goal}</dd></div><div><dt>独立判断</dt><dd>{p.independentResponsibility}</dd></div><div><dt>范围</dt><dd>{p.ownerScope}</dd></div><div><dt>输入</dt><dd>{p.inputs.join("；")}</dd></div><div><dt>可写资产</dt><dd>{p.writableAssets.join("；") || "未列出"}</dd></div><div><dt>交付</dt><dd>{p.deliverables.join("；")}</dd></div><div><dt>触发</dt><dd>{p.triggers.join("；")}</dd></div><div><dt>流程</dt><dd>{p.workflow}</dd></div><div><dt>交接边界</dt><dd>{p.handoffBoundary}</dd></div><div><dt>首项任务</dt><dd><code>{p.firstTaskId}</code></dd></div><div><dt>试行与回看</dt><dd>{p.trialDays} 天 · {stamp(role.reviewAtUtc)}</dd></div><div><dt>退出判据</dt><dd>{p.exitCriteria}</dd></div></dl>
     <h3>提出依据与比较</h3>{p.evidence.map((item, i) => <article className="decision" key={i}><strong>{item.kind}</strong><p>{item.observation}</p><small className="break-anywhere">{item.sourceRef} · {stamp(item.observedAtUtc)}</small></article>)}

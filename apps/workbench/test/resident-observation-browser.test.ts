@@ -24,12 +24,16 @@ const questionId = "1000000c-0000-4000-8000-000000000012";
 const answerId = "1000000d-0000-4000-8000-000000000013";
 const stamp = "2026-10-25T00:00:00.000Z";
 const page = (items: unknown[]) => ({ items, nextCursor: null });
-const proposal = { title:"实际开发流程",goal:"维护项目交付",independentResponsibility:"持续判断任务边界",ownerScope:"有界开发",
+const proposal = { title:"实际开发流程",roleClass:"business",templateKey:"development-workflow",goal:"维护项目交付",independentResponsibility:"持续判断任务边界",ownerScope:"有界开发",
   inputs:["已采纳任务"],writableAssets:[],deliverables:["固定报告"],triggers:["任务入队"],workflow:"检查、实施、交付",handoffBoundary:"交付消费者",
   firstTaskId:taskA,trialDays:14,baseline:"人工领取",expectedEffect:"稳定协作",costLimit:"两次",reviewAtUtc:stamp,exitCriteria:"回看",
   evidence:[],alternatives:[] };
 const role = {projectId,id:roleId,version:2,currentRevisionId:roleId,state:"active",proposal,proposedBy:"lead",createdAtUtc:stamp,
   trialStartedAtUtc:stamp,reviewAtUtc:stamp,mergeTargetRoleId:null};
+const systemRoleId = "10000014-0000-4000-8000-000000000020";
+const legacyRoleId = "10000015-0000-4000-8000-000000000021";
+const systemRole = {...role,id:systemRoleId,currentRevisionId:systemRoleId,proposal:{...proposal,title:"Lead",roleClass:"system",templateKey:"lead"}};
+const legacyRole = {...role,id:legacyRoleId,currentRevisionId:legacyRoleId,proposal:{...proposal,title:"旧职责",roleClass:undefined,templateKey:undefined}};
 const task = (id:string,title:string) => ({projectId,id,title,version:2,currentRevisionId:id,content:"固定任务正文",contentDocumentId:id,
   contentRevisionId:id,kind:"implementation",acceptance:"消费者实际使用后验收",owner:"worker",state:"in_progress",createdAt:stamp});
 const session = {projectId,id:sessionId,roleId:"worker",state:"ready",authorizationScope:"项目工作树",cwd:"/tmp/worktree",sandbox:"workspace-write",nativeThreadId:"native-thread",createdAt:stamp};
@@ -72,7 +76,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
       let value:unknown = page([]);
       if (url.pathname === "/api/session") value = {principal:{actorId:"lead",projectIds:[projectId],permissions:["read"]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"夹具项目",createdAt:stamp};
-      else if (url.pathname === `${p}/roles`) value = page([role]);
+      else if (url.pathname === `${p}/roles`) value = page([role,systemRole,legacyRole]);
       else if (url.pathname === `${p}/roles/${roleId}/hosts`) value = [external,owned];
       else if (url.pathname === `${p}/domains`) value = [domain];
       else if (url.pathname === `${p}/domains/${domainId}/route`) value = {domain,role,status:"external-manual",link:external,session:null,automaticStart:false};
@@ -110,8 +114,11 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.goto(`${base}/#/p/${projectId}/roles`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
+  await pageBrowser.locator(`#role-${roleId} > summary`).getByText("业务职责").waitFor();
+  await pageBrowser.locator(`#role-${systemRoleId} > summary`).getByText("系统职责").waitFor();
+  await pageBrowser.locator(`#role-${legacyRoleId} > summary`).getByText("分类未登记").waitFor();
   await pageBrowser.locator(`#role-${roleId} > summary`).click();
-  await pageBrowser.getByText("承载与业务领域").click();
+  await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
   await pageBrowser.getByText("外部 Codex Desktop 宿主").waitFor();
   const externalCard=pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"});
   assert.match(await externalCard.innerText(),/声称能力：.*启动/);
