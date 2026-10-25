@@ -1,15 +1,21 @@
 ---
 name: evoloop-workflow
-description: Use the evoLoop business CLI to take an authorized project assignment through fixed evidence, Task or Document updates, delivery, consumer feedback, and a justified next step. Use for actual evoLoop project work, not for building its frontend or changing repository development rules.
+description: Use the evoLoop business CLI to take an authorized project assignment through fixed evidence, Task or Document updates, delivery, consumer feedback, and a justified next step. Applies also when a repository change is assigned through evoLoop; engineering and frontend methods remain in their project guides.
 ---
 
 # evoLoop business work
 
 The usual handoff is: a person sees progress and evidence in the workbench, discusses the goal or decision in an existing Agent session, you act through the project CLI, then the person sees the result in the same project's read views. The workbench is mainly for human observation, reading, traceability, and feedback; do not require a person to click through routine work. Act only within the authority actually given in that conversation and by the project service. This skill cannot grant additional rights or turn a discussion into automatic acceptance.
 
-Use the project-local CLI against the authorized coordinator. Start with `npm run --silent cli -- help` and `npm run --silent cli -- session`; use [`agent-cli.md`](../../../docs/development/agent-cli.md) for setup, command forms, and recovery. The CLI and core API share the workbench's business boundary. If a named command or request is absent from `help`, `command types`, or `request types`, do not invent it.
+Use the supplied private wrapper when the assignment provides one; otherwise use the project-local CLI against the authorized coordinator. A wrapper does not identify a Loop worker or grant every command shown by help. For the normal CLI, start with `npm run --silent cli -- help` and `npm run --silent cli -- session`; use [`agent-cli.md`](../../../docs/development/agent-cli.md) for setup, command forms, and recovery. The CLI and core API share the workbench's business boundary. If a named command or request is absent from `help`, `command types`, or `request types`, do not invent it.
 
-If the native input identifies a managed Loop/Dispatch/Run and supplies a private CLI wrapper, read [the managed worker guide](references/managed-workers.md). Use that wrapper instead of looking for a human's token. The controller already starts and fixes this Task; write a signed submission or bounded decision before the Turn ends. Ordinary `delivery.record` cannot run while this Run is in flight.
+Choose the execution path from the fixed assignment and verified identity:
+
+- **Ordinary static Run:** read the assigned Task revision and `context`, produce the authorized artifacts and checks, and hand them to the Lead. If explicitly allowed, create a report and read back its fixed revision/hash. The Lead verifies the terminal Run and records Delivery under its own authority. Do not call `worker.submit` or `worker.decision` without a brokered worker identity.
+- **Loop/Dispatch worker:** when the input supplies the exact Loop, Dispatch and brokered worker identity, read [the managed worker guide](references/managed-workers.md). Submit a signed intent or bounded decision before the Turn ends.
+- **Existing conversation using the CLI:** act within the conversation's authorization and verified principal; CLI participation alone does not register or bind that Desktop conversation.
+
+Use `help` and `session` through the supplied wrapper as applicable. Ordinary `delivery.record` cannot run while a Run is in flight. Never look for a human's token to change paths. For selecting a Role, binding a Session, rework or a second Task, follow [the explicit handoff path](../../../docs/development/agent-cli.md#lead-分派返工与再次承接); binding is not automatic routing. When the assignment changes repository rules, also use `../development-workflow/SKILL.md` for the engineering method; these two skills answer different questions.
 
 When writing or changing work, read [the writing guide](references/writing.md): make the content understandable without earlier chat, include necessary context and fixed links, use a diagram only where it clarifies the work, and keep acceptance observable. Task content has one authority in its primary Document; use Task commands to maintain it, not an independent edit to the same Document.
 

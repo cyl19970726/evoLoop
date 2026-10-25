@@ -89,6 +89,23 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 普通 Run 不发 worker CLI 身份或自动生成 Delivery，控制者不能代签 `worker.submit` 或冒充 Agent 消费者亲用；外部真人消费仍按既有 reviewer attestation 合同记录。worker 自助报告须走[受管 Dispatch/broker 路径](#受管执行与自动接续)。自动 Loop 逐 Dispatch 新建 Session，绑定不触发复用；Desktop 自动桥接和侧栏注册没有已验证保证，普通业务长期自动巡检仍未实现。Role 与承载实例的合同见[RoleRegistry 与 SessionRuntime](../architecture/contracts.md#4-roleregistry-与-sessionruntime)。
 
+## Lead 分派、返工与再次承接
+
+Task 写清问题、希望改变的结果和唯一当前责任后，Lead 按实际职责选择承接者：规范负责人处理项目 skill、任务写法及工程方法，功能开发负责人处理业务能力，产品文档负责人处理产品模型。职责名称不表示已经建立 Role 或承载；先查正式记录。普通领域修复无需先经过规范负责人审批，跨域工作只需明确文件所有权和最终回收者。Lead 在这里是本项工作的协调责任，不新增平台权限或中心审批岗位。
+
+| 交接时点 | 谁做什么 | 回读什么才能继续 |
+| --- | --- | --- |
+| 选择责任 | Lead 读现有 Role；适合就沿用。没有合适职责时先说明缺口与临时承接办法，需新持续职责再走试行。 | Task owner 与已接受的 Role 匹配；consumer 是实际使用者身份，不拿 Role ID 代填。 |
+| 选择承载 | 有执行授权者核 Role 绑定和 Session。已有空闲 ready owned Session 可供普通 Run 复用；无可用实例再按上节建立。 | 真实 project sessionId、roleId、原生 Thread 和 cwd，以及 Task/Session 上无在途或 unknown Run。ready 只表明可用，不证明正在工作。 |
+| 固定并启动 | Lead 核正文、验收和所需固定来源，正常 start 后显式 reserve Run；执行者读自己的身份与固定 context。 | TaskRevision、basis 与 Run 输入一致；wrapper 仅是入口，不据此推定 worker 权限。普通静态 Run 不调用 worker.submit。 |
+| 接收交付 | 执行者交实际差异、产物、检查与限制；普通 Run 已知终态后，Lead 核实再关联 runId 登记 Delivery。 | 固定产物修订/hash 与实际检查；Run 完成、Delivery、使用观察和 Task 关闭分别核对。要求使用时由声明消费者实际使用并记录。 |
+| 返工 | Lead 把具体未满足的原判据、复现和下一责任留在原 Task 的反馈中。改正文或依据前先处理在途/未知，再按 reopen→update→start 建新修订。 | 保留原 Run/交付/失败观察，新 Run 只承接新固定输入；不因验收失败另造同工作的 Task。 |
+| 下一项工作 | Lead 明确分派第二项真实 Task，核 owner、固定输入、当前授权及空闲状态后，显式在原 Session 预留新 Run。 | 两项 Task、两次 Run 对应同一项目 Session 和同一原生 Thread；新聊天、同名 Role 或相同 cwd 均不能代替。常驻承载不因首 Task 结束自动关闭。 |
+
+普通显式路径可保留同 Session 连续承接，但仍须 Lead 驱动。受限自动 Loop 只在自己的来源、职责、范围、预算及活动状态内接续，当前逐 Dispatch 新建 Session；`role.bindSession` 不让 Loop 自动选择原常驻承载。通用常驻路由、任意 Desktop 聊天挂载与自动唤醒不可据此宣称已实现。产品语义见[任务与过程文档](../product/tasks-and-documents.md)、[工作台](../product/workbench.md)及[Codex 承载关系](../architecture/codex-integration.md#任务职责与定时触发)。
+
+核当前记录可从 `list roles`、`read role ROLE_ID --bindings`、`list sessions`、`list runs` 和 `task TASK_ID` 开始，均带实际 `--project`；详情按 `help` 使用 `read session` / `read run`。Role 列表可分页；Session/Run 列表当前不接受 `--limit` 或 `--cursor`。用绑定关联 Session，再用 Run 关联 Task，不从会话名称猜当前任务。私有 ID、地址与回执放过程报告，不放公开规范。普通工作台是否能直接找到同样关系，须另做实际阅读验证；API 可读不等于页面可见，列表或讨论区缺口不能用文档说明冒充前端已补齐。
+
 ## 配置周期工作的接续
 
 先用 `command schema schedule.create` / `schedule.revise` 核对当前输入。需要自动承接时，在新修订模板显式设置 `managedTarget: {loopId, stageId}`，指向同项目、已授权且已限定该 Stage 的 Loop 和 active Stage，并核模板责任者、日程 grant 与该业务职责的 runtime profile。缺省仍只创建普通 todo，不借下一次 tick 偷改旧日程范围。

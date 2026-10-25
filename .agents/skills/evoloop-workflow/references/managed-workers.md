@@ -1,5 +1,7 @@
 # Managed work through the scoped CLI
 
+This guide applies to brokered Loop/Dispatch workers. An ordinary static Run may also receive a private wrapper, but has no worker submission identity: follow the main skill's static Run path and the assignment's actual command permissions. Do not infer submission or delegation rights from the word “managed”.
+
 The native input supplies the exact project, Loop, Dispatch, Task, Run, source inbox/event, skill path, and CLI wrapper. Invoke the wrapper with the provided Node executable (or `node /absolute/wrapper.mjs` when Node 24 is on PATH). It supplies an independent short-lived worker identity and private receipt directory. Start with `session`, `context TASK_ID`, and `get /api/projects/PROJECT_ID/runtime/runs/RUN_ID`. Preserve the actual Run's `taskRevisionId` and `inputHash`; do not hash an abbreviated prompt or use the latest Task revision as a substitute.
 
 Every worker Document read must specify its immutable revision: `document DOCUMENT_ID --revision REVISION_ID` or `original DOCUMENT_ID --revision REVISION_ID`. Unversioned Document detail and revision-list routes are denied, including for a report you originally wrote, because another actor may have changed its current body. `document.create` returns `revisionId`; use that returned ID directly for the report's fixed readback.
