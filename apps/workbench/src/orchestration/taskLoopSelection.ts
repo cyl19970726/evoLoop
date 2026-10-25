@@ -21,6 +21,8 @@ export function taskLoopAssociation(
     ? "同一派发关联多个循环，需核对来源" : "正式派发未匹配已读回循环" };
   const loopId = matches[0]!.loopId;
   if (runs === null) return { kind: "unresolved", reason: "运行记录尚未读回，不能确认当前循环" };
+  if (runs.some(run => run.taskId !== status.taskId))
+    return { kind: "unresolved", reason: "运行记录不属于当前任务，不能关联循环" };
   const active = runs.filter(run => inFlight.has(run.state));
   if (active.length > 1) return { kind: "unresolved", reason: "任务有多个在途运行，不能确定唯一当前循环" };
   if (active.length === 1 && (active[0]!.id !== status.runId || active[0]!.state !== status.runState))

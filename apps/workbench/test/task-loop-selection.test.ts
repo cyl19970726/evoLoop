@@ -22,6 +22,7 @@ test("ambiguous, missing and failed evidence never claims a current Loop", () =>
   assert.equal(taskLoopAssociation(status,[old,current],null,false).kind,"unresolved");
   assert.equal(taskLoopAssociation(status,[old,current],[run],true).kind,"unresolved");
   assert.equal(taskLoopAssociation(status,[old,current],[{...run,id:"other"}],false).kind,"unresolved");
+  assert.equal(taskLoopAssociation(status,[old,current],[{...run,taskId:"other-task"}],false).kind,"unresolved");
   assert.equal(taskLoopAssociation(status,[old,current],[],false).kind,"unresolved");
 });
 

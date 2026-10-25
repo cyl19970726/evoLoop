@@ -10,9 +10,11 @@ const playwrightModule = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
 const projectId = "00000000-0000-4000-8000-000000000001";
 const taskId = "00000000-0000-4000-8000-000000000002";
+const otherTaskId = "00000000-0000-4000-8000-000000000008";
 const oldId = "11111111-0000-4000-8000-000000000003";
 const newId = "22222222-0000-4000-8000-000000000004";
 const runId = "33333333-0000-4000-8000-000000000005";
+const otherRunId = "44444444-0000-4000-8000-000000000009";
 const goalId = "00000000-0000-4000-8000-000000000006";
 const stageId = "00000000-0000-4000-8000-000000000007";
 const createdAt = "2026-10-25T00:00:00.000Z";
@@ -27,27 +29,37 @@ const loop = (id: string, state: string) => ({projectId,id,version:1,goalId,stag
 
 test("built Task page selects the current Loop, preserves manual history and fits 390px", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const { chromium } = (await import(pathToFileURL(playwrightModule!).href)).default;
-  let failWorkStatus = false;
+  let failWorkStatus = false, runState = "running", workRunState = "running";
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,"http://127.0.0.1");
     if (url.pathname === "/__fixture/fail-status" && req.method === "POST") { failWorkStatus = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/run-completed" && req.method === "POST") { runState = "completed"; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/status-completed" && req.method === "POST") { workRunState = "completed"; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/status-ready" && req.method === "POST") { failWorkStatus = false; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value: unknown = page([]), status = 200;
       if (url.pathname === "/api/session") value = {principal:{actorId:"owner",projectIds:[projectId],permissions:["read"]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"夹具项目",createdAt};
-      else if (url.pathname === `${p}/tasks/${taskId}`) value = {task,revision:{...task,taskId,id:taskId,actorId:"owner",reason:"夹具",createdAt},basis:null,
+      else if (url.pathname === `${p}/tasks/${taskId}` || url.pathname === `${p}/tasks/${otherTaskId}`) {
+        const currentTask = url.pathname.endsWith(otherTaskId) ? {...task,id:otherTaskId,currentRevisionId:otherTaskId,title:"另一项任务"} : task;
+        value = {task:currentTask,revision:{...currentTask,taskId:currentTask.id,id:currentTask.id,actorId:"owner",reason:"夹具",createdAt},basis:null,
         links:[],impacts:[],decisions:[],proposal:{stageId},judgements:[],deliveries:[],observations:[],closures:[]};
+      }
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
       else if (url.pathname === `${p}/runtime/sessions`) value = [];
-      else if (url.pathname === `${p}/references/tasks/${taskId}`) value = [];
-      else if (url.pathname === `${p}/runtime/runs`) value = [{projectId,id:runId,taskId,taskRevisionId:taskId,basisSetId:taskId,sessionId:taskId,
-        operationId:taskId,input:"",inputHash:"",state:"running",version:1,nativeTurnId:null,interruptRequested:false,resultSummary:null,actorId:"owner",createdAt,updatedAt:createdAt}];
+      else if (url.pathname === `${p}/references/tasks/${taskId}` || url.pathname === `${p}/references/tasks/${otherTaskId}`) value = [];
+      else if (url.pathname === `${p}/runtime/runs`) {
+        const second = url.searchParams.get("taskId") === otherTaskId;
+        value = [{projectId,id:second ? otherRunId : runId,taskId:second ? otherTaskId : taskId,taskRevisionId:second ? otherTaskId : taskId,basisSetId:taskId,sessionId:taskId,
+          operationId:taskId,input:"",inputHash:"",state:second ? "running" : runState,version:1,nativeTurnId:null,interruptRequested:false,resultSummary:null,actorId:"owner",createdAt,updatedAt:createdAt}];
+      }
       else if (url.pathname === `${p}/orchestration/status`) value = {state:"active",running:true,busy:false,faults:[],lastError:null};
-      else if (url.pathname === `${p}/orchestration/tasks/${taskId}/context`) value = page([context(oldId,"old-dispatch"),context(newId,"new-dispatch")]);
+      else if (url.pathname === `${p}/orchestration/tasks/${taskId}/context` || url.pathname === `${p}/orchestration/tasks/${otherTaskId}/context`) value = page([context(oldId,"old-dispatch"),context(newId,"new-dispatch")]);
       else if (url.pathname === `${p}/orchestration/work-status`) {
         if (failWorkStatus) { status=503; value={message:"正式派发读取失败"}; }
-        else value = {items:[{taskId,dispatchId:"new-dispatch",runId,runState:"running"}]};
+        else value = {items:[{taskId:url.searchParams.get("taskIds"),dispatchId:"new-dispatch",runId:url.searchParams.get("taskIds") === otherTaskId ? otherRunId : runId,
+          runState:url.searchParams.get("taskIds") === otherTaskId ? "running" : workRunState}]};
       }
       else if (url.pathname === `${p}/orchestration/loops/${oldId}`) value = loop(oldId,"stopped");
       else if (url.pathname === `${p}/orchestration/loops/${newId}`) value = loop(newId,"active");
@@ -66,6 +78,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const base = `http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const browser = await chromium.launch({headless:true}); t.after(() => browser.close());
   const pageBrowser = await browser.newPage({viewport:{width:1280,height:720}});
+  await pageBrowser.clock.install();
   await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}?tab=runtime`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
@@ -73,7 +86,15 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const panel = pageBrowser.getByRole("region",{name:"自动循环观察"});
   await panel.getByText(/当前运行 33333333 关联循环 22222222/).waitFor();
   assert.match(await panel.locator(".orch-loop-head h3").innerText(),/22222222/);
-  assert.equal((await panel.locator(".orch-loop-picker button").allInnerTexts()).every(text => text.length < 40),true);
+  assert.match(await panel.getByRole("button",{name:/循环 11111111/}).innerText(),/创建.*2026/);
+  assert.equal((await panel.locator(".orch-loop-picker button").allInnerTexts()).every(text => text.length < 70),true);
+  await fetch(`${base}/__fixture/run-completed`,{method:"POST"});
+  await pageBrowser.clock.fastForward(5000);
+  await panel.getByText(/当前循环未确认/).waitFor();
+  assert.match(await panel.locator(".orch-loop-head h3").innerText(),/22222222/);
+  await fetch(`${base}/__fixture/status-completed`,{method:"POST"});
+  await pageBrowser.clock.fastForward(5000);
+  await panel.getByText(/最近正式派发关联循环 22222222/).waitFor();
   await panel.getByRole("button",{name:/循环 11111111/}).click();
   assert.match(await panel.locator(".orch-loop-head h3").innerText(),/11111111/);
   await panel.getByRole("button",{name:"重新读取"}).click();
@@ -85,4 +106,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await panel.getByRole("button",{name:"重新读取"}).click();
   await panel.getByText(/自动循环读取未完成/).waitFor();
   assert.equal(await panel.getByText(/当前运行 33333333/).count(),0);
+  await panel.getByText(/显示上次读回的循环 11111111/).waitFor();
+  assert.match(await panel.locator(".orch-loop-head h3").innerText(),/11111111/);
+  await fetch(`${base}/__fixture/status-ready`,{method:"POST"});
+  await pageBrowser.evaluate(({projectId,otherTaskId}) => { location.hash = `#/p/${projectId}/tasks/${otherTaskId}?tab=runtime`; },{projectId,otherTaskId});
+  const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"]`).getByRole("region",{name:"自动循环观察"});
+  await nextPanel.getByText(/当前运行 44444444 关联循环 22222222/).waitFor();
+  assert.match(await nextPanel.locator(".orch-loop-head h3").innerText(),/22222222/);
 });

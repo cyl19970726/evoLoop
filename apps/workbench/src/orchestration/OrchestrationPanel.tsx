@@ -55,22 +55,24 @@ async function scopeTitles(client: ReturnType<typeof orchestrationClient>, loops
   return labels;
 }
 
-export function OrchestrationPanel({ token, projectId, refresh, taskId, verifiedRuns }: { token: string; projectId: string; refresh: number; taskId?: string; verifiedRuns?: RuntimeRunRecord[] | null }) {
+export function OrchestrationPanel({ token, projectId, refresh, taskId, verifiedRuns, runtimePoll = 0 }: { token: string; projectId: string; refresh: number; taskId?: string; verifiedRuns?: RuntimeRunRecord[] | null; runtimePoll?: number }) {
   const [status, setStatus] = useState<OrchestrationStatus | null>(null);
   const [loops, setLoops] = useState<ResultPage<OrchestrationLoop>>(empty);
   const [manualLoopId, setManualLoopId] = useState<string | null>(null);
   const [workStatus, setWorkStatus] = useState<WorkTaskStatus | null>(null);
+  const [workStatusError, setWorkStatusError] = useState("");
+  const [lastVerifiedLoopId, setLastVerifiedLoopId] = useState<string | null>(null);
   const [overviewError, setOverviewError] = useState("");
   const [loading, setLoading] = useState(true);
   const [epoch, setEpoch] = useState(0);
   const [moreLoops, setMoreLoops] = useState(false);
   const [taskContexts, setTaskContexts] = useState<ResultPage<TaskLoopContext>>(empty);
   const [titles, setTitles] = useState<Record<string,string>>({});
-  useEffect(() => { setManualLoopId(null); }, [token, projectId, taskId]);
+  useEffect(() => { setManualLoopId(null); setLastVerifiedLoopId(null); }, [token, projectId, taskId]);
   useEffect(() => {
     let active = true;
     const client = orchestrationClient(token, projectId);
-    setLoading(true); setLoops(empty()); setTaskContexts(empty()); setTitles({}); setStatus(null); setWorkStatus(null); setOverviewError("");
+    setLoading(true); setOverviewError(""); setWorkStatusError("");
     void (async () => {
       if (!taskId) return client.overview();
       const [nextStatus, context, work] = await Promise.all([client.status(), client.taskContext(taskId), api(token).workStatuses(projectId,[taskId])]);
@@ -85,8 +87,22 @@ export function OrchestrationPanel({ token, projectId, refresh, taskId, verified
     }).catch(cause => { if (active) { setOverviewError(errorText(cause)); setLoading(false); } });
     return () => { active = false; };
   }, [token, projectId, taskId, refresh, epoch]);
-  const association = taskId ? taskLoopAssociation(workStatus,taskContexts.items,verifiedRuns ?? null,!!taskContexts.nextCursor) : null;
-  const selected = taskId ? selectedTaskLoop(manualLoopId,association!,loops.items.map(item => item.id)) :
+  useEffect(() => {
+    if (!taskId || runtimePoll < 2) return;
+    let active = true;
+    void api(token).workStatuses(projectId,[taskId]).then(result => {
+      if (!active) return;
+      setWorkStatus(result.items.find(item => item.taskId === taskId) ?? null); setWorkStatusError("");
+    }).catch(cause => { if (active) { setWorkStatus(null); setWorkStatusError(errorText(cause)); } });
+    return () => { active = false; };
+  }, [token, projectId, taskId, runtimePoll]);
+  const association = taskId ? taskLoopAssociation(loading || overviewError || workStatusError ? null : workStatus,
+    taskContexts.items,verifiedRuns ?? null,!!taskContexts.nextCursor) : null;
+  useEffect(() => {
+    if (association?.kind === "current" || association?.kind === "recent") setLastVerifiedLoopId(association.loopId);
+  }, [association?.kind, association?.kind !== "unresolved" ? association?.loopId : null]);
+  const selected = taskId ? selectedTaskLoop(manualLoopId,association!,loops.items.map(item => item.id)) ??
+    (lastVerifiedLoopId && loops.items.some(item => item.id === lastVerifiedLoopId) ? lastVerifiedLoopId : null) :
     manualLoopId && loops.items.some(item => item.id === manualLoopId) ? manualLoopId : loops.items[0]?.id ?? null;
   async function loadMoreLoops() {
     if (taskId) {
@@ -113,7 +129,8 @@ export function OrchestrationPanel({ token, projectId, refresh, taskId, verified
   return <section className="panel orchestration-panel" aria-label="自动循环观察">
     <div className="panel-head"><h2>自动循环观察</h2><button onClick={() => setEpoch(value => value + 1)}>重新读取</button></div>
     <p className="muted">这里展示受管循环的入站、派发和交付证据。事件是审计记录；Run 完成不表示交付已封存、已使用或 Task 已验收。</p>
-    {overviewError && <Notice error>自动循环读取未完成：{overviewError}。当前记录可能不完整。</Notice>}
+    {overviewError && <Notice error>自动循环读取未完成：{overviewError}。保留上次读回的循环供核对，当前关联未确认。</Notice>}
+    {workStatusError && <Notice error>正式派发状态读取未完成：{workStatusError}。保留上次循环供核对，当前关联未确认。</Notice>}
     {loading && <p>正在读取循环状态…</p>}
     {status && <div className="orch-status">
       <strong>{status.state === "disabled" ? "自动循环未配置／尚未启用" : status.running === false ? "自动循环当前未运行" : "自动循环状态"}</strong>
@@ -123,13 +140,13 @@ export function OrchestrationPanel({ token, projectId, refresh, taskId, verified
       {status.faults?.map((fault, index) => <p key={index}>运行故障：{typeof fault === "string" ? fault : fault.code}</p>)}
     </div>}
     {!loading && loops.items.length === 0 && !overviewError && <p className="empty">{taskId ? "当前任务没有读到关联的受管循环。" : status?.state === "disabled" ? "自动循环未配置或尚未启用；没有可观察的受管循环。" : "尚未登记受管循环。"}</p>}
-    {taskId && !loading && loops.items.length > 0 && <p className="orch-context-label">{association?.kind === "current" ? `当前运行 ${short(association.runId!)} 关联循环 ${short(association.loopId)}` :
+    {taskId && loops.items.length > 0 && <p className="orch-context-label">{loading ? "正在重新核对当前循环；以下是上次读回的循环。" : association?.kind === "current" ? `当前运行 ${short(association.runId!)} 关联循环 ${short(association.loopId)}` :
       association?.kind === "recent" ? `最近正式派发关联循环 ${short(association.loopId)}；当前没有已核对的在途运行` :
-      `当前循环未确认：${association?.kind === "unresolved" ? association.reason : "运行证据尚未读回"}。可手动查看历史循环。`}</p>}
+      `当前循环未确认：${overviewError || workStatusError ? "读取失败" : association?.kind === "unresolved" ? association.reason : "运行证据尚未读回"}。${selected ? `显示上次读回的循环 ${short(selected)}，仅供核对。` : "可手动查看历史循环。"}`}</p>}
     {loops.items.length > 0 && <><div className="orch-loop-picker" role="group" aria-label="选择循环">
       {loops.items.map(loop => <button className={selected === loop.id ? "selected" : ""} aria-pressed={selected === loop.id} key={loop.id} onClick={() => setManualLoopId(loop.id)}>
         {taskId && association?.kind !== "unresolved" && association?.loopId === loop.id ? <strong>{association.kind === "current" ? "当前运行" : "最近派发"} · </strong> : null}
-        循环 {short(loop.id)} · {statusLabel(loop.state)}
+        循环 {short(loop.id)} · {statusLabel(loop.state)} · 创建 {date(loop.createdAtUtc)}
       </button>)}
     </div>{(taskId ? taskContexts.nextCursor : loops.nextCursor) && <button disabled={moreLoops} onClick={loadMoreLoops}>{moreLoops ? "读取中…" : `继续读取关联循环（已载入 ${loops.items.length}，还有更多）`}</button>}
       {taskId && manualLoopId && selected === manualLoopId && association?.kind !== "unresolved" && manualLoopId !== association?.loopId && <p className="orch-history-label">手动查看历史循环 {short(manualLoopId)} · {statusLabel(loops.items.find(item => item.id === manualLoopId)!.state)}；当前运行上下文见上方。</p>}
