@@ -7,9 +7,10 @@ import type { SchedulingReader, SchedulingTransaction } from "./scheduling.js";
 import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./process-documents.js";
 import type { DiscussionRecord, DiscussionEvent } from "./discussions.js";
 import type { EvaluationReader, EvaluationTransaction } from "./evaluation.js";
+import type { ResidentReader, ResidentTransaction } from "./resident-hosts.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
-export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader {
+export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
   /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
   getCognitiveClosureFact?(decisionId: string): Promise<CognitiveClosureFact | null>;
   getWaitingHandoffFact?(inboxId: string): Promise<WaitingHandoffFact | null>;
@@ -75,7 +76,7 @@ export interface ChildHandoffFact {
   /** Present only for a verified, historically completed Division transfer and receiving worker receipt. */
   division?: { bindingId: string; waitingDecisionId: string; acknowledgedRunId: string };
 }
-export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
+export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, ResidentTransaction, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;

@@ -12,6 +12,8 @@ import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
+import type { BusinessDomain, BusinessDomainRevision, HostLink, HostLinkRevision } from "@evoloop/contracts/resident-hosts";
+import { PgResidentHosts } from "./resident-hosts.js";
 import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
@@ -36,13 +38,13 @@ const rowDocumentRevision = (r: Row): DocumentRevision => ({ projectId: r.projec
 const legacyTaskStates = new Set(["proposed", "ready", "active", "review", "blocked", "deferred"]);
 const rowTask = (r: Row): Task => ({ projectId: r.project_id, id: r.task_id, version: r.version,
   currentRevisionId: r.current_revision_id, title: r.title, content: r.content,
-  contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind,
+  contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, domainId: r.domain_id ?? null,
   acceptance: r.acceptance, owner: r.owner, state: r.state,
   legacyDecision: legacyTaskStates.has(r.legacy_state)
     ? { state: r.legacy_state, decision: r.legacy_judgement_decision ?? null,
       reason: r.legacy_judgement_reason ?? r.legacy_revision_reason }
     : null });
-const rowTaskRevision = (r: Row): TaskRevision => ({ projectId: r.project_id, taskId: r.task_id, id: r.revision_id, version: r.version, title: r.title, content: r.content, contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, acceptance: r.acceptance, owner: r.owner, state: r.state, basisSetId: r.basis_set_id, actorId: r.actor_id, reason: r.reason, createdAt: iso(r.created_at) });
+const rowTaskRevision = (r: Row): TaskRevision => ({ projectId: r.project_id, taskId: r.task_id, id: r.revision_id, version: r.version, title: r.title, content: r.content, contentDocumentId: r.content_document_id, contentRevisionId: r.content_revision_id, kind: r.kind, domainId: r.domain_id ?? null, acceptance: r.acceptance, owner: r.owner, state: r.state, basisSetId: r.basis_set_id, actorId: r.actor_id, reason: r.reason, createdAt: iso(r.created_at) });
 const rowLink = (r: Row): TaskDocumentLink => ({ projectId: r.project_id, id: r.link_id, taskId: r.task_id, documentId: r.document_id, actorId: r.actor_id, createdAt: iso(r.created_at) });
 const rowImpact = (r: Row): Impact => ({ projectId: r.project_id, id: r.impact_id, taskId: r.task_id, taskRevisionId: r.task_revision_id, documentId: r.document_id, fromRevisionId: r.from_revision_id, toRevisionId: r.to_revision_id, state: r.state, decisionId: r.decision_id, createdAt: iso(r.created_at) });
 const rowBasisDecision = (r: Row): BasisDecision => ({ projectId: r.project_id, id: r.decision_id, impactId: r.impact_id, taskId: r.task_id, previousTaskRevisionId: r.previous_task_revision_id, nextTaskRevisionId: r.next_task_revision_id, decision: r.decision, reason: r.reason, actorId: r.actor_id, createdAt: iso(r.created_at) });
@@ -84,6 +86,7 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 class PgReader implements Reader {
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
+  protected readonly residents: PgResidentHosts;
   protected readonly scheduling: PgSchedulingQueries;
   protected readonly references: PgReferenceStore;
   protected readonly payloads: PgDocumentPayloadStore;
@@ -93,6 +96,7 @@ class PgReader implements Reader {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
+    this.residents = new PgResidentHosts(client, projectId);
     this.scheduling = new PgSchedulingQueries(client, projectId);
     this.payloads = new PgDocumentPayloadStore(client, projectId);
     this.discussions = new PgDiscussionQueries(client, projectId);
@@ -118,6 +122,12 @@ class PgReader implements Reader {
   listReviews(id: string) { return this.roles.listReviews(id); }
   listHandoffs(id: string) { return this.roles.listHandoffs(id); }
   listSessionBindings(id: string) { return this.roles.listSessionBindings(id); }
+  getBusinessDomain(id: string) { return this.residents.getBusinessDomain(id); }
+  listBusinessDomains() { return this.residents.listBusinessDomains(); }
+  listBusinessDomainRevisions(id: string) { return this.residents.listBusinessDomainRevisions(id); }
+  getHostLink(id: string) { return this.residents.getHostLink(id); }
+  listHostLinks(roleId: string) { return this.residents.listHostLinks(roleId); }
+  listHostLinkRevisions(id: string) { return this.residents.listHostLinkRevisions(id); }
   getSchedule(id: string) { return this.scheduling.getSchedule(id); }
   getManagedScheduleLoop(id: string) { return this.scheduling.getManagedScheduleLoop(id); }
   listSchedules() { return this.scheduling.listSchedules(); }
@@ -422,6 +432,10 @@ class PgReader implements Reader {
 }
 
 class PgTransaction extends PgReader implements Transaction {
+  createBusinessDomain(value: BusinessDomain, revision: BusinessDomainRevision) { return this.residents.createBusinessDomain(value, revision); }
+  advanceBusinessDomain(value: BusinessDomain, expectedVersion: number, revision: BusinessDomainRevision) { return this.residents.advanceBusinessDomain(value, expectedVersion, revision); }
+  createHostLink(value: HostLink, revision: HostLinkRevision) { return this.residents.createHostLink(value, revision); }
+  advanceHostLink(value: HostLink, expectedVersion: number, revision: HostLinkRevision) { return this.residents.advanceHostLink(value, expectedVersion, revision); }
   insertEvaluationRevision(value: import("@evoloop/contracts/evaluation").EvaluationRevision) { return this.evaluations.insertEvaluationRevision(value); }
   insertEvaluationAttempt(value: import("@evoloop/contracts/evaluation").EvaluationAttempt) { return this.evaluations.insertEvaluationAttempt(value); }
   insertEvaluationAssessment(value: import("@evoloop/contracts/evaluation").EvaluationAssessment) { return this.evaluations.insertEvaluationAssessment(value); }
@@ -507,11 +521,11 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async insertTask(t: Task): Promise<void> {
     this.assertScope(t.projectId);
-    await this.client.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,kind,content_document_id,content_revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.acceptance, t.owner, t.state, t.kind, t.contentDocumentId, t.contentRevisionId]);
+    await this.client.query("INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,kind,content_document_id,content_revision_id,domain_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.acceptance, t.owner, t.state, t.kind, t.contentDocumentId, t.contentRevisionId, t.domainId ?? null]);
   }
   async insertTaskRevision(r: TaskRevision): Promise<void> {
     this.assertScope(r.projectId);
-    await this.client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", [this.projectId, r.taskId, r.id, r.version, r.title, r.acceptance, r.owner, r.state, r.kind, r.contentDocumentId, r.contentRevisionId, r.basisSetId, r.actorId, r.reason, r.createdAt]);
+    await this.client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at,domain_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)", [this.projectId, r.taskId, r.id, r.version, r.title, r.acceptance, r.owner, r.state, r.kind, r.contentDocumentId, r.contentRevisionId, r.basisSetId, r.actorId, r.reason, r.createdAt, r.domainId ?? null]);
   }
   async insertSealedBasisSet(b: BasisSet): Promise<void> {
     this.assertScope(b.projectId);
@@ -524,7 +538,7 @@ class PgTransaction extends PgReader implements Transaction {
   }
   async updateTask(t: Task, expectedVersion: number): Promise<void> {
     this.assertScope(t.projectId);
-    const r = await this.client.query("UPDATE task SET version=$3,current_revision_id=$4,title=$5,acceptance=$6,owner=$7,state=$8,kind=$9,content_document_id=$10,content_revision_id=$11 WHERE project_id=$1 AND task_id=$2 AND version=$12 RETURNING version", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.acceptance, t.owner, t.state, t.kind, t.contentDocumentId, t.contentRevisionId, expectedVersion]);
+    const r = await this.client.query("UPDATE task SET version=$3,current_revision_id=$4,title=$5,acceptance=$6,owner=$7,state=$8,kind=$9,content_document_id=$10,content_revision_id=$11,domain_id=$13 WHERE project_id=$1 AND task_id=$2 AND version=$12 RETURNING version", [this.projectId, t.id, t.version, t.currentRevisionId, t.title, t.acceptance, t.owner, t.state, t.kind, t.contentDocumentId, t.contentRevisionId, expectedVersion, t.domainId ?? null]);
     if (!r.rowCount) throw await this.versionConflict("task", "task_id", t.id);
   }
   async insertLink(l: TaskDocumentLink): Promise<void> {

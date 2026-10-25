@@ -3,11 +3,12 @@ import { z } from "zod";
 const id = z.uuid();
 const text = z.string().trim().min(1).max(4000);
 const short = z.string().trim().min(1).max(240);
+export const roleTemplateKeySchema = z.enum(["lead", "cognition", "division", "product", "architecture", "development-workflow", "functional-development"]);
 const common = { projectId: id, operationId: id, roleId: id };
 const evidence = z.strictObject({ kind: z.enum(["backlog", "omission", "rework", "effect", "cost"]), observation: text, sourceRef: text, observedAtUtc: z.iso.datetime() });
 const alternative = z.strictObject({ kind: z.enum(["method", "knowledge", "another-instance", "temporary-assignment"]), assessment: text, estimatedCost: text });
 export const roleProposalSchema = z.strictObject({
-  title: short, goal: text, independentResponsibility: text, ownerScope: text,
+  title: short, roleClass: z.enum(["system", "business"]).optional(), templateKey: roleTemplateKeySchema.optional(), goal: text, independentResponsibility: text, ownerScope: text,
   inputs: z.array(text).min(1).max(20), writableAssets: z.array(text).max(20), deliverables: z.array(text).min(1).max(20),
   triggers: z.array(text).min(1).max(20), workflow: text, handoffBoundary: text,
   evidence: z.array(evidence).min(1).max(40), alternatives: z.array(alternative).min(4).max(4),
@@ -29,11 +30,21 @@ export const roleCommands = [
   z.strictObject({ ...common, type: z.literal("role.handoff"), expectedVersion: z.number().int().positive(), handoffId: id, kind: z.enum(["task", "knowledge", "session"]), sourceRef: text, targetRoleId: id, observedTaskVersion: z.number().int().positive().optional(), note: text }),
   z.strictObject({ ...common, type: z.literal("role.ackHandoff"), expectedVersion: z.number().int().positive(), handoffId: id, note: text }),
   z.strictObject({ ...common, type: z.literal("role.bindSession"), expectedVersion: z.number().int().positive(), sessionId: id, note: text }),
+  z.strictObject({ ...common, type: z.literal("role.classify"), expectedVersion: z.number().int().positive(), roleClass: z.enum(["system", "business"]), templateKey: roleTemplateKeySchema.nullable().optional(), reason: text }),
   z.strictObject({ ...common, type: z.literal("role.retire"), expectedVersion: z.number().int().positive(), reason: text, knowledgeDisposition: text, runtimeDisposition: text }),
 ] as const;
 export const roleCommandSchema = z.discriminatedUnion("type", roleCommands);
 export type RoleCommand = z.infer<typeof roleCommandSchema>;
 export type RoleState = "candidate" | "trial" | "active" | "retirement-pending" | "retired" | "rejected" | "deferred";
+export const initialRoleTemplates = [
+  { key: "lead", title: "Lead", roleClass: "system" },
+  { key: "cognition", title: "认知", roleClass: "system" },
+  { key: "division", title: "分工", roleClass: "system" },
+  { key: "product", title: "产品", roleClass: "business" },
+  { key: "architecture", title: "架构", roleClass: "business" },
+  { key: "development-workflow", title: "开发流程与规范", roleClass: "business" },
+  { key: "functional-development", title: "功能开发", roleClass: "business" },
+] as const;
 export interface RoleRecord { projectId: string; id: string; version: number; currentRevisionId: string; state: RoleState; proposal: RoleProposal; proposedBy: string; createdAtUtc: string; trialStartedAtUtc: string | null; reviewAtUtc: string; mergeTargetRoleId: string | null }
 export interface RoleRevision { projectId: string; roleId: string; id: string; version: number; state: RoleState; proposal: RoleProposal; actorId: string; reason: string; createdAtUtc: string; reviewAtUtc: string; mergeTargetRoleId: string | null }
 export interface RoleDecision { projectId: string; id: string; roleId: string; revisionId: string; decision: "accept-trial" | "reject" | "defer"; actorId: string; reason: string; createdAtUtc: string }

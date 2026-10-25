@@ -9,6 +9,8 @@ import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
+import { applyResident } from "./resident-hosts.js";
+import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
 import { applyDiscussion } from "./discussions.js";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
@@ -137,7 +139,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
-    if (command.type.startsWith("evaluation.")) return "review";
+    if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
@@ -268,6 +270,10 @@ export class WorkflowService {
       case "task.create": {
         if (await tx.getTask(command.taskId)) throw new DomainError("ALREADY_EXISTS", "Task already exists");
         requireBody(command.content);
+        if (command.domainId) {
+          const domain = required(await tx.getBusinessDomain(command.domainId), "Business domain");
+          if (domain.state !== "active") throw new DomainError("DOMAIN_RETIRED", "Task requires an active domain");
+        }
         const documentIds = command.documentIds ?? [];
         if (new Set(documentIds).size !== documentIds.length) throw new DomainError("DUPLICATE_DOCUMENT", "Linked documents must be unique");
         if (command.stageId) {
@@ -287,11 +293,11 @@ export class WorkflowService {
           author: actorId, createdAt: now, previousRevisionId: null, reason: "Initial task content" };
         const task: Task = { projectId: command.projectId, id: command.taskId, version: 1,
           currentRevisionId: revisionId, title: command.title, content: command.content,
-          contentDocumentId: documentId, contentRevisionId, kind: command.kind ?? null,
+          contentDocumentId: documentId, contentRevisionId, kind: command.kind ?? null, domainId: command.domainId ?? null,
           acceptance: command.acceptance, owner: command.owner, state: "todo" };
         const revision: TaskRevision = { projectId: command.projectId, taskId: task.id, id: revisionId,
           version: 1, title: task.title, content: task.content, contentDocumentId: documentId,
-          contentRevisionId, kind: task.kind, acceptance: task.acceptance, owner: task.owner,
+          contentRevisionId, kind: task.kind, domainId: task.domainId ?? null, acceptance: task.acceptance, owner: task.owner,
           state: "todo", basisSetId: null, actorId, reason: "Initial task", createdAt: now };
         await tx.insertDocument(document);
         await tx.insertDocumentRevision(contentRevision);
@@ -324,6 +330,13 @@ export class WorkflowService {
         if (linked.some(id => !documentIds.includes(id))) throw new DomainError("LINK_REMOVAL_UNSUPPORTED", "Existing document links cannot be removed by task.update");
         for (const id of documentIds) required(await tx.getDocument(id), "Linked document");
         const prior = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "Task revision");
+        const domainId = command.domainId === undefined ? prior.domainId ?? null : command.domainId;
+        if (domainId !== (prior.domainId ?? null) && task.state !== "todo")
+          throw new DomainError("REOPEN_REQUIRED", "Return the Task to todo before changing its domain");
+        if (domainId && domainId !== (prior.domainId ?? null)) {
+          const domain = required(await tx.getBusinessDomain(domainId), "Business domain");
+          if (domain.state !== "active") throw new DomainError("DOMAIN_RETIRED", "Task requires an active domain");
+        }
         const priorProposal = await tx.getTaskProposal(task.id);
         const priorStageId = priorProposal?.stageId ?? null;
         const stageId = command.stageId === undefined ? priorStageId : command.stageId;
@@ -381,7 +394,7 @@ export class WorkflowService {
         }
         const basisSetId = (prior.basisSetId || selectedExtras !== undefined) ? this.deps.ids.next() : null;
         const revision: TaskRevision = { ...prior, id: revisionId, version: task.version + 1, state: task.state, title: command.title,
-          content: command.content, contentRevisionId, kind, acceptance: command.acceptance, owner: command.owner,
+          content: command.content, contentRevisionId, kind, domainId, acceptance: command.acceptance, owner: command.owner,
           basisSetId, actorId, reason: command.reason, createdAt: now };
         await tx.insertTaskRevision(revision);
         if (basisSetId) {
@@ -394,7 +407,7 @@ export class WorkflowService {
             ...(retentions.length ? { retentions } : {}) });
         }
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
-          title: revision.title, content: revision.content, contentRevisionId, kind, acceptance: revision.acceptance,
+          title: revision.title, content: revision.content, contentRevisionId, kind, domainId, acceptance: revision.acceptance,
           owner: revision.owner }, task.version);
         if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
           await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
@@ -517,6 +530,7 @@ export class WorkflowService {
       case "role.handoff":
       case "role.ackHandoff":
       case "role.bindSession":
+      case "role.classify":
       case "role.retire": {
           try {
             const result = await applyRole(tx, principal, command, { nowUtc: now, nextId: () => this.deps.ids.next() });
@@ -525,6 +539,17 @@ export class WorkflowService {
             if (error instanceof RoleRuleError) throw new DomainError(error.code, error.message, error.currentVersion);
             throw error;
           }
+      }
+      case "domain.create":
+      case "domain.update":
+      case "host.register":
+      case "host.verify":
+      case "host.revoke": {
+          const applied = await applyResident(tx, principal, command,
+            now, () => this.deps.ids.next());
+          return { result: { ...base, entityId: applied.entityId, version: applied.version,
+            ...(applied.revisionId ? { revisionId: applied.revisionId } : {}) },
+            effects: [{ kind: applied.kind, entityId: applied.entityId, version: applied.version }] };
       }
       default:
         if (command.type === "evaluation.create" || command.type === "evaluation.revise" ||
@@ -683,6 +708,50 @@ export class WorkflowService {
   listRoleReviews(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listReviews(roleId); }); }
   listRoleHandoffs(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listHandoffs(roleId); }); }
   listRoleSessionBindings(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listSessionBindings(roleId); }); }
+  listBusinessDomains(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listBusinessDomains()); }
+  getBusinessDomain(principal: Principal, projectId: string, domainId: string) { return this.read(principal, projectId, async reader => required(await reader.getBusinessDomain(domainId), "Business domain")); }
+  listBusinessDomainRevisions(principal: Principal, projectId: string, domainId: string) { return this.read(principal, projectId, async reader => {
+    required(await reader.getBusinessDomain(domainId), "Business domain"); return reader.listBusinessDomainRevisions(domainId);
+  }); }
+  listHostLinks(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => {
+    required(await reader.getRole(roleId), "Role"); return reader.listHostLinks(roleId);
+  }); }
+  getHostLink(principal: Principal, projectId: string, linkId: string) { return this.read(principal, projectId, async reader => required(await reader.getHostLink(linkId), "Host link")); }
+  listHostLinkRevisions(principal: Principal, projectId: string, linkId: string) { return this.read(principal, projectId, async reader => {
+    required(await reader.getHostLink(linkId), "Host link"); return reader.listHostLinkRevisions(linkId);
+  }); }
+  getDomainRoute(principal: Principal, projectId: string, domainId: string): Promise<DomainRoute> {
+    return this.read(principal, projectId, async reader => {
+      const domain = required(await reader.getBusinessDomain(domainId), "Business domain");
+      const role = domain.roleId ? await reader.getRole(domain.roleId) : null;
+      const base = { domain, role, link: null, session: null, automaticStart: false as const };
+      if (domain.state !== "active" || !domain.roleId) return { ...base, status: "unassigned" as const };
+      if (!role || (role.state !== "trial" && role.state !== "active")) return { ...base, status: "role-unavailable" as const };
+      const allLinks = await reader.listHostLinks(role.id);
+      const links = allLinks.filter(link => link.state !== "revoked");
+      const revokedOwnedSessions = new Set(allLinks.filter(link => link.state === "revoked" && link.host.kind === "owned")
+        .map(link => (link.host as {kind:"owned";sessionId:string}).sessionId));
+      const bindings = await reader.listSessionBindings(role.id);
+      for (const link of links.filter(item => item.host.kind === "owned" && item.state === "verified")) {
+        const sessionId = (link.host as {kind:"owned";sessionId:string}).sessionId;
+        const session = await reader.getRuntimeSession(sessionId);
+        if (session?.projectId === projectId && session.roleId === role.id && session.state === "ready" &&
+          session.nativeThreadId && bindings.some(binding => binding.sessionId === session.id))
+          return { domain, role, link, session, status: "owned-ready", automaticStart: false };
+      }
+      // Existing formal Role bindings predate host links and remain authoritative owned hosts.
+      for (const binding of [...bindings].reverse()) {
+        if (revokedOwnedSessions.has(binding.sessionId)) continue;
+        const session = await reader.getRuntimeSession(binding.sessionId);
+        if (session?.projectId === projectId && session.roleId === role.id && session.state === "ready" && session.nativeThreadId)
+          return { domain, role, link: null, session, status: "owned-ready", automaticStart: false };
+      }
+      const external = links.find((item: HostLink) => item.host.kind === "external" && item.state === "verified" &&
+        item.verifiedCapabilities.includes("manual-claim"));
+      if (external) return { ...base, link: external, status: "external-manual" };
+      return { ...base, link: links[0] ?? null, status: links.length ? "host-unverified" : "unlinked" };
+    });
+  }
   getSchedule(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => required(await reader.getSchedule(scheduleId), "Schedule")); }
   listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
   listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }

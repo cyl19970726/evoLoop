@@ -17,6 +17,9 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
   await runner({databaseUrl:database!,dir:migrations,migrationsTable:"pgmigrations",schema,
     createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:19,log:()=>{}});
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
+  // Seed with the current writer's nullable domain fields, then remove them so
+  // the real migration still starts from the complete historical 019 schema.
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),taskId=randomUUID(),loopId=randomUUID();
@@ -52,7 +55,13 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
       VALUES($1,$2,$3,$4,$5,2,1,'pending',$6::jsonb)`,[projectId,dispatchId,loopId,inboxId,taskId,JSON.stringify(oldDispatch)]);
     await client.query("COMMIT");
   } catch(error) {await client.query("ROLLBACK");throw error;} finally {client.release();}
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[projectId])).rows[0].n>0,true);
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
+    AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0);
   await migrate(database!,schema);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[projectId])).rows[0].n,0);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[projectId])).rows[0].n,0);
   const loop=(await pool.query("SELECT data,current_policy_revision_id FROM orchestration_loop WHERE project_id=$1 AND loop_id=$2",[projectId,loopId])).rows[0];
   const dispatch=(await pool.query("SELECT data,policy_revision_id,binding_id FROM orchestration_dispatch WHERE project_id=$1 AND dispatch_id=$2",[projectId,dispatchId])).rows[0];
   const policy=(await pool.query("SELECT * FROM loop_policy_revision WHERE project_id=$1 AND policy_id=$2",[projectId,loop.current_policy_revision_id])).rows[0];
