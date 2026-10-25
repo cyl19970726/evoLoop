@@ -1,0 +1,5 @@
+.task-owner-meta { display: inline-flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.task-owner-meta code { white-space: normal; overflow-wrap: anywhere; }
+.task-owner-meta small { color: #69768e; font-size: .78rem; }
+.task-owner-sessions { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.task-owner-sessions a { overflow-wrap: anywhere; }

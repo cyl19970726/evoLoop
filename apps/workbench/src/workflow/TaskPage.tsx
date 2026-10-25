@@ -6,6 +6,7 @@ import type { MutationContext } from "./ActionForm";
 import { RuntimePanel } from "../runtime/RuntimePanel";
 import { ReferencePanel } from "../references/ReferencePanel";
 import { TaskWorkflow } from "./TaskWorkflow";
+import { TaskOwner } from "./TaskOwner";
 import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
@@ -243,7 +244,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     <header className="task-page-header">
       <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
       <p><a href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(id)}`}>查看此任务的评价与后果 →</a></p>
-      <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<span>责任者：{detail.task.owner}</span><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
+      <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} /><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
     </header>
     {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => selectTab("history")}>查看历史时间线 →</button></Alert>}
     {error && <Alert kind="error">当前任务回读失败：{error}。页首保留上次读回内容，不能视为当前状态；编辑草稿仍留在本页。</Alert>}

@@ -15,6 +15,7 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.uuid().optional() }).parse(request.query);
     return service.listRoles(principal(request), p.projectId, q.limit, q.cursor);
   });
+  app.get("/api/projects/:projectId/roles/:id", request => { const p = params(request.params); return service.getRole(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/role-templates", request => {
     const p = params(request.params);
     return service.listRoles(principal(request), p.projectId, 100).then(roles => ({
