@@ -17,6 +17,7 @@
     "./resident-hosts": "./dist/resident-hosts.js",
     "./delivery": "./dist/delivery.js",
     "./discussions": "./dist/discussions.js",
+    "./queues": "./dist/queues.js",
     "./references": "./dist/references.js",
     "./evaluation": "./dist/evaluation.js",
     "./orchestration": "./dist/orchestration.js",

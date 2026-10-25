@@ -1,6 +1,6 @@
 import { commandSchema } from "@evoloop/contracts";
 import type {
-  AppliedResult, BasisDecision, BasisSet, Command, CommandResult, Document, DocumentDecision,
+  AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
   DocumentDetail, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
@@ -13,6 +13,11 @@ import { applyResident } from "./resident-hosts.js";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
 import { applyDiscussion } from "./discussions.js";
+import { applyTaskCollaboration, taskAnswerInputBlock } from "./task-collaboration.js";
+export { taskAnswerInputBlock } from "./task-collaboration.js";
+import { applyQueue } from "./queues/index.js";
+import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
+import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
 export { RuntimeWorkflowService } from "./runtime/service.js";
@@ -20,7 +25,18 @@ import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork }
 
 export { DomainError } from "@evoloop/contracts/ports";
 
-export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory; hasher: ContentHasher }
+export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory; hasher: ContentHasher;
+  collaborationAuthority?: {
+    actorForRole(projectId:string,roleId:string):Promise<string|null>;
+    isAuthorizedRoleActor(projectId:string,actorId:string,roleId:string):Promise<boolean>;
+    isProjectActor(projectId:string,actorId:string):Promise<boolean>;
+    hasEngineeringActionGrant(principal:Principal,action:Extract<TaskCollaborationPayload,{type:"action_request"}>):Promise<boolean>;
+  };
+}
+function fixedUuid(hash:string):string {
+  const h=hash.slice(0,32);
+  return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`;
+}
 type Effect = { kind: string; entityId: string; version: number };
 type Outcome = { result: AppliedResult; effects: Effect[] };
 
@@ -79,7 +95,7 @@ function pageLimit(limit = 50): number {
 export class WorkflowService {
   constructor(private readonly deps: WorkflowDependencies) {}
 
-  async execute(principal: Principal, input: Command): Promise<CommandResult> {
+  async execute(principal: Principal, input: CommandInput): Promise<CommandResult> {
     const parsed = commandSchema.safeParse(input);
     if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
@@ -139,6 +155,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
+    if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
@@ -552,6 +569,88 @@ export class WorkflowService {
             effects: [{ kind: applied.kind, entityId: applied.entityId, version: applied.version }] };
       }
       default:
+        if (command.type.startsWith("queue.")) {
+          if (!tx.queue) throw new DomainError("QUEUE_UNAVAILABLE", "queue persistence is not configured");
+          const queueCommand = command as import("@evoloop/contracts/queues").QueueCommand;
+          try {
+            const applied = await applyQueue(tx.queue,tx,principal,queueCommand,{nowUtc:now,nextId:()=>this.deps.ids.next()});
+            const effects:Effect[]=[{kind:"queue",entityId:applied.queueId,version:applied.version}];
+            if(applied.runId && applied.claimId && (command.type==="queue.claim"||command.type==="queue.continue")) {
+              if(command.runOperationId!==command.operationId) throw new DomainError("RUN_OPERATION_MISMATCH", "queue and Run reservation must use the same operation ID");
+              const entry=(await tx.queue.getResidentQueue(command.queueId))!.entries.find(x=>x.id===command.entryId)!;
+              const task=required(await tx.getTask(entry.taskId),"Task");
+              const session=required(await tx.getRuntimeSession(entry.sessionId),"Session");
+              const recipient=await this.deps.collaborationAuthority?.actorForRole(command.projectId,entry.roleId);
+              if(!recipient)throw new DomainError("RECIPIENT_HELD","No current business actor is bound to this Role");
+              const discussionId=fixedUuid(this.deps.hasher.hash(`queue-channel:${command.projectId}:${command.runId}`));
+              const documentId=fixedUuid(this.deps.hasher.hash(`queue-channel-document:${command.projectId}:${command.runId}`));
+              let answeredContext="";
+              if(command.type==="queue.continue"){
+                const attempts=await tx.queue.listResidentQueueAttempts(command.claimId);
+                const prior=attempts.at(-2);
+                if(!prior)throw new DomainError("CONTINUATION_SOURCE_MISSING","previous Run intent is required");
+                const sourceChannelId=fixedUuid(this.deps.hasher.hash(`queue-channel:${command.projectId}:${prior.runId}`));
+                const channel=required(await tx.getDiscussion(sourceChannelId),"Previous Task channel");
+                if(channel.projectId!==command.projectId||channel.collaboration?.runId!==prior.runId||
+                  channel.collaboration.sessionId!==entry.sessionId||channel.task?.id!==task.id)
+                  throw new DomainError("CONTINUATION_SOURCE_MISMATCH","question and answer must belong to the previous Task Run");
+                const messages=command.answeredQuestions.length?await tx.listDiscussionEvents(sourceChannelId):[];
+                const lines:string[]=[];
+                for(const pair of command.answeredQuestions){
+                  const question=messages.find(x=>x.id===pair.questionEventId);
+                  const answer=messages.find(x=>x.id===pair.answerEventId);
+                  if(question?.collaborationPayload?.type!=="message"||question.collaborationPayload.kind!=="question"||
+                    answer?.collaborationPayload?.type!=="message"||answer.collaborationPayload.kind!=="answer"||
+                    answer.collaborationPayload.replyToEventId!==question.id)
+                    throw new DomainError("CONTINUATION_ANSWER_MISMATCH","continuation must cite an actual answered question");
+                  const answerRef=answer.collaborationPayload.body;
+                  const answerDocument=required(await tx.getDocument(answerRef.documentId),"Answer Document");
+                  const answerRevision=required(await tx.getDocumentRevision(answerRef.documentId,answerRef.revisionId),"Answer revision");
+                  if(answerDocument.projectId!==command.projectId||answerRevision.projectId!==command.projectId||
+                    answerRevision.documentId!==answerDocument.id||answerRevision.body===null||
+                    answerRevision.format!=="markdown"||this.deps.hasher.hash(answerRevision.body)!==answerRevision.contentHash)
+                    throw new DomainError("CONTINUATION_ANSWER_INVALID","fixed answer Document revision is invalid");
+                  lines.push(`Question ${question.id} document ${question.collaborationPayload.body.documentId}@${question.collaborationPayload.body.revisionId}`,
+                    taskAnswerInputBlock(sourceChannelId,answer.id,{documentId:answerRevision.documentId,revisionId:answerRevision.id,
+                      contentHash:answerRevision.contentHash,text:answerRevision.body}));
+                }
+                answeredContext=`\nContinuation reason: ${command.reason}\nPrevious Run ${prior.runId}; previous Task channel ${sourceChannelId}.`+
+                  (lines.length?`\nFixed answered messages:\n${lines.join("\n")}`:"\nContinue from the newly amended fixed Task input; no answered question is claimed.");
+              }
+              const input=`Task ${entry.taskId} fixed source ${entry.taskRevisionId}\n${task.title}\n${task.content}\nAcceptance: ${task.acceptance}${answeredContext}\nTask channel ${discussionId} (Run ${command.runId}). Read with evoLoop CLI: read discussion ${discussionId} --project ${command.projectId}; post question/progress/results with your own CLI identity using discussion.message.post and a fixed Document revision. Keep this Run bound to its fixed scope.`;
+              const reserved=await reserveRuntime({tx,principal:{...principal,actorId:session.actorId},now,nextId:()=>this.deps.ids.next(),hash:value=>this.deps.hasher.hash(value),
+                command:{type:"runtime.run.reserve",projectId:command.projectId,operationId:command.operationId,
+                  runId:command.runId,taskId:entry.taskId,sessionId:entry.sessionId,expectedVersion:task.version,input},
+                queueClaim:{claimId:applied.claimId,runId:command.runId,operationId:command.operationId,taskId:entry.taskId,sessionId:entry.sessionId}});
+              effects.push(...reserved.effects);
+              const opened=await applyTaskCollaboration({tx,principal,now,nextId:()=>this.deps.ids.next(),hasher:this.deps.hasher,
+                command:{type:"discussion.openTask",projectId:command.projectId,operationId:command.operationId,
+                  discussionId,documentId,title:`Task ${task.title}`,task:{id:task.id,revisionId:reserved.result.revisionId!},
+                  runId:command.runId,sessionId:entry.sessionId,recipientActorId:recipient},
+                isAuthorizedRoleActor:this.deps.collaborationAuthority?.isAuthorizedRoleActor??(async()=>false),
+                isProjectActor:this.deps.collaborationAuthority?.isProjectActor??(async()=>false),
+                hasEngineeringActionGrant:this.deps.collaborationAuthority?.hasEngineeringActionGrant??(async()=>false)});
+              effects.push(...opened.effects);
+            }
+            return {result:{...base,entityId:applied.queueId,version:applied.version,
+              queue:{claimId:applied.claimId,runId:applied.runId,held:applied.held}},effects};
+          } catch(error) {
+            if(error instanceof DomainError) throw error;
+            if(error instanceof Error && "code" in error && typeof error.code==="string" && /^[A-Z_]+$/.test(error.code))
+              throw new DomainError(error.code,error.message);
+            if(error instanceof Error && /^[A-Z_]+$/.test(error.message)) throw new DomainError(error.message,error.message);
+            throw error;
+          }
+        }
+        if (command.type === "discussion.openTask" || command.type === "discussion.message.post" ||
+          command.type === "discussion.receipt.record" || command.type === "discussion.action.request" ||
+          command.type === "discussion.action.decide" || command.type === "discussion.action.execute") {
+          const authority=this.deps.collaborationAuthority;
+          return applyTaskCollaboration({tx,command:command as import("@evoloop/contracts/discussions").TaskCollaborationCommand,principal,now,nextId:()=>this.deps.ids.next(),hasher:this.deps.hasher,
+            isAuthorizedRoleActor:authority?.isAuthorizedRoleActor??(async()=>false),
+            isProjectActor:authority?.isProjectActor??(async()=>false),
+            hasEngineeringActionGrant:authority?.hasEngineeringActionGrant??(async()=>false)});
+        }
         if (command.type === "evaluation.create" || command.type === "evaluation.revise" ||
           command.type === "evaluation.assessment.record" || command.type === "evaluation.conclusion.record")
           return applyEvaluation({ tx, command, principal, now });
@@ -564,7 +663,7 @@ export class WorkflowService {
         if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value) });
         }
-        return applyWorkflow({ tx, command, principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
+        return applyWorkflow({ tx, command:command as Parameters<typeof applyWorkflow>[0]["command"], principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
     }
   }
 
@@ -578,6 +677,15 @@ export class WorkflowService {
 
   getDiscussion(principal: Principal, projectId: string, id: string): Promise<import("@evoloop/contracts").DiscussionRecord> {
     return this.read(principal, projectId, async reader => required(await reader.getDiscussion(id), "Discussion"));
+  }
+  listResidentQueues(principal: Principal, projectId: string) {
+    return this.read(principal,projectId,reader=>reader.queue?.listResidentQueues()??Promise.resolve([]));
+  }
+  getResidentQueue(principal: Principal, projectId: string, id: string) {
+    return this.read(principal,projectId,async reader=>required(await reader.queue?.getResidentQueue(id)??null,"Queue"));
+  }
+  listResidentQueueAttempts(principal: Principal, projectId: string, claimId: string) {
+    return this.read(principal,projectId,reader=>reader.queue?.listResidentQueueAttempts(claimId)??Promise.resolve([]));
   }
   listDiscussions(principal: Principal, projectId: string, limit = 50, cursor?: string): Promise<Page<import("@evoloop/contracts").DiscussionRecord>> {
     return this.read(principal, projectId, reader => reader.listDiscussions(pageLimit(limit), cursor));

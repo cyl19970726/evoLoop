@@ -13,6 +13,8 @@ export interface ReserveContext {
   now: string;
   nextId(): string;
   hash(value: string): string;
+  /** Internal claim from the same journalled transaction. Never accepted from a public command. */
+  queueClaim?: {claimId:string;runId:string;operationId:string;taskId:string;sessionId:string};
 }
 const required = <T>(value: T | null, name: string): T => {
   if (value === null) throw new DomainError("NOT_FOUND", `${name} not found`);
@@ -22,7 +24,7 @@ const applied = (operationId: string, entityId: string, version: number, revisio
   status: "applied", operationId, entityId, version, ...(revisionId ? { revisionId } : {}),
 });
 
-export async function reserveRuntime({ tx, command, principal, now, nextId, hash }: ReserveContext): Promise<{ result: AppliedResult; effects: Effect[] }> {
+export async function reserveRuntime({ tx, command, principal, now, nextId, hash, queueClaim }: ReserveContext): Promise<{ result: AppliedResult; effects: Effect[] }> {
   if (command.type === "runtime.handoff.record") {
     const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
     if (run.state !== "completed") throw new DomainError("RUN_NOT_COMPLETED", "handoff follows a completed native run");
@@ -80,6 +82,8 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
       throw new DomainError("SESSION_NOT_READY", "only a bound ready session can close normally");
     if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id && ["requested", "dispatching", "running", "unknown"].includes(run.state)))
       throw new DomainError("SESSION_BUSY", "session has active or unresolved work");
+    try { await tx.queue?.assertQueueSessionVacant(session.id); }
+    catch { throw new DomainError("QUEUE_OCCUPIED", "session has an unreleased queue claim"); }
     const next = { ...session, state: "closing" as const, closeOperationId: command.operationId,
       closeAttemptedAt: null, closeVerifiedAt: null, version: session.version + 1, updatedAt: now };
     await tx.updateRuntimeSession(next, session.version);
@@ -90,6 +94,10 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   const session = required(await tx.getRuntimeSession(command.sessionId), "runtime session");
   if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "only a bound project-owned session can run");
   const task = required(await tx.getTask(command.taskId), "task");
+  try { await tx.queue?.assertQueueVacant(task.id,session.id,queueClaim?.claimId,queueClaim?.runId,queueClaim?.operationId); }
+  catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }
+  if(queueClaim && (queueClaim.runId!==command.runId||queueClaim.operationId!==command.operationId||queueClaim.taskId!==task.id||queueClaim.sessionId!==session.id))
+    throw new DomainError("QUEUE_CLAIM_MISMATCH", "queue reservation does not match its active claim");
   if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "task changed since dispatch was requested", task.version);
   if (task.state !== "in_progress") {
     throw new DomainError("TASK_NOT_READY", "only explicitly started in-progress tasks may dispatch");

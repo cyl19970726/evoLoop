@@ -55,6 +55,18 @@ const integrationSchema = z.strictObject({
   scheduling: z.strictObject({
     enabled: z.boolean(), grants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), scopeId: z.string().min(1).max(4000), roleId: z.string().min(1).max(4000) })).max(200),
   }).optional(),
+  residentQueue: z.strictObject({
+    enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
+    roleActors: z.array(z.strictObject({projectId:z.uuid(),roleId:z.uuid(),actorId:z.string().min(1).max(100)})).max(200)
+      .refine(values=>new Set(values.map(value=>JSON.stringify([value.projectId,value.roleId]))).size===values.length,
+        'Resident queue business actor bindings must be unique per project and Role'),
+    actionGrants: z.array(z.strictObject({projectId:z.uuid(),actorId:z.string().min(1).max(100),
+      actionType:z.enum(["worktree.write","git.commit","git.push","pr.create","pr.review","pr.merge","deployment"]),
+      repository:z.string().min(1).max(240),worktree:absolute,
+      commit:z.string().min(1).max(240).optional(),pullRequest:z.string().min(1).max(240).optional(),
+      inputHash:z.string().regex(/^[a-f0-9]{64}$/),expiresAt:z.iso.datetime({offset:true}),
+      paths:z.array(z.string().min(1).max(1024)).min(1).max(100)})).max(200).default([]),
+  }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
@@ -94,5 +106,5 @@ export async function loadIntegrations(path?: string) {
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
     return { template, hash: delegationTemplateHash(template) };
   };
-  return { runtime, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
+  return { runtime, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
 }

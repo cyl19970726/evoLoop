@@ -5,6 +5,8 @@ import { ApiError, errorText } from "../api";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import { runtimeClient, type NativeResult, type RuntimeStatus } from "./client";
 import { OrchestrationPanel } from "../orchestration/OrchestrationPanel";
+import { ResidentQueuePanel } from "../queues/ResidentQueuePanel";
+import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread";
 
 function readErrorText(cause: unknown): string {
   if (cause instanceof ApiError && (cause.status === 0 || cause.status >= 500))
@@ -48,13 +50,35 @@ export function RuntimePanel({ context, refresh, task }: { context: MutationCont
   }
   const grants = (status?.grants ?? []).filter(grant => !task || grant.roleId === task.owner);
   const visibleSessions = task ? sessions.filter(session => runs.some(run => run.sessionId === session.id)) : sessions;
+  useEffect(() => {
+    const reveal = () => {
+      const [path, query = ""] = window.location.hash.split("?");
+      const params = new URLSearchParams(query);
+      const id = task && path === `#/p/${context.projectId}/tasks/${task.id}` && params.get("tab") === "runtime"
+        ? params.get("run") && `runtime-run-${task.id}-${params.get("run")}`
+        : null;
+      const sessionId = !task && path === `#/p/${context.projectId}/runtime` ? params.get("session") : null;
+      const targetId = id || (sessionId && `runtime-session-${sessionId}`);
+      if (!targetId || !/^[a-z0-9-]+$/i.test(targetId)) return;
+      const target = document.getElementById(targetId);
+      if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
+        target.open = true;
+        target.scrollIntoView({ block: "start" });
+      }
+    };
+    const frame = requestAnimationFrame(reveal);
+    window.addEventListener("hashchange", reveal);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
+  }, [context.projectId, task?.id, runs, sessions]);
   return <section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}
     {status && !status.available && context.principal.permissions.includes("review") && <button disabled={recovering} onClick={recover}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</button>}
     <OrchestrationPanel key={`${context.projectId}:${context.principal.actorId}:${task?.id ?? "project"}`} token={context.token} projectId={context.projectId} refresh={refresh + epoch} taskId={task?.id} verifiedRuns={!error && runsForTask === task?.id ? runs : null} runtimePoll={runtimePoll && runtimePoll.taskId === task?.id ? runtimePoll.sequence : 0} />
+    <ResidentQueuePanel token={context.token} projectId={context.projectId} refresh={refresh + epoch} task={task} runs={runs} sessions={sessions} />
+    {task && <TaskCollaborationThread token={context.token} projectId={context.projectId} taskId={task.id} refresh={refresh + epoch} />}
     {visibleSessions.length === 0 && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
-    {visibleSessions.map(session => <details className="workflow-detail" key={session.id}><summary>{session.roleId} · {session.state}</summary>
+    {visibleSessions.map(session => <details className="workflow-detail" key={session.id} id={!task ? `runtime-session-${session.id}` : undefined}><summary>{session.roleId} · {session.state}</summary>
       <dl><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>权限</dt><dd>{session.sandbox}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
       {session.state === "unknown" && <Notice error>创建结果未知，不能用新 ID 重复创建来代替核对。</Notice>}
       <SessionHistory context={context} sessionId={session.id} />
@@ -74,7 +98,7 @@ export function RuntimePanel({ context, refresh, task }: { context: MutationCont
       { name: "input", label: "本次有界工作与停止条件", kind: "textarea", hint: "系统会附带任务的固定依据；原生运行结束后还需交付与使用验收。" },
     ]} build={v => ({ type: "runtime.run.reserve", runId: crypto.randomUUID(), taskId: task.id, expectedVersion: task.version, ...v })} />}
     <h3>运行记录</h3>{runs.length === 0 && <p className="empty">没有已登记运行。</p>}
-    {runs.map(run => <RunCard key={`${run.id}:${run.version}`} context={context} run={run} mayAbandon={sessions.some(s=>s.id===run.sessionId && s.sandbox==="read-only")} />)}
+    {runs.map(run => <RunCard key={`${run.id}:${run.version}`} context={context} run={run} anchorId={task?.id === run.taskId ? `runtime-run-${task.id}-${run.id}` : undefined} mayAbandon={sessions.some(s=>s.id===run.sessionId && s.sandbox==="read-only")} />)}
     <p className="muted">收到通知、读取材料、采用判断与真实效果分别留证。原生完成状态不会自动关闭任务。</p>
   </section>;
 }
@@ -85,10 +109,10 @@ function RuntimeEvidence({ load, label }: { load(): Promise<RuntimeRecordEvent[]
     {error && <Notice error>{error}</Notice>}{events.map(event => <div className="decision" key={event.id}><strong>{event.kind}</strong><p>{event.detail}</p><small>{event.actorId} · {event.createdAt}</small></div>)}
   </div>;
 }
-function RunCard({ context, run, mayAbandon }: { context: MutationContext; run: RuntimeRunRecord; mayAbandon: boolean }) {
+function RunCard({ context, run, mayAbandon, anchorId }: { context: MutationContext; run: RuntimeRunRecord; mayAbandon: boolean; anchorId?: string }) {
   const [nativeResult, setNativeResult] = useState<NativeResult | null>(null);
   const [error,setError] = useState("");
-  return <details className="workflow-detail"><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
+  return <details className="workflow-detail" id={anchorId}><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
     <p>任务修订 <code>{run.taskRevisionId}</code></p><p>依据集合 <code>{run.basisSetId}</code></p>
     {run.state === "unknown" && <Notice error>派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
     {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="workflow-detail"><summary>复核只读派发并保留失败记录</summary><p>仅适用于没有绑定 Turn 的只读运行。放弃会关闭旧会话的后续派发；不证明外部未执行，也不自动重发。</p><ActionForm context={context} review title="复核并放弃未知只读派发" fields={[reasonField,{name:"evidence",label:"所属线程历史与失败原因核对证据",kind:"textarea"}]} build={v=>({type:"runtime.run.abandonReadOnly",runId:run.id,expectedVersion:run.version,...v})} /></details>}

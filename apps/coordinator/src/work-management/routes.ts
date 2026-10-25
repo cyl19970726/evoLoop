@@ -15,6 +15,7 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.uuid().optional() }).parse(request.query);
     return service.listRoles(principal(request), p.projectId, q.limit, q.cursor);
   });
+  app.get("/api/projects/:projectId/roles/:id", request => { const p = params(request.params); return service.getRole(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/role-templates", request => {
     const p = params(request.params);
     return service.listRoles(principal(request), p.projectId, 100).then(roles => ({
@@ -40,6 +41,14 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     app.get(`/api/projects/:projectId/roles/:id/${path}`, request => { const p = params(request.params); return query(principal(request), p.projectId, p.id!); });
   }
   app.get("/api/projects/:projectId/schedules", request => service.listSchedules(principal(request), params(request.params).projectId));
+  app.get("/api/projects/:projectId/resident-queues", request => service.listResidentQueues(principal(request),params(request.params).projectId));
+  app.get("/api/projects/:projectId/resident-queues/:id", request => {const p=params(request.params);return service.getResidentQueue(principal(request),p.projectId,p.id!);});
+  app.get("/api/projects/:projectId/resident-queues/:id/attempts", async request => {
+    const p=params(request.params),who=principal(request);
+    const queue=await service.getResidentQueue(who,p.projectId,p.id!);
+    return Promise.all(queue.entries.map(async entry=>({entryId:entry.id,claimId:entry.claimId,
+      attempts:entry.claimId?await service.listResidentQueueAttempts(who,p.projectId,entry.claimId):[]})));
+  });
   app.get("/api/projects/:projectId/schedules/:id/revisions", request => { const p = params(request.params); return service.listScheduleRevisions(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/schedules/:id/occurrences", request => { const p = params(request.params); return service.listScheduleOccurrences(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/documents/:id/tasks", request => {

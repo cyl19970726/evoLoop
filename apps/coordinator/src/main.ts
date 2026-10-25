@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
+import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
 import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
 import { buildServer } from "./server.js";
@@ -40,6 +41,7 @@ import type { BrowserReadScope } from "./runtime/browser-read.js";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import type { RuntimeBinding } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
+import { ResidentQueuePump } from "./resident-queue/pump.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -55,12 +57,74 @@ const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTime
 pool.on("error", () => { /* Requests receive explicit unavailable responses; credentials are never logged. */ });
 const lease = await acquireCoordinatorLease(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-const uow = new PostgresUnitOfWork(pool);
+const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
+const currentProjectWriter = async (projectId:string,actorId:string) =>
+  (await currentIdentity()).some(p=>p.actorId===actorId&&p.projectIds.includes(projectId)&&
+    p.permissions.includes("read")&&p.permissions.includes("write"));
+const currentQueueConfiguration = async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).residentQueue;
+const uow = new PostgresUnitOfWork(pool, {
+  input: async (reader,taskId) => {
+    const task=await reader.getTask(taskId);
+    if(!task)throw new DomainError("TASK_UNAVAILABLE","queue Task is missing");
+    return canonicalTaskInputJson(await taskInputSignature(reader,task));
+  },
+  lead: async (_client,projectId,actorId) => !!(await currentQueueConfiguration())?.enabled &&
+    hasCurrentStudyReviewer(await currentIdentity(),projectId,actorId),
+  binding: async (client,projectId,roleId,sessionId) => {
+    const queue=await currentQueueConfiguration();
+    const business=queue?.enabled && queue.roleActors.find(x=>x.projectId===projectId&&x.roleId===roleId);
+    if(!business || !await currentProjectWriter(projectId,business.actorId))return false;
+    const r=await client.query(`SELECT 1 FROM role_session_binding b JOIN role_definition role ON role.project_id=b.project_id AND role.role_id=b.role_id
+      JOIN runtime_session s ON s.project_id=b.project_id AND s.session_id=b.session_id
+      WHERE b.project_id=$1 AND b.role_id=$2 AND b.session_id=$3 AND role.state IN ('trial','active')
+        AND s.role_id=$2::text AND s.state='ready' LIMIT 1`,[projectId,roleId,sessionId]);
+    return !!r.rows[0];
+  },
+  grant: async (client,projectId,roleId,sessionId,taskId) => {
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    if(!current.residentQueue?.enabled||!current.runtime?.enabled)return false;
+    const r=await client.query(`SELECT s.actor_id,s.authorization_scope,s.cwd,s.sandbox,s.model,s.approval_policy,t.owner
+      FROM runtime_session s JOIN task t ON t.project_id=s.project_id AND t.task_id=$4
+      WHERE s.project_id=$1 AND s.session_id=$2 AND s.role_id=$3 AND s.state='ready'`,
+      [projectId,sessionId,roleId,taskId]);
+    const s=r.rows[0];
+    return !!s&&s.owner===roleId&&hasCurrentStudyReviewer(await currentIdentity(),projectId,s.actor_id)&&
+      current.hasRuntimeGrant({projectId,actorId:s.actor_id,roleId,authorizationScope:s.authorization_scope,
+        cwd:s.cwd,sandbox:s.sandbox,model:s.model,approvalPolicy:s.approval_policy})&&
+      await current.allowedRuntimeCwd(projectId,s.cwd);
+  },
+});
 const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
 const service = new WorkflowService({
   uow, clock, ids,
   hasher: { hash: value => createHash("sha256").update(value, "utf8").digest("hex") },
+  collaborationAuthority: {
+    actorForRole: async (projectId,roleId) => {
+      const config=await currentQueueConfiguration();
+      const binding=config?.enabled&&config.roleActors.find(x=>x.projectId===projectId&&x.roleId===roleId);
+      return binding&&await currentProjectWriter(projectId,binding.actorId)?binding.actorId:null;
+    },
+    isAuthorizedRoleActor: async (projectId,actorId,roleId) => {
+      const config=await currentQueueConfiguration();
+      if(!config?.enabled)return false;
+      if(!config.roleActors.some(x=>x.projectId===projectId&&x.actorId===actorId&&x.roleId===roleId)||
+        !await currentProjectWriter(projectId,actorId))return false;
+      const role=await pool.query(`SELECT 1 FROM role_definition WHERE project_id=$1 AND role_id=$2 AND state IN ('trial','active') LIMIT 1`,
+        [projectId,roleId]);
+      return role.rows.length>0;
+    },
+    isProjectActor: currentProjectWriter,
+    hasEngineeringActionGrant: async (principal,action) => {
+      const config=await currentQueueConfiguration();
+      return !!config?.enabled&&config.actionGrants.some(g=>g.actorId===principal.actorId&&
+        principal.projectIds.includes(g.projectId)&&g.actionType===action.actionType&&
+        g.repository===action.scope.repository&&g.worktree===action.scope.worktree&&
+        (g.commit??null)===(action.scope.commit??null)&&(g.pullRequest??null)===(action.scope.pullRequest??null)&&
+        g.inputHash===action.inputHash&&Date.parse(g.expiresAt)>=Date.parse(action.expiresAt)&&Date.parse(g.expiresAt)>Date.now()&&
+        g.paths.length===action.scope.paths.length&&g.paths.every((p,i)=>p===action.scope.paths[i]));
+    },
+  },
 });
 const trustedRuntime = new RuntimeWorkflowService({ uow, clock, ids });
 const configuredBlobRoot = process.env.EVOLOOP_BLOB_ROOT;
@@ -226,11 +290,25 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined),
   mayDispatchRun: async run => {
     if (!await mayStartManaged(run.projectId, "run", run.id)) return false;
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    if(!hasCurrentStudyReviewer(await currentIdentity(),run.projectId,run.actorId))return false;
+    const queueInstalled=(await pool.query("SELECT to_regclass('resident_queue_attempt') IS NOT NULL AS installed")).rows[0]?.installed;
+    const queueAttempt=queueInstalled?await pool.query(`SELECT c.claim_id,c.released_at,e.role_id,e.session_id FROM resident_queue_attempt a
+      JOIN resident_queue_claim c ON c.project_id=a.project_id AND c.claim_id=a.claim_id
+      JOIN resident_queue_entry e ON e.project_id=c.project_id AND e.queue_id=c.queue_id AND e.entry_id=c.entry_id
+      WHERE a.project_id=$1 AND a.run_id=$2 AND a.operation_id=$3`,[run.projectId,run.id,run.operationId]):{rows:[]};
+    if(queueAttempt.rows[0]){
+      const attempt=queueAttempt.rows[0];
+      if(attempt.released_at||attempt.session_id!==run.sessionId||!current.residentQueue?.enabled)return false;
+      const business=current.residentQueue.roleActors.find(x=>x.projectId===run.projectId&&x.roleId===attempt.role_id);
+      if(!business||!await currentProjectWriter(run.projectId,business.actorId))return false;
+      if(!await uow.read(run.projectId,reader=>reader.queue?.queueBindingCurrent(attempt.role_id,run.sessionId)??Promise.resolve(false)))return false;
+    }
     const reader = credentials.find(p => p.projectIds.includes(run.projectId) && p.permissions.includes("read"));
     if (!reader) return false;
     const session = await service.getRuntimeSession(reader, run.projectId, run.sessionId);
     return currentSessionGrant(pool,session,
-      () => integrations.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
+      () => current.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
         authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}),
       dynamicAdmission ? () => dynamicAdmission.canStartRun(run,session) : undefined);
   },
@@ -251,6 +329,10 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canW
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });
 try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
+const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.canWrite,
+  credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
+  pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
+  onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
 const deliveryStore = new PgOutboxDeliveryStore(pool);
 const feishu = integrations.feishu;
 const hasFeishuGrant = (projectId: string, actorId: string) => !!feishu?.enabled && feishu.grants.some(g => g.projectId === projectId && g.actorId === actorId && g.scope === "project");
@@ -309,7 +391,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
+  try { residentQueue.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
   finally {
     try { if (runner) await runner.stop(); }
     finally { try { await lease.release(); } finally { await pool.end(); } }
@@ -317,5 +399,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); residentQueue.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

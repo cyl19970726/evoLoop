@@ -1,0 +1,6 @@
+.role-presence{margin:14px 0;border:1px solid #dce3f0;border-radius:8px;padding:12px;min-width:0;background:#f8faff;color:#34425b}
+.role-presence summary{cursor:pointer;color:#315a9b;font-weight:600}
+.role-presence-head{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:12px 0;color:#596b89;font-size:12px}
+.role-presence-item{border-top:1px solid #dce3f0;padding:12px 0;min-width:0;overflow-wrap:anywhere}
+.role-presence-item p{margin:6px 0}
+.role-presence-error{color:#923f47}

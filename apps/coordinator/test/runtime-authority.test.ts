@@ -26,6 +26,20 @@ const headers = { authorization: `Bearer ${token}` };
 const command = { type: "runtime.session.reserve", projectId, operationId, sessionId,
   roleId: grant.roleId, authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox,
   approvalPolicy: "on-request" };
+
+test("resident queue business actor bindings have one actor per project and Role", async () => {
+  const directory=await mkdtemp(join(tmpdir(),"evoloop-queue-binding-"));
+  try {
+    const file=join(directory,"integrations.json"),roleId=randomUUID();
+    const binding={projectId,roleId,actorId:"worker-a"};
+    await writeFile(file,JSON.stringify({residentQueue:{enabled:true,roleActors:[binding,
+      {...binding,projectId:randomUUID(),actorId:"worker-b"}]}}));
+    assert.equal((await loadIntegrations(file)).residentQueue?.roleActors.length,2);
+    await writeFile(file,JSON.stringify({residentQueue:{enabled:true,roleActors:[binding,
+      {...binding,actorId:"worker-b"}]}}));
+    await assert.rejects(loadIntegrations(file),/Invalid integration configuration/);
+  } finally { await rm(directory,{recursive:true,force:true}); }
+});
 const workManagementQueries = {
   listRoles: async () => ({ items: [], nextCursor: null }), listRoleRevisions: async () => [],
   listRoleReviews: async () => [], listRoleHandoffs: async () => [], listRoleSessionBindings: async () => [],
