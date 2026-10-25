@@ -3,9 +3,9 @@ import type { RoleRecord, RoleSessionBinding } from "@evoloop/contracts/roles";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { ApiError, errorText, request } from "../api";
 import { href } from "../ui/shared";
+import { isRoleOwnerId, readOwnerRole } from "./ownerRole";
 import "./task-owner.css";
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sessionState: Record<RuntimeSessionRecord["state"], string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
 };
@@ -18,14 +18,13 @@ export function TaskOwner({ token, projectId, owner, readKey }: { token: string;
   const [reading, setReading] = useState(false);
   useEffect(() => {
     let active = true;
-    setRole(null); setRoleError(""); setSessions([]); setSessionNote(""); setReading(uuid.test(owner));
-    if (!uuid.test(owner)) return () => { active = false; };
+    setRole(null); setRoleError(""); setSessions([]); setSessionNote(""); setReading(isRoleOwnerId(owner));
+    if (!isRoleOwnerId(owner)) return () => { active = false; };
     const base = `/api/projects/${encodeURIComponent(projectId)}`;
     void (async () => {
       try {
-        const found = await request<RoleRecord>(token, `${base}/roles/${encodeURIComponent(owner)}`, 15000);
+        const found = await readOwnerRole(token, projectId, owner);
         if (!active) return;
-        if (found.id !== owner || found.projectId !== projectId || !found.proposal?.title?.trim()) throw new Error("职责响应与当前任务不符");
         setRole(found);
         try {
           const [bindings, registered] = await Promise.all([
