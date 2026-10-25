@@ -69,6 +69,11 @@ test("resident observation keeps acceptance, host authority and task replies dis
   const {chromium} = (await import(pathToFileURL(playwrightModule!).href)).default;
   let failDiscussions = false, longDiscussions = false;
   let currentQueue = queue;
+  let taskReads: string[] = [];
+  const oldEntries = Array.from({length:24},(_,index) => {
+    const id = `30000000-0000-4000-8000-${String(index).padStart(12,"0")}`;
+    return {...entries[0],id,taskId:id,taskRevisionId:id,position:index,state:"released",claimId:null,holdCode:null,holdReason:null};
+  });
   let currentRun = {...run,state:"running"};
   let currentRoleTitle = "实际开发流程";
   let holdNextRole = false, heldRoleReads = 0, releaseHeldRole: (() => void) | null = null, failRoleReads = 0;
@@ -89,6 +94,12 @@ test("resident observation keeps acceptance, host authority and task replies dis
     if (url.pathname === "/__fixture/fail-next-role") { failRoleReads = 3; res.end("ok"); return; }
     if (url.pathname === "/__fixture/restore-role") { failRoleReads = 0; res.end("ok"); return; }
     if (url.pathname === "/__fixture/terminal-run") { currentRun = {...run,state:"completed"}; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/deep-queue") {
+      currentQueue = {...queue,entries:[...oldEntries,...entries.map((entry,index) => ({...entry,position:index+24}))]};
+      taskReads = []; res.end("ok"); return;
+    }
+    if (url.pathname === "/__fixture/task-reads") { res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify(taskReads));return; }
+    if (url.pathname === "/__fixture/restore-queue") { currentQueue = queue; res.end("ok"); return; }
     if (url.pathname === "/__fixture/held-detail-count") { res.end(String(heldDetails)); return; }
     if (url.pathname === "/__fixture/release-held-detail") { releaseHeldDetail?.(); res.end("ok"); return; }
     if (url.pathname === "/__fixture/advance-queue") {
@@ -136,6 +147,13 @@ test("resident observation keeps acceptance, host authority and task replies dis
       else if (url.pathname === `${p}/runtime/runs`) value = url.searchParams.get("taskId") === taskB ? [] : [currentRun];
       else if (url.pathname === `${p}/tasks/${taskA}` || url.pathname === `${p}/tasks/${taskB}`) {
         const item = url.pathname.endsWith(taskA) ? task(taskA,"先完成 A 的实际使用") : task(taskB,"验收后才启动 B");
+        taskReads.push(item.id);
+        value = {task:item,revision:{...item,id:item.id,taskId:item.id,actorId:"lead",reason:"夹具",createdAt:stamp},basis:null,links:[],impacts:[],decisions:[],deliveries:[],observations:[],closures:[]};
+      }
+      else if (url.pathname.startsWith(`${p}/tasks/`) && oldEntries.some(entry => url.pathname.endsWith(entry.id))) {
+        const id = url.pathname.slice(`${p}/tasks/`.length);
+        taskReads.push(id);
+        const item = task(id,`历史任务 ${id.slice(-2)}`);
         value = {task:item,revision:{...item,id:item.id,taskId:item.id,actorId:"lead",reason:"夹具",createdAt:stamp},basis:null,links:[],impacts:[],decisions:[],deliveries:[],observations:[],closures:[]};
       }
       else if (url.pathname === `${p}/discussions`) {
@@ -252,6 +270,23 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await pageBrowser.locator(".resident-queues").count(),0);
   await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?session=${sessionId}`);
   await queueItems.nth(0).getByText(/承接职责 已更新的承接职责/).waitFor();
+  await fetch(`${base}/__fixture/deep-queue`);
+  await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
+  await pageBrowser.getByText(/本轮优先核对当前占用与各 Session 下一顺位，最多 24 项名称/).waitFor();
+  await pageBrowser.getByText(/当前占用：先完成 A 的实际使用/).waitFor();
+  await pageBrowser.getByText(/后续顺位：验收后才启动 B/).waitFor();
+  const deepItems = pageBrowser.locator(".resident-queue-session li");
+  assert.equal(await deepItems.count(),27);
+  await deepItems.nth(24).getByRole("link",{name:"先完成 A 的实际使用"}).waitFor();
+  await deepItems.nth(25).getByRole("link",{name:"验收后才启动 B"}).waitFor();
+  await deepItems.nth(21).getByRole("link",{name:"历史任务 21"}).waitFor();
+  const lookedUp = await (await fetch(`${base}/__fixture/task-reads`)).json() as string[];
+  assert.ok(lookedUp.includes(taskA) && lookedUp.includes(taskB));
+  assert.equal(new Set(lookedUp).size,24);
+  assert.equal(lookedUp.includes(oldEntries[22]!.id) || lookedUp.includes(oldEntries[23]!.id),false);
+  await fetch(`${base}/__fixture/restore-queue`);
+  await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
+  await pageBrowser.locator(".resident-queue-session li").nth(3).waitFor({state:"detached"});
   await fetch(`${base}/__fixture/hold-next-detail`);
   await pageBrowser.getByRole("button",{name:"回读详情与尝试"}).click();
   for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-detail-count`)).text() !== "1"; attempt++)

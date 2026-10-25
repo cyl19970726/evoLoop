@@ -92,14 +92,24 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
   }, [open, token, projectId, queue.id, queue.version, refresh, listReadVersion, readVersion]);
   const shown = detail ?? queue;
   const namedEntries = shown.entries.filter(item => !sessionId || item.sessionId === sessionId).sort((a, b) => a.position - b.position);
+  const groups = new Map<string, ResidentQueueEntry[]>();
+  for (const entry of namedEntries) groups.set(entry.sessionId, [...(groups.get(entry.sessionId) ?? []), entry]);
+  const priorityEntries = [...groups.values()].flatMap(entries => [
+    entries.find(entry => entry.state === "claimed"), entries.find(entry => entry.state === "queued"),
+  ].filter((entry): entry is ResidentQueueEntry => !!entry));
+  const selectedIds = new Set<string>();
+  const lookupEntries = [...priorityEntries, ...namedEntries].filter(entry => {
+    if (selectedIds.has(entry.id)) return false;
+    selectedIds.add(entry.id); return true;
+  }).slice(0, maxNamedEntries);
   const nameScope = `${projectId}|${queue.id}|${sessionId ?? ""}|${listReadVersion}|${readVersion}|${namedEntries.map(entry => `${entry.id}:${entry.taskId}:${entry.roleId}`).join("|")}`;
   useEffect(() => {
     if (!open) return;
     let active = true;
     const controller = new AbortController();
     setNames({ scope: nameScope, tasks: {}, roles: {}, failed: [] });
-    const tasks = [...new Set(namedEntries.slice(0, maxNamedEntries).map(entry => entry.taskId))].filter(id => id !== task?.id);
-    const roles = [...new Set(namedEntries.slice(0, maxNamedEntries).map(entry => entry.roleId))];
+    const tasks = [...new Set(lookupEntries.map(entry => entry.taskId))].filter(id => id !== task?.id);
+    const roles = [...new Set(lookupEntries.map(entry => entry.roleId))];
     const work: Array<{ kind: "task" | "role"; id: string }> = [
       ...tasks.map(id => ({ kind: "task" as const, id })), ...roles.map(id => ({ kind: "role" as const, id })),
     ];
@@ -133,10 +143,6 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
     names.scope === nameScope ? names : { tasks: {}, roles: {}, failed: [] };
   const taskName = (id: string) => task?.id === id ? task.title : currentNames.tasks[id] ?? `任务 ${short(id)}`;
   const roleName = (id: string) => currentNames.roles[id] ?? `职责 ${short(id)}`;
-  const groups = new Map<string, ResidentQueueEntry[]>();
-  for (const entry of namedEntries) {
-    groups.set(entry.sessionId, [...(groups.get(entry.sessionId) ?? []), entry]);
-  }
   const attempts = new Map(attemptRows?.map(row => [row.entryId, row.attempts]) ?? []);
   const total = attemptRows?.reduce((sum, row) => sum + row.attempts.length, 0);
   return <details ref={cardRef} className="resident-queue-card" onToggle={event => setOpen(event.currentTarget.open)}>
@@ -145,7 +151,7 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
       <div className="resident-queue-meta"><span>排序理由：{shown.reason}</span><span>总运行上限 {shown.maxRuns}；累计尝试 {total ?? "待读回"}</span><span>{observedAt ? `详情读于 ${observedAt}` : "详情尚未读回"}</span><button type="button" onClick={() => setReadVersion(value => value + 1)}>回读详情与尝试</button></div>
       {loading && <p>正在读取队列详情与尝试…</p>}
       {error && <p role="alert" className="resident-queue-error">详情回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
-      {namedEntries.length > maxNamedEntries && <p className="resident-queue-observed">仅核对前 {maxNamedEntries} 项名称；其余条目保留 ID，请打开任务核实。</p>}
+      {namedEntries.length > maxNamedEntries && <p className="resident-queue-observed">本轮优先核对当前占用与各 Session 下一顺位，最多 {maxNamedEntries} 项名称；其余条目保留 ID，请打开任务核实。</p>}
       {currentNames.failed.length > 0 && <p className="resident-queue-observed">部分名称未读回，已保留对象 ID 供核对。</p>}
       {[...groups].map(([sessionId, entries]) => {
         const session = sessions.find(value => value.id === sessionId);
