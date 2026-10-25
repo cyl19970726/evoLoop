@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import pg from 'pg';
@@ -8,9 +7,11 @@ import { PgResidentQueue } from '../src/queues.ts';
 import { PostgresUnitOfWork } from '../src/index.ts';
 import { RuntimeWorkflowService, WorkflowService } from '@evoloop/core';
 import { canonicalTaskInputJson, taskInputSignature } from '../../core/src/task-input.ts';
+import { reserveRuntime } from '../../core/src/runtime/reserve.ts';
+import { ResidentQueuePump, queueIntentId } from '../../../apps/coordinator/src/resident-queue/pump.ts';
 import { createHash } from 'node:crypto';
 const url=process.env.TEST_DATABASE_URL;
-if(!url || !new URL(url).pathname.toLowerCase().includes('evoloop_test')) throw new Error('dedicated evoloop_test database required');
+if(!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(url).pathname)) throw new Error('dedicated evoloop_*_test database required');
 const schema=`el_queue_${randomUUID().replaceAll('-','').slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const uow=new PostgresUnitOfWork(pool);
@@ -21,7 +22,6 @@ const projectId=randomUUID();const queueId=randomUUID();
 const leader=async()=>true;const grant=async()=>true;const binding=async()=>true;const input=async()=>'{\"fixed\":true}';
 before(async()=>{
   await migrate(url,schema);
-  await pool.query(readFileSync(new URL('../schema/027_resident_session_queue.sql',import.meta.url),'utf8'));
   await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,now())',[projectId,'Queue test']);
 });
 after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
@@ -80,7 +80,7 @@ test('one intent survives duplicate dispatch and holds the Session after termina
     assert.equal((await sa.listResidentQueueAttempts(ids.claimId)).length,1);
     await a.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,interrupt_requested,actor_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,'fixed',repeat('b',64),'completed',1,$8,false,'lead',now(),now())`,[p,ids.runId,task,rev,basis,session,ids.operationId,'turn-'+ids.runId]);
-    await sa.holdResidentQueueEntry(q,entry,'manual_review','Question awaiting Lead');
+    await sa.holdResidentQueueEntry(q,entry,'grant_revoked','Grant changed; Lead must review');
     await assert.rejects(sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3),/QUEUE_HOLD_REQUIRES_DECISION/);
     const claimedHold=(await sa.list(q))!.entries[0]!;await sa.unholdResidentQueueEntry(q,entry,claimedHold.version,randomUUID(),'lead','Question answered');
     const secondIds={runId:randomUUID(),operationId:randomUUID()};
@@ -123,11 +123,17 @@ test('official Task and Run lifecycle releases A only after current consumer acc
       {projectId:p,queueId:q,id:entryA,taskId:taskA,taskRevisionId:revisionA,sourceInputJson:signatures.get(taskA)!,sessionId:session,roleId:role,position:0,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1},
       {projectId:p,queueId:q,id:entryB,taskId:taskB,taskRevisionId:revisionB,sourceInputJson:signatures.get(taskB)!,sessionId:session,roleId:role,position:1,dependsOn:[entryA],consumerId:'lead',useRequired:true,releaseRule:'accepted',state:'queued',holdCode:null,holdReason:null,claimId:null,version:1}]});
     await queue.adoptResidentQueue(q,1,'lead');
-    const claimId=randomUUID();assert.equal((await queue.claimResidentQueue(q,entryA,1,claimId,{runId,operationId:randomUUID(),taskRevisionId:revisionA}))?.claimId,claimId);
+    const claimId=randomUUID(),runOperationId=randomUUID();assert.equal((await queue.claimResidentQueue(q,entryA,1,claimId,{runId,operationId:runOperationId,taskRevisionId:revisionA}))?.claimId,claimId);
     assert.equal(await queue.claimResidentQueue(q,entryB,1,randomUUID(),{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:revisionB}),null);
     await work.query('COMMIT');
     const task=(await uow.read(p,r=>r.getTask(taskA)))!;
-    await apply({type:'runtime.run.reserve',projectId:p,operationId:randomUUID(),runId,taskId:taskA,sessionId:session,expectedVersion:task.version,input:'Execute fixed Task A'});
+    const ordinary=await workflow.execute(principal,{type:'runtime.run.reserve',projectId:p,operationId:randomUUID(),runId,taskId:taskA,sessionId:session,expectedVersion:task.version,input:'Execute fixed Task A'});
+    assert.equal(ordinary.status,'rejected');if(ordinary.status==='rejected')assert.equal(ordinary.code,'QUEUE_OCCUPIED');
+    await uow.transaction(p,async tx=>{const reserved=await reserveRuntime({tx,principal,now:new Date().toISOString(),nextId:randomUUID,hash,
+      command:{type:'runtime.run.reserve',projectId:p,operationId:runOperationId,runId,taskId:taskA,sessionId:session,expectedVersion:task.version,input:'Execute fixed Task A'},
+      queueClaim:{claimId,runId,operationId:runOperationId,taskId:taskA,sessionId:session}});
+      await tx.insertOperation({projectId:p,id:runOperationId,actorId:'lead',commandHash:hash('queue fixture'),
+        commandType:'queue.claim',result:reserved.result,createdAt:new Date().toISOString()});});
     await runtime.beginDispatch(p,runId);const stored=(await uow.read(p,r=>r.getRuntimeRun(runId)))!;
     await runtime.bindTurn(p,runId,{id:'turn-'+runId},{kind:'startReply',operationId:stored.operationId});
     await runtime.recordTurn(p,runId,'turn-'+runId,'completed','Fixed result observed');
@@ -141,8 +147,165 @@ test('official Task and Run lifecycle releases A only after current consumer acc
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),true);
     assert.equal((await queue.list(q))!.entries[0]!.claimId,claimId,'released entry retains claim provenance for dependency checks');
     assert.equal((await queue.getResidentQueueClaim(claimId))?.releaseKind,'accepted');
+    const heldB=(await queue.list(q))!.entries.find(x=>x.id===entryB)!;
+    await queue.unholdResidentQueueEntry(q,entryB,heldB.version,randomUUID(),'lead','A is accepted; resume B');
     const second=await queue.claimResidentQueue(q,entryB,1,randomUUID(),{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:revisionB});assert.ok(second);await work.query('COMMIT');
     assert.equal(await queue.countResidentQueueAttempts(q),2);
     await assert.rejects(pool.query('INSERT INTO resident_queue_attempt(project_id,claim_id,sequence,run_id,operation_id,task_revision_id) VALUES($1,$2,2,$3,$4,$5)',[p,second!.claimId,randomUUID(),randomUUID(),revisionB]),/run budget exhausted/);
   }catch(e){await work.query('ROLLBACK');throw e;}finally{work.release();}
+});
+
+test('central queue claim journals claim, Run, channel and outbox atomically; replay is stable',async()=>{
+  const p=randomUUID(),role=randomUUID(),roleRev=randomUUID(),taskId=randomUUID(),taskBId=randomUUID(),sessionId=randomUUID();
+  const queueId=randomUUID(),entryId=randomUUID(),entryBId=randomUUID();
+  let claimId=queueIntentId('claim',p,queueId,entryId,'1','1');
+  let runId=queueIntentId('run',p,queueId,entryId,'1','1','1');
+  let operationId=queueIntentId('run.reserve',p,queueId,entryId,'1','1','1');
+  const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+  let grantEnabled=true;
+  const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>grantEnabled,binding:async()=>true,lead:async()=>true,
+    input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
+  const central=new WorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash},
+    collaborationAuthority:{actorForRole:async()=> 'worker',isAuthorizedRoleActor:async()=>true,
+      isProjectActor:async()=>true,hasEngineeringActionGrant:async()=>false}});
+  const native=new RuntimeWorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+  const apply=async(command:Parameters<typeof central.execute>[1])=>{
+    const result=await central.execute(lead,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
+  await apply({type:'project.create',projectId:p,operationId:randomUUID(),title:'Central queue'});
+  const client=await pool.connect();try{await client.query('BEGIN');
+    await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`,[p,role,roleRev]);
+    await client.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','trial',now(),now()+interval '1 day')`,[p,role,roleRev]);
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  await apply({type:'task.create',projectId:p,operationId:randomUUID(),taskId,title:'Build A',content:'Fixed work',acceptance:'Accepted result',owner:role});
+  await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Fix source'});
+  await apply({type:'task.create',projectId:p,operationId:randomUUID(),taskId:taskBId,title:'Build B',content:'Wait for A',acceptance:'Accepted B',owner:role});
+  await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId:taskBId,expectedVersion:1,reason:'Fix source'});
+  await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+  await native.beginSessionCreate(p,sessionId);
+  await native.bindSession(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+  await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
+    VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRev]);
+  const before=(await central.getTask(lead,p,taskId)).task;
+  const beforeB=(await central.getTask(lead,p,taskBId)).task;
+  await apply({type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:3,reason:'A then B with one answer continuation',entries:[{
+    id:entryId,taskId,taskRevisionId:before.currentRevisionId,sessionId,roleId:role,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'},
+    {id:entryBId,taskId:taskBId,taskRevisionId:beforeB.currentRevisionId,sessionId,roleId:role,dependsOn:[entryId],
+      consumerId:'lead',useRequired:false,releaseRule:'accepted'}]});
+  await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1});
+  const badOperationId=randomUUID(),badClaimId=randomUUID();
+  const rolledBack=await central.execute(lead,{type:'queue.claim',projectId:p,operationId:badOperationId,queueId,entryId,
+    expectedVersion:1,claimId:badClaimId,runId:randomUUID(),runOperationId:randomUUID()});
+  assert.equal(rolledBack.status,'rejected');if(rolledBack.status==='rejected')assert.equal(rolledBack.code,'RUN_OPERATION_MISMATCH');
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries[0]?.state,'queued');
+  assert.equal((await central.listResidentQueueAttempts(lead,p,badClaimId)).length,0);
+  assert.equal((await pool.query('SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,badOperationId])).rowCount,0);
+  grantEnabled=false;
+  const pumpOptions={workflow:central,credentials:async()=>[lead],enabled:async()=>true,canWrite:()=>true,
+    pollIntervalMs:60000,onError:(error:unknown)=>{throw error;}};
+  await new ResidentQueuePump(pumpOptions).tick();
+  const held=(await central.getResidentQueue(lead,p,queueId)).entries[0]!;
+  assert.equal(held.holdCode,'grant_revoked');
+  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,0);
+  grantEnabled=true;
+  await new ResidentQueuePump(pumpOptions).tick();
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries[0]?.state,'held');
+  await apply({type:'queue.unhold',projectId:p,operationId:randomUUID(),queueId,entryId,
+    expectedEntryVersion:held.version,reason:'Current grant restored; Lead resumes'});
+  const generation=String((await central.getResidentQueue(lead,p,queueId)).entries[0]!.version);
+  claimId=queueIntentId('claim',p,queueId,entryId,'1',generation);
+  runId=queueIntentId('run',p,queueId,entryId,'1',generation,'1');
+  operationId=queueIntentId('run.reserve',p,queueId,entryId,'1',generation,'1');
+  await Promise.all([new ResidentQueuePump(pumpOptions).tick(),new ResidentQueuePump(pumpOptions).tick()]);
+  const command={type:'queue.claim' as const,projectId:p,operationId,queueId,entryId,expectedVersion:1,claimId,runId,runOperationId:operationId};
+  const first=await apply(command);
+  assert.deepEqual(await central.execute(lead,command),first);
+  const queue=await central.getResidentQueue(lead,p,queueId);assert.equal(queue.entries[0]?.claimId,claimId);
+  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,1);
+  const run=await central.getRuntimeRun(lead,p,runId);assert.equal(run.state,'requested');
+  assert.match(run.input,/Task channel [0-9a-f-]{36}/);
+  const journal=await pool.query('SELECT command_type FROM operation_journal WHERE project_id=$1 AND operation_id=$2',[p,operationId]);
+  assert.equal(journal.rows[0]?.command_type,'queue.claim');
+  const outbox=await pool.query('SELECT kind FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,operationId]);
+  assert.ok(outbox.rows.some(row=>row.kind==='runtime.run.requested'));
+  assert.ok(outbox.rows.some(row=>row.kind==='discussion'));
+  const channels=await central.listDiscussions(lead,p);assert.ok(channels.items.some(x=>x.collaboration?.runId===runId));
+  const occupied=await central.execute(lead,{type:'runtime.run.reserve',projectId:p,operationId:randomUUID(),runId:randomUUID(),taskId,sessionId,
+    expectedVersion:(await central.getTask(lead,p,taskId)).task.version,input:'outside reservation'});
+  assert.equal(occupied.status,'rejected');if(occupied.status==='rejected')assert.equal(occupied.code,'QUEUE_OCCUPIED');
+  const channel=channels.items.find(x=>x.collaboration?.runId===runId)!;
+  const worker={actorId:'worker',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+  const fixedMessage=async(body:string)=>{
+    const documentId=randomUUID(),revisionId=randomUUID();
+    const client=await pool.connect();try{
+      await client.query('BEGIN');
+      await client.query('SET CONSTRAINTS ALL DEFERRED');
+      await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
+        VALUES($1,$2,'Fixed message',1,$3,'discussion','draft')`,[p,documentId,revisionId]);
+      await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,
+        created_at,reason,media_type,original_name,assets_manifest)
+        VALUES($1,$2,$3,$4,'markdown',$5,'lead',now(),'fixed','text/markdown','message.md','[]'::jsonb)`,
+        [p,documentId,revisionId,body,hash(body)]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    return {documentId,revisionId};
+  };
+  const questionBody=await fixedMessage('Which acceptance evidence should I include?');
+  const question=await central.execute(worker,{type:'discussion.message.post',projectId:p,operationId:randomUUID(),
+    discussionId:channel.id,expectedVersion:1,kind:'question',recipientActorId:'lead',body:questionBody});
+  assert.equal(question.status,'applied',JSON.stringify(question));
+  const questionEvent=(await central.listDiscussionEvents(lead,p,channel.id)).find(x=>x.collaborationPayload?.type==='message'&&
+    x.collaborationPayload.kind==='question')!;
+  const answerBody=await fixedMessage('Include the current passing test receipt and consumer use observation.');
+  const answer=await central.execute(lead,{type:'discussion.message.post',projectId:p,operationId:randomUUID(),
+    discussionId:channel.id,expectedVersion:2,kind:'answer',recipientActorId:'worker',replyToEventId:questionEvent.id,body:answerBody});
+  assert.equal(answer.status,'applied',JSON.stringify(answer));
+  const answerEvent=(await central.listDiscussionEvents(lead,p,channel.id)).find(x=>x.collaborationPayload?.type==='message'&&
+    x.collaborationPayload.kind==='answer')!;
+  await native.beginDispatch(p,runId);
+  await native.bindTurn(p,runId,{id:`turn-${runId}`},{kind:'startReply',operationId});
+  await native.recordTurn(p,runId,`turn-${runId}`,'completed','Question left for issuer');
+  const occupiedSession=await central.getRuntimeSession(lead,p,sessionId);
+  const close=await central.execute(lead,{type:'runtime.session.close',projectId:p,operationId:randomUUID(),
+    sessionId,expectedVersion:occupiedSession.version,reason:'ordinary close while queue claim is active'});
+  assert.equal(close.status,'rejected');if(close.status==='rejected')assert.equal(close.code,'QUEUE_OCCUPIED');
+  await new ResidentQueuePump(pumpOptions).tick();
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryBId)?.state,'queued');
+  const continuationRunId=randomUUID(),continuationOperationId=randomUUID();
+  const continued=await central.execute(lead,{type:'queue.continue',projectId:p,operationId:continuationOperationId,
+    queueId,entryId,claimId,runId:continuationRunId,runOperationId:continuationOperationId,
+    reason:'Use the fixed answer in the original Session',answeredQuestions:[{questionEventId:questionEvent.id,answerEventId:answerEvent.id}]});
+  assert.equal(continued.status,'applied',JSON.stringify(continued));
+  const continuation=await central.getRuntimeRun(lead,p,continuationRunId);
+  assert.equal(continuation.sessionId,sessionId);
+  assert.match(continuation.input,new RegExp(`\\[evoloop-task-answer ${channel.id} ${answerEvent.id} ${answerBody.documentId} ${answerBody.revisionId} ${hash('Include the current passing test receipt and consumer use observation.')}\\]`));
+  await native.beginDispatch(p,continuationRunId);
+  await native.bindTurn(p,continuationRunId,{id:`turn-${continuationRunId}`},{kind:'startReply',operationId:continuationOperationId});
+  await native.recordTurn(p,continuationRunId,`turn-${continuationRunId}`,'completed','Used fixed answer');
+  await new ResidentQueuePump(pumpOptions).tick();
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryBId)?.state,'queued');
+  for(const [stage,expectedVersion] of [['received',3],['read',4],['adopted',5]] as const){
+    const receipt=await central.execute(worker,{type:'discussion.receipt.record',projectId:p,operationId:randomUUID(),
+      discussionId:channel.id,expectedVersion,messageEventId:answerEvent.id,stage,evidence:answerBody,
+      ...(stage==='adopted'?{continuation:{runId:continuationRunId,taskRevisionId:continuation.taskRevisionId}}:{})});
+    assert.equal(receipt.status,'applied',JSON.stringify(receipt));
+  }
+  const beforeDelivery=(await central.getTask(lead,p,taskId)).task;
+  const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId,runId:continuationRunId,
+    expectedVersion:beforeDelivery.version,artifactRef:'repo:task-a',artifactRevision:'abc123',contentHash:hash('A result'),
+    technicalResult:'passed',technicalEvidence:'Tests passed',reason:'Deliver A'});
+  await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId,deliveryId:delivery.revisionId!,
+    observer:'lead',observerKind:'agent',result:'used',evidence:'Read and used A',reason:'Consumer used A'});
+  const beforeClose=(await central.getTask(lead,p,taskId)).task;
+  await apply({type:'task.close',projectId:p,operationId:randomUUID(),taskId,expectedVersion:beforeClose.version,
+    deliveryId:delivery.revisionId!,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'A accepted'});
+  await new ResidentQueuePump(pumpOptions).tick();
+  assert.equal((await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryId)?.state,'released');
+  await new ResidentQueuePump(pumpOptions).tick();
+  const afterB=(await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryBId)!;
+  assert.equal(afterB.state,'claimed');
+  await new ResidentQueuePump(pumpOptions).tick();
+  assert.equal((await central.listResidentQueueAttempts(lead,p,afterB.claimId!)).length,1);
 });

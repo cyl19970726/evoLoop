@@ -4,8 +4,8 @@ import { DomainError, type ContentHasher, type Transaction } from "@evoloop/cont
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 
 interface Context { tx: Transaction; command: TaskCollaborationCommand; principal: Principal; now: string;
-  nextId(): string; hasher: ContentHasher; isAuthorizedRoleActor(actorId: string, roleId: string): Promise<boolean>;
-  isProjectActor(actorId: string): Promise<boolean>;
+  nextId(): string; hasher: ContentHasher; isAuthorizedRoleActor(projectId: string, actorId: string, roleId: string): Promise<boolean>;
+  isProjectActor(projectId: string, actorId: string): Promise<boolean>;
   hasEngineeringActionGrant(principal: Principal, action: Extract<TaskCollaborationPayload, { type: "action_request" }>): Promise<boolean> }
 const fail = (code: string, message: string, version?: number): never => { throw new DomainError(code, message, version); };
 const need = <T>(value: T | null, label: string): T => value ?? fail("NOT_FOUND", `${label} was not found`);
@@ -62,7 +62,7 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
     if (task.currentRevisionId !== revision.id) fail("BASELINE_CHANGED", "Task revision changed", task.version);
     if (run.taskId !== task.id || run.taskRevisionId !== revision.id || run.sessionId !== session.id)
       fail("RUN_MISMATCH", "Run must contain this fixed Task revision and Session");
-    if (!(await ctx.isAuthorizedRoleActor(command.recipientActorId, session.roleId)))
+    if (!(await ctx.isAuthorizedRoleActor(command.projectId, command.recipientActorId, session.roleId)))
       fail("RECIPIENT_HELD", "Recipient has no verified authority for this Session role");
     const binding = (await tx.listSessionBindings(session.roleId)).some(item => item.sessionId === session.id);
     if (!binding) fail("SESSION_HELD", "Session is not bound to its owned Role");
@@ -98,7 +98,7 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
     const task = need(await tx.getTask(old.task!.id), "Task");
     if (task.currentRevisionId !== old.task!.revisionId) fail("BASELINE_CHANGED", "Task revision changed; open a new fixed channel", task.version);
     const session = need(await tx.getRuntimeSession(old.collaboration!.sessionId), "Original Session");
-    if (session.projectId !== command.projectId || !(await ctx.isAuthorizedRoleActor(recipient, session.roleId)))
+    if (session.projectId !== command.projectId || !(await ctx.isAuthorizedRoleActor(command.projectId, recipient, session.roleId)))
       fail("RECIPIENT_HELD", "Worker no longer has verified authority for this Session role");
   }
   const events = await tx.listDiscussionEvents(old.id);
@@ -166,7 +166,7 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
     revisionId = command.evidence.revisionId;
   } else if (command.type === "discussion.action.request") {
     if (principal.actorId !== recipient) fail("FORBIDDEN", "Worker participant must request the bounded action");
-    if (!(await ctx.isProjectActor(command.executorActorId))) fail("EXECUTOR_HELD", "Designated executor is not a verified project actor");
+    if (!(await ctx.isProjectActor(command.projectId, command.executorActorId))) fail("EXECUTOR_HELD", "Designated executor is not a verified project actor");
     const run = need(await tx.getRuntimeRun(old.collaboration!.runId), "Original Run");
     if (run.projectId !== command.projectId || run.taskId !== old.task!.id ||
       run.taskRevisionId !== old.task!.revisionId || run.sessionId !== old.collaboration!.sessionId ||

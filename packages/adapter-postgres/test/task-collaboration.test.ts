@@ -154,8 +154,8 @@ async function continuationScenario(withExternalChange: boolean) {
   const apply = (principal: Principal, command: Record<string, unknown>) => uow.transaction(projectId, tx =>
     applyTaskCollaboration({ tx, command: { projectId, operationId: randomUUID(), discussionId, ...command } as TaskCollaborationCommand,
       principal, now: currentTime, nextId: randomUUID, hasher: { hash },
-      isAuthorizedRoleActor: async actor => actor === worker.actorId,
-      isProjectActor: async actor => actor === issuer.actorId || actor === worker.actorId,
+      isAuthorizedRoleActor: async (project,actor) => project===projectId && actor === worker.actorId,
+      isProjectActor: async (project,actor) => project===projectId && (actor === issuer.actorId || actor === worker.actorId),
       hasEngineeringActionGrant: async () => false }));
   await apply(worker, { type: "discussion.message.post", expectedVersion: 1, kind: "question",
     recipientActorId: issuer.actorId, body: { documentId: questionId, revisionId: question.revisionId } });

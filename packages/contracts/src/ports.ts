@@ -8,9 +8,12 @@ import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./proces
 import type { DiscussionRecord, DiscussionEvent } from "./discussions.js";
 import type { EvaluationReader, EvaluationTransaction } from "./evaluation.js";
 import type { ResidentReader, ResidentTransaction } from "./resident-hosts.js";
+import type { QueueReader, QueueTransaction } from "./queues.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
+  /** Queue capability is optional for legacy in-memory adapters; commands reject its absence. */
+  queue?: QueueReader;
   /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
   getCognitiveClosureFact?(decisionId: string): Promise<CognitiveClosureFact | null>;
   getWaitingHandoffFact?(inboxId: string): Promise<WaitingHandoffFact | null>;
@@ -78,6 +81,7 @@ export interface ChildHandoffFact {
   division?: { bindingId: string; waitingDecisionId: string; acknowledgedRunId: string };
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, ResidentTransaction, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
+  queue?: QueueTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;

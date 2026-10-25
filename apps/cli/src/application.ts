@@ -43,13 +43,14 @@ function mode(args: Args, names: string[]): string | undefined {
   if (selected.length > 1) throw new UsageError(`Choose one of ${names.map(key => `--${key}`).join(", ")}.`);
   return selected[0];
 }
-const readModes = ["events", "history", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts"];
+const readModes = ["events", "history", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts"];
 const listPaths: Record<string, string> = { tasks: "tasks", documents: "documents", goals: "goals", stages: "stages", discussions: "discussions", roles: "roles", domains: "domains", "role-templates": "role-templates",
-  schedules: "schedules", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
+  schedules: "schedules", "resident-queues": "resident-queues", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
 const orchestrationLists: Record<string, string> = { loops: "loops", inbox: "inbox", dispatches: "dispatches" };
 const reads: Record<string, { path: string; modes: string[]; list?: boolean }> = {
   goal: { path: "goals", modes: ["revisions"] }, stage: { path: "stages", modes: ["revisions", "reviews"] },
   discussion: { path: "discussions", modes: ["events"] }, role: { path: "roles", modes: ["revisions", "reviews", "handoffs", "bindings", "hosts"], list: true },
+  "resident-queue": { path: "resident-queues", modes: ["attempts"] },
   domain: { path: "domains", modes: ["revisions", "route"] }, host: { path: "hosts", modes: ["revisions"] },
   schedule: { path: "schedules", modes: ["revisions", "occurrences"], list: true }, run: { path: "runtime/runs", modes: ["events", "result", "trace"] },
   session: { path: "runtime/sessions", modes: ["events", "history"], list: true }, git: { path: "references/git", modes: [] }, references: { path: "references/tasks", modes: [] },

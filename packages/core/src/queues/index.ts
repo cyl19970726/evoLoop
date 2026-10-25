@@ -28,7 +28,14 @@ export interface QueueResult {queueId:string;version:number;claimId:string|null;
 const fail=(code:string,message:string):never=>{throw Object.assign(new Error(message),{code});};
 const terminal=new Set(['completed','failed','interrupted']);
 /** Business checks run inside the caller's journalled transaction. The PG adapter still locks authority rows atomically. */
-export async function applyQueue(tx:QueueTransaction & Reader,principal:Principal,input:QueueCommand,ctx:QueueContext):Promise<QueueResult>{
+export function applyQueue(tx:QueueTransaction & Reader,principal:Principal,input:QueueCommand,ctx:QueueContext):Promise<QueueResult>;
+export function applyQueue(tx:QueueTransaction,reader:Reader,principal:Principal,input:QueueCommand,ctx:QueueContext):Promise<QueueResult>;
+export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Principal,principalOrInput:Principal|QueueCommand,
+  inputOrContext:QueueCommand|QueueContext,context?:QueueContext):Promise<QueueResult>{
+  const reader=context?readerOrPrincipal as Reader:tx as QueueTransaction & Reader;
+  const principal=(context?principalOrInput:readerOrPrincipal) as Principal;
+  const input=(context?inputOrContext:principalOrInput) as QueueCommand;
+  const ctx=(context??inputOrContext) as QueueContext;
   const parsed=queueCommandSchema.safeParse(input);if(!parsed.success)return fail('INVALID_COMMAND',parsed.error.message);
   const c=parsed.data;
   if(!principal.actorId||!principal.projectIds.includes(c.projectId)||!principal.permissions.includes('review'))return fail('FORBIDDEN','project review permission required');
@@ -39,53 +46,58 @@ export async function applyQueue(tx:QueueTransaction & Reader,principal:Principa
     const entries:ResidentQueueEntry[]=[];
     for(const [position,item] of c.entries.entries()){
       if(item.dependsOn.some(d=>!entries.some(x=>x.id===d)))return fail('INVALID_DEPENDENCY','dependencies must precede the entry');
-      const task=await tx.getTask(item.taskId);
-      if(!task||task.projectId!==c.projectId||task.state!=='in_progress')return fail('TASK_UNAVAILABLE','queue requires an in-progress Task with sealed fixed input');
-      const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(tx,task,item.taskRevisionId));
+      const task=await reader.getTask(item.taskId);
+      if(!task||task.projectId!==c.projectId||task.state!=='in_progress'||task.currentRevisionId!==item.taskRevisionId)
+        return fail('TASK_UNAVAILABLE','queue requires the current in-progress Task revision and sealed fixed input');
+      const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(reader,task,item.taskRevisionId));
       entries.push({projectId:c.projectId,queueId:c.queueId,id:item.id,taskId:item.taskId,taskRevisionId:item.taskRevisionId,sourceInputJson,sessionId:item.sessionId,roleId:item.roleId,position,dependsOn:item.dependsOn,consumerId:item.consumerId,useRequired:item.useRequired,releaseRule:item.releaseRule,state:'queued',holdCode:null,holdReason:null,claimId:null,version:1});
     }
     const queue:ResidentQueue={projectId:c.projectId,id:c.queueId,version:1,adoptedVersion:null,maxRuns:c.maxRuns,reason:c.reason,actorId:principal.actorId,entries};
     await tx.createResidentQueue(queue);return result(queue);
   }
   const queue=await tx.getResidentQueue(c.queueId);if(!queue)return fail('NOT_FOUND','queue missing');
+  if((c.type==='queue.claim'||c.type==='queue.continue')&&principal.actorId!==queue.actorId)
+    return fail('QUEUE_ACTOR_MISMATCH','only the adopted queue controller may reserve its Run');
   if(c.type==='queue.reorder'){if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');const version=await tx.reorderResidentQueue(c.queueId,c.expectedVersion,c.entryIds,principal.actorId,c.reason);return {...result(queue),version};}
   if(c.type==='queue.amend'){
     if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');
     const entry=queue.entries.find(x=>x.id===c.entryId);if(!entry)return fail('NOT_FOUND','entry missing');
-    const task=await tx.getTask(entry.taskId);if(!task||task.currentRevisionId!==c.taskRevisionId||task.state!=='in_progress')return fail('TASK_REVISION_CONFLICT','amendment requires current in-progress Task revision');
-    const attempts=entry.claimId?await tx.listResidentQueueAttempts(entry.claimId):[];const last=attempts.at(-1);const run=last?await tx.getRuntimeRun(last.runId):null;
+    const task=await reader.getTask(entry.taskId);if(!task||task.currentRevisionId!==c.taskRevisionId||task.state!=='in_progress')return fail('TASK_REVISION_CONFLICT','amendment requires current in-progress Task revision');
+    const attempts=entry.claimId?await tx.listResidentQueueAttempts(entry.claimId):[];const last=attempts.at(-1);const run=last?await reader.getRuntimeRun(last.runId):null;
     if(last&&(!run||!terminal.has(run.state)))return fail('RUN_UNSETTLED','unknown or active Run cannot amend input');
-    const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(tx,task));
+    const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(reader,task));
     const version=await tx.amendResidentQueueEntry(c.queueId,c.entryId,c.expectedVersion,c.taskRevisionId,sourceInputJson,principal.actorId,c.reason);
     return {...result(queue),version};
   }
   if(c.type==='queue.adopt'){if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');await tx.adoptResidentQueue(c.queueId,c.expectedVersion,principal.actorId);return result(queue);}
   const entry=queue.entries.find(x=>x.id===c.entryId);if(!entry)return fail('NOT_FOUND','entry missing');
-  if(c.type==='queue.hold'){await tx.holdResidentQueueEntry(c.queueId,c.entryId,'manual_review',c.reason);return result(queue,null,null,'manual_review');}
+  if(c.type==='queue.hold'){
+    if(entry.state==='released')return fail('ENTRY_UNAVAILABLE','released entry cannot be held');
+    await tx.holdResidentQueueEntry(c.queueId,c.entryId,'manual_review',c.reason);return result(queue,null,null,'manual_review');
+  }
   if(c.type==='queue.unhold'){
     if(entry.version!==c.expectedEntryVersion)return fail('VERSION_CONFLICT','entry changed');
-    if(entry.holdCode!=='manual_review')return fail('HOLD_NOT_MANUAL','only manual review holds can be lifted');
+    if(!entry.holdCode||entry.holdCode==='budget_exhausted')return fail('HOLD_NOT_LIFTABLE','entry is not held or adopted budget is exhausted');
     await tx.unholdResidentQueueEntry(c.queueId,c.entryId,c.expectedEntryVersion,c.operationId,principal.actorId,c.reason);
     return result(queue);
   }
   if(c.type==='queue.claim'||c.type==='queue.continue'){
-    if(entry.holdCode==='manual_review')return fail('MANUAL_REVIEW_REQUIRED','Lead must explicitly unhold this entry');
-    if(entry.holdCode==='budget_exhausted')return fail('BUDGET_EXHAUSTED','adopted queue run budget exhausted');
+    if(entry.holdCode)return fail('HOLD_REQUIRES_DECISION','Lead must explicitly unhold this entry');
     if(c.type==='queue.claim'&&queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue order changed');
     if(queue.adoptedVersion!==queue.version)return fail('QUEUE_NOT_ADOPTED','Lead must adopt current order');
     const claim=c.type==='queue.continue'?await tx.getResidentQueueClaim(c.claimId):null;
     if(c.type==='queue.continue'&&(!claim||claim.entryId!==entry.id||claim.releasedAt))return fail('CLAIM_MISMATCH','active Task claim required');
-    if(c.type==='queue.claim'&&entry.state!=='queued'&&entry.state!=='held')return fail('ENTRY_UNAVAILABLE','entry already claimed');
+    if(c.type==='queue.claim'&&entry.state!=='queued')return fail('ENTRY_UNAVAILABLE','entry is not queued');
     const attempts=claim?await tx.listResidentQueueAttempts(claim.claimId):[];
     if(await tx.countResidentQueueAttempts(c.queueId)>=queue.maxRuns){await tx.holdResidentQueueEntry(c.queueId,entry.id,'budget_exhausted','adopted queue run budget exhausted');return result(queue,claim?.claimId??null,null,'budget_exhausted');}
-    if(attempts.length){const previous=await tx.getRuntimeRun(attempts.at(-1)!.runId);if(!previous||!terminal.has(previous.state))return fail('RUN_UNSETTLED','previous Run must be confirmed terminal; unknown requires original operation reconciliation');}
-    const task=await tx.getTask(entry.taskId),session=await tx.getRuntimeSession(entry.sessionId);
+    if(attempts.length){const previous=await reader.getRuntimeRun(attempts.at(-1)!.runId);if(!previous||!terminal.has(previous.state))return fail('RUN_UNSETTLED','previous Run must be confirmed terminal; unknown requires original operation reconciliation');}
+    const task=await reader.getTask(entry.taskId),session=await reader.getRuntimeSession(entry.sessionId);
     const dependencyFacts=await Promise.all(entry.dependsOn.map(async id=>{const d=queue.entries.find(x=>x.id===id);const c=d?.claimId?await tx.getResidentQueueClaim(d.claimId):null;return d?.state==='released'&&c?.releaseKind==='accepted';}));
     const dependencies=dependencyFacts.every(Boolean);
-    const currentInputJson=task?canonicalTaskInputJson(await taskInputSignature(tx,task)):null;
+    const currentInputJson=task?canonicalTaskInputJson(await taskInputSignature(reader,task)):null;
     const grantCurrent=await tx.exactQueueGrant(entry.roleId,entry.sessionId,entry.taskId);
     const bindingCurrent=await tx.queueBindingCurrent(entry.roleId,entry.sessionId);
-    const runBusy=(await tx.listRuntimeRuns()).some(r=>(r.taskId===entry.taskId||r.sessionId===entry.sessionId)&&!terminal.has(r.state)) || session?.state==='unknown';
+    const runBusy=(await reader.listRuntimeRuns()).some(r=>(r.taskId===entry.taskId||r.sessionId===entry.sessionId)&&!terminal.has(r.state)) || session?.state==='unknown';
     const gate=evaluateQueueEntry(entry,{currentTaskRevisionId:task?.currentRevisionId??null,taskState:task?.state??'other',sessionReady:session?.state==='ready',nativeThreadId:session?.nativeThreadId??null,bindingCurrent,grantCurrent,conflictingRun:runBusy,currentInputJson},dependencies);
     // Exact input is supplied separately to avoid treating lifecycle revisions as input changes.
     if(!gate.ready){await tx.holdResidentQueueEntry(c.queueId,entry.id,gate.code!,gate.reason!);return result(queue,claim?.claimId??null,null,gate.code);}
@@ -96,11 +108,12 @@ export async function applyQueue(tx:QueueTransaction & Reader,principal:Principa
     const next=await tx.appendResidentQueueAttempt(c.claimId,attempt,queue.maxRuns);return result(queue,c.claimId,next?c.runId:null,next?null:'budget_exhausted');
   }
   if(c.type==='queue.release'){
+    if(entry.holdCode)return fail('HOLD_REQUIRES_DECISION','Lead must explicitly unhold before release');
     const claim=await tx.getResidentQueueClaim(c.claimId);if(!claim||claim.entryId!==entry.id||claim.releasedAt)return fail('CLAIM_MISMATCH','active claim required');
-    const attempts=await tx.listResidentQueueAttempts(claim.claimId);const last=attempts.at(-1);const run=last?await tx.getRuntimeRun(last.runId):null;
+    const attempts=await tx.listResidentQueueAttempts(claim.claimId);const last=attempts.at(-1);const run=last?await reader.getRuntimeRun(last.runId):null;
     if(!run||!terminal.has(run.state))return fail('RUN_UNSETTLED','unknown or active Run cannot release');
-    const task=await tx.getTask(entry.taskId);if(!task)return fail('TASK_UNAVAILABLE','Task missing');
-    if(canonicalTaskInputJson(await taskInputSignature(tx,task))!==entry.sourceInputJson)return fail('TASK_CHANGED','business input changed');
+    const task=await reader.getTask(entry.taskId);if(!task)return fail('TASK_UNAVAILABLE','Task missing');
+    if(canonicalTaskInputJson(await taskInputSignature(reader,task))!==entry.sourceInputJson)return fail('TASK_CHANGED','business input changed');
     if(c.decisionId){if(entry.releaseRule!=='bounded_decision'||!c.reason||!c.nextResponsibility)return fail('BOUNDED_DECISION_REQUIRED','explicit bounded Lead decision required');
       const ok=await tx.releaseResidentQueueBounded(c.claimId,c.decisionId,principal.actorId,c.reason,c.nextResponsibility);return result(queue,ok?c.claimId:null);}
     const ok=await tx.releaseResidentQueueAccepted(c.claimId);return result(queue,ok?c.claimId:null,null,ok?null:'awaiting_acceptance');

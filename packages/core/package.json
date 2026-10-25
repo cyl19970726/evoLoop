@@ -8,6 +8,7 @@
     "./scheduling": "./dist/scheduling/index.js",
     "./documents": "./dist/documents/index.js",
     "./runtime": "./dist/runtime/index.js",
+    "./task-input": "./dist/task-input.js",
     "./roles": "./dist/roles/index.js",
     "./delivery": "./dist/delivery/index.js",
     "./references": "./dist/references/index.js",

@@ -52,9 +52,11 @@ const statusLabel: Record<DiscussionRecord["status"], string> = {
   prepared: "交接包已准备，待人工承接", handed_off: "已人工登记承接观察",
   decided: "已登记讨论决定", linked: "已链接后续对象",
 };
-const kindLabel: Record<DiscussionRecord["kind"], string> = { allocation: "讨论当前分工", direction: "讨论下一阶段" };
+const kindLabel: Record<DiscussionRecord["kind"], string> = { allocation: "讨论当前分工", direction: "讨论下一阶段", task_collaboration: "任务协作频道" };
 const eventLabel: Record<DiscussionEvent["kind"], string> = {
   prepared: "准备交接包", handoff: "人工承接观察", decision: "讨论决定", action: "后续对象链接",
+  message: "消息", receipt: "收读回执", action_request: "工程动作请求",
+  action_decision: "工程动作决定", action_execution: "外部执行回执",
 };
 
 async function complete<T>(label: string, load: (cursor?: string) => Promise<Page<T>>): Promise<T[]> {
@@ -140,11 +142,20 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     <h3>已有讨论</h3>{loading && <p>正在读取讨论列表…</p>}{error && <Notice error>{error}</Notice>}
     {!loading && items.length === 0 && <p className="empty">尚无讨论交接包。没有新取舍时无需制造任务或常设职责。</p>}
     <div className="discussion-list">{items.map(item => <button type="button" key={item.id} className={item.id === selectedId ? "active" : ""} onClick={() => setSelectedId(item.id)}>
-      <strong>{kindLabel[item.kind]}</strong><span>{item.question}</span><small>{statusLabel[item.status]} · v{item.version}</small>
+      <strong>{kindLabel[item.kind]}</strong><span>{item.kind === "task_collaboration" ? `Task ${item.task?.id ?? "未绑定"}` : item.question}</span><small>{statusLabel[item.status]} · v{item.version}</small>
     </button>)}</div>
     {nextCursor && <button type="button" className="more" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "加载中…" : "加载更多讨论"}</button>}
     {detailError && <Notice error>讨论详情或事件不可读：{detailError}。不能据列表状态提交后续动作。</Notice>}
-    {selected && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
+    {selected?.kind === "task_collaboration" && <div className="discussion-detail"><h3>任务协作频道</h3>
+      <p>固定 Task：<code>{selected.task?.id ?? "未绑定"}</code> · 修订 <code>{selected.task?.revisionId ?? "未绑定"}</code></p>
+      <p>原 Run：<code>{selected.collaboration?.runId ?? "未绑定"}</code> · Session <code>{selected.collaboration?.sessionId ?? "未绑定"}</code></p>
+      <p>派出者：{selected.collaboration?.issuerActorId ?? "未绑定"} · 执行者：{selected.collaboration?.recipientActorId ?? "未绑定"}</p>
+      {events.map(event=><article className="decision" key={event.id}><strong>{eventLabel[event.kind]} · v{event.version}</strong>
+        <p>事件 <code>{event.id}</code> · {event.actorId} · {event.createdAt}</p>
+        {event.collaborationPayload?.type === "message" && <p>固定正文：<a href={`#/p/${context.projectId}/documents/${event.collaborationPayload.body.documentId}?revision=${event.collaborationPayload.body.revisionId}`}>阅读消息原文</a></p>}
+      </article>)}
+    </div>}
+    {selected && selected.kind !== "task_collaboration" && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
   </section>;
 }
 

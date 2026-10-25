@@ -4,12 +4,15 @@ import { runtimeCommands } from "./runtime.js";
 import { roleCommands } from "./roles.js";
 import { scheduleCommands } from "./scheduling.js";
 import { discussionCommands } from "./discussions.js";
+import { taskCollaborationCommands } from "./discussions.js";
+import { queueCommandSchema } from "./queues.js";
 import { evaluationCommands } from "./evaluation.js";
 import { residentCommands } from "./resident-hosts.js";
 export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
 export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionStatus } from "./discussions.js";
+export type { ResidentQueue, ResidentQueueEntry, QueueClaim, QueueAttempt } from "./queues.js";
 
 export const idSchema = z.uuid();
 const text = z.string().trim().min(1).max(4000);
@@ -45,6 +48,8 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...residentCommands,
   ...scheduleCommands,
   ...discussionCommands,
+  ...taskCollaborationCommands,
+  ...queueCommandSchema.options,
   ...evaluationCommands,
 ]);
 export type Command = z.infer<typeof commandSchema>;
@@ -114,6 +119,7 @@ export interface BasisDecision {
 export interface AppliedResult {
   status: "applied"; operationId: string; entityId: string; version?: number;
   revisionId?: string; decisionId?: string; impactIds?: string[];
+  queue?: { claimId: string | null; runId: string | null; held: import("./queues.js").QueueHoldCode | null };
 }
 export interface RejectedResult {
   status: "rejected"; operationId: string; code: string; message: string; currentVersion?: number;

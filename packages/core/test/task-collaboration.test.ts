@@ -74,8 +74,8 @@ function fixture() {
   } as unknown as Transaction;
   async function apply(command: TaskCollaborationCommand, principal: Principal = worker, now = "2026-10-25T01:00:00Z") {
     return applyTaskCollaboration({ tx, command, principal, now, nextId: () => id(next++),
-      hasher: { hash }, isAuthorizedRoleActor: async actor => recipientValid && actor === "worker",
-      isProjectActor: async actor => actor === "issuer" || actor === "worker",
+      hasher: { hash }, isAuthorizedRoleActor: async (project,actor) => project===projectId && recipientValid && actor === "worker",
+      isProjectActor: async (project,actor) => project===projectId && (actor === "issuer" || actor === "worker"),
       hasEngineeringActionGrant: async () => actionGrant });
   }
   async function open() {

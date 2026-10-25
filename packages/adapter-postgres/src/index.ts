@@ -14,6 +14,7 @@ import { PgEvaluationStore } from "./evaluation.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
 import type { BusinessDomain, BusinessDomainRevision, HostLink, HostLinkRevision } from "@evoloop/contracts/resident-hosts";
 import { PgResidentHosts } from "./resident-hosts.js";
+import { PgResidentQueue, type QueueGrantCheck, type QueueLeadCheck, type QueueBindingCheck } from "./queues.js";
 import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
@@ -25,6 +26,12 @@ import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageRev
 import { DomainError, type CognitiveClosureFact, type WaitingHandoffFact, type ChildHandoffFact, type Reader, type Transaction, type UnitOfWork } from "@evoloop/contracts/ports";
 
 const { Pool } = pg;
+export interface QueueAuthority {
+  grant?: QueueGrantCheck;
+  lead?: QueueLeadCheck;
+  binding?: QueueBindingCheck;
+  input?: (reader: Reader, taskId: string) => Promise<string>;
+}
 const maxDetailRows = 10_000;
 type Row = QueryResultRow;
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
@@ -84,6 +91,7 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 }
 
 class PgReader implements Reader {
+  readonly queue: PgResidentQueue;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
   protected readonly residents: PgResidentHosts;
@@ -92,7 +100,8 @@ class PgReader implements Reader {
   protected readonly payloads: PgDocumentPayloadStore;
   protected readonly discussions: PgDiscussionQueries;
   protected readonly evaluations: PgEvaluationStore;
-  constructor(protected readonly client: PoolClient, protected readonly projectId: string) {
+  constructor(protected readonly client: PoolClient, protected readonly projectId: string,
+    queueAuthority: QueueAuthority = {}) {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
@@ -101,6 +110,10 @@ class PgReader implements Reader {
     this.payloads = new PgDocumentPayloadStore(client, projectId);
     this.discussions = new PgDiscussionQueries(client, projectId);
     this.evaluations = new PgEvaluationStore(client, projectId);
+    this.queue = new PgResidentQueue(client, projectId,
+      queueAuthority.grant ?? (async () => false),
+      async (_client, _projectId, taskId) => queueAuthority.input ? queueAuthority.input(this, taskId) : "",
+      queueAuthority.lead ?? (async () => false), queueAuthority.binding ?? (async () => false));
   }
   getEvaluation(id: string, revisionId?: string) { return this.evaluations.getEvaluation(id, revisionId); }
   listEvaluations(limit: number, cursor?: string, taskId?: string, knowledgePageId?: string) { return this.evaluations.listEvaluations(limit, cursor, taskId, knowledgePageId); }
@@ -608,7 +621,7 @@ class PgTransaction extends PgReader implements Transaction {
 }
 
 export class PostgresUnitOfWork implements UnitOfWork {
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(private readonly pool: pg.Pool, private readonly queueAuthority: QueueAuthority = {}) {}
   async transaction<T>(projectId: string, action: (tx: Transaction) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     let open = false;
@@ -617,7 +630,7 @@ export class PostgresUnitOfWork implements UnitOfWork {
       try { await client.query("BEGIN"); } catch (error) { destroy = true; throw error; }
       open = true;
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [projectId]);
-      const result = await action(new PgTransaction(client, projectId));
+      const result = await action(new PgTransaction(client, projectId, this.queueAuthority));
       try {
         await client.query("COMMIT");
         open = false;
@@ -643,7 +656,7 @@ export class PostgresUnitOfWork implements UnitOfWork {
     try {
       try { await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); } catch (error) { destroy = true; throw error; }
       open = true;
-      const result = await action(new PgReader(client, projectId));
+      const result = await action(new PgReader(client, projectId, this.queueAuthority));
       try { await client.query("COMMIT"); } catch (error) { destroy = true; throw error; }
       open = false;
       return result;
