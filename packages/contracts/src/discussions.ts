@@ -24,7 +24,8 @@ export const taskCollaborationCommands = [
     kind: taskMessageKind, recipientActorId: short, body: documentRef, replyToEventId: id.optional() }),
   z.strictObject({ ...common, type: z.literal("discussion.receipt.record"), expectedVersion: version,
     messageEventId: id, stage: z.enum(["received", "read", "adopted", "resolved"]),
-    evidence: documentRef }),
+    evidence: documentRef,
+    continuation: z.strictObject({ runId: id, taskRevisionId: id }).optional() }),
   z.strictObject({ ...common, type: z.literal("discussion.action.request"), expectedVersion: version,
     ...actionRequest.shape, detail: documentRef }),
   z.strictObject({ ...common, type: z.literal("discussion.action.decide"), expectedVersion: version,
@@ -75,7 +76,8 @@ export interface DiscussionRecord {
 }
 export type TaskCollaborationPayload =
   | { type: "message"; kind: z.infer<typeof taskMessageKind>; recipientActorId: string; body: z.infer<typeof documentRef>; replyToEventId: string | null }
-  | { type: "receipt"; messageEventId: string; stage: "received" | "read" | "adopted" | "resolved"; evidence: z.infer<typeof documentRef> }
+  | { type: "receipt"; messageEventId: string; stage: "received" | "read" | "adopted" | "resolved";
+    evidence: z.infer<typeof documentRef>; continuation: { runId: string; taskRevisionId: string } | null }
   | ({ type: "action_request"; detail: z.infer<typeof documentRef> } & z.infer<typeof actionRequest>)
   | { type: "action_decision"; requestEventId: string; decision: "approved" | "rejected" | "expired"; evidence: z.infer<typeof documentRef> }
   | { type: "action_execution"; requestEventId: string; decisionEventId: string; state: "started" | "succeeded" | "failed" | "unknown"; externalOperationId: string; artifact: z.infer<typeof documentRef> };

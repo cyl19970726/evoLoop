@@ -4,7 +4,7 @@ import test from "node:test";
 import type { DiscussionEvent, DiscussionRecord, TaskCollaborationCommand } from "@evoloop/contracts/discussions";
 import type { Document, DocumentRevision, Principal, Task, TaskRevision } from "@evoloop/contracts";
 import type { Transaction } from "@evoloop/contracts/ports";
-import { applyTaskCollaboration } from "../src/task-collaboration.ts";
+import { applyTaskCollaboration, taskAnswerInputBlock } from "../src/task-collaboration.ts";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const hash = (body: string) => createHash("sha256").update(body).digest("hex");
@@ -23,7 +23,11 @@ function fixture() {
     content: task.content, contentDocumentId: task.contentDocumentId, contentRevisionId: task.contentRevisionId,
     kind: null, acceptance: task.acceptance, owner: task.owner, state: "in_progress",
     basisSetId: null, actorId: "issuer", reason: "Fixed", createdAt: "2026-10-25T00:00:00Z" };
-  const run = { projectId, id: runId, taskId, taskRevisionId, sessionId, input: "Original input", inputHash: hash("Original input") };
+  const run = { projectId, id: runId, taskId, taskRevisionId, sessionId, basisSetId: id(60),
+    input: "Original input", inputHash: hash("Original input"), state: "completed", nativeTurnId: "turn-1",
+    createdAt: "2026-10-25T00:00:00Z" };
+  let continuation: typeof run | null = null;
+  let continuationRevision: TaskRevision | null = null;
   let discussion: DiscussionRecord | null = null;
   const events: DiscussionEvent[] = [];
   const documents = new Map<string, Document>();
@@ -47,8 +51,10 @@ function fixture() {
     insertDocument: async (document: Document) => { documents.set(document.id, document); },
     insertDocumentRevision: async (revision: DocumentRevision) => { revisions.set(revision.id, revision); },
     getTask: async (value: string) => value === taskId ? task : null,
-    getTaskRevision: async (value: string, revisionId: string) => value === taskId && revisionId === taskRevisionId ? taskRevision : null,
-    getRuntimeRun: async (value: string) => value === runId ? run : null,
+    getTaskRevision: async (value: string, revisionId: string) => value === taskId && revisionId === taskRevisionId ? taskRevision :
+      value === taskId && revisionId === continuationRevision?.id ? continuationRevision : null,
+    getRuntimeRun: async (value: string) => value === runId ? run : value === continuation?.id ? continuation : null,
+    getBasisSet: async () => ({ members: [{ documentId: id(80), revisionId: id(81) }] }),
     getRuntimeSession: async (value: string) => value === sessionId ? { projectId, id: sessionId, roleId: id(50) } : null,
     listSessionBindings: async () => [{ sessionId }],
     listDiscussionEvents: async () => events,
@@ -69,7 +75,22 @@ function fixture() {
       runId, sessionId, recipientActorId: "worker" }, issuer);
   }
   const version = () => discussion!.version;
+  function continueWithAnswer(message: DiscussionEvent, input?: string) {
+    const taskRevisionId = id(70);
+    continuationRevision = { ...taskRevision, id: taskRevisionId, version: 3, basisSetId: id(71), reason: "Runtime dispatch reserved" };
+    task.currentRevisionId = taskRevisionId;
+    task.version = 3;
+    const answer = message.collaborationPayload;
+    assert.equal(answer?.type, "message");
+    const body = revisions.get((answer as Extract<typeof answer, { type: "message" }>).body.revisionId)!;
+    const frozen = input ?? `Continue from this answer:\n${taskAnswerInputBlock(discussionId, message.id, {
+      documentId: body.documentId, revisionId: body.id, contentHash: body.contentHash, text: body.body! })}`;
+    continuation = { ...run, id: id(72), taskRevisionId, basisSetId: id(71), input: frozen,
+      inputHash: hash(frozen), nativeTurnId: "turn-2", createdAt: "2026-10-25T02:00:00Z" };
+    return { runId: continuation.id, taskRevisionId };
+  }
   return { apply, open, version, events, documents, revisions, task, run,
+    continueWithAnswer,
     setRecipientValid: (value: boolean) => { recipientValid = value; },
     setActionGrant: (value: boolean) => { actionGrant = value; },
     get discussion() { return discussion; } };
@@ -92,12 +113,20 @@ test("fixed Task question, answer and actual adoption preserve the original Run 
   await f.apply({ ...base("discussion.message.post", f.version(), 104), kind: "answer",
     recipientActorId: "worker", body: ref(23), replyToEventId: questionEvent.id } as TaskCollaborationCommand, issuer);
   const answer = f.events.at(-1)!;
+  await f.apply({ ...base("discussion.receipt.record", f.version(), 108), messageEventId: questionEvent.id,
+    stage: "resolved", evidence: ref(23) } as TaskCollaborationCommand, issuer);
   await f.apply({ ...base("discussion.receipt.record", f.version(), 105), messageEventId: answer.id,
     stage: "received", evidence: ref(24) } as TaskCollaborationCommand);
   await f.apply({ ...base("discussion.receipt.record", f.version(), 106), messageEventId: answer.id,
     stage: "read", evidence: ref(25) } as TaskCollaborationCommand);
+  await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
+    stage: "adopted", evidence: ref(26) } as TaskCollaborationCommand), "CONTINUATION_REQUIRED");
+  const falseContinuation = f.continueWithAnswer(answer, "Continuation without the fixed answer");
+  await rejects(f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
+    stage: "adopted", evidence: ref(26), continuation: falseContinuation } as TaskCollaborationCommand), "ANSWER_NOT_IN_RUN");
+  const continuation = f.continueWithAnswer(answer);
   await f.apply({ ...base("discussion.receipt.record", f.version(), 107), messageEventId: answer.id,
-    stage: "adopted", evidence: ref(26) } as TaskCollaborationCommand);
+    stage: "adopted", evidence: ref(26), continuation } as TaskCollaborationCommand);
   assert.equal(question.result.version, 2);
   assert.equal((f.events.at(-1)!.collaborationPayload as { stage: string }).stage, "adopted");
   assert.equal(f.run.input, "Original input");
@@ -125,6 +154,19 @@ test("opening rejects unverified recipient; participants and fixed Task provenan
   f.task.currentRevisionId = id(999);
   await rejects(f.apply({ ...base("discussion.message.post", f.version(), 103), kind: "question",
     recipientActorId: "issuer", body: ref(20) } as TaskCollaborationCommand), "BASELINE_CHANGED");
+});
+
+test("revoked owned Role authority holds new messages and action requests", async () => {
+  const f = fixture(); await f.open();
+  f.setRecipientValid(false);
+  await rejects(f.apply({ ...base("discussion.message.post", f.version(), 150), kind: "question",
+    recipientActorId: "issuer", body: ref(20) } as TaskCollaborationCommand), "RECIPIENT_HELD");
+  await rejects(f.apply({ ...base("discussion.action.request", f.version(), 151), requestId: id(152),
+    executorActorId: "issuer", actionType: "pr.create", scope: { repository: "evoLoop",
+      worktree: "/tmp/worktree", paths: ["README.md"] }, inputHash: f.run.inputHash,
+    reason: "Review", authorityEvidence: "Prior grant", expiresAt: "2026-10-26T00:00:00Z",
+    acceptance: "PR URL", detail: ref(21) } as TaskCollaborationCommand), "RECIPIENT_HELD");
+  assert.equal(f.events.length, 1);
 });
 
 test("bounded action requires approval, actual executor, expiry and stable reconciliation ID", async () => {

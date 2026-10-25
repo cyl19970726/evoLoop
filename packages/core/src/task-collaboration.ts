@@ -9,6 +9,15 @@ interface Context { tx: Transaction; command: TaskCollaborationCommand; principa
 const fail = (code: string, message: string, version?: number): never => { throw new DomainError(code, message, version); };
 const need = <T>(value: T | null, label: string): T => value ?? fail("NOT_FOUND", `${label} was not found`);
 const expired = (expiresAt: string, now: string): boolean => Date.parse(expiresAt) <= Date.parse(now);
+/** The dispatcher includes this exact fixed block in the continuation Run input. */
+export function taskAnswerInputBlock(discussionId: string, messageEventId: string,
+  body: { documentId: string; revisionId: string; contentHash: string; text: string }): string {
+  return `[evoloop-task-answer ${discussionId} ${messageEventId} ${body.documentId} ${body.revisionId} ${body.contentHash}]\n${body.text}\n[/evoloop-task-answer]`;
+}
+const sameTaskBusinessInput = (a: import("@evoloop/contracts").TaskRevision,
+  b: import("@evoloop/contracts").TaskRevision): boolean =>
+  a.title === b.title && a.contentDocumentId === b.contentDocumentId && a.contentRevisionId === b.contentRevisionId &&
+  a.content === b.content && a.kind === b.kind && a.acceptance === b.acceptance && a.owner === b.owner;
 const ref = async (ctx: Context, value: { documentId: string; revisionId: string }): Promise<DocumentRevision> => {
   const document = need(await ctx.tx.getDocument(value.documentId), "Document");
   const revision = need(await ctx.tx.getDocumentRevision(value.documentId, value.revisionId), "Document revision");
@@ -88,8 +97,13 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
   const [issuer, recipient] = participants(old);
   if (command.type !== "discussion.action.execute" && principal.actorId !== issuer && principal.actorId !== recipient)
     fail("FORBIDDEN", "Only the two participants may act");
-  const task = need(await tx.getTask(old.task!.id), "Task");
-  if (task.currentRevisionId !== old.task!.revisionId) fail("BASELINE_CHANGED", "Task revision changed; open a new fixed channel", task.version);
+  if (command.type === "discussion.message.post" || command.type === "discussion.action.request") {
+    const task = need(await tx.getTask(old.task!.id), "Task");
+    if (task.currentRevisionId !== old.task!.revisionId) fail("BASELINE_CHANGED", "Task revision changed; open a new fixed channel", task.version);
+    const session = need(await tx.getRuntimeSession(old.collaboration!.sessionId), "Original Session");
+    if (session.projectId !== command.projectId || !(await ctx.isAuthorizedRoleActor(recipient, session.roleId)))
+      fail("RECIPIENT_HELD", "Worker no longer has verified authority for this Session role");
+  }
   const events = await tx.listDiscussionEvents(old.id);
   const get = (id: string) => need(events.find(item => item.id === id) ?? null, "Referenced event");
   let payload: TaskCollaborationPayload;
@@ -112,15 +126,49 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
     const message = get(command.messageEventId);
     if (message.kind !== "message" || message.collaborationPayload?.type !== "message" ||
       message.collaborationPayload.recipientActorId !== principal.actorId) fail("RECEIPT_MISMATCH", "Only the actual recipient can acknowledge a message");
+    const messagePayload = message.collaborationPayload as Extract<TaskCollaborationPayload, { type: "message" }>;
     const stages = ["received", "read", "adopted", "resolved"];
     const prior = events.filter(item => item.kind === "receipt" && item.collaborationPayload?.type === "receipt" &&
       item.collaborationPayload.messageEventId === message.id);
     if (prior.some(item => item.collaborationPayload?.type === "receipt" && item.collaborationPayload.stage === command.stage))
       fail("ALREADY_RECORDED", "Receipt stage already recorded");
     const highest = Math.max(-1, ...prior.map(item => stages.indexOf((item.collaborationPayload as Extract<TaskCollaborationPayload, { type: "receipt" }>).stage)));
-    if (stages.indexOf(command.stage) > highest + 1) fail("RECEIPT_ORDER", "Record earlier receipt stages first");
+    if (command.stage === "resolved" && messagePayload.kind !== "answer") {
+      if (highest < stages.indexOf("read")) fail("RECEIPT_ORDER", "Recipient must first receive and read the message");
+      if (messagePayload.kind === "question" && !events.some(item => item.kind === "message" &&
+        item.actorId === principal.actorId && item.collaborationPayload?.type === "message" &&
+        item.collaborationPayload.kind === "answer" && item.collaborationPayload.replyToEventId === message.id))
+        fail("ANSWER_REQUIRED", "Question resolution requires a fixed reply from this recipient");
+    } else if (stages.indexOf(command.stage) > highest + 1) fail("RECEIPT_ORDER", "Record earlier receipt stages first");
+    if ((command.stage === "adopted") !== (command.continuation !== undefined))
+      fail("CONTINUATION_REQUIRED", "Adoption alone requires a verified continuation Run");
+    if (command.stage === "adopted") {
+      if (messagePayload.kind !== "answer") fail("ADOPTION_TARGET", "Only a fixed answer can be adopted by a continuation Run");
+      const continued = need(await tx.getRuntimeRun(command.continuation!.runId), "Continuation Run");
+      const original = need(await tx.getRuntimeRun(old.collaboration!.runId), "Original Run");
+      if (continued.projectId !== command.projectId || continued.id === original.id ||
+        continued.taskId !== old.task!.id || continued.sessionId !== old.collaboration!.sessionId ||
+        continued.taskRevisionId !== command.continuation!.taskRevisionId ||
+        continued.state !== "completed" || !continued.nativeTurnId ||
+        Date.parse(continued.createdAt) < Date.parse(message.createdAt))
+        fail("CONTINUATION_MISMATCH", "Adoption requires a completed later Run in the original Task and Session");
+      const sourceRevision = need(await tx.getTaskRevision(old.task!.id, old.task!.revisionId), "Source Task revision");
+      const continuedRevision = need(await tx.getTaskRevision(old.task!.id, continued.taskRevisionId), "Continuation Task revision");
+      if (!sameTaskBusinessInput(sourceRevision, continuedRevision))
+        fail("TASK_INPUT_CHANGED", "Continuation changed the Task business input");
+      const originalBasis = need(await tx.getBasisSet(old.task!.id, original.taskRevisionId, original.basisSetId), "Original basis");
+      const continuedBasis = need(await tx.getBasisSet(old.task!.id, continued.taskRevisionId, continued.basisSetId), "Continuation basis");
+      const members = (basis: typeof originalBasis) => basis.members.map(item => `${item.documentId}:${item.revisionId}`).sort().join("|");
+      if (members(originalBasis) !== members(continuedBasis)) fail("TASK_INPUT_CHANGED", "Continuation changed the fixed Task basis");
+      const answer = await ref(ctx, messagePayload.body);
+      const block = taskAnswerInputBlock(old.id, message.id, { documentId: answer.documentId,
+        revisionId: answer.id, contentHash: answer.contentHash, text: answer.body! });
+      if (ctx.hasher.hash(continued.input) !== continued.inputHash || !continued.input.includes(block))
+        fail("ANSWER_NOT_IN_RUN", "Continuation Run input does not include the fixed answer block");
+    }
     await ref(ctx, command.evidence);
-    payload = { type: "receipt", messageEventId: message.id, stage: command.stage, evidence: command.evidence };
+    payload = { type: "receipt", messageEventId: message.id, stage: command.stage, evidence: command.evidence,
+      continuation: command.continuation ?? null };
     revisionId = command.evidence.revisionId;
   } else if (command.type === "discussion.action.request") {
     if (principal.actorId !== recipient) fail("FORBIDDEN", "Worker participant must request the bounded action");
