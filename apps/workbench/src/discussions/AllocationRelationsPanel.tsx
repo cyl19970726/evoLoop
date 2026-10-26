@@ -7,6 +7,12 @@ import { allocationRelations, type AllocationTrace } from "./allocationClient";
 
 const status = { current: "当前修订", changed: "修订已改变", unavailable: "目标暂不可核实" } as const;
 const assignmentStatus = { current: "当前承接", historical: "历史承接", unknown: "当前承接待核" } as const;
+const taskAcceptanceGap = {
+  "no-assignment": "该 Task 修订尚无分派记录",
+  "not-accepted": "该 Task 修订已有分派，尚无接受记录",
+  "different-task-revision": "仅其他 Task 修订有分派记录",
+  unavailable: "该 Task 固定修订暂不可核实",
+} as const;
 
 function targetKey(target: { kind: "owned"; sessionId: string } | { kind: "external"; linkId: string }): string {
   return target.kind === "owned" ? `owned:${target.sessionId}` : `external:${target.linkId}`;
@@ -25,6 +31,11 @@ function TraceCard({ trace, projectId }: { trace: AllocationTrace; projectId: st
           : relation.target.kind === "document"
             ? <a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(relation.target.id)}?revision=${encodeURIComponent(relation.target.revisionId)}`}>查看过程文档固定修订</a>
             : "关联阶段"} · {status[relation.targetStatus]}</p>
+      {relation.target.kind === "task" && relation.taskAcceptanceGap !== undefined && <small>
+        {relation.taskAcceptanceGap === null
+          ? "该修订存在已接受路径；具体接收者可能在后续页。"
+          : taskAcceptanceGap[relation.taskAcceptanceGap]}
+      </small>}
       <small>目标 {relation.target.id} · 行动事件 {relation.actionEventId}</small>
     </> : <>
       <strong>确切 Session 曾接手</strong>
@@ -38,7 +49,7 @@ function TraceCard({ trace, projectId }: { trace: AllocationTrace; projectId: st
     {trace.decisionDocumentRevisionId && <p><a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(trace.discussion.document.id)}?revision=${encodeURIComponent(trace.decisionDocumentRevisionId)}`}>阅读这次决定所依据的固定原文</a></p>}
     <details><summary>固定来源</summary><ul>{trace.sources.map((source, index) => {
       const link = safeArtifactHref(source.href, projectId);
-      return <li key={`${source.kind}:${source.id}:${index}`}>{link ? <a href={link}>{source.kind} · {source.id}</a> : <span>{source.kind} · {source.id}</span>}{source.revision && ` · ${source.revision}`}</li>;
+      return <li key={`${source.kind}:${source.id}:${index}`}>{link ? <a href={link}>{source.kind} · {source.id}</a> : <span>{source.kind} · {source.id}</span>}{source.revision && ` · ${source.revision}`}{source.kind === "stage" && " · 链接打开当前阶段入口；固定版本需另行核对"}</li>;
     })}</ul></details>
   </article>;
 }
