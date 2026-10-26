@@ -69,7 +69,8 @@ export function checkedRecoveryView(value: SessionRecoveryView, projectId: strin
   if (!value || value.sessionId !== sessionId || !Array.isArray(value.decisions) || !Array.isArray(value.queues)
     || typeof value.observedAtUtc !== "string" || typeof value.partial !== "boolean" || typeof value.nextAction !== "string"
     || value.gate !== null && (!value.gate || value.gate.projectId !== projectId || value.gate.sessionId !== sessionId
-      || !(value.gate.phase in phaseText) || typeof value.gate.reason !== "string")
+      || !(value.gate.phase in phaseText) || value.gate.causeKind !== null && !(value.gate.causeKind in causeText)
+      || typeof value.gate.reason !== "string")
     || value.executionProfile !== null && (!value.executionProfile || !value.executionProfile.revision
       || value.executionProfile.revision.projectId !== projectId || value.executionProfile.revision.sessionId !== sessionId
       || typeof value.executionProfile.revision.revisionId !== "string"
@@ -80,6 +81,7 @@ export function checkedRecoveryView(value: SessionRecoveryView, projectId: strin
       || queue.maxRuns < 0 || queue.attemptsUsed < 0 || queue.attemptsRemaining < 0
       || queue.attemptsRemaining !== Math.max(0, queue.maxRuns - queue.attemptsUsed))
     || value.decisions.some(decision => !decision || decision.projectId !== projectId || decision.sessionId !== sessionId
+      || (decision.kind !== "retry_failed" && decision.kind !== "resume")
       || typeof decision.id !== "string" || typeof decision.reason !== "string")) {
     throw new Error("恢复观察响应与所选 Session 不符或内容不完整");
   }
