@@ -4,6 +4,7 @@ import type { RoleRecord } from "@evoloop/contracts/roles";
 import { api, errorText, request, safeArtifactHref } from "../api";
 import { roleClient } from "../roles/client";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
+import { AllocationRelationsPanel } from "./AllocationRelationsPanel";
 
 type Choices = { goals: Goal[]; stages: Stage[]; tasks: Task[]; documents: Document[]; roles: RoleRecord[] };
 const emptyChoices: Choices = { goals: [], stages: [], tasks: [], documents: [], roles: [] };
@@ -53,6 +54,12 @@ const statusLabel: Record<DiscussionRecord["status"], string> = {
   decided: "已登记讨论决定", linked: "已链接后续对象",
 };
 const kindLabel: Record<DiscussionRecord["kind"], string> = { allocation: "讨论当前分工", direction: "讨论下一阶段", task_collaboration: "任务协作频道" };
+function discussionFromHash(projectId: string): string {
+  const [path, query = ""] = window.location.hash.split("?");
+  if (path !== `#/p/${encodeURIComponent(projectId)}/discussions`) return "";
+  const values = new URLSearchParams(query).getAll("discussion");
+  return values.length === 1 && /^[0-9a-f-]{36}$/i.test(values[0]!) ? values[0]! : "";
+}
 const eventLabel: Record<DiscussionEvent["kind"], string> = {
   prepared: "准备交接包", handoff: "人工承接观察", decision: "讨论决定", action: "后续对象链接",
   message: "消息", receipt: "收读回执", action_request: "工程动作请求",
@@ -74,9 +81,10 @@ async function complete<T>(label: string, load: (cursor?: string) => Promise<Pag
 }
 
 export function DiscussionPanel({ context, refresh }: { context: MutationContext; refresh: number }) {
+  const [listKind, setListKind] = useState<DiscussionRecord["kind"] | "all">("allocation");
   const [items, setItems] = useState<DiscussionRecord[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(() => discussionFromHash(context.projectId));
   const [selected, setSelected] = useState<DiscussionRecord | null>(null);
   const [events, setEvents] = useState<DiscussionEvent[]>([]);
   const [choices, setChoices] = useState<Choices>(emptyChoices);
@@ -87,16 +95,21 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
   const [loading, setLoading] = useState(true);
   const [moreBusy, setMoreBusy] = useState(false);
   const listEpoch = useRef(0);
-  useEffect(() => { setSelectedId(""); }, [context.token, context.projectId]);
+  useEffect(() => {
+    const sync = () => setSelectedId(discussionFromHash(context.projectId));
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, [context.projectId]);
+  useEffect(() => { setSelectedId(discussionFromHash(context.projectId)); }, [context.token, context.projectId]);
   useEffect(() => {
     let active = true; const epoch = ++listEpoch.current;
     setLoading(true); setError(""); setItems([]); setNextCursor(null);
-    api(context.token).discussions(context.projectId)
+    api(context.token).discussions(context.projectId, undefined, listKind === "all" ? undefined : listKind)
       .then(page => { if (active && listEpoch.current === epoch) { setItems(page.items); setNextCursor(page.nextCursor); } })
       .catch(cause => { if (active && listEpoch.current === epoch) setError(errorText(cause)); })
       .finally(() => { if (active && listEpoch.current === epoch) setLoading(false); });
     return () => { active = false; };
-  }, [context.token, context.projectId, refresh]);
+  }, [context.token, context.projectId, refresh, listKind]);
   useEffect(() => {
     let active = true; setChoices(emptyChoices); setChoicesLoading(true); setChoicesError("");
     const client = api(context.token), roles = roleClient(context.token, context.projectId);
@@ -125,7 +138,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     if (!nextCursor || moreBusy) return;
     const epoch = listEpoch.current; setMoreBusy(true); setError("");
     try {
-      const page = await api(context.token).discussions(context.projectId, nextCursor);
+      const page = await api(context.token).discussions(context.projectId, nextCursor, listKind === "all" ? undefined : listKind);
       if (epoch === listEpoch.current) {
         setItems(previous => [...new Map([...previous, ...page.items].map(item => [item.id, item])).values()]);
         setNextCursor(page.nextCursor);
@@ -133,20 +146,30 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     } catch (cause) { if (epoch === listEpoch.current) setError(errorText(cause)); }
     finally { if (epoch === listEpoch.current) setMoreBusy(false); }
   }
-  return <section className="panel discussion-panel"><div className="panel-head"><h2>负责人讨论与交接</h2><button type="button" title="回读会重建本面板表单并清除未保存的输入，请先复制草稿" onClick={context.onChanged}>回读讨论（先保留草稿）</button></div>
-    <p>从固定的项目材料准备已有会话的讨论包。准备不表示桌面会话已收到；人工观察、决定、对象变更与实际使用分别登记。</p>
-    {choicesError && <Notice error>无法完整读取选择对象：{choicesError}。暂不生成交接包。</Notice>}
-    {choicesLoading && <p>正在读取可固定的目标与来源…</p>}
-    {!choicesLoading && !choicesError && choices.goals.length > 0 && <PrepareDiscussion context={context} choices={choices} onPrepared={setSelectedId} />}
-    {!choicesLoading && !choicesError && !choices.goals.length && <p className="empty">先建立真实目标，才能固定讨论范围。</p>}
-    <h3>已有讨论</h3>{loading && <p>正在读取讨论列表…</p>}{error && <Notice error>{error}</Notice>}
-    {!loading && items.length === 0 && <p className="empty">尚无讨论交接包。没有新取舍时无需制造任务或常设职责。</p>}
-    <div className="discussion-list">{items.map(item => <button type="button" key={item.id} className={item.id === selectedId ? "active" : ""} onClick={() => setSelectedId(item.id)}>
-      <strong>{kindLabel[item.kind]}</strong><span>{item.kind === "task_collaboration" ? `Task ${item.task?.id ?? "未绑定"}` : item.question}</span><small>{statusLabel[item.status]} · v{item.version}</small>
-    </button>)}</div>
-    {nextCursor && <button type="button" className="more" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "加载中…" : "加载更多讨论"}</button>}
-    {detailError && <Notice error>讨论详情或事件不可读：{detailError}。不能据列表状态提交后续动作。</Notice>}
-    {selected?.kind === "task_collaboration" && <div className="discussion-detail"><h3>任务协作频道</h3>
+  return <section className="discussion-panel">
+    <div className="discussion-toolbar"><p>从固定材料理解问题、取舍和后续关系。准备、人工交接、决定和实际接手各有独立记录。</p><button type="button" title="回读会重建本面板表单并清除未保存的输入，请先复制草稿" onClick={context.onChanged}>回读讨论（先保留草稿）</button></div>
+    <details className="workflow-detail discussion-prepare"><summary>准备新的讨论</summary>
+      {choicesError && <Notice error>无法完整读取选择对象：{choicesError}。暂不生成交接包。</Notice>}
+      {choicesLoading && <p>正在读取可固定的目标与来源…</p>}
+      {!choicesLoading && !choicesError && choices.goals.length > 0 && <PrepareDiscussion context={context} choices={choices} onPrepared={setSelectedId} />}
+      {!choicesLoading && !choicesError && !choices.goals.length && <p className="empty">先建立真实目标，才能固定讨论范围。</p>}
+    </details>
+    <div className="discussion-exploration-grid">
+      <aside className="discussion-exploration-column discussion-exploration-list" aria-label="讨论列表">
+        <h2>讨论列表</h2>
+        <label className="discussion-kind-filter">范围<select value={listKind} onChange={event => { setListKind(event.target.value as typeof listKind); setSelectedId(""); window.location.hash = `#/p/${encodeURIComponent(context.projectId)}/discussions`; }}><option value="allocation">当前分工</option><option value="direction">下一阶段</option><option value="all">全部讨论</option></select></label>
+        <p className="muted">查看已有讨论；未决和维持现状也保留原记录。</p>
+        {loading && <p>正在读取讨论列表…</p>}{error && <Notice error>{error}</Notice>}
+        {!loading && items.length === 0 && <p className="empty">尚无讨论交接包。没有新取舍时无需制造任务或常设职责。</p>}
+        <div className="discussion-list">{items.map(item => <button type="button" key={item.id} className={item.id === selectedId ? "active" : ""} onClick={() => { setSelectedId(item.id); window.location.hash = `#/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(item.id)}`; }}>
+          <strong>{item.kind === "allocation" ? item.question : kindLabel[item.kind]}</strong><span>{item.kind === "task_collaboration" ? `Task ${item.task?.id ?? "未绑定"}` : item.kind === "allocation" ? kindLabel[item.kind] : item.question}</span><small>{statusLabel[item.status]} · v{item.version}</small>
+        </button>)}</div>
+        {nextCursor && <button type="button" className="more" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "加载中…" : "加载更多讨论"}</button>}
+      </aside>
+      <div className="discussion-exploration-column discussion-exploration-main" aria-label="讨论详情">
+        {detailError && <Notice error>讨论详情或事件不可读：{detailError}。不能据列表状态提交后续动作。</Notice>}
+        {!selected && !detailError && <div className="discussion-exploration-empty"><h2>选择一条讨论</h2><p>问题、备选、决定和固定原件会显示在这里。</p></div>}
+        {selected?.kind === "task_collaboration" && <div className="discussion-detail"><h3>任务协作频道</h3>
       <p>固定 Task：<code>{selected.task?.id ?? "未绑定"}</code> · 修订 <code>{selected.task?.revisionId ?? "未绑定"}</code></p>
       <p>原 Run：<code>{selected.collaboration?.runId ?? "未绑定"}</code> · Session <code>{selected.collaboration?.sessionId ?? "未绑定"}</code></p>
       <p>派出者：{selected.collaboration?.issuerActorId ?? "未绑定"} · 执行者：{selected.collaboration?.recipientActorId ?? "未绑定"}</p>
@@ -154,8 +177,12 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
         <p>事件 <code>{event.id}</code> · {event.actorId} · {event.createdAt}</p>
         {event.collaborationPayload?.type === "message" && <p>固定正文：<a href={`#/p/${context.projectId}/documents/${event.collaborationPayload.body.documentId}?revision=${event.collaborationPayload.body.revisionId}`}>阅读消息原文</a></p>}
       </article>)}
-    </div>}
-    {selected && selected.kind !== "task_collaboration" && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
+        </div>}
+        {selected && selected.kind !== "task_collaboration" && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
+      </div>
+      {selected?.kind === "allocation" ? <AllocationRelationsPanel context={context} record={selected} refresh={refresh} />
+        : <aside className="discussion-exploration-column discussion-exploration-relations" aria-label="正式关系与具体承接"><h2>正式关系与确切承接</h2><p className="muted">选择一条分工讨论后查看正式关系。</p></aside>}
+    </div>
   </section>;
 }
 

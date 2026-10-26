@@ -84,7 +84,7 @@ export function api(token: string, timeoutMs = 15000) {
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
     stages: (p: string) => call<Stage[]>(`${projectPath(p)}/stages`),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
-    discussions: (p: string, cursor?: string) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),
     discussionEvents: (p: string, id: string) => call<DiscussionEvent[]>(`${projectPath(p)}/discussions/${key(id)}/events`),
     documents: (p: string, cursor?: string) => call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),

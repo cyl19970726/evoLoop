@@ -5,7 +5,7 @@ import { Button } from "../components/ui/button";
 import { href, type Route, type Section } from "./shared";
 import { SessionNavigation } from "../sessions/SessionNavigation";
 
-export const sectionNames: Record<Section, string> = { overview: "项目总览", work: "任务", "create-task": "创建任务", inbox: "待判断与复核", task: "任务详情", documents: "文档与知识", document: "文档阅读", knowledge: "知识空间", journey: "目标与阶段", discussions: "负责人讨论", collaboration: "协作回执", runtime: "团队分工", schedules: "日程", roles: "团队分工", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果", settings: "项目设置" };
+export const sectionNames: Record<Section, string> = { overview: "项目总览", work: "任务", "create-task": "创建任务", inbox: "待判断与复核", task: "任务详情", documents: "文档与知识", document: "文档阅读", knowledge: "知识空间", journey: "目标与阶段", discussions: "团队分工", collaboration: "协作回执", runtime: "团队分工", schedules: "日程", roles: "团队分工", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果", settings: "项目设置" };
 const functions = [
   { section: "overview", title: "项目总览", Icon: Home },
   { section: "work", title: "任务", Icon: ListTodo },

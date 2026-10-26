@@ -7,6 +7,7 @@ import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
 import { codexThreadHref } from "./externalHostEntry";
 import { RoleTemplateSummary } from "./RoleTemplateSummary";
+import { AllocationBacklinks } from "../discussions/AllocationBacklinks";
 import { href } from "../ui/shared";
 
 const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -153,6 +154,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
 
 function RoleCard({ context, role, refresh }: { context: MutationContext; role: RoleRecord; refresh: number }) {
   const [connectOpen, setConnectOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState<{ revisions: RoleRevision[]; reviews: RoleTrialReview[]; handoffs: RoleHandoff[]; bindings: RoleSessionBinding[] } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -167,8 +169,9 @@ function RoleCard({ context, role, refresh }: { context: MutationContext; role: 
   useEffect(() => { setHistory(null); }, [refresh, role.version]);
   const base = { roleId: role.id, expectedVersion: role.version };
   const p = role.proposal;
-  return <details className="workflow-detail" id={`role-${role.id}`} tabIndex={-1}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
+  return <details className="workflow-detail" id={`role-${role.id}`} tabIndex={-1} onToggle={event => setExpanded(event.currentTarget.open)}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
     <RolePresenceCard token={context.token} projectId={context.projectId} roleId={role.id} roleState={role.state} refresh={refresh} />
+    {expanded && <AllocationBacklinks context={context} filter={{ roleId: role.id }} refresh={refresh} />}
     {(role.state === "trial" || role.state === "active") && <details className="workflow-detail" onToggle={event => setConnectOpen(event.currentTarget.open)}><summary>连接已有 Codex 会话</summary><p>只登记原会话引用，实际打开、读取和人工接单须另行核实；登记不表示自动发送或启动。</p>
       <ActionForm context={context} review title="登记外部会话" fields={[{ name: "ref", label: "原会话完整引用", hint: "填写 codex://threads/<聊天 UUID>；历史裸 UUID 也会规范化。先在原应用核对。" }, reasonField]}
         build={v => {
