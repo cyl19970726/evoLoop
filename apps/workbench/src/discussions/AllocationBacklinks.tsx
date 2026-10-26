@@ -4,6 +4,11 @@ import type { MutationContext } from "../workflow/ActionForm";
 import { allocationRelations, type AllocationFilter, type AllocationTrace } from "./allocationClient";
 import { useAllocationChanges } from "./useAllocationChanges";
 import { date } from "../ui/shared";
+import { groupAllocationBacklinks, loadedBacklinkSummary } from "./allocationBacklinkGroups";
+import { AllocationTraceCard } from "./AllocationRelationsPanel";
+import { useAllocationNames, type AllocationKnownNames } from "./useAllocationNames";
+
+const noKnownNames: AllocationKnownNames = { tasks: [], roles: [], documents: [] };
 
 export function AllocationBacklinks({ context, filter, refresh }: { context: MutationContext; filter: AllocationFilter; refresh: number }) {
   const [items, setItems] = useState<AllocationTrace[]>([]);
@@ -19,6 +24,9 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
   const root = useRef<HTMLElement>(null);
   const loadedScope = useRef("");
   const key = JSON.stringify(filter);
+  const names = useAllocationNames(context.token, context.projectId, items, noKnownNames, !loading && !error,
+    `${key}\0${refresh}\0${readAgain}`);
+  const groups = groupAllocationBacklinks(items);
   const changesError = useAllocationChanges(context.token, context.projectId, root, () => setReadAgain(value => value + 1));
   useEffect(() => {
     const current = ++epoch.current, controller = new AbortController();
@@ -65,13 +73,13 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
     {!loading && !error && !items.length && <p className="muted">{partial
       ? "来源读取不完整，暂不能判断是否有关联。"
       : cursor ? "当前页没有来源；后续页面尚未读完。" : "尚无可确认的正式分工讨论来源。"}</p>}
-    <ul>{items.map(trace => <li key={trace.id}>
-      <a href={`#/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(trace.discussion.id)}`}>{trace.discussion.title || "分工讨论"}</a>
-      <span> · {trace.relation.kind === "task-recipient" ? "Task 同修订已接受" : "正式行动链接"}
-        {!trace.decisionIsLatest && " · 历史决定"}</span>
-      {trace.relation.kind === "task-recipient" && <small>{trace.relation.assignment.method === "direct" ? "本人确认" : "负责人观察"}
-        {" · 分派状态："}{trace.relation.assignmentStatus === "current" ? "当前仍被接受" : trace.relation.assignmentStatus === "historical" ? "历史接受" : "待核"}
-        {" · Task 修订："}{trace.relation.taskRevisionStatus === "current" ? "仍为当前修订" : trace.relation.taskRevisionStatus === "changed" ? "已变更，需按新修订重新核对" : "暂不可核实"}</small>}
+    <ul className="allocation-backlink-groups">{groups.map(group => <li key={group.discussion.id}>
+      <a href={`#/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(group.discussion.id)}`}>{group.discussion.title || "分工讨论"}</a>
+      <small>{loadedBacklinkSummary(group, Boolean(cursor || partial))}</small>
+      <details><summary>展开 {group.traces.length} 条具体关系</summary>
+        <p className="muted">讨论 ID <code>{group.discussion.id}</code> · 当前读到版本 v{group.discussion.version}；下列关系各有固定来源。</p>
+        <div className="allocation-backlink-relations">{group.traces.map(trace => <AllocationTraceCard key={trace.id} trace={trace} projectId={context.projectId} names={names} />)}</div>
+      </details>
     </li>)}</ul>
     {cursor && <button type="button" disabled={busy || loading} onClick={() => void more()}>{busy ? "读取中…" : "加载更多来源"}</button>}
   </section>;
