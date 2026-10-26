@@ -6,6 +6,8 @@ export interface OperationReceipt {
   operationId: string;
   commandType: Operation["commandType"];
   createdAt: string;
+  /** SHA-256 of the core's canonical actor+command intent; never the command body. */
+  commandHash?: string;
 }
 
 const storageKey = "evoloop.unconfirmed-operations.v1";
@@ -14,6 +16,7 @@ function onlyRecoveryFields(item: OperationReceipt): OperationReceipt {
   return {
     actorId: item.actorId, projectId: item.projectId, taskId: item.taskId,
     operationId: item.operationId, commandType: item.commandType, createdAt: item.createdAt,
+    ...(item.commandHash && /^[0-9a-f]{64}$/i.test(item.commandHash) ? { commandHash: item.commandHash } : {}),
   };
 }
 
@@ -44,6 +47,10 @@ export function removeReceipt(current: OperationReceipt[], operationId: string):
 
 export function visibleReceipts(current: OperationReceipt[], actorId: string, projectIds: string[]): OperationReceipt[] {
   return current.filter(item => item.actorId === actorId && projectIds.includes(item.projectId));
+}
+
+export function hasProjectReceipt(current: OperationReceipt[], projectId: string): boolean {
+  return current.some(item => item.projectId === projectId);
 }
 
 export function readReceipts(): OperationReceipt[] {

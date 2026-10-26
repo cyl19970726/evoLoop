@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { api, ApiError, isStaleConflict, isUnconfirmed, safeArtifactHref } from "../src/api.ts";
+import { sessionClient } from "../src/sessions/client.ts";
 
 const command = {
   type: "task.reviewBasis" as const,
@@ -24,6 +25,32 @@ test("a truncated successful command response remains unconfirmed", async () => 
 
 test("a successful response for another operation remains unconfirmed", async () => {
   await withFetch(async () => Response.json({ status: "applied", operationId: "other", entityId: command.taskId }), async () => {
+    await assert.rejects(api("token").command(command), cause => cause instanceof ApiError && cause.status === 0);
+  });
+});
+
+test("operation read requires a valid server command hash", async () => {
+  await withFetch(async () => Response.json({ id: "operation-1", projectId: "project-1", actorId: "owner",
+    commandType: "task.reviewBasis", result: { status: "rejected", operationId: "operation-1", code: "CONFLICT", message: "changed" } }), async () => {
+    await assert.rejects(api("token").operation("project-1", "operation-1"), cause => cause instanceof ApiError && cause.status === 0);
+  });
+});
+
+test("first assignment read accepts only a successful JSON null", async () => {
+  await withFetch(async (input, init) => {
+    assert.equal(input, "/api/projects/project-1/tasks/task-1/assignment");
+    assert.equal(init?.method, undefined);
+    return Response.json(null);
+  }, async () => {
+    assert.equal(await sessionClient("token", "project-1").assignment("task-1"), null);
+  });
+  for (const response of [new Response("", { status: 200 }), new Response("{", { status: 200 }),
+    Response.json({ code: "NOT_FOUND" }, { status: 404 }), Response.json({ code: "ERROR" }, { status: 500 })]) {
+    await withFetch(async () => response, async () => {
+      await assert.rejects(sessionClient("token", "project-1").assignment("task-1"), cause => cause instanceof ApiError);
+    });
+  }
+  await withFetch(async () => Response.json(null), async () => {
     await assert.rejects(api("token").command(command), cause => cause instanceof ApiError && cause.status === 0);
   });
 });

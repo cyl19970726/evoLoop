@@ -7,6 +7,7 @@ import type { RoleRecord } from "@evoloop/contracts/roles";
 import { errorText, request } from "../api";
 import { href } from "../ui/shared";
 import { queueClient, type EntryAttempts } from "./client";
+import { ActionForm, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import "./residentQueue.css";
 
 const key = encodeURIComponent;
@@ -23,8 +24,8 @@ const holdLabel: Record<QueueHoldCode, string> = {
   manual_review: "等待人工复核",
 };
 
-export function ResidentQueuePanel({ token, projectId, refresh, task, sessionId, runs, sessions }: {
-  token: string; projectId: string; refresh: number; task?: Task; sessionId?: string; runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
+export function ResidentQueuePanel({ context, token, projectId, refresh, task, sessionId, runs, sessions }: {
+  context: MutationContext; token: string; projectId: string; refresh: number; task?: Task; sessionId?: string; runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const [queues, setQueues] = useState<ResidentQueue[]>([]);
   const [queueScope, setQueueScope] = useState("");
@@ -57,13 +58,13 @@ export function ResidentQueuePanel({ token, projectId, refresh, task, sessionId,
     <p className="resident-queue-observed">{loading || queueScope !== `${projectId}:${token}` && !error ? "正在核对队列…" : queueScope === `${projectId}:${token}` && observedAt ? `队列读于 ${observedAt}` : "队列尚未读回"}</p>
     {error && <p role="alert" className="resident-queue-error">队列回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
     {!loading && !error && queueScope === `${projectId}:${token}` && visible.length === 0 && <p className="empty">{sessionId ? "此 Session 尚未见于已登记驻留队列。" : task ? "此任务尚未见于已登记驻留队列。" : "尚无已登记驻留队列。"}</p>}
-    {visible.map(queue => <QueueCard key={`${projectId}:${queue.id}`} token={token} projectId={projectId} queue={queue} refresh={refresh} listReadVersion={listReadVersion}
+    {visible.map(queue => <QueueCard key={`${projectId}:${queue.id}`} context={context} token={token} projectId={projectId} queue={queue} refresh={refresh} listReadVersion={listReadVersion}
       task={task} sessionId={sessionId} runs={runs} sessions={sessions} />)}
   </section>;
 }
 
-function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, sessionId, runs, sessions }: {
-  token: string; projectId: string; queue: ResidentQueue; refresh: number; listReadVersion: number; task?: Task; sessionId?: string;
+function QueueCard({ context, token, projectId, queue, refresh, listReadVersion, task, sessionId, runs, sessions }: {
+  context: MutationContext; token: string; projectId: string; queue: ResidentQueue; refresh: number; listReadVersion: number; task?: Task; sessionId?: string;
   runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const [open, setOpen] = useState(false);
@@ -153,6 +154,19 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
       {error && <p role="alert" className="resident-queue-error">详情回读失败：{error}。下面是上次读回，不能视为当前状态。</p>}
       {namedEntries.length > maxNamedEntries && <p className="resident-queue-observed">本轮优先核对当前占用与各 Session 下一顺位，最多 {maxNamedEntries} 项名称；其余条目保留 ID，请打开任务核实。</p>}
       {currentNames.failed.length > 0 && <p className="resident-queue-observed">部分名称未读回，已保留对象 ID 供核对。</p>}
+      {!loading && !error && <div className="resident-queue-actions">
+        {shown.adoptedVersion !== shown.version && <ActionForm context={context} review title="采纳当前队列顺序" fields={[]}
+          build={() => ({ type: "queue.adopt", queueId: shown.id, expectedVersion: shown.version })} />}
+        {shown.entries.filter(entry => entry.state === "queued" || entry.state === "held").length > 1 && <ActionForm context={context} review title="调整队列顺序" fields={[
+          { name: "entryId", label: "要提前的任务", kind: "select", options: shown.entries.filter(entry => entry.state === "queued" || entry.state === "held").map(entry => option(entry.id, `${taskName(entry.taskId)} · 当前第 ${entry.position + 1} 项`)) }, reasonField,
+        ]} build={v => { const ids = [...shown.entries].sort((a,b) => a.position-b.position).map(entry => entry.id); const at = ids.indexOf(v.entryId);
+          if (at <= 0) throw new Error("此任务已是第一项，请选择后续任务"); [ids[at-1],ids[at]]=[ids[at]!,ids[at-1]!];
+          return { type: "queue.reorder", queueId: shown.id, expectedVersion: shown.version, entryIds: ids, reason: v.reason }; }} />}
+        {task && shown.entries.some(entry => entry.taskId === task.id && entry.taskRevisionId !== task.currentRevisionId && entry.state === "queued") && <ActionForm context={context} review title="按当前任务修订更新队列项" fields={[reasonField]}
+          build={v => ({ type: "queue.amend", queueId: shown.id, expectedVersion: shown.version,
+            entryId: shown.entries.find(entry => entry.taskId === task.id && entry.taskRevisionId !== task.currentRevisionId && entry.state === "queued")!.id,
+            taskRevisionId: task.currentRevisionId, reason: v.reason })} />}
+      </div>}
       {[...groups].map(([sessionId, entries]) => {
         const session = sessions.find(value => value.id === sessionId);
         let priorReleased = true;
@@ -176,6 +190,10 @@ function QueueCard({ token, projectId, queue, refresh, listReadVersion, task, se
               <p>承接职责 <a href={href(projectId, "roles")}>{roleName(entry.roleId)}</a> <code>{short(entry.roleId)}</code> · 消费者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "消费者实际使用并验收" : "消费者验收" : "有界人工决定"}</p>
               {entry.dependsOn.length > 0 && <p>依赖放行：{entry.dependsOn.map(short).join("、")}</p>}
               {entry.holdCode && <p className="resident-queue-hold">{holdLabel[entry.holdCode]}{entry.holdReason ? `：${entry.holdReason}` : ""}</p>}
+              {!loading && !error && entry.state === "queued" && <ActionForm context={context} review title={`暂停此任务队列项 · ${taskName(entry.taskId)}`} fields={[reasonField]}
+                build={v => ({ type: "queue.hold", queueId: shown.id, entryId: entry.id, reason: v.reason })} />}
+              {!loading && !error && entry.state === "held" && <ActionForm context={context} review title={`解除此任务队列项暂停 · ${taskName(entry.taskId)}`} fields={[reasonField]}
+                build={v => ({ type: "queue.unhold", queueId: shown.id, entryId: entry.id, expectedEntryVersion: entry.version, reason: v.reason })} />}
               {entry.state === "claimed" && <p>此项占用当前 Session；后项即使已有序号也不表示已启动。</p>}
               {entry.state === "claimed" && run && ["completed", "failed", "interrupted"].includes(run.state) && <p>本轮运行已结束，仍占用 Session；等待交付／验收或明确接续，不代表后项已经运行。</p>}
               {entry.state === "queued" && before && shown.adoptedVersion !== null && <p>还需核对当前任务修订、依赖、授权、会话及占用；这里只表示顺位。</p>}

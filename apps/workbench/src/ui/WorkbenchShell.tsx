@@ -1,44 +1,46 @@
 import { useState, type ReactNode } from "react";
-import { BookOpen, BriefcaseBusiness, ChevronLeft, ChevronRight, CircleHelp, FileText, FolderOpen, Home, ListTodo, Menu, MessageSquare, CalendarDays, Users, Terminal, TriangleAlert, GitBranch, Target } from "lucide-react";
+import { BookOpen, BriefcaseBusiness, CalendarDays, ChevronLeft, ChevronRight, FolderOpen, Home, ListTodo, Menu, Settings, TriangleAlert, Users } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger } from "../components/ui/sheet";
 import { Button } from "../components/ui/button";
 import { href, type Route, type Section } from "./shared";
+import { SessionNavigation } from "../sessions/SessionNavigation";
 
-export const sectionNames: Record<Section, string> = { overview: "总览", work: "任务", inbox: "待判断与复核", task: "任务详情", documents: "过程文档", document: "文档阅读", knowledge: "知识空间", journey: "目标与阶段", discussions: "负责人讨论", collaboration: "协作回执", runtime: "分工与会话", schedules: "日程", roles: "职责提案", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果" };
-const groups = [
-  { title: "推进工作", links: [["inbox", CircleHelp], ["work", ListTodo], ["documents", FileText], ["journey", Target], ["evaluations", Target]] },
-  { title: "协作辅助", links: [["discussions", MessageSquare], ["runtime", Terminal], ["schedules", CalendarDays], ["roles", Users], ["collaboration", GitBranch]] },
+export const sectionNames: Record<Section, string> = { overview: "项目总览", work: "任务", "create-task": "创建任务", inbox: "待判断与复核", task: "任务详情", documents: "文档与知识", document: "文档阅读", knowledge: "知识空间", journey: "目标与阶段", discussions: "负责人讨论", collaboration: "协作回执", runtime: "团队分工", schedules: "日程", roles: "团队分工", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果", settings: "项目设置" };
+const functions = [
+  { section: "overview", title: "项目总览", Icon: Home },
+  { section: "work", title: "任务", Icon: ListTodo },
+  { section: "documents", title: "文档与知识", Icon: BookOpen },
+  { section: "schedules", title: "日程", Icon: CalendarDays },
+  { section: "runtime", title: "团队分工", Icon: Users },
 ] as const;
 
-export function WorkbenchShell({ route, projectTitle, actor, receiptCount, logout, children }: { route: Route; projectTitle: string; actor: string; receiptCount: number; logout(): void; children: ReactNode }) {
+export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token, logout, children }: { route: Route; projectTitle: string; actor: string; receiptCount: number; token: string; logout(): void; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
   const projectId = route.projectId!;
-  const current = route.section === "task" ? "work" : route.section === "document" ? "documents" : route.section;
-  const isKnowledge = current === "knowledge";
-  function link(section: Section, label: string, Icon: typeof Home) {
-    return <a key={section} href={href(projectId, section)} className={current === section ? "selected" : ""} aria-current={current === section ? "page" : undefined} onClick={() => setOpen(false)}><Icon size={17} aria-hidden="true" /><span>{label}</span>{section === "operations" && receiptCount > 0 && <span className="nav-count">{receiptCount}</span>}</a>;
-  }
-  const navigation = <>
+  const current = route.section === "task" || route.section === "create-task" || route.section === "journey" || route.section === "inbox" || route.section === "evaluations" ? "work"
+    : ["document", "knowledge", "repository"].includes(route.section) ? "documents"
+      : ["roles", "discussions", "collaboration"].includes(route.section) ? "runtime" : route.section;
+  const isKnowledge = route.section === "knowledge";
+  const link = (section: Section, title: string, Icon: typeof Home) => <a key={section} href={href(projectId, section)} className={current === section ? "selected" : ""} aria-current={current === section ? "page" : undefined} onClick={() => setOpen(false)}><Icon size={18} aria-hidden="true" /><span>{title}</span></a>;
+  const sidebar = <>
     <a className="project-switch" href="#/" onClick={() => setOpen(false)}><span className="project-monogram">E</span><span><small>当前项目</small><strong title={projectTitle}>{projectTitle || "读取项目…"}</strong></span><ChevronRight size={15} aria-hidden="true" /></a>
-    {isKnowledge ? <div className="nav-group"><p>阅读与来源</p>{link("knowledge", "知识空间", BookOpen)}{link("documents", "过程文档", FileText)}{link("discussions", "负责人讨论", MessageSquare)}</div> : groups.map(group => <div className="nav-group" key={group.title}><p>{group.title}</p>{group.links.map(([section, Icon]) => link(section, sectionNames[section], Icon))}</div>)}
-    <div className="nav-resources">{link("operations", "待核对操作", TriangleAlert)}{link("repository", "仓库规范", FolderOpen)}</div>
+    <nav className="project-functions" aria-label="项目功能">{functions.map(item => link(item.section, item.title, item.Icon))}</nav>
+    <SessionNavigation token={token} projectId={projectId} selectedId={route.section === "runtime" && route.session ? route.session.includes(":") ? route.session : `owned:${route.session}` : undefined} onNavigate={() => setOpen(false)} />
+    <div className="nav-resources"><a href={href(projectId, "operations")} onClick={() => setOpen(false)}><TriangleAlert size={17} />待核对操作{receiptCount > 0 && <span className="nav-count">{receiptCount}</span>}</a><a href={href(projectId, "repository")} onClick={() => setOpen(false)}><FolderOpen size={17} />仓库规范</a><a href={href(projectId, "settings")} onClick={() => setOpen(false)}><Settings size={17} />项目设置</a></div>
   </>;
   return <div className={`workbench-layout ${collapsed ? "sidebar-collapsed" : ""}`}>
     <a className="skip-link" href="#workspace-main" onClick={e => { e.preventDefault(); document.getElementById("workspace-main")?.focus(); }}>跳到内容</a>
     <nav className="module-rail" aria-label="主导航"><a className="rail-brand" href="#/" aria-label="evoLoop 项目选择">e<span>L</span></a>
-      <a className={!isKnowledge && current !== "overview" ? "selected" : ""} href={href(projectId, "work")} aria-current={!isKnowledge && current !== "overview" ? "page" : undefined}><BriefcaseBusiness size={22} aria-hidden="true" /><span>工作</span></a>
+      <a className={!isKnowledge && route.section !== "overview" ? "selected" : ""} href={href(projectId, "work")} aria-current={!isKnowledge && route.section !== "overview" ? "page" : undefined}><BriefcaseBusiness size={22} aria-hidden="true" /><span>工作</span></a>
       <a className={isKnowledge ? "selected" : ""} href={href(projectId, "knowledge")} aria-current={isKnowledge ? "page" : undefined}><BookOpen size={22} aria-hidden="true" /><span>知识</span></a>
-      <a className={current === "overview" ? "selected" : ""} href={href(projectId, "overview")} aria-current={current === "overview" ? "page" : undefined}><Home size={22} aria-hidden="true" /><span>总览</span></a>
+      <a className={route.section === "overview" ? "selected" : ""} href={href(projectId, "overview")} aria-current={route.section === "overview" ? "page" : undefined}><Home size={22} aria-hidden="true" /><span>总览</span></a>
       <span className="rail-footer">本机<br />试用</span>
     </nav>
-    <aside className="project-sidebar" aria-label="项目导航">{navigation}</aside>
-    <div className="workspace-body">
-      <header className="workspace-header"><div className="workspace-heading">
-        <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="ghost" size="icon" className="mobile-menu" aria-label="打开项目导航"><Menu size={19} /></Button></SheetTrigger><SheetContent side="left" className="mobile-navigation"><SheetHeader><SheetTitle>项目导航</SheetTitle><SheetDescription>选择当前项目的工作、知识和协作入口。</SheetDescription></SheetHeader><nav aria-label="移动项目导航"><div className="mobile-modules">{link("work", "工作", BriefcaseBusiness)}{link("knowledge", "知识", BookOpen)}{link("overview", "总览", Home)}</div>{navigation}</nav></SheetContent></Sheet>
-        <button className="sidebar-toggle quiet" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "展开项目导航" : "收起项目导航"} aria-expanded={!collapsed}>{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</button><span>工作台 <span className="breadcrumb-divider">/</span> <strong>{sectionNames[route.section]}</strong></span>
-      </div><div className="workspace-account"><a href={href(projectId, "operations")} className="receipt-link" aria-label={`待核对操作 ${receiptCount} 项`}><TriangleAlert size={16} aria-hidden="true" /><span>{receiptCount ? `${receiptCount} 项待核对` : "操作回执"}</span></a><span className="actor-name" title={actor}>{actor}</span><button className="quiet" onClick={logout}>退出</button></div></header>
-      <main id="workspace-main" tabIndex={-1}>{children}</main>
-    </div>
+    <aside className="project-sidebar" aria-label="项目导航">{sidebar}</aside>
+    <div className="workspace-body">{import.meta.env.DEV && <div className="development-preview" role="status">{window.location.port === "5181" ? "开发测试预览 · 模拟数据 · 尚未发布" : "开发预览 · 连接现有数据 · 尚未发布"}</div>}<header className="workspace-header"><div className="workspace-heading">
+      <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="ghost" size="icon" className="mobile-menu" aria-label="打开项目导航"><Menu size={19} /></Button></SheetTrigger><SheetContent side="left" className="mobile-navigation"><SheetHeader><SheetTitle>项目导航</SheetTitle><SheetDescription>选择功能或 Session，查看当前工作。</SheetDescription></SheetHeader><nav aria-label="移动项目导航"><div className="mobile-modules">{link("work", "工作", BriefcaseBusiness)}{link("knowledge", "知识", BookOpen)}{link("overview", "总览", Home)}</div>{sidebar}</nav></SheetContent></Sheet>
+      <button className="sidebar-toggle quiet" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "展开项目导航" : "收起项目导航"} aria-expanded={!collapsed}>{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</button><span>工作台 <span className="breadcrumb-divider">/</span> <strong>{route.section === "runtime" && route.session ? "会话" : sectionNames[route.section]}</strong></span></div>
+      <div className="workspace-account"><a href={href(projectId, "operations")} className="receipt-link" aria-label={`待核对操作 ${receiptCount} 项`}><TriangleAlert size={16} aria-hidden="true" /><span>{receiptCount ? `${receiptCount} 项待核对` : "操作回执"}</span></a><span className="actor-name" title={actor}>{actor}</span><button className="quiet" onClick={logout}>退出</button></div></header><main id="workspace-main" tabIndex={-1}>{children}</main></div>
   </div>;
 }
