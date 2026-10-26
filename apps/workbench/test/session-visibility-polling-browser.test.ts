@@ -66,7 +66,9 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
       else if (url.pathname.startsWith(`${root}/session-work/`)) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length));
         if (key === externalKey) counts.externalSnapshot++; else counts.ownedSnapshot++;
-        value = snapshot(key, updated);
+        // The new activity is available only after the change endpoint has delivered its notification.
+        // A lingering snapshot from visibility restoration cannot satisfy the UI assertion.
+        value = snapshot(key, updated && changeDelivered);
       }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
