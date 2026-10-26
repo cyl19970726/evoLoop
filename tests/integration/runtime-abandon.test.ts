@@ -6,6 +6,18 @@ import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal, RuntimeBinding } from "@evoloop/contracts";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop_runtime_abandon_test/.test(new URL(url).pathname)) {
   throw new Error("dedicated evoloop_runtime_abandon_test database required");
@@ -21,6 +33,7 @@ const deps = {
 };
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
+withPersistedResumeProfile(runtime,uow);
 const projectId = randomUUID();
 const reviewer: Principal = { actorId: "runtime-reviewer", projectIds: [projectId], permissions: ["read", "review"] };
 const writer: Principal = { actorId: "runtime-writer", projectIds: [projectId], permissions: ["read", "write"] };

@@ -15,6 +15,8 @@ let ordinaryResumed = false;
 let turnStarts = 0;
 let configReads = 0;
 let threadReads = 0;
+let observedResumes = 0;
+let lastTurnModel = null;
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") { initialized = true; continue; }
@@ -29,6 +31,11 @@ for await (const line of lines) {
   if (message.id === toolId || message.id === toolId+1) {
     send({method:"fixture/toolDecision",params:{threadId:thread.id,turnId:"turn-1",result:message.result}});
     if (mode==="dynamic-replay" && message.id===toolId) send({id:toolId+1,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}});
+    continue;
+  }
+  if (mode === "protocol-0164" && [850, 851, 852, 853].includes(message.id)) {
+    send({ method: "fixture/timeDecision", params: { threadId: thread.id, requestId: message.id,
+      ...(message.result ? { result: message.result } : {}), ...(message.error ? { error: message.error } : {}) } });
     continue;
   }
   const { id, method, params } = message;
@@ -71,6 +78,21 @@ for await (const line of lines) {
     send({ id, result: { thread } }); continue;
   }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
+  if (method === "thread/resume" && mode.startsWith("profile-transition")) {
+    observedResumes++;
+    if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.model!=="new-model"||
+      params.sandbox!=="workspace-write"||params.approvalPolicy!=="on-request"||
+      params.config?.["sandbox_workspace_write.network_access"]!==false){
+      send({id,error:{code:-32602,message:"profile transition was not exact"}});continue;
+    }
+    thread.model=params.model;
+    if(mode==="profile-transition-lost")continue;
+    send({id,result:{thread:{...thread,status:{type:"idle",activeFlags:[]}},
+      model:mode==="profile-transition-wrong-model"?"old-model":params.model,
+      modelProvider:"openai",cwd:thread.cwd,approvalPolicy:params.approvalPolicy,
+      sandbox:{type:"workspaceWrite",writableRoots:mode==="profile-transition-broad"?["/private"]:[],
+        networkAccess:false}}});continue;
+  }
   if (method === "thread/resume" && mode === "resume-profile") {
     if (params.threadId !== thread.id || params.cwd !== thread.cwd || params.model !== "gpt-6-astra" ||
       params.sandbox !== "workspace-write" || params.approvalPolicy !== "on-request" ||
@@ -132,7 +154,7 @@ for await (const line of lines) {
     const nativeThread={...thread,status:{type:mode==='message-profile-active'||
       (mode==='message-profile-activity-race'&&threadReads>=3)?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
-      observedTurnStarts:turnStarts,
+      observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list") {
@@ -169,6 +191,10 @@ for await (const line of lines) {
   if (method === "turn/interrupt") { send({ id, result: {} }); send({ method: "turn/completed", params: { threadId: thread.id, turn: { id: params.turnId, status: "interrupted" } } }); continue; }
   if (method === "turn/start") {
     turnStarts++;
+    if(mode.startsWith("profile-transition")){
+      lastTurnModel=params.model;
+      if(params.model!=="new-model") {send({id,error:{code:-32602,message:"new model absent from Turn start"}});continue;}
+    }
     if (mode.startsWith("message-profile")) {
       if (ordinaryResumed) {
         if (params.approvalPolicy !== "never" || params.permissions !== "evoloop_message_read" ||
@@ -185,6 +211,12 @@ for await (const line of lines) {
     send({ id, result: { turn: { id: "turn-1", status: "inProgress" } } });
     send({ method: "item/started", params: { threadId: "unowned", turnId: "x" } });
     send({ method: "turn/started", params: { threadId: thread.id, turn: { id: "turn-1", status: "inProgress" } } });
+    if (mode === "protocol-0164") {
+      send({ id: 850, method: "currentTime/read", params: { threadId: thread.id } });
+      send({ id: 851, method: "currentTime/read", params: { threadId: "foreign-thread" } });
+      send({ id: 852, method: "currentTime/read", params: {} });
+      send({ id: 853, method: "unreviewed/serverRequest", params: { threadId: thread.id } });
+    }
     if (mode === "approval") send({ id: approvalId, method: "item/commandExecution/requestApproval", params: { threadId: thread.id, turnId: "turn-1", command: "echo fixture" } });
     if (mode.startsWith("dynamic")) send({id:toolId,method:"item/tool/call",params:{
       threadId:mode==="dynamic-foreign"?"other-thread":thread.id,

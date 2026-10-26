@@ -18,6 +18,19 @@ const session = (r: QueryResultRow): RuntimeSessionRecord => ({
   closeAttemptedAt: r.close_attempted_at ? iso(r.close_attempted_at) : null,
   closeVerifiedAt: r.close_verified_at ? iso(r.close_verified_at) : null,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
+  executionProfile: r.profile_revision ? {
+    revision: { projectId:r.project_id,sessionId:r.session_id,revisionId:r.profile_revision.revision_id,
+      version:r.profile_revision.version,previousRevisionId:r.profile_revision.previous_revision_id,
+      model:r.profile_revision.model,sandbox:r.profile_revision.sandbox,approvalPolicy:r.profile_revision.approval_policy,
+      cwd:r.profile_revision.cwd,authorizationScope:r.profile_revision.authorization_scope,
+      provenance:r.profile_revision.provenance,operationId:r.profile_revision.operation_id,actorId:r.profile_revision.actor_id,
+      reason:r.profile_revision.reason,evidenceRef:r.profile_revision.evidence_ref,
+      createdAt:iso(r.profile_revision.created_at) },
+    activationState:r.profile_activation_state,activeRevisionId:r.profile_active_revision_id,
+    activationOperationId:r.profile_activation_operation_id,
+    attemptedAt:r.profile_attempted_at?iso(r.profile_attempted_at):null,
+    activationEvidence:r.profile_activation_evidence,
+  } : null,
 });
 const run = (r: QueryResultRow): RuntimeRunRecord => ({
   projectId: r.project_id, id: r.run_id, taskId: r.task_id,
@@ -33,6 +46,7 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
     actualTaskRevisionId: r.evaluation_actual_task_revision_id, attemptId: r.evaluation_attempt_id,
   } : null,
   evaluationPacket: r.evaluation_packet ?? null,
+  executionProfile: r.execution_profile_snapshot ?? null,
 });
 const event = (r: QueryResultRow): RuntimeRecordEvent => ({
   projectId: r.project_id, id: r.event_id, runId: r.run_id, sessionId: r.session_id,
@@ -48,13 +62,19 @@ export class PgRuntimeStore {
     if (projectId !== this.projectId) throw new DomainError("PROJECT_SCOPE", "runtime record belongs to another project");
   }
   async getRuntimeSession(id: string): Promise<RuntimeSessionRecord | null> {
-    const result = await this.client.query("SELECT * FROM runtime_session WHERE project_id=$1 AND session_id=$2", [this.projectId, id]);
+    const result = await this.client.query(`${this.sessionProjection()} WHERE s.project_id=$1 AND s.session_id=$2`, [this.projectId, id]);
     return result.rows[0] ? session(result.rows[0]) : null;
   }
   async listRuntimeSessions(): Promise<RuntimeSessionRecord[]> {
-    const result = await this.client.query("SELECT * FROM runtime_session WHERE project_id=$1 ORDER BY created_at,session_id LIMIT $2", [this.projectId, limit + 1]);
+    const result = await this.client.query(`${this.sessionProjection()} WHERE s.project_id=$1 ORDER BY s.created_at,s.session_id LIMIT $2`, [this.projectId, limit + 1]);
     return bounded(result.rows.map(session), "runtime sessions");
   }
+  private sessionProjection():string {return `SELECT s.*,to_jsonb(p) AS profile_revision,
+    h.activation_state AS profile_activation_state,h.active_revision_id AS profile_active_revision_id,
+    h.activation_operation_id AS profile_activation_operation_id,h.attempted_at AS profile_attempted_at,
+    h.activation_evidence AS profile_activation_evidence
+    FROM runtime_session s LEFT JOIN session_execution_profile h ON h.project_id=s.project_id AND h.session_id=s.session_id
+    LEFT JOIN session_execution_profile_revision p ON p.project_id=h.project_id AND p.session_id=h.session_id AND p.revision_id=h.revision_id`;}
   async getRuntimeRun(id: string): Promise<RuntimeRunRecord | null> {
     const result = await this.client.query("SELECT * FROM runtime_run WHERE project_id=$1 AND run_id=$2", [this.projectId, id]);
     return result.rows[0] ? run(result.rows[0]) : null;
@@ -90,12 +110,13 @@ export class PgRuntimeStore {
     this.scope(item.projectId);
     const binding = item.evaluationBinding;
     await this.client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,interrupt_requested,result_summary,actor_id,created_at,updated_at,
-      evaluation_id,evaluation_revision_id,evaluation_case_id,evaluation_condition_id,evaluation_source_task_revision_id,evaluation_actual_task_revision_id,evaluation_attempt_id,evaluation_packet)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::jsonb)`,
+      evaluation_id,evaluation_revision_id,evaluation_case_id,evaluation_condition_id,evaluation_source_task_revision_id,evaluation_actual_task_revision_id,evaluation_attempt_id,evaluation_packet,execution_profile_snapshot)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::jsonb,$26::jsonb)`,
       [item.projectId,item.id,item.taskId,item.taskRevisionId,item.basisSetId,item.sessionId,item.operationId,item.input,item.inputHash,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.actorId,item.createdAt,item.updatedAt,
         binding?.evaluationId ?? null,binding?.revisionId ?? null,binding?.caseId ?? null,binding?.conditionId ?? null,
         binding?.sourceTaskRevisionId ?? null,binding?.actualTaskRevisionId ?? null,binding?.attemptId ?? null,
-        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null]);
+        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,
+        item.executionProfile ? JSON.stringify(item.executionProfile) : null]);
   }
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);

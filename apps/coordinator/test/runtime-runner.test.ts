@@ -501,6 +501,127 @@ test("requested Run waits without native start or state mutation, then uses its 
   } finally { await runner.stop(); }
 });
 
+test("lost execution profile resume needs original Thread readback and a separate recovery decision", async () => {
+  const oldRevisionId=randomUUID(),revisionId=randomUUID(),profileOperationId=randomUUID();
+  const oldRevision={projectId,sessionId:session.id,revisionId:oldRevisionId,version:1,model:"old-model",
+    sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,cwd:session.cwd,
+    authorizationScope:session.authorizationScope,provenance:"reserved" as const,
+    previousRevisionId:null,operationId:randomUUID(),actorId,reason:"initial",evidenceRef:null,
+    createdAt:new Date().toISOString()};
+  const revision={...oldRevision,revisionId,version:2,model:"new-model",provenance:"revised" as const,
+    previousRevisionId:oldRevisionId,operationId:profileOperationId};
+  const revisedSession:RuntimeSessionRecord={...session,model:"new-model",executionProfile:{revision,
+    activeRevisionId:oldRevisionId,activationState:"pending",activationOperationId:null,attemptedAt:null,
+    activationEvidence:null}};
+  const requested:RuntimeRunRecord={...run,id:randomUUID(),state:"requested",nativeTurnId:null,
+    executionProfile:{revisionId,version:2,model:"new-model",sandbox:session.sandbox,
+      approvalPolicy:session.approvalPolicy,cwd:session.cwd,authorizationScope:session.authorizationScope,
+      provenance:"revised"}};
+  class ProfileRuntime extends FakeRuntime {
+    resumes=0;readbacks=0;confirmed=false;
+    async activateExecutionProfile(_current:RuntimeBinding,target:RuntimeSessionSpec){
+      this.resumes++;
+      assert.equal(target.model,"new-model");
+      throw new RuntimeUnknownError("thread/resume",null,"reply lost");
+    }
+    async inspectExecutionProfileActivation(current:RuntimeBinding,target:RuntimeSessionSpec){
+      this.readbacks++;
+      assert.equal(current.nativeThreadId,session.nativeThreadId);
+      return this.confirmed?{...current,resumeProfile:{...current.resumeProfile!,model:target.model!,
+        executionProfileRevisionId:revisionId}}:null;
+    }
+  }
+  const runtime=new ProfileRuntime();let permits=0,dispatches=0,resumeGranted=false;
+  runtime.startTurn=async (_binding:RuntimeBinding,_input:string,_operation:string,profile?:typeof requested.executionProfile)=>{
+    assert.equal(profile?.revisionId,revisionId);runtime.starts++;return{id:"recovered-turn",status:"inProgress"};
+  };
+  runtime.listTurns=async()=>({data:[{id:"recovered-turn",status:"inProgress"}],nextCursor:null});
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[revisedSession],
+    listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>revisedSession} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+    getExecutionProfileRevision:async()=>oldRevision,
+    beginExecutionProfileActivation:async()=>{permits++;return permits===1;},
+    settleExecutionProfileActivation:async (_p:string,_s:string,_r:string,state:string)=>{
+      revisedSession.executionProfile!.activationState=state as "unknown"|"active";
+      if(state==="active")revisedSession.executionProfile!.activeRevisionId=revisionId;
+      if(state==="unknown")resumeGranted=false;
+    },
+    canStartRecoveredRun:async()=>resumeGranted,
+    beginDispatch:async()=>{dispatches++;},
+    bindTurn:async()=>{requested.state="running";requested.nativeTurnId="recovered-turn";return requested;},
+  } as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&ProfileRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>true});
+  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:"same fixed Task input"});
+  try{
+    await runner.start();
+    assert.equal(runtime.resumes,0,"a blocked gate cannot activate a pending profile");
+    assert.equal(permits,0);assert.equal(runtime.starts,0);assert.equal(dispatches,0);
+    resumeGranted=true;
+    await runner.pump();
+    assert.equal(runtime.resumes,1);assert.equal(runtime.starts,0);assert.equal(dispatches,0);
+    await runner.pump();
+    assert.equal(runtime.resumes,1);assert.equal(runtime.readbacks,1);assert.equal(runtime.starts,0);
+    runtime.confirmed=true;
+    await runner.pump();
+    assert.equal(runtime.resumes,1);assert.equal(runtime.readbacks,2);
+    assert.equal(runtime.starts,0);assert.equal(dispatches,0,"readback is not a recovery decision");
+    resumeGranted=true;
+    await runner.pump();
+    assert.equal(runtime.starts,1);assert.equal(dispatches,1);
+    assert.equal(revisedSession.executionProfile?.activeRevisionId,revisionId);
+  }finally{await runner.stop();}
+});
+
+test("explicit native profile rejection fails the fixed requested Run without dispatch or replay", async () => {
+  const oldRevisionId=randomUUID(),revisionId=randomUUID(),profileOperationId=randomUUID();
+  const oldRevision={projectId,sessionId:session.id,revisionId:oldRevisionId,version:1,model:"old-model",
+    sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,cwd:session.cwd,
+    authorizationScope:session.authorizationScope,provenance:"reserved" as const,
+    previousRevisionId:null,operationId:randomUUID(),actorId,reason:"initial",evidenceRef:null,
+    createdAt:new Date().toISOString()};
+  const revisedSession:RuntimeSessionRecord={...session,model:"new-model",executionProfile:{
+    revision:{...oldRevision,revisionId,version:2,model:"new-model",provenance:"revised",
+      previousRevisionId:oldRevisionId,operationId:profileOperationId},
+    activeRevisionId:oldRevisionId,activationState:"pending",activationOperationId:null,
+    attemptedAt:null,activationEvidence:null}};
+  const fixed={revisionId,version:2,model:"new-model",sandbox:session.sandbox,
+    approvalPolicy:session.approvalPolicy,cwd:session.cwd,authorizationScope:session.authorizationScope,
+    provenance:"revised" as const};
+  const requested:RuntimeRunRecord={...run,id:randomUUID(),state:"requested",nativeTurnId:null,
+    executionProfile:fixed};
+  class RejectedProfileRuntime extends FakeRuntime {
+    resumes=0;readbacks=0;
+    async activateExecutionProfile(){this.resumes++;throw new RuntimeServerError("thread/resume",7,-32602,"profile denied");}
+    async inspectExecutionProfileActivation(){this.readbacks++;return null;}
+  }
+  const runtime=new RejectedProfileRuntime();let permits=0,dispatches=0,rejections=0;
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[revisedSession],
+    listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>revisedSession} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+    getExecutionProfileRevision:async()=>oldRevision,
+    beginExecutionProfileActivation:async()=>{permits++;return true;},
+    settleExecutionProfileActivation:async (_p:string,_s:string,_r:string,state:string)=>{
+      revisedSession.executionProfile!.activationState=state as "rejected";
+    },
+    rejectDispatch:async (_p:string,id:string)=>{assert.equal(id,requested.id);rejections++;requested.state="failed";},
+    beginDispatch:async()=>{dispatches++;},
+  } as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&RejectedProfileRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>true});
+  try{
+    await runner.start();
+    assert.equal(permits,1);assert.equal(runtime.resumes,1);assert.equal(runtime.readbacks,0);
+    assert.equal(runtime.starts,0);assert.equal(dispatches,0);assert.equal(rejections,1);
+    assert.equal(requested.state,"failed");assert.deepEqual(requested.executionProfile,fixed);
+    assert.equal(revisedSession.executionProfile?.activeRevisionId,oldRevisionId);
+    await runner.pump();
+    assert.equal(runtime.resumes,1);assert.equal(runtime.starts,0);assert.equal(rejections,1);
+  }finally{await runner.stop();}
+});
+
 test("late admission denial after preflight leaves the requested Run untouched", async () => {
   const requested = { ...run, state: "requested" as const, nativeTurnId: null };
   const runtime = new FakeRuntime();
@@ -655,7 +776,7 @@ test("registered Session restores its business profile after an ordinary message
   const persisted={...session,sandbox:'workspace-write' as const};
   const first:RuntimeRunRecord={...run,id:randomUUID(),state:'requested',nativeTurnId:null};
   const runs=[first];
-  let readOnly=false,resumes=0,unknown=0;
+  let readOnly=false,resumes=0,unknown=0,canStart=true;
   const runtime=Object.assign(new FakeRuntime(),{needsBusinessRestore:()=>readOnly});
   runtime.resume=async(binding,profile)=>{
     assert.equal(profile.sandbox,persisted.sandbox);
@@ -671,6 +792,7 @@ test("registered Session restores its business profile after an ordinary message
   const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[persisted],
     listRuntimeRuns:async()=>runs,getRuntimeSession:async()=>persisted} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),beginDispatch:async()=>{},
+    canStartRecoveredRun:async()=>canStart,
     bindTurn:async(_p:string,id:string,turn:RuntimeTurn)=>{
       const item=runs.find(r=>r.id===id)!;item.state='running';item.nativeTurnId=turn.id;return item;
     },markRunUnknown:async()=>{unknown++;}} as unknown as RuntimeWorkflowService;
@@ -687,11 +809,88 @@ test("registered Session restores its business profile after an ordinary message
     readOnly=true;
     const next:RuntimeRunRecord={...run,id:randomUUID(),operationId:randomUUID(),state:'requested',nativeTurnId:null};
     runs.push(next);
+    canStart=false;
+    await runner.pump();
+    assert.equal(runtime.starts,1);assert.equal(resumes,1,
+      'blocked gate must not restore the writable business profile');
+    canStart=true;
     await runner.pump();
     assert.equal(runtime.starts,2);
     assert.equal(resumes,2);
     assert.equal(next.state,'running');
     assert.equal(unknown,0,'a missing local restore must never create an unknown business start');
+  }finally{await runner.stop();}
+});
+
+test("two runners with a positive gate hint restore and start only after the single durable dispatch winner",async()=>{
+  const requested:RuntimeRunRecord={...run,id:randomUUID(),state:'requested',nativeTurnId:null};
+  const events:string[]=[];let arrivals=0,claimed=false,resumes=0,starts=0;
+  let release!:()=>void;
+  const bothAtPermit=new Promise<void>(resolve=>{release=resolve;});
+  const makeRuntime=()=>{
+    const native=Object.assign(new FakeRuntime(),{needsBusinessRestore:()=>true});
+    native.resume=async binding=>{events.push('resume');resumes++;return binding;};
+    native.startTurn=async()=>{events.push('turn');starts++;return{id:'one-turn',status:'inProgress'};};
+    native.listTurns=async()=>({data:[{id:'one-turn',status:'inProgress',completedAtUtc:null}],nextCursor:null});
+    return native;
+  };
+  const workflow={getRuntimeSession:async()=>session} as unknown as WorkflowService;
+  const trusted={canStartRecoveredRun:async()=>true,
+    beginDispatch:async()=>{
+      arrivals++;if(arrivals===2)release();await bothAtPermit;
+      if(claimed)throw new DomainError('RUN_NOT_REQUESTED','other runner already owns dispatch');
+      claimed=true;events.push('permit');
+    },
+    bindTurn:async()=>({...requested,state:'running' as const,nativeTurnId:'one-turn'}),
+  } as unknown as RuntimeWorkflowService;
+  const principal={actorId,projectIds:[projectId],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+  const runners=[makeRuntime(),makeRuntime()].map(native=>{
+    const value=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
+      workflow,trusted,principals:[principal],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+    (value as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+    return value;
+  });
+  const process=(value:RuntimeRunner)=>
+    (value as unknown as {process:(p:Principal,r:RuntimeRunRecord)=>Promise<boolean>}).process(principal,requested);
+  const outcomes=await Promise.allSettled(runners.map(process));
+  assert.equal(outcomes.filter(result=>result.status==='rejected').length,1);
+  assert.equal(arrivals,2);assert.equal(resumes,1);assert.equal(starts,1);
+  assert.deepEqual(events,['permit','resume','turn']);
+});
+
+test("lost business-profile restore acknowledgement makes the Run unknown without Turn or resume replay",async()=>{
+  const revisionId=randomUUID(),originalSnapshot={revisionId,version:1,model:'old-model',
+    sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,cwd:session.cwd,
+    authorizationScope:session.authorizationScope,provenance:'reserved' as const};
+  const activeSession:RuntimeSessionRecord={...session,model:'old-model',executionProfile:{
+    revision:{projectId,sessionId:session.id,revisionId,version:1,model:'old-model',
+      sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,cwd:session.cwd,
+      authorizationScope:session.authorizationScope,provenance:'reserved',previousRevisionId:null,
+      operationId:randomUUID(),actorId,reason:'fixed',evidenceRef:null,createdAt:new Date().toISOString()},
+    activeRevisionId:revisionId,activationState:'active',activationOperationId:null,
+    attemptedAt:null,activationEvidence:null}};
+  const requested:RuntimeRunRecord={...run,id:randomUUID(),state:'requested',nativeTurnId:null,
+    executionProfile:originalSnapshot};
+  const originalOperation=requested.operationId;
+  const native=new FakeRuntime();let resumes=0,permits=0,unknowns=0;
+  native.resume=async()=>{resumes++;throw new RuntimeUnknownError('thread/resume',null,'reply lost');};
+  native.startTurn=async()=>{native.starts++;throw new Error('Turn must not start after lost resume');};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[activeSession],
+    listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>activeSession} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),canStartRecoveredRun:async()=>true,
+    beginDispatch:async()=>{permits++;},markRunUnknown:async()=>{unknowns++;requested.state='unknown';},
+  } as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+  try{
+    await runner.start();
+    assert.equal(permits,1);assert.equal(resumes,1);assert.equal(unknowns,1);assert.equal(native.starts,0);
+    await runner.pump();
+    assert.equal(permits,1);assert.equal(resumes,1);assert.equal(native.starts,0);
+    assert.equal(requested.operationId,originalOperation);
+    assert.deepEqual(requested.executionProfile,originalSnapshot);
   }finally{await runner.stop();}
 });
 

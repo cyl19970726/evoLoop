@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EvaluationFixedRef } from "./evaluation.js";
+import type { ExecutionProfileSnapshot, SessionExecutionProfile } from "./session-recovery.js";
 
 export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000) });
 
@@ -24,6 +25,8 @@ export interface RuntimeSessionRecord {
   state: RuntimeSessionState; version: number; nativeThreadId: string | null; nativeSessionId: string | null;
   operationId: string; actorId: string; createdAt: string; updatedAt: string;
   closeOperationId?: string | null; closeAttemptedAt?: string | null; closeVerifiedAt?: string | null;
+  /** Adopted configured profile and its native activation status. */
+  executionProfile?: SessionExecutionProfile | null;
 }
 export interface RuntimeRunRecord {
   projectId: string; id: string; taskId: string; taskRevisionId: string; basisSetId: string;
@@ -33,6 +36,8 @@ export interface RuntimeRunRecord {
   evaluationBinding?: { evaluationId: string; revisionId: string; caseId: string; conditionId: string;
     sourceTaskRevisionId: string; actualTaskRevisionId: string; attemptId: string } | null;
   evaluationPacket?: EvaluationPacketBinding | null;
+  /** Immutable configured launch profile; this is not provider-reported actual model telemetry. */
+  executionProfile?: ExecutionProfileSnapshot | null;
 }
 /** Packet bytes live in a controlled Blob; this immutable binding describes the exact native input. */
 export interface EvaluationPacketBinding {
@@ -43,7 +48,10 @@ export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.preflightRejected" | "run.bound" | "run.status" | "run.unknown" |
-    "run.reviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "runtime.approvalDeclined" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
+    "run.reviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" |
+    "session.executionProfile.activationStarted" | "session.executionProfile.active" |
+    "session.executionProfile.unknown" | "session.executionProfile.rejected" |
+    "runtime.approvalDeclined" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
   detail: string; nativeTurnId: string | null; cursor: string | null; itemsDigest: string | null;
   actorId: string; createdAt: string;
 }
@@ -60,7 +68,7 @@ export interface RuntimeBinding {
   owner: "evoloop-codex-app-server";
   /** Persisted Session profile for an exact native resume; omitted only for legacy read-only inspection. */
   resumeProfile?: { actorId: string; model: string | null; sandbox: "read-only" | "workspace-write";
-    approvalPolicy: "on-request" | "untrusted" };
+    approvalPolicy: "on-request" | "untrusted"; executionProfileRevisionId?: string };
 }
 
 export interface RuntimeSessionSpec {
@@ -72,6 +80,7 @@ export interface RuntimeSessionSpec {
   cwd: string;
   authorizationScope: string;
   model?: string;
+  executionProfileRevisionId?: string;
   sandbox: "read-only" | "workspace-write";
   approvalPolicy: "on-request" | "untrusted";
 }
@@ -155,7 +164,8 @@ export interface RuntimePort {
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
   /** Optional classified trace capability. Absence means unsupported, never an empty complete trace. */
   readWorkPage?(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimeWorkPage>;
-  startTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn>;
+  startTurn(binding: RuntimeBinding, input: string, operationId: string,
+    executionProfile?: ExecutionProfileSnapshot | null): Promise<RuntimeTurn>;
   interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void>;
   /** Optional native archive; an acknowledgement alone never proves archival. */
   archiveThread?(binding: RuntimeBinding): Promise<void>;

@@ -40,7 +40,7 @@ export async function buildServer(options: {
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
-  hasRuntimeGrant?: (scope: RuntimeGrant) => boolean;
+  hasRuntimeGrant?: (scope: RuntimeGrant) => boolean | Promise<boolean>;
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
@@ -112,7 +112,9 @@ export async function buildServer(options: {
   app.post("/api/commands", async (request, reply) => {
     const command = commandSchema.parse(request.body);
     if (command.type.startsWith("runtime.")) {
-      if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" && !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
+      if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
+        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" &&
+        !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
       if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
         throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
@@ -120,8 +122,9 @@ export async function buildServer(options: {
       if (command.type === "runtime.session.reserve") {
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
         if (dynamic ? !await options.authorizeDynamicSession?.(principal,command) :
-          !options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
-          roleId: command.roleId, authorizationScope: command.authorizationScope, cwd: command.cwd, sandbox: command.sandbox }) ||
+          !await options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
+          roleId: command.roleId, authorizationScope: command.authorizationScope, cwd: command.cwd,
+          sandbox: command.sandbox, model: command.model ?? null, approvalPolicy: command.approvalPolicy }) ||
           !await options.allowedRuntimeCwd?.(command.projectId, command.cwd)) {
           if (!await options.authorizeDynamicSession?.(principal, command))
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
@@ -132,8 +135,9 @@ export async function buildServer(options: {
         const session = await options.service.getRuntimeSession(principal, command.projectId, command.sessionId);
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
         if (dynamic ? !await options.authorizeDynamicRun?.(principal,command,session) :
-          !options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
-          roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox })) {
+          !await options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
+          roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd,
+          sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy })) {
           if (!await options.authorizeDynamicRun?.(principal, command, session))
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
@@ -164,6 +168,10 @@ export async function buildServer(options: {
     return { ...(options.runtime?.status(projectId) ?? { available: false, error: "尚未配置 Codex 执行服务", faults: [] }), allowedCwds: [...new Set(callerGrants(projectId,who(request.principal).actorId).map(g=>g.cwd))], grants: callerGrants(projectId,who(request.principal).actorId) };
   });
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
+  app.get("/api/projects/:projectId/runtime/sessions/:id/recovery", async request => {
+    const p=params(request.params);
+    return options.service.getSessionRecovery(who(request.principal),p.projectId!,p.id!);
+  });
   if (options.allocationRelations) registerAllocationRelationRoutes(app, options.allocationRelations);
   if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, session) => ({
     ...session, capabilities: { ...session.capabilities,

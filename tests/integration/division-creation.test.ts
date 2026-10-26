@@ -10,6 +10,18 @@ import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestr
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop.*test/.test(new URL(url).pathname)) throw new Error("dedicated PostgreSQL test database required");
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
@@ -32,6 +44,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash:sha}});
   const runtime=new RuntimeWorkflowService({uow,clock,ids});
+  withPersistedResumeProfile(runtime,uow);
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,id)=>p===projectId&&id==="cognition-scope"?
     {projectId,scopeId:id,actorId:cognition,roleId:cognitionRole,active:true}:null,
     canActAsRole:async(p,actor,role)=>p===projectId&&actor===cognition&&role===cognitionRole,

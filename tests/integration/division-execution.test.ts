@@ -21,6 +21,18 @@ import { buildServer } from "../../apps/coordinator/src/server.js";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { runtimeThreadConfigForSession } from "../../apps/coordinator/src/configuration.js";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop.*test/.test(new URL(url).pathname))
   throw new Error("dedicated PostgreSQL test database required");
@@ -42,6 +54,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  withPersistedResumeProfile(runtime,uow);
   let broker:WorkerCredentialBroker;
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,id)=>p===pid&&id==="cognitive-scope"?
     {projectId:pid,scopeId:id,actorId:cognition,roleId:cognitiveRole,active:true}:null,

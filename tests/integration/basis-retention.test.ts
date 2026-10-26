@@ -7,6 +7,18 @@ import { WorkflowService } from "@evoloop/core";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(database))
   throw new Error("Use a dedicated evoloop_*test database");
@@ -28,6 +40,7 @@ test("a todo Task can explicitly retain a published older source without an impa
   const service = new WorkflowService({ uow, clock, ids: { next: randomUUID },
     hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const trusted = new RuntimeWorkflowService({ uow, clock, ids: { next: randomUUID } });
+  withPersistedResumeProfile(trusted,uow);
   const issue = (command: Omit<Command, "projectId" | "operationId"> & { operationId?: string }): Promise<CommandResult> =>
     service.execute(principal, { ...command, projectId, operationId: command.operationId ?? randomUUID() } as Command);
   const applied = (result: CommandResult) => {

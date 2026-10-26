@@ -75,8 +75,11 @@ test("official queue and direct Run commands cannot bypass a concrete external a
   await accepted({ type: "runtime.session.reserve", projectId, operationId: randomUUID(), sessionId: sid, roleId,
     cwd: "/tmp/evoloop-assignment", authorizationScope: "test", sandbox: "read-only", approvalPolicy: "on-request" });
   await runtime.beginSessionCreate(projectId, sid);
+  const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sid)))!;
   await runtime.bindSession(projectId, sid, { owner: "evoloop-codex-app-server", projectId, sessionId: sid, roleId,
-    cwd: "/tmp/evoloop-assignment", authorizationScope: "test", nativeThreadId: `fake-thread-${sid}`, nativeSessionId: `fake-native-${sid}` });
+    cwd: "/tmp/evoloop-assignment", authorizationScope: "test", nativeThreadId: `fake-thread-${sid}`, nativeSessionId: `fake-native-${sid}`,
+    resumeProfile:{actorId:reservedSession.actorId,model:reservedSession.model,sandbox:reservedSession.sandbox,
+      approvalPolicy:reservedSession.approvalPolicy,executionProfileRevisionId:reservedSession.executionProfile!.revision.revisionId} });
   const assign = (version: number, target: { kind: "owned"; sessionId: string } | { kind: "external"; linkId: string }) => accepted({
     type: "task.assignment.set", projectId, operationId: randomUUID(), taskId: tid, expectedTaskVersion: task.version,
     expectedVersion: version, target, recipientActorId: "worker", reason: "Lead selects this exact recipient" });

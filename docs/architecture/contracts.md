@@ -141,6 +141,8 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 `session-work` 提供目录、单会话快照、变化和分页活动。共同 DTO 在 `contracts/session-work` 与 `contracts/session-observation`：分别返回生成时间、来源观察时间、部分结果及缺项，区分项目记录、Session 自述与独立使用。当前工作依据具体分派、claim 或 Run；Role 拥有某任务只表示职责，不能推定同 Role 每个 Session 都已接手。成果归属按真实 Run 或人工接手的有效时间范围核对，不把转交后新承接者的交付算给旧会话。
 
+受控恢复通过单 Session 恢复读取返回配置档案、当前 gate、最多20条正式决定、关联队列的版本与累计预算，以及可解释的下一动作。attempts 未读到或额度字段缺失时为未知，不得显示成零。gate 决定与普通 activity 不混为一类；分别保留 cause、操作者、理由、原 Run/inputHash、指定 retry Run 或 pin 消息及记录时间，只有同项目有权限的读取才可见。
+
 PG 在源写入的同一事务追加只含引用、状态与短预览的观察变化；每项目事务计数器锁持有到提交，避免普通 identity sequence 的晚提交越过游标。读取在一个 repeatable-read 事务中取得事实和边界。变化返回有稳定身份的 invalidate，客户端合并去重后重读相关范围；不重发写入或启动模型。游标绑定项目、调用者与用途／筛选；分页期间继续保留首个观察位置，目录失效后从第一页重建，避免漏掉并发新增项。
 
 活动保留正式事件的真实 `actorId` 与源讨论入口；讨论事件属于项目记录，关联到 Session 的任务上下文不能证明由该 Session 本人发言或执行。分工、方向讨论与任务沟通分别标明，讨论链接其他目标仍是关联背景，不扩展本会话的接受或执行归属。Discussion 聚合头保留变化失效记录，但不作为第二条活动重复显示同一动作；历史和首屏快照都带出这个范围说明。范围说明本身不表示数据缺失，实际截断或不可读仍以 `partial` 和具体限制标注。
@@ -164,6 +166,12 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历史。owned 登记要求同项目、同 Role、ready、真实原生 Thread 与正式绑定；external 只可声称并经 reviewer 核实 open/read/manual-claim，核实能力、证据、观察者和时间分开保存，未核实显示未知。撤销、Role 退出或承载失效时不能沿旧验证继续派发。Desktop link 不是 RuntimeSession，也不提供 start/send/interrupt 自动控制；路由查询本身永不启动模型。本机已按该合同核回 owned/external 承载与领域登记；已建立范围与本轮证据统一见[当前基线](../roadmap.md#当前基线)。登记、已核能力、队列执行及页面展示分别取证，不能由一个链接推定 Desktop 自动控制。
 
 `SessionRuntime` 的能力按实际宿主逐项声明：创建/继续、查询状态、发送已授权任务、读取回复/产物、请求停止、恢复关联；某能力不存在就返回 unsupported。发送消息或唤醒并不等于接收、执行、完成。不能凭“创建请求已发出”就登记为已运行。运行时身份映射保留 `roleId ↔ sessionId ↔ taskId` 的时间范围和来源；同一任务因续做换 session 时保留交接链。
+
+Codex App Server 协议版本由本机运行配置显式固定；省略时维持兼容旧配置。升级到受支持的新候选前，配置保管人先核选中的二进制版本与标准／实验 schema 指纹，服务按该版本做精确匹配，不自动升级或放宽协议锁。新增的 `currentTime/read` 仅为精确绑定 owned Thread 提供只读时间，不授予执行权或模型能力；即使 `model/list` 返回某模型，也不能证明新 Turn 会被服务商接受或其实际运行模型。
+
+受管 Session 的启动失败或结果未知会在项目事务内阻断该 Session 后续 Run 与普通消息启动，保留失败来源、原 Task claim 和最早已排队消息；结果未知先沿原 Run／消息 ID 只读对账，不自动重发，也不清除失败事实。Lead 的 `queue.retryFailed` 只针对原 claim 最新、已确认 `failed` 或 `interrupted` 的 Run；retry 不改写来源 Run 的终态，也不把 `interrupted` 重新命名为 `failed`，并仍禁止 `unknown`／`completed`。只要业务 Task 输入未变，新 Run 的输入仍包含原 Run 固定输入，但会创建新的沟通通道和执行封套，因此保存并区分来源 Run/inputHash 与新 Run 实际 inputHash，不能把字节不同的两个输入称为同一 hash。每次 retry 都要求控制者复核影响、固定输入与原 claim，消耗同队列累计预算，且不自动重试。retry 成功后只允许恢复原来 pin 的那条 queued 消息一次；消息完成后保持 `awaiting_acceptance`，直到原 claim 的交付、消费者使用、Task 验收与 accepted release 满足既有条件，才开放下一个启动。任何后续失败或未知都会重新阻断。
+
+`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。
 
 分工管理者能读取任务负荷、结果、使用反馈和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 session 可提出，分工管理者不控制全部业务任务。[方向出处](../references/lineage.md)
 
@@ -193,7 +201,9 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 
 `GET /api/projects/:projectId/orchestration/work-status` 为已分页 Task 列表补充最多50项的工作事实，只依赖项目读取权限和已迁移数据库，不依赖自动 Loop、controller 或原生运行时启用。普通启动和受管模式各只注册一次同一读取入口；读取不启动泵、派发或模型。无派发的普通 Task 保持普通工作标签，存储读取失败明确报错，不伪装为没有工作；受管 worker 的读取范围仍由原鉴权限制。
 
-本机受限 ResidentQueue 让 Lead 明示条目顺序、依赖、理由、固定 Task 输入、owned Session、消费者、释放规则与累计 Run 预算，并采纳一个可执行版本。未领取的重排、Task 改版后的队列修订和重新采纳使用 CAS；不能只改正文便沿旧条目启动。领取在同项目事务内核当前 Task、正式绑定、精确 grant、Session ready 与原生 Thread、Task/Session 无在途或未知 Run，并原子记录 claim、Run 预留意图、Journal/outbox；同一 Session 的后项等前项释放，另一个领取不能抢占。所有后续尝试计入同一预算；终态只结束一次 Run，不释放 Task claim。默认核当前通过的 Delivery、Task 关闭及要求的消费者 `used` 后释放；条目预先允许有界释放时，有权 Lead 可对无依赖后项给出释放决定，保留未完任务下一责任。依赖项仍须真实验收。未知原生启动或封存按原操作与 Run 对账，不能重试造成第二次外部执行。[PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的本机原 Session 已按采纳队列完成 A→B 两项真实任务的领取、接续和验收后放行；[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的有界故障回归不能替代其他场景的原生验收，也不能从已领取或 Run 结束推定 Task 被消费者使用。
+本机受限 ResidentQueue 让 Lead 明示条目顺序、依赖、理由、固定 Task 输入、owned Session、消费者、释放规则与累计 Run 预算，并采纳一个可执行版本。未领取的重排、Task 改版后的队列修订和重新采纳使用 CAS；不能只改正文便沿旧条目启动。领取在同项目事务内核当前 Task、正式绑定、精确 grant、Session ready 与原生 Thread、Task/Session 无在途或未知 Run，并原子记录 claim、Run 预留意图、Journal/outbox；同一 Session 的后项等前项释放，另一个领取不能抢占。所有后续尝试计入同一预算；终态只结束一次 Run，不释放 Task claim。默认核当前通过的 Delivery、Task 关闭及要求的消费者 `used` 后释放；条目预先允许有界释放时，有权 Lead 可对无依赖后项给出释放决定，保留未完任务下一责任。已释放的有界条目不会自动开放 Session gate；有权者仍须另作 `runtime.session.recovery.resume`，且记录保留该有界释放来源。依赖该条目的后项仍须真实验收并取得 `accepted` release；有界释放不能满足依赖，也不能改写原 claim 的 accepted 规则。未知原生启动或封存按原操作与 Run 对账，不能重试造成第二次外部执行。[PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的本机原 Session 已按采纳队列完成 A→B 两项真实任务的领取、接续和验收后放行；[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的有界故障回归不能替代其他场景的原生验收，也不能从已领取或 Run 结束推定 Task 被消费者使用。
+
+队列额度通常在创建时固定；受控恢复中的 `queue.extendBudget` 是有边界的显式追加：当前登记控制者以队列版本和旧上限做 CAS，记录新上限、理由与依据，保留累计 attempts、claim 及历史决定，不自动解除 held 条目或派发 Run。变更后的队列版本须重新采纳。`queue.retryFailed` 使用同一队列累计预算，并固定原失败 Run、Run 版本/inputHash、Task 修订、Session gate 和原 claim；不能用继续运行、重排或新建队列擦除失败或重置用量。只有精确授权且剩余额度足够时才可形成唯一 successor；失败/未知保留原记录并再次阻断。`queue.unhold` 只处理仍可解除的普通 hold，不越过预算耗尽或 Session recovery gate。
 
 Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到同项目 TaskRevision、Run、Session 与 DocumentRevision；事件与 `received`、`read`、`adopted`、`resolved` 回执分开，发出不等于读到或采用。答复若改变范围，应先按 Task 版本规则修订；原 Turn 的输入不静默 steering。原 Run 已知终态后，控制者经显式 `queue.continue` 引用此前同一通道的问答，固定答复正文/hash 进入同一 Session 的新 Run 输入。实际收件者可在新 Run 已绑定原生 Turn、正在运行或已完成时签采用回执；仍须同 Task/Session、完整业务输入一致且包含精确答复，不能以采用代替交付或验收。受限工程动作另有 request、review 决定和实际 executor 执行回执：请求固定原 Run 输入 hash、精确 repo/worktree/路径/commit/PR 范围、授权证据和到期；批准不等于外部动作已发生，执行时再核真实 actor 与现行精确 grant，unknown 沿原外部操作 ID 对账。缺配置或权限即阻断，不借 controller 身份代业务执行。原 Session 的真实问答、固定答复采用、消费者使用及受限动作回执已按[当前基线](../roadmap.md#当前基线)分别取证；答复、采用、请求、批准和实际执行各有独立记录。当前没有独立通知消费者，重复 Task 消息和 pump 的回归不表示外部通知传输重投或 Desktop 自动唤醒已验。
 
