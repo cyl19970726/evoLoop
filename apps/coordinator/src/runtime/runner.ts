@@ -14,7 +14,7 @@ import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId,
   uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
 
 interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
-type RuntimeFaultPhase = "project_scan" | "session_create" | "session_close" | "run_preflight" | "run_start" | "run_reconcile" | "approval_receipt";
+type RuntimeFaultPhase = "project_scan" | "session_create" | "session_close" | "profile_activation" | "run_preflight" | "run_start" | "run_reconcile" | "approval_receipt";
 type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
 export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
   phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string }
@@ -22,6 +22,7 @@ const faultMessage: Record<RuntimeFaultPhase, string> = {
   project_scan: "项目运行状态暂不可读取；新派发须等待恢复。",
   session_create: "会话创建结果尚未核实；保留原会话 ID，不自动重试。",
   session_close: "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。",
+  profile_activation: "模型配置的原生生效尚未核实；同一会话的后续启动保持阻止。",
   run_preflight: "运行前置校验未通过；请核对原 Run 的持久状态。",
   run_start: "原生启动结果尚未核实；保留原 Run ID，不自动重试。",
   run_reconcile: "运行暂不可对账；保留原 Run ID 与未知状态。",
@@ -36,7 +37,9 @@ type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(bin
   startReadOnlyTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyReadOnlyThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   needsBusinessRestore?(binding:RuntimeBinding):boolean;
-  markReadOnlyThread?(binding:RuntimeBinding):void };
+  markReadOnlyThread?(binding:RuntimeBinding):void;
+  activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
+  inspectExecutionProfileActivation?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding|null> };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const marker = (operationId: string) => `[evoloop-run-operation:${operationId}]`;
 const object = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -57,12 +60,14 @@ export function bindingOf(session: RuntimeSessionRecord): RuntimeBinding {
   return { sessionId: session.id, roleId: session.roleId, projectId: session.projectId, cwd: session.cwd,
     authorizationScope: session.authorizationScope, nativeThreadId: session.nativeThreadId,
     nativeSessionId: session.nativeSessionId, owner: "evoloop-codex-app-server",
-    resumeProfile:{actorId:session.actorId,model:session.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy} };
+    resumeProfile:{actorId:session.actorId,model:session.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
+      ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.revision.revisionId}:{})} };
 }
 function specOf(session: RuntimeSessionRecord): RuntimeSessionSpec {
   return { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
     cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
-    approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}) };
+    approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}),
+    ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.revision.revisionId}:{}) };
 }
 async function collect<T>(load: (cursor?: string) => Promise<RuntimePage<T>>, maxPages: number): Promise<T[]> {
   const items: T[] = [];
@@ -335,6 +340,69 @@ export class RuntimeRunner {
     }
     return binding;
   }
+  /** Pending revisions are activated only for the one already reserved Run. A lost reply is read back, never resent. */
+  private async executionBinding(session:RuntimeSessionRecord,run:RuntimeRunRecord):Promise<RuntimeBinding|null>{
+    const profile=session.executionProfile;
+    if(!profile)return this.readBinding(session);
+    if(!run.executionProfile||run.executionProfile.revisionId!==profile.revision.revisionId||
+      run.executionProfile.model!==profile.revision.model||run.executionProfile.sandbox!==session.sandbox||
+      run.executionProfile.approvalPolicy!==session.approvalPolicy||run.executionProfile.cwd!==session.cwd||
+      run.executionProfile.authorizationScope!==session.authorizationScope)
+      throw new DomainError("EXECUTION_PROFILE_MISMATCH","Run's fixed launch profile differs from its Session revision");
+    if(profile.activationState==='active')return this.readBinding(session);
+    if(profile.activationState==='rejected'){
+      // The native operation was explicitly rejected before any Turn was sent. Keep the
+      // immutable Run as a terminal failed attempt so a later revision requires a new Run.
+      await this.deps.trusted.rejectDispatch(run.projectId,run.id,
+        'Native Thread rejected this execution profile before Turn start');
+      return null;
+    }
+    if(!this.runtime.activateExecutionProfile||!this.runtime.inspectExecutionProfileActivation)
+      throw new DomainError("CAPABILITY_UNAVAILABLE","native execution profile activation is unavailable");
+    const previousId=profile.activeRevisionId;
+    if(!previousId)throw new DomainError("EXECUTION_PROFILE_MISSING","last confirmed execution profile revision is unavailable");
+    const previous=await this.deps.trusted.getExecutionProfileRevision(session.projectId,session.id,previousId);
+    if(previous.projectId!==session.projectId||previous.sessionId!==session.id||
+      previous.sandbox!==session.sandbox||previous.approvalPolicy!==session.approvalPolicy||
+      previous.cwd!==session.cwd||previous.authorizationScope!==session.authorizationScope)
+      throw new DomainError("EXECUTION_PROFILE_MISMATCH","previous execution profile changed immutable Session identity");
+    const prior=bindingOf(session);
+    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,executionProfileRevisionId:previous.revisionId};
+    const target=specOf(session),revisionId=profile.revision.revisionId,operationId=profile.revision.operationId;
+    if(profile.activationState==='pending'){
+      const permit=await this.deps.trusted.beginExecutionProfileActivation(session.projectId,session.id,revisionId,operationId);
+      if(permit){
+        try{
+          const revised=await this.runtime.activateExecutionProfile(prior,target,revisionId,operationId);
+          await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,
+            'active','Exact original Thread and configured model confirmed by thread/resume');
+          this.registered.add(session.id);
+          return revised;
+        }catch(error){
+          const state=error instanceof RuntimeServerError&&error.method==='thread/resume'?'rejected':'unknown';
+          await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,state,
+            state==='rejected'?'Native thread/resume explicitly rejected the chosen profile':
+              'Native profile activation outcome is uncertain; original Thread requires readback');
+          this.recordFault(session.projectId,'profile_activation',error,session.id,run.id,
+            state==='unknown'?'unknown_outcome':faultCategory(error));
+          if(state==='rejected')await this.deps.trusted.rejectDispatch(run.projectId,run.id,
+            'Native Thread rejected this execution profile before Turn start');
+          return null;
+        }
+      }
+    }
+    try{
+      const revised=await this.runtime.inspectExecutionProfileActivation(prior,target,revisionId,operationId);
+      if(!revised)return null;
+      await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,
+        'active','Exact original Thread configured model confirmed by read-only thread/read');
+      this.registered.add(session.id);
+      return revised;
+    }catch(error){
+      this.recordFault(session.projectId,'profile_activation',error,session.id,run.id,'verification');
+      return null;
+    }
+  }
   /** Register provenance and inspect metadata for reads without opening another native writer. */
   private async readBinding(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
     if (!(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
@@ -527,8 +595,15 @@ export class RuntimeRunner {
       await this.deps.trusted.rejectDispatch(original.projectId, original.id, "Current authorization is unavailable for a new Turn");
       return false;
     }
-    const binding = original.state === "requested" && !original.nativeTurnId ?
-      await this.restore(session) : await this.readBinding(session);
+    const unstarted=original.state==="requested"&&!original.nativeTurnId;
+    const canStart=unstarted&&this.deps.trusted.canStartRecoveredRun ?
+      await this.deps.trusted.canStartRecoveredRun(original.projectId,original.sessionId,original.id) : true;
+    // A blocked gate may still need read-only reconciliation of a lost activation
+    // reply, or durable closure of an explicit rejection. Neither starts a Turn.
+    const activation=session.executionProfile?.activationState;
+    if(unstarted&&!canStart&&!['attempting','unknown','rejected'].includes(activation??''))return false;
+    const binding = unstarted ? await this.executionBinding(session,original) : await this.readBinding(session);
+    if(!binding||unstarted&&!canStart)return false;
     let run = original;
     if (run.state === "requested" && !run.nativeTurnId) {
       let input: string;
@@ -544,7 +619,10 @@ export class RuntimeRunner {
       if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return false;
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
       try {
-        const turn = await this.runtime.startTurn(binding, input, run.operationId);
+        // The durable Run dispatch permit precedes both native business-profile
+        // restoration and turn/start. An uncertain resume is never retried.
+        const startBinding = await this.restore(session);
+        const turn = await this.runtime.startTurn(startBinding, input, run.operationId,run.executionProfile);
         run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId });
       } catch (error) {
         await this.deps.trusted.markRunUnknown(run.projectId, run.id, "Turn start acknowledgement unavailable; reconcile owned history before any retry");

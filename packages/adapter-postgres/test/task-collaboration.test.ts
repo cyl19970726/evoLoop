@@ -121,9 +121,12 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
   await execute(issuer, { type: "runtime.session.reserve", sessionId, roleId: worker.actorId, cwd,
     authorizationScope, sandbox: "workspace-write", approvalPolicy: "on-request" });
   await runtime.beginSessionCreate(projectId, sessionId);
+  const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
   await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId,
     roleId: worker.actorId, cwd, authorizationScope, nativeThreadId: `thread-${projectId}`,
-    nativeSessionId: `native-${projectId}` });
+    nativeSessionId: `native-${projectId}`,
+    resumeProfile:{actorId:reservedSession.actorId,model:reservedSession.model,sandbox:reservedSession.sandbox,
+      approvalPolicy:reservedSession.approvalPolicy,executionProfileRevisionId:reservedSession.executionProfile!.revision.revisionId} });
   const run1Id = randomUUID();
   const run1 = await execute(issuer, { type: "runtime.run.reserve", runId: run1Id, taskId, sessionId,
     expectedVersion: ready.version, input: "Original Run1 input" });

@@ -10,6 +10,18 @@ import { authorizeWorkerCommand, authorizeWorkerRequest } from "../../apps/coord
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.ts";
 import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.ts";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated evoloop test DB required");
 const schema=`el_resume_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -21,6 +33,7 @@ const hash=(s:string)=>createHash("sha256").update(s).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
 const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+withPersistedResumeProfile(runtime,uow);
 const store=new PgOrchestrationStore(pool,{
   getAuthorizationFact:async(_project,id)=>id===scope?{projectId,scopeId:scope,actorId:cognition,roleId:cognitiveRole,active:true}:null,
   canActAsRole:async(_project,actor,role)=>actor===cognition&&role===cognitiveRole,

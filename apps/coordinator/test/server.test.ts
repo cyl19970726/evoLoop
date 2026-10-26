@@ -87,6 +87,86 @@ test("owner history and discussion queries preserve authenticated identity and p
   } finally { await app.close(); }
 });
 
+test("Session recovery read remains available without a native runtime and keeps project read scope", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000014";
+  const foreignProject="00000000-0000-4000-8000-000000000015";
+  let calls=0;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getSessionRecovery:async (principal:{actorId:string;projectIds:string[];permissions:string[]},project:string,id:string)=>{
+      calls++;
+      if(!principal.projectIds.includes(project)||!principal.permissions.includes("read"))
+        throw new DomainError("FORBIDDEN","project read required");
+      assert.equal(principal.actorId,"local-owner");assert.equal(id,sessionId);
+      return {sessionId:id,gate:{phase:"blocked"},nextAction:"review_original_run"};
+    },
+  } as unknown as WorkflowService});
+  try{
+    const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/recovery`;
+    assert.equal((await app.inject({url:path})).statusCode,401);
+    const read=await app.inject({url:path,headers:{authorization:`Bearer ${token}`}});
+    assert.equal(read.statusCode,200,read.body);
+    assert.equal(read.json().nextAction,"review_original_run");
+    assert.equal((await app.inject({url:`/api/projects/${foreignProject}/runtime/sessions/${sessionId}/recovery`,
+      headers:{authorization:`Bearer ${token}`}})).statusCode,403);
+    assert.equal((await app.inject({url:`/api/projects/${projectId}/runtime/sessions/bad/recovery`,
+      headers:{authorization:`Bearer ${token}`}})).statusCode,400);
+    assert.equal(calls,2);
+  }finally{await app.close();}
+});
+
+test("profile revision and recovery decision persist without enabling the native runner", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000021";
+  const revisionId="00000000-0000-4000-8000-000000000022";
+  const causeId="00000000-0000-4000-8000-000000000023";
+  const seen:string[]=[];
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    execute:async (_principal:unknown,command:{type:string;operationId:string})=>{
+      seen.push(command.type);return{status:"applied",operationId:command.operationId,entityId:sessionId,version:4};
+    },
+  } as unknown as WorkflowService});
+  try{
+    for(const payload of [
+      {type:"runtime.session.executionProfile.revise",projectId,operationId:"00000000-0000-4000-8000-000000000024",
+        sessionId,expectedVersion:3,expectedExecutionProfileRevisionId:revisionId,
+        model:"new-model",evidenceRef:"document:approved",reason:"Provider rejected the prior model"},
+      {type:"runtime.session.recovery.resume",projectId,operationId:"00000000-0000-4000-8000-000000000025",
+        sessionId,expectedVersion:4,expectedCauseId:causeId,resumeMessageId:null,
+        evidenceRef:"document:reviewed",reason:"Original Thread configuration was verified"},
+    ]){
+      const result=await app.inject({method:"POST",url:"/api/commands",
+        headers:{authorization:`Bearer ${token}`},payload});
+      assert.equal(result.statusCode,200,result.body);
+    }
+    assert.deepEqual(seen,["runtime.session.executionProfile.revise","runtime.session.recovery.resume"]);
+  }finally{await app.close();}
+});
+
+test("runtime Run reservation requires a grant for the Session's current model",async()=>{
+  const sessionId="00000000-0000-4000-8000-000000000031";
+  const taskId="00000000-0000-4000-8000-000000000032";
+  let model="approved-model",writes=0;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getRuntimeSession:async()=>({id:sessionId,roleId:"approved-role",authorizationScope:"task:approved",
+      cwd:"/tmp/approved",sandbox:"read-only",approvalPolicy:"on-request",model}),
+    execute:async(_principal:unknown,command:{operationId:string})=>{writes++;
+      return{status:"applied",operationId:command.operationId,entityId:sessionId,version:1};},
+  } as unknown as WorkflowService,
+  runtime:{status:()=>({available:true,error:null,faults:[]})} as unknown as Parameters<typeof buildServer>[0]['runtime'],
+  hasRuntimeGrant:scope=>scope.model==="approved-model"&&scope.actorId==="local-owner"&&
+    scope.approvalPolicy==="on-request"});
+  try{
+    const payload={type:"runtime.run.reserve",projectId,operationId:"00000000-0000-4000-8000-000000000033",
+      runId:"00000000-0000-4000-8000-000000000034",taskId,sessionId,expectedVersion:1,input:"fixed input"};
+    const url="/api/commands",headers={authorization:`Bearer ${token}`};
+    assert.equal((await app.inject({method:"POST",url,headers,payload})).statusCode,200);
+    model="unapproved-model";
+    const denied=await app.inject({method:"POST",url,headers,payload:{...payload,
+      operationId:"00000000-0000-4000-8000-000000000035"}});
+    assert.equal(denied.statusCode,403,denied.body);
+    assert.equal(writes,1);
+  }finally{await app.close();}
+});
+
 test("schedule status scopes grants to the caller and active commands require an exact current grant", async () => {
   const otherProject = "00000000-0000-4000-8000-000000000099";
   const otherToken = "b".repeat(40);

@@ -14,6 +14,13 @@ export const queueCommandSchema=z.discriminatedUnion('type',[
     answeredQuestions:z.array(z.strictObject({questionEventId:id,answerEventId:id})).max(20).default([])}),
   z.strictObject({...base,type:z.literal('queue.release'),entryId:id,claimId:id,decisionId:id.optional(),reason:note.optional(),nextResponsibility:note.optional()}),
   z.strictObject({...base,type:z.literal('queue.hold'),entryId:id,reason:note}),
+  z.strictObject({...base,type:z.literal('queue.extendBudget'),expectedVersion:z.number().int().positive(),
+    expectedMaxRuns:z.number().int().min(1).max(100),maxRuns:z.number().int().min(1).max(100),evidenceRef:note,reason:note}),
+  z.strictObject({...base,type:z.literal('queue.retryFailed'),entryId:id,claimId:id,runId:id,runOperationId:id,
+    expectedVersion:z.number().int().positive(),expectedGateVersion:z.number().int().positive(),
+    sourceRunId:id,expectedSourceRunVersion:z.number().int().positive(),
+    expectedTaskRevisionId:id,expectedExecutionProfileRevisionId:id,expectedInputHash:z.string().regex(/^[a-f0-9]{64}$/),
+    resumeMessageId:id.nullable(),evidenceRef:note,reason:note}),
 ]);
 export type QueueCommand=z.infer<typeof queueCommandSchema>;
 export type QueueEntryState='queued'|'held'|'claimed'|'released';
@@ -36,6 +43,7 @@ export interface QueueReader {
   queueBindingCurrent(roleId:string,sessionId:string):Promise<boolean>;
 }
 export interface QueueTransaction extends QueueReader {
+  extendResidentQueueBudget?(queueId:string,expectedVersion:number,expectedMaxRuns:number,maxRuns:number,actorId:string,reason:string,evidenceRef:string,operationId:string):Promise<number>;
   assertQueueVacant(taskId:string,sessionId:string,matchingClaimId?:string,matchingRunId?:string,matchingOperationId?:string):Promise<void>;
   assertQueueSessionVacant(sessionId:string):Promise<void>;
   createResidentQueue(queue:ResidentQueue):Promise<void>;
