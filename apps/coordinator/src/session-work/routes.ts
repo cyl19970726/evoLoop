@@ -18,7 +18,8 @@ const principalOf = (request: { principal: Principal | null }): Principal => {
 
 /** Read-only routes; the service enforces the same project and principal fence on each request. */
 export function registerSessionWorkRoutes(app: FastifyInstance, service: SessionObservationService,
-  present: (principal: Principal, session: ObservedSession) => ObservedSession = (_principal, session) => session): void {
+  present: (principal: Principal, session: ObservedSession) => ObservedSession = (_principal, session) => session,
+  presentSnapshot: (principal: Principal, projectId: string, session: ObservedSession) => Promise<ObservedSession> = async (_principal, _projectId, session) => session): void {
   app.get("/api/projects/:projectId/session-work", async request => {
     const { projectId } = z.strictObject({ projectId: id }).parse(request.params);
     const options = z.strictObject({ limit: limit50, cursor: cursor.optional(), search: z.string().trim().max(240).optional(),
@@ -56,7 +57,8 @@ export function registerSessionWorkRoutes(app: FastifyInstance, service: Session
     const { projectId, key: sessionKey } = z.strictObject({ projectId: id, key }).parse(request.params);
     const principal = principalOf(request);
     const snapshot = await service.snapshot(principal, projectId, sessionKey);
-    return { ...snapshot, session: present(principal, snapshot.session) };
+    // Execution configuration is read only for the selected snapshot, never once per directory row.
+    return { ...snapshot, session: await presentSnapshot(principal, projectId, present(principal, snapshot.session)) };
   });
   app.get("/api/projects/:projectId/tasks/:id/assignment/history", request => {
     const { projectId, id: taskId } = z.strictObject({ projectId: id, id }).parse(request.params);

@@ -8,6 +8,8 @@ import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
+import type { ObservedSession } from "@evoloop/contracts/session-observation";
+import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
 import { registerSessionWorkRoutes } from "./session-work/routes.js";
 import type { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
@@ -39,6 +41,8 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  /** Read-only, snapshot-only projection. Must not initialize native processes or perform dispatch. */
+  messageExecution?: (principal: Principal, projectId: string, session: ObservedSession) => Promise<OrdinaryMessageExecutionCapability>;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
   hasRuntimeGrant?: (scope: RuntimeGrant) => boolean | Promise<boolean>;
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
@@ -179,6 +183,13 @@ export async function buildServer(options: {
         available: false, mode: "unavailable", reason: !principal.permissions.includes("write")
           ? "当前身份只有读取权限，不能保存消息。" : "此服务尚未启用消息持久化入口。",
       } },
+  }), async (principal, projectId, session) => ({
+    ...session, capabilities: { ...session.capabilities,
+      ordinaryExecution: options.messageExecution
+        ? await options.messageExecution(principal, projectId, session)
+        : { state: "unknown", reasonCode: "EXECUTION_STATUS_UNAVAILABLE",
+          reason: "此服务未提供普通消息执行状态；可保存不代表能够自动回复。", observedAt: new Date().toISOString() },
+    },
   }));
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
