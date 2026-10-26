@@ -265,22 +265,50 @@ export class RuntimeRunner {
     const binding = bindingOf(session);
     await this.runtime.registerBinding(binding);
     // Readback comes before any write, including after a restart or lost acknowledgement.
-    if (await this.runtime.isThreadArchived(binding)) {
+    const retainUnverifiedAttempt = () => {
+      const prior = this.faults.get(this.faultKey(session.projectId,"session_close",session.id));
+      if (prior?.category !== "native_rejected" && prior?.category !== "authorization")
+        this.recordFault(session.projectId,"session_close",null,session.id,undefined,"unknown_outcome");
+    };
+    let archivedBefore: boolean;
+    try { archivedBefore = await this.runtime.isThreadArchived(binding); }
+    catch (error) {
+      // Before an attempt, a failed precheck must stop archive; after one, its outcome stays unknown.
+      if (!session.closeAttemptedAt) throw error;
+      retainUnverifiedAttempt();
+      return false;
+    }
+    if (archivedBefore) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
       return true;
     }
-    if (session.closeAttemptedAt) return false;
+    if (session.closeAttemptedAt) {
+      retainUnverifiedAttempt();
+      return false;
+    }
     if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
     // Native source is a UI classification, not proof of who created the thread.
     // inspect validates the exact persisted thread/session/cwd binding before archive.
     await this.runtime.inspect(binding);
     await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
+    let archiveCategory: RuntimeFaultCategory = "unknown_outcome";
     try { await this.runtime.archiveThread(binding); }
-    catch (error) { this.recordFault(session.projectId,"session_close",error,session.id,undefined,"unknown_outcome"); }
-    if (await this.runtime.isThreadArchived(binding)) {
+    catch (error) {
+      // Only an explicit native rejection is classifiable; lost replies remain unknown.
+      if (error instanceof RuntimeServerError) archiveCategory = faultCategory(error);
+    }
+    let archivedAfter: boolean;
+    try { archivedAfter = await this.runtime.isThreadArchived(binding); }
+    catch {
+      // The archive may have happened even when verification itself fails.
+      this.recordFault(session.projectId,"session_close",null,session.id,undefined,archiveCategory);
+      return false;
+    }
+    if (archivedAfter) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
       return true;
     }
+    this.recordFault(session.projectId,"session_close",null,session.id,undefined,archiveCategory);
     return false;
   }
   private async create(session: RuntimeSessionRecord): Promise<void> {
