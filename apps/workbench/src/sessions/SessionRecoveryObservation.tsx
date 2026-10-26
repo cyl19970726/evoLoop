@@ -1,6 +1,6 @@
 import { date, ShortId } from "../ui/shared";
 import type { RecoveryRead } from "./recoveryPresentation";
-import { recoveryActivationLabel, recoveryBudget, recoveryCauseLabel, recoveryNextActionLabel, recoveryPhaseLabel } from "./recoveryPresentation";
+import { recoveryActivationLabel, recoveryBudget, recoveryCauseLabel, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel } from "./recoveryPresentation";
 
 function FullRecoveryId({ label, value }: { label: string; value: string }) {
   return <details className="session-recovery-full-id"><summary>{label} <ShortId value={value} /> · 查看完整 ID</summary><code>{value}</code></details>;
@@ -18,9 +18,10 @@ export function SessionRecoveryOverview({ read, runtimeState, queueHref }: { rea
   return <section className="session-recovery-overview" aria-label="恢复进度">
     <div className="session-recovery-heading"><h2>恢复进度</h2><small>读取于 {date(view.observedAtUtc)}</small></div>
     {gate ? <>
-      <div className="session-recovery-facts"><div><small>当前阶段</small><strong>{runtimeState === "closed" && gate.phase === "open" ? "恢复门开放；会话已关闭" : recoveryPhaseLabel(gate.phase)}</strong></div><div><small>{gate.phase === "open" ? "最近停止或恢复的说明" : "停止或等待原因"}</small><strong>{gate.reason || "原因尚未记录"}</strong></div><div><small>下一动作</small><strong>{recoveryNextActionLabel(view.nextAction, runtimeState)}</strong></div></div>
+      <div className="session-recovery-facts"><div><small>当前阶段</small><strong>{runtimeState === "closed" && gate.phase === "open" ? "恢复门开放；会话已关闭" : recoveryPhaseLabel(gate.phase)}</strong></div><div><small>{gate.phase === "open" ? "最近停止或恢复的说明" : "停止或等待原因"}</small><strong>{recoveryReasonSummary(gate)}</strong></div><div><small>下一动作</small><strong>{recoveryNextActionLabel(view.nextAction, runtimeState)}</strong></div></div>
       {runtimeState === "closed" && <p className="session-recovery-note">该受管 Session 已关闭；恢复阶段不能使它直接接续。请先核对会话生命周期与授权。</p>}
-      {gate.causeKind && <p className="session-recovery-context">{gate.phase === "open" ? "最近来源" : "来源"}：{recoveryCauseLabel(gate.causeKind)}{gate.causeId && <> <ShortId value={gate.causeId} /></>}{gate.causeState && ` · 保存状态 ${gate.causeState}`} · 更新于 {date(gate.updatedAt)}</p>}
+      {gate.causeKind && <p className="session-recovery-context">{gate.phase === "open" ? "最近来源" : "来源"}：{recoveryCauseLabel(gate.causeKind)}{gate.causeId && <> <ShortId value={gate.causeId} /></>}{gate.causeState && ` · 保存状态：${recoverySourceStateLabel(gate.causeState)}`} · 更新于 {date(gate.updatedAt)}</p>}
+      <details className="session-recovery-full-id"><summary>查看原始恢复原因与状态代码</summary><p>{gate.reason || "原始原因未记录"}</p><code>{gate.causeState ?? "原始状态未记录"}</code></details>
       {gate.causeId && <FullRecoveryId label={gate.phase === "open" ? "最近停止或恢复来源" : "失败或等待来源"} value={gate.causeId} />}
       {gate.phase === "retrying" && <p className="session-recovery-note">仅已批准的原任务重试可接续；其他任务与消息仍等待。实际是否运行请核对 Run。</p>}
       {gate.phase === "retrying" && gate.retryRunId && <p className="session-recovery-context">获准重试的 Run：<ShortId value={gate.retryRunId} /></p>}
