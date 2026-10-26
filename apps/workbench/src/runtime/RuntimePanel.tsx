@@ -48,6 +48,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [targetRunId, setTargetRunId] = useState(() => requestedTaskRunId(context.projectId, task?.id));
   const [targetRunProblem, setTargetRunProblem] = useState("");
   const revealedRunHref = useRef<string | null>(null);
+  const revealedRunElement = useRef<HTMLDetailsElement | null>(null);
   const [roleNames, setRoleNames] = useState<{scope:string; values:Record<string,RoleName>}>({scope:"",values:{}});
   const [assignmentRead, setAssignmentRead] = useState<{scope:string; value:TaskSessionAssignment|null; error:string}|null>(null);
   const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? "", targetRunId ?? ""]);
@@ -144,12 +145,12 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
         ? params.get("run") && `runtime-run-${task.id}-${params.get("run")}`
         : null;
       const targetId = id;
-      if (!targetId) { revealedRunHref.current = null; return; }
+      if (!targetId) { revealedRunHref.current = null; revealedRunElement.current = null; return; }
       if (!/^[a-z0-9-]+$/i.test(targetId)) return;
       const target = document.getElementById(targetId);
       if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
         const firstReveal = revealedRunHref.current !== window.location.hash;
-        target.open = true;
+        if (target !== revealedRunElement.current) { target.open = true; revealedRunElement.current = target; }
         if (firstReveal) {
           revealedRunHref.current = window.location.hash;
           target.scrollIntoView({ block: "start" });
