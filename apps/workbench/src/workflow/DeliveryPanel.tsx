@@ -115,7 +115,7 @@ export function DeliveryPanel({ detail, projectId, token, names, onChanged, acti
     if (!delivery.runId) return "未声明来源 Run；旧交付不会自动归于任何评价尝试。";
     if (delivery.projectId !== projectId || delivery.taskId !== detail.task.id) return "交付来源与当前任务范围不符；运行入口暂不提供。";
     const read = runReads[delivery.runId];
-    if (read?.status === "ready") return <><a href={taskSectionHref(projectId, delivery.taskId, { revisionId: read.run.taskRevisionId })}>实际执行 Task 修订 <code>{read.run.taskRevisionId}</code> ↗</a>；<a href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次 Run →</a>；<a href={`#/p/${encodeURIComponent(projectId)}/runtime?session=${encodeURIComponent(read.run.sessionId)}`}>查看对应 Session →</a></>;
+    if (read?.status === "ready") return <><a href={taskSectionHref(projectId, delivery.taskId, { revisionId: read.run.taskRevisionId })}>实际执行 Task 修订 <code>{read.run.taskRevisionId}</code> ↗</a>；<a href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次 Run →</a>；<a href={`#/p/${encodeURIComponent(projectId)}/runtime?session=${encodeURIComponent(`owned:${read.run.sessionId}`)}`}>查看对应 Session →</a></>;
     if (read?.status === "reading") return "正在核对来源 Run；运行入口暂不提供。";
     return <>来源 Run 尚未核实；<button type="button" className="quiet" disabled={!active || !token} onClick={() => void readOlderRun(delivery.runId!)}>核对来源 Run</button>{read?.status === "failed" && <> · {read.message}</>}</>;
   }

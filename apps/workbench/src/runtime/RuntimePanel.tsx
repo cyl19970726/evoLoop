@@ -64,7 +64,8 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
       if (fetching) return;
       fetching = true;
       try {
-        const [s, list, workRead, assignment, targetRun] = await Promise.all([client.status(), client.sessions(), client.runs(task?.id)
+        const [s, sessionsRead, workRead, assignment, targetRun] = await Promise.all([client.status(), client.sessions()
+          .then(value => ({value,error:""})).catch(cause => ({value:[] as RuntimeSessionRecord[],error:errorText(cause)})), client.runs(task?.id)
           .then(value => ({value,error:""})).catch(cause => ({value:[] as RuntimeRunRecord[],error:errorText(cause)})),
           task ? sessionClient(context.token, context.projectId).assignment(task.id).then(value => {
             if (value && (value.projectId !== context.projectId || value.taskId !== task.id)) throw new Error("分派响应与当前任务不符");
@@ -73,19 +74,16 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
             .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:""}),
           targetRunId && uuid.test(targetRunId) ? client.run(targetRunId).then(value => ({value,error:""}))
             .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:targetRunId ? "链接中的 Run ID 无效" : ""})]);
-        const scopedSessions = list.filter(session => session.projectId === context.projectId);
-        if (targetSessionId && uuid.test(targetSessionId) && !scopedSessions.some(session => session.id === targetSessionId)) {
-          try {
-            const exact = await client.session(targetSessionId);
-            if (exact.id === targetSessionId && exact.projectId === context.projectId) scopedSessions.push(exact);
-          } catch { /* Target focus below reports that the Session could not be read. */ }
-        }
+        const scopedSessions = sessionsRead.value.filter(session => session.projectId === context.projectId);
         if (active) { const verified = targetRun.value && targetRun.value.id === targetRunId && targetRun.value.projectId === context.projectId && targetRun.value.taskId === task?.id ? targetRun.value : null;
           const work = workRead.value;
-          setStatus(s); setSessions(scopedSessions); setRuns(verified && !work.some(run => run.id === verified.id) ? [...work,verified] : work);
+          setStatus(s); setSessions(scopedSessions); setRuns(verified ? [...work.filter(run => run.id !== verified.id),verified] : work);
           setTargetRunProblem(targetRunId && !verified ? targetRun.error || "目标 Run 与当前任务不符" : "");
           setRunsForTask(workRead.error ? undefined : task?.id); setLoadedScope(sessionScope); setAssignmentRead({scope:sessionScope,...assignment});
-          setError(workRead.error ? `运行列表暂不可读取：${workRead.error}。${verified ? "目标 Run 已单独核对；" : ""}其他运行不能据此推断。` : "");
+          setError([
+            sessionsRead.error && `会话列表暂不可读取：${sessionsRead.error}。会话范围不能据此推断。`,
+            workRead.error && `运行列表暂不可读取：${workRead.error}。${verified ? "目标 Run 已单独核对；" : ""}其他运行不能据此推断。`,
+          ].filter(Boolean).join(" "));
           sequence += 1; if (sequence > 1) setRuntimePoll({taskId:task?.id,sequence}); }
       } catch (cause) { if (active) setError(errorText(cause)); }
       finally { fetching = false; }
@@ -147,12 +145,15 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
         : null;
       const targetId = id;
       if (!targetId) { revealedRunHref.current = null; return; }
-      if (revealedRunHref.current === window.location.hash || !/^[a-z0-9-]+$/i.test(targetId)) return;
+      if (!/^[a-z0-9-]+$/i.test(targetId)) return;
       const target = document.getElementById(targetId);
       if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
-        revealedRunHref.current = window.location.hash;
+        const firstReveal = revealedRunHref.current !== window.location.hash;
         target.open = true;
-        target.scrollIntoView({ block: "start" });
+        if (firstReveal) {
+          revealedRunHref.current = window.location.hash;
+          target.scrollIntoView({ block: "start" });
+        }
       }
     };
     const frame = requestAnimationFrame(reveal);
