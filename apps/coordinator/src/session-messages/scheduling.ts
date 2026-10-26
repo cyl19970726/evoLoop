@@ -64,7 +64,7 @@ export function sessionMessageCanStart(deps:SessionMessageSchedulingDeps){
       await deps.service.noteBlocked(message.projectId,message.id,'Waiting for one ready Task turn after the previous ordinary message');
       return false;
     }
-    await deps.service.noteBlocked(message.projectId,message.id,null);
+    // Final native/permission gates may still block; beginDispatch owns clearing the reason.
     return true;
   };
 }
