@@ -94,17 +94,18 @@ for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.
     assert.equal((await ordinary.qualifyReadOnlyThread(messageBinding)).available,true);
     assert.equal((await ordinary.startReadOnlyTurn(messageBinding,"ordinary question","message-op")).id,"turn-1");
     await assert.rejects(()=>ordinary.startTurn(messageBinding,"business","business-op"),RuntimeProtocolError);
-    await ordinary.resume(messageBinding,{...restoreSpec,model:null,sandbox:"workspace-write"});
+    await ordinary.resume(messageBinding,{...restoreSpec,model:null,sandbox:"workspace-write"},"business-op");
     assert.equal((await ordinary.startTurn(messageBinding,"fixed business input","business-op")).id,"turn-1");
     assert.equal((await ordinary.listTurns(messageBinding)).data[0]?.id,"turn-1");
   });
 
   test(`${expectedVersion} keeps an unacknowledged native Turn start unknown`, async t => {
     const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,"timeout"],
-      expectedVersion,requestTimeoutMs:100});
+      expectedVersion,requestTimeoutMs:500});
     t.after(()=>adapter.close());await adapter.open();
     const owned=await adapter.create(spec);
-    await assert.rejects(()=>adapter.startTurn(owned,"business","durable-op"),RuntimeUnknownError);
+    await assert.rejects(()=>adapter.startTurn(owned,"business","durable-op"),
+      error=>error instanceof RuntimeUnknownError&&error.method==="turn/start");
     assert.equal((await adapter.listTurns(owned)).data[0]?.id,"turn-1");
   });
 }
@@ -557,9 +558,99 @@ for(const mode of ['message-profile','message-profile-reject','message-profile-t
     else await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op'),
       mode==='message-profile-timeout'?RuntimeUnknownError:RuntimeServerError);
     await assert.rejects(()=>adapter.startTurn(binding,'business','business-op'),RuntimeProtocolError);
-    await adapter.resume(binding,{...restoreSpec,sandbox:'workspace-write'});
+    await adapter.resume(binding,{...restoreSpec,sandbox:'workspace-write'},'business-op');
     assert.equal((await adapter.startTurn(binding,'business','business-op')).id,'turn-1');
     assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
+  });
+}
+
+for (const expectedVersion of ['codex-cli 0.154.0','codex-cli 0.164.0-alpha.11.1'] as const) {
+for (const sandbox of ['read-only','workspace-write'] as const) {
+  test(`${expectedVersion} loaded ordinary Thread prepares the exact ${sandbox} business Turn even when resume echoes the named profile`, async t => {
+    const revisionId='00000000-0000-4000-8000-000000000171';
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,
+      spawnArgs:[fixture,`message-profile-loaded-${expectedVersion.endsWith('0.154.0')?'legacy-':''}${sandbox}`],expectedVersion,
+      verifyBinding:async()=>true,requestTimeoutMs:300,enableRestrictedMessagePermissions:true,
+      threadConfig:async()=>({'sandbox_workspace_write.network_access':false})});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox,
+        approvalPolicy:'on-request',executionProfileRevisionId:revisionId}};
+    const profile:RuntimeSessionSpec={...restoreSpec,model:'gpt-6-sol',sandbox,executionProfileRevisionId:revisionId};
+    const snapshot={revisionId,version:1,model:'gpt-6-sol',sandbox,approvalPolicy:'on-request' as const,
+      cwd:spec.cwd,authorizationScope:spec.authorizationScope,provenance:'revised' as const};
+    await adapter.registerBinding(binding);
+    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
+    await adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:m] hello','m');
+    await assert.rejects(()=>adapter.startTurn(binding,'premature','business-op',snapshot),RuntimeProtocolError);
+    await assert.rejects(()=>adapter.resume(binding,profile),RuntimeProtocolError);
+    assert.equal((await adapter.inspect(binding) as {observedResumes:number}).observedResumes,1);
+    assert.deepEqual(await adapter.resume(binding,profile,'business-op'),binding);
+    assert.equal(adapter.needsBusinessRestore(binding),true);
+    await assert.rejects(()=>adapter.startTurn(binding,'wrong Run','another-operation',snapshot),RuntimeProtocolError);
+    assert.equal((await adapter.startTurn(binding,'business','business-op',snapshot)).id,'turn-2');
+    assert.equal(adapter.needsBusinessRestore(binding),false);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
+  });
+}
+}
+
+for (const suffix of ['wrong-model','foreign','different-policy']) {
+  test(`loaded ordinary rejoin with ${suffix} cannot prepare a business Turn`,async t=>{
+    const revisionId='00000000-0000-4000-8000-000000000172';
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,
+      spawnArgs:[fixture,`message-profile-loaded-read-only-${suffix}`],
+      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
+      enableRestrictedMessagePermissions:true});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
+        approvalPolicy:'on-request',executionProfileRevisionId:revisionId}};
+    await adapter.registerBinding(binding);
+    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
+    await adapter.startReadOnlyTurn(binding,'ordinary','m');
+    await assert.rejects(()=>adapter.resume(binding,{...restoreSpec,model:'gpt-6-sol',
+      executionProfileRevisionId:revisionId},'b'),suffix==='foreign'?RuntimeProtocolError:RuntimeUnknownError);
+    await assert.rejects(()=>adapter.startTurn(binding,'business','b'),RuntimeProtocolError);
+    assert.equal(adapter.needsBusinessRestore(binding),true);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+  });
+}
+
+for (const suffix of ['lost','reject']) {
+  test(`a ${suffix} business start leaves the ordinary tool gate in place and cannot replay in the adapter`,async t=>{
+    const revisionId='00000000-0000-4000-8000-000000000173';
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,
+      spawnArgs:[fixture,`message-profile-loaded-read-only-${suffix}`],requestTimeoutMs:500,
+      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
+      enableRestrictedMessagePermissions:true});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
+        approvalPolicy:'on-request',executionProfileRevisionId:revisionId}};
+    const profile:RuntimeSessionSpec={...restoreSpec,model:'gpt-6-sol',executionProfileRevisionId:revisionId};
+    const snapshot={revisionId,version:1,model:'gpt-6-sol',sandbox:'read-only' as const,
+      approvalPolicy:'on-request' as const,cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      provenance:'revised' as const};
+    await adapter.registerBinding(binding);
+    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
+    await adapter.startReadOnlyTurn(binding,'ordinary','m');
+    await adapter.resume(binding,profile,'b');
+    await assert.rejects(()=>adapter.startTurn(binding,'business','b',snapshot),
+      error=>suffix==='lost' ? error instanceof RuntimeUnknownError&&error.method==='turn/start' :
+        error instanceof RuntimeServerError);
+    assert.equal(adapter.needsBusinessRestore(binding),true);
+    await assert.rejects(()=>adapter.startTurn(binding,'repeat','b',snapshot),RuntimeProtocolError);
+    await assert.rejects(()=>adapter.resume(binding,profile,'b'),RuntimeProtocolError);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
+    await adapter.resume(binding,profile,'b-new');
+    assert.equal((await adapter.startTurn(binding,'new authorized Run','b-new',snapshot)).id,'turn-3');
+    assert.equal(adapter.needsBusinessRestore(binding),false);
+    await assert.rejects(()=>adapter.startTurn(binding,'replay old Run','b',snapshot),RuntimeProtocolError);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,3);
   });
 }
 

@@ -872,13 +872,14 @@ test("lost business-profile restore acknowledgement makes the Run unknown withou
   const requested:RuntimeRunRecord={...run,id:randomUUID(),state:'requested',nativeTurnId:null,
     executionProfile:originalSnapshot};
   const originalOperation=requested.operationId;
-  const native=new FakeRuntime();let resumes=0,permits=0,unknowns=0;
+  const native=new FakeRuntime();let resumes=0,permits=0,unknowns=0,unknownReason='';
   native.resume=async()=>{resumes++;throw new RuntimeUnknownError('thread/resume',null,'reply lost');};
   native.startTurn=async()=>{native.starts++;throw new Error('Turn must not start after lost resume');};
   const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[activeSession],
     listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>activeSession} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),canStartRecoveredRun:async()=>true,
-    beginDispatch:async()=>{permits++;},markRunUnknown:async()=>{unknowns++;requested.state='unknown';},
+    beginDispatch:async()=>{permits++;},markRunUnknown:async(_p:string,_id:string,reason:string)=>{
+      unknowns++;unknownReason=reason;requested.state='unknown';},
   } as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
     workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
@@ -891,8 +892,73 @@ test("lost business-profile restore acknowledgement makes the Run unknown withou
     assert.equal(permits,1);assert.equal(resumes,1);assert.equal(native.starts,0);
     assert.equal(requested.operationId,originalOperation);
     assert.deepEqual(requested.executionProfile,originalSnapshot);
+    assert.match(unknownReason,/Business profile restoration/);
+    assert.match(unknownReason,/did not call Task turn\/start/);
+    assert.match(unknownReason,/native_outcome_unknown; method=thread\/resume/);
+    assert.equal(runner.status(projectId).faults[0]?.phase,'business_profile_restore');
+    assert.equal(runner.status(projectId).faults[0]?.nativeMethod,'thread/resume');
   }finally{await runner.stop();}
 });
+
+for (const failure of ['resume_rejected','turn_start_unknown','binding_failed'] as const) {
+  test(`dispatch diagnostics distinguish ${failure} without replaying its original operation`,async()=>{
+    const requested:RuntimeRunRecord={...run,id:randomUUID(),operationId:randomUUID(),state:'requested',nativeTurnId:null};
+    const originalInput=requested.input,originalHash=requested.inputHash,originalOperation=requested.operationId;
+    const runtime=new FakeRuntime();let resumes=0,permits=0,rejections=0,unknowns=0,unknownReason='';
+    const nativePrivateDetail='private native path and task text must not be persisted';
+    runtime.resume=async binding=>{
+      resumes++;
+      if(failure==='resume_rejected')throw new RuntimeServerError('thread/resume',7,-32602,nativePrivateDetail);
+      return binding;
+    };
+    runtime.startTurn=async()=>{
+      runtime.starts++;
+      if(failure==='turn_start_unknown')throw new RuntimeUnknownError('turn/start',8,nativePrivateDetail);
+      return{id:'task-turn-replied',status:'inProgress'};
+    };
+    const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+      listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>session} as unknown as WorkflowService;
+    const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),canStartRecoveredRun:async()=>true,
+      beginDispatch:async()=>{permits++;requested.state='dispatching';},
+      rejectDispatch:async(_p:string,id:string,_reason:string,proof:unknown)=>{
+        assert.equal(id,requested.id);
+        assert.deepEqual(proof,{kind:'native_resume_rejected',operationId:originalOperation,code:-32602,category:'invalid_params'});
+        rejections++;requested.state='failed';
+      },
+      bindTurn:async()=>{throw new Error('binding persistence unavailable');},
+      markRunUnknown:async(_p:string,id:string,reason:string)=>{
+        assert.equal(id,requested.id);unknowns++;unknownReason=reason;requested.state='unknown';
+      },
+    } as unknown as RuntimeWorkflowService;
+    const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&FakeRuntime,
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+      canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+    (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+    try{
+      await runner.start();
+      const fault=runner.status(projectId).faults[0]!;
+      assert.equal(permits,1);assert.equal(resumes,1);
+      if(failure==='resume_rejected'){
+        assert.equal(requested.state,'failed');assert.equal(runtime.starts,0);
+        assert.equal(rejections,1);assert.equal(unknowns,0);
+        assert.equal(fault.phase,'business_profile_restore');assert.equal(fault.category,'native_rejected');
+        assert.equal(fault.nativeMethod,'thread/resume');assert.equal(fault.nativeCode,-32602);
+        assert.equal(fault.nativeCategory,'invalid_params');
+      }else{
+        assert.equal(requested.state,'unknown');assert.equal(runtime.starts,1);
+        assert.equal(rejections,0);assert.equal(unknowns,1);
+        assert.equal(fault.phase,failure==='turn_start_unknown'?'run_start':'run_bind');
+        assert.match(unknownReason,failure==='turn_start_unknown'?/Task turn\/start outcome was not confirmed/:/returned a Turn but its binding receipt was not saved/);
+      }
+      assert.doesNotMatch(JSON.stringify({fault,unknownReason}),new RegExp(nativePrivateDetail));
+      await runner.pump();
+      assert.equal(permits,1);assert.equal(resumes,1);
+      assert.equal(runtime.starts,failure==='resume_rejected'?0:1);
+      assert.equal(requested.operationId,originalOperation);
+      assert.equal(requested.input,originalInput);assert.equal(requested.inputHash,originalHash);
+    }finally{await runner.stop();}
+  });
+}
 
 test("rehydration of a bound dynamic Session ignores a colliding static grant until current dynamic authority returns",async()=>{
   const dispatchId=randomUUID(),dynamicSession={...session,id:loopIntentId(dispatchId,"session"),

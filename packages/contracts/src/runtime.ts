@@ -39,6 +39,14 @@ export interface RuntimeRunRecord {
   /** Immutable configured launch profile; this is not provider-reported actual model telemetry. */
   executionProfile?: ExecutionProfileSnapshot | null;
 }
+/** Trusted caller proof that thread/resume explicitly failed before any turn/start call. */
+export interface NativeResumeRejection {
+  kind: "native_resume_rejected";
+  operationId: string;
+  code: number;
+  category: "rollout_not_found" | "thread_unavailable" | "invalid_params" |
+    "method_not_found" | "permission_denied" | "server_rejected";
+}
 /** Packet bytes live in a controlled Blob; this immutable binding describes the exact native input. */
 export interface EvaluationPacketBinding {
   payloadRef: string; contentHash: string; manifestHash: string; builderVersion: string;
@@ -47,7 +55,7 @@ export interface EvaluationPacketBinding {
 export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
-    "run.requested" | "run.dispatching" | "run.preflightRejected" | "run.bound" | "run.status" | "run.unknown" |
+    "run.requested" | "run.dispatching" | "run.preflightRejected" | "run.dispatchRejected" | "run.bound" | "run.status" | "run.unknown" |
     "run.reviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
@@ -158,7 +166,8 @@ export interface RuntimeApprovalRequest {
 
 export interface RuntimePort {
   create(spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
-  resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
+  /** A business restore following an ordinary Turn requires the durably dispatched Run operation ID. */
+  resume(binding: RuntimeBinding, spec: RuntimeSessionSpec, dispatchOperationId?: string): Promise<RuntimeBinding>;
   inspect(binding: RuntimeBinding): Promise<unknown>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;

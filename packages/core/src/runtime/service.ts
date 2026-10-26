@@ -1,5 +1,5 @@
 import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import type { EvaluationPacketBinding, RuntimeBinding, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { EvaluationPacketBinding, NativeResumeRejection, RuntimeBinding, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
@@ -13,6 +13,9 @@ const required = <T>(value: T | null, kind: string): T => {
   return value;
 };
 const safeDetail = (value: string): string => value.slice(0, 4000);
+const nativeResumeRejectionCategories = new Set<NativeResumeRejection["category"]>([
+  "rollout_not_found", "thread_unavailable", "invalid_params", "method_not_found", "permission_denied", "server_rejected",
+]);
 const canonicalUtc = (value: string): boolean => {
   const instant = Date.parse(value);
   return Number.isFinite(instant) && new Date(instant).toISOString() === value;
@@ -249,15 +252,25 @@ export class RuntimeWorkflowService {
     });
   }
 
-  /** Records a preflight failure before any external turn/start attempt. */
-  async rejectDispatch(projectId: string, runId: string, reason: string): Promise<RuntimeRunRecord> {
+  /** Records a preflight failure, or an exact native thread/resume rejection before turn/start. */
+  async rejectDispatch(projectId: string, runId: string, reason: string,
+    proof?: NativeResumeRejection): Promise<RuntimeRunRecord> {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
-      if (current.state !== "requested") throw new DomainError("RUN_NOT_REQUESTED", "preflight rejection is only valid before external dispatch");
+      if (proof) {
+        if (proof.kind !== "native_resume_rejected" || proof.operationId !== current.operationId ||
+          !Number.isSafeInteger(proof.code) || Math.abs(proof.code) > 2147483647 ||
+          !nativeResumeRejectionCategories.has(proof.category))
+          throw new DomainError("NATIVE_REJECTION_PROOF_INVALID", "native resume rejection proof does not match this Run");
+        if (current.state !== "dispatching" || current.nativeTurnId !== null)
+          throw new DomainError("RUN_NOT_DISPATCHING", "native resume rejection requires an unstarted dispatching Run");
+      } else if (current.state !== "requested")
+        throw new DomainError("RUN_NOT_REQUESTED", "preflight rejection is only valid before external dispatch");
+      const detail = proof ? `Native thread/resume rejected (${proof.category}, code ${proof.code})` : reason;
       const next: RuntimeRunRecord = { ...current, state: "failed", version: current.version + 1,
-        resultSummary: safeDetail(reason), updatedAt: this.deps.clock.now() };
+        resultSummary: safeDetail(detail), updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
-      await this.emit(tx, runId, current.sessionId, "run.preflightRejected", reason, null, projectId);
+      await this.emit(tx, runId, current.sessionId, proof ? "run.dispatchRejected" : "run.preflightRejected", detail, null, projectId);
       await tx.appendOutbox({ projectId, id: this.deps.ids.next(), operationId: current.operationId,
         effectKey: `${projectId}:runtime.run.failed:${runId}`, kind: "runtime.run.failed",
         entityId: runId, version: next.version, createdAt: this.deps.clock.now() });
