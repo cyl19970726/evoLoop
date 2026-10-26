@@ -41,6 +41,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [targetRunId, setTargetRunId] = useState(() => task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
   const [targetRunProblem, setTargetRunProblem] = useState("");
+  const runtimePanelRef = useRef<HTMLElement | null>(null);
   const revealedRunHref = useRef<string | null>(null);
   const revealedRunElement = useRef<HTMLDetailsElement | null>(null);
   const [roleNames, setRoleNames] = useState<{scope:string; values:Record<string,RoleName>}>({scope:"",values:{}});
@@ -138,7 +139,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
       const targetId = id;
       if (!targetId) { revealedRunHref.current = null; revealedRunElement.current = null; return; }
       if (!/^[a-z0-9-]+$/i.test(targetId)) return;
-      const target = document.getElementById(targetId);
+      const target = runtimePanelRef.current?.querySelector(`#${targetId}`);
       if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
         const firstReveal = revealedRunHref.current !== window.location.hash;
         if (target !== revealedRunElement.current) { target.open = true; revealedRunElement.current = target; }
@@ -153,7 +154,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     window.addEventListener("hashchange", reveal);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
   }, [context.projectId, task?.id, runs]);
-  return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
+  return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section ref={runtimePanelRef} className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {targetRunProblem && <Notice error>指定的 Run 暂不可核对：{targetRunProblem}。没有定位到其他运行。</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}

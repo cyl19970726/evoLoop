@@ -93,9 +93,12 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const browser = await chromium.launch({headless:true}); t.after(() => browser.close());
   const pageBrowser = await browser.newPage({viewport:{width:1280,height:720}});
   await pageBrowser.clock.install();
-  await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}?tab=runtime`);
+  await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}?revision=${taskId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
+  const historicalRun = pageBrowser.locator(`[data-page-key="task:${taskId}:${taskId}:"] #runtime-run-${taskId}-${runId}`);
+  await historicalRun.waitFor({state:"attached"});
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=runtime`; },{projectId,taskId});
   await pageBrowser.getByRole("tab",{name:"运行与关联"}).waitFor();
   const panel = pageBrowser.getByRole("region",{name:"自动循环观察"});
   await panel.getByText(/当前运行 33333333 关联循环 22222222/).waitFor();
@@ -136,6 +139,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
     `#/p/${projectId}/runtime?session=${encodeURIComponent(`owned:${taskId}`)}`);
   await exactRunLink.click();
   await pageBrowser.locator(`#runtime-run-${taskId}-${runId}[open]`).waitFor();
+  assert.equal(await historicalRun.evaluate(el => el.getClientRects().length),0,"historical Task page stays mounted but hidden");
   await pageBrowser.getByText(/exact version two/).waitFor();
   assert.equal(await pageBrowser.locator(`#runtime-run-${taskId}-${runId}`).evaluate(el => {
     const top=el.getBoundingClientRect().top; return top>=0 && top<window.innerHeight;
