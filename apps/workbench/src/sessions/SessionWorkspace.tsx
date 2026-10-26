@@ -49,6 +49,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [readAgain, setReadAgain] = useState(0);
   const [recoveryRead, setRecoveryRead] = useState<RecoveryRead>({ status: "loading" });
   const epoch = useRef(0);
+  const historyAbort = useRef<AbortController | null>(null);
+  const historyScope = useRef("");
+  historyScope.current = `${context.token}\0${scope}\0${active}\0${refresh}\0${readAgain}`;
   const cursor = useRef<string | null>(null);
   const requestVersion = useRef(0);
   const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.busy === false ? 15000 : 5000;
@@ -60,6 +63,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   useEffect(() => {
     if (!active) return;
     const current = ++epoch.current;
+    historyAbort.current?.abort(); historyAbort.current = null;
     const controller = new AbortController();
     const client = sessionClient(context.token, context.projectId);
     let checking = false;
@@ -68,7 +72,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     cursor.current = null;
     const saved = remember.get(scope) ?? null;
     setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false);
-    setHistoryPartial(false); setHistoryLimitations([]); setError(""); setLoading(true);
+    setHistoryPartial(false); setHistoryLimitations([]); setHistoryError(""); setHistoryBusy(false); setError(""); setLoading(true);
     setRecoveryRead({ status: "loading" });
     async function readRecovery(sessionId: string) {
       if (document.visibilityState === "hidden" || recoveryChecking) return;
@@ -128,18 +132,24 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     const timer = window.setInterval(() => { void checkChanges(); if (recoveryTarget) void readRecovery(recoveryTarget); }, pollInterval);
     const visible = () => { if (document.visibilityState === "visible") { void read(); } };
     document.addEventListener("visibilitychange", visible);
-    return () => { controller.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+    return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, active, refresh, readAgain, pollInterval]);
   async function moreActivity() {
     if (historyBusy || historyLoaded && !historyCursor) return;
+    const requestScope = historyScope.current, requestEpoch = epoch.current;
+    const controller = new AbortController();
+    historyAbort.current = controller;
+    const currentRequest = () => !controller.signal.aborted && historyScope.current === requestScope && epoch.current === requestEpoch;
     setHistoryBusy(true); setHistoryError("");
     try {
-      const page = await sessionClient(context.token, context.projectId).activities(sessionKey, historyCursor ?? undefined);
+      const page = await sessionClient(context.token, context.projectId).activities(sessionKey, historyCursor ?? undefined, controller.signal);
+      if (!currentRequest()) return;
+      if (page.items.some(item => item.sessionKey !== sessionKey)) throw new Error("活动历史与所选 Session 不符");
       setActivity(old => bounded(old, page.items)); setHistoryCursor(page.nextCursor); setHistoryLoaded(true);
       setHistoryPartial(old => old || page.metadata.partial);
       setHistoryLimitations(old => [...new Set([...old, ...page.metadata.limitations])]);
-    } catch (cause) { setHistoryError(errorText(cause)); }
-    finally { setHistoryBusy(false); }
+    } catch (cause) { if (currentRequest()) setHistoryError(errorText(cause)); }
+    finally { if (currentRequest()) { historyAbort.current = null; setHistoryBusy(false); } }
   }
   const current = snapshot?.session.key === sessionKey ? snapshot : null;
   if (!current) return <div className="content"><h1>Session</h1>{loading ? <p>正在读取会话工作区…</p> : <Alert kind="error">会话暂不可读取：{error || "未找到当前项目的会话"}。<button onClick={() => setReadAgain(value => value + 1)}>重试</button></Alert>}</div>;
