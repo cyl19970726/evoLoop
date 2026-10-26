@@ -10,4 +10,6 @@
 .runtime-session-role { overflow-wrap: anywhere; }
 .runtime-session-role code { color: #66758f; font-size: 0.85em; overflow-wrap: anywhere; }
 .runtime-session-role small { color: #8a5460; font-size: 0.85em; }
+.runtime-run-card[id] { scroll-margin-top: 78px; }
+@media (max-width: 760px) { .runtime-run-card[id] { scroll-margin-top: 70px; } }
 @media (max-width: 420px) { .runtime-session-focus { padding: 10px; } }
