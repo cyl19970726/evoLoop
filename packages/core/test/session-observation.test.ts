@@ -50,3 +50,17 @@ test("profile resolves an exact Session target and unknown Session or Task fails
   await assert.rejects(f.service.assignment(principal, projectId, "00000000-0000-4000-8000-000000000099"),
     { code: "NOT_FOUND" });
 });
+
+test("an existing Task without an assignment is null; authority and storage failures remain errors", async () => {
+  const f = fixture();
+  Object.assign(f.reader.sessionAssignments!, { getTaskSessionAssignment: async () => null });
+  assert.equal(await f.service.assignment(principal, projectId, taskId), null);
+  await assert.rejects(f.service.assignment(principal, projectId, linkId), { code: "NOT_FOUND" });
+  Object.assign(f.reader, { getTask: async () => ({ id: taskId, projectId: linkId }) });
+  await assert.rejects(f.service.assignment(principal, projectId, taskId), { code: "NOT_FOUND" });
+  Object.assign(f.reader, { getTask: async () => ({ id: taskId, projectId }), sessionAssignments: undefined });
+  await assert.rejects(f.service.assignment(principal, projectId, taskId), { code: "CAPABILITY_UNAVAILABLE" });
+  const broken = fixture();
+  Object.assign(broken.reader.sessionAssignments!, { getTaskSessionAssignment: async () => { throw new Error("storage disconnected"); } });
+  await assert.rejects(broken.service.assignment(principal, projectId, taskId), /storage disconnected/);
+});

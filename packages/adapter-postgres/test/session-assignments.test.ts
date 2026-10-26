@@ -6,6 +6,8 @@ import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { PgSessionAssignments } from "../src/session-assignments.ts";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "../../core/src/task-input.ts";
+import { SessionObservationService } from "@evoloop/core/session-observation";
+import { buildServer } from "../../../apps/coordinator/src/server.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -108,6 +110,49 @@ after(async () => {
   const cleanup = new pg.Client({ connectionString: url });
   await cleanup.connect();
   try { await cleanup.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await cleanup.end(); }
+});
+
+test("authenticated API returns null before first assignment and preserves missing Task and permission errors", async () => {
+  const uow = new PostgresUnitOfWork(pool), otherProjectId = randomUUID(), firstTaskId = randomUUID(), foreignTaskId = randomUUID();
+  const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
+    hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
+  const principal = { actorId: "lead", projectIds: [projectId, otherProjectId],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const apply = async (p: string, command: Record<string, unknown>) => {
+    const result = await workflow.execute(principal, { projectId: p, operationId: randomUUID(), ...command } as never);
+    assert.equal(result.status, "applied", JSON.stringify(result)); return result;
+  };
+  await apply(projectId, { type: "task.create", taskId: firstTaskId, title: "First assignment", content: "Read then assign",
+    acceptance: "An empty assignment is available for its first recipient", owner: roleId });
+  await apply(projectId, { type: "task.start", taskId: firstTaskId, expectedVersion: 1, reason: "Freeze the new Task" });
+  await apply(otherProjectId, { type: "project.create", title: "Other assignment project" });
+  await apply(otherProjectId, { type: "task.create", taskId: foreignTaskId, title: "Foreign task", content: "Other project",
+    acceptance: "Not visible in another project", owner: "other-role" });
+  const token = randomUUID() + randomUUID(), foreignToken = randomUUID() + randomUUID(), writeToken = randomUUID() + randomUUID();
+  const app = await buildServer({ service: workflow, sessionWork: new SessionObservationService({ uow }), credentials: [
+    { token, ...principal }, { token: foreignToken, actorId: "foreign-reader", projectIds: [otherProjectId], permissions: ["read"] },
+    { token: writeToken, actorId: "writer-only", projectIds: [projectId], permissions: ["write"] }] });
+  const path = (id: string) => `/api/projects/${projectId}/tasks/${id}/assignment`;
+  const get = (id: string, auth = token) => app.inject({ url: path(id), headers: { authorization: `Bearer ${auth}` } });
+  try {
+    const empty = await get(firstTaskId);
+    assert.equal(empty.statusCode, 200, empty.body); assert.equal(empty.json(), null);
+    assert.equal((await get(randomUUID())).statusCode, 404);
+    assert.equal((await get(foreignTaskId)).statusCode, 404, "a Task that exists elsewhere is still missing here");
+    assert.equal((await get(firstTaskId, foreignToken)).statusCode, 403);
+    assert.equal((await get(firstTaskId, writeToken)).statusCode, 403);
+    assert.equal((await app.inject({ url: path(firstTaskId) })).statusCode, 401);
+    const task = (await workflow.getTask(principal, projectId, firstTaskId)).task;
+    const assigned = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` },
+      payload: { type: "task.assignment.set", projectId, operationId: randomUUID(), taskId: firstTaskId,
+        expectedTaskVersion: task.version, target: { kind: "external", linkId: link1 }, recipientActorId: "worker",
+        expectedVersion: 0, reason: "First exact recipient" } });
+    assert.equal(assigned.statusCode, 200, assigned.body); assert.equal(assigned.json().status, "applied");
+    const readback = await get(firstTaskId);
+    assert.equal(readback.statusCode, 200, readback.body);
+    assert.deepEqual(readback.json().target, { kind: "external", linkId: link1 });
+    assert.equal(readback.json().state, "assigned");
+  } finally { await app.close(); }
 });
 
 test("exact HostLink profiles and assignment revisions persist; CAS and immutable history hold", async () => {

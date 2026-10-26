@@ -69,13 +69,11 @@ export class SessionObservationService {
       return this.assignments(reader).listSessionProfileHistory(snapshot.session.target, limit, cursor);
     });
   }
-  async assignment(principal: Principal, projectId: string, taskId: string): Promise<TaskSessionAssignment> {
+  async assignment(principal: Principal, projectId: string, taskId: string): Promise<TaskSessionAssignment | null> {
     return this.read(principal, projectId, async reader => {
       const task = await reader.getTask(taskId);
       if (!task || task.projectId !== projectId) throw new DomainError("NOT_FOUND", "Task was not found");
-      const assignment = await this.assignments(reader).getTaskSessionAssignment(taskId);
-      if (!assignment) throw new DomainError("NOT_FOUND", "Task assignment was not found");
-      return assignment;
+      return this.assignments(reader).getTaskSessionAssignment(taskId);
     });
   }
   async assignmentHistory(principal: Principal, projectId: string, taskId: string, limit: number,
