@@ -13,6 +13,7 @@ import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread"
 import { RoleTemplateSummary } from "../roles/RoleTemplateSummary";
 import { sessionClient } from "../sessions/client";
 import { eligibleOwnedSessions } from "../sessions/assignmentEligibility";
+import { taskRunFromHash } from "../orchestration/navigation";
 import "./session-focus.css";
 
 function readErrorText(cause: unknown): string {
@@ -28,13 +29,6 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
 };
 type RoleName = { title?: string; error?: string };
 const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox]);
-function requestedTaskRunId(projectId: string, taskId?: string): string | null {
-  if (!taskId) return null;
-  const [path, query = ""] = window.location.hash.split("?");
-  if (path !== `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`) return null;
-  const params = new URLSearchParams(query);
-  return params.get("tab") === "runtime" ? params.get("run") : null;
-}
 export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
@@ -45,7 +39,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [epoch, setEpoch] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
-  const [targetRunId, setTargetRunId] = useState(() => requestedTaskRunId(context.projectId, task?.id));
+  const [targetRunId, setTargetRunId] = useState(() => task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
   const [targetRunProblem, setTargetRunProblem] = useState("");
   const revealedRunHref = useRef<string | null>(null);
   const revealedRunElement = useRef<HTMLDetailsElement | null>(null);
@@ -53,7 +47,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [assignmentRead, setAssignmentRead] = useState<{scope:string; value:TaskSessionAssignment|null; error:string}|null>(null);
   const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? "", targetRunId ?? ""]);
   useEffect(() => {
-    const onHash = () => setTargetRunId(requestedTaskRunId(context.projectId, task?.id));
+    const onHash = () => setTargetRunId(task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
     onHash(); window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [context.projectId, task?.id]);
@@ -139,11 +133,8 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     draftBaseline: `${task.currentRevisionId}:${assigned?.version ?? 0}:${assigned?.state ?? "none"}:${assigned ? JSON.stringify(assigned.target) : ""}` } : context;
   useEffect(() => {
     const reveal = () => {
-      const [path, query = ""] = window.location.hash.split("?");
-      const params = new URLSearchParams(query);
-      const id = task && path === `#/p/${context.projectId}/tasks/${task.id}` && params.get("tab") === "runtime"
-        ? params.get("run") && `runtime-run-${task.id}-${params.get("run")}`
-        : null;
+      const requestedRun = task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null;
+      const id = requestedRun && task ? `runtime-run-${task.id}-${requestedRun}` : null;
       const targetId = id;
       if (!targetId) { revealedRunHref.current = null; revealedRunElement.current = null; return; }
       if (!/^[a-z0-9-]+$/i.test(targetId)) return;
@@ -154,6 +145,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
         if (firstReveal) {
           revealedRunHref.current = window.location.hash;
           target.scrollIntoView({ block: "start" });
+          target.querySelector("summary")?.focus({ preventScroll: true });
         }
       }
     };

@@ -14,7 +14,7 @@ import { legacyDecisionLabel } from "./taskListPresentation";
 import { DeliveryArtifact, DeliveryObservation, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
 import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
-import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash } from "../orchestration/navigation";
+import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash } from "../orchestration/navigation";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -171,6 +171,11 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     setDetail(null); setBasisDocuments({}); }, [id, projectId]);
   useEffect(() => {
     if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
+    const targetRun = tab === "runtime" ? taskRunFromHash(window.location.hash, projectId, id) : null;
+    if (targetRun && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetRun)) {
+      landingRef.current = null;
+      return;
+    }
     const frame = window.requestAnimationFrame(() => {
       if (scrollToTaskSection(projectId, id, tab, selectedRevision, value => document.getElementById(value))) {
         landingRef.current = null;

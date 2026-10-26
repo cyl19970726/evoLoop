@@ -4,7 +4,7 @@ import { ApiError } from "../src/api.ts";
 import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
 import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
 import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/orchestration/summary.ts";
-import { navigateTaskTab, scrollToTaskSection, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
 import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
@@ -100,6 +100,10 @@ test("three Task links select fixed history, runtime and delivery without crossi
   assert.equal(taskSectionFromHash(runtime,projectId,"55555555-5555-4555-8555-555555555555"),null);
   assert.equal(taskSectionFromHash(runtime,loopId,taskId),null);
   assert.equal(taskSectionFromHash(`${runtime}&tab=history`,projectId,taskId),"overview");
+  const runId="66666666-6666-4666-8666-666666666666";
+  assert.equal(taskRunFromHash(`${runtime}&run=${runId}`,projectId,taskId),runId);
+  assert.equal(taskRunFromHash(`${runtime}&run=${runId}`,projectId,"55555555-5555-4555-8555-555555555555"),null);
+  assert.equal(taskRunFromHash(delivery,projectId,taskId),null);
 });
 
 test("deep-linked delivery clears the header with its tab row, and hidden cached routes cannot scroll", () => {
