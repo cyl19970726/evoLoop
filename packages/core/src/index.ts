@@ -700,8 +700,9 @@ export class WorkflowService {
   listResidentQueueAttempts(principal: Principal, projectId: string, claimId: string) {
     return this.read(principal,projectId,reader=>reader.queue?.listResidentQueueAttempts(claimId)??Promise.resolve([]));
   }
-  listDiscussions(principal: Principal, projectId: string, limit = 50, cursor?: string): Promise<Page<import("@evoloop/contracts").DiscussionRecord>> {
-    return this.read(principal, projectId, reader => reader.listDiscussions(pageLimit(limit), cursor));
+  listDiscussions(principal: Principal, projectId: string, limit = 50, cursor?: string,
+    kind?: import("@evoloop/contracts").DiscussionRecord['kind']): Promise<Page<import("@evoloop/contracts").DiscussionRecord>> {
+    return this.read(principal, projectId, reader => reader.listDiscussions(pageLimit(limit), cursor, kind));
   }
   listDiscussionEvents(principal: Principal, projectId: string, id: string): Promise<import("@evoloop/contracts").DiscussionEvent[]> {
     return this.read(principal, projectId, async reader => {

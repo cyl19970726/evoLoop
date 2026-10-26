@@ -38,10 +38,28 @@ export class PgDiscussionQueries {
     const result = await this.client.query("SELECT * FROM discussion WHERE project_id=$1 AND discussion_id=$2", [this.projectId, id]);
     return result.rows[0] ? rowRecord(result.rows[0]) : null;
   }
-  async listDiscussions(limit: number, cursor?: string): Promise<Page<DiscussionRecord>> {
+  async listDiscussions(limit: number, cursor?: string, kind?: DiscussionRecord["kind"]): Promise<Page<DiscussionRecord>> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new DomainError("INVALID_PAGE", "Limit must be 1..100");
-    const result = await this.client.query("SELECT * FROM discussion WHERE project_id=$1 AND ($2::uuid IS NULL OR discussion_id>$2::uuid) ORDER BY discussion_id LIMIT $3", [this.projectId, cursor ?? null, limit + 1]);
-    return { items: result.rows.slice(0, limit).map(rowRecord), nextCursor: result.rows.length > limit ? result.rows[limit - 1]!.discussion_id : null };
+    if (kind === undefined) {
+      const result = await this.client.query("SELECT * FROM discussion WHERE project_id=$1 AND ($2::uuid IS NULL OR discussion_id>$2::uuid) ORDER BY discussion_id LIMIT $3", [this.projectId, cursor ?? null, limit + 1]);
+      return { items: result.rows.slice(0, limit).map(rowRecord), nextCursor: result.rows.length > limit ? result.rows[limit - 1]!.discussion_id : null };
+    }
+    if (!["allocation", "direction", "task_collaboration"].includes(kind))
+      throw new DomainError("INVALID_FILTER", "Invalid Discussion kind");
+    const result = await this.client.query("SELECT * FROM discussion WHERE project_id=$1 AND ($2::uuid IS NULL OR discussion_id>$2::uuid) AND ($3::text IS NULL OR kind=$3) ORDER BY discussion_id LIMIT $4", [this.projectId, cursor ?? null, kind ?? null, limit + 1]);
+    const items: DiscussionRecord[] = [];
+    let nextCursor: string | null = null;
+    for (const row of result.rows.slice(0, limit)) {
+      const item = rowRecord(row);
+      if (Buffer.byteLength(JSON.stringify({ items: [...items, item], nextCursor: row.discussion_id }), "utf8") > 256 * 1024) {
+        if (!items.length) throw new DomainError("RESULT_TOO_LARGE", "One Discussion exceeds response byte limit");
+        nextCursor = items[items.length - 1]!.id;
+        break;
+      }
+      items.push(item);
+    }
+    if (nextCursor === null && result.rows.length > items.length) nextCursor = items.at(-1)?.id ?? null;
+    return { items, nextCursor };
   }
   async listDiscussionEvents(id: string): Promise<DiscussionEvent[]> {
     const result = await this.client.query("SELECT * FROM discussion_event WHERE project_id=$1 AND discussion_id=$2 ORDER BY version LIMIT $3", [this.projectId, id, maxEvents + 1]);

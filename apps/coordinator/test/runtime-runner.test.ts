@@ -5,7 +5,7 @@ import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { currentSessionGrant } from "../src/orchestration/dynamic-admission.js";
@@ -135,6 +135,151 @@ test("closing session archives once, verifies identity, and restart only reads a
     assert.equal(closing.closeAttemptedAt, null);
     assert.equal(closing.state, "closing");
   } finally { await reject.stop(); }
+});
+
+test("fresh runner retains an unverified prior archive attempt until exact native readback", async () => {
+  const closeOperationId = randomUUID();
+  const closing: RuntimeSessionRecord = { ...session, state: "closing", version: 5,
+    closeOperationId, closeAttemptedAt: new Date().toISOString(), closeVerifiedAt: null };
+  let archived = false, reads = 0, archives = 0, confirms = 0, inspections = 0;
+  class EmptyThreadRuntime extends FakeRuntime {
+    async isThreadArchived(binding: RuntimeBinding) {
+      assert.equal(binding.nativeThreadId, closing.nativeThreadId);
+      assert.equal(binding.nativeSessionId, closing.nativeSessionId);
+      reads++;
+      return archived;
+    }
+    async archiveThread() { archives++; throw new Error("must not retry an attempted archive"); }
+    override async inspect(_binding: RuntimeBinding) { inspections++; throw new Error("must not inspect for replay"); }
+  }
+  const native = new EmptyThreadRuntime();
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+    listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    markSessionArchiveAttempt: async () => { throw new Error("attempt marker must not repeat"); },
+    confirmSessionClosed: async (_project: string, binding: RuntimeBinding, operationId: string) => {
+      assert.equal(operationId, closeOperationId);
+      assert.equal(binding.sessionId, closing.id);
+      assert.equal(binding.nativeThreadId, closing.nativeThreadId);
+      confirms++; closing.state = "closed";
+    } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & EmptyThreadRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    assert.equal(closing.state, "closing");
+    assert.deepEqual(runner.status(projectId).faults.map(f => [f.sessionId, f.phase, f.category]),
+      [[closing.id, "session_close", "unknown_outcome"]]);
+    await runner.pump();
+    assert.deepEqual(runner.status(projectId).faults.map(f => f.category), ["unknown_outcome"]);
+    assert.equal(archives, 0); assert.equal(inspections, 0); assert.equal(confirms, 0);
+    assert.ok(reads >= 2);
+    archived = true;
+    await runner.pump();
+    assert.equal(confirms, 1); assert.equal(closing.state, "closed");
+    assert.equal(runner.status(projectId).faults.length, 0);
+    assert.equal(archives, 0);
+  } finally { await runner.stop(); }
+});
+
+test("readback failure after a durable archive attempt remains unknown and cannot replay", async t => {
+  for (const sample of [
+    { name: "fresh runner first read times out", alreadyAttempted: true,
+      error: new RuntimeUnknownError("thread/list", 8, "private reply lost") },
+    { name: "empty archive acknowledgement then post-read is rejected", alreadyAttempted: false,
+      error: new RuntimeServerError("thread/list", 8, -32600, "private native read rejection") },
+  ] as const) await t.test(sample.name, async () => {
+    const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(),
+      closeAttemptedAt: sample.alreadyAttempted ? new Date().toISOString() : null };
+    let reads = 0, archives = 0, marks = 0, confirms = 0, inspections = 0;
+    class ReadFailureRuntime extends FakeRuntime {
+      async isThreadArchived() {
+        reads++;
+        if (sample.alreadyAttempted || reads === 2) throw sample.error;
+        return false;
+      }
+      async archiveThread() { archives++; } // Native's empty acknowledgement proves nothing.
+      override async inspect(binding: RuntimeBinding) { inspections++; return super.inspect(binding); }
+    }
+    const native = new ReadFailureRuntime();
+    const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+      listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+    const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+      markSessionArchiveAttempt: async () => { marks++; closing.closeAttemptedAt = new Date().toISOString(); },
+      confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
+    const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & ReadFailureRuntime,
+      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+      canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+    try {
+      await runner.start();
+      assert.equal(closing.state, "closing"); assert.equal(confirms, 0);
+      assert.equal(archives, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(marks, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(inspections, sample.alreadyAttempted ? 0 : 1);
+      assert.deepEqual(runner.status(projectId).faults.map(f => [f.phase, f.category]),
+        [["session_close", "unknown_outcome"]]);
+      assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /private reply|private native/);
+      await runner.pump();
+      assert.equal(archives, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(marks, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(confirms, 0);
+      assert.deepEqual(runner.status(projectId).faults.map(f => f.category), ["unknown_outcome"]);
+    } finally { await runner.stop(); }
+  });
+});
+
+test("failed archive precheck stops before durable attempt or native write", async () => {
+  const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
+  let archives = 0, marks = 0, inspections = 0, confirms = 0;
+  class FailedPrecheckRuntime extends FakeRuntime {
+    async isThreadArchived() { throw new RuntimeUnknownError("thread/list", 8, "precheck unavailable"); }
+    async archiveThread() { archives++; }
+    override async inspect(_binding: RuntimeBinding) { inspections++; return {}; }
+  }
+  const native = new FailedPrecheckRuntime();
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+    listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    markSessionArchiveAttempt: async () => { marks++; }, confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & FailedPrecheckRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try { await runner.start(); assert.equal(closing.state, "closing"); assert.equal(closing.closeAttemptedAt, null);
+    assert.equal(archives, 0); assert.equal(marks, 0); assert.equal(inspections, 0); assert.equal(confirms, 0);
+  } finally { await runner.stop(); }
+});
+
+test("archive failure keeps a redacted rejection or unknown timeout category without replay", async t => {
+  for (const sample of [
+    { name: "explicit native rejection", error: new RuntimeServerError("thread/archive", 7, -32600, "no rollout found; secret=private"), category: "native_rejected" },
+    { name: "response timeout", error: new RuntimeUnknownError("thread/archive", 7, "reply unavailable; secret=private"), category: "unknown_outcome" },
+  ] as const) await t.test(sample.name, async () => {
+    const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
+    let archives = 0, confirms = 0;
+    class FailureRuntime extends FakeRuntime {
+      async isThreadArchived() { return false; }
+      async archiveThread() { archives++; throw sample.error; }
+    }
+    const native = new FailureRuntime();
+    const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+      listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+    const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+      markSessionArchiveAttempt: async () => { closing.closeAttemptedAt = new Date().toISOString(); },
+      confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
+    const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & FailureRuntime,
+      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+      canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+    try {
+      await runner.start();
+      assert.equal(archives, 1); assert.equal(confirms, 0); assert.equal(closing.state, "closing");
+      assert.deepEqual(runner.status(projectId).faults.map(f => [f.phase, f.category]), [["session_close", sample.category]]);
+      assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /rollout found|reply unavailable|secret=private/);
+      await runner.pump();
+      assert.equal(archives, 1,"persisted attempt never replays");
+      assert.deepEqual(runner.status(projectId).faults.map(f => f.category), [sample.category]);
+    } finally { await runner.stop(); }
+  });
 });
 
 test("runtime faults retain exact Run ownership, redact errors, and clear only the recovered Run",async()=>{
