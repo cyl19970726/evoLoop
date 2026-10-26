@@ -4,6 +4,7 @@ import { errorText, safeArtifactHref } from "../api";
 import { date } from "../ui/shared";
 import type { MutationContext } from "../workflow/ActionForm";
 import { allocationRelations, type AllocationTrace } from "./allocationClient";
+import { useAllocationChanges } from "./useAllocationChanges";
 
 const status = { current: "当前修订", changed: "修订已改变", unavailable: "目标暂不可核实" } as const;
 const assignmentStatus = { current: "当前承接", historical: "历史承接", unknown: "当前承接待核" } as const;
@@ -65,24 +66,32 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
   const [error, setError] = useState("");
   const [partial, setPartial] = useState(false);
   const [limitations, setLimitations] = useState<string[]>([]);
+  const [observedAt, setObservedAt] = useState<string | null>(null);
   const [readAgain, setReadAgain] = useState(0);
   const epoch = useRef(0);
+  const loadedScope = useRef("");
+  const changesError = useAllocationChanges(context.token, context.projectId, () => setReadAgain(value => value + 1));
   useEffect(() => {
     const current = ++epoch.current;
     const controller = new AbortController();
-    setLoading(true); setItems([]); setCursor(null); setError(""); setPartial(false); setLimitations([]);
+    const scope = `${context.token}\0${context.projectId}\0${record.id}`;
+    if (loadedScope.current !== scope) {
+      loadedScope.current = scope; setItems([]); setCursor(null); setPartial(false); setLimitations([]); setObservedAt(null);
+    }
+    setLoading(true); setMoreBusy(false); setCursor(null); setError("");
     allocationRelations(context.token, context.projectId, { discussionId: record.id }, undefined, controller.signal)
       .then(page => {
         if (epoch.current !== current) return;
         if (page.resetRequired) throw new Error("关系读取范围已变化，请重新读取。");
         setItems(page.items); setCursor(page.nextCursor); setPartial(page.metadata.partial); setLimitations(page.metadata.limitations);
+        setObservedAt(page.metadata.generatedAt);
       })
       .catch(cause => { if (epoch.current === current) setError(errorText(cause)); })
       .finally(() => { if (epoch.current === current) setLoading(false); });
     return () => { controller.abort(); if (epoch.current === current) epoch.current++; };
   }, [context.token, context.projectId, record.id, refresh, readAgain]);
   async function more() {
-    if (!cursor || moreBusy) return;
+    if (!cursor || moreBusy || loading) return;
     const current = epoch.current, previous = cursor;
     setMoreBusy(true); setError("");
     try {
@@ -91,7 +100,7 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
       if (page.resetRequired) { setReadAgain(value => value + 1); return; }
       if (page.nextCursor === previous) throw new Error("关系游标没有前进，请重新读取整条讨论。");
       setItems(before => [...new Map([...before, ...page.items].map(item => [item.id, item])).values()]);
-      setCursor(page.nextCursor); setPartial(before => before || page.metadata.partial);
+      setCursor(page.nextCursor); setPartial(before => before || page.metadata.partial); setObservedAt(page.metadata.generatedAt);
       setLimitations(before => [...new Set([...before, ...page.metadata.limitations])]);
     } catch (cause) { if (epoch.current === current) setError(errorText(cause)); }
     finally { if (epoch.current === current) setMoreBusy(false); }
@@ -99,7 +108,10 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
   return <aside className="discussion-exploration-column discussion-exploration-relations" aria-label="正式关系与具体承接">
     <h2>正式关系与确切承接</h2>
     <p className="muted">只显示决定后的正式链接及相同 Task 修订的接受记录。接受不等于运行、交付或实际使用。</p>
-    {loading && <p>正在核对关系来源…</p>}
+    <button type="button" disabled={loading} onClick={() => setReadAgain(value => value + 1)}>重新读取关系</button>
+    {observedAt && <p className="muted">关系读于 {date(observedAt)}；变化检查失败时保留此读数。</p>}
+    {loading && <p>正在核对关系来源…{observedAt && "下方为上次读数。"}</p>}
+    {changesError && <p role="status" className="discussion-relation-error">{changesError}</p>}
     {error && <p role="alert" className="discussion-relation-error">关系读取失败：{error}。不能据此判断没有承接。</p>}
     {partial && <p role="status" className="discussion-relation-error">来源读取不完整，以下关系只能作为已见部分。</p>}
     {limitations.length > 0 && <details><summary>来源限制 · {limitations.length} 项</summary><ul>{limitations.map(item => <li key={item}>{item}</li>)}</ul></details>}
@@ -107,6 +119,6 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
       ? "来源读取不完整，暂不能判断是否存在正式关系。"
       : cursor ? "当前页没有关系；后续页面尚未读完。" : "尚无正式后续对象链接；讨论上下文和拟交接会话不构成实际承接。"}</p>}
     {items.map(item => <TraceCard key={item.id} trace={item} projectId={context.projectId} />)}
-    {cursor && <button type="button" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "正在读取…" : "加载更多关系"}</button>}
+    {cursor && <button type="button" disabled={moreBusy || loading} onClick={() => void more()}>{moreBusy ? "正在读取…" : "加载更多关系"}</button>}
   </aside>;
 }
