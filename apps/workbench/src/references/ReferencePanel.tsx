@@ -105,7 +105,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   }, [context.token, context.projectId, kind, wikiEntry, knowledgeId, historyTick]);
   async function post(path: string, type: "reference.git" | "reference.formal" | "reference.task", payload: Record<string, unknown>) {
     const operationId = crypto.randomUUID();
-    if (!context.onAttempt({ type, projectId: context.projectId, operationId, ...(taskId ? { taskId } : {}) })) {
+    if (!await context.onAttempt({ type, projectId: context.projectId, operationId, ...(taskId ? { taskId } : {}) })) {
       setMessage("无法保存操作回执，尚未提交。"); return;
     }
     setBusy(true); setMessage("");
