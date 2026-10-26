@@ -2,6 +2,7 @@ import type { Principal } from '@evoloop/contracts';
 import { queueCommandSchema } from '@evoloop/contracts/queues';
 import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence,QueueHoldCode } from '@evoloop/contracts/queues';
 import { canonicalTaskInputJson,taskInputSignature } from '../task-input.js';
+import { requireAssignedSession } from '../session-assignments/dispatch.js';
 import type { Reader } from '@evoloop/contracts/ports';
 
 export type { ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence } from '@evoloop/contracts/queues';
@@ -50,6 +51,7 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
       const task=await reader.getTask(item.taskId);
       if(!task||task.projectId!==c.projectId||task.state!=='in_progress'||task.currentRevisionId!==item.taskRevisionId)
         return fail('TASK_UNAVAILABLE','queue requires the current in-progress Task revision and sealed fixed input');
+      await requireAssignedSession(reader,task,item.sessionId);
       const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(reader,task,item.taskRevisionId));
       entries.push({projectId:c.projectId,queueId:c.queueId,id:item.id,taskId:item.taskId,taskRevisionId:item.taskRevisionId,sourceInputJson,sessionId:item.sessionId,roleId:item.roleId,position,dependsOn:item.dependsOn,consumerId:item.consumerId,useRequired:item.useRequired,releaseRule:item.releaseRule,state:'queued',holdCode:null,holdReason:null,claimId:null,version:1});
     }
@@ -96,6 +98,16 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
     }
     if(attempts.length){const previous=await reader.getRuntimeRun(attempts.at(-1)!.runId);if(!previous||!terminal.has(previous.state))return fail('RUN_UNSETTLED','previous Run must be confirmed terminal; unknown requires original operation reconciliation');}
     const task=await reader.getTask(entry.taskId),session=await reader.getRuntimeSession(entry.sessionId);
+    if(task){
+      try { await requireAssignedSession(reader,task,entry.sessionId,c.type==='queue.continue'); }
+      catch(error){
+        if(error instanceof Error && 'code' in error && ['TASK_ASSIGNED_ELSEWHERE','ASSIGNMENT_STALE'].includes(String(error.code))){
+          await tx.holdResidentQueueEntry(c.queueId,entry.id,'binding_changed',error.message);
+          return result(queue,null,null,'binding_changed');
+        }
+        throw error;
+      }
+    }
     const dependencyFacts=await Promise.all(entry.dependsOn.map(async id=>{const d=queue.entries.find(x=>x.id===id);const c=d?.claimId?await tx.getResidentQueueClaim(d.claimId):null;return d?.state==='released'&&c?.releaseKind==='accepted';}));
     const dependencies=dependencyFacts.every(Boolean);
     const currentInputJson=task?canonicalTaskInputJson(await taskInputSignature(reader,task)):null;

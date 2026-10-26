@@ -42,6 +42,10 @@ import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import type { RuntimeBinding } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
+import { SessionObservationService } from "@evoloop/core/session-observation";
+import { SessionMessageService } from "@evoloop/core/session-messages";
+import { SessionMessagePump } from "./session-messages/pump.js";
+import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -255,6 +259,7 @@ const browserRead = runtimeConfig?.enabled && runtimeConfig.browserRead ? new Br
 }) : null;
 const runtimeFactory = runtimeConfig?.enabled ? () => {
   const adapter = new CodexAppServerAdapter({
+  enableRestrictedMessagePermissions: integrations.sessionMessages?.enabled ?? false,
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
@@ -324,7 +329,29 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canW
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });
 try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
+const messageService = new SessionMessageService({ uow, clock, ids, grantFor: async (message, session) => {
+  const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
+  if (!current?.enabled || !current.readOnlyProtocolVerified || !await currentProjectWriter(message.projectId, message.senderActorId)) return null;
+  const grant = current.grants.find(g => g.enabled && g.projectId === message.projectId && g.sessionId === session.id &&
+    g.senderActorId === message.senderActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd);
+  if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
+  try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
+} });
+const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
+  onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
+const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))], canWrite: lease.canWrite,
+  pollIntervalMs: integrations.sessionMessages?.pollIntervalMs ?? 2000,
+  canStart: async message => {
+    const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
+    if (!current?.enabled || !current.readOnlyProtocolVerified) {
+      await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用或只读宿主能力未经本轮核准，消息保留待处理。");
+      return false;
+    }
+    return businessBeforeMessage(message);
+  }, onError: () => console.error("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
 const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.canWrite,
+  messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
@@ -355,6 +382,8 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
   projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
+  sessionWork: new SessionObservationService({ uow }),
+  sessionMessages: messageService,
   planningSources: (principal, projectId, taskId, revisionId, loopId) =>
     readPlanningSources(pool, principal, projectId, taskId, revisionId, loopId),
   sourceConfiguration: principal => ({
@@ -386,7 +415,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { residentQueue.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
+  try { messagePump?.stop(); residentQueue.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
   finally {
     try { if (runner) await runner.stop(); }
     finally { try { await lease.release(); } finally { await pool.end(); } }
@@ -394,5 +423,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); residentQueue.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); residentQueue.start(); messagePump?.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

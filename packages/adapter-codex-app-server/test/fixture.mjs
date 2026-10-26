@@ -11,6 +11,10 @@ let pendingCreateId = null;
 let turnListReads = 0;
 let archived = mode === "already-archived";
 let transitionResumes = 0;
+let ordinaryResumed = false;
+let turnStarts = 0;
+let configReads = 0;
+let threadReads = 0;
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") { initialized = true; continue; }
@@ -29,11 +33,29 @@ for await (const line of lines) {
   }
   const { id, method, params } = message;
   if (method === "initialize") {
-    if (mode.startsWith("dynamic") && params.capabilities?.experimentalApi !== true) process.exit(2);
-    if (!mode.startsWith("dynamic") && params.capabilities?.experimentalApi === true) process.exit(2);
+    if ((mode.startsWith("dynamic") || mode.startsWith("message-profile")) && params.capabilities?.experimentalApi !== true) process.exit(2);
+    if (!mode.startsWith("dynamic") && !mode.startsWith("message-profile") && params.capabilities?.experimentalApi === true) process.exit(2);
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
+  if (method === "config/read") {
+    const disabled = {enabled:false,destructive_enabled:false,open_world_enabled:false};
+    configReads++;
+    const features=Object.fromEntries(['apps','plugins','recommended_plugins','remote_plugin','plugin_sharing',
+      'enable_mcp_apps','browser_use','browser_use_external','computer_use','multi_agent','multi_agent_v2',
+      'tool_suggest','in_app_browser','in_app_local_automation'].map(key=>[key,false]));
+    const appDefault=mode==='message-profile-apps-enabled'||(mode==='message-profile-drift'&&configReads>1)?
+      {...disabled,enabled:true}:disabled;
+    const appOverride=mode==='message-profile-app-override'?{'write-app':{enabled:true}}:{};
+    const filesystem=mode==='message-profile-broad'?{'/tmp/evoloop-fixture':'read',':root':'read'}:{'/tmp/evoloop-fixture':'read'};
+    send({id,result:{config:{apps:{_default:appDefault,...appOverride},
+      features,web_search:'disabled',tools:{web_search:null},browser_use:null,computer_use:null,
+      orchestrator:{mcp:{enabled:false},skills:{enabled:false}},
+      mcp_servers:{},plugins:{},permissions:{evoloop_message_read:{filesystem,network:{enabled:false}}}},origins:{}}});continue;
+  }
+  if (method === "mcpServerStatus/list") {
+    send({id,result:{data:mode==='message-profile-mcp'?[{name:'write-capable',tools:{write:{name:'write',inputSchema:{}}}}]:[],nextCursor:null}});continue;
+  }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
   if (mode === "timeout" && method === "turn/start") continue;
@@ -64,6 +86,19 @@ for await (const line of lines) {
       send({id,error:{code:-32602,message:"resume did not apply current network profile"}}); continue;
     }
   }
+  if (method === "thread/resume" && mode.startsWith("message-profile")) {
+    if (params.permissions === "evoloop_message_read") {
+      if (params.approvalPolicy !== "never" || params.sandbox !== undefined || params.config !== undefined) {
+        send({id,error:{code:-32602,message:"ordinary resume has elevated policy"}}); continue;
+      }
+      ordinaryResumed = true;
+    } else if (params.sandbox === "workspace-write") {
+      if (!ordinaryResumed || params.approvalPolicy !== "on-request" || params.config?.["sandbox_workspace_write.network_access"] !== true) {
+        send({id,error:{code:-32602,message:"business profile not restored"}}); continue;
+      }
+      ordinaryResumed = false;
+    } else {send({id,error:{code:-32602,message:"unexpected profile"}});continue;}
+  }
   if (method === "thread/archive") {
     if (params.threadId !== thread.id) { send({ id, error: { code: -32602, message: "foreign thread" } }); continue; }
     archived = true;
@@ -82,6 +117,7 @@ for await (const line of lines) {
       mode === "foreign-samecwd" ? [foreign, owned] : [owned] : [], nextCursor: null } }); continue;
   }
   if (method === "thread/resume" || method === "thread/read") {
+    if (method === "thread/read") threadReads++;
     const observedEnvironment = mode === "env-observe" && method === "thread/read" ? {
       HOME: process.env.HOME ?? null, CODEX_HOME: process.env.CODEX_HOME ?? null,
       PATH: process.env.PATH ?? null, HTTPS_PROXY: process.env.HTTPS_PROXY ?? null,
@@ -93,11 +129,22 @@ for await (const line of lines) {
       NODE_OPTIONS: process.env.NODE_OPTIONS ?? null,
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
-    send({ id, result: { thread: mode === "changed-session" ? { ...thread, sessionId: "different-session" } : thread,
+    const nativeThread={...thread,status:{type:mode==='message-profile-active'||
+      (mode==='message-profile-activity-race'&&threadReads>=3)?'active':'idle',activeFlags:[]}};
+    send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
+      observedTurnStarts:turnStarts,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list") {
     turnListReads++;
+    if (mode === "message-profile-history") {
+      if (params.sortDirection !== "desc" || params.limit !== 100) {
+        send({id,error:{code:-32602,message:"ordinary history did not request newest first"}});continue;
+      }
+      const data=params.cursor ? [{id:"older-100",status:"completed",completedAt:1792498484}] :
+        Array.from({length:100},(_,index)=>({id:index===0?"turn-1":`older-${index}`,status:"completed",completedAt:1792498484-index}));
+      send({id,result:{data,nextCursor:params.cursor?null:"older-page"}});continue;
+    }
     send({ id, result: { data: [{ id: "turn-1",
       status: mode === "transient-interrupted" && turnListReads === 1 ? "interrupted" : mode === "failed-turn" ? "failed" : "completed",
       completedAt: mode === "transient-interrupted" && turnListReads === 1 ? null : mode === "invalid-completed-at" ? "not-a-timestamp" : 1792498484,
@@ -121,6 +168,20 @@ for await (const line of lines) {
   }
   if (method === "turn/interrupt") { send({ id, result: {} }); send({ method: "turn/completed", params: { threadId: thread.id, turn: { id: params.turnId, status: "interrupted" } } }); continue; }
   if (method === "turn/start") {
+    turnStarts++;
+    if (mode.startsWith("message-profile")) {
+      if (ordinaryResumed) {
+        if (params.approvalPolicy !== "never" || params.permissions !== "evoloop_message_read" ||
+          params.sandboxPolicy !== undefined || params.cwd !== thread.cwd) {
+          send({id,error:{code:-32602,message:"ordinary turn not read-only"}});continue;
+        }
+        if (mode === "message-profile-reject") {send({id,error:{code:-32602,message:"fixture rejected ordinary start"}});continue;}
+        if (mode === "message-profile-timeout") continue;
+      } else if (params.approvalPolicy !== "on-request" || params.sandboxPolicy?.type !== "workspaceWrite" ||
+        params.sandboxPolicy.networkAccess !== true || params.cwd !== thread.cwd) {
+        send({id,error:{code:-32602,message:"business turn did not regain exact profile"}});continue;
+      }
+    }
     send({ id, result: { turn: { id: "turn-1", status: "inProgress" } } });
     send({ method: "item/started", params: { threadId: "unowned", turnId: "x" } });
     send({ method: "turn/started", params: { threadId: thread.id, turn: { id: "turn-1", status: "inProgress" } } });

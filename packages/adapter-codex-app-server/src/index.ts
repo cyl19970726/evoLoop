@@ -32,7 +32,10 @@ function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return environment;
 }
 const finite = (value: number): boolean => Number.isFinite(value) && value > 0;
+const ORDINARY_PERMISSION_PROFILE='evoloop_message_read';
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const policyJson=(value:unknown):string=>JSON.stringify(value,(_key,current)=>object(current)?
+  Object.fromEntries(Object.entries(current).sort(([a],[b])=>a.localeCompare(b))):current);
 const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
   (["actorId","model","sandbox","approvalPolicy"] as const).every(key =>
@@ -105,6 +108,8 @@ export interface CodexAppServerOptions {
   requestTimeoutMs?: number;
   dynamicToolTimeoutMs?: number;
   clientVersion?: string;
+  /** Enables pinned experimental named-permission selection for ordinary Session turns at process startup. */
+  enableRestrictedMessagePermissions?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
   /** Explicit per-request approval, never a session-wide grant. Default is deny. */
@@ -139,6 +144,11 @@ export class CodexAppServerAdapter implements RuntimePort {
   private events = new Set<(event: RuntimeEvent) => void>();
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   private declaredTools = new Map<string, Set<string>>();
+  /** A read-only conversation disables dynamic tools and approvals until the exact business profile is restored. */
+  private readOnlyThreads = new Set<string>();
+  private businessTurnPolicies = new Map<string,{sandboxPolicy:{type:'readOnly';networkAccess:false}|{type:'workspaceWrite';writableRoots:string[];networkAccess:boolean};approvalPolicy:'on-request'|'untrusted'}>();
+  private readOnlyQualifications = new Map<string,{fingerprint:string;observedAt:number}>();
+  private businessRestoreAcknowledged = new Set<string>();
   private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
   private closed = false;
@@ -182,7 +192,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     lines.on("close", () => this.disconnect("stdout closed"));
     try {
       const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" },
-        ...(this.options.dynamicTools && this.options.callDynamicTool ? {capabilities:{experimentalApi:true}} : {}) }));
+        ...((this.options.dynamicTools && this.options.callDynamicTool)||this.options.enableRestrictedMessagePermissions ?
+          {capabilities:{experimentalApi:true}} : {}) }));
       if (!result || !nonempty(result.userAgent) || !nonempty(result.platformFamily)) throw new RuntimeProtocolError("invalid initialize response");
       this.send({ method: "initialized" });
       this.ready = true;
@@ -207,7 +218,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private async probeSchema(): Promise<void> {
     const directory = await mkdtemp(resolve(tmpdir(), "evoloop-codex-schema-"));
     try {
-      const experimental=!!(this.options.dynamicTools && this.options.callDynamicTool);
+      const experimental=!!(this.options.dynamicTools && this.options.callDynamicTool)||!!this.options.enableRestrictedMessagePermissions;
       await execFileAsync(this.executable, ["app-server", "generate-json-schema", ...(experimental ? ["--experimental"] : []), "--out", directory], {
         timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
       });
@@ -283,7 +294,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (message.method === "item/tool/call") {
       const call = params;
       const key = nonempty(call?.threadId) && nonempty(call?.callId) ? `${call.threadId}\0${call.callId}` : null;
-      const valid = !!binding && !!key && !this.seenToolCalls.has(key) && call?.namespace == null &&
+      const valid = !!binding && !this.readOnlyThreads.has(binding.nativeThreadId) && !!key && !this.seenToolCalls.has(key) && call?.namespace == null &&
         nonempty(call?.turnId) && nonempty(call?.tool) && !!object(call?.arguments) &&
         this.declaredTools.get(binding.nativeThreadId)?.has(call.tool) && !!this.options.callDynamicTool;
       if (!valid) { this.send({id,result:{contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false}}); return; }
@@ -327,7 +338,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       return;
     }
     let decision: "accept" | "decline" = "decline";
-    if (this.options.decideApproval) {
+    if (!this.readOnlyThreads.has(binding.nativeThreadId) && this.options.decideApproval) {
       let timer: NodeJS.Timeout | undefined;
       try {
         decision = await Promise.race([
@@ -345,6 +356,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   private disconnect(reason: string): void {
     const wasConnected = this.ready || !!this.child;
     this.ready = false;
+    this.readOnlyQualifications.clear();
+    this.businessRestoreAcknowledged.clear();
     const child = this.child; this.child = null;
     if (child && !child.killed) child.kill();
     for (const [id, pending] of this.pending) {
@@ -360,6 +373,19 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.validateBinding(binding);
     if (!this.options.verifyBinding || !await this.options.verifyBinding(binding)) throw new RuntimeProtocolError("binding provenance not verified");
     this.rememberBinding(binding);
+  }
+
+  /** A settled ordinary Turn still needs an acknowledged original Task profile. */
+  needsBusinessRestore(binding:RuntimeBinding):boolean {
+    this.owned(binding);
+    return this.readOnlyThreads.has(binding.nativeThreadId);
+  }
+
+  /** Reestablish the read-only tool gate from a durable unresolved message after process restart. */
+  markReadOnlyThread(binding:RuntimeBinding):void {
+    this.owned(binding);
+    this.readOnlyThreads.add(binding.nativeThreadId);
+    this.businessRestoreAcknowledged.delete(binding.nativeThreadId);
   }
 
   private validateBinding(binding: RuntimeBinding): void {
@@ -395,6 +421,8 @@ export class CodexAppServerAdapter implements RuntimePort {
       const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER,
         ...(spec.actorId ? {resumeProfile:{actorId:spec.actorId,model:spec.model??null,sandbox:spec.sandbox,approvalPolicy:spec.approvalPolicy}} : {}) };
       this.rememberBinding(binding);
+      this.businessTurnPolicies.set(binding.nativeThreadId,{sandboxPolicy:spec.sandbox==='read-only'?{type:'readOnly',networkAccess:false}:
+        {type:'workspaceWrite',writableRoots:[],networkAccess:config?.['sandbox_workspace_write.network_access']===true},approvalPolicy:spec.approvalPolicy});
       if (dynamicTools?.length) this.declaredTools.set(binding.nativeThreadId,new Set(dynamicTools.map(tool=>tool.name)));
       return binding;
     } finally { this.pendingCreate = null; }
@@ -402,6 +430,7 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
     this.owned(binding);
+    this.readOnlyQualifications.delete(binding.nativeThreadId);
     if (!spec || !nonempty(spec.actorId) || spec.sessionId !== binding.sessionId || spec.roleId !== binding.roleId ||
       spec.projectId !== binding.projectId || spec.authorizationScope !== binding.authorizationScope ||
       spec.cwd !== binding.cwd || resolve(spec.cwd) !== spec.cwd ||
@@ -420,7 +449,144 @@ export class CodexAppServerAdapter implements RuntimePort {
       sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
     const thread = object(result?.thread);
     if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("resumed thread does not match registered binding");
+    this.businessTurnPolicies.set(binding.nativeThreadId,{sandboxPolicy:spec.sandbox==='read-only'?{type:'readOnly',networkAccess:false}:
+      {type:'workspaceWrite',writableRoots:[],networkAccess:config?.['sandbox_workspace_write.network_access']===true},approvalPolicy:spec.approvalPolicy});
+    if(this.readOnlyThreads.has(binding.nativeThreadId))
+      this.businessRestoreAcknowledged.add(binding.nativeThreadId);
     return binding;
+  }
+
+  private async nativeThreadIdle(binding:RuntimeBinding):Promise<boolean>{
+    const result=object(await this.request('thread/read',{threadId:binding.nativeThreadId,includeTurns:false}));
+    const thread=object(result?.thread);
+    if(thread?.id!==binding.nativeThreadId||thread?.sessionId!==binding.nativeSessionId||thread?.cwd!==binding.cwd)
+      throw new RuntimeProtocolError('native idle check does not match owned Session');
+    return object(thread.status)?.type==='idle';
+  }
+
+  /** Read the effective original profile and the owned thread's live MCP inventory without starting a Turn. */
+  async qualifyReadOnlyThread(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>{
+    this.owned(binding);
+    const unavailable=(reason:string)=>{this.readOnlyQualifications.delete(binding.nativeThreadId);
+      return{available:false,reason,fingerprint:null};};
+    if(!binding.resumeProfile)return unavailable('Owned Session has no verified resume profile');
+    try{
+      const configReply=object(await this.request('config/read',{cwd:binding.cwd,includeLayers:false}));
+      const config=object(configReply?.config);
+      const origins=object(configReply?.origins);
+      if(!config||!origins)return unavailable('Effective native tool configuration is unreadable');
+      // Codex 0.154 config/read uses AppsConfig {_default, ...perAppId}, not AppConfig at the root.
+      // An app can override the disabled default, so every explicit app must also be disabled.
+      const apps=object(config.apps),appDefault=object(apps?._default);
+      if(!apps||!appDefault||appDefault.enabled!==false||
+        appDefault.destructive_enabled!==false||appDefault.open_world_enabled!==false)
+        return unavailable('Native apps are not explicitly disabled for this Session profile');
+      const knownDefaultKeys=new Set(['enabled','destructive_enabled','open_world_enabled',
+        'approvals_reviewer','default_tools_approval_mode']);
+      if(Object.keys(appDefault).some(key=>!knownDefaultKeys.has(key)))
+        return unavailable('Native app default contains an unverified override');
+      for(const [appId,rawApp] of Object.entries(apps)){
+        if(appId==='_default')continue;
+        const app=object(rawApp);
+        if(!app||app.enabled!==false||app.default_tools_enabled===true||
+          Object.keys(object(app.links)??{}).length>0||Object.keys(object(app.tools)??{}).length>0||
+          (app.links!=null&&!object(app.links))||(app.tools!=null&&!object(app.tools)))
+          return unavailable('An app is enabled or has an unreadable override');
+        const knownAppKeys=new Set(['enabled','default_tools_enabled','destructive_enabled','open_world_enabled',
+          'approvals_reviewer','default_tools_approval_mode','links','tools']);
+        if(Object.keys(app).some(key=>!knownAppKeys.has(key)))
+          return unavailable('Native app configuration contains an unverified override');
+      }
+      const features=object(config.features);
+      for(const key of ['apps','plugins','recommended_plugins','remote_plugin','plugin_sharing',
+        'enable_mcp_apps','browser_use','browser_use_external','computer_use',
+        'multi_agent','multi_agent_v2','tool_suggest','in_app_browser','in_app_local_automation']){
+        if(features?.[key]!==false)return unavailable(`Native ${key} feature is not explicitly disabled`);
+      }
+      for(const key of ['mcp_servers','plugins']){
+        const value=object(config[key]);
+        if(!value||Object.keys(value).length>0)
+          return unavailable('Native MCP or plugin configuration is not empty');
+      }
+      if(config.browser_use!=null||config.computer_use!=null||config.web_search!=='disabled'||
+        object(config.tools)?.web_search!=null)
+        return unavailable('Native browser, computer or web search tool remains configured');
+      const orchestrator=object(config.orchestrator);
+      if(!orchestrator||object(orchestrator.mcp)?.enabled!==false||
+        object(orchestrator.skills)?.enabled!==false)
+        return unavailable('Orchestrator MCP and skills are not explicitly disabled');
+      const knownExternalKeys=new Set(['apps','mcp_servers','plugins','apps_mcp_product_sku',
+        'include_apps_instructions','mcp_oauth_callback_url','mcp_oauth_callback_port',
+        'mcp_oauth_credentials_store','mcp_optional_startup_grace_ms']);
+      if(Object.entries(config).some(([key,value])=>value!=null&&
+        /(?:^|_)(?:apps?|plugins?|mcp)(?:_|$)/i.test(key)&&!knownExternalKeys.has(key)))
+        return unavailable('Native external tool configuration contains an unverified entry');
+      if(features&&Object.entries(features).some(([key,value])=>
+        /app|plugin|mcp|browser|computer|multi_agent|tool_suggest/i.test(key)&&value!==false&&value!==null))
+        return unavailable('Native external tool feature is not disabled');
+      const inventory=object(await this.request('mcpServerStatus/list',{
+        threadId:binding.nativeThreadId,limit:100,detail:'toolsAndAuthOnly',
+      }));
+      if(!inventory||!Array.isArray(inventory.data)||inventory.data.length>0||inventory.nextCursor!==null)
+        return unavailable('Owned native thread has MCP servers or incomplete tool inventory');
+      if(!this.options.enableRestrictedMessagePermissions)
+        return unavailable('Restricted named-permission protocol was not enabled when the native adapter started');
+      const profiles=object(config.permissions),profile=object(profiles?.[ORDINARY_PERMISSION_PROFILE]);
+      const filesystem=object(profile?.filesystem),network=object(profile?.network);
+      if(!profile||!filesystem||!network||profile.extends!=null||profile.workspace_roots!=null||
+        Object.entries(profile).some(([key,value])=>!['description','extends','workspace_roots','filesystem','network'].includes(key)&&value!=null)||
+        profile.description!=null||filesystem[binding.cwd]!=='read'||
+        Object.entries(filesystem).some(([key,value])=>key!==binding.cwd&&value!=null)||
+        network.enabled!==false||Object.entries(network).some(([key,value])=>key!=='enabled'&&value!=null))
+        return unavailable('Effective ordinary permission profile must read only this Session cwd with network disabled');
+      if(!await this.nativeThreadIdle(binding))
+        return unavailable('Owned native thread is active or its idle state cannot be verified');
+      const fingerprint=createHash('sha256').update(policyJson({
+        policy:'evoloop-native-readonly-v1',
+        owner:binding.owner,sessionId:binding.sessionId,nativeThreadId:binding.nativeThreadId,
+        nativeSessionId:binding.nativeSessionId,cwd:binding.cwd,profile:binding.resumeProfile,
+        config,origins,inventory:[],
+      })).digest('hex');
+      const prior=this.readOnlyQualifications.get(binding.nativeThreadId);
+      if(prior&&prior.fingerprint!==fingerprint)return unavailable('Native tool profile changed; requalification is required');
+      this.readOnlyQualifications.set(binding.nativeThreadId,{fingerprint,observedAt:Date.now()});
+      return{available:true,reason:'Verified MCP-free, app-disabled native profile',fingerprint};
+    }catch{return unavailable('Native tool policy could not be verified');}
+  }
+
+  /** Ordinary conversation is a separate native read-only turn on the same owned thread. */
+  async startReadOnlyTurn(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>{
+    this.owned(binding);
+    if(!this.options.enableRestrictedMessagePermissions)
+      throw new RuntimeProtocolError('restricted named-permission protocol was not enabled at startup');
+    if(!nonempty(input)||!nonempty(operationId)||!binding.resumeProfile)
+      throw new RuntimeProtocolError('owned profile, input and durable operation ID required');
+    const proof=this.readOnlyQualifications.get(binding.nativeThreadId);
+    if(!proof||Date.now()-proof.observedAt>5000)throw new RuntimeProtocolError('ordinary Turn requires a fresh MCP-free native profile qualification');
+    const rechecked=await this.qualifyReadOnlyThread(binding);
+    if(!rechecked.available||rechecked.fingerprint!==proof.fingerprint)
+      throw new RuntimeProtocolError('native read-only tool profile changed before Turn start');
+    this.readOnlyQualifications.delete(binding.nativeThreadId);
+    // This does not alter the saved resumeProfile. The next business Run must explicitly resume its exact profile.
+    this.readOnlyThreads.add(binding.nativeThreadId);
+    this.businessRestoreAcknowledged.delete(binding.nativeThreadId);
+    const result=object(await this.request('thread/resume',{
+      threadId:binding.nativeThreadId,excludeTurns:true,cwd:binding.cwd,
+      ...(binding.resumeProfile.model?{model:binding.resumeProfile.model}:{}),
+      permissions:ORDINARY_PERMISSION_PROFILE,approvalPolicy:'never',
+    }));
+    const thread=object(result?.thread);
+    if(thread?.id!==binding.nativeThreadId||thread?.sessionId!==binding.nativeSessionId||thread?.cwd!==binding.cwd)
+      throw new RuntimeUnknownError('thread/resume',null,'read-only resume acknowledgement unavailable');
+    if(!await this.nativeThreadIdle(binding))
+      throw new RuntimeProtocolError('owned native thread became active before ordinary Turn start');
+    const started=object(await this.request('turn/start',{
+      threadId:binding.nativeThreadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
+      cwd:binding.cwd,approvalPolicy:'never',permissions:ORDINARY_PERMISSION_PROFILE,
+    }));
+    const turn=runtimeTurn(started?.turn);
+    if(!turn)throw new RuntimeUnknownError('turn/start',null,'invalid acknowledgement; turn may have started');
+    return turn;
   }
 
   async inspect(binding: RuntimeBinding): Promise<unknown> {
@@ -463,7 +629,10 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
-    const result = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 100, ...(cursor ? { cursor } : {}) }));
+    // Pinned 0.154 defaults to newest first. State it explicitly so bounded
+    // ordinary-message recovery always searches the most recent native Turns.
+    const result = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 100,
+      sortDirection:'desc', ...(cursor ? { cursor } : {}) }));
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
     return { data: turns as RuntimeTurn[], nextCursor: nonempty(result?.nextCursor) ? result.nextCursor : null };
@@ -501,11 +670,18 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async startTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn> {
     this.owned(binding);
+    const restoring=this.readOnlyThreads.has(binding.nativeThreadId);
+    if(restoring&&!this.businessRestoreAcknowledged.has(binding.nativeThreadId))
+      throw new RuntimeProtocolError('exact business profile must be acknowledged before Task turn');
     if (!nonempty(input) || !nonempty(operationId)) throw new RuntimeProtocolError("input and durable operation ID required");
     // The caller persists operationId before this call. The CLI does not promise idempotency for clientUserMessageId.
-    const result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId }));
+    const policy=this.businessTurnPolicies.get(binding.nativeThreadId);
+    if(restoring&&!policy)throw new RuntimeProtocolError('exact business Turn policy was not restored');
+    const result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
+      ...(policy?{cwd:binding.cwd,sandboxPolicy:policy.sandboxPolicy,approvalPolicy:policy.approvalPolicy}:{}) }));
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
+    if(restoring){this.readOnlyThreads.delete(binding.nativeThreadId);this.businessRestoreAcknowledged.delete(binding.nativeThreadId);}
     return turn;
   }
 

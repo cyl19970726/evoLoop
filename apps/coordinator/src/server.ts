@@ -7,6 +7,10 @@ import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
+import type { SessionObservationService } from "@evoloop/core/session-observation";
+import { registerSessionWorkRoutes } from "./session-work/routes.js";
+import type { SessionMessageService } from "@evoloop/core/session-messages";
+import { registerSessionMessageRoutes } from "./session-messages/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import type { RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
@@ -29,6 +33,8 @@ const errorStatus = (code: string) => code === "FORBIDDEN" ? 403 : code === "NOT
 export async function buildServer(options: {
   service: WorkflowService; credentials: AuthConfig; webRoot?: string; canWrite?: () => boolean;
   runtime?: RuntimeRunner; allowedRuntimeCwds?: (projectId: string) => string[];
+  sessionWork?: SessionObservationService;
+  sessionMessages?: SessionMessageService;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
   hasRuntimeGrant?: (scope: RuntimeGrant) => boolean;
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
@@ -153,6 +159,16 @@ export async function buildServer(options: {
     return { ...(options.runtime?.status(projectId) ?? { available: false, error: "尚未配置 Codex 执行服务", faults: [] }), allowedCwds: [...new Set(callerGrants(projectId,who(request.principal).actorId).map(g=>g.cwd))], grants: callerGrants(projectId,who(request.principal).actorId) };
   });
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
+  if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, session) => ({
+    ...session, capabilities: { ...session.capabilities,
+      send: options.sessionMessages && principal.permissions.includes("write") ? session.capabilities.send : {
+        available: false, mode: "unavailable", reason: !principal.permissions.includes("write")
+          ? "当前身份只有读取权限，不能保存消息。" : "此服务尚未启用消息持久化入口。",
+      } },
+  }));
+  if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
+    workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
+  });
   app.get("/api/projects/:projectId/runtime/sessions/:id/history", async request => {
     const p = params(request.params);
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法声称历史完整。");

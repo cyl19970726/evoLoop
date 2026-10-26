@@ -135,9 +135,19 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 浏览器保存新草稿不自动采纳它；已采纳的版本指针由显式决定和条件更新改变。发生冲突保留输入并返回可复核的当前版本；结果未知按 operationId 查询，而不是换 ID 重发。UI 分别呈现业务、运行、同步、知识和效果状态。刷新提示只要求回读，不能直接推进状态。前端结构与范围见[前端架构](frontend.md)。
 
+### Session 工作观察：有界读取同一份事实
+
+会话目录统一读取 owned RuntimeSession 和已登记的 external HostLink。同一真实会话去重，同一 Role 的不同实例保留；可选绑定表不能代替完整目录。项目内展示名、用途和当前／历史归类由 `SessionProfileRecord` 版本化维护，不改原生聊天标题或运行权限。没有明确归类的旧 ready 会话保持 unclassified；外部实时状态未同步时为未知。
+
+`session-work` 提供目录、单会话快照、变化和分页活动。共同 DTO 在 `contracts/session-work` 与 `contracts/session-observation`：分别返回生成时间、来源观察时间、部分结果及缺项，区分项目记录、Session 自述与独立使用。当前工作依据具体分派、claim 或 Run；Role 拥有某任务只表示职责，不能推定同 Role 每个 Session 都已接手。成果归属按真实 Run 或人工接手的有效时间范围核对，不把转交后新承接者的交付算给旧会话。
+
+PG 在源写入的同一事务追加只含引用、状态与短预览的观察变化；每项目事务计数器锁持有到提交，避免普通 identity sequence 的晚提交越过游标。读取在一个 repeatable-read 事务中取得事实和边界。变化返回有稳定身份的 invalidate，客户端合并去重后重读相关范围；不重发写入或启动模型。游标绑定项目、调用者与用途／筛选；分页期间继续保留首个观察位置，目录失效后从第一页重建，避免漏掉并发新增项。
+
+目录／活动默认每页 50，变化最多 100；服务端限制 UTF-8 响应字节，超限显式分页或标注遗漏及详情入口。项目 attention 聚合独立于当前目录页。原生深度历史不进入页面轮询；token、费用和进程内存没有可靠采集时返回 null 与原因，不填 0。当前源码和隔离检查不代表新工作区、性能目标或真实消息已通过使用验收。
+
 ### UnitOfWork：同库原子命令
 
-`UnitOfWork.run` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口。core 先核 operation ID/摘要，再在这个作用域内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
+`UnitOfWork.transaction` 和 `read` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口；read 使用一致的只读快照。core 先核 operation ID/摘要，再在写事务内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
 
 操作 ID 与命令摘要一起去重，同一 ID 带不同命令必须拒绝；提交结果未知时按该 ID 查询同库事务结果。首片已自动检查最后一步失败时全部回滚、提交成功但回包丢失后恢复不重复创建，以及旧基线更新被拒绝；CLI 当前也按原 ID 查询回执。这个本机子集不证明外部副作用恰好一次或生产恢复，数据库选型本身也不是测试通过证据。
 
@@ -164,6 +174,12 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 显式新职责试行许可在 `newRoleAllocation.creation`，缺省无创建权。只有精确模板授权 `allowProposeAndAcceptTrial: true`、限定最多 90 天的 `maxTrialDays` 时，研究者才能随 `division.decide` 提交完整 Role 提案及首 Task 当前 owner；首 Task 须为同 Goal／Stage 下观察版本一致的 todo、无在途或未知执行，固定诊断 Document 原文须由研究者实际有权读回。原 Role 提案与接受规则在同一项目锁和 PostgreSQL 事务内运行，两次正式 Role 操作及 role effect 与一次 binding 名额、策略、分工事件和操作一起提交；失败整体回滚，成功后撤回不返名额。同一操作重试回读，异正文拒绝。研究者的提案署名、控制者按模板接受的署名分别保留；创建许可不代表永久激活、延长期限、增额或扩大运行目录。真正接收、执行、独立使用和成本回看仍分别取证，未知成本保持未知。
 
 每个新 Session 引用当前职责说明或临时任务约定，补充实例目标、输入修订、首项任务、操作范围和交接/退出条件。新 Role 另附缺口证据、替代办法、独立责任与工作流程、试行基线和回看条件；换窗口仅更新实例关联。撤回 Role 时交接未完任务与知识、停止相应触发并核对在途实例，不能仅更改登记状态。流程见[动态多 session](../product/agent-loop.md)。
+
+### 具体承接与职责分开
+
+`TaskSessionAssignment` 固定 Task 修订、具体 owned Session／external HostLink、指定接手 actor 和版本；reviewer 通过 `task.assignment.set/release` 安排与交接，不自动创建 Run。接手由指定 actor 用 `acknowledge` 亲签；Lead 只有人工通信观察时使用 `observeAcceptance`，记录 observer、来源及 `lead-observed`，实际接手 actor 留空，不能冒称执行者签名或原生送达。人工承接窗口只用于筛选关联任务记录；其中的交付仍保留原登记者和产物来源，不据时间窗口推定该会话独立制作了成果。
+
+建议先完成 `task.start` 固定依据再分派。开始、范围变化或其他修订使旧分派过时后，旧 ack 保持原修订，不自动沿用。新队列和直接 Run 必须匹配当前具体 owned 分派；external 人工任务不能被任意同 Role ready 会话抢走。没有显式分派的旧工作维持原授权规则；已建立的合法 queue claim 按其独立封存的业务输入接续，真实 claim／Run 与旧人工 ack 分别显示。
 
 ## 5. Coordinator：派发、交接与恢复
 
