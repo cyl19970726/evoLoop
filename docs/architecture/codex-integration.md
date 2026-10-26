@@ -169,6 +169,10 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 
 普通消息还受 Session recovery gate 约束：gate blocked 时不因普通消息到了就自动启动。已知失败 claim 的 retry 必须先按原 Run 显式决定；只有对应 retry 成功后，启动权才临时落到故障时 pin 的原 queued 消息。该消息处理完成后不自动放行后续业务 Run，而是等待原 Task 的验收和 accepted release。消息失败／结果 unknown 也会阻断同 Session 后续启动；unknown 先只读对账，不能通过发一条新消息或 `resume` 代替原结果核验。
 
+工作台与CLI的Session snapshot把保存和执行分开：`capabilities.send.available`仅表示当前身份能否保存消息，不证明运行器、精确消息grant或原生工具权限已就绪。协调器在单个snapshot追加`capabilities.ordinaryExecution`，返回`state`、稳定`reasonCode`、解释和`observedAt`；`disabled`说明执行未启用，`blocked`说明已知配置、身份、额度或占用阻止执行，`manual`表示外部人工转交，读取失败为`unknown`。配置及持久准入通过仍只报`unverified`，不把未核的只读原生权限称为就绪。目录和旧服务可缺此字段，消费者按未知处理，不推定启用。
+
+此状态读取只核当前运行配置、现行项目身份、精确Session grant及已有累计消息计数，不启动原生进程、不扫描外部工具、不调用任务答复接续或消息派发。每次真正派发仍重新核准入、原生权限与持久槽位；snapshot不是启动承诺。消息执行关闭不撤销保存能力，owned消息可继续保存为queued；运行器未启用或不可用时，后续pump也未必能补写blockedReason，界面须在保存前显示独立执行状态。启用后原queued消息仍按现行grant检查，不静默取消或替换历史。
+
 发送只证明消息已保存。明确未派发前可由发送者撤回；processing／unknown 不能靠 cancel 假报已停。原生请求超时沿原消息、操作和 Thread 历史标记回查，不盲目重启；正常结束但没有完整答复时记录 completed_without_reply。外部 Desktop HostLink 只有人工转交，不能据此伪造自动送达或唤醒。
 
 普通模式单独配置精确 Session、发送者、实际接收 actor、Role、目录和有界 turn grant，不借 Task 队列或 Loop 的额度。`RuntimeSession.actorId` 是创建／控制身份，不等于业务执行者；原消息 read 回执只接受实际处理所固定的收件 actor，创建者、发送者读取回复不能代签 Session 已读。

@@ -48,6 +48,7 @@ import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
@@ -412,6 +413,17 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   sessionWork: new SessionObservationService({ uow }),
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService,
+  messageExecution: createMessageExecutionReader({
+    loadConfiguration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+    runtimeAvailable: () => runner?.status().available === true,
+    isProjectWriter: currentProjectWriter,
+    readSession: (projectId, sessionId) => uow.read(projectId, reader => reader.getRuntimeSession(sessionId)),
+    turnsUsed: (projectId, sessionId, senderActorId) => uow.read(projectId, async reader => {
+      if (!reader.sessionMessages) throw new Error("Message persistence is unavailable");
+      return reader.sessionMessages.countSessionMessageTurns(sessionId, senderActorId);
+    }),
+    cwdIsCurrent: async cwd => { try { return await realpath(cwd) === cwd; } catch { return false; } },
+  }),
   planningSources: (principal, projectId, taskId, revisionId, loopId) =>
     readPlanningSources(pool, principal, projectId, taskId, revisionId, loopId),
   sourceConfiguration: principal => ({

@@ -25,9 +25,20 @@ export interface SessionActionCapability {
   available: boolean;
   reason: string | null;
 }
+/** Snapshot-only execution projection. Saving a message never implies a native Turn is enabled. */
+export interface OrdinaryMessageExecutionCapability {
+  state: "disabled" | "blocked" | "unverified" | "manual" | "unknown";
+  /** Stable machine-readable cause; unverified does not promise native policy qualification or a reply. */
+  reasonCode: string;
+  reason: string;
+  observedAt: string;
+}
 export interface SessionCapabilities {
   observe: SessionActionCapability;
+  /** Persistence capability only; runtime execution is described separately. */
   send: SessionActionCapability & { mode: "owned-read-only" | "manual-handoff" | "unavailable" };
+  /** Added by the coordinator on snapshots; older responses and directory items may omit it. */
+  ordinaryExecution?: OrdinaryMessageExecutionCapability;
   open: SessionActionCapability & { ref: string | null };
   interrupt: SessionActionCapability;
   close: SessionActionCapability;
