@@ -52,6 +52,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
       }
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
       else if (url.pathname === `${p}/runtime/sessions`) value = [];
+      else if (url.pathname === `${p}/runtime/sessions/${taskId}`) value = {projectId,id:taskId,roleId:"owner",state:"closed",authorizationScope:"固定任务",cwd:"/tmp",sandbox:"read-only",version:1,createdAt,updatedAt:createdAt};
       else if (url.pathname === `${p}/references/tasks/${taskId}` || url.pathname === `${p}/references/tasks/${otherTaskId}`) value = [];
       else if (url.pathname === `${p}/runtime/runs`) {
         const second = url.searchParams.get("taskId") === otherTaskId;
@@ -125,4 +126,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   assert.equal(await exactRunLink.getAttribute("href"),`#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
   await exactRunLink.click();
   await pageBrowser.locator(`#runtime-run-${taskId}-${runId}[open]`).waitFor();
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
+  await pageBrowser.getByRole("link",{name:"查看对应 Session →"}).click();
+  await pageBrowser.getByRole("region",{name:"目标 Session"}).getByText(`Session ID ${taskId}`).waitFor();
 });
