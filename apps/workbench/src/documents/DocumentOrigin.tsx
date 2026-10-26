@@ -63,7 +63,7 @@ export function DocumentOrigin({ token, projectId, documentId, revisionId, refre
       <p>此 Run 回读的任务与执行修订均与上方来源一致。运行状态不表示问题已经修复。</p>
       <p>运行 ID <code>{current.run.id}</code> · 执行任务修订 <code>{current.run.taskRevisionId}</code></p>
       <p>输入 SHA-256 <code>{current.run.inputHash}</code></p>
-      <a href={taskSectionHref(projectId,origin.taskId,{tab:"runtime"})}>在所属任务的运行记录中继续核对 →</a>
+      <a href={`${taskSectionHref(projectId,origin.taskId,{tab:"runtime"})}&run=${encodeURIComponent(current.run.id)}`}>在所属任务核对这次 Run →</a>
     </details>}
     {origin.runId && current?.run && <p className="muted">来源 Run {staleRun ? "上次读于" : "读于"} {current.runObservedAt?.toLocaleString("zh-CN") ?? "时间未记录"}。{staleRun && (current.runReading || current.refreshKey !== refreshKey) ? "正在重新核对当前状态。" : ""}</p>}
     {origin.runId && current?.runProblem && <p className="doc-origin-limit">{current.run ? `来源 Run 本次回读失败：${current.runProblem}。上次状态仅供核对，不能视为当前状态。` : `登记的来源 Run 尚不能确认为该固定任务修订：${current.runProblem}。此处不提供未经核实的运行入口。`}</p>}

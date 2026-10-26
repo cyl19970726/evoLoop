@@ -29,13 +29,17 @@ const loop = (id: string, state: string) => ({projectId,id,version:1,goalId,stag
 
 test("built Task page selects the current Loop, preserves manual history and fits 390px", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const { chromium } = (await import(pathToFileURL(playwrightModule!).href)).default;
-  let failWorkStatus = false, runState = "running", workRunState = "running";
+  let failWorkStatus = false, failRunList = false, failSessionList = false, exactRunReads = 0, runState = "running", workRunState = "running";
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,"http://127.0.0.1");
     if (url.pathname === "/__fixture/fail-status" && req.method === "POST") { failWorkStatus = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/run-completed" && req.method === "POST") { runState = "completed"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/status-completed" && req.method === "POST") { workRunState = "completed"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/status-ready" && req.method === "POST") { failWorkStatus = false; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/fail-run-list") { failRunList = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/restore-run-list") { failRunList = false; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/fail-session-list") { failSessionList = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/exact-run-reads") { res.end(String(exactRunReads)); return; }
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value: unknown = page([]), status = 200;
@@ -44,15 +48,25 @@ test("built Task page selects the current Loop, preserves manual history and fit
       else if (url.pathname === `${p}/tasks/${taskId}` || url.pathname === `${p}/tasks/${otherTaskId}`) {
         const currentTask = url.pathname.endsWith(otherTaskId) ? {...task,id:otherTaskId,currentRevisionId:otherTaskId,title:"另一项任务"} : task;
         value = {task:currentTask,revision:{...currentTask,taskId:currentTask.id,id:currentTask.id,actorId:"owner",reason:"夹具",createdAt},basis:null,
-        links:[],impacts:[],decisions:[],proposal:{stageId},judgements:[],deliveries:[],observations:[],closures:[]};
+        links:[],impacts:[],decisions:[],proposal:{stageId},judgements:[],deliveries:currentTask.id === taskId ? [{
+          projectId,id:"55555555-0000-4000-8000-000000000010",taskId,taskRevisionId:taskId,runId,
+          technicalResult:"passed",technicalEvidence:"已核对",actorId:"owner",createdAt,
+          artifactRef:"https://example.test/report",artifactRevision:"v1",contentHash:"a".repeat(64),
+        }] : [],observations:[],closures:[]};
       }
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
-      else if (url.pathname === `${p}/runtime/sessions`) value = [];
+      else if (url.pathname === `${p}/runtime/sessions`) { if (failSessionList) { status=413; value={message:"RESULT_TOO_LARGE"}; } else value=[]; }
       else if (url.pathname === `${p}/references/tasks/${taskId}` || url.pathname === `${p}/references/tasks/${otherTaskId}`) value = [];
       else if (url.pathname === `${p}/runtime/runs`) {
+        if (failRunList) { status = 413; value = {message:"RESULT_TOO_LARGE"}; }
+        else {
         const second = url.searchParams.get("taskId") === otherTaskId;
         value = [{projectId,id:second ? otherRunId : runId,taskId:second ? otherTaskId : taskId,taskRevisionId:second ? otherTaskId : taskId,basisSetId:taskId,sessionId:taskId,
-          operationId:taskId,input:"",inputHash:"",state:second ? "running" : runState,version:1,nativeTurnId:null,interruptRequested:false,resultSummary:null,actorId:"owner",createdAt,updatedAt:createdAt}];
+          operationId:taskId,input:"",inputHash:"",state:second ? "running" : runState,version:1,nativeTurnId:null,interruptRequested:false,resultSummary:"list version one",actorId:"owner",createdAt,updatedAt:createdAt}];
+        }
+      }
+      else if (url.pathname === `${p}/runtime/runs/${runId}`) { exactRunReads++; value = {projectId,id:runId,taskId,taskRevisionId:taskId,basisSetId:taskId,sessionId:taskId,
+        operationId:taskId,input:"",inputHash:"",state:"completed",version:2,nativeTurnId:null,interruptRequested:false,resultSummary:"exact version two",actorId:"owner",createdAt,updatedAt:createdAt};
       }
       else if (url.pathname === `${p}/orchestration/status`) value = {state:"active",running:true,busy:false,faults:[],lastError:null};
       else if (url.pathname === `${p}/orchestration/tasks/${taskId}/context` || url.pathname === `${p}/orchestration/tasks/${otherTaskId}/context`) value = page([context(oldId,"old-dispatch"),context(newId,"new-dispatch")]);
@@ -113,4 +127,22 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"]`).getByRole("region",{name:"自动循环观察"});
   await nextPanel.getByText(/当前运行 44444444 关联循环 22222222/).waitFor();
   assert.match(await nextPanel.locator(".orch-loop-head h3").innerText(),/22222222/);
+  assert.equal(await (await fetch(`${base}/__fixture/exact-run-reads`)).text(),"0", "hidden Delivery tab must not prefetch historical Runs");
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
+  const exactRunLink = pageBrowser.getByRole("link",{name:"核对这次 Run →"});
+  await exactRunLink.waitFor();
+  assert.equal(await exactRunLink.getAttribute("href"),`#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
+  assert.equal(await pageBrowser.getByRole("link",{name:"查看对应 Session →"}).getAttribute("href"),
+    `#/p/${projectId}/runtime?session=${encodeURIComponent(`owned:${taskId}`)}`);
+  await exactRunLink.click();
+  await pageBrowser.locator(`#runtime-run-${taskId}-${runId}[open]`).waitFor();
+  await pageBrowser.getByText(/exact version two/).waitFor();
+  assert.equal(await pageBrowser.getByText(/list version one/).count(),0);
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
+  await fetch(`${base}/__fixture/fail-run-list`);
+  await fetch(`${base}/__fixture/fail-session-list`);
+  await pageBrowser.getByRole("link",{name:"核对这次 Run →"}).click();
+  await pageBrowser.locator(`#runtime-run-${taskId}-${runId}[open]`).waitFor();
+  await pageBrowser.getByText(/运行列表暂不可读取/).waitFor();
+  await pageBrowser.getByText(/会话列表暂不可读取/).waitFor();
 });

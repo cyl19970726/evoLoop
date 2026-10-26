@@ -271,7 +271,7 @@ function LoopObservation({ token, projectId, loop, title, taskId, context }: { t
           <p className="orch-story-links">{data.revisionIds[item.taskId]?.[item.taskVersion] ?
             <a href={taskSectionHref(projectId,item.taskId,{revisionId:data.revisionIds[item.taskId]![item.taskVersion]})}>派发请求时任务修订 v{item.taskVersion}</a> :
             <span>派发请求时任务修订 v{item.taskVersion} 暂不可核实；<a href={taskHref(projectId,item.taskId)}>查看现任务</a></span>}
-            {item.runtimeRunId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"runtime"})}>所属任务的运行页（Run {short(item.runtimeRunId)}）</a></>}
+            {item.runtimeRunId && <> · <a href={`${taskSectionHref(projectId,item.taskId,{tab:"runtime"})}&run=${encodeURIComponent(item.runtimeRunId)}`}>所属任务的运行页（Run {short(item.runtimeRunId)}）</a></>}
             {submission?.deliveryId && <> · <a href={taskSectionHref(projectId,item.taskId,{tab:"delivery"})}>所属任务的交付与使用页（Delivery {short(submission.deliveryId)}）</a></>}
             {item.parentDispatchId && <> · 上游派发见下方记录</>}</p>
           <details><summary>完整理由、固定标识与核对</summary>
