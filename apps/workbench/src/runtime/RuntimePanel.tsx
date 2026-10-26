@@ -240,7 +240,7 @@ function RuntimeEvidence({ load, label }: { load(): Promise<RuntimeRecordEvent[]
 function RunCard({ context, run, mayAbandon, anchorId }: { context: MutationContext; run: RuntimeRunRecord; mayAbandon: boolean; anchorId?: string }) {
   const [nativeResult, setNativeResult] = useState<NativeResult | null>(null);
   const [error,setError] = useState("");
-  return <details className="workflow-detail" id={anchorId}><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
+  return <details className="workflow-detail runtime-run-card" id={anchorId}><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
     <p>任务修订 <code>{run.taskRevisionId}</code></p><p>依据集合 <code>{run.basisSetId}</code></p>
     {run.state === "unknown" && <Notice error>派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
     {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="workflow-detail"><summary>复核只读派发并保留失败记录</summary><p>仅适用于没有绑定 Turn 的只读运行。放弃会关闭旧会话的后续派发；不证明外部未执行，也不自动重发。</p><ActionForm context={context} review title="复核并放弃未知只读派发" fields={[reasonField,{name:"evidence",label:"所属线程历史与失败原因核对证据",kind:"textarea"}]} build={v=>({type:"runtime.run.abandonReadOnly",runId:run.id,expectedVersion:run.version,...v})} /></details>}

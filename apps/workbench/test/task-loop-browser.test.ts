@@ -139,6 +139,14 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const currentTaskPage = pageBrowser.locator(`[data-page-key="task:${taskId}::"]`);
   const currentRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}`);
   const currentOpenRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}[open]`);
+  const runTitleClearsHeader = ({taskId,runId}:{taskId:string;runId:string}) => {
+    const run=document.querySelector(`[data-page-key="task:${taskId}::"] #runtime-run-${taskId}-${runId}`);
+    const title=run?.querySelector(":scope > summary");
+    const header=document.querySelector(".workspace-header");
+    if (!title || !header) return false;
+    const titleRect=title.getBoundingClientRect(), headerRect=header.getBoundingClientRect();
+    return titleRect.top>=headerRect.bottom+8 && titleRect.bottom<window.innerHeight;
+  };
   const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次 Run →"});
   await exactRunLink.waitFor();
   assert.equal(await exactRunLink.getAttribute("href"),`#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
@@ -148,23 +156,18 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await currentOpenRun.waitFor();
   assert.equal(await historicalRun.evaluate(el => el.getClientRects().length),0,"historical Task page stays mounted but hidden");
   await currentRun.getByText(/exact version two/).waitFor();
-  await pageBrowser.waitForFunction(({taskId,runId}) => {
-    const el=document.querySelector(`[data-page-key="task:${taskId}::"] #runtime-run-${taskId}-${runId}`);
-    const top=el?.getBoundingClientRect().top; return top!==undefined && top>=-2 && top<window.innerHeight;
-  },{taskId,runId});
+  await pageBrowser.waitForFunction(runTitleClearsHeader,{taskId,runId});
   await pageBrowser.evaluate(() => window.scrollTo(0,0));
   await pageBrowser.waitForTimeout(5500);
   assert.equal(await pageBrowser.evaluate(() => window.scrollY),0,"polling must not reclaim manual scrolling");
   assert.equal(await currentRun.getByText(/list version one/).count(),0);
+  await pageBrowser.setViewportSize({width:1280,height:720});
   await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
   await fetch(`${base}/__fixture/fail-run-list`);
   await fetch(`${base}/__fixture/fail-session-list`);
   await currentTaskPage.getByRole("link",{name:"核对这次 Run →"}).click();
   await currentOpenRun.waitFor();
-  await pageBrowser.waitForFunction(({taskId,runId}) => {
-    const el=document.querySelector(`[data-page-key="task:${taskId}::"] #runtime-run-${taskId}-${runId}`);
-    const top=el?.getBoundingClientRect().top; return top!==undefined && top>=-2 && top<window.innerHeight;
-  },{taskId,runId});
+  await pageBrowser.waitForFunction(runTitleClearsHeader,{taskId,runId});
   await currentTaskPage.getByText(/运行列表暂不可读取/).waitFor();
   await currentTaskPage.getByText(/会话列表暂不可读取/).waitFor();
 });
