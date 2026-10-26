@@ -13,6 +13,7 @@ import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread"
 import { RoleTemplateSummary } from "../roles/RoleTemplateSummary";
 import { sessionClient } from "../sessions/client";
 import { eligibleOwnedSessions } from "../sessions/assignmentEligibility";
+import { taskRunFromHash } from "../orchestration/navigation";
 import "./session-focus.css";
 
 function readErrorText(cause: unknown): string {
@@ -28,13 +29,6 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
 };
 type RoleName = { title?: string; error?: string };
 const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox]);
-function requestedTaskRunId(projectId: string, taskId?: string): string | null {
-  if (!taskId) return null;
-  const [path, query = ""] = window.location.hash.split("?");
-  if (path !== `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`) return null;
-  const params = new URLSearchParams(query);
-  return params.get("tab") === "runtime" ? params.get("run") : null;
-}
 export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
@@ -45,15 +39,17 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [epoch, setEpoch] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
-  const [targetRunId, setTargetRunId] = useState(() => requestedTaskRunId(context.projectId, task?.id));
+  const [targetRunId, setTargetRunId] = useState(() => task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
   const [targetRunProblem, setTargetRunProblem] = useState("");
+  const runtimePanelRef = useRef<HTMLElement | null>(null);
   const revealedRunHref = useRef<string | null>(null);
   const revealedRunElement = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => { revealedRunHref.current = null; revealedRunElement.current = null; }, [targetRunId]);
   const [roleNames, setRoleNames] = useState<{scope:string; values:Record<string,RoleName>}>({scope:"",values:{}});
   const [assignmentRead, setAssignmentRead] = useState<{scope:string; value:TaskSessionAssignment|null; error:string}|null>(null);
   const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? "", targetRunId ?? ""]);
   useEffect(() => {
-    const onHash = () => setTargetRunId(requestedTaskRunId(context.projectId, task?.id));
+    const onHash = () => setTargetRunId(task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
     onHash(); window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [context.projectId, task?.id]);
@@ -139,29 +135,27 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     draftBaseline: `${task.currentRevisionId}:${assigned?.version ?? 0}:${assigned?.state ?? "none"}:${assigned ? JSON.stringify(assigned.target) : ""}` } : context;
   useEffect(() => {
     const reveal = () => {
-      const [path, query = ""] = window.location.hash.split("?");
-      const params = new URLSearchParams(query);
-      const id = task && path === `#/p/${context.projectId}/tasks/${task.id}` && params.get("tab") === "runtime"
-        ? params.get("run") && `runtime-run-${task.id}-${params.get("run")}`
-        : null;
+      const requestedRun = task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null;
+      const id = requestedRun && task ? `runtime-run-${task.id}-${requestedRun}` : null;
       const targetId = id;
       if (!targetId) { revealedRunHref.current = null; revealedRunElement.current = null; return; }
       if (!/^[a-z0-9-]+$/i.test(targetId)) return;
-      const target = document.getElementById(targetId);
+      const target = runtimePanelRef.current?.querySelector(`#${targetId}`);
       if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
         const firstReveal = revealedRunHref.current !== window.location.hash;
         if (target !== revealedRunElement.current) { target.open = true; revealedRunElement.current = target; }
         if (firstReveal) {
           revealedRunHref.current = window.location.hash;
           target.scrollIntoView({ block: "start" });
+          target.querySelector("summary")?.focus({ preventScroll: true });
         }
       }
     };
     const frame = requestAnimationFrame(reveal);
     window.addEventListener("hashchange", reveal);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
-  }, [context.projectId, task?.id, runs]);
-  return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
+  }, [context.projectId, task?.id, runs, targetRunId]);
+  return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section ref={runtimePanelRef} className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {targetRunProblem && <Notice error>指定的 Run 暂不可核对：{targetRunProblem}。没有定位到其他运行。</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}

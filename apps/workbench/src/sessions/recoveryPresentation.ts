@@ -35,6 +35,33 @@ export const recoveryNextActionLabel = (action: string, runtimeState?: string | 
 export const recoveryCauseLabel = (kind: NonNullable<SessionRecoveryView["gate"]>["causeKind"]) => kind ? causeText[kind] : "来源未记录";
 export const recoveryActivationLabel = (state: NonNullable<SessionRecoveryView["executionProfile"]>["activationState"]) => activationText[state];
 
+type RecoveryGate = NonNullable<SessionRecoveryView["gate"]>;
+const sourceStateText = new Map([
+  ["unknown", "结果尚未确认"], ["failed", "已记录为失败"], ["interrupted", "已记录为中断"],
+  ["rejected", "已被拒绝"], ["active", "已激活"], ["completed", "已完成"],
+]);
+export const recoverySourceStateLabel = (state: string) => sourceStateText.get(state) ?? "状态需核对原始记录";
+export function recoveryReasonSummary(gate: RecoveryGate): string {
+  if (gate.phase === "open") return "恢复门已开放；具体恢复依据请核对原始记录";
+  if (gate.phase === "retrying") return "原任务重试已获批准，等待执行结果核对";
+  if (gate.phase === "message_pending") return "等待原排队消息处理";
+  if (gate.phase === "awaiting_acceptance") return "等待交付与验收放行";
+  if (gate.causeKind === "run") {
+    if (gate.causeState === "unknown") return "本次运行结果尚未确认";
+    if (gate.causeState === "failed") return "本次运行已记录为失败";
+    if (gate.causeState === "interrupted") return "本次运行已记录为中断";
+  }
+  if (gate.causeKind === "message") {
+    if (gate.causeState === "unknown") return "原消息处理结果尚未确认";
+    if (gate.causeState === "failed") return "原消息处理已记录为失败";
+  }
+  if (gate.causeKind === "execution_profile") {
+    if (gate.causeState === "unknown") return "执行配置激活结果尚未确认";
+    if (gate.causeState === "rejected") return "执行配置激活已被拒绝";
+  }
+  return "当前等待原因需核对原始记录";
+}
+
 export function checkedRecoveryView(value: SessionRecoveryView, projectId: string, sessionId: string): SessionRecoveryView {
   if (!value || value.sessionId !== sessionId || !Array.isArray(value.decisions) || !Array.isArray(value.queues)
     || typeof value.observedAtUtc !== "string" || typeof value.partial !== "boolean" || typeof value.nextAction !== "string"

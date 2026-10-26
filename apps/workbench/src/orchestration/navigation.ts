@@ -26,6 +26,13 @@ export function taskSectionFromHash(hash: string, projectId: string, taskId: str
   return tab && params.getAll("tab").length === 1 && sections.has(tab as TaskSection) ? tab as TaskSection : "overview";
 }
 
+export function taskRunFromHash(hash: string, projectId: string, taskId: string): string | null {
+  const [path, query = "", extra] = hash.split("?");
+  if (extra !== undefined || path !== taskSectionHref(projectId, taskId)) return null;
+  const params = new URLSearchParams(query);
+  return params.get("tab") === "runtime" ? params.get("run") : null;
+}
+
 /** Land at the visible tab row after React has switched a deep-linked tab. */
 export function scrollToTaskSection(projectId: string, taskId: string, section: TaskSection,
   revisionId: string | undefined, getElement: (id: string) => HTMLElement | null): boolean {

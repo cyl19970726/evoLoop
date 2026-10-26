@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkedRecoveryView, recoveryActivationLabel, recoveryBudget, recoveryNextActionLabel, recoveryPhaseLabel, type SessionRecoveryView } from "../src/sessions/recoveryPresentation.ts";
+import { checkedRecoveryView, recoveryActivationLabel, recoveryBudget, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel, type SessionRecoveryView } from "../src/sessions/recoveryPresentation.ts";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
@@ -44,4 +44,17 @@ test("a mismatched or incomplete recovery response cannot be shown on another Se
   };
   assert.equal(checkedRecoveryView({ ...base, gate, executionProfile }, projectId, sessionId).executionProfile?.revision.model, "gpt-6-sol");
   assert.throws(() => checkedRecoveryView({ ...base, gate: { ...gate, projectId: "33333333-3333-4333-8333-333333333333" } }, projectId, sessionId), /内容不完整/);
+});
+
+test("recovery reason summarizes only recognized saved outcomes", () => {
+  const gate: NonNullable<SessionRecoveryView["gate"]> = { projectId, sessionId, version: 1, phase: "blocked", causeKind: "run", causeId: sessionId,
+    causeState: "unknown", reason: "Run terminal failure or unresolved native outcome", queueId: null, claimId: null,
+    retryRunId: null, resumeMessageId: null, decisionOperationId: null, updatedAt: base.observedAtUtc };
+  assert.equal(recoveryReasonSummary(gate), "本次运行结果尚未确认");
+  assert.equal(recoveryReasonSummary({ ...gate, causeState: "failed" }), "本次运行已记录为失败");
+  assert.equal(recoveryReasonSummary({ ...gate, causeState: "interrupted" }), "本次运行已记录为中断");
+  assert.equal(recoveryReasonSummary({ ...gate, causeKind: "message", causeState: "unknown" }), "原消息处理结果尚未确认");
+  assert.equal(recoveryReasonSummary({ ...gate, causeState: "new_state" }), "当前等待原因需核对原始记录");
+  assert.equal(recoverySourceStateLabel("new_state"), "状态需核对原始记录");
+  assert.equal(recoverySourceStateLabel("toString"), "状态需核对原始记录");
 });
