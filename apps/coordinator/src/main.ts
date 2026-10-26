@@ -23,6 +23,7 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
+import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfigForSession } from "./configuration.js";
@@ -105,6 +106,8 @@ const ids = { next: randomUUID };
 const service = new WorkflowService({
   uow, clock, ids,
   hasher: { hash: value => createHash("sha256").update(value, "utf8").digest("hex") },
+  recoveryAuthority: staticRecoveryAuthority(
+    () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -263,10 +266,23 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   const adapter = new CodexAppServerAdapter({
   enableRestrictedMessagePermissions: integrations.sessionMessages?.enabled ?? false,
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
+  expectedVersion: `codex-cli ${runtimeConfig.protocolVersion}`,
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
-  threadConfig: spec => runtimeThreadConfigForSession(runtimeConfig.grants,spec,sessionOrigin),
+  authorizeExecutionProfileActivation: async (current,target,revisionId,operationId) => {
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return !!configured.runtime?.enabled&&!await isBoundDynamicSession(pool,current.projectId,current.sessionId)&&
+      !!target.actorId&&configured.hasRuntimeGrant({projectId:current.projectId,actorId:target.actorId,
+        roleId:current.roleId,authorizationScope:current.authorizationScope,cwd:current.cwd,
+        sandbox:target.sandbox,model:target.model??null,approvalPolicy:target.approvalPolicy})&&
+      await configured.allowedRuntimeCwd(current.projectId,current.cwd)&&
+      await trustedRuntime.verifyExecutionProfileActivation(current.projectId,current,target,revisionId,operationId);
+  },
+  threadConfig: async spec => {
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return current.runtime?.enabled ? runtimeThreadConfigForSession(current.runtime.grants,spec,sessionOrigin) : undefined;
+  },
   ...(browserRead ? {dynamicTools:(spec:import("@evoloop/contracts/runtime").RuntimeSessionSpec)=>browserRead.tools(spec),
     callDynamicTool:(call:DynamicToolCall,binding:RuntimeBinding)=>browserRead.call(call,binding),
     cancelDynamicTool:()=>browserRead.close()} : {}),
@@ -285,11 +301,15 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   }),
   blobsForPrincipal,
   principals: credentials, canWrite: lease.canWrite, allowedCwd: integrations.allowedRuntimeCwd,
-  mayCreateSession: async session => await mayStartManaged(session.projectId, "session", session.id) &&
-    await currentSessionGrant(pool,session,
-      () => integrations.hasRuntimeGrant({projectId:session.projectId,actorId:session.actorId,roleId:session.roleId,
-        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}),
-      dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined),
+  mayCreateSession: async session => {
+    if(!await mayStartManaged(session.projectId,"session",session.id))return false;
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return currentSessionGrant(pool,session,
+      () => current.hasRuntimeGrant({projectId:session.projectId,actorId:session.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,model:session.model,
+        approvalPolicy:session.approvalPolicy}),
+      dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined);
+  },
   mayDispatchRun: async run => {
     if (!await mayStartManaged(run.projectId, "run", run.id)) return false;
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -311,13 +331,17 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
     const session = await service.getRuntimeSession(reader, run.projectId, run.sessionId);
     return currentSessionGrant(pool,session,
       () => current.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
-        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox}),
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,model:session.model,
+        approvalPolicy:session.approvalPolicy}),
       dynamicAdmission ? () => dynamicAdmission.canStartRun(run,session) : undefined);
   },
-  hasGrant: async (scope,session) => session
-    ? currentSessionGrant(pool,session,() => integrations.hasRuntimeGrant(scope),
-      dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined)
-    : integrations.hasRuntimeGrant(scope),
+  hasGrant: async (scope,session) => {
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return session
+      ? currentSessionGrant(pool,session,() => current.hasRuntimeGrant(scope),
+        dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined)
+      : current.hasRuntimeGrant(scope);
+  },
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
@@ -397,7 +421,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   ...(managed ? {orchestration: managed.routes, workers: managed.workers} : {}),
   ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
     runner.readEvaluationPacket(principal, projectId, runId) } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
-  allowedRuntimeCwds: integrations.allowedRuntimeCwds, hasRuntimeGrant: integrations.hasRuntimeGrant,
+  allowedRuntimeCwds: integrations.allowedRuntimeCwds,
+  hasRuntimeGrant: async scope => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).hasRuntimeGrant(scope),
   isDynamicSession: sessionOrigin.isDynamicSession,
   authorizeDynamicSession: async (principal,command) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canReserveSession({projectId:command.projectId,sessionId:command.sessionId,

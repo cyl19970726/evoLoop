@@ -10,6 +10,18 @@ import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { authorizeWorkerRequest, authorizeWorkerCommand } from "../../apps/coordinator/src/workers/guard.js";
 import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.js";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated evoloop test DB required");
 const schema=`el_workerfacts_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -21,6 +33,7 @@ const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
 const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+withPersistedResumeProfile(runtime,uow);
 const issue=async(command:Record<string,unknown>,actorId=owner)=>{
   const result=await workflow.execute(principal(actorId),{projectId,operationId:randomUUID(),...command} as never);
   assert.equal(result.status,"applied",JSON.stringify(result));

@@ -17,6 +17,18 @@ import { authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { dynamicRuntimeAdmission } from "../../apps/coordinator/src/orchestration/dynamic-admission.js";
 import { loopIntentId } from "../../apps/coordinator/src/orchestration/runner.js";
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -25,7 +37,9 @@ const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cogni
 const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
-const runtime=new RuntimeWorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+const runtimeUow=new PostgresUnitOfWork(pool);
+const runtime=new RuntimeWorkflowService({uow:runtimeUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+withPersistedResumeProfile(runtime,runtimeUow);
 let businessGrantActive=true;
 let brokerForRole:WorkerCredentialBroker|null=null;
 const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&scope===scopeId?{projectId,scopeId,actorId:worker,roleId:businessRole,active:businessGrantActive}:project===projectId&&scope===cognitiveScope?{projectId,scopeId:cognitiveScope,actorId:actor,roleId:cognitiveRole,active:true}:null,
@@ -344,6 +358,20 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const lateClaim=randomUUID();
   await issue(actor,{type:"dispatch.claim",dispatchId:lateDispatch.entityId,claimToken:lateClaim,leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await issue(actor,{type:"dispatch.start",dispatchId:lateDispatch.entityId,claimToken:lateClaim});
+  const blockedCognition=await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession);
+  assert.equal(blockedCognition.gate?.phase,"blocked");
+  assert.equal(blockedCognition.gate?.causeId,cognitiveRun);
+  assert.equal(blockedCognition.gate?.causeState,"failed");
+  const knownCognitionRuns=(await workflow.listRuntimeRuns(principal(actor),projectId)).filter(run=>run.sessionId===cognitiveSession);
+  assert.ok(knownCognitionRuns.length>0&&knownCognitionRuns.every(run=>["completed","failed","interrupted"].includes(run.state)),
+    "explicit recovery is allowed only after every Session Run has a known terminal state");
+  assert.equal((await workflow.getRuntimeRun(principal(actor),projectId,cognitiveRun)).state,"failed");
+  const resumedCognition=await workflow.execute(principal(actor),{type:"runtime.session.recovery.resume",projectId,
+    operationId:randomUUID(),sessionId:cognitiveSession,expectedVersion:blockedCognition.gate!.version,
+    expectedCauseId:blockedCognition.gate!.causeId!,resumeMessageId:blockedCognition.gate!.resumeMessageId,
+    evidenceRef:"fixture://verified-terminal-cognition-run",reason:"Explicitly resume after reviewing the failed cognition Run"});
+  assert.equal(resumedCognition.status,"applied",JSON.stringify(resumedCognition));
+  assert.equal((await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession)).gate?.phase,"open");
   const lateRun=await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),runId:lateRunId,
     taskId:lateTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Reject late first submission"});
   assert.equal(lateRun.status,"applied");
@@ -401,6 +429,20 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await issue(actor,{type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await issue(actor,{type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
+  const blockedAfterLateRun=await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession);
+  assert.equal(blockedAfterLateRun.gate?.phase,"blocked");
+  assert.equal(blockedAfterLateRun.gate?.causeId,lateRunId);
+  assert.equal(blockedAfterLateRun.gate?.causeState,"failed");
+  const knownRunsAfterLate=(await workflow.listRuntimeRuns(principal(actor),projectId)).filter(run=>run.sessionId===cognitiveSession);
+  assert.ok(knownRunsAfterLate.length>0&&knownRunsAfterLate.every(run=>["completed","failed","interrupted"].includes(run.state)),
+    "explicit recovery is allowed only after every Session Run has a known terminal state");
+  assert.equal((await workflow.getRuntimeRun(principal(actor),projectId,lateRunId)).state,"failed");
+  const resumedAfterLate=await workflow.execute(principal(actor),{type:"runtime.session.recovery.resume",projectId,
+    operationId:randomUUID(),sessionId:cognitiveSession,expectedVersion:blockedAfterLateRun.gate!.version,
+    expectedCauseId:blockedAfterLateRun.gate!.causeId!,resumeMessageId:blockedAfterLateRun.gate!.resumeMessageId,
+    evidenceRef:"fixture://verified-terminal-late-run",reason:"Explicitly resume after reviewing the late failed cognition Run"});
+  assert.equal(resumedAfterLate.status,"applied",JSON.stringify(resumedAfterLate));
+  assert.equal((await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession)).gate?.phase,"open");
   const recoveryRun=await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),
     runId:recoveryRunId,taskId:recoveryTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Record bounded division intent"});
   assert.equal(recoveryRun.status,"applied",JSON.stringify(recoveryRun));

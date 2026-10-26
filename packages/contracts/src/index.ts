@@ -10,6 +10,8 @@ import { evaluationCommands } from "./evaluation.js";
 import { residentCommands } from "./resident-hosts.js";
 import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
+import { sessionRecoveryCommands } from "./session-recovery.js";
+export type { ExecutionProfileSnapshot, ExecutionProfileRevision, SessionExecutionProfile, SessionRecoveryGate, SessionRecoveryDecision, SessionRecoveryView } from "./session-recovery.js";
 export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
@@ -50,6 +52,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...residentCommands,
   ...sessionMessageCommands,
   ...sessionAssignmentCommands,
+  ...sessionRecoveryCommands,
   ...scheduleCommands,
   ...discussionCommands,
   ...taskCollaborationCommands,

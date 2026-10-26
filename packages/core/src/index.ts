@@ -26,10 +26,13 @@ import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
 export { RuntimeWorkflowService } from "./runtime/service.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
+import { applySessionRecovery, type RecoveryAuthority } from './session-recovery.js';
+import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 
 export { DomainError } from "@evoloop/contracts/ports";
 
 export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory; hasher: ContentHasher;
+  recoveryAuthority?: RecoveryAuthority;
   collaborationAuthority?: {
     actorForRole(projectId:string,roleId:string):Promise<string|null>;
     isAuthorizedRoleActor(projectId:string,actorId:string,roleId:string):Promise<boolean>;
@@ -160,6 +163,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
+    if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')return 'review';
     if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
@@ -168,6 +172,8 @@ export class WorkflowService {
   }
 
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
+    if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
+      return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("session.message."))
       return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
     if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.")) {
@@ -585,9 +591,9 @@ export class WorkflowService {
           if (!tx.queue) throw new DomainError("QUEUE_UNAVAILABLE", "queue persistence is not configured");
           const queueCommand = command as import("@evoloop/contracts/queues").QueueCommand;
           try {
-            const applied = await applyQueue(tx.queue,tx,principal,queueCommand,{nowUtc:now,nextId:()=>this.deps.ids.next()});
+            const applied = await applyQueue(tx.queue,tx,principal,queueCommand,{nowUtc:now,nextId:()=>this.deps.ids.next(),...(tx.recovery?{recovery:tx.recovery}:{})});
             const effects:Effect[]=[{kind:"queue",entityId:applied.queueId,version:applied.version}];
-            if(applied.runId && applied.claimId && (command.type==="queue.claim"||command.type==="queue.continue")) {
+            if(applied.runId && applied.claimId && (command.type==="queue.claim"||command.type==="queue.continue"||command.type==="queue.retryFailed")) {
               if(command.runOperationId!==command.operationId) throw new DomainError("RUN_OPERATION_MISMATCH", "queue and Run reservation must use the same operation ID");
               const entry=(await tx.queue.getResidentQueue(command.queueId))!.entries.find(x=>x.id===command.entryId)!;
               const task=required(await tx.getTask(entry.taskId),"Task");
@@ -629,7 +635,12 @@ export class WorkflowService {
                 answeredContext=`\nContinuation reason: ${command.reason}\nPrevious Run ${prior.runId}; previous Task channel ${sourceChannelId}.`+
                   (lines.length?`\nFixed answered messages:\n${lines.join("\n")}`:"\nContinue from the newly amended fixed Task input; no answered question is claimed.");
               }
-              const input=`Task ${entry.taskId} fixed source ${entry.taskRevisionId}\n${task.title}\n${task.content}\nAcceptance: ${task.acceptance}${answeredContext}\nTask channel ${discussionId} (Run ${command.runId}). Read with evoLoop CLI: read discussion ${discussionId} --project ${command.projectId}; post question/progress/results with your own CLI identity using discussion.message.post and a fixed Document revision. Keep this Run bound to its fixed scope.`;
+              const channelInput=`Current Task channel ${discussionId} (Run ${command.runId}). Read with evoLoop CLI: read discussion ${discussionId} --project ${command.projectId}; post question/progress/results with your own CLI identity using discussion.message.post and a fixed Document revision. Keep this Run bound to its fixed scope.`;
+              let input=`Task ${entry.taskId} fixed source ${entry.taskRevisionId}\n${task.title}\n${task.content}\nAcceptance: ${task.acceptance}${answeredContext}\n${channelInput}`;
+              if(command.type==='queue.retryFailed'){
+                const source=required(await tx.getRuntimeRun(command.sourceRunId),'Retry source Run');
+                input=`Retry the same fixed business input from Run ${source.id}, Task revision ${source.taskRevisionId}, input SHA256 ${source.inputHash}.\n<fixed_source_run_input>\n${source.input}\n</fixed_source_run_input>\nExecution envelope for this attempt: prior channel/Run references above are historical. Use this current channel for new communication.\n${channelInput}`;
+              }
               const reserved=await reserveRuntime({tx,principal:{...principal,actorId:session.actorId},now,nextId:()=>this.deps.ids.next(),hash:value=>this.deps.hasher.hash(value),
                 command:{type:"runtime.run.reserve",projectId:command.projectId,operationId:command.operationId,
                   runId:command.runId,taskId:entry.taskId,sessionId:entry.sessionId,expectedVersion:task.version,input},
@@ -828,6 +839,36 @@ export class WorkflowService {
   listStageRevisions(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageRevisions(stageId); }); }
   listStageReviews(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageReviews(stageId); }); }
   getRuntimeSession(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeSession(sessionId), "Runtime session")); }
+  getSessionRecovery(principal:Principal,projectId:string,sessionId:string):Promise<SessionRecoveryView>{
+    return this.read(principal,projectId,async reader=>{
+      const session=required(await reader.getRuntimeSession(sessionId),'Runtime session');
+      if(!reader.recovery)throw new DomainError('RECOVERY_UNAVAILABLE','Session recovery reads are not configured');
+      const gate=await reader.recovery.getRecoveryGate(sessionId);
+      const observedDecisions=await reader.recovery.listRecoveryDecisions(sessionId,21);
+      const decisions=observedDecisions.slice(0,20);
+      let causeUnresolved=false,causeUnavailable=false;
+      if(gate?.phase==='blocked'&&gate.causeId){
+        if(gate.causeKind==='run'){
+          const source=await reader.getRuntimeRun(gate.causeId);causeUnavailable=!source;
+          causeUnresolved=!source||['requested','dispatching','running','unknown'].includes(source.state);
+        }else if(gate.causeKind==='message'){
+          const source=await reader.sessionMessages?.getSessionMessage(gate.causeId);causeUnavailable=!source;
+          causeUnresolved=!source||['queued','processing','unknown'].includes(source.state);
+        }
+      }
+      const allQueues=(await reader.queue?.listResidentQueues()??[]).filter(q=>q.entries.some(e=>e.sessionId===sessionId));
+      const queues=await Promise.all(allQueues.slice(0,20).map(async q=>{
+        const attemptsUsed=await reader.queue!.countResidentQueueAttempts(q.id);
+        return {queueId:q.id,version:q.version,adoptedVersion:q.adoptedVersion,maxRuns:q.maxRuns,attemptsUsed,attemptsRemaining:Math.max(0,q.maxRuns-attemptsUsed)};
+      }));
+      const nextAction:SessionRecoveryView['nextAction']=gate?.phase==='blocked'?(causeUnresolved||['attempting','unknown'].includes(session.executionProfile?.activationState??'')?'reconcile_original_operation':'review_recovery_decision'):
+        gate?.phase==='retrying'?'await_authorized_retry':gate?.phase==='message_pending'?'await_original_message':
+        gate?.phase==='awaiting_acceptance'?'record_delivery_use_and_accepted_release':
+        session.executionProfile?.activationState==='pending'?'dispatch_authorized_business_attempt':'normal_work';
+      return {sessionId,executionProfile:session.executionProfile??null,gate,decisions,queues,nextAction,
+        partial:allQueues.length>20||observedDecisions.length>20||causeUnavailable,observedAtUtc:this.deps.clock.now()};
+    });
+  }
   listRuntimeSessions(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listRuntimeSessions()); }
   getRuntimeRun(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeRun(runId), "Runtime run")); }
   listRuntimeRuns(principal: Principal, projectId: string, taskId?: string) { return this.read(principal, projectId, reader => reader.listRuntimeRuns(taskId)); }

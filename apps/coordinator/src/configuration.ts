@@ -81,6 +81,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
+    /** Exact locally reviewed App Server protocol; absence preserves the 0.154 default. */
+    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1"]).default("0.154.0"),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
     browserRead: z.strictObject({scopePath:absolute,playwrightModulePath:absolute}).optional(),
     delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>

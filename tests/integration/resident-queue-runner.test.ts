@@ -10,6 +10,18 @@ import { canonicalTaskInputJson, taskInputSignature } from '../../packages/core/
 import { ResidentQueuePump } from '../../apps/coordinator/src/resident-queue/pump.js';
 import { RuntimeRunner } from '../../apps/coordinator/src/runtime/runner.js';
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const database=process.env.TEST_DATABASE_URL;
 if(!database||!/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(database).pathname))
   throw new Error('dedicated evoloop_*_test database required');
@@ -69,6 +81,7 @@ for(const lostReply of [false,true]) test(lostReply ?
     collaborationAuthority:{actorForRole:async()=>businessActor,isAuthorizedRoleActor:async()=>true,
       isProjectActor:async()=>true,hasEngineeringActionGrant:async()=>false}});
   const trusted=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+  withPersistedResumeProfile(trusted,uow);
   const apply=async(command:Parameters<typeof workflow.execute>[1])=>{
     const result=await workflow.execute(controller,command);
     assert.equal(result.status,'applied',JSON.stringify(result));return result;

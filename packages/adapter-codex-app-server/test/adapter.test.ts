@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { CodexAppServerAdapter, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "../src/index.js";
 import { mapWorkItem } from "../src/work-trace.js";
@@ -12,6 +14,100 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
   const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, mode], requestTimeoutMs: timeout });
   await adapter.open(); return adapter;
 };
+
+test("only the two reviewed CLI protocol versions can be selected", () => {
+  assert.throws(() => new CodexAppServerAdapter({ expectedVersion: "codex-cli 0.165.0" }), /unsupported Codex CLI protocol version/);
+  assert.throws(() => new CodexAppServerAdapter({ expectedVersion: "0.164.0-alpha.11.1" }), /unsupported Codex CLI protocol version/);
+});
+
+test("version mismatch and changed standard or experimental schema stop before App Server startup", async t => {
+  const directory=await mkdtemp(join(tmpdir(),"evoloop-protocol-fingerprint-"));
+  t.after(()=>rm(directory,{recursive:true,force:true}));
+  const executable=join(directory,"fake-codex");
+  await writeFile(executable,`#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\\n' 'codex-cli 0.164.0-alpha.11.1'; exit 0; fi
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ]; then
+  while [ "$#" -gt 0 ]; do if [ "$1" = "--out" ]; then shift; mkdir -p "$1"; printf '{}' > "$1/codex_app_server_protocol.v2.schemas.json"; exit 0; fi; shift; done
+fi
+printf 'app-server-started' > '${join(directory,"started")}'
+exit 1
+`,{mode:0o700});
+  const wrongVersion=new CodexAppServerAdapter({executable,expectedVersion:"codex-cli 0.154.0"});
+  await assert.rejects(()=>wrongVersion.open(),/CLI version mismatch/);
+  for(const experimental of [false,true]){
+    const adapter=new CodexAppServerAdapter({executable,expectedVersion:"codex-cli 0.164.0-alpha.11.1",
+      enableRestrictedMessagePermissions:experimental});
+    await assert.rejects(()=>adapter.open(),/schema changed/);
+  }
+  await assert.rejects(()=>import("node:fs/promises").then(fs=>fs.stat(join(directory,"started"))),{code:"ENOENT"});
+});
+
+for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1"]) {
+  test(`${expectedVersion} answers current time only for an owned Thread when its schema supports it`, async t => {
+    const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, "protocol-0164"],
+      expectedVersion, requestTimeoutMs: 500 });
+    t.after(() => adapter.close()); await adapter.open();
+    const binding = await adapter.create(spec);
+    const replies = new Map<number, Record<string, unknown>>();
+    const settled = new Promise<void>(resolveReplies => adapter.onEvent(event => {
+      if (event.method !== "fixture/timeDecision") return;
+      const value = event.params as Record<string, unknown>;
+      replies.set(value.requestId as number, value);
+      if (replies.size === 4) resolveReplies();
+    }));
+    await adapter.startTurn(binding, "business", "business-op");
+    await settled;
+    const own = replies.get(850)!;
+    if (expectedVersion === "codex-cli 0.164.0-alpha.11.1") {
+      assert.equal(Number.isSafeInteger((own.result as Record<string, unknown>).currentTimeAt), true);
+      assert.ok(Math.abs((own.result as {currentTimeAt:number}).currentTimeAt - Math.floor(Date.now()/1000)) < 5);
+    } else assert.equal((own.error as {code:number}).code, -32601);
+    assert.equal((replies.get(851)!.error as {code:number}).code, expectedVersion.endsWith("0.154.0") ? -32601 : -32000);
+    assert.equal((replies.get(852)!.error as {code:number}).code, expectedVersion.endsWith("0.154.0") ? -32601 : -32000);
+    assert.equal((replies.get(853)!.error as {code:number}).code, -32601);
+  });
+
+  test(`${expectedVersion} retains owned business RPCs, unknown start, and ordinary policy restoration`, async t => {
+    const business = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs:[fixture,"normal"],
+      expectedVersion, requestTimeoutMs:500 });
+    t.after(()=>business.close()); await business.open();
+    const owned=await business.create(spec);
+    assert.equal((await business.inspect(owned) as {thread:{id:string}}).thread.id,owned.nativeThreadId);
+    assert.equal((await business.resume(owned,restoreSpec)).nativeThreadId,owned.nativeThreadId);
+    assert.equal((await business.startTurn(owned,"fixed business input","business-op")).id,"turn-1");
+    assert.equal((await business.listTurns(owned)).data[0]?.id,"turn-1");
+    assert.equal((await business.listItems(owned,"turn-1")).data.length,1);
+    await business.interruptTurn(owned,"turn-1");
+    await business.archiveThread(owned);
+    assert.equal(await business.isThreadArchived(owned),true);
+
+    const ordinary = new CodexAppServerAdapter({ executable:process.execPath,spawnArgs:[fixture,"message-profile"],
+      expectedVersion,requestTimeoutMs:500,enableRestrictedMessagePermissions:true,
+      verifyBinding:async()=>true,
+      threadConfig:async()=>({"sandbox_workspace_write.network_access":true}) });
+    t.after(()=>ordinary.close()); await ordinary.open();
+    const messageBinding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
+      authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
+      resumeProfile:{actorId:"original-actor",model:null,sandbox:"workspace-write",approvalPolicy:"on-request"}};
+    await ordinary.registerBinding(messageBinding);
+    assert.equal((await ordinary.qualifyReadOnlyThread(messageBinding)).available,true);
+    assert.equal((await ordinary.startReadOnlyTurn(messageBinding,"ordinary question","message-op")).id,"turn-1");
+    await assert.rejects(()=>ordinary.startTurn(messageBinding,"business","business-op"),RuntimeProtocolError);
+    await ordinary.resume(messageBinding,{...restoreSpec,model:null,sandbox:"workspace-write"});
+    assert.equal((await ordinary.startTurn(messageBinding,"fixed business input","business-op")).id,"turn-1");
+    assert.equal((await ordinary.listTurns(messageBinding)).data[0]?.id,"turn-1");
+  });
+
+  test(`${expectedVersion} keeps an unacknowledged native Turn start unknown`, async t => {
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,"timeout"],
+      expectedVersion,requestTimeoutMs:100});
+    t.after(()=>adapter.close());await adapter.open();
+    const owned=await adapter.create(spec);
+    await assert.rejects(()=>adapter.startTurn(owned,"business","durable-op"),RuntimeUnknownError);
+    assert.equal((await adapter.listTurns(owned)).data[0]?.id,"turn-1");
+  });
+}
 
 test("owned archive requires exact native readback; empty and lost acknowledgements are not proof", async t => {
   const normal = await open(); t.after(() => normal.close());
@@ -269,6 +365,17 @@ test("restores only a binding accepted by the trusted store", async t => {
   await assert.rejects(() => adapter.registerBinding({ ...binding, nativeThreadId: "desktop-thread" }), RuntimeProtocolError);
 });
 
+test("new owned Threads retain their first execution profile revision in the adapter binding",async t=>{
+  const revisionId="00000000-0000-4000-8000-000000000131";
+  const adapter=await open();t.after(()=>adapter.close());
+  const first={...spec,executionProfileRevisionId:revisionId};
+  const binding=await adapter.create(first);
+  assert.equal(binding.resumeProfile?.executionProfileRevisionId,revisionId);
+  await assert.rejects(()=>adapter.resume(binding,{...first,executionProfileRevisionId:
+    "00000000-0000-4000-8000-000000000132"}),RuntimeProtocolError);
+  await adapter.resume(binding,first);
+});
+
 test("resuming a persisted Session reapplies its exact native profile", async t => {
   const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, "resume-profile"],
     verifyBinding: async () => true,
@@ -288,6 +395,89 @@ test("resuming a persisted Session reapplies its exact native profile", async t 
   await assert.rejects(() => adapter.resume(binding, { ...profile, model: "other-model" }), RuntimeProtocolError);
   await assert.rejects(() => adapter.resume(binding, { ...profile, sandbox: "read-only" }), RuntimeProtocolError);
   await assert.rejects(() => adapter.resume(binding, { ...profile, approvalPolicy: "untrusted" }), RuntimeProtocolError);
+});
+
+for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1"]) {
+test(`${expectedVersion} approved execution profile revision changes only the owned Thread and freezes the next Turn model`, async t => {
+  const priorRevisionId = "00000000-0000-4000-8000-000000000101";
+  const revisionId = "00000000-0000-4000-8000-000000000102";
+  const operationId = "00000000-0000-4000-8000-000000000103";
+  let authorized = false;
+  const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, "profile-transition"],
+    expectedVersion,
+    verifyBinding: async () => true, authorizeExecutionProfileActivation: async () => authorized,
+    threadConfig: async () => ({ "sandbox_workspace_write.network_access": false }) });
+  t.after(() => adapter.close()); await adapter.open();
+  const prior: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId,
+    nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd,
+    authorizationScope: spec.authorizationScope, owner: "evoloop-codex-app-server",
+    resumeProfile: { actorId: "original-actor", model: "old-model", sandbox: "workspace-write",
+      approvalPolicy: "on-request", executionProfileRevisionId: priorRevisionId } };
+  const target: RuntimeSessionSpec = { ...restoreSpec, model: "new-model", sandbox: "workspace-write",
+    executionProfileRevisionId: revisionId };
+  await adapter.registerBinding(prior);
+  await assert.rejects(() => adapter.activateExecutionProfile(prior, target, revisionId, operationId), RuntimeProtocolError);
+  assert.equal((await adapter.inspect(prior) as { observedResumes: number }).observedResumes, 0);
+  authorized = true;
+  const revised = await adapter.activateExecutionProfile(prior, target, revisionId, operationId);
+  assert.equal(revised.nativeThreadId, prior.nativeThreadId);
+  assert.equal(revised.resumeProfile?.model, "new-model");
+  assert.equal(revised.resumeProfile?.executionProfileRevisionId, revisionId);
+  await assert.rejects(() => adapter.registerBinding(prior), RuntimeProtocolError);
+  await assert.rejects(() => adapter.startTurn(prior, "business", "run-op"), RuntimeProtocolError);
+  await adapter.startTurn(revised, "business", "run-op", { revisionId,version:2,model:"new-model",
+    sandbox:"workspace-write",approvalPolicy:"on-request",cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,provenance:"revised" });
+  const observed = await adapter.inspect(revised) as { lastTurnModel: string; observedTurnStarts: number };
+  assert.equal(observed.lastTurnModel, "new-model");
+  assert.equal(observed.observedTurnStarts, 1);
+});
+}
+
+test("lost execution profile acknowledgement is reconciled by one read of the original Thread", async t => {
+  const oldRevisionId="00000000-0000-4000-8000-000000000111";
+  const revisionId="00000000-0000-4000-8000-000000000112";
+  const operationId="00000000-0000-4000-8000-000000000113";
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,"profile-transition-lost"],
+    requestTimeoutMs:50,verifyBinding:async()=>true,authorizeExecutionProfileActivation:async()=>true,
+    threadConfig:async()=>({"sandbox_workspace_write.network_access":false})});
+  t.after(()=>adapter.close());await adapter.open();
+  const old:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:"evoloop-codex-app-server",resumeProfile:{actorId:"original-actor",model:"old-model",
+      sandbox:"workspace-write",approvalPolicy:"on-request",executionProfileRevisionId:oldRevisionId}};
+  const target:RuntimeSessionSpec={...restoreSpec,model:"new-model",sandbox:"workspace-write",
+    executionProfileRevisionId:revisionId};
+  await adapter.registerBinding(old);
+  await assert.rejects(()=>adapter.activateExecutionProfile(old,target,revisionId,operationId),RuntimeUnknownError);
+  assert.equal((await adapter.inspect(old) as {observedResumes:number;observedTurnStarts:number}).observedResumes,1);
+  await assert.rejects(()=>adapter.startTurn(old,"forbidden","run-op"),RuntimeProtocolError);
+  const confirmed=await adapter.inspectExecutionProfileActivation(old,target,revisionId,operationId);
+  assert.equal(confirmed?.resumeProfile?.model,"new-model");
+  assert.equal((await adapter.inspect(confirmed!) as {observedResumes:number}).observedResumes,1);
+});
+
+test("an inconsistent native model acknowledgement cannot activate the revised business profile",async t=>{
+  for(const mode of ["profile-transition-wrong-model","profile-transition-broad"]){
+  const oldRevisionId="00000000-0000-4000-8000-000000000121";
+  const revisionId="00000000-0000-4000-8000-000000000122";
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,
+    spawnArgs:[fixture,mode],verifyBinding:async()=>true,
+    authorizeExecutionProfileActivation:async()=>true,
+    threadConfig:async()=>({"sandbox_workspace_write.network_access":false})});
+  t.after(()=>adapter.close());await adapter.open();
+  const current:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:"evoloop-codex-app-server",resumeProfile:{actorId:"original-actor",model:"old-model",
+      sandbox:"workspace-write",approvalPolicy:"on-request",executionProfileRevisionId:oldRevisionId}};
+  const target:RuntimeSessionSpec={...restoreSpec,model:"new-model",sandbox:"workspace-write",
+    executionProfileRevisionId:revisionId};
+  await adapter.registerBinding(current);
+  await assert.rejects(()=>adapter.activateExecutionProfile(current,target,revisionId,
+    "00000000-0000-4000-8000-000000000123"),RuntimeUnknownError);
+  await assert.rejects(()=>adapter.startTurn(current,"must stay blocked","run-op"),RuntimeProtocolError);
+  assert.equal((await adapter.inspect(current) as {observedTurnStarts:number}).observedTurnStarts,0);
+  }
 });
 
 test("resume explicitly revokes inherited workspace network access on the same Thread", async t => {

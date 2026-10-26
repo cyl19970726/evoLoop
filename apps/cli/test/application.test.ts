@@ -133,12 +133,16 @@ test("the CLI entry point reads resident queue attempts and preserves ordinary r
     const ordinary = await invoke("read", "resident-queue", queue, "--project", project);
     assert.equal(ordinary.code, 0, ordinary.stderr);
     assert.deepEqual(JSON.parse(ordinary.stdout), { id: queue });
+    const recovery=await invoke('read','session',queue,'--project',project,'--recovery');
+    assert.equal(recovery.code,0,recovery.stderr);
+    assert.deepEqual(JSON.parse(recovery.stdout),{id:queue});
     const unknown = await invoke("read", "resident-queue", queue, "--project", project, "--not-a-mode");
     assert.equal(unknown.code, 2);
     assert.equal(JSON.parse(unknown.stderr).error.code, "INVALID_INPUT");
     assert.deepEqual(paths, [
       `/api/projects/${project}/resident-queues/${queue}/attempts`,
       `/api/projects/${project}/resident-queues/${queue}`,
+      `/api/projects/${project}/runtime/sessions/${queue}/recovery`,
     ]);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });

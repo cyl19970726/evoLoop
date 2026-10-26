@@ -95,6 +95,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
 
   const session = required(await tx.getRuntimeSession(command.sessionId), "runtime session");
   if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "only a bound project-owned session can run");
+  await tx.recovery?.assertStartupAllowed(session.id,'run',command.runId);
   const task = required(await tx.getTask(command.taskId), "task");
   await requireAssignedSession(tx, task, command.sessionId, !!queueClaim);
   try { await tx.queue?.assertQueueVacant(task.id,session.id,queueClaim?.claimId,queueClaim?.runId,queueClaim?.operationId); }
@@ -170,6 +171,11 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     operationId: command.operationId, input: command.input, inputHash: hash(command.input),
     state: "requested", version: 1, nativeTurnId: null, interruptRequested: false,
     resultSummary: null, actorId: principal.actorId, createdAt: now, updatedAt: now,
+    ...(session.executionProfile ? {executionProfile:{
+      revisionId:session.executionProfile.revision.revisionId,version:session.executionProfile.revision.version,
+      model:session.executionProfile.revision.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
+      cwd:session.cwd,authorizationScope:session.authorizationScope,provenance:session.executionProfile.revision.provenance,
+    }} : {}),
     ...(command.evaluation ? { evaluationBinding: { ...command.evaluation,
       sourceTaskRevisionId: evaluation!.definition.case.sourceTaskRevisionId,
       actualTaskRevisionId: revisionId, attemptId: attemptId! }, evaluationPacket: null } : {}),

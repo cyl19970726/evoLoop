@@ -27,6 +27,19 @@ const command = { type: "runtime.session.reserve", projectId, operationId, sessi
   roleId: grant.roleId, authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox,
   approvalPolicy: "on-request" };
 
+test("runtime protocol version defaults to the reviewed 0.154 schema and accepts only explicit 0.164", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-runtime-version-"));
+  const file = join(directory, "integrations.json");
+  try {
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[]}}));
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.154.0");
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.164.0-alpha.11.1",grants:[]}}));
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.164.0-alpha.11.1");
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.165.0",grants:[]}}));
+    await assert.rejects(loadIntegrations(file), /Invalid integration configuration/);
+  } finally { await rm(directory,{recursive:true,force:true}); }
+});
+
 test("resident queue business actor bindings have one actor per project and Role", async () => {
   const directory=await mkdtemp(join(tmpdir(),"evoloop-queue-binding-"));
   try {

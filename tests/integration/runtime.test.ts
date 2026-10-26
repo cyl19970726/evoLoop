@@ -6,6 +6,18 @@ import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop_runtime_test/.test(new URL(url).pathname)) {
   throw new Error("dedicated evoloop_runtime_test database required");
@@ -21,6 +33,7 @@ const deps = {
 };
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
+withPersistedResumeProfile(runtime,uow);
 const projectId = randomUUID();
 const principal: Principal = { actorId: "runtime-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
 const issue = async (data: Record<string, unknown>, operationId = randomUUID()): Promise<CommandResult> =>
@@ -150,6 +163,18 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   await assert.rejects(workflow.getRuntimeRun({ actorId: "foreign", projectIds: [randomUUID()], permissions: ["read"] }, projectId, runId), /Permission read/);
   assert.equal(await uow.read(randomUUID(), tx => tx.getRuntimeRun(runId)), null);
 
+  const resumeKnown=async(sourceId:string)=>{
+    const recovery=(await workflow.getSessionRecovery(principal,projectId,sessionId)).gate!;
+    assert.equal(recovery.phase,'blocked','known outcomes do not implicitly permit another native startup');
+    assert.equal(recovery.causeId,sourceId);
+    const runs=(await workflow.listRuntimeRuns(principal,projectId)).filter(r=>r.sessionId===sessionId);
+    assert.ok(runs.every(r=>['completed','failed','interrupted'].includes(r.state)));
+    applied(await issue({type:'runtime.session.recovery.resume',sessionId,expectedVersion:recovery.version,
+      expectedCauseId:recovery.causeId,resumeMessageId:recovery.resumeMessageId,
+      evidenceRef:'fixture://known-terminal-review',reason:'Reviewer confirms original operation was reconciled before continuing'}));
+  };
+  assert.equal((await workflow.getRuntimeRun(principal,projectId,runId)).state,'completed');
+  await resumeKnown(runId);
   const followupId = randomUUID();
   const followup = applied(await issue({ ...reserveRun, runId: followupId,
     expectedVersion: ready.version! + 1, input: "Inspect the first native result and continue this accepted task" }));
@@ -173,6 +198,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal(failed.nativeTurnId, null);
   await assert.rejects(runtime.beginDispatch(projectId, preflightRunId), /already attempted/);
   assert.equal((await workflow.getTask(principal, projectId, otherTaskId)).task.state, "in_progress");
+  await resumeKnown(preflightRunId);
 
   const readyTask = async (title: string) => {
     const id = randomUUID();
@@ -193,6 +219,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   applied(await issue({ type: "document.adopt", documentId, expectedVersion: 3, revisionId: updatedDocument.revisionId, reason: "New adopted basis" }));
   await assert.rejects(runtime.beginDispatch(projectId, reserved.entityId), /review pending basis impacts before dispatch/);
   assert.equal((await runtime.rejectDispatch(projectId, reserved.entityId, "Source changed after task freeze")).state, "failed");
+  await resumeKnown(reserved.entityId);
 
   const manuallyStartedTaskId = randomUUID();
   applied(await issue({ type: "task.create", taskId: manuallyStartedTaskId, title: "Manual start", content: "# Try a Turn",
@@ -203,6 +230,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   applied(await issue({ ...reserveRun, runId: manualRunId, taskId: manuallyStartedTaskId,
     expectedVersion: manualStart.version }));
   assert.equal((await runtime.rejectDispatch(projectId, manualRunId, "No external Turn started")).state, "failed");
+  await resumeKnown(manualRunId);
 
   const unresolvedTaskId = randomUUID();
   applied(await issue({ type: "task.create", taskId: unresolvedTaskId, title: "Uncertain dispatch", content: "# Try one Turn",
@@ -215,5 +243,5 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   await runtime.beginDispatch(projectId, unresolvedRunId);
   assert.deepEqual(await runtime.recoverDispatching(projectId), { sessions: [], runs: [unresolvedRunId] });
   rejected(await issue({ ...reserveRun, runId: randomUUID(), taskId: unresolvedTaskId,
-    expectedVersion: unresolvedReady.version! + 1 }), "SESSION_BUSY");
+    expectedVersion: unresolvedReady.version! + 1 }), "RECOVERY_BLOCKED");
 });
