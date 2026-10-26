@@ -17,6 +17,7 @@ const taskAcceptanceGap = {
 function targetKey(target: { kind: "owned"; sessionId: string } | { kind: "external"; linkId: string }): string {
   return target.kind === "owned" ? `owned:${target.sessionId}` : `external:${target.linkId}`;
 }
+function stageJourneyHref(projectId: string): string { return `#/p/${encodeURIComponent(projectId)}/journey`; }
 
 function TraceCard({ trace, projectId }: { trace: AllocationTrace; projectId: string }) {
   const relation = trace.relation;
@@ -30,7 +31,7 @@ function TraceCard({ trace, projectId }: { trace: AllocationTrace; projectId: st
           ? <a href={`#/p/${encodeURIComponent(projectId)}/roles?role=${encodeURIComponent(relation.target.id)}`}>查看职责档案</a>
           : relation.target.kind === "document"
             ? <a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(relation.target.id)}?revision=${encodeURIComponent(relation.target.revisionId)}`}>查看过程文档固定修订</a>
-            : "关联阶段"} · {status[relation.targetStatus]}</p>
+            : <>阶段 v{relation.target.version} · <a href={stageJourneyHref(projectId)}>查看当前阶段入口</a>（不是固定版本历史）</>} · {status[relation.targetStatus]}</p>
       {relation.target.kind === "task" && relation.taskAcceptanceGap !== undefined && <small>
         {relation.taskAcceptanceGap === null
           ? "该修订存在已接受路径；具体接收者可能在后续页。"
@@ -48,7 +49,9 @@ function TraceCard({ trace, projectId }: { trace: AllocationTrace; projectId: st
     {history && <small>关联历史决定；当前决定已变化，后续关系需重新核对。</small>}
     {trace.decisionDocumentRevisionId && <p><a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(trace.discussion.document.id)}?revision=${encodeURIComponent(trace.decisionDocumentRevisionId)}`}>阅读这次决定所依据的固定原文</a></p>}
     <details><summary>固定来源</summary><ul>{trace.sources.map((source, index) => {
-      const link = safeArtifactHref(source.href, projectId);
+      const link = source.kind === "stage"
+        ? source.href === stageJourneyHref(projectId) ? source.href : null
+        : safeArtifactHref(source.href, projectId);
       return <li key={`${source.kind}:${source.id}:${index}`}>{link ? <a href={link}>{source.kind} · {source.id}</a> : <span>{source.kind} · {source.id}</span>}{source.revision && ` · ${source.revision}`}{source.kind === "stage" && " · 链接打开当前阶段入口；固定版本需另行核对"}</li>;
     })}</ul></details>
   </article>;
@@ -100,7 +103,9 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
     {error && <p role="alert" className="discussion-relation-error">关系读取失败：{error}。不能据此判断没有承接。</p>}
     {partial && <p role="status" className="discussion-relation-error">来源读取不完整，以下关系只能作为已见部分。</p>}
     {limitations.length > 0 && <details><summary>来源限制 · {limitations.length} 项</summary><ul>{limitations.map(item => <li key={item}>{item}</li>)}</ul></details>}
-    {!loading && !error && items.length === 0 && <p className="empty">尚无正式后续对象链接；讨论上下文和拟交接会话不构成实际承接。</p>}
+    {!loading && !error && items.length === 0 && <p className="empty">{partial
+      ? "来源读取不完整，暂不能判断是否存在正式关系。"
+      : cursor ? "当前页没有关系；后续页面尚未读完。" : "尚无正式后续对象链接；讨论上下文和拟交接会话不构成实际承接。"}</p>}
     {items.map(item => <TraceCard key={item.id} trace={item} projectId={context.projectId} />)}
     {cursor && <button type="button" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "正在读取…" : "加载更多关系"}</button>}
   </aside>;

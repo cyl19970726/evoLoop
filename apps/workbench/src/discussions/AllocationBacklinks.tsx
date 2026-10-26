@@ -48,12 +48,16 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
     {error && <p role="alert">来源暂不可读：{error}。不能据此判断没有关联。</p>}
     {partial && <p role="status">来源读取不完整，以下仅为已见部分。</p>}
     {limitations.length > 0 && <details><summary>来源限制 · {limitations.length} 项</summary><ul>{limitations.map(item => <li key={item}>{item}</li>)}</ul></details>}
-    {!loading && !error && !items.length && <p className="muted">尚无可确认的正式分工讨论来源。</p>}
+    {!loading && !error && !items.length && <p className="muted">{partial
+      ? "来源读取不完整，暂不能判断是否有关联。"
+      : cursor ? "当前页没有来源；后续页面尚未读完。" : "尚无可确认的正式分工讨论来源。"}</p>}
     <ul>{items.map(trace => <li key={trace.id}>
       <a href={`#/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(trace.discussion.id)}`}>{trace.discussion.title || "分工讨论"}</a>
       <span> · {trace.relation.kind === "task-recipient" ? "Task 同修订已接受" : "正式行动链接"}
         {!trace.decisionIsLatest && " · 历史决定"}</span>
-      {trace.relation.kind === "task-recipient" && <small>{trace.relation.assignment.method === "direct" ? "本人确认" : "负责人观察"} · {trace.relation.assignmentStatus === "current" ? "当前承接" : trace.relation.assignmentStatus === "historical" ? "历史承接" : "当前状态待核"}</small>}
+      {trace.relation.kind === "task-recipient" && <small>{trace.relation.assignment.method === "direct" ? "本人确认" : "负责人观察"}
+        {" · 分派状态："}{trace.relation.assignmentStatus === "current" ? "当前仍被接受" : trace.relation.assignmentStatus === "historical" ? "历史接受" : "待核"}
+        {" · Task 修订："}{trace.relation.taskRevisionStatus === "current" ? "仍为当前修订" : trace.relation.taskRevisionStatus === "changed" ? "已变更，需按新修订重新核对" : "暂不可核实"}</small>}
     </li>)}</ul>
     {cursor && <button type="button" disabled={busy} onClick={() => void more()}>{busy ? "读取中…" : "加载更多来源"}</button>}
   </section>;
