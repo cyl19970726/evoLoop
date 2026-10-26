@@ -12,22 +12,25 @@ const projectId = "70000001-0000-4000-8000-000000000001";
 const ownedId = "70000002-0000-4000-8000-000000000002";
 const legacyId = "70000003-0000-4000-8000-000000000003";
 const externalId = "70000004-0000-4000-8000-000000000004";
-const keys = { disabled: `owned:${ownedId}`, legacy: `owned:${legacyId}`, manual: `external:${externalId}` };
+const revokedId = "70000005-0000-4000-8000-000000000005";
+const keys = { disabled: `owned:${ownedId}`, legacy: `owned:${legacyId}`, manual: `external:${externalId}`, revoked: `external:${revokedId}` };
 const stamp = "2026-10-27T00:00:00.000Z";
 const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
 const unavailable = { available: false, reason: "未开放" };
 const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"]
   .map(key => [key, { value: null, unit: "", source: null, scope: "session", observedAt: null, interval: null, unavailableReason: "未记录" }]));
 function snapshot(key: string) {
-  const external = key === keys.manual;
+  const external = key === keys.manual || key === keys.revoked;
   const id = key.slice(key.indexOf(":") + 1);
   const target = external ? { kind: "external", linkId: id } : { kind: "owned", sessionId: id };
   const send = key === keys.legacy ? { available: false, reason: "当前身份只有读取权限。", mode: "unavailable" }
+    : key === keys.revoked ? { available: false, reason: "外部连接已撤销。", mode: "unavailable" }
     : { available: true, reason: external ? "外部消息仅保存" : "当前可保存待处理消息", mode: external ? "manual-handoff" : "owned-read-only" };
   const ordinaryExecution = key === keys.disabled ? { state: "disabled", reasonCode: "SESSION_MESSAGES_DISABLED",
     reason: "普通自动回复未启用；保存后当前不会启动此会话。", observedAt: stamp }
-    : key === keys.manual ? { state: "manual", reasonCode: "EXTERNAL_HANDOFF", reason: "需人工转交原会话。", observedAt: stamp } : undefined;
-  return { session: { key, target, aliases: [], title: key === keys.disabled ? "关闭自动回复的会话" : key === keys.legacy ? "旧版只读会话" : "外部会话",
+    : key === keys.manual ? { state: "manual", reasonCode: "EXTERNAL_HANDOFF", reason: "需人工转交原会话。", observedAt: stamp }
+      : key === keys.revoked ? { state: "blocked", reasonCode: "EXTERNAL_LINK_REVOKED", reason: "已撤销的连接不可人工转交。", observedAt: stamp } : undefined;
+  return { session: { key, target, aliases: [], title: key === keys.disabled ? "关闭自动回复的会话" : key === keys.legacy ? "旧版只读会话" : key === keys.revoked ? "已撤销外部会话" : "外部会话",
     profile: null, kind: external ? "external" : "owned", roles: [], membership: "current", membershipReason: "测试",
     runtimeState: external ? null : "ready", busy: external ? null : false, currentTask: null, latestBusinessRun: null,
     lastProgressAt: null, capabilities: { observe: unavailable, send, open: { ...unavailable, ref: null }, interrupt: unavailable,
@@ -83,4 +86,10 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   await page.getByRole("heading", { name: "外部会话" }).waitFor();
   assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /需人工转交.*需人工转交原会话/);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count() > 0, true);
+
+  await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
+  await page.getByRole("heading", { name: "已撤销外部会话" }).waitFor();
+  assert.match(await page.locator(".session-workspace-section").filter({ hasText: "普通对话" }).first().innerText(), /不能向当前外部会话保存或转交消息/);
+  assert.equal(await page.getByText("外部连接已撤销。", { exact: true }).count(), 1);
+  assert.equal(await page.getByText("保存人工转交", { exact: true }).count(), 0);
 });
