@@ -135,9 +135,19 @@ Task 接受和 Run 派发固定到不可变 TaskRevision 及依据集合；更�
 
 浏览器保存新草稿不自动采纳它；已采纳的版本指针由显式决定和条件更新改变。发生冲突保留输入并返回可复核的当前版本；结果未知按 operationId 查询，而不是换 ID 重发。UI 分别呈现业务、运行、同步、知识和效果状态。刷新提示只要求回读，不能直接推进状态。前端结构与范围见[前端架构](frontend.md)。
 
+### Session 工作观察：有界读取同一份事实
+
+会话目录统一读取 owned RuntimeSession 和已登记的 external HostLink。同一真实会话去重，同一 Role 的不同实例保留；可选绑定表不能代替完整目录。项目内展示名、用途和当前／历史归类由 `SessionProfileRecord` 版本化维护，不改原生聊天标题或运行权限。没有明确归类的旧 ready 会话保持 unclassified；外部实时状态未同步时为未知。
+
+`session-work` 提供目录、单会话快照、变化和分页活动。共同 DTO 在 `contracts/session-work` 与 `contracts/session-observation`：分别返回生成时间、来源观察时间、部分结果及缺项，区分项目记录、Session 自述与独立使用。当前工作依据具体分派、claim 或 Run；Role 拥有某任务只表示职责，不能推定同 Role 每个 Session 都已接手。成果归属按真实 Run 或人工接手的有效时间范围核对，不把转交后新承接者的交付算给旧会话。
+
+PG 在源写入的同一事务追加只含引用、状态与短预览的观察变化；每项目事务计数器锁持有到提交，避免普通 identity sequence 的晚提交越过游标。读取在一个 repeatable-read 事务中取得事实和边界。变化返回有稳定身份的 invalidate，客户端合并去重后重读相关范围；不重发写入或启动模型。游标绑定项目、调用者与用途／筛选；分页期间继续保留首个观察位置，目录失效后从第一页重建，避免漏掉并发新增项。
+
+目录／活动默认每页 50，变化最多 100；服务端限制 UTF-8 响应字节，超限显式分页或标注遗漏及详情入口。项目 attention 聚合独立于当前目录页。原生深度历史不进入页面轮询；token、费用和进程内存没有可靠采集时返回 null 与原因，不填 0。当前源码和隔离检查不代表新工作区、性能目标或真实消息已通过使用验收。
+
 ### UnitOfWork：同库原子命令
 
-`UnitOfWork.run` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口。core 先核 operation ID/摘要，再在这个作用域内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
+`UnitOfWork.transaction` 和 `read` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口；read 使用一致的只读快照。core 先核 operation ID/摘要，再在写事务内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
 
 操作 ID 与命令摘要一起去重，同一 ID 带不同命令必须拒绝；提交结果未知时按该 ID 查询同库事务结果。首片已自动检查最后一步失败时全部回滚、提交成功但回包丢失后恢复不重复创建，以及旧基线更新被拒绝；CLI 当前也按原 ID 查询回执。这个本机子集不证明外部副作用恰好一次或生产恢复，数据库选型本身也不是测试通过证据。
 
@@ -165,11 +175,19 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 
 每个新 Session 引用当前职责说明或临时任务约定，补充实例目标、输入修订、首项任务、操作范围和交接/退出条件。新 Role 另附缺口证据、替代办法、独立责任与工作流程、试行基线和回看条件；换窗口仅更新实例关联。撤回 Role 时交接未完任务与知识、停止相应触发并核对在途实例，不能仅更改登记状态。流程见[动态多 session](../product/agent-loop.md)。
 
+### 具体承接与职责分开
+
+`TaskSessionAssignment` 固定 Task 修订、具体 owned Session／external HostLink、指定接手 actor 和版本；reviewer 通过 `task.assignment.set/release` 安排与交接，不自动创建 Run。接手由指定 actor 用 `acknowledge` 亲签；Lead 只有人工通信观察时使用 `observeAcceptance`，记录 observer、来源及 `lead-observed`，实际接手 actor 留空，不能冒称执行者签名或原生送达。人工承接窗口只用于筛选关联任务记录；其中的交付仍保留原登记者和产物来源，不据时间窗口推定该会话独立制作了成果。
+
+建议先完成 `task.start` 固定依据再分派。开始、范围变化或其他修订使旧分派过时后，旧 ack 保持原修订，不自动沿用。新队列和直接 Run 必须匹配当前具体 owned 分派；external 人工任务不能被任意同 Role ready 会话抢走。没有显式分派的旧工作维持原授权规则；已建立的合法 queue claim 按其独立封存的业务输入接续，真实 claim／Run 与旧人工 ack 分别显示。
+
 ## 5. Coordinator：派发、交接与恢复
 
 首期仍用单活协调者串行派发，租约、并发条件和失去独占后的停写行为在 PostgreSQL 上验证；不再把飞书记录字段当独占锁。数据库条件更新能约束内部抢占，却不提供跨 Codex、飞书和 Wiki 的恰好一次副作用。
 
 协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；各对象显示当前读回的状态、观察时间与下一责任；Run 的终态不能代替任务验收或消费者使用。
+
+`GET /api/projects/:projectId/orchestration/work-status` 为已分页 Task 列表补充最多50项的工作事实，只依赖项目读取权限和已迁移数据库，不依赖自动 Loop、controller 或原生运行时启用。普通启动和受管模式各只注册一次同一读取入口；读取不启动泵、派发或模型。无派发的普通 Task 保持普通工作标签，存储读取失败明确报错，不伪装为没有工作；受管 worker 的读取范围仍由原鉴权限制。
 
 本机受限 ResidentQueue 让 Lead 明示条目顺序、依赖、理由、固定 Task 输入、owned Session、消费者、释放规则与累计 Run 预算，并采纳一个可执行版本。未领取的重排、Task 改版后的队列修订和重新采纳使用 CAS；不能只改正文便沿旧条目启动。领取在同项目事务内核当前 Task、正式绑定、精确 grant、Session ready 与原生 Thread、Task/Session 无在途或未知 Run，并原子记录 claim、Run 预留意图、Journal/outbox；同一 Session 的后项等前项释放，另一个领取不能抢占。所有后续尝试计入同一预算；终态只结束一次 Run，不释放 Task claim。默认核当前通过的 Delivery、Task 关闭及要求的消费者 `used` 后释放；条目预先允许有界释放时，有权 Lead 可对无依赖后项给出释放决定，保留未完任务下一责任。依赖项仍须真实验收。未知原生启动或封存按原操作与 Run 对账，不能重试造成第二次外部执行。[PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的本机原 Session 已按采纳队列完成 A→B 两项真实任务的领取、接续和验收后放行；[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的有界故障回归不能替代其他场景的原生验收，也不能从已领取或 Run 结束推定 Task 被消费者使用。
 
@@ -252,3 +270,15 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 第一条端到端试点至少贯穿：来源入库 → 两个 session 的相反解释 → Wiki 维护修订 → PostgreSQL 任务引用固定修订并执行 → 飞书投影与入站协作对账 → 交付后的实际亲用 → 依据效果形成下一任务/职责试行。随后演练文档旧基线写、同基线 Wiki 写、任务出站成功但丢响应、飞书入站冲突与投影删除、来源撤回、协调者重启、知识恢复及新 session 独立消费。每项报告要分开记录“原生能力、官方 Skill/模型行为、项目适配、人工操作、尚未观察”。
 
 当前没有证据可承诺飞书事件完整投递、跨平台恰好一次执行、外部投影立即一致、OpenViking 0.5.0 安全多写者发布、源撤回自动修正全部页、可靠通知送达或 Wiki 比直接材料更高效。S1a 已验证 PG 内部事务、同基线竞争与固定依据；范围见[实测报告](../research/design-review-20261020.md)，不能将其外推到未接入的合同。任何实现只能在验证后的边界内向上暴露能力；升级后重新跑相应案例。更细的测试和代码约定见[开发规范](../development/standards.md)。
+
+## 9. 分工讨论的可信关系反查
+
+角色探索复用 allocation Discussion、固定 Document、Role 与 Task 的正式记录。`GET /api/projects/:projectId/allocation-relations` 恰选 `roleId`、`sessionKey`、`discussionId` 一个过滤器；`GET .../discussions?kind=allocation` 可发现未决或尚无正式关联的讨论。它们都是读取，不创建角色、分派、Run 或权限。写入继续通过既有讨论决定与 `discussion.action.link`、Role 决定/回看和具体任务分派命令。
+
+可信路径是决议的不可变 action event → Role/Task 的固定修订；具体接手者另须匹配同项目、同 Task ID、同 Task 修订的 `accepted` 分派历史。同 Role 的其他会话、仅 assigned、文本 sourceRef 或另一 Task 修订不能补足这条路径。Role 反查只展示该正式关联 Role 及其固定 Task owner 匹配的路径；Session 反查只取精确身份与真实别名，不扩展整个职责。
+
+返回按关系路径分页：默认20、最大50、单响应不超过256KiB。每页含来源、当前决定/目标修订/分派关系的独立状态；讨论当前正文与决议当时的固定 Document 修订分别提供。直接接收者亲签与 Lead 人工观察保留各自身份，转交、释放和被新决定取代的路径仍可追溯。关联、接受、Run、交付与独立使用是不同证据；不由一条边推定试行成功。试行期限、条件和回看继续读原 Role 权威。
+
+Task 目标的 `taskAcceptanceGap` 说明精确修订的接受缺口：`null` 表示已有相符接受历史（其路径可能在后页），`no-assignment` 表示未登记分派，`not-accepted` 表示该修订尚无接受，`different-task-revision` 表示仅登记了其他修订，`unavailable` 表示固定对象不可读。其他目标不带该字段；这不是新增 Task 状态。只有 Role 链接而没有 Task 链接时保留 Role 来源，讨论未读全前不推断不存在后续任务。
+
+游标签名并绑定项目、调用身份/权限、过滤范围、规范会话及关系代次。复用既有 observation journal，使独立 Document、Stage 和 Discussion 头变化也推进关系代次；关系页通过项目级变化入口失效。代次改变时返回 `resetRequired` 并要求重读，不能伪装跨页固定快照；无变化时按不可变路径键继续，不能在一万项处截断。签名仅在当前协调进程内有效，重启或无效签名要求重新从首屏读取。缺少正式路径是空页，不存在/越权、服务未安装与读取失败仍为错误；前端不能把错误显示成“没有讨论”。更完整的对象正文和版本从原入口读取。Document 来源指向固定原件；Stage 保留固定版本，入口为当前阶段页，核历史仍用既有修订读取。

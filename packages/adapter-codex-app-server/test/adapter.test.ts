@@ -316,6 +316,92 @@ test("a read-only bound Session cannot resume as a workspace writer",async t=>{
   await assert.rejects(()=>adapter.resume(binding,{...restoreSpec,sandbox:"workspace-write"}),RuntimeProtocolError);
 });
 
+test('ordinary messages require the restricted protocol at native startup',async t=>{
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,'normal'],requestTimeoutMs:500,
+    verifyBinding:async()=>true,threadConfig:async()=>({'sandbox_workspace_write.network_access':true})});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-astra',sandbox:'workspace-write',approvalPolicy:'on-request'}};
+  await adapter.registerBinding(binding);
+  const proof=await adapter.qualifyReadOnlyThread(binding);
+  assert.equal(proof.available,false);
+  assert.match(proof.reason,/named-permission protocol was not enabled/);
+  await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op'),RuntimeProtocolError);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
+  await adapter.resume(binding,{...restoreSpec,model:'gpt-6-astra',sandbox:'workspace-write'});
+  assert.equal((await adapter.startTurn(binding,'business','business-op')).id,'turn-1');
+});
+
+for(const mode of ['message-profile-apps-enabled','message-profile-app-override','message-profile-mcp',
+  'message-profile-broad','message-profile-active']){
+  test(`ordinary ${mode} is blocked before any native Turn`,async t=>{
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      verifyBinding:async()=>true,requestTimeoutMs:500,enableRestrictedMessagePermissions:true});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
+    await adapter.registerBinding(binding);
+    const proof=await adapter.qualifyReadOnlyThread(binding);
+    assert.equal(proof.available,false);assert.equal(proof.fingerprint,null);
+    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'hello','op'),RuntimeProtocolError);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
+  });
+}
+
+for(const mode of ['message-profile','message-profile-reject','message-profile-timeout']){
+  test(`ordinary ${mode} uses cwd-only permissions and preserves later business policy`,async t=>{
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      verifyBinding:async()=>true,requestTimeoutMs:300,enableRestrictedMessagePermissions:true,
+      threadConfig:async()=>({'sandbox_workspace_write.network_access':true})});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
+    await adapter.registerBinding(binding);
+    const proof=await adapter.qualifyReadOnlyThread(binding);
+    assert.equal(proof.available,true,proof.reason);
+    assert.match(proof.fingerprint??'',/^[a-f0-9]{64}$/);
+    if(mode==='message-profile')assert.equal((await adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op')).id,'turn-1');
+    else await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op'),
+      mode==='message-profile-timeout'?RuntimeUnknownError:RuntimeServerError);
+    await assert.rejects(()=>adapter.startTurn(binding,'business','business-op'),RuntimeProtocolError);
+    await adapter.resume(binding,{...restoreSpec,sandbox:'workspace-write'});
+    assert.equal((await adapter.startTurn(binding,'business','business-op')).id,'turn-1');
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
+  });
+}
+
+for(const mode of ['message-profile-drift','message-profile-activity-race']){
+  test(`ordinary ${mode} is rechecked before native Turn start`,async t=>{
+    const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      verifyBinding:async()=>true,enableRestrictedMessagePermissions:true});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
+    await adapter.registerBinding(binding);
+    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
+    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'hello','op'),RuntimeProtocolError);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
+  });
+}
+
+test('bounded message history starts with the newest native Turn even after one hundred older Turns',async t=>{
+  const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,'message-profile-history'],
+    verifyBinding:async()=>true,enableRestrictedMessagePermissions:true});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
+  await adapter.registerBinding(binding);
+  const first=await adapter.listTurns(binding);
+  assert.equal(first.data.length,100);assert.equal(first.data[0]?.id,'turn-1');assert.equal(first.nextCursor,'older-page');
+  assert.equal((await adapter.listTurns(binding,first.nextCursor)).data[0]?.id,'older-100');
+});
+
+
 test("read and resume reject a changed native session tree", async t => {
   const adapter = await open("changed-session"); t.after(() => adapter.close());
   const binding = await adapter.create(spec);
