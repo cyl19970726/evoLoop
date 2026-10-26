@@ -94,10 +94,12 @@ test("paged work status uses exact project facts and separates formal cognition 
     JOIN basis_set b ON b.project_id=t.project_id AND b.task_id=t.task_id AND b.task_revision_id=t.current_revision_id
     WHERE t.project_id=$1 AND t.task_id=$2`,[projectId,researchId])).rows[0];
   assert.ok(basis,"current Task has a fixed basis for the isolated Run fixture");
+  // This fixture models a previously bound owned Session. A reserved Session has
+  // no confirmed launch profile and cannot advance a Run into an unknown Turn.
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
-    state,version,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,'researcher','/isolated-fixture','fixture','read-only','on-request','reserved',1,$3,$4,$5,$5)`,
-    [projectId,sessionId,randomUUID(),ownerId,fixedTime]);
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,'researcher','/isolated-fixture','fixture','read-only','on-request','ready',1,$6,$6,$3,$4,$5,$5)`,
+    [projectId,sessionId,randomUUID(),ownerId,fixedTime,`fixture-native-${sessionId}`]);
   await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
     operation_id,input,input_hash,state,version,actor_id,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,'isolated read-projection fixture',$8,'requested',1,$9,$10,$10)`,
@@ -109,7 +111,11 @@ test("paged work status uses exact project facts and separates formal cognition 
     assert.equal(during.find(row=>row.taskId===researchId)?.readyForAcceptance,false,
       `a ${state} Run blocks readiness even though the old Delivery and use remain`);
   }
+  assert.equal((await pool.query('SELECT phase,cause_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',
+    [projectId,sessionId])).rows[0]?.phase,'blocked','unknown native outcome keeps the Session recovery gate closed');
   await pool.query("UPDATE runtime_run SET state='completed',version=3,native_turn_id='isolated-fixture-turn' WHERE project_id=$1 AND run_id=$2",[projectId,runId]);
+  assert.equal((await pool.query('SELECT phase FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',
+    [projectId,sessionId])).rows[0]?.phase,'blocked','later Run reconciliation does not silently reopen the Session');
   assert.equal((await request(token)).json<{items:Array<{taskId:string;readyForAcceptance:boolean}>}>().items
     .find(row=>row.taskId===researchId)?.readyForAcceptance,true);
   assert.equal((await request(otherToken)).statusCode,403,"another project cannot read the projection");

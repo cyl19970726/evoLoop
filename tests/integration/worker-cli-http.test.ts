@@ -18,6 +18,18 @@ import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { createWorkerSealer } from "../../apps/coordinator/src/orchestration/seal.js";
 import { readTaskContext } from "../../apps/coordinator/src/orchestration/setup.js";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const database = process.env.TEST_DATABASE_URL;
 if (!database || new URL(database).pathname !== "/evoloop_journey_eval_test")
   throw new Error("worker CLI/HTTP test requires the isolated evoloop_journey_eval_test database");
@@ -33,6 +45,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const uow=new PostgresUnitOfWork(pool);
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
   const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+  withPersistedResumeProfile(runtime,uow);
   const projectId=randomUUID(),loopId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),cognitiveTaskId=randomUUID();
   const cognitiveRole="fixture-planner",businessRole="fixture-builder",controller="fixture-controller";
   const cognitiveScope="fixture-cognition-scope",businessScope="fixture-business-scope";

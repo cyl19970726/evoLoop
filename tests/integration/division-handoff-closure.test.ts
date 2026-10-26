@@ -47,6 +47,15 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     return work(tx);
   });
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  const bindOwned=async(sessionId:string,roleId:string,cwd:string,authorizationScope:string)=>{
+    const reserved=await uow.read(pid,reader=>reader.getRuntimeSession(sessionId));
+    assert.ok(reserved?.executionProfile,"034 must persist the fixed configured Session profile");
+    const nativeId=`fixture-${sessionId}`;
+    await runtime.bindSession(pid,sessionId,{owner:"evoloop-codex-app-server",projectId:pid,sessionId,
+      roleId,cwd,authorizationScope,nativeThreadId:nativeId,nativeSessionId:nativeId,
+      resumeProfile:{actorId:reserved.actorId,model:reserved.model,sandbox:reserved.sandbox,
+        approvalPolicy:reserved.approvalPolicy,executionProfileRevisionId:reserved.executionProfile.revision.revisionId}});
+  };
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,id)=>p===pid&&id==="cognition-scope"?
     {projectId:pid,scopeId:id,actorId:researcher,roleId:cognitiveRole,active:true}:null,
     canActAsRole:async(_p,actor,role)=>actor===researcher&&role===cognitiveRole,
@@ -98,12 +107,33 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   await issue(researcher,{type:"dispatch.claim",dispatchId:parent.entityId,claimToken:parentToken,
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await issue(researcher,{type:"dispatch.start",dispatchId:parent.entityId,claimToken:parentToken});
+  const rowCounts=()=>pool.query(`SELECT
+    (SELECT count(*)::int FROM task WHERE project_id=$1) AS tasks,
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs,
+    (SELECT count(*)::int FROM orchestration_operation WHERE project_id=$1) AS orchestration_operations,
+    (SELECT count(*)::int FROM operation_journal WHERE project_id=$1) AS workflow_operations`,[pid]);
+  const beforeMigration=(await rowCounts()).rows[0];
+  await assert.rejects(uow.read(pid,reader=>reader.getChildHandoffFact!(randomUUID())),
+    error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="MIGRATION_REQUIRED"),
+    "the new Division closure reader requires 023 before it can evaluate a handoff");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[pid])).rows[0].n>0,true);
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
+    AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0,
+    "the pre-migration schema must have no domain columns");
+  // Current runtime code requires the real 034 execution profile tables. Keep
+  // pre-023 facts historical, then finish the actual upgrade before new Runs.
+  await migrate(url!,schema);
+  migrated=true;
+  await migrate(url!,schema);
+  assert.deepEqual((await rowCounts()).rows[0],beforeMigration,"023..034 and a rerun add no business facts");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
   const cognitiveSession=randomUUID(),cognitiveRun=randomUUID(),cwd=template.cwd;
   await applied(researcher,{type:"runtime.session.reserve",sessionId:cognitiveSession,roleId:cognitiveRole,cwd,
     authorizationScope:"cognition-scope",model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
   await runtime.beginSessionCreate(pid,cognitiveSession);
-  await runtime.bindSession(pid,cognitiveSession,{owner:"evoloop-codex-app-server",projectId:pid,sessionId:cognitiveSession,
-    roleId:cognitiveRole,cwd,authorizationScope:"cognition-scope",nativeThreadId:`fixture-${cognitiveSession}`,nativeSessionId:`fixture-${cognitiveSession}`});
+  await bindOwned(cognitiveSession,cognitiveRole,cwd,"cognition-scope");
   await applied(researcher,{type:"runtime.run.reserve",runId:cognitiveRun,taskId:parentTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Choose"});
   await issue(researcher,{type:"dispatch.resolve",dispatchId:parent.entityId,claimToken:parentToken,result:"accepted",runtimeRunId:cognitiveRun,reason:"Fixture"});
   const binding=await issue(researcher,{type:"division.decide",decisionId:randomUUID(),loopId,
@@ -121,26 +151,6 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   await runtime.recordTurn(pid,cognitiveRun,turn,"completed","Fixture terminal");
   await issue(controller,{type:"worker.outcome",dispatchId:parent.entityId,outcome:"waiting",deliveryId:null,
     decisionId:waiting.entityId,evidenceRef:null,reason:"Hand over"});
-  const rowCounts=()=>pool.query(`SELECT
-    (SELECT count(*)::int FROM task WHERE project_id=$1) AS tasks,
-    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs,
-    (SELECT count(*)::int FROM orchestration_operation WHERE project_id=$1) AS orchestration_operations,
-    (SELECT count(*)::int FROM operation_journal WHERE project_id=$1) AS workflow_operations`,[pid]);
-  const beforeMigration=(await rowCounts()).rows[0];
-  await assert.rejects(uow.read(pid,reader=>reader.getChildHandoffFact!(randomUUID())),
-    error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="MIGRATION_REQUIRED"),
-    "the new Division closure reader requires 023 before it can evaluate a handoff");
-  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[pid])).rows[0].n>0,true);
-  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
-  assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
-    AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0,
-    "the pre-migration schema must have no domain columns");
-  await migrate(url!,schema);
-  migrated=true;
-  await migrate(url!,schema);
-  assert.deepEqual((await rowCounts()).rows[0],beforeMigration,"023 and its rerun add no business facts");
-  assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
-  assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
   const childId=randomUUID();
   for(const [label,changes] of [
     ["binding",{bindingId:randomUUID()}],
@@ -178,8 +188,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   await applied(controller,{type:"runtime.session.reserve",sessionId,roleId,cwd,authorizationScope:"division-scope",
     model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
   await runtime.beginSessionCreate(pid,sessionId);
-  await runtime.bindSession(pid,sessionId,{owner:"evoloop-codex-app-server",projectId:pid,sessionId,roleId,cwd,
-    authorizationScope:"division-scope",nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});
+  await bindOwned(sessionId,roleId,cwd,"division-scope");
   const receivingRun=await applied(controller,{type:"runtime.run.reserve",runId,taskId:firstTaskId,sessionId,expectedVersion:3,input:"Receive"});
   await issue(controller,{type:"dispatch.resolve",dispatchId:childId,claimToken:childToken,result:"accepted",runtimeRunId:runId,reason:"Child Run"});
   scope={projectId:pid,loopId,taskId:firstTaskId,runId,roleId,kind:"business"};

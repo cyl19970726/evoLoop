@@ -7,6 +7,18 @@ import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated evoloop test DB required");
 const schema=`el_legacy_gap_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -17,6 +29,7 @@ const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
 const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+withPersistedResumeProfile(runtime,uow);
 const store=new PgOrchestrationStore(pool,{
   getAuthorizationFact:async(project,scopeId)=>project===projectId&&scopeId===scope?{projectId,scopeId:scope,actorId:actor,roleId:role,active:true}:null,
   canActAsRole:async(project,actorId,roleId)=>project===projectId&&actorId===actor&&roleId===role,
@@ -122,6 +135,19 @@ test("old dispatch.gap event without run or task version recovers from immutable
   await managed({type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await managed({type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
+  const blockedSession=await workflow.getSessionRecovery(principal,projectId,sessionId);
+  assert.equal(blockedSession.gate?.phase,"blocked");
+  assert.equal(blockedSession.gate?.causeId,runId);
+  assert.equal(blockedSession.gate?.causeState,"failed");
+  const knownSessionRuns=(await workflow.listRuntimeRuns(principal,projectId)).filter(run=>run.sessionId===sessionId);
+  assert.ok(knownSessionRuns.length>0&&knownSessionRuns.every(run=>["completed","failed","interrupted"].includes(run.state)),
+    "explicit recovery is allowed only after every Session Run has a known terminal state");
+  assert.equal((await workflow.getRuntimeRun(principal,projectId,runId)).state,"failed");
+  const resume=await official({type:"runtime.session.recovery.resume",sessionId,expectedVersion:blockedSession.gate!.version,
+    expectedCauseId:blockedSession.gate!.causeId!,resumeMessageId:blockedSession.gate!.resumeMessageId,
+    evidenceRef:"fixture://verified-terminal-run",reason:"Explicitly resume after reviewing the failed cognition Run"});
+  assert.equal(resume.status,"applied",JSON.stringify(resume));
+  assert.equal((await workflow.getSessionRecovery(principal,projectId,sessionId)).gate?.phase,"open");
   await official({type:"runtime.run.reserve",runId:recoveryRunId,taskId:recoveryTaskId,sessionId,expectedVersion:2,
     input:"Inspect the first terminal gap"});
   await managed({type:"dispatch.resolve",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,

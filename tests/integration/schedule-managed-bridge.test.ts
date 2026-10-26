@@ -134,14 +134,18 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
     return JSON.parse(result.stdout) as Record<string, any>;
   };
   const fixtureRuntime = { pump: async () => {
-    const pending = await pool.query(`SELECT session_id,role_id,cwd,authorization_scope FROM runtime_session
+    const pending = await pool.query(`SELECT session_id FROM runtime_session
       WHERE project_id=$1 AND state='reserved' ORDER BY session_id`, [projectId]);
     for (const row of pending.rows) {
-      await runtime.beginSessionCreate(projectId, row.session_id);
+      const reserved = await runtime.beginSessionCreate(projectId, row.session_id);
+      assert(reserved.executionProfile, "reserved Session must carry its fixed execution profile");
       await runtime.bindSession(projectId, row.session_id, { owner: "evoloop-codex-app-server", projectId,
-        sessionId: row.session_id, roleId: row.role_id, cwd: row.cwd,
-        authorizationScope: row.authorization_scope, nativeThreadId: `fixture-${row.session_id}`,
-        nativeSessionId: `fixture-${row.session_id}` });
+        sessionId: row.session_id, roleId: reserved.roleId, cwd: reserved.cwd,
+        authorizationScope: reserved.authorizationScope, nativeThreadId: `fixture-${row.session_id}`,
+        nativeSessionId: `fixture-${row.session_id}`,
+        resumeProfile: { actorId: reserved.actorId, model: reserved.executionProfile.revision.model,
+          sandbox: reserved.sandbox, approvalPolicy: reserved.approvalPolicy,
+          executionProfileRevisionId: reserved.executionProfile.revision.revisionId } });
     }
   } };
   const runner = new ManagedLoopRunner({ projects: [projectId], reader: () => principal(),

@@ -131,6 +131,16 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 
 第一版只管理该适配器自己创建、登记的 Thread。本页固定实验已观察到独立 App Server 可读桌面线程元数据、桌面可读新建线程历史及一次宿主通知的真实消费；UI 同步、自动控制、跨进程审批及多写行为仍**未验证**。`thread/list` 提供发现能力，但不授权扫描或接管用户全部历史。部署形态从本地 stdio 改为远程、需要修改账号认证或使用实验 API 时，先做版本固定、权限与协议验证，再扩大承诺。
 
+### 受控 Session 恢复与执行配置
+
+本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 只读对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。
+
+`queue.retryFailed` 只允许原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 原状态，不把 `interrupted` 改写成 `failed`，并禁止 `unknown` 或 `completed`。每次都由控制者显式复核影响、固定业务输入与原 claim，核对 Run version/inputHash、Task 固定修订和完整业务输入签名、Session 空闲、当前绑定及精确 grant，并消耗队列同一累计预算。新 Run 固定来源 Run/inputHash，但开新 Task 沟通通道并使用新的执行封套，所以新 Run 的实际输入 hash 会独立计算；业务输入完全不变不等于两个完整输入字节相同。明确 retry 决定只许可这一个新 Run，不自动清除门槛或启动下一项。A retry 确认完成后才可启动原来 pin 的 M 一次；M 完成后进入等待验收，必须核通过交付、真实消费者使用（如要求）、Task close 与原 claim accepted release，才重新开放 Session 并允许 B。retry 或 M 再失败／未知则重新阻断。没有自动无限重试，也不靠新队列重置历史额度。
+
+受控 `queue.extendBudget` 由原登记队列控制者在旧上限与当前队列版本上 CAS，明确提供新上限、理由和依据；只扩大额度并留下历史，不重置已用 attempts、不自动 unhold／adopt 或派发。新队列版本重新采纳后才具备后续执行资格。若条目预先允许的有界释放已正式记录，Session gate 仍不会自动开放；有权者须另作 `runtime.session.recovery.resume`，记录保留有界释放来源，且依赖该条目的后项仍要求 `accepted` release，有界释放不能满足依赖或改变原规则。`runtime.session.executionProfile.revise` 则是纯事务的配置修订：本次只可按精确授权修改 model，Session ID、Thread、cwd、scope、sandbox 与 approval 不变，也不直接调用原生宿主或解除 gate。runner 以原 Thread、显式完整配置执行单次 activation 并核配置回读；明确成功才把修订标为 active。activation 结果 unknown 时只读原 Thread 对账，不重放激活操作；即使只读回读确认 active，仍须另作显式 `runtime.session.recovery.resume`，不会自动启动后续工作。每个 Run 保存启动时的配置快照；这是 launch policy，不是 provider 对该 Turn 实际用模的遥测。真实原生恢复与模型接受仍由 Lead 在隔离验收中确认。
+
+状态机、命令和读取字段属于本次代码实现合同；原生模型运行、失败恢复、原 M 单次执行、accepted 后开放 B 仍以后续真实原生验收为准，不能从代码或隔离测试宣称上线或通过。
+
 ## 端口合同（拟议）
 
 | evoLoop 能力（跨运行时） | Codex 适配器内部方法与观察 | 项目侧必须保存／判断 |
@@ -143,13 +153,21 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 | `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
 | `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
 
-本机 `codex-cli 0.154.0` 的 v2 schema 显示：`TurnStartParams` 必需 `threadId` 和 `input`，`TurnSteerParams` 必需 `threadId`、`expectedTurnId`、`input`，`TurnInterruptParams` 必需 `threadId` 与 `turnId`。`thread/start` 的 `cwd`、`model`、`sandbox`、`approvalPolicy` 可选；选择时遵守项目授权与运行环境，而不是用固定高权限配置求方便。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是实现时的外部合同；每次 CLI 升级重生 schema 并检查实验字段门控。
+本机已固定支持 `codex-cli 0.154.0` 与显式候选 `codex-cli 0.164.0-alpha.11.1`；前者继续可用，配置字段 `runtime.protocolVersion` 缺省仍为 `0.154.0`，不会因安装了较新 CLI 而自动切换。适配器启动前逐一核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查、自动选新协议或更改全局 CLI。由配置保管人先检查所选二进制和 schema，再显式采用候选版本；例如以下只是运行配置片段，不代表安装路径或凭据：
 
-正常结束已有 owned Session 时，项目审阅者可署名请求 `runtime.session.close`，无需取得该职责的启动执行 grant；这不授予 Session/Run reserve 权限。实际归档仍由 runner 核验原 `Session.actorId` 的精确项目、职责、scope、cwd、sandbox grant 和原生绑定，原授权缺失时保持 `closing`，不归档或假报 `closed`。关闭请求只接受已绑定且空闲的 `ready` Session；同项目事务把它改为 `closing`，立即阻止新 Run。受管执行器先保存关闭操作 ID 和归档尝试时间，再对固定 0.154.0 `thread/archive` 发一次请求；空回包不是结束证据。只有受限分页的 `thread/list` 在 `archived:true`、原目录下核到相同 thread/session 身份才记为 `closed`。原生 `source` 是宿主分类，不是 owned 创建权威；本系统保存的 `thread/start` 回执与不可变绑定才是归属依据。丢回包、重启、查询不完整或身份不符时保留 `closing` 和原 ID，只读对账，不自动重发归档。原 Session、Run、事件及 Task/Knowledge 历史不删改；旧未知只读 Run 放弃仍是独立特例。适配器的 `close()` 仅关闭共享 App Server 子进程，不代表逐 Session 关闭。关闭后原生 trace 的历史读取尚未开放，须在关闭前固定需要的实际证据。隔离的单 Turn owned 样本已核到归档和同一身份回读；空 Thread 样本在重启后无法回读，保持 `closing`，不视为已关闭。
+```json
+{"runtime":{"enabled":true,"protocolVersion":"0.164.0-alpha.11.1"}}
+```
+
+0.164 候选提供 `currentTime/read`，适配器只对注册表中精确绑定的 owned Thread 响应当前 Unix 秒数；缺少绑定、Thread 不符或使用 0.154 时拒绝。它只是只读时间能力，不授予 Thread／Turn 控制，也不改变权限或启动策略。`model/list` 显示模型仅代表协议可列出该选项，不能证明特定模型会被 Turn 接受或是实际运行模型；新模型仍须由 Lead 核实，实际结果以后续受控 Turn 证据为准。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是外部合同；每次 CLI 升级仍须重新读取 schema 并核对所选功能对应的标准／实验指纹。
+
+正常结束已有 owned Session 时，项目审阅者可署名请求 `runtime.session.close`，无需取得该职责的启动执行 grant；这不授予 Session/Run reserve 权限。实际归档仍由 runner 核验原 `Session.actorId` 的精确项目、职责、scope、cwd、sandbox grant 和原生绑定，原授权缺失时保持 `closing`，不归档或假报 `closed`。关闭请求只接受已绑定且空闲的 `ready` Session；同项目事务把它改为 `closing`，立即阻止新 Run。受管执行器先保存关闭操作 ID 和归档尝试时间，再对显式选定、已通过对应版本与 schema 指纹核验的 `thread/archive` 发一次请求；空回包不是结束证据。只有受限分页的 `thread/list` 在 `archived:true`、原目录下核到相同 thread/session 身份才记为 `closed`。原生 `source` 是宿主分类，不是 owned 创建权威；本系统保存的 `thread/start` 回执与不可变绑定才是归属依据。丢回包、重启、查询不完整或身份不符时保留 `closing` 和原 ID，只读对账，不自动重发归档。原 Session、Run、事件及 Task/Knowledge 历史不删改；旧未知只读 Run 放弃仍是独立特例。适配器的 `close()` 仅关闭共享 App Server 子进程，不代表逐 Session 关闭。关闭后原生 trace 的历史读取尚未开放，须在关闭前固定需要的实际证据。隔离的单 Turn owned 样本已核到归档和同一身份回读；空 Thread 样本在重启后无法回读，保持 `closing`，不视为已关闭。
 
 ## 普通消息与业务执行共用原会话
 
 普通消息使用独立持久处理记录，不复用带 Task／basis 外键的业务 Run，也不制造假任务。它与 Task Run 共用原生会话占用：数据库拒绝两类在途／unknown 执行并存；队列的长期 Task claim 与最后业务 attempt 保留。原任务的有效答复先接续，最早普通消息与可执行业务轮次按持久公平标记交替；业务真正绑定 running Turn 后才清除让行标记，不能在 requested 时提前放行另一条消息。
+
+普通消息还受 Session recovery gate 约束：gate blocked 时不因普通消息到了就自动启动。已知失败 claim 的 retry 必须先按原 Run 显式决定；只有对应 retry 成功后，启动权才临时落到故障时 pin 的原 queued 消息。该消息处理完成后不自动放行后续业务 Run，而是等待原 Task 的验收和 accepted release。消息失败／结果 unknown 也会阻断同 Session 后续启动；unknown 先只读对账，不能通过发一条新消息或 `resume` 代替原结果核验。
 
 发送只证明消息已保存。明确未派发前可由发送者撤回；processing／unknown 不能靠 cancel 假报已停。原生请求超时沿原消息、操作和 Thread 历史标记回查，不盲目重启；正常结束但没有完整答复时记录 completed_without_reply。外部 Desktop HostLink 只有人工转交，不能据此伪造自动送达或唤醒。
 

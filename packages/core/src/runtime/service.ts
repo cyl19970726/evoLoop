@@ -1,5 +1,6 @@
 import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import type { EvaluationPacketBinding, RuntimeBinding, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { EvaluationPacketBinding, RuntimeBinding, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { event } from "./reserve.js";
@@ -30,7 +31,79 @@ export class RuntimeWorkflowService {
         binding.nativeThreadId !== saved.nativeThreadId || binding.nativeSessionId !== saved.nativeSessionId) {
         throw new DomainError("FOREIGN_BINDING", "native binding does not match an owned active session");
       }
+      if(saved.executionProfile && (binding.resumeProfile?.actorId!==saved.actorId||
+        binding.resumeProfile.model!==saved.model||binding.resumeProfile.sandbox!==saved.sandbox||
+        binding.resumeProfile.approvalPolicy!==saved.approvalPolicy))
+        throw new DomainError("FOREIGN_BINDING","registered native profile differs from the owned Session");
+      if (saved.executionProfile && (saved.executionProfile.activationState !== "active" ||
+        saved.executionProfile.activeRevisionId !== saved.executionProfile.revision.revisionId ||
+        binding.resumeProfile?.executionProfileRevisionId !== saved.executionProfile.revision.revisionId ||
+        binding.resumeProfile.model !== saved.executionProfile.revision.model))
+        throw new DomainError("EXECUTION_PROFILE_NOT_ACTIVE", "binding is not the confirmed Session execution profile");
       return saved;
+    });
+  }
+
+  async getExecutionProfileRevision(projectId:string,sessionId:string,revisionId:string):Promise<ExecutionProfileRevision>{
+    return this.deps.uow.read(projectId,async reader =>
+      required(await reader.recovery?.getExecutionProfileRevision(sessionId,revisionId)??null,"execution profile revision"));
+  }
+
+  /** Adapter preflight; the native caller cannot invent or substitute a pending revision. */
+  async verifyExecutionProfileActivation(projectId:string,current:RuntimeBinding,target:RuntimeSessionSpec,
+    revisionId:string,operationId:string):Promise<boolean>{
+    return this.deps.uow.read(projectId,async reader=>{
+      const saved=await reader.getRuntimeSession(current.sessionId);
+      const adopted=saved?.executionProfile;
+      if(!saved||saved.projectId!==projectId||saved.state!=="ready"||
+        saved.nativeThreadId!==current.nativeThreadId||saved.nativeSessionId!==current.nativeSessionId||
+        saved.cwd!==current.cwd||saved.roleId!==current.roleId||saved.authorizationScope!==current.authorizationScope||
+        saved.actorId!==current.resumeProfile?.actorId||
+        !adopted||!["attempting","unknown"].includes(adopted.activationState)||
+        adopted.revision.revisionId!==revisionId||adopted.revision.operationId!==operationId||
+        adopted.activeRevisionId!==current.resumeProfile.executionProfileRevisionId||
+        adopted.revision.model!==target.model||saved.model!==adopted.revision.model||
+        target.executionProfileRevisionId!==revisionId||
+        target.actorId!==saved.actorId||target.projectId!==projectId||target.sessionId!==saved.id||
+        target.roleId!==saved.roleId||target.cwd!==saved.cwd||
+        target.authorizationScope!==saved.authorizationScope||target.sandbox!==saved.sandbox||
+        target.approvalPolicy!==saved.approvalPolicy)return false;
+      const previous=adopted.activeRevisionId?
+        await reader.recovery?.getExecutionProfileRevision(saved.id,adopted.activeRevisionId):null;
+      return !!previous&&previous.model===current.resumeProfile.model&&
+        previous.sandbox===current.resumeProfile.sandbox&&
+        previous.approvalPolicy===current.resumeProfile.approvalPolicy&&
+        previous.cwd===current.cwd&&previous.authorizationScope===current.authorizationScope;
+    });
+  }
+
+  async beginExecutionProfileActivation(projectId:string,sessionId:string,revisionId:string,
+    operationId:string):Promise<boolean>{
+    return this.deps.uow.transaction(projectId,async tx=>{
+      const profile=required(await tx.recovery?.getExecutionProfileRevision(sessionId,revisionId)??null,"execution profile revision");
+      if(profile.operationId!==operationId)throw new DomainError("EXECUTION_PROFILE_OPERATION_MISMATCH","profile activation must use its original operation");
+      const claimed=await tx.recovery!.beginExecutionProfileActivation(sessionId,revisionId,operationId);
+      if(claimed)await this.emit(tx,null,sessionId,"session.executionProfile.activationStarted",
+        `Execution profile revision ${revisionId} native resume attempt began`,null,projectId);
+      return claimed;
+    });
+  }
+
+  /** Read-only admission hint. The transactional startup guard remains authoritative. */
+  async canStartRecoveredRun(projectId:string,sessionId:string,runId:string):Promise<boolean>{
+    return this.deps.uow.read(projectId,async reader=>{
+      if(!reader.recovery)throw new DomainError("CAPABILITY_UNAVAILABLE","Session recovery gate unavailable");
+      const gate=required(await reader.recovery.getRecoveryGate(sessionId),"Session recovery gate");
+      return gate.phase==='open'||gate.phase==='retrying'&&gate.retryRunId===runId;
+    });
+  }
+
+  async settleExecutionProfileActivation(projectId:string,sessionId:string,revisionId:string,
+    state:"active"|"unknown"|"rejected",evidence:string):Promise<void>{
+    return this.deps.uow.transaction(projectId,async tx=>{
+      if(!tx.recovery)throw new DomainError("CAPABILITY_UNAVAILABLE","execution profile persistence unavailable");
+      await tx.recovery.settleExecutionProfileActivation(sessionId,revisionId,state,safeDetail(evidence));
+      await this.emit(tx,null,sessionId,`session.executionProfile.${state}`,safeDetail(evidence),null,projectId);
     });
   }
 
@@ -87,7 +160,11 @@ export class RuntimeWorkflowService {
       if (!["creating", "unknown"].includes(current.state)) throw new DomainError("SESSION_NOT_CREATING", "session cannot bind from current state");
       if (binding.owner !== "evoloop-codex-app-server" || binding.projectId !== projectId || binding.sessionId !== sessionId ||
         binding.roleId !== current.roleId || binding.cwd !== current.cwd || binding.authorizationScope !== current.authorizationScope ||
-        !binding.nativeThreadId || !binding.nativeSessionId) {
+        !binding.nativeThreadId || !binding.nativeSessionId ||
+        current.executionProfile && (binding.resumeProfile?.executionProfileRevisionId !== current.executionProfile.revision.revisionId ||
+          binding.resumeProfile.model !== current.executionProfile.revision.model ||
+          binding.resumeProfile.actorId!==current.actorId||binding.resumeProfile.sandbox!==current.sandbox||
+          binding.resumeProfile.approvalPolicy!==current.approvalPolicy)) {
         throw new DomainError("FOREIGN_BINDING", "native binding does not match reserved project session");
       }
       const next = { ...current, state: "ready" as const, version: current.version + 1,
@@ -118,6 +195,12 @@ export class RuntimeWorkflowService {
         throw new DomainError("EVALUATION_PACKET_MISSING", "a verified fixed-input packet is required before evaluation dispatch");
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
       if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "owned session is not ready");
+      if(session.executionProfile||current.executionProfile){
+        if(!session.executionProfile||!current.executionProfile||session.executionProfile.activationState!=="active"||
+          current.executionProfile.revisionId!==session.executionProfile.revision.revisionId)
+          throw new DomainError("EXECUTION_PROFILE_NOT_ACTIVE","Run's fixed execution profile is not active");
+      }
+      await tx.recovery?.assertStartupAllowed(session.id,"run",current.id);
       const task = required(await tx.getTask(current.taskId), "task");
       if (task.state !== "in_progress" || task.currentRevisionId !== current.taskRevisionId) {
         throw new DomainError("TASK_CHANGED", "task changed after run reservation");

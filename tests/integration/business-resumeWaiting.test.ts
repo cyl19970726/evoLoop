@@ -10,6 +10,18 @@ import { authorizeWorkerRequest } from "../../apps/coordinator/src/workers/guard
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.js";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))
   throw new Error("dedicated evoloop_*_test database required");
@@ -30,6 +42,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}});
   const runtime=new RuntimeWorkflowService({uow,clock,ids});
+  withPersistedResumeProfile(runtime,uow);
   let businessGrant=true;
   const store=new PgOrchestrationStore(pool,{
     getAuthorizationFact:async(p,scope)=>p===projectId&&["cognitive-scope","business-scope"].includes(scope)?{

@@ -387,9 +387,12 @@ async function officialRun(fixture:Awaited<ReturnType<typeof officialCase>>, con
     cwd:condition.environment.cwd,authorizationScope:condition.environment.authorizationScope,
     model:condition.model,sandbox:condition.environment.sandbox,approvalPolicy:condition.environment.approvalPolicy});
   await runtime.beginSessionCreate(projectId,sessionId);
+  const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:actor,
     cwd:condition.environment.cwd,authorizationScope:condition.environment.authorizationScope,
-    nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+    nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`,
+    resumeProfile:{actorId:reservedSession.actorId,model:reservedSession.model,sandbox:reservedSession.sandbox,
+      approvalPolicy:reservedSession.approvalPolicy,executionProfileRevisionId:reservedSession.executionProfile!.revision.revisionId}});
   const taskBefore=(await uow.read(projectId,reader=>reader.getTask(taskId)))!;
   await apply({type:"runtime.run.reserve",projectId,operationId:randomUUID(),runId,taskId,sessionId,
     expectedVersion:taskBefore.version,input:definition.case.commonInput,

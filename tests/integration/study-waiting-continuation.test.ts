@@ -21,6 +21,18 @@ import {managedWorkerEvidence} from "../../apps/coordinator/src/orchestration/se
 import {readDocumentOriginal} from "../../apps/coordinator/src/documents/read-original.js";
 import {readTaskContext} from "../../apps/cli/src/materials.js";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))
   throw new Error("isolated evoloop test database required");
@@ -43,6 +55,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   const controller=principal(controllerId),reviewer=principal(reviewerId);
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  withPersistedResumeProfile(runtime,uow);
   let template:DelegationTemplate|null=null,templateHash="";
   let grant=true,reviewerCurrent=true,businessGrant=true;
   let workerMaterial: (actorId:string,documentId:string,revisionId:string)=>Promise<boolean> = async()=>false;

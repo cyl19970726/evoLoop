@@ -15,6 +15,18 @@ import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 import { RuntimeRunner } from "../../apps/coordinator/src/runtime/runner.js";
 
+
+function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
+  const bind = runtime.bindSession.bind(runtime);
+  runtime.bindSession = async (projectId, sessionId, binding) => {
+    const saved = await uow.read(projectId, reader => reader.getRuntimeSession(sessionId));
+    const profile = saved?.executionProfile;
+    if (!saved || !profile) throw new Error("fixture Session execution profile unavailable");
+    return bind(projectId, sessionId, { ...binding, resumeProfile: { actorId: saved.actorId, model: saved.model,
+      sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: profile.revision.revisionId } });
+  };
+  return runtime;
+}
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated PostgreSQL test database required");
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
@@ -34,6 +46,7 @@ test("PG method records a choice, then permits only its original todo Task throu
   const owner="owner",cognition="cognition",business="business",other="other-business";
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  withPersistedResumeProfile(runtime,uow);
   const broker=new WorkerCredentialBroker({workerRoot,apiUrl:"http://127.0.0.1:1",cliMain:"/unused/cli.js",
     nodeExecutable:process.execPath,ttlMs:60_000});
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,scope)=>p===projectId&&scope==="cognition-scope"?
@@ -268,6 +281,7 @@ test("PG final cognition decision prevents a late method child before budget or 
   const parentTaskId=randomUUID(),firstTaskId=randomUUID(),owner="owner",cognition="cognition",business="business";
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
+  withPersistedResumeProfile(runtime,uow);
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId&&
     (scope==="cognition-scope"||scope==="business-scope")?
       {projectId,scopeId:scope,actorId:owner,roleId:scope==="cognition-scope"?cognition:business,active:true}:null,

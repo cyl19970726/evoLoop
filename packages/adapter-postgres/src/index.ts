@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { runner } from "node-pg-migrate";
 import pg, { type PoolClient, type QueryResultRow } from "pg";
 import { PgRuntimeStore } from "./runtime.js";
+import { PgSessionRecovery } from "./session-recovery.js";
 import { PgSessionMessages } from "./session-messages.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgSessionObservation } from "./session-observation.js";
@@ -99,6 +100,7 @@ class PgReader implements Reader {
   allocationRelations(scope: string) { return new PgAllocationRelations(this.client, this.projectId, scope); }
   readonly queue: PgResidentQueue;
   readonly sessionMessages: PgSessionMessages;
+  readonly recovery: PgSessionRecovery;
   readonly sessionAssignments: PgSessionAssignments;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
@@ -112,6 +114,7 @@ class PgReader implements Reader {
     queueAuthority: QueueAuthority = {}) {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
+    this.recovery = new PgSessionRecovery(client, projectId);
     this.sessionMessages = new PgSessionMessages(client, projectId);
     this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);

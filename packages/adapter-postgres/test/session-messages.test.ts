@@ -21,6 +21,19 @@ const qualified='a'.repeat(64);
 function item(id=randomUUID()):SessionMessageRecord{return{projectId,id,operationId:randomUUID(),target:{kind:'owned',sessionId},
   senderActorId:'sender',content:'What changed?',context:null,replyToMessageId:null,state:'queued',version:1,
   blockedReason:null,readReceipt:null,createdAt:now,updatedAt:now};}
+async function reviewBlockedMessage(messageId:string):Promise<void>{
+  await uow.transaction(projectId,async tx=>{
+    const gate=await tx.recovery!.lockRecoveryGate(sessionId);
+    assert.equal(gate.phase,'blocked');assert.equal(gate.causeKind,'message');assert.equal(gate.causeId,messageId);
+    const operationId=randomUUID(),at=new Date().toISOString();
+    await tx.recovery!.saveRecoveryDecision({projectId,id:operationId,sessionId,kind:'resume',
+      expectedGateVersion:gate.version,causeId:messageId,sourceRunId:null,sourceInputHash:null,retryRunId:null,
+      resumeMessageId:gate.resumeMessageId,actorId:'lead',reason:'Explicitly reviewed known original message outcome',
+      evidenceRef:'review://original-message',createdAt:at},
+      {...gate,version:gate.version+1,phase:gate.resumeMessageId?'message_pending':'open',
+        reason:'Explicitly reviewed known original message outcome',decisionOperationId:operationId,updatedAt:at},gate.version);
+  });
+}
 before(async()=>{
   await migrate(url!,schema);
   await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,$3)',[projectId,'Message test',now]);
@@ -73,6 +86,9 @@ test('message persists separately, unknown retains exact operation, receipt requ
   assert.deepEqual(readChanges,[{actor_id:'receiver',source_table:'session_message_read_receipt'}],
     'explicit read must invalidate the precise Session and retain the receiving actor');
   assert.equal((await service.get(projectId,message.id)).version,settledVersion,'the terminal message remains immutable');
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.phase,'blocked',
+    'known original outcome does not silently clear an unknown recovery gate');
+  await reviewBlockedMessage(message.id);
 });
 
 test('preflight is side-effect-free for missing or exhausted grants and dispatch rechecks revocation',async()=>{
@@ -100,6 +116,10 @@ test('preflight is side-effect-free for missing or exhausted grants and dispatch
   await assert.rejects(()=>guarded.preflightDispatch(projectId,second.id),/grant is exhausted/);
   assert.equal((await guarded.detail(projectId,second.id)).message.state,'queued');
   assert.equal((await guarded.detail(projectId,second.id)).processing,null);
+  await uow.transaction(projectId,tx=>applySessionMessage(tx,
+    {actorId:sender,projectIds:[projectId],permissions:['write']},
+    {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:second.id,
+      expectedVersion:1,reason:'End isolated grant test'},now));
 });
 
 test('pending scanning can pass the old ten-thousand offset while each page stays bounded',async()=>{
@@ -123,14 +143,21 @@ test('two message processors cannot occupy one Session and direct Task Run INSER
   await service.bindTurn(projectId,first.id,{id:'native-turn-2',status:'inProgress'});
   await service.settle(projectId,first.id,{id:'native-turn-2',status:'failed',completedAtUtc:now},null);
   assert.equal((await service.get(projectId,first.id)).state,'failed');
-  await uow.transaction(projectId,async tx=>{const pending=(await tx.sessionMessages!.getSessionMessage(second.id))!;
-    await tx.sessionMessages!.updateSessionMessage({...pending,state:'cancelled',version:pending.version+1,updatedAt:new Date().toISOString()},pending.version);});
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.resumeMessageId,second.id);
+  await assert.rejects(()=>service.beginDispatch(projectId,second.id,randomUUID(),randomUUID(),qualified),/recovery gate/i);
+  await reviewBlockedMessage(first.id);
+  await service.beginDispatch(projectId,second.id,randomUUID(),randomUUID(),qualified);
+  await service.bindTurn(projectId,second.id,{id:'native-turn-2b',status:'inProgress'});
+  await service.settle(projectId,second.id,{id:'native-turn-2b',status:'completed',completedAtUtc:now},null);
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.phase,'open');
 });
 
 test('unknown native start only reads original history marker and never resends',async()=>{
   const message=item();await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
-  const operationId=randomUUID();await service.beginDispatch(projectId,message.id,randomUUID(),operationId,qualified);
-  await service.markUnknown(projectId,message.id,'lost native acknowledgement');
+  const roomy=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,maxTurns:10})});
+  const operationId=randomUUID();await roomy.beginDispatch(projectId,message.id,randomUUID(),operationId,qualified);
+  await roomy.markUnknown(projectId,message.id,'lost native acknowledgement');
   let starts=0,readOnlyGates=0,found=false;
   const runtime={isReady:()=>true,registerBinding:async()=>{},markReadOnlyThread:()=>{readOnlyGates++;},
     startReadOnlyTurn:async()=>{starts++;throw new Error('must not resend');},
@@ -138,12 +165,14 @@ test('unknown native start only reads original history marker and never resends'
     listItems:async()=>({data:[{id:'input',type:'userMessage',text:`[evoloop-message-operation:${operationId}] original`},
       {id:'answer',type:'agentMessage',phase:'final_answer',text:'A visible reply'}],nextCursor:null})};
   const errors:unknown[]=[];
-  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+  const pump=new SessionMessagePump({service:roomy,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>errors.push(e)});
   await pump.tick();assert.equal(starts,0);assert.equal((await service.get(projectId,message.id)).state,'unknown');
   found=true;await pump.tick();assert.equal(starts,0);assert.equal((await service.get(projectId,message.id)).state,'replied');
   assert.equal((await service.processing(projectId,message.id))?.response,'A visible reply');
   assert.equal(readOnlyGates,2);assert.deepEqual(errors,[]);
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.phase,'blocked');
+  await reviewBlockedMessage(message.id);
 });
 
 test('direct ordinary processing INSERT cannot cross an active Task Run',async()=>{
@@ -252,6 +281,8 @@ test('explicit pre-turn rejection releases occupancy and does not claim a native
     stage:'read' as const,evidence:'I saw it'};
   await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
     {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/real native Turn/);
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.resumeMessageId,second.id);
+  await reviewBlockedMessage(first.id);
   await roomy.beginDispatch(projectId,second.id,randomUUID(),randomUUID(),qualified);
   await roomy.failBeforeStart(projectId,second.id,'Native rejected before turn/start');
 });

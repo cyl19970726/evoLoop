@@ -22,6 +22,12 @@ const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
 const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
 const projectId=randomUUID();const queueId=randomUUID();
+async function withExecutionProfile(projectId:string,sessionId:string,binding:Parameters<RuntimeWorkflowService['bindSession']>[2]){
+  const saved=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
+  return {...binding,resumeProfile:{actorId:saved.actorId,model:saved.model,sandbox:saved.sandbox,
+    approvalPolicy:saved.approvalPolicy,executionProfileRevisionId:saved.executionProfile!.revision.revisionId}};
+}
+
 async function withWriteFault(table:'resident_queue_claim'|'resident_queue_entry'|'runtime_run'|'process_document'|'outbox_event'|'delivery',
   event:'INSERT'|'UPDATE',action:()=>Promise<void>):Promise<void>{
   const name=`queue_fault_${randomUUID().replaceAll('-','')}`;
@@ -101,10 +107,10 @@ test('one intent survives duplicate dispatch and holds the Session after termina
     assert.equal(next?.sequence,2);
     await a.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,interrupt_requested,actor_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,'fixed',repeat('b',64),'unknown',1,false,'lead',now(),now())`,[p,secondIds.runId,task,rev,basis,session,secondIds.operationId]);
-    assert.equal(await sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3),null);
+    await assert.rejects(sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3),/explicitly permitted failed Run successor/);
     await a.query("UPDATE runtime_run SET state='completed',native_turn_id=$3,version=2,updated_at=now() WHERE project_id=$1 AND run_id=$2",[p,secondIds.runId,'turn-'+secondIds.runId]);
-    assert.equal((await sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3))?.sequence,3);
-    assert.equal(await sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3),null);
+    await assert.rejects(sa.appendResidentQueueAttempt(ids.claimId,{runId:randomUUID(),operationId:randomUUID(),taskRevisionId:rev},3),/explicitly permitted failed Run successor/);
+    assert.equal((await sa.listResidentQueueAttempts(ids.claimId)).length,2,'unknown readback preserves the blocked gate until a formal recovery decision');
     assert.equal(await sa.releaseResidentQueueAccepted(ids.claimId),false);await assert.rejects(sa.assertQueueVacant(task,session),/QUEUE_OCCUPIED/);await a.query('COMMIT');
   }catch(e){await a.query('ROLLBACK');await b.query('ROLLBACK');throw e;}finally{a.release();b.release();}
 });
@@ -125,7 +131,7 @@ test('official Task and Run lifecycle releases A only after current consumer acc
   }
   await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId:session,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
   await runtime.beginSessionCreate(p,session);
-  await runtime.bindSession(p,session,{owner:'evoloop-codex-app-server',projectId:p,sessionId:session,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:'thread-'+session,nativeSessionId:'native-'+session});
+  await runtime.bindSession(p,session,await withExecutionProfile(p,session,{owner:'evoloop-codex-app-server',projectId:p,sessionId:session,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:'thread-'+session,nativeSessionId:'native-'+session}));
   const bind=await pool.connect();try{await bind.query('BEGIN');await bind.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc) VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,session,roleRev]);await bind.query('COMMIT');}catch(e){await bind.query('ROLLBACK');throw e;}finally{bind.release();}
   const signatures=new Map<string,string>();for(const taskId of [taskA,taskB])signatures.set(taskId,await uow.read(p,async reader=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(taskId))!))));
   const input=async(_c:pg.PoolClient,_p:string,taskId:string)=>uow.read(p,async reader=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(taskId))!)));
@@ -198,7 +204,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId:taskBId,expectedVersion:1,reason:'Fix source'});
   await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
   await native.beginSessionCreate(p,sessionId);
-  await native.bindSession(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+  await native.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));
   await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
     VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRev]);
   const before=(await central.getTask(lead,p,taskId)).task;
@@ -455,8 +461,8 @@ test('first queue claim and old Loop reserve serialize on an idle shared Session
     await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,
       cwd:'/tmp/queue-race',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
     await trusted.beginSessionCreate(p,sessionId);
-    await trusted.bindSession(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
-      cwd:'/tmp/queue-race',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+    await trusted.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
+      cwd:'/tmp/queue-race',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));
     await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
       VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRevision]);
     const queued=(await service.getTask(lead,p,queuedTask)).task;
@@ -573,8 +579,8 @@ test('failed consumer use can continue the same claim from amended input without
   await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,
     cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
   await native.beginSessionCreate(p,sessionId);
-  await native.bindSession(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
-    cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`});
+  await native.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
+    cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));
   await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
     VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRev]);
   const initial=(await central.getTask(lead,p,taskId)).task;

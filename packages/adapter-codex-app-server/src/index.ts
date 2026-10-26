@@ -6,11 +6,21 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
+import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import { mapWorkItem } from "./work-trace.js";
 
 const OWNER = "evoloop-codex-app-server" as const;
-const SCHEMA_SHA256 = "f3487938786b729cb6773dbc9e83a7efab9c78c845db7094e8f539f373cbacc9";
-const EXPERIMENTAL_SCHEMA_SHA256 = "7b9e7d385fffef8d428cc5490b56ce9c393bd3ed7bc7ccd730956387e723ec05";
+const PINNED_PROTOCOLS = {
+  "codex-cli 0.154.0": {
+    standard: "f3487938786b729cb6773dbc9e83a7efab9c78c845db7094e8f539f373cbacc9",
+    experimental: "7b9e7d385fffef8d428cc5490b56ce9c393bd3ed7bc7ccd730956387e723ec05",
+  },
+  "codex-cli 0.164.0-alpha.11.1": {
+    standard: "8fe0d6335768743b8388dfdbe95fef85303524093e2dffc301704555e73e718f",
+    experimental: "3b9df7cbe5659538e7162e1f8fdadcad42badc08bfeac2fe617ede44ca057b12",
+  },
+} as const;
+type PinnedProtocolVersion = keyof typeof PINNED_PROTOCOLS;
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
 // The App Server and its probes must not inherit coordinator credentials or Node execution flags.
@@ -38,7 +48,7 @@ const policyJson=(value:unknown):string=>JSON.stringify(value,(_key,current)=>ob
   Object.fromEntries(Object.entries(current).sort(([a],[b])=>a.localeCompare(b))):current);
 const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
-  (["actorId","model","sandbox","approvalPolicy"] as const).every(key =>
+  (["actorId","model","sandbox","approvalPolicy","executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const safeProviderCode = (value: unknown): string | null => typeof value === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : null;
@@ -116,6 +126,9 @@ export interface CodexAppServerOptions {
   decideApproval?: (request: RuntimeApprovalRequest, binding: RuntimeBinding) => Promise<"accept" | "decline">;
   /** Required to restore a persisted binding after restart. Must consult the trusted project store. */
   verifyBinding?: (binding: RuntimeBinding) => Promise<boolean>;
+  /** Trusted, persisted activation permit for exactly one adopted Session execution profile revision. */
+  authorizeExecutionProfileActivation?: (current: RuntimeBinding, target: RuntimeSessionSpec,
+    revisionId: string, operationId: string) => Promise<boolean>;
   /** Synthetic parent environment for process-boundary tests; all values still pass through the allowlist. */
   environment?: NodeJS.ProcessEnv;
   /** Trusted local profile configuration, never accepted from a worker's request. */
@@ -146,6 +159,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private declaredTools = new Map<string, Set<string>>();
   /** A read-only conversation disables dynamic tools and approvals until the exact business profile is restored. */
   private readOnlyThreads = new Set<string>();
+  private profileTransitionThreads = new Set<string>();
   private businessTurnPolicies = new Map<string,{sandboxPolicy:{type:'readOnly';networkAccess:false}|{type:'workspaceWrite';writableRoots:string[];networkAccess:boolean};approvalPolicy:'on-request'|'untrusted'}>();
   private readOnlyQualifications = new Map<string,{fingerprint:string;observedAt:number}>();
   private businessRestoreAcknowledged = new Set<string>();
@@ -157,12 +171,16 @@ export class CodexAppServerAdapter implements RuntimePort {
   private readonly timeout: number;
   private readonly dynamicToolTimeout: number;
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly expectedVersion: PinnedProtocolVersion;
 
   constructor(private readonly options: CodexAppServerOptions = {}) {
     this.executable = options.executable ?? "codex";
     this.timeout = options.requestTimeoutMs ?? 15_000;
     this.dynamicToolTimeout = options.dynamicToolTimeoutMs ?? 30_000;
     this.environment = childEnvironment(options.environment ?? process.env);
+    const expectedVersion = options.expectedVersion ?? "codex-cli 0.154.0";
+    if (!(expectedVersion in PINNED_PROTOCOLS)) throw new RuntimeProtocolError("unsupported Codex CLI protocol version");
+    this.expectedVersion = expectedVersion as PinnedProtocolVersion;
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
   }
@@ -174,10 +192,9 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (this.closed) throw new RuntimeProtocolError("adapter closed");
     if (this.ready) return;
     if (this.child) throw new RuntimeProtocolError("adapter opening");
-    const expected = this.options.expectedVersion ?? "codex-cli 0.154.0";
     if (!this.options.spawnArgs) {
       const version = await this.probeVersion();
-      if (version !== expected) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${expected}, got ${version}`);
+      if (version !== this.expectedVersion) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${this.expectedVersion}, got ${version}`);
       await this.probeSchema();
     }
     const child = spawn(this.executable, this.options.spawnArgs ?? ["app-server", "--stdio"], {
@@ -223,7 +240,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
       });
       const schema = await readFile(resolve(directory, "codex_app_server_protocol.v2.schemas.json"));
-      const expected = experimental ? EXPERIMENTAL_SCHEMA_SHA256 : SCHEMA_SHA256;
+      const expected = PINNED_PROTOCOLS[this.expectedVersion][experimental ? "experimental" : "standard"];
       if (createHash("sha256").update(schema).digest("hex") !== expected) throw new RuntimeProtocolError("Codex App Server schema changed; review capabilities before use");
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
@@ -290,6 +307,15 @@ export class CodexAppServerAdapter implements RuntimePort {
       ...(binding ? { projectId: binding.projectId, sessionId: binding.sessionId } :
         creating ? { projectId: creating.projectId, sessionId: creating.sessionId } : {}),
       ...(nonempty(threadId) ? { threadId } : {}), ...(nonempty(params?.turnId) ? { turnId: params.turnId } : {}) };
+    if (message.method === "currentTime/read") {
+      if (this.expectedVersion !== "codex-cli 0.164.0-alpha.11.1") {
+        this.send({ id, error: { code: -32601, message: "Unsupported server request" } }); return;
+      }
+      if (!binding || params?.threadId !== binding.nativeThreadId) {
+        this.send({ id, error: { code: -32000, message: "Unregistered thread" } }); return;
+      }
+      this.send({ id, result: { currentTimeAt: Math.floor(Date.now() / 1000) } }); return;
+    }
     if (creating && this.approvals.size === 0) { this.disconnect("approval evidence observer unavailable"); return; }
     if (message.method === "item/tool/call") {
       const call = params;
@@ -419,7 +445,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");
       const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER,
-        ...(spec.actorId ? {resumeProfile:{actorId:spec.actorId,model:spec.model??null,sandbox:spec.sandbox,approvalPolicy:spec.approvalPolicy}} : {}) };
+        ...(spec.actorId ? {resumeProfile:{actorId:spec.actorId,model:spec.model??null,sandbox:spec.sandbox,
+          approvalPolicy:spec.approvalPolicy,...(spec.executionProfileRevisionId?
+            {executionProfileRevisionId:spec.executionProfileRevisionId}:{})}} : {}) };
       this.rememberBinding(binding);
       this.businessTurnPolicies.set(binding.nativeThreadId,{sandboxPolicy:spec.sandbox==='read-only'?{type:'readOnly',networkAccess:false}:
         {type:'workspaceWrite',writableRoots:[],networkAccess:config?.['sandbox_workspace_write.network_access']===true},approvalPolicy:spec.approvalPolicy});
@@ -438,7 +466,8 @@ export class CodexAppServerAdapter implements RuntimePort {
       (spec.approvalPolicy !== "on-request" && spec.approvalPolicy !== "untrusted") ||
       !binding.resumeProfile || binding.resumeProfile.actorId !== spec.actorId ||
       binding.resumeProfile.model !== (spec.model??null) || binding.resumeProfile.sandbox !== spec.sandbox ||
-      binding.resumeProfile.approvalPolicy !== spec.approvalPolicy)
+      binding.resumeProfile.approvalPolicy !== spec.approvalPolicy ||
+      (binding.resumeProfile.executionProfileRevisionId??null)!==(spec.executionProfileRevisionId??null))
       throw new RuntimeProtocolError("resume profile does not match registered binding");
     const config = await this.options.threadConfig?.(spec);
     if (spec.sandbox === "workspace-write" &&
@@ -449,11 +478,104 @@ export class CodexAppServerAdapter implements RuntimePort {
       sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
     const thread = object(result?.thread);
     if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("resumed thread does not match registered binding");
+    if(binding.resumeProfile.executionProfileRevisionId&&spec.model)
+      this.assertRevisedProfileReply(result,binding,spec,
+        spec.sandbox==='workspace-write'&&config?.['sandbox_workspace_write.network_access']===true);
     this.businessTurnPolicies.set(binding.nativeThreadId,{sandboxPolicy:spec.sandbox==='read-only'?{type:'readOnly',networkAccess:false}:
       {type:'workspaceWrite',writableRoots:[],networkAccess:config?.['sandbox_workspace_write.network_access']===true},approvalPolicy:spec.approvalPolicy});
     if(this.readOnlyThreads.has(binding.nativeThreadId))
       this.businessRestoreAcknowledged.add(binding.nativeThreadId);
     return binding;
+  }
+
+  private revisedBinding(current: RuntimeBinding, target: RuntimeSessionSpec,
+    revisionId: string, operationId: string): RuntimeBinding {
+    this.validateBinding(current);
+    const old=current.resumeProfile;
+    if(!old||!nonempty(old.executionProfileRevisionId)||!nonempty(revisionId)||!nonempty(operationId)||
+      old.executionProfileRevisionId===revisionId||target.executionProfileRevisionId!==revisionId||
+      !nonempty(target.actorId)||!nonempty(target.model)||target.model===old.model||
+      target.actorId!==old.actorId||target.sessionId!==current.sessionId||target.roleId!==current.roleId||
+      target.projectId!==current.projectId||target.cwd!==current.cwd||
+      target.authorizationScope!==current.authorizationScope||target.sandbox!==old.sandbox||
+      target.approvalPolicy!==old.approvalPolicy)
+      throw new RuntimeProtocolError('execution profile revision changed owned identity or lacks a durable target');
+    return {...current,resumeProfile:{...old,model:target.model,executionProfileRevisionId:revisionId}};
+  }
+
+  private async authorizeRevision(current:RuntimeBinding,target:RuntimeSessionSpec,
+    revisionId:string,operationId:string):Promise<RuntimeBinding>{
+    const revised=this.revisedBinding(current,target,revisionId,operationId);
+    if(!this.options.authorizeExecutionProfileActivation||
+      !await this.options.authorizeExecutionProfileActivation(current,target,revisionId,operationId))
+      throw new RuntimeProtocolError('persisted execution profile activation permit is unavailable');
+    const registered=this.bindings.get(current.nativeThreadId);
+    if(registered&&!sameBinding(registered,current)&&!sameBinding(registered,revised))
+      throw new RuntimeProtocolError('registered Thread has a different execution profile');
+    if(!registered)this.rememberBinding(current);
+    this.profileTransitionThreads.add(current.nativeThreadId);
+    return revised;
+  }
+
+  private assertRevisedProfileReply(reply:Record<string,unknown>|null,
+    current:RuntimeBinding,target:RuntimeSessionSpec,networkAccess:boolean):void{
+    const thread=object(reply?.thread),sandbox=object(reply?.sandbox);
+    const expectedSandbox=target.sandbox==='read-only'?'readOnly':'workspaceWrite';
+    if(!thread||thread.id!==current.nativeThreadId||thread.sessionId!==current.nativeSessionId||
+      thread.cwd!==current.cwd||thread.model!=null&&thread.model!==target.model||
+      (target.model!=null&&reply?.model!==target.model)||!nonempty(reply?.modelProvider)||reply?.cwd!==current.cwd||
+      reply?.approvalPolicy!==target.approvalPolicy||sandbox?.type!==expectedSandbox||
+      (sandbox?.networkAccess??false)!==networkAccess||
+      (target.sandbox==='workspace-write'&&sandbox?.writableRoots!=null&&
+        (!Array.isArray(sandbox.writableRoots)||sandbox.writableRoots.some(root=>root!==current.cwd))))
+      throw new RuntimeUnknownError('thread/resume',null,'execution profile reply did not confirm the exact owned Thread and model');
+  }
+
+  /** Called only after the coordinator has durably claimed this one revision's activation. */
+  async activateExecutionProfile(current:RuntimeBinding,target:RuntimeSessionSpec,
+    revisionId:string,operationId:string):Promise<RuntimeBinding>{
+    const revised=await this.authorizeRevision(current,target,revisionId,operationId);
+    if(!sameBinding(this.bindings.get(current.nativeThreadId)!,current))
+      throw new RuntimeProtocolError('execution profile activation was already attempted in this adapter');
+    if(!await this.nativeThreadIdle(current))
+      throw new RuntimeProtocolError('owned Thread is active; execution profile cannot be applied');
+    const config=await this.options.threadConfig?.(target);
+    if(target.sandbox==='workspace-write'&&typeof config?.['sandbox_workspace_write.network_access']!=='boolean')
+      throw new RuntimeProtocolError('revised workspace profile lacks an exact current network grant');
+    const networkAccess=target.sandbox==='workspace-write'&&config?.['sandbox_workspace_write.network_access']===true;
+    const reply=object(await this.request('thread/resume',{
+      threadId:current.nativeThreadId,excludeTurns:true,cwd:target.cwd,model:target.model,
+      sandbox:target.sandbox,approvalPolicy:target.approvalPolicy,...(config?{config}:{})}));
+    this.assertRevisedProfileReply(reply,current,target,networkAccess);
+    this.bindings.set(current.nativeThreadId,revised);
+    this.businessTurnPolicies.set(current.nativeThreadId,{sandboxPolicy:target.sandbox==='read-only'?
+      {type:'readOnly',networkAccess:false}:{type:'workspaceWrite',writableRoots:[],networkAccess},
+      approvalPolicy:target.approvalPolicy});
+    this.profileTransitionThreads.delete(current.nativeThreadId);
+    if(this.readOnlyThreads.has(current.nativeThreadId))this.businessRestoreAcknowledged.add(current.nativeThreadId);
+    return revised;
+  }
+
+  /** Read-only reconciliation of a lost resume reply; never repeats the original native operation. */
+  async inspectExecutionProfileActivation(current:RuntimeBinding,target:RuntimeSessionSpec,
+    revisionId:string,operationId:string):Promise<RuntimeBinding|null>{
+    const revised=await this.authorizeRevision(current,target,revisionId,operationId);
+    const result=object(await this.request('thread/read',{threadId:current.nativeThreadId,includeTurns:false}));
+    const thread=object(result?.thread);
+    if(!thread||thread.id!==current.nativeThreadId||thread.sessionId!==current.nativeSessionId||thread.cwd!==current.cwd)
+      throw new RuntimeProtocolError('profile readback did not match the owned Thread');
+    if(thread.model!==target.model||object(thread.status)?.type!=='idle')return null;
+    const config=await this.options.threadConfig?.(target);
+    if(target.sandbox==='workspace-write'&&typeof config?.['sandbox_workspace_write.network_access']!=='boolean')
+      throw new RuntimeProtocolError('reconciled workspace profile lacks an exact current network grant');
+    const networkAccess=target.sandbox==='workspace-write'&&config?.['sandbox_workspace_write.network_access']===true;
+    this.bindings.set(current.nativeThreadId,revised);
+    this.businessTurnPolicies.set(current.nativeThreadId,{sandboxPolicy:target.sandbox==='read-only'?
+      {type:'readOnly',networkAccess:false}:{type:'workspaceWrite',writableRoots:[],networkAccess},
+      approvalPolicy:target.approvalPolicy});
+    this.profileTransitionThreads.delete(current.nativeThreadId);
+    if(this.readOnlyThreads.has(current.nativeThreadId))this.businessRestoreAcknowledged.add(current.nativeThreadId);
+    return revised;
   }
 
   private async nativeThreadIdle(binding:RuntimeBinding):Promise<boolean>{
@@ -668,8 +790,18 @@ export class CodexAppServerAdapter implements RuntimePort {
     return { data, unsupportedCount, truncated, nextCursor: nonempty(result.nextCursor) ? result.nextCursor : null };
   }
 
-  async startTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn> {
+  async startTurn(binding: RuntimeBinding, input: string, operationId: string,
+    executionProfile?: ExecutionProfileSnapshot | null): Promise<RuntimeTurn> {
     this.owned(binding);
+    if(this.profileTransitionThreads.has(binding.nativeThreadId))
+      throw new RuntimeProtocolError('execution profile activation has not been confirmed');
+    if(binding.resumeProfile?.executionProfileRevisionId){
+      if(!executionProfile||executionProfile.revisionId!==binding.resumeProfile.executionProfileRevisionId||
+        executionProfile.model!==binding.resumeProfile.model||executionProfile.sandbox!==binding.resumeProfile.sandbox||
+        executionProfile.approvalPolicy!==binding.resumeProfile.approvalPolicy||
+        executionProfile.cwd!==binding.cwd||executionProfile.authorizationScope!==binding.authorizationScope)
+        throw new RuntimeProtocolError('Run does not carry this exact immutable execution profile');
+    }
     const restoring=this.readOnlyThreads.has(binding.nativeThreadId);
     if(restoring&&!this.businessRestoreAcknowledged.has(binding.nativeThreadId))
       throw new RuntimeProtocolError('exact business profile must be acknowledged before Task turn');
@@ -678,6 +810,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     const policy=this.businessTurnPolicies.get(binding.nativeThreadId);
     if(restoring&&!policy)throw new RuntimeProtocolError('exact business Turn policy was not restored');
     const result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
+      ...(binding.resumeProfile?.model?{model:binding.resumeProfile.model}:{}),
       ...(policy?{cwd:binding.cwd,sandboxPolicy:policy.sandboxPolicy,approvalPolicy:policy.approvalPolicy}:{}) }));
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");

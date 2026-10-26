@@ -76,10 +76,30 @@ export class PgResidentQueue {
     const ordered=await this.client.query('SELECT entry_id FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 ORDER BY position',[this.projectId,id]);await this.client.query('INSERT INTO resident_queue_revision(project_id,queue_id,version,reason,actor_id,ordered_entry_ids) VALUES($1,$2,$3,$4,$5,$6)',[this.projectId,id,version,reason,actor,ordered.rows.map(x=>x.entry_id)]);return version;
   }
   async adoptResidentQueue(id:string,expected:number,actor:string):Promise<void>{if(!await this.lead(this.client,this.projectId,actor))throw new Error('QUEUE_AUTHORIZATION');const r=await this.client.query('UPDATE resident_queue SET adopted_version=version,adopted_by=$4,adopted_at=now(),updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND version=$3 RETURNING version',[this.projectId,id,expected,actor]);if(!r.rowCount)throw new Error('QUEUE_VERSION_CONFLICT');}
+  async extendResidentQueueBudget(queueId:string,expectedVersion:number,expectedMaxRuns:number,maxRuns:number,actorId:string,reason:string,evidenceRef:string,operationId:string):Promise<number>{
+    if(!reason.trim()||!evidenceRef.trim()||maxRuns<=expectedMaxRuns||maxRuns>100||!await this.lead(this.client,this.projectId,actorId))
+      throw new DomainError('QUEUE_AUTHORIZATION','Only the original controller may explicitly increase the queue budget');
+    const r=await this.client.query('SELECT version,max_runs,actor_id FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,queueId]);
+    if(!r.rows[0]||r.rows[0].version!==expectedVersion||r.rows[0].max_runs!==expectedMaxRuns)
+      throw new DomainError('VERSION_CONFLICT','Queue budget changed',r.rows[0]?.version);
+    if(r.rows[0].actor_id!==actorId)throw new DomainError('QUEUE_AUTHORIZATION','Original controller required');
+    const version=expectedVersion+1;
+    await this.client.query(`INSERT INTO resident_queue_budget_revision(project_id,queue_id,operation_id,previous_version,version,
+      previous_max_runs,max_runs,actor_id,reason,evidence_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [this.projectId,queueId,operationId,expectedVersion,version,expectedMaxRuns,maxRuns,actorId,reason,evidenceRef]);
+    await this.client.query('UPDATE resident_queue SET version=$3,max_runs=$4,reason=$5,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND version=$6',
+      [this.projectId,queueId,version,maxRuns,reason,expectedVersion]);
+    const entries=await this.client.query('SELECT entry_id FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 ORDER BY position',[this.projectId,queueId]);
+    await this.client.query('INSERT INTO resident_queue_revision(project_id,queue_id,version,reason,actor_id,ordered_entry_ids) VALUES($1,$2,$3,$4,$5,$6)',
+      [this.projectId,queueId,version,reason,actorId,entries.rows.map(x=>x.entry_id)]);
+    return version;
+  }
   async holdResidentQueueEntry(queueId:string,entryId:string,code:QueueHoldCode,reason:string):Promise<void>{await this.client.query("UPDATE resident_queue_entry SET state=CASE WHEN state='claimed' THEN 'claimed' ELSE 'held' END,hold_code=$4,hold_reason=$5,version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 AND state IN ('queued','held','claimed')",[this.projectId,queueId,entryId,code,reason]);}
   async unholdResidentQueueEntry(queueId:string,entryId:string,expectedVersion:number,decisionId:string,actor:string,reason:string):Promise<void>{
     if(!reason.trim()||!await this.lead(this.client,this.projectId,actor))throw new Error('QUEUE_AUTHORIZATION');
-    const r=await this.client.query("UPDATE resident_queue_entry SET state=CASE WHEN state='held' THEN 'queued' ELSE state END,hold_code=NULL,hold_reason=NULL,version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 AND version=$4 AND hold_code IS NOT NULL AND hold_code<>'budget_exhausted' RETURNING entry_id",[this.projectId,queueId,entryId,expectedVersion]);
+    const budget=await this.client.query('SELECT max_runs FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,queueId]);
+    const used=await this.countResidentQueueAttempts(queueId);
+    const r=await this.client.query("UPDATE resident_queue_entry SET state=CASE WHEN state='held' THEN 'queued' ELSE state END,hold_code=NULL,hold_reason=NULL,version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 AND version=$4 AND hold_code IS NOT NULL AND (hold_code<>'budget_exhausted' OR $5<$6) RETURNING entry_id",[this.projectId,queueId,entryId,expectedVersion,used,budget.rows[0]?.max_runs??0]);
     if(!r.rowCount)throw new Error('QUEUE_HOLD_CONFLICT');
     await this.client.query('INSERT INTO resident_queue_unhold_decision(project_id,decision_id,queue_id,entry_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,$6)',[this.projectId,decisionId,queueId,entryId,actor,reason]);
   }
@@ -131,6 +151,9 @@ export class PgResidentQueue {
     }
     if(q.rows[0].version!==q.rows[0].adopted_version)throw new Error('QUEUE_NOT_ADOPTED');
     if(er.rows[0].state!=='queued')return null;
+    await this.client.query('SELECT session_recovery_slot_lock($1,$2)',[this.projectId,e.sessionId]);
+    const gate=await this.client.query('SELECT phase FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,e.sessionId]);
+    if(gate.rows[0]?.phase!=='open')throw new DomainError('SESSION_RECOVERY_REQUIRED','Session recovery gate blocks a new queue claim');
     const deps=await this.client.query(`SELECT d.entry_id,d.state,c.release_kind FROM resident_queue_entry d LEFT JOIN resident_queue_claim c ON c.project_id=d.project_id AND c.queue_id=d.queue_id AND c.entry_id=d.entry_id WHERE d.project_id=$1 AND d.queue_id=$2 AND d.entry_id=ANY($3::uuid[])`,[this.projectId,queueId,e.dependsOn]);
     if(deps.rows.length!==e.dependsOn.length||deps.rows.some(x=>x.state!=='released'||x.release_kind!=='accepted')){await this.holdResidentQueueEntry(queueId,entryId,'dependency','prerequisite not accepted');return null;}
     try{await this.assertQueueVacant(e.taskId,e.sessionId);}catch(error){
@@ -155,6 +178,11 @@ export class PgResidentQueue {
     await this.client.query('SELECT queue_id FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,key.rows[0].queue_id]);
     const c=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2 FOR UPDATE',[this.projectId,claimId]);if(!c.rows[0]||c.rows[0].released_at)return null;
     const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,c.rows[0].queue_id,c.rows[0].entry_id]);const e=entryOf(er.rows[0]);
+    await this.client.query('SELECT session_recovery_slot_lock($1,$2)',[this.projectId,e.sessionId]);
+    const gate=await this.client.query('SELECT phase,retry_run_id,claim_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,e.sessionId]);
+    if(gate.rows[0]?.phase!=='open'&&
+      !(gate.rows[0]?.phase==='retrying'&&gate.rows[0]?.retry_run_id===a.runId&&gate.rows[0]?.claim_id===claimId))
+      throw new DomainError('SESSION_RECOVERY_REQUIRED','Only the explicitly permitted failed Run successor may reserve');
     if(e.holdCode)throw new Error('QUEUE_HOLD_REQUIRES_DECISION');
     const replay=await this.client.query('SELECT * FROM resident_queue_attempt WHERE project_id=$1 AND operation_id=$2',[this.projectId,a.operationId]);if(replay.rows[0]){const x=attemptOf(replay.rows[0]);if(x.claimId!==claimId||x.runId!==a.runId||x.taskRevisionId!==a.taskRevisionId)throw new Error('OPERATION_CONFLICT');return x;}
     const attempts=await this.listResidentQueueAttempts(claimId);if(await this.countResidentQueueAttempts(c.rows[0].queue_id)>=maxRuns)return null;

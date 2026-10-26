@@ -4,6 +4,7 @@ import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,Que
 import { canonicalTaskInputJson,taskInputSignature } from '../task-input.js';
 import { requireAssignedSession } from '../session-assignments/dispatch.js';
 import type { Reader } from '@evoloop/contracts/ports';
+import type { SessionRecoveryTransaction } from '@evoloop/contracts/session-recovery';
 
 export type { ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence } from '@evoloop/contracts/queues';
 export interface QueueDecision {ready:boolean;code:QueueHoldCode|null;reason:string|null}
@@ -24,7 +25,7 @@ export function evaluateQueueRelease(entry:ResidentQueueEntry,e:QueueReleaseEvid
   if(entry.releaseRule==='bounded_decision'&&e.boundedDecisionId&&e.boundedDecisionActorId&&e.boundedDecisionReason?.trim()&&e.nextResponsibility?.trim()&&e.taskState==='in_progress')return {ready:true,code:null,reason:null};
   return held('awaiting_acceptance','current delivery, consumer use and Task closure or bounded Lead decision are not verified');
 }
-export interface QueueContext {nowUtc:string;nextId():string}
+export interface QueueContext {nowUtc:string;nextId():string;recovery?:SessionRecoveryTransaction}
 export interface QueueResult {queueId:string;version:number;claimId:string|null;runId:string|null;held:QueueHoldCode|null}
 const fail=(code:string,message:string):never=>{throw Object.assign(new Error(message),{code});};
 const terminal=new Set(['completed','failed','interrupted']);
@@ -41,7 +42,7 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
   const c=parsed.data;
   if(!principal.actorId||!principal.projectIds.includes(c.projectId)||!principal.permissions.includes('review'))return fail('FORBIDDEN','project review permission required');
   if(!await tx.queueControllerCurrent(principal.actorId))return fail('QUEUE_AUTHORIZATION','current queue controller authority required');
-  const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.hold','queue.unhold'];
+  const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.hold','queue.unhold','queue.extendBudget','queue.retryFailed'];
   if(leadOnly.includes(c.type)&&!principal.permissions.includes('write'))return fail('FORBIDDEN','Lead write permission required');
   const result=(queue:ResidentQueue|null,claimId:string|null=null,runId:string|null=null,hold:QueueHoldCode|null=null):QueueResult=>({queueId:c.queueId,version:queue?.version??0,claimId,runId,held:hold});
   if(c.type==='queue.create'){
@@ -59,6 +60,14 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
     await tx.createResidentQueue(queue);return result(queue);
   }
   const queue=await tx.getResidentQueue(c.queueId);if(!queue)return fail('NOT_FOUND','queue missing');
+  if(c.type==='queue.extendBudget'){
+    if(principal.actorId!==queue.actorId||principal.actorId.startsWith('worker-'))return fail('QUEUE_ACTOR_MISMATCH','Only the registered controller may extend its queue budget');
+    if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','Queue changed');
+    if(queue.maxRuns!==c.expectedMaxRuns||c.maxRuns<=queue.maxRuns)return fail('BUDGET_MISMATCH','Budget must explicitly increase from the observed maximum');
+    if(!tx.extendResidentQueueBudget)return fail('RECOVERY_UNAVAILABLE','Queue budget revision persistence is unavailable');
+    const version=await tx.extendResidentQueueBudget(c.queueId,c.expectedVersion,c.expectedMaxRuns,c.maxRuns,principal.actorId,c.reason,c.evidenceRef,c.operationId);
+    return {...result(queue),version};
+  }
   if((c.type==='queue.claim'||c.type==='queue.continue')&&principal.actorId!==queue.actorId)
     return fail('QUEUE_ACTOR_MISMATCH','only the adopted queue controller may reserve its Run');
   if(c.type==='queue.reorder'){if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');const version=await tx.reorderResidentQueue(c.queueId,c.expectedVersion,c.entryIds,principal.actorId,c.reason);return {...result(queue),version};}
@@ -74,17 +83,63 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
   }
   if(c.type==='queue.adopt'){if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');await tx.adoptResidentQueue(c.queueId,c.expectedVersion,principal.actorId);return result(queue);}
   const entry=queue.entries.find(x=>x.id===c.entryId);if(!entry)return fail('NOT_FOUND','entry missing');
+  if(c.type==='queue.retryFailed'){
+    if(principal.actorId!==queue.actorId||principal.actorId.startsWith('worker-'))return fail('QUEUE_ACTOR_MISMATCH','Only the registered controller may choose a failed retry');
+    if(queue.version!==c.expectedVersion||queue.adoptedVersion!==queue.version)return fail('QUEUE_NOT_ADOPTED','Read and adopt the current queue before retry');
+    if(!ctx.recovery)return fail('RECOVERY_UNAVAILABLE','Session recovery persistence is unavailable');
+    if(entry.state!=='claimed'||entry.claimId!==c.claimId||entry.holdCode)return fail('CLAIM_MISMATCH','Retry requires the original active, unheld Task claim');
+    const claim=await tx.getResidentQueueClaim(c.claimId);
+    if(!claim||claim.releasedAt||claim.entryId!==entry.id||claim.sessionId!==entry.sessionId)return fail('CLAIM_MISMATCH','The original claim is unavailable');
+    const source=await reader.getRuntimeRun(c.sourceRunId);
+    const attempts=await tx.listResidentQueueAttempts(c.claimId);
+    if(attempts.at(-1)?.runId!==c.sourceRunId||!source||!['failed','interrupted'].includes(source.state)||source.version!==c.expectedSourceRunVersion||
+      source.inputHash!==c.expectedInputHash||source.sessionId!==entry.sessionId||source.taskId!==entry.taskId||source.evaluationBinding)
+      return fail('RETRY_SOURCE_MISMATCH','Only the exact latest known-failed or interrupted Run may be retried; unknown and completed are not retryable failures');
+    const gate=await ctx.recovery.lockRecoveryGate(entry.sessionId);
+    if(gate.version!==c.expectedGateVersion)return fail('VERSION_CONFLICT','Recovery gate changed');
+    if(gate.phase!=='blocked'||gate.claimId!==c.claimId)return fail('RECOVERY_NOT_BLOCKED','The failed claim is not the current recovery source');
+    if(gate.resumeMessageId!==c.resumeMessageId)return fail('RECOVERY_MESSAGE_CHANGED','The original queued message cannot be replaced');
+    if(c.resumeMessageId){
+      const message=await reader.sessionMessages?.getSessionMessage(c.resumeMessageId);
+      if(!message||message.state!=='queued'||message.target.kind!=='owned'||message.target.sessionId!==entry.sessionId)
+        return fail('RECOVERY_MESSAGE_UNAVAILABLE','The pinned original message must still be queued on this Session');
+    }
+    const task=await reader.getTask(entry.taskId),session=await reader.getRuntimeSession(entry.sessionId);
+    if(!task||task.state!=='in_progress'||task.currentRevisionId!==c.expectedTaskRevisionId||!session||session.state!=='ready'||!session.nativeThreadId)
+      return fail('TASK_REVISION_CONFLICT','Retry requires the current Task revision and original ready Session');
+    if(session.executionProfile?.revision.revisionId!==c.expectedExecutionProfileRevisionId)
+      return fail('EXECUTION_PROFILE_CONFLICT','Retry must name the exact reviewed execution profile revision');
+    await requireAssignedSession(reader,task,entry.sessionId,true);
+    const currentInput=canonicalTaskInputJson(await taskInputSignature(reader,task));
+    const sourceInput=canonicalTaskInputJson(await taskInputSignature(reader,task,source.taskRevisionId));
+    if(currentInput!==entry.sourceInputJson||currentInput!==sourceInput)return fail('RETRY_INPUT_CHANGED','Retry preserves the original fixed business input');
+    if((await reader.listRuntimeRuns()).some(r=>(r.taskId===task.id||r.sessionId===session.id)&&!terminal.has(r.state))||await reader.sessionMessages?.hasActiveSessionMessage(session.id))
+      return fail('RUN_UNSETTLED','Reconcile every active or unknown Run/message before retry');
+    if(!await tx.exactQueueGrant(entry.roleId,entry.sessionId,entry.taskId)||!await tx.queueBindingCurrent(entry.roleId,entry.sessionId))
+      return fail('QUEUE_AUTHORIZATION','Retry needs the current exact grant and binding');
+    if(await tx.countResidentQueueAttempts(queue.id)>=queue.maxRuns)return fail('BUDGET_EXHAUSTED','The original queue has no remaining attempts');
+    const decision={projectId:c.projectId,id:c.operationId,sessionId:session.id,kind:'retry_failed' as const,
+      expectedGateVersion:gate.version,causeId:c.sourceRunId,sourceRunId:source.id,sourceInputHash:source.inputHash,
+      retryRunId:c.runId,resumeMessageId:gate.resumeMessageId,actorId:principal.actorId,reason:c.reason,evidenceRef:c.evidenceRef,createdAt:ctx.nowUtc};
+    await ctx.recovery.saveRecoveryDecision(decision,{...gate,phase:'retrying',version:gate.version+1,
+      retryRunId:c.runId,reason:c.reason,decisionOperationId:c.operationId,updatedAt:ctx.nowUtc},gate.version);
+    const attempt=await tx.appendResidentQueueAttempt(c.claimId,{runId:c.runId,operationId:c.runOperationId,taskRevisionId:task.currentRevisionId},queue.maxRuns);
+    if(!attempt)return fail('BUDGET_EXHAUSTED','Queue attempt reservation was rejected');
+    return result(queue,c.claimId,c.runId);
+  }
   if(c.type==='queue.hold'){
     if(entry.state==='released')return fail('ENTRY_UNAVAILABLE','released entry cannot be held');
     await tx.holdResidentQueueEntry(c.queueId,c.entryId,'manual_review',c.reason);return result(queue,null,null,'manual_review');
   }
   if(c.type==='queue.unhold'){
     if(entry.version!==c.expectedEntryVersion)return fail('VERSION_CONFLICT','entry changed');
-    if(!entry.holdCode||entry.holdCode==='budget_exhausted')return fail('HOLD_NOT_LIFTABLE','entry is not held or adopted budget is exhausted');
+    if(!entry.holdCode||(entry.holdCode==='budget_exhausted'&&await tx.countResidentQueueAttempts(queue.id)>=queue.maxRuns))return fail('HOLD_NOT_LIFTABLE','entry is not held or adopted budget is exhausted');
     await tx.unholdResidentQueueEntry(c.queueId,c.entryId,c.expectedEntryVersion,c.operationId,principal.actorId,c.reason);
     return result(queue);
   }
   if(c.type==='queue.claim'||c.type==='queue.continue'){
+    const recoveryGate=await reader.recovery?.getRecoveryGate(entry.sessionId);
+    if(recoveryGate&&recoveryGate.phase!=='open')return fail('SESSION_RECOVERY_REQUIRED','An explicit Session recovery decision is required');
     if(entry.holdCode)return fail('HOLD_REQUIRES_DECISION','Lead must explicitly unhold this entry');
     if(c.type==='queue.claim'&&queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue order changed');
     if(queue.adoptedVersion!==queue.version)return fail('QUEUE_NOT_ADOPTED','Lead must adopt current order');
