@@ -22,7 +22,8 @@ import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
-import { registerOrchestrationRoutes, registerPlanningSourcesRoute, type OrchestrationRouteOptions,
+import { registerOrchestrationRoutes, registerPlanningSourcesRoute, registerWorkStatusRoute,
+  type WorkStatusesReader, type OrchestrationRouteOptions,
   type PlanningSourcesReader } from "./orchestration/routes.js";
 import { authorizeWorkerRequest, type WorkerGuardFacts } from "./workers/guard.js";
 import type { WorkerIdentity } from "./workers/types.js";
@@ -49,6 +50,7 @@ export async function buildServer(options: {
   knowledge?: Omit<KnowledgeRouteOptions, "workflow">;
   readEvaluationPacket?: ReadEvaluationPacket;
   orchestration?: OrchestrationRouteOptions;
+  workStatuses?: WorkStatusesReader;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
   sourceConfiguration?(principal: Principal | null): {git: boolean; wiki: boolean};
@@ -293,6 +295,8 @@ export async function buildServer(options: {
   });
   if (options.references) registerReferenceRoutes(app, options.references);
   if (options.orchestration) registerOrchestrationRoutes(app, options.orchestration);
+  const workStatuses = options.workStatuses ?? options.orchestration?.workStatuses;
+  if (workStatuses) registerWorkStatusRoute(app, workStatuses);
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service);

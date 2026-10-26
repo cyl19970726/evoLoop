@@ -31,6 +31,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
+import { readWorkStatuses } from "./orchestration/work-status.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
 import { workerGuardFacts } from "./workers/facts.js";
@@ -382,6 +383,7 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
   projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
+  workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   sessionWork: new SessionObservationService({ uow }),
   sessionMessages: messageService,
   planningSources: (principal, projectId, taskId, revisionId, loopId) =>
