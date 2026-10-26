@@ -44,6 +44,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const runtimePanelRef = useRef<HTMLElement | null>(null);
   const revealedRunHref = useRef<string | null>(null);
   const revealedRunElement = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => { revealedRunHref.current = null; revealedRunElement.current = null; }, [targetRunId]);
   const [roleNames, setRoleNames] = useState<{scope:string; values:Record<string,RoleName>}>({scope:"",values:{}});
   const [assignmentRead, setAssignmentRead] = useState<{scope:string; value:TaskSessionAssignment|null; error:string}|null>(null);
   const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? "", targetRunId ?? ""]);
@@ -153,7 +154,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     const frame = requestAnimationFrame(reveal);
     window.addEventListener("hashchange", reveal);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
-  }, [context.projectId, task?.id, runs]);
+  }, [context.projectId, task?.id, runs, targetRunId]);
   return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section ref={runtimePanelRef} className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
     {targetRunProblem && <Notice error>指定的 Run 暂不可核对：{targetRunProblem}。没有定位到其他运行。</Notice>}
