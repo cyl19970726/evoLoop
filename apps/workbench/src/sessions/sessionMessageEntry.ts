@@ -1,19 +1,9 @@
-import type { SessionCapabilities } from "@evoloop/contracts/session-work";
+import type { OrdinaryMessageExecutionCapability, SessionCapabilities } from "@evoloop/contracts/session-work";
 
-type OrdinaryExecution = {
-  state: "disabled" | "blocked" | "unverified" | "manual" | "unknown";
-  reasonCode: string;
-  reason: string;
-  observedAt: string;
-};
-
-/** The optional read keeps older Session snapshot APIs explicitly unverified. */
-export type MessageEntryCapabilities = SessionCapabilities & { ordinaryExecution?: OrdinaryExecution };
-
-const executionLabels: Record<OrdinaryExecution["state"], string> = {
+const executionLabels: Record<OrdinaryMessageExecutionCapability["state"], string> = {
   disabled: "未启用", blocked: "受限", unverified: "执行前待核验", manual: "需人工转交", unknown: "暂不可核实",
 };
-const executionFallbacks: Record<OrdinaryExecution["state"], string> = {
+const executionFallbacks: Record<OrdinaryMessageExecutionCapability["state"], string> = {
   disabled: "普通自动回复未启用；保存后当前不会启动此会话。",
   blocked: "自动处理当前受限；保存后不能预期自动回复。",
   unverified: "自动处理条件尚未完成执行前核验；保存后不能预期自动回复。",
@@ -21,7 +11,8 @@ const executionFallbacks: Record<OrdinaryExecution["state"], string> = {
   unknown: "自动处理状态暂不可核实；保存后不能预期自动回复。",
 };
 
-export function sessionMessageEntry(kind: "owned" | "external", capabilities: MessageEntryCapabilities) {
+/** The optional read keeps older Session snapshot APIs explicitly unverified. */
+export function sessionMessageEntry(kind: "owned" | "external", capabilities: SessionCapabilities) {
   const execution = capabilities.ordinaryExecution;
   const state = execution?.state && execution.state in executionLabels ? execution.state : "unknown";
   return {

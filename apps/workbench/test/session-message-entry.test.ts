@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionCapabilities } from "@evoloop/contracts/session-work";
-import { sessionMessageEntry, type MessageEntryCapabilities } from "../src/sessions/sessionMessageEntry.ts";
+import { sessionMessageEntry } from "../src/sessions/sessionMessageEntry.ts";
 
 const capability = { available: false, reason: null };
 const base: SessionCapabilities = { observe: capability, send: { available: true, reason: "只保存消息", mode: "owned-read-only" },
@@ -20,7 +20,7 @@ test("disabled owned execution stays saveable but says it will not auto-reply", 
 });
 
 test("older snapshots and unverified execution never imply automatic readiness", () => {
-  const older = sessionMessageEntry("owned", base as MessageEntryCapabilities);
+  const older = sessionMessageEntry("owned", base);
   assert.equal(older.executionLabel, "暂不可核实");
   assert.match(older.executionReason, /不能预期自动回复/);
   const pending = sessionMessageEntry("owned", { ...base, ordinaryExecution: { state: "unverified",

@@ -12,7 +12,7 @@ import { activityPresentation } from "./activityPresentation";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
 import { sessionLifecycleLabel, sessionStatusLabel } from "./sessionStatusPresentation";
-import { sessionMessageEntry, type MessageEntryCapabilities } from "./sessionMessageEntry";
+import { sessionMessageEntry } from "./sessionMessageEntry";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results" | "responsibilities" | "resources";
@@ -181,7 +181,7 @@ function SessionProfileForm({ context, snapshot, onApplied }: { context: Mutatio
 }
 
 function SessionMessages({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
-  const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities as MessageEntryCapabilities);
+  const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
   const currentMessageScope = useRef("");
   currentMessageScope.current = `${context.token}\0${context.projectId}\0${snapshot.session.key}`;
   const [messages, setMessages] = useState<SessionMessageRecord[]>([]);
