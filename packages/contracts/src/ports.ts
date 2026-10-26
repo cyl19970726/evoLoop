@@ -6,6 +6,7 @@ import type { RoleReader, RoleTransaction } from "./roles.js";
 import type { SchedulingReader, SchedulingTransaction } from "./scheduling.js";
 import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./process-documents.js";
 import type { DiscussionRecord, DiscussionEvent } from "./discussions.js";
+import type { AllocationRelationsReader } from "./allocation-relations.js";
 import type { EvaluationReader, EvaluationTransaction } from "./evaluation.js";
 import type { ResidentReader, ResidentTransaction } from "./resident-hosts.js";
 import type { QueueReader, QueueTransaction } from "./queues.js";
@@ -20,12 +21,13 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   sessionMessages?: SessionMessageReader;
   sessionAssignments?: SessionAssignmentReader;
   sessionObservation?(scope: string): SessionObservationReader;
+  allocationRelations?(scope: string): AllocationRelationsReader;
   /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
   getCognitiveClosureFact?(decisionId: string): Promise<CognitiveClosureFact | null>;
   getWaitingHandoffFact?(inboxId: string): Promise<WaitingHandoffFact | null>;
   getChildHandoffFact?(dispatchId: string): Promise<ChildHandoffFact | null>;
   getDiscussion(id: string): Promise<DiscussionRecord | null>;
-  listDiscussions(limit: number, cursor?: string): Promise<Page<DiscussionRecord>>;
+  listDiscussions(limit: number, cursor?: string, kind?: DiscussionRecord['kind']): Promise<Page<DiscussionRecord>>;
   listDiscussionEvents(id: string): Promise<DiscussionEvent[]>;
   getRuntimeSession(id: string): Promise<RuntimeSessionRecord | null>;
   listRuntimeSessions(): Promise<RuntimeSessionRecord[]>;

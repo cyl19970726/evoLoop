@@ -7,12 +7,13 @@ import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./
 import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
 import { sessionWorkPath } from "./session-work.js";
+import { allocationRelationsPath } from "./allocation-relations.js";
 
 type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance"]);
+const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -66,6 +67,8 @@ const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSche
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
   commands: ["id", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
+    "list discussions --project UUID [--kind allocation|direction|task_collaboration] [--limit 1..100 --cursor UUID] (read only)",
+    "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
     "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
@@ -163,9 +166,15 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid Session work read parameters."); }
     return client.get(`${prefix}${path}`);
   }
+  if (action === "allocations") {
+    check(args, 1, ["project", "role", "session", "discussion", "limit", "cursor"]);
+    try { return client.get(`${prefix}${allocationRelationsPath(args.options)}`); }
+    catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid allocation relation filter."); }
+  }
   if (action === "list") {
-    check(args, 2, ["project", "limit", "cursor", "task", "knowledge", "loop"]);
+    check(args, 2, ["project", "limit", "cursor", "task", "knowledge", "loop", "kind"]);
     const entity = args.words[1]!, orchestrationList = orchestrationLists[entity], suffix = listPaths[entity];
+    if (args.options.has("kind") && entity !== "discussions") throw new UsageError("--kind applies only to list discussions.");
     if (orchestrationList) {
       if (args.options.has("task") || args.options.has("knowledge") || args.options.has("limit") || args.options.has("cursor"))
         throw new UsageError("Orchestration list accepts only --project and --loop for inbox/dispatches.");
@@ -175,6 +184,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     }
     if (!suffix || args.options.has("loop")) throw new UsageError("Unknown list or unsupported --loop; use help.");
     const query = new URLSearchParams();
+    if (args.options.has("kind")) {
+      const kind = option(args, "kind");
+      if (!kind || !["allocation", "direction", "task_collaboration"].includes(kind))
+        throw new UsageError("--kind must be allocation, direction, or task_collaboration.");
+      query.set("kind", kind);
+    }
     if (args.options.has("limit") || args.options.has("cursor")) {
       if (!["tasks", "documents", "goals", "discussions", "roles", "evaluations", "knowledge", "candidates"].includes(entity)) throw new UsageError("This endpoint is not paginated; omit --limit/--cursor.");
       const limit = Number(option(args, "limit") ?? 50); if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new UsageError("--limit must be 1..100.");

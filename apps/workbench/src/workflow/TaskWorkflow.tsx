@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import * as React from "react";
 import type { DocumentDetail, RuntimeRunRecord, TaskDetail, TaskRevision, TaskRevisionState } from "@evoloop/contracts";
 import { api, safeArtifactHref } from "../api";
 import { runtimeClient } from "../runtime/client";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "./ActionForm";
 import { attributableRuns } from "./deliveryRun";
 import { RevisionHistory } from "./RevisionHistory";
+import { useRoleChoices } from "./useRoleChoices";
+
+const { useEffect, useState } = React;
 
 export const taskStateLabel: Record<TaskRevisionState, string> = {
   todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消",
@@ -15,6 +18,12 @@ export const taskKindLabel = { implementation: "实施", research: "调研", val
 
 export function TaskWorkflow({ context, detail, documents, mode = "actions" }: { context: MutationContext; detail: TaskDetail; documents?: Record<string, DocumentDetail>; mode?: "actions" | "delivery" | "history" }) {
   const task = detail.task;
+  const [roleRetry, setRoleRetry] = useState(0);
+  const roleChoices = useRoleChoices(context.token, context.projectId, `${task.version}:${roleRetry}`, mode === "actions");
+  const ownerOptions = roleChoices.loading || roleChoices.error
+    ? [option(task.owner, "当前负责者（职责目录待核对）")]
+    : roleChoices.options.some(item => item.value === task.owner) ? roleChoices.options
+      : [option(task.owner, "当前负责者（未核为活跃角色）"), ...roleChoices.options];
   const [revisions, setRevisions] = useState<TaskRevision[]>([]);
   const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
   const [runReadError, setRunReadError] = useState("");
@@ -85,16 +94,20 @@ export function TaskWorkflow({ context, detail, documents, mode = "actions" }: {
   return <section className="panel"><div className="panel-head"><h2>任务操作</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
     <p className="muted">正文由任务持有固定文档。提交前核对当前版本；操作结果未知时保留原 ID，不重复发送。</p>
     {task.state === "in_progress" && <Notice>执行范围已固定。需要修改正文、验收、责任者或类型时，先通过下方操作返回待办，再更新并重新开始。</Notice>}
+    {roleChoices.error && <Notice error>职责选择暂不可完整读取：{roleChoices.error}。仍可保留现负责者，修改任务正文与验收；更换负责者须先读全职责目录。<button type="button" onClick={() => setRoleRetry(value => value + 1)}>重试读取职责</button></Notice>}
     {(task.state === "todo" || task.state === "in_progress") && <ActionForm context={context} title="更新任务内容" fields={[
       { name: "title", label: "任务名称", value: task.title }, { name: "kind", label: "类型（可选）", kind: "select", optional: true, value: task.kind ?? "", options: [option("implementation", "实施"), option("research", "调研"), option("validation", "验证")] },
-      { name: "content", label: "任务正文（Markdown）", kind: "textarea", value: task.content },
-      { name: "acceptance", label: "独立验收条件", kind: "textarea", value: task.acceptance }, { name: "owner", label: "责任者", value: task.owner }, reasonField,
-    ]} build={v => ({ ...base, type: "task.update", title: v.title, kind: v.kind || null, content: v.content, acceptance: v.acceptance,
+      { name: "content", label: "任务内容", kind: "textarea", value: task.content },
+      { name: "acceptance", label: "独立验收条件", kind: "textarea", value: task.acceptance }, { name: "owner", label: "负责角色", kind: "select", value: task.owner, options: ownerOptions }, reasonField,
+    ]} build={v => {
+      if (!ownerOptions.some(item => item.value === v.owner)) throw new Error("所选职责未在当前已核对范围内");
+      return { ...base, type: "task.update", title: v.title, kind: v.kind || null, content: v.content, acceptance: v.acceptance,
       owner: v.owner, documentIds: detail.links.map(link => link.documentId), ...(detail.proposal ? {
         ...(detail.proposal.consumer ? { consumer: detail.proposal.consumer } : {}), useRequired: detail.proposal.useRequired,
         ...(detail.proposal.evidence ? { evidence: detail.proposal.evidence } : {}),
         ...(detail.proposal.stopCondition ? { stopCondition: detail.proposal.stopCondition } : {}),
-      } : {}), reason: v.reason })} />}
+      } : {}), reason: v.reason };
+    }} />}
     {task.state === "todo" && <><ActionForm context={context} review title="开始任务并固定依据" fields={[reasonField,
       ...olderSources.map(source => ({ name: `retain_${source.documentId}`, label: `如需保留《${source.title}》旧版 ${source.revisionId.slice(0, 8)}，请写理由`, kind: "textarea" as const, optional: true,
         hint: `已核到发布版 ${source.observedAdoptedRevisionId.slice(0, 8)}；先从依据页读两版。留空不会自动同意使用旧版。` })),
