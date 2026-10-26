@@ -1,35 +1,5 @@
-/** Frontend projection of the fixed recovery observation v1 response. */
-export interface SessionRecoveryView {
-  sessionId: string;
-  executionProfile: {
-    revision: { projectId: string; sessionId: string; revisionId: string; version: number; model: string | null; createdAt: string; actorId: string; reason: string; evidenceRef: string | null };
-    activeRevisionId: string | null;
-    activationState: "active" | "pending" | "attempting" | "unknown" | "rejected";
-    activationOperationId: string | null;
-    attemptedAt: string | null;
-    activationEvidence: string | null;
-  } | null;
-  gate: {
-    projectId: string;
-    sessionId: string;
-    phase: "open" | "blocked" | "retrying" | "message_pending" | "awaiting_acceptance";
-    causeKind: "run" | "message" | "execution_profile" | null;
-    causeId: string | null;
-    causeState: string | null;
-    reason: string;
-    queueId: string | null;
-    claimId: string | null;
-    retryRunId: string | null;
-    resumeMessageId: string | null;
-    decisionOperationId: string | null;
-    updatedAt: string;
-  } | null;
-  decisions: Array<{ projectId: string; sessionId: string; id: string; kind: "retry_failed" | "resume"; actorId: string; reason: string; evidenceRef: string | null; createdAt: string; causeId: string }>;
-  queues: Array<{ queueId: string; version: number; adoptedVersion: number | null; maxRuns: number; attemptsUsed: number; attemptsRemaining: number }>;
-  nextAction: string;
-  partial: boolean;
-  observedAtUtc: string;
-}
+import type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
+export type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
 
 export type RecoveryRead =
   | { status: "loading" }
