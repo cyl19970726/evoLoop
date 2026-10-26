@@ -12,11 +12,14 @@ let turnListReads = 0;
 let archived = mode === "already-archived";
 let transitionResumes = 0;
 let ordinaryResumed = false;
+let loadedBusinessResume = false;
+let genericMessageBusinessResumed = false;
 let turnStarts = 0;
 let configReads = 0;
 let threadReads = 0;
 let observedResumes = 0;
 let lastTurnModel = null;
+let loadedBusinessInput = null;
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") { initialized = true; continue; }
@@ -108,6 +111,30 @@ for await (const line of lines) {
       send({id,error:{code:-32602,message:"resume did not apply current network profile"}}); continue;
     }
   }
+  if (method === "thread/resume" && mode.startsWith("message-profile-loaded")) {
+    observedResumes++;
+    const originalSandbox=mode.includes("workspace")?"workspace-write":"read-only";
+    if (params.permissions === "evoloop_message_read") {
+      if (params.model !== "gpt-6-sol" || params.approvalPolicy !== "never" || params.sandbox !== undefined) {
+        send({id,error:{code:-32602,message:"ordinary profile was not exact"}});continue;
+      }
+      ordinaryResumed=true;
+    } else {
+      if (!ordinaryResumed || params.model !== "gpt-6-sol" || params.sandbox !== originalSandbox ||
+        params.approvalPolicy !== "on-request" || params.cwd !== thread.cwd ||
+        (originalSandbox==="workspace-write" && params.config?.["sandbox_workspace_write.network_access"] !== false)) {
+        send({id,error:{code:-32602,message:"business restoration request was not exact"}});continue;
+      }
+      loadedBusinessResume=true;
+    }
+    const nativeThread={...thread,status:{type:"idle",activeFlags:[]},model:"gpt-6-sol"};
+    send({id,result:{thread:mode.endsWith("foreign")&&loadedBusinessResume?
+      {...nativeThread,sessionId:"foreign"}:nativeThread,
+      model:mode.endsWith("wrong-model")?"foreign-model":"gpt-6-sol",modelProvider:"openai",cwd:thread.cwd,
+      approvalPolicy:"never",sandbox:{type:"readOnly",networkAccess:false},
+      ...(mode.includes("legacy")?{}:{activePermissionProfile:{
+        id:mode.endsWith("different-policy")?"foreign_policy":"evoloop_message_read",extends:null}})}});continue;
+  }
   if (method === "thread/resume" && mode.startsWith("message-profile")) {
     if (params.permissions === "evoloop_message_read") {
       if (params.approvalPolicy !== "never" || params.sandbox !== undefined || params.config !== undefined) {
@@ -119,6 +146,7 @@ for await (const line of lines) {
         send({id,error:{code:-32602,message:"business profile not restored"}}); continue;
       }
       ordinaryResumed = false;
+      genericMessageBusinessResumed = true;
     } else {send({id,error:{code:-32602,message:"unexpected profile"}});continue;}
   }
   if (method === "thread/archive") {
@@ -154,11 +182,19 @@ for await (const line of lines) {
     const nativeThread={...thread,status:{type:mode==='message-profile-active'||
       (mode==='message-profile-activity-race'&&threadReads>=3)?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
+      ...(method === "thread/resume" && genericMessageBusinessResumed ? {
+        model:"fixture-model",modelProvider:"openai",cwd:thread.cwd,approvalPolicy:"on-request",
+        sandbox:{type:"workspaceWrite",writableRoots:[],networkAccess:true},activePermissionProfile:null} : {}),
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list") {
     turnListReads++;
+    if (mode.startsWith("message-profile-loaded")) {
+      const businessVisible=turnStarts>=2&&(!mode.endsWith("lost")&&!mode.endsWith("reject")||turnStarts>=3);
+      send({id,result:{data:[...(businessVisible?[{id:`turn-${turnStarts}`,status:"inProgress",completedAt:null}]:[]),
+        ...(turnStarts>=1?[{id:"turn-1",status:"completed",completedAt:1792498484}]:[])],nextCursor:null}});continue;
+    }
     if (mode === "message-profile-history") {
       if (params.sortDirection !== "desc" || params.limit !== 100) {
         send({id,error:{code:-32602,message:"ordinary history did not request newest first"}});continue;
@@ -174,6 +210,9 @@ for await (const line of lines) {
     }], nextCursor: null } }); continue;
   }
   if (method === "thread/items/list") {
+    if (mode.startsWith("message-profile-loaded")&&params.turnId===`turn-${turnStarts}`&&turnStarts>=2) {
+      send({id,result:{data:loadedBusinessInput?[{turnId:params.turnId,item:{id:"business-input",type:"userMessage",text:loadedBusinessInput}}]:[],nextCursor:null}});continue;
+    }
     if (mode === "work-trace") {
       const items = params.cursor ? [
         { id: "mcp-1", type: "mcpToolCall", server: "files", tool: "read", status: "completed", result: { content: [{ type: "text", text: "read output" }] }, error: null, durationMs: 7 },
@@ -195,7 +234,27 @@ for await (const line of lines) {
       lastTurnModel=params.model;
       if(params.model!=="new-model") {send({id,error:{code:-32602,message:"new model absent from Turn start"}});continue;}
     }
-    if (mode.startsWith("message-profile")) {
+    if (mode.startsWith("message-profile-loaded")) {
+      if (!loadedBusinessResume) {
+        if (!ordinaryResumed || params.permissions!=="evoloop_message_read" ||
+          params.approvalPolicy!=="never" || params.sandboxPolicy!==undefined || params.cwd!==thread.cwd) {
+          send({id,error:{code:-32602,message:"ordinary Turn was not exact"}});continue;
+        }
+      } else {
+        const expectedSandbox=mode.includes("workspace")?"workspaceWrite":"readOnly";
+        if (params.model!=="gpt-6-sol" || params.permissions!==undefined ||
+          params.approvalPolicy!=="on-request" || params.sandboxPolicy?.type!==expectedSandbox ||
+          params.sandboxPolicy.networkAccess!==false || params.cwd!==thread.cwd ||
+          (expectedSandbox==="workspaceWrite" && JSON.stringify(params.sandboxPolicy.writableRoots)!=="[]")) {
+          send({id,error:{code:-32602,message:"business Turn did not use exact original overrides"}});continue;
+        }
+        if (mode.endsWith("reject")&&turnStarts===2) {send({id,error:{code:-32602,message:"business Turn rejected"}});continue;}
+        if (mode.endsWith("lost")&&turnStarts===2) continue;
+        lastTurnModel=params.model;
+        loadedBusinessInput=params.input?.[0]?.text??null;
+        ordinaryResumed=false;
+      }
+    } else if (mode.startsWith("message-profile")) {
       if (ordinaryResumed) {
         if (params.approvalPolicy !== "never" || params.permissions !== "evoloop_message_read" ||
           params.sandboxPolicy !== undefined || params.cwd !== thread.cwd) {
@@ -208,9 +267,10 @@ for await (const line of lines) {
         send({id,error:{code:-32602,message:"business turn did not regain exact profile"}});continue;
       }
     }
-    send({ id, result: { turn: { id: "turn-1", status: "inProgress" } } });
+    const startedTurnId=mode.startsWith("message-profile-loaded")?`turn-${turnStarts}`:"turn-1";
+    send({ id, result: { turn: { id: startedTurnId, status: "inProgress" } } });
     send({ method: "item/started", params: { threadId: "unowned", turnId: "x" } });
-    send({ method: "turn/started", params: { threadId: thread.id, turn: { id: "turn-1", status: "inProgress" } } });
+    send({ method: "turn/started", params: { threadId: thread.id, turn: { id: startedTurnId, status: "inProgress" } } });
     if (mode === "protocol-0164") {
       send({ id: 850, method: "currentTime/read", params: { threadId: thread.id } });
       send({ id: 851, method: "currentTime/read", params: { threadId: "foreign-thread" } });

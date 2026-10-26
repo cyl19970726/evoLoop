@@ -150,6 +150,8 @@ Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也�
 
 若故障时已有原消息 M 排队，retry 成功前 M 不会启动；指定 A retry 确认 completed 后，仅该 pin M 获一次处理许可。M 成功后 gate 停在 awaiting acceptance；Lead 仍须按原规则核交付、Task close、声明消费者 used（如适用）并对原 claim 执行 accepted release，随后才开放 B。若条目已按预先授权的有界规则正式释放，gate 也不会自动开放；有权者须再执行 `runtime.session.recovery.resume`，并保留有界释放来源。依赖该条目的 B 仍须看到 `accepted` release，有界释放不满足依赖，也不能改变 A 的原 accepted 规则。无 claim 的普通消息失败等其他可恢复情形，也由 `runtime.session.recovery.resume` 在 exact cause/gate version 和已对账结果下登记显式决定；未处理的原排队消息保持 pin；已终态或取消的原消息只可经正式 resume 清 pin，不可换成新消息或重播，也不接管尚未结算的 unknown。任何 failure/unknown 都保留并重新阻断，不清除、不自动重试；额度已获授权仅使有界命令可用，不构成无限执行授权。本段记录的是本次实现合同，真实原生模型接受、A→原 M→B 和 Lead 的实际验收仍后置。
 
+排查消息后的业务接续时，读取原 Run 事件与运行状态中的具体失败阶段：`business_profile_restore`、`run_start` 和 `run_bind` 分别表示准备业务策略、发起任务 Turn 与保存绑定。已加载 Thread 的 `thread/resume` 回显不单独证明业务权限已恢复，下一业务 `turn/start` 须显式使用原固定 profile。新的 `run.dispatchRejected` 只由本次精确的恢复 RPC 拒绝证据产生；旧 unknown 不能凭相似机制、没有 Turn ID 或暂时未找到历史而改成 failed。真正的启动／绑定回执未知继续按原 Run 和 operation 对账，不重发消息、不新建替代 Run，也不重置队列成本。
+
 核当前记录可从 `list roles`、`read role ROLE_ID --bindings`、`list sessions`、`list runs` 和 `task TASK_ID` 开始，均带实际 `--project`；详情按 `help` 使用 `read session` / `read run`。Role 列表可分页；Session/Run 列表当前不接受 `--limit` 或 `--cursor`。用绑定关联 Session，再用 Run 关联 Task，不从会话名称猜当前任务。私有 ID、地址与回执放过程报告，不放公开规范。普通工作台是否能直接找到同样关系，须另做实际阅读验证；API 可读不等于页面可见，列表或讨论区缺口不能用文档说明冒充前端已补齐。
 
 ## 配置周期工作的接续

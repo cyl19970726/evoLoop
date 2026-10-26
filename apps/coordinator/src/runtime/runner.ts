@@ -3,7 +3,7 @@ import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, Runtime
 import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace } from "@evoloop/contracts/runtime";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
@@ -14,23 +14,37 @@ import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId,
   uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
 
 interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
-type RuntimeFaultPhase = "project_scan" | "session_create" | "session_close" | "profile_activation" | "run_preflight" | "run_start" | "run_reconcile" | "approval_receipt";
+type RuntimeFaultPhase = "project_scan" | "session_create" | "session_close" | "profile_activation" | "run_preflight" | "business_profile_restore" | "run_start" | "run_bind" | "run_reconcile" | "approval_receipt";
 type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
 export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
-  phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string }
+  phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string;
+  nativeMethod?: "thread/resume" | "turn/start"; nativeCode?: number;
+  nativeCategory?: RuntimeServerError["category"] }
 const faultMessage: Record<RuntimeFaultPhase, string> = {
   project_scan: "项目运行状态暂不可读取；新派发须等待恢复。",
   session_create: "会话创建结果尚未核实；保留原会话 ID，不自动重试。",
   session_close: "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。",
   profile_activation: "模型配置的原生生效尚未核实；同一会话的后续启动保持阻止。",
   run_preflight: "运行前置校验未通过；请核对原 Run 的持久状态。",
+  business_profile_restore: "业务配置恢复未完成；本执行者尚未发送任务 Turn，请核对原 Run 的恢复记录。",
   run_start: "原生启动结果尚未核实；保留原 Run ID，不自动重试。",
+  run_bind: "原生已返回 Turn，但运行绑定尚未保存；保留原 Run ID，只读核对原操作。",
   run_reconcile: "运行暂不可对账；保留原 Run ID 与未知状态。",
   approval_receipt: "审批拒绝回执尚未保存；请核对原会话或运行。",
 };
 const faultCategory = (error: unknown): RuntimeFaultCategory => error instanceof RuntimeServerError ?
   error.category === "permission_denied" ? "authorization" : "native_rejected" :
   error instanceof DomainError ? error.code === "FORBIDDEN" ? "authorization" : "verification" : "unavailable";
+// Native messages can contain private paths or task material. Persist only bounded protocol facts.
+const dispatchFailureDetail = (error: unknown): string => {
+  const method = error instanceof RuntimeServerError || error instanceof RuntimeUnknownError ? error.method : null;
+  const safeMethod = method === "thread/resume" || method === "turn/start" ? method : "unavailable";
+  if (error instanceof RuntimeServerError)
+    return `native_rejected; method=${safeMethod}; category=${error.category}; code=${error.code}`;
+  if (error instanceof RuntimeUnknownError) return `native_outcome_unknown; method=${safeMethod}`;
+  if (error instanceof RuntimeProtocolError || error instanceof DomainError) return "local_verification_failed";
+  return "unclassified_failure";
+};
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
@@ -129,6 +143,12 @@ export class RuntimeRunner {
     sessionId?: string, runId?: string, category = faultCategory(error)) {
     const fault: RuntimeFault = {projectId,sessionId:sessionId??null,runId:runId??null,
       phase,category,message:faultMessage[phase],observedAtUtc:new Date().toISOString()};
+    if ((error instanceof RuntimeServerError || error instanceof RuntimeUnknownError) &&
+      (error.method === "thread/resume" || error.method === "turn/start")) fault.nativeMethod = error.method;
+    if (error instanceof RuntimeServerError) {
+      fault.nativeCode = error.code;
+      fault.nativeCategory = error.category;
+    }
     const key=this.faultKey(projectId,phase,sessionId,runId);
     this.faults.delete(key);this.faults.set(key,fault);
   }
@@ -330,12 +350,12 @@ export class RuntimeRunner {
       this.recordFault(session.projectId,"session_create",error,session.id,undefined,"unknown_outcome");
     }
   }
-  private async restore(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
+  private async restore(session: RuntimeSessionRecord, operationId: string): Promise<RuntimeBinding> {
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) throw new Error("Session authority is no longer available");
     const binding = bindingOf(session);
     if (!this.registered.has(session.id) || this.runtime.needsBusinessRestore?.(binding)) {
       await this.runtime.registerBinding(binding);
-      await this.runtime.resume(binding, specOf(session));
+      await this.runtime.resume(binding, specOf(session), operationId);
       this.registered.add(session.id);
     }
     return binding;
@@ -618,15 +638,40 @@ export class RuntimeRunner {
       // Recheck after preflight, immediately before recording the external-start intent.
       if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return false;
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
+      let startBinding: RuntimeBinding;
       try {
         // The durable Run dispatch permit precedes both native business-profile
         // restoration and turn/start. An uncertain resume is never retried.
-        const startBinding = await this.restore(session);
-        const turn = await this.runtime.startTurn(startBinding, input, run.operationId,run.executionProfile);
+        startBinding = await this.restore(session, run.operationId);
+      } catch (error) {
+        if (error instanceof RuntimeServerError && error.method === "thread/resume") {
+          await this.deps.trusted.rejectDispatch(run.projectId, run.id,
+            "Native business-profile resume was explicitly rejected before Task turn/start", {
+              kind: "native_resume_rejected", operationId: run.operationId, code: error.code, category: error.category,
+            });
+          this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id);
+        } else {
+          await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+            `Business profile restoration was not confirmed; this coordinator did not call Task turn/start; ${dispatchFailureDetail(error)}; reconcile the original operation without replay`);
+          this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id,"unknown_outcome");
+        }
+        return false;
+      }
+      let turn: RuntimeTurn;
+      try {
+        turn = await this.runtime.startTurn(startBinding, input, run.operationId,run.executionProfile);
+      } catch (error) {
+        await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+          `Task turn/start outcome was not confirmed; ${dispatchFailureDetail(error)}; reconcile owned history before any retry`);
+        this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unknown_outcome");
+        return false;
+      }
+      try {
         run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId });
       } catch (error) {
-        await this.deps.trusted.markRunUnknown(run.projectId, run.id, "Turn start acknowledgement unavailable; reconcile owned history before any retry");
-        this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unknown_outcome");
+        await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+          "Task turn/start returned a Turn but its binding receipt was not saved; reconcile the original operation without starting another Turn");
+        this.recordFault(run.projectId,"run_bind",error,run.sessionId,run.id,"unknown_outcome");
         return false;
       }
     }
