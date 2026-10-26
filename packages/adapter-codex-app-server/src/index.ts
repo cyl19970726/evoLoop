@@ -157,12 +157,14 @@ export class CodexAppServerAdapter implements RuntimePort {
   private events = new Set<(event: RuntimeEvent) => void>();
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   private declaredTools = new Map<string, Set<string>>();
-  /** A read-only conversation disables dynamic tools and approvals until the exact business profile is restored. */
+  /** A read-only conversation disables dynamic tools and approvals until a business Turn is acknowledged. */
   private readOnlyThreads = new Set<string>();
   private profileTransitionThreads = new Set<string>();
   private businessTurnPolicies = new Map<string,{sandboxPolicy:{type:'readOnly';networkAccess:false}|{type:'workspaceWrite';writableRoots:string[];networkAccess:boolean};approvalPolicy:'on-request'|'untrusted'}>();
   private readOnlyQualifications = new Map<string,{fingerprint:string;observedAt:number}>();
-  private businessRestoreAcknowledged = new Set<string>();
+  /** The original policy is ready for one explicit turn/start override; resume alone cannot apply it on a loaded Thread. */
+  private businessRestorePrepared = new Map<string,string>();
+  private businessRestoreAttempted = new Map<string,Set<string>>();
   private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
   private closed = false;
@@ -383,7 +385,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     const wasConnected = this.ready || !!this.child;
     this.ready = false;
     this.readOnlyQualifications.clear();
-    this.businessRestoreAcknowledged.clear();
+    this.businessRestorePrepared.clear();
     const child = this.child; this.child = null;
     if (child && !child.killed) child.kill();
     for (const [id, pending] of this.pending) {
@@ -401,7 +403,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.rememberBinding(binding);
   }
 
-  /** A settled ordinary Turn still needs an acknowledged original Task profile. */
+  /** A settled ordinary Turn still needs an acknowledged original Task Turn. */
   needsBusinessRestore(binding:RuntimeBinding):boolean {
     this.owned(binding);
     return this.readOnlyThreads.has(binding.nativeThreadId);
@@ -411,7 +413,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   markReadOnlyThread(binding:RuntimeBinding):void {
     this.owned(binding);
     this.readOnlyThreads.add(binding.nativeThreadId);
-    this.businessRestoreAcknowledged.delete(binding.nativeThreadId);
+    this.businessRestorePrepared.delete(binding.nativeThreadId);
   }
 
   private validateBinding(binding: RuntimeBinding): void {
@@ -456,8 +458,14 @@ export class CodexAppServerAdapter implements RuntimePort {
     } finally { this.pendingCreate = null; }
   }
 
-  async resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
+  async resume(binding: RuntimeBinding, spec: RuntimeSessionSpec, dispatchOperationId?: string): Promise<RuntimeBinding> {
     this.owned(binding);
+    if(dispatchOperationId!==undefined&&!nonempty(dispatchOperationId))
+      throw new RuntimeProtocolError('business restore operation ID is empty');
+    if(this.readOnlyThreads.has(binding.nativeThreadId)&&!nonempty(dispatchOperationId))
+      throw new RuntimeProtocolError('business restore requires the durably dispatched Run operation ID');
+    if(dispatchOperationId&&this.businessRestoreAttempted.get(binding.nativeThreadId)?.has(dispatchOperationId))
+      throw new RuntimeProtocolError('this business Turn start was already attempted; reconcile its durable operation');
     this.readOnlyQualifications.delete(binding.nativeThreadId);
     if (!spec || !nonempty(spec.actorId) || spec.sessionId !== binding.sessionId || spec.roleId !== binding.roleId ||
       spec.projectId !== binding.projectId || spec.authorizationScope !== binding.authorizationScope ||
@@ -478,13 +486,16 @@ export class CodexAppServerAdapter implements RuntimePort {
       sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
     const thread = object(result?.thread);
     if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("resumed thread does not match registered binding");
-    if(binding.resumeProfile.executionProfileRevisionId&&spec.model)
-      this.assertRevisedProfileReply(result,binding,spec,
-        spec.sandbox==='workspace-write'&&config?.['sandbox_workspace_write.network_access']===true);
+    const networkAccess=spec.sandbox==='workspace-write'&&config?.['sandbox_workspace_write.network_access']===true;
+    if(this.readOnlyThreads.has(binding.nativeThreadId)){
+      if(!this.isExactOrdinaryRejoinReply(result,binding,spec))
+        this.assertBusinessResumeReply(result,binding,spec,networkAccess);
+    }else if(binding.resumeProfile.executionProfileRevisionId&&spec.model)
+      this.assertRevisedProfileReply(result,binding,spec,networkAccess);
     this.businessTurnPolicies.set(binding.nativeThreadId,{sandboxPolicy:spec.sandbox==='read-only'?{type:'readOnly',networkAccess:false}:
       {type:'workspaceWrite',writableRoots:[],networkAccess:config?.['sandbox_workspace_write.network_access']===true},approvalPolicy:spec.approvalPolicy});
     if(this.readOnlyThreads.has(binding.nativeThreadId))
-      this.businessRestoreAcknowledged.add(binding.nativeThreadId);
+      this.businessRestorePrepared.set(binding.nativeThreadId,dispatchOperationId!);
     return binding;
   }
 
@@ -531,6 +542,35 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeUnknownError('thread/resume',null,'execution profile reply did not confirm the exact owned Thread and model');
   }
 
+  /** A loaded rejoin may echo the ordinary named policy despite exact business overrides in the request. */
+  private isExactOrdinaryRejoinReply(reply:Record<string,unknown>|null,
+    binding:RuntimeBinding,target:RuntimeSessionSpec):boolean{
+    const thread=object(reply?.thread),sandbox=object(reply?.sandbox),active=object(reply?.activePermissionProfile);
+    return thread?.id===binding.nativeThreadId&&thread.sessionId===binding.nativeSessionId&&
+      thread.cwd===binding.cwd&&(thread.model==null||thread.model===target.model)&&
+      (target.model==null||reply?.model===target.model)&&nonempty(reply?.modelProvider)&&
+      reply?.cwd===binding.cwd&&reply?.approvalPolicy==='never'&&
+      sandbox?.type==='readOnly'&&sandbox.networkAccess===false&&
+      (this.expectedVersion==='codex-cli 0.154.0' ? reply?.activePermissionProfile==null :
+        active?.id===ORDINARY_PERMISSION_PROFILE&&active.extends==null);
+  }
+
+  /** A cold resume can already report the legacy business policy; a loaded named profile cannot masquerade as it. */
+  private assertBusinessResumeReply(reply:Record<string,unknown>|null,
+    binding:RuntimeBinding,target:RuntimeSessionSpec,networkAccess:boolean):void{
+    const thread=object(reply?.thread),sandbox=object(reply?.sandbox);
+    const expectedSandbox=target.sandbox==='read-only'?'readOnly':'workspaceWrite';
+    if(!thread||thread.id!==binding.nativeThreadId||thread.sessionId!==binding.nativeSessionId||
+      thread.cwd!==binding.cwd||thread.model!=null&&thread.model!==target.model||
+      (target.model!=null&&reply?.model!==target.model)||!nonempty(reply?.modelProvider)||
+      reply?.cwd!==binding.cwd||reply?.approvalPolicy!==target.approvalPolicy||
+      sandbox?.type!==expectedSandbox||(sandbox?.networkAccess??false)!==networkAccess||
+      reply?.activePermissionProfile!=null||
+      (target.sandbox==='workspace-write'&&sandbox?.writableRoots!=null&&
+        (!Array.isArray(sandbox.writableRoots)||sandbox.writableRoots.some(root=>root!==binding.cwd))))
+      throw new RuntimeUnknownError('thread/resume',null,'business resume reply did not match the owned Thread or an exact known profile');
+  }
+
   /** Called only after the coordinator has durably claimed this one revision's activation. */
   async activateExecutionProfile(current:RuntimeBinding,target:RuntimeSessionSpec,
     revisionId:string,operationId:string):Promise<RuntimeBinding>{
@@ -552,7 +592,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       {type:'readOnly',networkAccess:false}:{type:'workspaceWrite',writableRoots:[],networkAccess},
       approvalPolicy:target.approvalPolicy});
     this.profileTransitionThreads.delete(current.nativeThreadId);
-    if(this.readOnlyThreads.has(current.nativeThreadId))this.businessRestoreAcknowledged.add(current.nativeThreadId);
+    // Activation confirms a model revision, not a later Run's dispatch operation.
     return revised;
   }
 
@@ -574,7 +614,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       {type:'readOnly',networkAccess:false}:{type:'workspaceWrite',writableRoots:[],networkAccess},
       approvalPolicy:target.approvalPolicy});
     this.profileTransitionThreads.delete(current.nativeThreadId);
-    if(this.readOnlyThreads.has(current.nativeThreadId))this.businessRestoreAcknowledged.add(current.nativeThreadId);
+    // Readback confirms the revision, not a later Run's dispatch operation.
     return revised;
   }
 
@@ -689,9 +729,9 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(!rechecked.available||rechecked.fingerprint!==proof.fingerprint)
       throw new RuntimeProtocolError('native read-only tool profile changed before Turn start');
     this.readOnlyQualifications.delete(binding.nativeThreadId);
-    // This does not alter the saved resumeProfile. The next business Run must explicitly resume its exact profile.
+    // This does not alter the saved resumeProfile. The next business Turn must explicitly carry its exact policy.
     this.readOnlyThreads.add(binding.nativeThreadId);
-    this.businessRestoreAcknowledged.delete(binding.nativeThreadId);
+    this.businessRestorePrepared.delete(binding.nativeThreadId);
     const result=object(await this.request('thread/resume',{
       threadId:binding.nativeThreadId,excludeTurns:true,cwd:binding.cwd,
       ...(binding.resumeProfile.model?{model:binding.resumeProfile.model}:{}),
@@ -803,18 +843,26 @@ export class CodexAppServerAdapter implements RuntimePort {
         throw new RuntimeProtocolError('Run does not carry this exact immutable execution profile');
     }
     const restoring=this.readOnlyThreads.has(binding.nativeThreadId);
-    if(restoring&&!this.businessRestoreAcknowledged.has(binding.nativeThreadId))
-      throw new RuntimeProtocolError('exact business profile must be acknowledged before Task turn');
+    if(restoring&&this.businessRestorePrepared.get(binding.nativeThreadId)!==operationId)
+      throw new RuntimeProtocolError('exact business Turn policy must be prepared once before Task turn');
     if (!nonempty(input) || !nonempty(operationId)) throw new RuntimeProtocolError("input and durable operation ID required");
+    if(this.businessRestoreAttempted.get(binding.nativeThreadId)?.has(operationId))
+      throw new RuntimeProtocolError('this business Turn start was already attempted; reconcile its durable operation');
     // The caller persists operationId before this call. The CLI does not promise idempotency for clientUserMessageId.
     const policy=this.businessTurnPolicies.get(binding.nativeThreadId);
     if(restoring&&!policy)throw new RuntimeProtocolError('exact business Turn policy was not restored');
+    if(restoring){
+      this.businessRestorePrepared.delete(binding.nativeThreadId);
+      const attempted=this.businessRestoreAttempted.get(binding.nativeThreadId)??new Set<string>();
+      attempted.add(operationId);
+      this.businessRestoreAttempted.set(binding.nativeThreadId,attempted);
+    }
     const result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
       ...(binding.resumeProfile?.model?{model:binding.resumeProfile.model}:{}),
       ...(policy?{cwd:binding.cwd,sandboxPolicy:policy.sandboxPolicy,approvalPolicy:policy.approvalPolicy}:{}) }));
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
-    if(restoring){this.readOnlyThreads.delete(binding.nativeThreadId);this.businessRestoreAcknowledged.delete(binding.nativeThreadId);}
+    if(restoring)this.readOnlyThreads.delete(binding.nativeThreadId);
     return turn;
   }
 
