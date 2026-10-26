@@ -18,7 +18,7 @@ const taskAcceptanceGap = {
 
 function stageJourneyHref(projectId: string): string { return `#/p/${encodeURIComponent(projectId)}/journey`; }
 
-function TraceCard({ trace, projectId, names }: { trace: AllocationTrace; projectId: string; names: Record<string, string> }) {
+export function AllocationTraceCard({ trace, projectId, names }: { trace: AllocationTrace; projectId: string; names: Record<string, string> }) {
   const relation = trace.relation;
   const history = !trace.decisionIsLatest;
   const targetName = relation.kind === "decision-target" && relation.target.kind !== "stage"
@@ -52,9 +52,10 @@ function TraceCard({ trace, projectId, names }: { trace: AllocationTrace; projec
     {history && <small>关联历史决定；当前决定已变化，后续关系需重新核对。</small>}
     {trace.decisionDocumentRevisionId && <p><a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(trace.discussion.document.id)}?revision=${encodeURIComponent(trace.decisionDocumentRevisionId)}`}>阅读这次决定所依据的固定原文</a></p>}
     <details><summary>固定来源与标识</summary><ul>
+      <li>关系 ID <code>{trace.id}</code> · 决定事件 <code>{trace.decisionEventId}</code>{trace.decisionDocumentRevisionId && <> · 决定固定修订 <code>{trace.decisionDocumentRevisionId}</code></>}</li>
       {relation.kind === "decision-target"
-        ? <li>目标 ID <code>{relation.target.id}</code> · 行动事件 <code>{relation.actionEventId}</code></li>
-        : <li>Session <code>{allocationSessionKey(relation.assignment.target)}</code> · Task ID <code>{relation.task.id}</code> · 行动事件 <code>{relation.taskActionEventId}</code>{relation.assignment.method === "lead-observed" && <> · 观察者 <code>{relation.assignment.observerActorId}</code></>}</li>}
+        ? <li>目标 ID <code>{relation.target.id}</code> · {relation.target.kind === "stage" ? <>固定版本 v{relation.target.version}</> : <>固定修订 <code>{relation.target.revisionId}</code></>} · 行动事件 <code>{relation.actionEventId}</code></li>
+        : <li>Session <code>{allocationSessionKey(relation.assignment.target)}</code> · Task ID <code>{relation.task.id}</code> · Task 固定修订 <code>{relation.task.revisionId}</code> · 行动事件 <code>{relation.taskActionEventId}</code>{relation.assignment.method === "lead-observed" && <> · 观察者 <code>{relation.assignment.observerActorId}</code></>}</li>}
       {trace.sources.map((source, index) => {
         const link = source.kind === "stage"
           ? source.href === stageJourneyHref(projectId) ? source.href : null
@@ -128,7 +129,7 @@ export function AllocationRelationsPanel({ context, record, refresh, known, name
     {!loading && !error && items.length === 0 && <p className="empty">{partial
       ? "来源读取不完整，暂不能判断是否存在正式关系。"
       : cursor ? "当前页没有关系；后续页面尚未读完。" : "尚无正式后续对象链接；讨论上下文和拟交接会话不构成实际承接。"}</p>}
-    {items.map(item => <TraceCard key={item.id} trace={item} projectId={context.projectId} names={names} />)}
+    {items.map(item => <AllocationTraceCard key={item.id} trace={item} projectId={context.projectId} names={names} />)}
     {cursor && <button type="button" disabled={moreBusy || loading} onClick={() => void more()}>{moreBusy ? "正在读取…" : "加载更多关系"}</button>}
   </aside>;
 }
