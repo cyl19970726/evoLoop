@@ -69,8 +69,9 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
   const [observedAt, setObservedAt] = useState<string | null>(null);
   const [readAgain, setReadAgain] = useState(0);
   const epoch = useRef(0);
+  const root = useRef<HTMLElement>(null);
   const loadedScope = useRef("");
-  const changesError = useAllocationChanges(context.token, context.projectId, () => setReadAgain(value => value + 1));
+  const changesError = useAllocationChanges(context.token, context.projectId, root, () => setReadAgain(value => value + 1));
   useEffect(() => {
     const current = ++epoch.current;
     const controller = new AbortController();
@@ -105,7 +106,7 @@ export function AllocationRelationsPanel({ context, record, refresh }: { context
     } catch (cause) { if (epoch.current === current) setError(errorText(cause)); }
     finally { if (epoch.current === current) setMoreBusy(false); }
   }
-  return <aside className="discussion-exploration-column discussion-exploration-relations" aria-label="正式关系与具体承接">
+  return <aside ref={root} className="discussion-exploration-column discussion-exploration-relations" aria-label="正式关系与具体承接">
     <h2>正式关系与确切承接</h2>
     <p className="muted">只显示决定后的正式链接及相同 Task 修订的接受记录。接受不等于运行、交付或实际使用。</p>
     <button type="button" disabled={loading} onClick={() => setReadAgain(value => value + 1)}>重新读取关系</button>

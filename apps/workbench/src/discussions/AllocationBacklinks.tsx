@@ -16,9 +16,10 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
   const [observedAt, setObservedAt] = useState<string | null>(null);
   const [readAgain, setReadAgain] = useState(0);
   const epoch = useRef(0);
+  const root = useRef<HTMLElement>(null);
   const loadedScope = useRef("");
   const key = JSON.stringify(filter);
-  const changesError = useAllocationChanges(context.token, context.projectId, () => setReadAgain(value => value + 1));
+  const changesError = useAllocationChanges(context.token, context.projectId, root, () => setReadAgain(value => value + 1));
   useEffect(() => {
     const current = ++epoch.current, controller = new AbortController();
     const scope = `${context.token}\0${context.projectId}\0${key}`;
@@ -52,7 +53,7 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
     } catch (cause) { if (epoch.current === current) setError(errorText(cause)); }
     finally { if (epoch.current === current) setBusy(false); }
   }
-  return <section className="allocation-backlinks" aria-label="正式分工讨论来源"><h3>正式分工讨论来源</h3>
+  return <section ref={root} className="allocation-backlinks" aria-label="正式分工讨论来源"><h3>正式分工讨论来源</h3>
     <p className="muted">仅按正式行动链接及同修订接受记录反查；相同职责下的其他会话不会自动计入。</p>
     <button type="button" disabled={loading} onClick={() => setReadAgain(value => value + 1)}>重新读取来源</button>
     {observedAt && <p className="muted">来源读于 {date(observedAt)}；变化检查失败时保留此读数。</p>}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { allocationRelations } from "../src/discussions/allocationClient.ts";
-import { allocationChangeRequiresReload } from "../src/discussions/useAllocationChanges.ts";
+import { allocationChangeRequiresReload, subscribeAllocationChanges } from "../src/discussions/useAllocationChanges.ts";
 import { api } from "../src/api.ts";
 import { sessionClient } from "../src/sessions/client.ts";
 import type { SessionChanges } from "@evoloop/contracts/session-observation";
@@ -72,4 +72,43 @@ test("allocation invalidation watches project changes, including unrelated Sessi
   assert.equal(allocationChangeRequiresReload({ ...unchanged, items: [{ sessionKeys: ["owned:other"] }] } as SessionChanges), true);
   assert.equal(allocationChangeRequiresReload({ ...unchanged, resetRequired: true }), true);
   assert.equal(allocationChangeRequiresReload({ ...unchanged, hasMore: true }), true);
+});
+
+test("expanded panels share one project cursor and stop reading while hidden", async () => {
+  const priorFetch = globalThis.fetch;
+  const priorWindow = globalThis.window;
+  const priorDocument = globalThis.document;
+  let tick: (() => void) | undefined, cleared = 0, reads = 0, invalidations = 0;
+  globalThis.window = { setInterval: (callback: () => void) => { tick = callback; return 1; },
+    clearInterval: () => { cleared++; }, addEventListener: () => {}, removeEventListener: () => {} } as unknown as Window & typeof globalThis;
+  globalThis.document = { visibilityState: "visible", addEventListener: () => {}, removeEventListener: () => {} } as unknown as Document;
+  globalThis.fetch = async () => Response.json([1, 3].includes(++reads) ? { observationCursor: `project-cursor-${reads}` } : {
+    items: reads === 2 ? [{ sessionKeys: ["owned:other"] }] : [], nextCursor: "next-cursor", hasMore: false, resetRequired: false,
+    metadata: { generatedAt: "2026-10-26T00:00:00Z", sourceObservedAt: null, partial: false, limitations: [] },
+  });
+  const element = { getClientRects: () => [{}] } as unknown as HTMLElement;
+  const makeSubscriber = () => ({ element: () => element, visible: true, generation: 0,
+    invalidate: () => { invalidations++; }, error: () => {} });
+  const first = makeSubscriber(), second = makeSubscriber();
+  const stopFirst = subscribeAllocationChanges("token", projectId, first);
+  const stopSecond = subscribeAllocationChanges("token", projectId, second);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(reads, 1, "one baseline for two panels");
+    assert.equal(invalidations, 2);
+    first.visible = false; second.visible = false;
+    tick?.(); await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(reads, 1, "hidden panels do not poll");
+    first.visible = true;
+    tick?.(); await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(reads, 3, "one project changes read and one new baseline after an invalidation");
+    assert.equal(invalidations, 3, "only the visible panel rereads immediately");
+    second.visible = true;
+    tick?.(); await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(invalidations, 4, "the hidden panel catches up when visible again");
+  } finally {
+    stopFirst(); stopSecond();
+    globalThis.fetch = priorFetch; globalThis.window = priorWindow; globalThis.document = priorDocument;
+  }
+  assert.equal(cleared, 1, "the shared timer is removed after the last subscriber");
 });
