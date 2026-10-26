@@ -88,3 +88,18 @@ test("an unrelated 404 cannot authorize replay", async () => {
     async () => { throw new Error("must not send"); }), /project missing/);
   clearRecoveryIntents();
 });
+
+test("a persisted business rejection after replay is resolved by exact same-ID read", async () => {
+  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  const rejected = { status: "rejected" as const, operationId, code: "VERSION_CONFLICT", message: "basis changed" };
+  const recorded = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash, result: rejected } as Operation;
+  let reads = 0, sends = 0;
+  const result = await replayRecoveryIntent(receipt, async () => {
+    reads++;
+    if (reads === 1) throw new ApiError(404, "not found", { code: "OPERATION_NOT_FOUND" });
+    return recorded;
+  }, async () => { sends++; throw new ApiError(409, "basis changed", rejected); });
+  assert.deepEqual(result, rejected);
+  assert.equal(reads, 2); assert.equal(sends, 1);
+  clearRecoveryIntents();
+});

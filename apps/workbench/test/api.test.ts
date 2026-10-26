@@ -29,6 +29,13 @@ test("a successful response for another operation remains unconfirmed", async ()
   });
 });
 
+test("operation read requires a valid server command hash", async () => {
+  await withFetch(async () => Response.json({ id: "operation-1", projectId: "project-1", actorId: "owner",
+    commandType: "task.reviewBasis", result: { status: "rejected", operationId: "operation-1", code: "CONFLICT", message: "changed" } }), async () => {
+    await assert.rejects(api("token").operation("project-1", "operation-1"), cause => cause instanceof ApiError && cause.status === 0);
+  });
+});
+
 test("first assignment read accepts only a successful JSON null", async () => {
   await withFetch(async (input, init) => {
     assert.equal(input, "/api/projects/project-1/tasks/task-1/assignment");

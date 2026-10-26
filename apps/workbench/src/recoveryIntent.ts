@@ -74,7 +74,16 @@ export async function replayRecoveryIntent(receipt: OperationReceipt, read: () =
     if (!operationNotFound(cause)) throw cause;
     const command = await recoveryIntent(receipt);
     if (!command) throw new Error("原命令已不在当前页面内存中，不能安全重试");
-    return send(command);
+    try { return await send(command); }
+    catch (sendError) {
+      if (!(sendError instanceof ApiError && sendError.status === 409)) throw sendError;
+      // A persisted business rejection is returned as 409. Read its operation
+      // and verify the exact original hash before clearing the pending receipt.
+      const recorded = await read();
+      const verdict = await verifyRecoveryOperation(receipt, recorded);
+      if (verdict !== "match") throw new Error("拒绝记录与原命令摘要不匹配，回执仍需人工核对");
+      return recorded.result;
+    }
   }
   const verdict = await verifyRecoveryOperation(receipt, operation);
   if (verdict !== "match") throw new Error(verdict === "unavailable"

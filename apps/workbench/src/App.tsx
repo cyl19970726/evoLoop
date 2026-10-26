@@ -14,7 +14,7 @@ import { TeamWorkspace } from "./roles/TeamWorkspace";
 import { SchedulingPanel } from "./scheduling/SchedulingPanel";
 import { JourneyBoard } from "./workflow/JourneyBoard";
 import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
-import { addReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
+import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import { clearRecoveryIntents, forgetRecoveryIntent, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "./recoveryIntent";
 
 import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
@@ -143,7 +143,7 @@ function OperationCheck({ receipt, token, onConfirmed }: {
   </Alert>;
 }
 
-function ProjectChooser({ token, principal, receipts, onRefreshSession, context }: { token: string; principal: Principal; receipts: OperationReceipt[]; onRefreshSession: () => Promise<void>; context: MutationContext }) {
+function ProjectChooser({ token, principal, receipts, operationNotice, onRefreshSession, onConfirmed, context }: { token: string; principal: Principal; receipts: OperationReceipt[]; operationNotice: string; onRefreshSession: () => Promise<void>; onConfirmed: (receipt: OperationReceipt, result: Operation["result"]) => void; context: MutationContext }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
   const [refresh, setRefresh] = useState(0);
@@ -172,9 +172,11 @@ function ProjectChooser({ token, principal, receipts, onRefreshSession, context 
     <div className="eyebrow">选择项目</div><h1>你的项目</h1>
     <button type="button" className="quiet" onClick={refreshProjects} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新项目"}</button>
     {refreshError && <Alert kind="error">刷新失败：{refreshError}</Alert>}
+    {operationNotice && <Alert>{operationNotice}</Alert>}
+    {receipts.map(receipt => <OperationCheck key={receipt.operationId} receipt={receipt} token={token} onConfirmed={result => { onConfirmed(receipt, result); setRefresh(value => value + 1); }} />)}
     {projects.length ? <div className="project-list">{projects.map(p => <a className="project-item" key={p.id} href={href(p.id, "work")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入任务列表 →</span></a>)}</div> : <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
     {missing.length > 0 && <Alert>有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在项目不会被覆盖。</Alert>}
-    {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, onChanged: () => { setRefresh(v => v + 1); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
+    {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { setRefresh(v => v + 1); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
   </section>;
 }
 
@@ -245,13 +247,14 @@ export function App() {
     if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
     clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); setToken(""); setSession(null);
   }
-  if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="#/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
-  const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
-  const operationChecks = <>{projectReceipts.map(receipt => <div className="global-alert" key={receipt.operationId}><OperationCheck receipt={receipt} token={token} onConfirmed={result => {
+  function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
     forgetRecoveryIntent(receipt.operationId);
     setOperationNotice(result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); setRefresh(v => v + 1);
-  }} /></div>)}{!projectReceipts.length && <p className="empty">当前身份没有待核对的共同命令回执。知识、外部来源和协作操作的专用回执仍在各自页面核对。</p>}</>;
+  }
+  if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="#/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
+  const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
+  const operationChecks = <>{projectReceipts.map(receipt => <div className="global-alert" key={receipt.operationId}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></div>)}{!projectReceipts.length && <p className="empty">当前身份没有待核对的共同命令回执。知识、外部来源和协作操作的专用回执仍在各自页面核对。</p>}</>;
   return <WorkbenchShell route={route} projectTitle={projectTitle} actor={principal.actorId} receiptCount={projectReceipts.length} token={token} logout={logout}>
     {route.section !== "operations" && projectReceipts.length > 0 && <div className="global-alert"><Alert kind="error">{projectReceipts.length} 项操作结果尚未确认，提交已暂缓。<a href={href(projectId, "operations")}>按原操作 ID 核对</a></Alert></div>}
     {!receiptStorageAvailable && <div className="global-alert"><Alert kind="error">浏览器未能暂存操作回执。请保留原操作 ID，并在待核对操作中查询。</Alert></div>}

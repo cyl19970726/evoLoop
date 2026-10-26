@@ -66,6 +66,7 @@ function checkedCommandResult(value: unknown, operationId: string): CommandResul
 function checkedOperation(value: unknown, operationId: string): Operation {
   if (!isRecord(value) || value.id !== operationId || typeof value.projectId !== "string"
     || typeof value.actorId !== "string" || typeof value.commandType !== "string"
+    || typeof value.commandHash !== "string" || !/^[0-9a-f]{64}$/i.test(value.commandHash)
     || !isCommandResult(value.result, operationId)) throw new ApiError(0, "操作记录响应无法核实，请稍后用同一 ID 查询");
   return value as unknown as Operation;
 }

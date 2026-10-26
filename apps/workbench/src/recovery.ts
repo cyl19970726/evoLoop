@@ -46,6 +46,10 @@ export function visibleReceipts(current: OperationReceipt[], actorId: string, pr
   return current.filter(item => item.actorId === actorId && projectIds.includes(item.projectId));
 }
 
+export function hasProjectReceipt(current: OperationReceipt[], projectId: string): boolean {
+  return current.some(item => item.projectId === projectId);
+}
+
 export function readReceipts(): OperationReceipt[] {
   try { return parseReceipts(window.sessionStorage.getItem(storageKey)); }
   catch { return []; }
