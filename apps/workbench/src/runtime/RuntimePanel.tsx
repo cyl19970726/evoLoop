@@ -28,6 +28,13 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
 };
 type RoleName = { title?: string; error?: string };
 const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox]);
+function requestedTaskRunId(projectId: string, taskId?: string): string | null {
+  if (!taskId) return null;
+  const [path, query = ""] = window.location.hash.split("?");
+  if (path !== `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`) return null;
+  const params = new URLSearchParams(query);
+  return params.get("tab") === "runtime" ? params.get("run") : null;
+}
 export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
@@ -38,24 +45,46 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [epoch, setEpoch] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
+  const [targetRunId, setTargetRunId] = useState(() => requestedTaskRunId(context.projectId, task?.id));
+  const [targetRunProblem, setTargetRunProblem] = useState("");
+  const revealedRunHref = useRef<string | null>(null);
+  const revealedRunElement = useRef<HTMLDetailsElement | null>(null);
   const [roleNames, setRoleNames] = useState<{scope:string; values:Record<string,RoleName>}>({scope:"",values:{}});
   const [assignmentRead, setAssignmentRead] = useState<{scope:string; value:TaskSessionAssignment|null; error:string}|null>(null);
-  const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? ""]);
+  const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? "", targetRunId ?? ""]);
+  useEffect(() => {
+    const onHash = () => setTargetRunId(requestedTaskRunId(context.projectId, task?.id));
+    onHash(); window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [context.projectId, task?.id]);
   useEffect(() => {
     let active = true, fetching = false, sequence = 0;
     const client = runtimeClient(context.token, context.projectId);
-    setLoadedScope(null); setAssignmentRead(null); setError("");
+    setLoadedScope(null); setAssignmentRead(null); setError(""); setTargetRunProblem("");
     async function load() {
       if (fetching) return;
       fetching = true;
       try {
-        const [s, list, work, assignment] = await Promise.all([client.status(), client.sessions(), client.runs(task?.id),
+        const [s, sessionsRead, workRead, assignment, targetRun] = await Promise.all([client.status(), client.sessions()
+          .then(value => ({value,error:""})).catch(cause => ({value:[] as RuntimeSessionRecord[],error:errorText(cause)})), client.runs(task?.id)
+          .then(value => ({value,error:""})).catch(cause => ({value:[] as RuntimeRunRecord[],error:errorText(cause)})),
           task ? sessionClient(context.token, context.projectId).assignment(task.id).then(value => {
             if (value && (value.projectId !== context.projectId || value.taskId !== task.id)) throw new Error("分派响应与当前任务不符");
             return {value,error:""};
           })
-            .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:""})]);
-        if (active) { setStatus(s); setSessions(list.filter(session => session.projectId === context.projectId)); setRuns(work); setRunsForTask(task?.id); setLoadedScope(sessionScope); setAssignmentRead({scope:sessionScope,...assignment}); setError("");
+            .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:""}),
+          targetRunId && uuid.test(targetRunId) ? client.run(targetRunId).then(value => ({value,error:""}))
+            .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:targetRunId ? "链接中的 Run ID 无效" : ""})]);
+        const scopedSessions = sessionsRead.value.filter(session => session.projectId === context.projectId);
+        if (active) { const verified = targetRun.value && targetRun.value.id === targetRunId && targetRun.value.projectId === context.projectId && targetRun.value.taskId === task?.id ? targetRun.value : null;
+          const work = workRead.value;
+          setStatus(s); setSessions(scopedSessions); setRuns(verified ? [...work.filter(run => run.id !== verified.id),verified] : work);
+          setTargetRunProblem(targetRunId && !verified ? targetRun.error || "目标 Run 与当前任务不符" : "");
+          setRunsForTask(workRead.error ? undefined : task?.id); setLoadedScope(sessionScope); setAssignmentRead({scope:sessionScope,...assignment});
+          setError([
+            sessionsRead.error && `会话列表暂不可读取：${sessionsRead.error}。会话范围不能据此推断。`,
+            workRead.error && `运行列表暂不可读取：${workRead.error}。${verified ? "目标 Run 已单独核对；" : ""}其他运行不能据此推断。`,
+          ].filter(Boolean).join(" "));
           sequence += 1; if (sequence > 1) setRuntimePoll({taskId:task?.id,sequence}); }
       } catch (cause) { if (active) setError(errorText(cause)); }
       finally { fetching = false; }
@@ -63,7 +92,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     void load();
     const timer = setInterval(() => { void load(); }, 5000);
     return () => { active = false; clearInterval(timer); };
-  }, [context.token, context.projectId, task?.id, targetSessionId, refresh, epoch]);
+  }, [context.token, context.projectId, task?.id, targetSessionId, targetRunId, refresh, epoch]);
   async function recover() {
     setRecovering(true);
     try { await runtimeClient(context.token, context.projectId).recover(); setEpoch(e => e + 1); }
@@ -116,11 +145,16 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
         ? params.get("run") && `runtime-run-${task.id}-${params.get("run")}`
         : null;
       const targetId = id;
-      if (!targetId || !/^[a-z0-9-]+$/i.test(targetId)) return;
+      if (!targetId) { revealedRunHref.current = null; revealedRunElement.current = null; return; }
+      if (!/^[a-z0-9-]+$/i.test(targetId)) return;
       const target = document.getElementById(targetId);
       if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
-        target.open = true;
-        target.scrollIntoView({ block: "start" });
+        const firstReveal = revealedRunHref.current !== window.location.hash;
+        if (target !== revealedRunElement.current) { target.open = true; revealedRunElement.current = target; }
+        if (firstReveal) {
+          revealedRunHref.current = window.location.hash;
+          target.scrollIntoView({ block: "start" });
+        }
       }
     };
     const frame = requestAnimationFrame(reveal);
@@ -129,6 +163,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   }, [context.projectId, task?.id, runs]);
   return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}
+    {targetRunProblem && <Notice error>指定的 Run 暂不可核对：{targetRunProblem}。没有定位到其他运行。</Notice>}
     {!status ? <p>正在读取执行服务…</p> : !status.available && <Notice>{status.error || "Codex 执行服务尚未接通。已有运行记录仍保留；不自动重发未知启动。"}</Notice>}
     {status && !status.available && context.principal.permissions.includes("review") && <button disabled={recovering} onClick={recover}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</button>}
     {hasTarget && <section className="runtime-session-focus" aria-label="目标 Session">

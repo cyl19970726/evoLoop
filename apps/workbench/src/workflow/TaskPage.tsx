@@ -277,7 +277,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       </section>
     </section>
     <section role="tabpanel" id={panelId("delivery")} aria-labelledby={tabId("delivery")} hidden={tab !== "delivery"}>
-      <DeliveryPanel token={token} detail={detail} projectId={projectId} names={deliveryNames} onChanged={onChanged} />
+      <DeliveryPanel token={token} detail={detail} projectId={projectId} names={deliveryNames} onChanged={onChanged} active={active && tab === "delivery"} />
     </section>
     <section role="tabpanel" id={panelId("runtime")} aria-labelledby={tabId("runtime")} hidden={tab !== "runtime"}>
       <TaskAssignmentPanel context={context} task={detail.task} refresh={refresh} />
