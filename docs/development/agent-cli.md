@@ -179,3 +179,19 @@ worker 凭据的有限有效期由外部配置 `orchestration.credentialTtlMs` �
 具名读取、固定 context/原件、专用请求 schema、持久回执与服务端核对已实现；当前能力以 `help`、`command types`、`request types`、对应 schema 与实际读回为准。新上下文 Agent 已仅经业务 skill＋CLI 完成一项隔离静态归档任务：上游改版显式保留旧依据，交接引用错误产生的两次失败保留，修正版经另一 Agent 实际读取和字节核验后关闭；普通工作台独立只读 QA 可见相同固定原件、交付、观察和旧历史。整合检查与 C1—C4 状态统一见[阶段路线](../roadmap.md#agent-业务入口-c1c4实施里程碑)。这核验了机器入口与人的观察面能够接续，不能替代真人亲用或证明整体产品效果。外置 Wiki 已有受限写读与候选复核证据，语义索引未验；飞书真实租户延后；生产可靠性与长期效果仍需独立验收。
 
 C5 补充验证了新模型：一项 Task 无需预建主文档，经 CLI 一次创建后直接读取正文、开始并交付；首版错误深链的失败观察保留，修订时实际走 reopen→update→start，省略 basis 仍继承原归档修订。修正版经另一 Agent 重读固定 context、导出并核验 355 字节 HTML/CSS/SVG 后关闭，普通 GUI 独立回读相同正文、交付和历史。图在 390px 下保持可读字号并内部横向滚动；这些仍是隔离样本与 Agent 使用，未升级既有预览或证明真人体验。
+
+## 读取分工讨论与具体承接路径
+
+先用 `list discussions --project UUID --kind allocation` 找探索讨论，再用 `discussion UUID` / `discussion UUID --events` 及固定 Document 原件读问题、备选和决定。未决或暂不增员也可有讨论，不需要先创建 Role。关系较多时不要把全部事件下载到前端再筛：
+
+```sh
+npm run --silent cli -- allocations --project PROJECT_UUID --role ROLE_UUID --limit 20
+npm run --silent cli -- allocations --project PROJECT_UUID --session external:HOST_LINK_UUID --limit 20
+npm run --silent cli -- allocations --project PROJECT_UUID --discussion DISCUSSION_UUID --limit 20
+```
+
+三个过滤器恰选一个。用返回的原 `nextCursor` 取下一页；`resetRequired` 时重读首屏，换项目/身份/过滤器也重置。命令只发一次有界读取，不自动追完全部分页，不产生分派或模型运行。旧的无kind讨论列表保持原行为；kind筛选还支持direction和task_collaboration。
+
+关系返回决议与目标固定修订、当前状态和来源；旧决定的固定正文不能被讨论最新 Document 偷换。同 Task 修订的 accepted 历史才能提供确切 Session，assigned 或同 Role 成员不算接受；direct与lead-observed的署名分开。正常未关联为空页；权限、对象不存在、未安装能力或存储故障按错误处理，不改成空成功。已有 Task 尚无分派时，`work assignment UUID` 正常返回null，供首次分派；未知Task仍拒绝。
+
+要把新决定落实为可追溯事实，按当前 `command schema` 核字段，正常记录讨论决定，并用 `discussion.action.link` 固定当前 Role/Task 修订；Task先start后再固定分派和接收。写操作沿原operationId、版本和回查规则。链接本身不创建角色或授予执行许可；没有完整实际使用证据不得借此关闭任务。

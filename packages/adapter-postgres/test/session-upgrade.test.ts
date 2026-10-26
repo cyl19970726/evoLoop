@@ -114,7 +114,7 @@ after(async () => {
   try { await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); } finally { await cleanup.end(); }
 });
 
-test("029 legacy authority survives 030-032 and projects into Session history", async () => {
+test("029 legacy authority survives 030-033 and projects into Session history", async () => {
   const beforeUpgrade = await legacySnapshot();
   const baseline = await client.query("SELECT name FROM pgmigrations ORDER BY run_on, name");
   assert.equal(baseline.rowCount, 28);
@@ -124,9 +124,9 @@ test("029 legacy authority survives 030-032 and projects into Session history", 
   const afterUpgrade = await legacySnapshot();
   assert.deepEqual(afterUpgrade, beforeUpgrade, "legacy authoritative rows must be byte/value stable across the upgrade");
   const upgradedMigrations = await client.query("SELECT name FROM pgmigrations ORDER BY run_on, name");
-  assert.equal(upgradedMigrations.rowCount, 31);
-  assert.deepEqual(upgradedMigrations.rows.slice(-3).map(row => row.name), [
-    "030_session_observation", "031_session_messages", "032_session_assignments",
+  assert.equal(upgradedMigrations.rowCount, 32);
+  assert.deepEqual(upgradedMigrations.rows.slice(-4).map(row => row.name), [
+    "030_session_observation", "031_session_messages", "032_session_assignments", "033_allocation_relations_indexes",
   ]);
 
   const projected = await client.query(`SELECT source_table,count(*)::int AS rows FROM session_observation_change

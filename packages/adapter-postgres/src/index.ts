@@ -7,6 +7,7 @@ import { PgRuntimeStore } from "./runtime.js";
 import { PgSessionMessages } from "./session-messages.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgSessionObservation } from "./session-observation.js";
+import { PgAllocationRelations } from "./allocation-relations.js";
 import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
 import { scheduledSourceFacts } from "./schedule-source.js";
@@ -95,6 +96,7 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 
 class PgReader implements Reader {
   sessionObservation(scope: string) { return new PgSessionObservation(this.client, this.projectId, scope); }
+  allocationRelations(scope: string) { return new PgAllocationRelations(this.client, this.projectId, scope); }
   readonly queue: PgResidentQueue;
   readonly sessionMessages: PgSessionMessages;
   readonly sessionAssignments: PgSessionAssignments;
@@ -130,7 +132,7 @@ class PgReader implements Reader {
   listEvaluationAssessments(id: string, revisionId: string) { return this.evaluations.listEvaluationAssessments(id, revisionId); }
   listEvaluationConclusions(id: string, revisionId: string) { return this.evaluations.listEvaluationConclusions(id, revisionId); }
   getDiscussion(id: string) { return this.discussions.getDiscussion(id); }
-  listDiscussions(limit: number, cursor?: string) { return this.discussions.listDiscussions(limit, cursor); }
+  listDiscussions(limit: number, cursor?: string, kind?: import("@evoloop/contracts").DiscussionRecord['kind']) { return this.discussions.listDiscussions(limit, cursor, kind); }
   listDiscussionEvents(id: string) { return this.discussions.listDiscussionEvents(id); }
   getTaskExternalHead(taskId:string,slotId:string){return this.references.getTaskExternalHead(taskId,slotId);}
   getTaskExternalSnapshot(taskId:string,revisionId:string,slotId:string){return this.references.getTaskExternalSnapshot(taskId,revisionId,slotId);}

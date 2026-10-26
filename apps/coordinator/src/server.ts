@@ -9,6 +9,8 @@ import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import { registerSessionWorkRoutes } from "./session-work/routes.js";
+import type { AllocationRelationsService } from "@evoloop/core/allocation-relations";
+import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
@@ -34,6 +36,7 @@ export async function buildServer(options: {
   service: WorkflowService; credentials: AuthConfig; webRoot?: string; canWrite?: () => boolean;
   runtime?: RuntimeRunner; allowedRuntimeCwds?: (projectId: string) => string[];
   sessionWork?: SessionObservationService;
+  allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
   hasRuntimeGrant?: (scope: RuntimeGrant) => boolean;
@@ -159,6 +162,7 @@ export async function buildServer(options: {
     return { ...(options.runtime?.status(projectId) ?? { available: false, error: "尚未配置 Codex 执行服务", faults: [] }), allowedCwds: [...new Set(callerGrants(projectId,who(request.principal).actorId).map(g=>g.cwd))], grants: callerGrants(projectId,who(request.principal).actorId) };
   });
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
+  if (options.allocationRelations) registerAllocationRelationRoutes(app, options.allocationRelations);
   if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, session) => ({
     ...session, capabilities: { ...session.capabilities,
       send: options.sessionMessages && principal.permissions.includes("write") ? session.capabilities.send : {
@@ -262,8 +266,9 @@ export async function buildServer(options: {
     const p = params(request.params); return options.service.listTaskRevisions(who(request.principal), p.projectId!, p.id!);
   });
   app.get("/api/projects/:projectId/discussions", async request => {
-    const p = params(request.params); const q = pageSchema.parse(request.query);
-    return options.service.listDiscussions(who(request.principal), p.projectId!, q.limit, q.cursor);
+    const p = params(request.params);
+    const q = pageSchema.extend({ kind: z.enum(["allocation", "direction", "task_collaboration"]).optional() }).parse(request.query);
+    return options.service.listDiscussions(who(request.principal), p.projectId!, q.limit, q.cursor, q.kind);
   });
   app.get("/api/projects/:projectId/discussions/:id", async request => {
     const p = params(request.params); return options.service.getDiscussion(who(request.principal), p.projectId!, p.id!);
