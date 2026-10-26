@@ -9,7 +9,7 @@ export type SessionTarget = z.infer<typeof sessionTargetSchema>;
 /** Opaque to clients; always URL-encode when used in a route. */
 export type SessionKey = string;
 export interface ObservationSource {
-  kind: "session" | "host-link" | "role" | "task" | "run" | "queue" | "discussion" | "delivery" | "consumer-observation" | "message" | "session-profile" | "task-assignment";
+  kind: "session" | "host-link" | "role" | "task" | "run" | "queue" | "discussion" | "document" | "stage" | "delivery" | "consumer-observation" | "message" | "session-profile" | "task-assignment";
   id: string;
   revision: string | null;
   evidence: "project-record" | "session-statement" | "independent-use";
