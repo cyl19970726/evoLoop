@@ -9,6 +9,7 @@ export function runtimeClient(token: string, projectId: string) {
   return {
     status: () => get<RuntimeStatus>(""), sessions: () => get<RuntimeSessionRecord[]>("/sessions"),
     runs: (taskId?: string) => get<RuntimeRunRecord[]>(`/runs${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`),
+    run: (runId: string) => get<RuntimeRunRecord>(`/runs/${encodeURIComponent(runId)}`),
     events: (runId: string) => get<RuntimeRecordEvent[]>(`/runs/${encodeURIComponent(runId)}/events`),
     history: (sessionId: string) => get<{turns:{id:string;status:string;messages:{type:string;text:string}[]}[];truncated:boolean;observedAt:string}>(`/sessions/${encodeURIComponent(sessionId)}/history`),
     sessionEvents: (sessionId: string) => get<RuntimeRecordEvent[]>(`/sessions/${encodeURIComponent(sessionId)}/events`),
