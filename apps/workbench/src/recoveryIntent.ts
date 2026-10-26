@@ -54,10 +54,21 @@ export async function recoveryIntent(receipt: OperationReceipt): Promise<Command
   } catch { return null; }
 }
 
-export async function verifyRecoveryOperation(receipt: OperationReceipt, operation: Operation): Promise<"match" | "unavailable" | "mismatch"> {
+export function isSpecialOperation(type: OperationReceipt["commandType"]): boolean {
+  return type === "document.payload" || type === "reference.git" || type === "reference.formal" || type === "reference.task";
+}
+
+export async function verifyRecoveryOperation(receipt: OperationReceipt, operation: Operation): Promise<"match" | "scoped-match" | "unavailable" | "mismatch"> {
   if (operation.id !== receipt.operationId || operation.projectId !== receipt.projectId
     || operation.actorId !== receipt.actorId || operation.commandType !== receipt.commandType
     || operation.result.operationId !== receipt.operationId) return "mismatch";
+  if (isSpecialOperation(receipt.commandType)) {
+    // These legacy endpoints did not save a browser-side payload digest. Their
+    // own operation record confirms this scoped result, never the original body.
+    if (receipt.commandType === "document.payload" && operation.result.status === "applied"
+      && operation.result.entityId !== receipt.taskId) return "mismatch";
+    return "scoped-match";
+  }
   const command = await recoveryIntent(receipt);
   const hash = command ? await sha256(canonicalJson({ actorId: receipt.actorId, command })) : receipt.commandHash;
   if (!hash) return "unavailable";

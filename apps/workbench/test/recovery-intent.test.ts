@@ -115,3 +115,24 @@ test("a persisted business rejection after replay is resolved by exact same-ID r
   assert.equal(reads, 2); assert.equal(sends, 1);
   clearRecoveryIntents();
 });
+
+test("only legacy special endpoints retain scoped operation confirmation without replay", async () => {
+  clearRecoveryIntents();
+  for (const type of ["document.payload", "reference.git", "reference.formal", "reference.task"] as const) {
+    const specialReceipt = { ...receipt, commandType: type };
+    const operation = { id: operationId, projectId, actorId: "owner", commandType: type,
+      commandHash: "a".repeat(64), result: { ...applied, entityId: type === "document.payload" ? taskId : "reference-id" } } as Operation;
+    assert.equal(await verifyRecoveryOperation(specialReceipt, operation), "scoped-match", type);
+    assert.equal(await verifyRecoveryOperation(specialReceipt, { ...operation, actorId: "other" }), "mismatch");
+    assert.equal(await verifyRecoveryOperation(specialReceipt, { ...operation, projectId: "other" }), "mismatch");
+    assert.equal(await verifyRecoveryOperation(specialReceipt, { ...operation, id: "other" }), "mismatch");
+    assert.equal(await verifyRecoveryOperation(specialReceipt, { ...operation, commandType: "other" }), "mismatch");
+    await assert.rejects(replayRecoveryIntent(specialReceipt,
+      async () => { throw new ApiError(404, "not found", { code: "OPERATION_NOT_FOUND" }); },
+      async () => { throw new Error("must not send"); }), /原命令已不在/);
+  }
+  const specialReceipt = { ...receipt, commandType: "document.payload" as const };
+  const wrongDocument = { id: operationId, projectId, actorId: "owner", commandType: "document.payload",
+    commandHash: "a".repeat(64), result: { ...applied, entityId: "other-document" } } as Operation;
+  assert.equal(await verifyRecoveryOperation(specialReceipt, wrongDocument), "mismatch");
+});

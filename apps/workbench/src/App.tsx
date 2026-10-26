@@ -15,7 +15,7 @@ import { SchedulingPanel } from "./scheduling/SchedulingPanel";
 import { JourneyBoard } from "./workflow/JourneyBoard";
 import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
-import { clearRecoveryIntents, forgetRecoveryIntent, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "./recoveryIntent";
+import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "./recoveryIntent";
 
 import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "./ui/returnRoute";
@@ -105,7 +105,7 @@ function OperationCheck({ receipt, token, onConfirmed }: {
     try {
       const operation: Operation = await api(token).operation(receipt.projectId, receipt.operationId);
       const verdict = await verifyRecoveryOperation(receipt, operation);
-      if (verdict !== "match") {
+      if (verdict !== "match" && verdict !== "scoped-match") {
         setStatus(verdict === "unavailable"
           ? "已查到同 ID 记录，但当前页面没有完整原命令，无法核对正文摘要。回执保留，需用原始意图与操作记录人工核对。"
           : "操作记录与原命令摘要不匹配；回执保留，不能据此确认或重发。");
@@ -255,7 +255,8 @@ export function App() {
   }
   function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
     forgetRecoveryIntent(receipt.operationId);
-    setOperationNotice(result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`);
+    const scope = isSpecialOperation(receipt.commandType) ? "已核到服务端同身份、同项目、同类型及同 ID 的操作结果；浏览器未核对原提交正文摘要。" : "";
+    setOperationNotice(`${result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`} ${scope}`.trim());
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); setRefresh(v => v + 1);
   }
   if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="#/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
