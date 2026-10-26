@@ -17,7 +17,7 @@ const applied = { status: "applied" as const, operationId, entityId: taskId, rev
 const commandHash = "37e82174125e7b03f4a6dd9fff90fdc490c462bc7fc06d258290dcd32ebfac35";
 
 test("same-page recovery reads first and explicitly replays the exact core command after 404", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); assert.equal(await rememberRecoveryIntent("owner", command), commandHash);
   let reads = 0, sends = 0;
   const result = await replayRecoveryIntent(receipt,
     async () => { reads++; throw new ApiError(404, "not found", { code: "OPERATION_NOT_FOUND" }); },
@@ -28,7 +28,7 @@ test("same-page recovery reads first and explicitly replays the exact core comma
 });
 
 test("a now-visible operation is confirmed without replay", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); await rememberRecoveryIntent("owner", command);
   const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash, result: applied } as Operation;
   const result = await replayRecoveryIntent(receipt, async () => operation, async () => { throw new Error("must not send"); });
   assert.deepEqual(result, applied);
@@ -36,7 +36,7 @@ test("a now-visible operation is confirmed without replay", async () => {
 });
 
 test("same ID, actor and type with a different command hash stays unconfirmed", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); await rememberRecoveryIntent("owner", command);
   const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash: "different", result: applied } as Operation;
   assert.equal(await verifyRecoveryOperation(receipt, operation), "mismatch");
   await assert.rejects(replayRecoveryIntent(receipt, async () => operation,
@@ -52,8 +52,20 @@ test("a legacy receipt without its original body cannot confirm even a same-ID r
     async () => { throw new Error("must not send"); }), /没有完整原命令/);
 });
 
+test("hash-only receipt after reload confirms a matching record but cannot replay", async () => {
+  clearRecoveryIntents();
+  const stored = { ...receipt, commandHash };
+  const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash, result: applied } as Operation;
+  assert.equal(await verifyRecoveryOperation(stored, operation), "match");
+  assert.deepEqual(await replayRecoveryIntent(stored, async () => operation,
+    async () => { throw new Error("must not send"); }), applied);
+  await assert.rejects(replayRecoveryIntent(stored,
+    async () => { throw new ApiError(404, "not found", { code: "OPERATION_NOT_FOUND" }); },
+    async () => { throw new Error("must not send"); }), /原命令已不在/);
+});
+
 test("a visible record for another actor cannot clear this receipt or replay", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); await rememberRecoveryIntent("owner", command);
   const operation = { id: operationId, projectId, actorId: "other", commandType: "task.create", commandHash, result: applied } as Operation;
   await assert.rejects(replayRecoveryIntent(receipt, async () => operation,
     async () => { throw new Error("must not send"); }), /不匹配/);
@@ -65,16 +77,16 @@ test("old, refreshed, wrong-actor and non-core receipts cannot replay", async ()
   const read404 = async (): Promise<Operation> => { throw new ApiError(404, "not found", { code: "OPERATION_NOT_FOUND" }); };
   const send = async (): Promise<typeof applied> => { throw new Error("must not send"); };
   await assert.rejects(replayRecoveryIntent(receipt, read404, send), /原命令已不在/);
-  rememberRecoveryIntent("owner", command);
+  await rememberRecoveryIntent("owner", command);
   assert.equal(await recoveryIntent({ ...receipt, actorId: "someone-else" }), null);
   assert.equal(await recoveryIntent({ ...receipt, projectId: "44444444-4444-4444-8444-444444444444" }), null);
-  rememberRecoveryIntent("owner", { type: "document.payload", projectId, operationId });
+  await rememberRecoveryIntent("owner", { type: "document.payload", projectId, operationId });
   clearRecoveryIntents();
   await assert.rejects(replayRecoveryIntent(receipt, read404, send), /原命令已不在/);
 });
 
 test("read failure other than 404 never triggers replay", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); await rememberRecoveryIntent("owner", command);
   await assert.rejects(replayRecoveryIntent(receipt,
     async () => { throw new ApiError(503, "offline"); },
     async () => { throw new Error("must not send"); }), /offline/);
@@ -82,7 +94,7 @@ test("read failure other than 404 never triggers replay", async () => {
 });
 
 test("an unrelated 404 cannot authorize replay", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); await rememberRecoveryIntent("owner", command);
   await assert.rejects(replayRecoveryIntent(receipt,
     async () => { throw new ApiError(404, "project missing", { code: "PROJECT_NOT_FOUND" }); },
     async () => { throw new Error("must not send"); }), /project missing/);
@@ -90,7 +102,7 @@ test("an unrelated 404 cannot authorize replay", async () => {
 });
 
 test("a persisted business rejection after replay is resolved by exact same-ID read", async () => {
-  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  clearRecoveryIntents(); await rememberRecoveryIntent("owner", command);
   const rejected = { status: "rejected" as const, operationId, code: "VERSION_CONFLICT", message: "basis changed" };
   const recorded = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash, result: rejected } as Operation;
   let reads = 0, sends = 0;

@@ -187,6 +187,7 @@ export function App() {
   const [refresh, setRefresh] = useState(0);
   const [receipts, setReceipts] = useState<OperationReceipt[]>(readReceipts);
   const receiptsRef = useRef(receipts);
+  const attemptInFlight = useRef(false);
   const [receiptStorageAvailable, setReceiptStorageAvailable] = useState(true);
   const [operationNotice, setOperationNotice] = useState("");
   const [projectError, setProjectError] = useState("");
@@ -199,22 +200,27 @@ export function App() {
     setReceipts(next);
     setReceiptStorageAvailable(writeReceipts(next));
   }
-  function beginAttempt(command: RecoverableCommand): boolean {
-    if (!session) return false;
-    const next = addReceipt(receiptsRef.current, {
-      actorId: session!.principal.actorId,
-      projectId: command.projectId,
-      taskId: command.discussionId ?? command.taskId ?? command.goalId ?? command.stageId ?? command.documentId ?? command.projectId,
-      operationId: command.operationId,
-      commandType: command.type,
-      createdAt: new Date().toISOString(),
-    });
-    if (!writeReceipts(next)) { setReceiptStorageAvailable(false); return false; }
-    receiptsRef.current = next;
-    setReceipts(next);
-    setReceiptStorageAvailable(true);
-    rememberRecoveryIntent(session.principal.actorId, command);
-    return true;
+  async function beginAttempt(command: RecoverableCommand): Promise<boolean> {
+    if (!session || attemptInFlight.current || hasProjectReceipt(forPrincipal(receiptsRef.current, session.principal.actorId, [command.projectId]), command.projectId)) return false;
+    attemptInFlight.current = true;
+    try {
+      const commandHash = await rememberRecoveryIntent(session.principal.actorId, command);
+      const next = addReceipt(receiptsRef.current, {
+        actorId: session.principal.actorId,
+        projectId: command.projectId,
+        taskId: command.discussionId ?? command.taskId ?? command.goalId ?? command.stageId ?? command.documentId ?? command.projectId,
+        operationId: command.operationId,
+        commandType: command.type,
+        createdAt: new Date().toISOString(),
+        ...(commandHash ? { commandHash } : {}),
+      });
+      if (!writeReceipts(next)) { forgetRecoveryIntent(command.operationId); setReceiptStorageAvailable(false); return false; }
+      receiptsRef.current = next;
+      setReceipts(next);
+      setReceiptStorageAvailable(true);
+      return true;
+    } catch { forgetRecoveryIntent(command.operationId); return false; }
+    finally { attemptInFlight.current = false; }
   }
   function finishKnown(operationId: string) {
     forgetRecoveryIntent(operationId);

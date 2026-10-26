@@ -39,7 +39,7 @@ function Basis({ basis, projectId, documents }: { basis: BasisSet | null; projec
 
 function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, onKnown, blockedByUnknown, blockedByRead, canReview }: {
   token: string; projectId: string; detail: TaskDetail; impact: Impact;
-  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; blockedByRead: boolean; canReview: boolean;
+  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean | Promise<boolean>; onKnown: (operationId: string) => void; blockedByUnknown: boolean; blockedByRead: boolean; canReview: boolean;
 }) {
   const formId = useId();
   const [before, setBefore] = useState<DocumentRevision | null>(null);
@@ -71,11 +71,15 @@ function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, 
       reason: reason.trim(), ...(decision === "adopt" && acceptance.trim() ? { acceptance: acceptance.trim() } : {}),
       operationId: crypto.randomUUID(),
     };
-    if (!onAttempt(command)) {
+    setBusy(true);
+    let recorded = false;
+    try { recorded = await onAttempt(command); } catch { /* Do not send without a recovery receipt. */ }
+    if (!recorded) {
+      setBusy(false);
       setMessage(`无法保存操作回执，本次未发送。请启用浏览器会话存储后重试。操作 ID：${command.operationId}`);
       return;
     }
-    setBusy(true); setMessage("");
+    setMessage("");
     try {
       const result = await api(token).command(command);
       onKnown(command.operationId);
@@ -129,7 +133,7 @@ function ImpactReview({ token, projectId, detail, impact, onChanged, onAttempt, 
 export function TaskPage({ context, token, projectId, id, selectedRevision, refresh, onChanged, onAttempt, onKnown, blockedByUnknown, canReview, active }: {
   context: MutationContext; token: string; projectId: string; id: string; refresh: number;
   selectedRevision?: string;
-  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean; active: boolean;
+  onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean | Promise<boolean>; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean; active: boolean;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);

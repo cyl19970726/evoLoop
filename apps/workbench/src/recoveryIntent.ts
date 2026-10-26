@@ -10,7 +10,7 @@ export function operationNotFound(value: unknown): value is ApiError {
 
 // The original command can include private body text. It stays in the authenticated
 // page's memory and disappears on reload or logout; sessionStorage holds metadata only.
-const pending = new Map<string, { actorId: string; projectId: string; type: string; body: string; digest: Promise<string> }>();
+const pending = new Map<string, { actorId: string; projectId: string; type: string; body: string; digest: string }>();
 
 // Mirrors core's canonicalJson for its SHA-256 operation digest.
 function canonicalJson(value: unknown): string {
@@ -31,23 +31,25 @@ async function sha256(body: string): Promise<string> {
   return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function rememberRecoveryIntent(actorId: string, value: unknown): void {
+export async function rememberRecoveryIntent(actorId: string, value: unknown): Promise<string | null> {
   const parsed = commandSchema.safeParse(value);
-  if (!parsed.success) return; // Non-core endpoints have their own recovery contracts.
+  if (!parsed.success) return null; // Non-core endpoints have their own recovery contracts.
   const body = JSON.stringify(parsed.data);
+  const digest = await sha256(canonicalJson({ actorId, command: parsed.data }));
   pending.set(parsed.data.operationId, { actorId, projectId: parsed.data.projectId,
-    type: parsed.data.type, body, digest: sha256(canonicalJson({ actorId, command: parsed.data })) });
+    type: parsed.data.type, body, digest });
+  return digest;
 }
 
 export async function recoveryIntent(receipt: OperationReceipt): Promise<Command | null> {
   const saved = pending.get(receipt.operationId);
   if (!saved || saved.actorId !== receipt.actorId || saved.projectId !== receipt.projectId
-    || saved.type !== receipt.commandType) return null;
+    || saved.type !== receipt.commandType || receipt.commandHash && receipt.commandHash !== saved.digest) return null;
   try {
     const parsed = commandSchema.safeParse(JSON.parse(saved.body));
     return parsed.success && parsed.data.operationId === receipt.operationId
       && parsed.data.projectId === receipt.projectId && parsed.data.type === receipt.commandType
-      && await sha256(canonicalJson({ actorId: receipt.actorId, command: parsed.data })) === await saved.digest
+      && await sha256(canonicalJson({ actorId: receipt.actorId, command: parsed.data })) === saved.digest
       ? parsed.data : null;
   } catch { return null; }
 }
@@ -57,8 +59,8 @@ export async function verifyRecoveryOperation(receipt: OperationReceipt, operati
     || operation.actorId !== receipt.actorId || operation.commandType !== receipt.commandType
     || operation.result.operationId !== receipt.operationId) return "mismatch";
   const command = await recoveryIntent(receipt);
-  if (!command) return "unavailable";
-  const hash = await sha256(canonicalJson({ actorId: receipt.actorId, command }));
+  const hash = command ? await sha256(canonicalJson({ actorId: receipt.actorId, command })) : receipt.commandHash;
+  if (!hash) return "unavailable";
   return operation.commandHash === hash ? "match" : "mismatch";
 }
 

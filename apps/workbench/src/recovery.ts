@@ -6,6 +6,8 @@ export interface OperationReceipt {
   operationId: string;
   commandType: Operation["commandType"];
   createdAt: string;
+  /** SHA-256 of the core's canonical actor+command intent; never the command body. */
+  commandHash?: string;
 }
 
 const storageKey = "evoloop.unconfirmed-operations.v1";
@@ -14,6 +16,7 @@ function onlyRecoveryFields(item: OperationReceipt): OperationReceipt {
   return {
     actorId: item.actorId, projectId: item.projectId, taskId: item.taskId,
     operationId: item.operationId, commandType: item.commandType, createdAt: item.createdAt,
+    ...(item.commandHash && /^[0-9a-f]{64}$/i.test(item.commandHash) ? { commandHash: item.commandHash } : {}),
   };
 }
 

@@ -12,7 +12,7 @@ export interface RecoverableCommand {
 export interface MutationContext {
   token: string; projectId: string; principal: Principal; blocked: boolean;
   draftScope?: string; draftBaseline?: string;
-  onAttempt(command: RecoverableCommand): boolean; onKnown(operationId: string): void; onChanged(): void;
+  onAttempt(command: RecoverableCommand): boolean | Promise<boolean>; onKnown(operationId: string): void; onChanged(): void;
 }
 // Sensitive form content stays in this authenticated page's memory, never storage.
 interface Draft { values: Record<string, string>; baseline?: string }
@@ -59,8 +59,11 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
     let command: Command;
     try { command = commandSchema.parse({ ...build(values), projectId: context.projectId, operationId: crypto.randomUUID() }); }
     catch { setMessage("请补全必需字段并检查输入格式。"); setFailed(true); return; }
-    if (!context.onAttempt(command)) { setMessage("浏览器不能保存恢复回执，本次尚未提交。"); setFailed(true); return; }
     setBusy(true);
+    let recorded = false;
+    try { recorded = await context.onAttempt(command); }
+    catch { /* A receipt that could not be saved must never send its command. */ }
+    if (!recorded) { setBusy(false); setMessage("浏览器不能保存恢复回执，本次尚未提交。"); setFailed(true); return; }
     try {
       const result = await api(context.token).command(command);
       context.onKnown(command.operationId);

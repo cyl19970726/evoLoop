@@ -70,7 +70,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
           assets: assets.map((file, index) => ({ path: file.name, blobId: ids[index + 1]!,
             contentHash: hashes[index + 1]!, size: file.size, mediaType: file.type || "application/octet-stream" })) },
       };
-      if (!context.onAttempt({ type: "document.payload", projectId: context.projectId,
+      if (!await context.onAttempt({ type: "document.payload", projectId: context.projectId,
         operationId, documentId: docId })) { setMessage("浏览器不能保存恢复回执，本次尚未提交。"); return; }
       const result = await request<CommandResult>(context.token,
         `/api/projects/${key(context.projectId)}/documents/import`, 120000,
