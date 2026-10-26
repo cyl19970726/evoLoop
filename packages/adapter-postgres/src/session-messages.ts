@@ -43,7 +43,7 @@ export class PgSessionMessages implements SessionMessageTransaction {
   }
   async listPendingSessionMessages(limit:number,offset=0):Promise<SessionMessageRecord[]>{
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new RangeError('message limit must be 1..100');
-    if(!Number.isInteger(offset)||offset<0||offset>10000)throw new RangeError('message offset must be 0..10000');
+    if(!Number.isSafeInteger(offset)||offset<0)throw new RangeError('message offset must be a nonnegative safe integer');
     const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.target_kind='owned'
       AND m.state IN ('queued','processing','unknown')
       AND (m.state<>'queued' OR (NOT EXISTS(SELECT 1 FROM session_message_processing busy

@@ -51,7 +51,8 @@ export class SessionMessagePump {
       let offset=this.nextOffset.get(projectId)??0;
       let page=await this.deps.service.pending(projectId,pageLimit,offset);
       if(!page.length&&offset>0){offset=0;page=await this.deps.service.pending(projectId,pageLimit,offset);}
-      this.nextOffset.set(projectId,page.length<pageLimit?0:Math.min(10000,offset+page.length));
+      const nextOffset=offset+page.length;
+      this.nextOffset.set(projectId,page.length<pageLimit||!Number.isSafeInteger(nextOffset)?0:nextOffset);
       for(const message of page){
         processed++;
         try{await this.process(message);}catch(error){this.deps.onError(error);}

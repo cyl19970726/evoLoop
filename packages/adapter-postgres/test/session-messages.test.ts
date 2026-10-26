@@ -102,6 +102,11 @@ test('preflight is side-effect-free for missing or exhausted grants and dispatch
   assert.equal((await guarded.detail(projectId,second.id)).processing,null);
 });
 
+test('pending scanning can pass the old ten-thousand offset while each page stays bounded',async()=>{
+  assert.deepEqual(await service.pending(projectId,30,10030),[]);
+  await assert.rejects(()=>service.pending(projectId,30,Number.MAX_SAFE_INTEGER+1),/offset/);
+});
+
 test('two message processors cannot occupy one Session and direct Task Run INSERT is rejected while occupied',async()=>{
   const first=item(),second=item();
   await uow.transaction(projectId,async tx=>{await tx.sessionMessages!.insertSessionMessage(first);await tx.sessionMessages!.insertSessionMessage(second);});

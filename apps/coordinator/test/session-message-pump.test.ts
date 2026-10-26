@@ -17,8 +17,8 @@ const message=(id:string,sessionId:string,state:'unknown'|'processing'|'queued')
   target:{kind:'owned',sessionId},senderActorId:'sender',content:'Hello',context:null,replyToMessageId:null,state,
   version:2,blockedReason:null,readReceipt:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
 
-test('bounded rotating pending pages eventually visit more than thirty unresolved Sessions',async()=>{
-  const messages=Array.from({length:80},()=>message(randomUUID(),randomUUID(),'unknown'));
+test('bounded rotating pending pages eventually visit over ten thousand unresolved Sessions',async()=>{
+  const messages=Array.from({length:10080},()=>message(randomUUID(),randomUUID(),'unknown'));
   const seen:string[]=[],offsets:number[]=[];
   const service={pending:async(_p:string,_limit:number,offset:number)=>{offsets.push(offset);return messages.slice(offset,offset+30);},
     session:async(_p:string,id:string)=>session(id),processing:async(_p:string,id:string)=>({operationId:id,nativeTurnId:null,state:'unknown'}),
@@ -29,8 +29,9 @@ test('bounded rotating pending pages eventually visit more than thirty unresolve
   const failures:unknown[]=[];
   const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>failures.push(e)});
-  await pump.tick();await pump.tick();await pump.tick();
-  assert.deepEqual(offsets,[0,30,60]);assert.equal(new Set(seen).size,80);assert.deepEqual(failures,[]);
+  for(let i=0;i<messages.length/30;i++)await pump.tick();
+  assert.deepEqual(offsets.slice(0,3),[0,30,60]);assert.equal(offsets.at(-1),10050);
+  assert.equal(new Set(seen).size,messages.length);assert.deepEqual(failures,[]);
 });
 
 test('known bound Turn settles from one native page without rereading long history',async()=>{
