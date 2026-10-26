@@ -12,6 +12,7 @@ import { activityPresentation } from "./activityPresentation";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
 import { sessionLifecycleLabel, sessionStatusLabel } from "./sessionStatusPresentation";
+import { sessionMessageEntry, type MessageEntryCapabilities } from "./sessionMessageEntry";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results" | "responsibilities" | "resources";
@@ -180,7 +181,9 @@ function SessionProfileForm({ context, snapshot, onApplied }: { context: Mutatio
 }
 
 function SessionMessages({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
-  const send = snapshot.session.capabilities.send;
+  const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities as MessageEntryCapabilities);
+  const currentMessageScope = useRef("");
+  currentMessageScope.current = `${context.token}\0${context.projectId}\0${snapshot.session.key}`;
   const [messages, setMessages] = useState<SessionMessageRecord[]>([]);
   const [selected, setSelected] = useState<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null } | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -238,19 +241,26 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
     } catch (cause) { setError(errorText(cause)); }
   }
   async function detail(messageId: string) {
+    const scope = currentMessageScope.current;
     try {
       const value = await sessionClient(context.token, context.projectId).message(messageId);
+      if (currentMessageScope.current !== scope) return;
       if (value.message.id !== messageId || value.message.projectId !== context.projectId) throw new Error("消息详情与所选项目记录不符");
+      const target = value.message.target;
+      const targetKey = target.kind === "owned" ? `owned:${target.sessionId}` : `external:${target.linkId}`;
+      if (targetKey !== snapshot.session.key) throw new Error("消息详情与所选 Session 不符");
       setSelected(value); setError("");
-    } catch (cause) { setError(errorText(cause)); }
+    } catch (cause) { if (currentMessageScope.current === scope) setError(errorText(cause)); }
   }
   const status: Record<SessionMessageRecord["state"], string> = { queued: "待派发", processing: "原会话处理中", replied: "已回复", completed_without_reply: "已完成但无回复", failed: "失败", unknown: "结果未知", cancelled: "已取消", manual_pending: "待人工转交" };
   const canRecordRead = selected?.message.target.kind === "owned" && !selected.message.readReceipt
     && selected.processing?.receiverActorId === context.principal.actorId && !!selected.processing.nativeTurnId
     && (selected.processing.state === "completed" || selected.processing.state === "failed")
     && (selected.message.state === "replied" || selected.message.state === "completed_without_reply" || selected.message.state === "failed");
-  return <section className="session-workspace-section"><h2>普通对话</h2><p>{send.mode === "manual-handoff" ? "外部会话需人工转交；保存消息不代表原会话已收到或阅读。" : "消息、原会话执行与最终答复分别核对；保存成功不代表已完成回复。"}</p>
-    {!send.available ? <Alert>{send.reason || "当前不可发送消息。"}</Alert> : <ActionForm context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title="发送消息" fields={[{ name: "content", label: "消息内容", kind: "textarea" }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content })} onApplied={() => { setReload(value => value + 1); onApplied(); }} />}
+  return <section className="session-workspace-section"><h2>普通对话</h2><p>{entry.introduction}</p>
+    {entry.canSave && entry.sendReason && <p className="muted">保存能力：{entry.sendReason}</p>}
+    <p role="status">自动处理：{entry.executionLabel}。{entry.executionReason}{entry.executionObservedAt && <> 状态读于 {date(entry.executionObservedAt)}。</>}</p>
+    {!entry.canSave ? <Alert>{entry.sendReason || "当前不可保存消息。"}</Alert> : <ActionForm context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={entry.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea" }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content })} onApplied={result => { setReload(value => value + 1); void detail(result.entityId); onApplied(); }} />}
     <h3>消息记录</h3>{loading && <p>正在读取消息…</p>}{error && <Alert kind="error">消息暂不可读取：{error}。<button onClick={() => setReload(value => value + 1)}>重试</button></Alert>}
     {messages.length ? <ul className="session-message-list">{messages.map(item => <li key={item.id}><button type="button" className="quiet" onClick={() => void detail(item.id)}>{item.content.slice(0, 130)}{item.content.length > 130 ? "…" : ""}</button><small>{status[item.state]} · {date(item.createdAt)}</small></li>)}</ul> : !loading && !error && <p className="empty">没有已保存的普通消息。</p>}
     {nextCursor && messages.length < 300 && <button type="button" onClick={() => void more()}>加载更早消息</button>}
