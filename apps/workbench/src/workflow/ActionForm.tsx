@@ -1,6 +1,9 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import * as React from "react";
+import type { FormEvent, ReactNode } from "react";
 import { commandSchema, type Command, type Principal, type Operation } from "@evoloop/contracts";
 import { api, errorText, isStaleConflict, isUnconfirmed } from "../api";
+
+const { useEffect, useState } = React;
 
 export interface RecoverableCommand {
   projectId: string; operationId: string; type: Operation["commandType"];

@@ -5,6 +5,7 @@ import { errorText } from "../api";
 import { ActionForm, option, type MutationContext } from "../workflow/ActionForm";
 import { Alert, date, href } from "../ui/shared";
 import { sessionClient } from "./client";
+import { SessionOpenEntry } from "./SessionOpenEntry";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results" | "responsibilities" | "resources";
@@ -113,7 +114,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const work = current.currentWork;
   const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations])];
   return <div className="content session-workspace">
-    <div className="session-workspace-head"><div><p className="eyebrow">{session.kind === "owned" ? "项目受管 Session" : "外部连接 Session"} · {session.membership === "current" ? "当前团队" : session.membership === "historical" ? "历史" : "待归类"}</p><h1>{session.title}</h1><p>{session.profile?.purpose || session.roles.map(role => role.responsibility).filter(Boolean).join("；") || "用途尚未登记"}</p></div><div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button>{session.capabilities.open.available && session.capabilities.open.ref && /^https?:\/\//.test(session.capabilities.open.ref) && <a href={session.capabilities.open.ref} target="_blank" rel="noreferrer">打开原会话 ↗</a>}</div></div>
+    <div className="session-workspace-head"><div><p className="eyebrow">{session.kind === "owned" ? "项目受管 Session" : "外部连接 Session"} · {session.membership === "current" ? "当前团队" : session.membership === "historical" ? "历史" : "待归类"}</p><h1>{session.title}</h1><p>{session.profile?.purpose || session.roles.map(role => role.responsibility).filter(Boolean).join("；") || "用途尚未登记"}</p></div><div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button><SessionOpenEntry session={session} token={context.token} projectId={context.projectId} currentRead={active && !loading && !error} active={active} /></div></div>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     <section className="session-current-work"><div><small>当前任务</small><strong>{work ? <a href={href(context.projectId, "task", work.id)}>{work.title}</a> : "尚无可确认的当前任务"}</strong><span>{work ? work.relation === "accepted" ? "具体 Session 已接手" : work.relation === "assigned" ? "已分派，待确认接手" : work.relation === "claimed" || work.relation === "run" ? "有正式运行关联" : "角色责任" : "角色责任不等于已接手"}</span></div>{work && <a className="session-task-link" href={href(context.projectId, "task", work.id)}>查看任务</a>}</section>
     <div className="session-workspace-summary"><div><small>运行状态</small><strong>{session.busy === true ? "忙碌" : session.busy === false ? "空闲" : "状态未知"}</strong><span>{session.runtimeState ?? "没有可确认的运行状态"}</span></div><div><small>待处理问题</small><strong>{current.questions.filter(question => !question.answered).length}</strong><span>来自任务讨论记录</span></div><div><small>最近进展</small><strong>{date(session.lastProgressAt ?? undefined)}</strong><span>来源记录时间，未知时不推断</span></div></div>

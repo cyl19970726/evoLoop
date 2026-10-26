@@ -5,6 +5,7 @@ import { errorText, request } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
+import { codexThreadHref } from "./externalHostEntry";
 import { RoleTemplateSummary } from "./RoleTemplateSummary";
 import { href } from "../ui/shared";
 
@@ -169,9 +170,13 @@ function RoleCard({ context, role, refresh }: { context: MutationContext; role: 
   return <details className="workflow-detail" id={`role-${role.id}`} tabIndex={-1}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
     <RolePresenceCard token={context.token} projectId={context.projectId} roleId={role.id} roleState={role.state} refresh={refresh} />
     {(role.state === "trial" || role.state === "active") && <details className="workflow-detail" onToggle={event => setConnectOpen(event.currentTarget.open)}><summary>连接已有 Codex 会话</summary><p>只登记原会话引用，实际打开、读取和人工接单须另行核实；登记不表示自动发送或启动。</p>
-      <ActionForm context={context} review title="登记外部会话" fields={[{ name: "ref", label: "原会话完整引用", hint: "例如 codex://threads/…；请先在原应用核对" }, reasonField]}
-        build={v => ({ type: "host.register", linkId: crypto.randomUUID(), roleId: role.id, expectedRoleVersion: role.version,
-          host: { kind: "external", provider: "codex-desktop", ref: v.ref }, claimedCapabilities: ["open", "read", "manual-claim"], reason: v.reason })} />
+      <ActionForm context={context} review title="登记外部会话" fields={[{ name: "ref", label: "原会话完整引用", hint: "填写 codex://threads/<聊天 UUID>；历史裸 UUID 也会规范化。先在原应用核对。" }, reasonField]}
+        build={v => {
+          const ref = codexThreadHref(v.ref);
+          if (!ref) throw new Error("请填写完整的 Codex 聊天引用或 UUID");
+          return { type: "host.register", linkId: crypto.randomUUID(), roleId: role.id, expectedRoleVersion: role.version,
+            host: { kind: "external", provider: "codex-desktop", ref }, claimedCapabilities: ["open", "read", "manual-claim"], reason: v.reason };
+        }} />
       {connectOpen && <HostVerification context={context} role={role} refresh={refresh} />}
     </details>}
     <dl><div><dt>目标</dt><dd>{p.goal}</dd></div><div><dt>独立判断</dt><dd>{p.independentResponsibility}</dd></div><div><dt>范围</dt><dd>{p.ownerScope}</dd></div><div><dt>输入</dt><dd>{p.inputs.join("；")}</dd></div><div><dt>可写资产</dt><dd>{p.writableAssets.join("；") || "未列出"}</dd></div><div><dt>交付</dt><dd>{p.deliverables.join("；")}</dd></div><div><dt>触发</dt><dd>{p.triggers.join("；")}</dd></div><div><dt>流程</dt><dd>{p.workflow}</dd></div><div><dt>交接边界</dt><dd>{p.handoffBoundary}</dd></div><div><dt>首项任务</dt><dd><code>{p.firstTaskId}</code></dd></div><div><dt>试行与回看</dt><dd>{p.trialDays} 天 · {stamp(role.reviewAtUtc)}</dd></div><div><dt>退出判据</dt><dd>{p.exitCriteria}</dd></div></dl>

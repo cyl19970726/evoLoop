@@ -5,7 +5,7 @@ import { roleClient } from "../roles/client";
 import { option } from "./ActionForm";
 
 /** Current Role choices are read from the project; a partial list is never offered as complete. */
-export function useRoleChoices(token: string, projectId: string, refresh: number, enabled = true) {
+export function useRoleChoices(token: string, projectId: string, refresh: number | string, enabled = true) {
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
