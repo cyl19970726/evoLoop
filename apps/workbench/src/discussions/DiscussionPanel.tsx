@@ -5,32 +5,13 @@ import { api, errorText, request, safeArtifactHref } from "../api";
 import { roleClient } from "../roles/client";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { AllocationRelationsPanel } from "./AllocationRelationsPanel";
+import { discussionCopyEnvelope, discussionDecisionPayload, type VerifiedDocumentHead } from "./commands";
 
 type Choices = { goals: Goal[]; stages: Stage[]; tasks: Task[]; documents: Document[]; roles: RoleRecord[] };
 const emptyChoices: Choices = { goals: [], stages: [], tasks: [], documents: [], roles: [] };
 const lines = (value: string) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
 const safeSessionRef = (value: string, projectId: string) =>
   !!safeArtifactHref(value, projectId) || /^codex:\/\/threads\/[0-9a-f-]{36}$/i.test(value.trim());
-export function discussionCopyEnvelope(origin: string, projectId: string, documentId: string, revisionId: string, body: string): string {
-  const fixed = `${origin}/#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revisionId)}`;
-  return `工作台入口：${origin}/\n固定原件入口：${fixed}\n以下正文才是被 SHA-256 核对的原件；此定位封套在复制时添加，不属于原件哈希。\n\n${body}`;
-}
-interface VerifiedDocumentHead { version: number; revisionId: string; contentHash: string; author: string; body: string }
-
-/** An explicit recovery uses the observed owner Document head; the old Discussion revision stays fixed. */
-export function discussionDecisionPayload(record: DiscussionRecord, latestDecision: DiscussionEvent | undefined,
-  head: VerifiedDocumentHead, values: Record<string, string>): Record<string, unknown> {
-  const mismatch = head.revisionId !== record.currentDocumentRevisionId;
-  if (mismatch && (values.confirmRecovery !== "confirmed" || !values.documentRecoveryReason?.trim()))
-    throw new Error("请先核对两版并明确确认恢复及理由");
-  return { type: "discussion.decision.record", discussionId: record.id, expectedVersion: record.version,
-    documentRevisionId: mismatch ? head.revisionId : record.currentDocumentRevisionId,
-    choice: values.choice, unresolved: values.unresolved, relookCondition: values.relookCondition,
-    evidence: values.evidence, reason: values.reason,
-    ...(latestDecision ? { supersedesDecisionEventId: latestDecision.id } : {}),
-    ...(mismatch ? { documentRecovery: { expectedDocumentVersion: head.version, reason: values.documentRecoveryReason.trim() } } : {}) };
-}
-
 async function verifiedMarkdown(token: string, projectId: string, documentId: string, revisionId: string): Promise<{ revision: DocumentRevision; body: string }> {
   const revision = await api(token).documentRevision(projectId, documentId, revisionId);
   if (revision.projectId !== projectId || revision.documentId !== documentId || revision.id !== revisionId)
