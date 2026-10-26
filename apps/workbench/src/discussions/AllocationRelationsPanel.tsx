@@ -79,7 +79,8 @@ export function AllocationRelationsPanel({ context, record, refresh, known, name
   const root = useRef<HTMLElement>(null);
   const loadedScope = useRef("");
   const changesError = useAllocationChanges(context.token, context.projectId, root, () => setReadAgain(value => value + 1));
-  const names = useAllocationNames(context.token, context.projectId, items, known, namesReady, readAgain);
+  const names = useAllocationNames(context.token, context.projectId, items, known, namesReady && !loading,
+    `${record.id}\0${refresh}\0${readAgain}`);
   useEffect(() => {
     const current = ++epoch.current;
     const controller = new AbortController();
