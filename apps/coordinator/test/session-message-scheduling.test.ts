@@ -47,3 +47,14 @@ test('durable yield marker gives a ready business entry one turn, then allows th
   const resumed=sessionMessageCanStart({workflow,service:fakeService(false,blocked),principals:async()=>[lead],onError:e=>{throw e;}});
   assert.equal(await resumed(message),true);
 });
+
+test('scheduling eligibility leaves the last blocked reason until actual dispatch',async()=>{
+  const changes:Array<string|null>=[];
+  const blocked={...message,blockedReason:'Owned native thread is active or its idle state cannot be verified'};
+  const workflow={listResidentQueues:async()=>[]} as unknown as WorkflowService;
+  const service={noteBlocked:async(_project:string,_message:string,reason:string|null)=>{changes.push(reason);},
+    mustYieldBusiness:async()=>false} as unknown as SessionMessageService;
+  const canStart=sessionMessageCanStart({workflow,service,principals:async()=>[lead],onError:e=>{throw e;}});
+  assert.equal(await canStart(blocked),true);
+  assert.deepEqual(changes,[], 'later native qualification can still fail, so scheduling alone must not clear the reason');
+});
