@@ -4,6 +4,7 @@ import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../ui/shared";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
+import { sessionStatusLabel } from "./sessionStatusPresentation";
 import "./sessions.css";
 
 export const sessionHref = (projectId: string, key: string) => `${href(projectId, "runtime")}?session=${encodeURIComponent(key)}`;
@@ -24,9 +25,8 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
   function item(session: ObservedSession) {
     const task = session.currentTask;
-    const state = session.busy === true ? "进行中" : session.busy === false ? "空闲" : "状态未知";
     return <a key={session.key} href={sessionHref(projectId, session.key)} className={`session-nav-item ${selectedId === session.key ? "selected" : ""}`} aria-current={selectedId === session.key ? "page" : undefined} onClick={onNavigate}>
-      <strong title={session.title}>{session.title}</strong><small>{task ? task.title : session.roles.map(role => role.title).join(" · ") || "职责未确认"}</small><small>{session.kind === "owned" ? "受管" : "外部"} · {state}</small>
+      <strong title={session.title}>{session.title}</strong><small>{task ? task.title : session.roles.map(role => role.title).join(" · ") || "职责未确认"}</small><small>{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small>
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {
