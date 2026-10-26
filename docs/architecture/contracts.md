@@ -268,3 +268,15 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 第一条端到端试点至少贯穿：来源入库 → 两个 session 的相反解释 → Wiki 维护修订 → PostgreSQL 任务引用固定修订并执行 → 飞书投影与入站协作对账 → 交付后的实际亲用 → 依据效果形成下一任务/职责试行。随后演练文档旧基线写、同基线 Wiki 写、任务出站成功但丢响应、飞书入站冲突与投影删除、来源撤回、协调者重启、知识恢复及新 session 独立消费。每项报告要分开记录“原生能力、官方 Skill/模型行为、项目适配、人工操作、尚未观察”。
 
 当前没有证据可承诺飞书事件完整投递、跨平台恰好一次执行、外部投影立即一致、OpenViking 0.5.0 安全多写者发布、源撤回自动修正全部页、可靠通知送达或 Wiki 比直接材料更高效。S1a 已验证 PG 内部事务、同基线竞争与固定依据；范围见[实测报告](../research/design-review-20261020.md)，不能将其外推到未接入的合同。任何实现只能在验证后的边界内向上暴露能力；升级后重新跑相应案例。更细的测试和代码约定见[开发规范](../development/standards.md)。
+
+## 9. 分工讨论的可信关系反查
+
+角色探索复用 allocation Discussion、固定 Document、Role 与 Task 的正式记录。`GET /api/projects/:projectId/allocation-relations` 恰选 `roleId`、`sessionKey`、`discussionId` 一个过滤器；`GET .../discussions?kind=allocation` 可发现未决或尚无正式关联的讨论。它们都是读取，不创建角色、分派、Run 或权限。写入继续通过既有讨论决定与 `discussion.action.link`、Role 决定/回看和具体任务分派命令。
+
+可信路径是决议的不可变 action event → Role/Task 的固定修订；具体接手者另须匹配同项目、同 Task ID、同 Task 修订的 `accepted` 分派历史。同 Role 的其他会话、仅 assigned、文本 sourceRef 或另一 Task 修订不能补足这条路径。Role 反查只展示该正式关联 Role 及其固定 Task owner 匹配的路径；Session 反查只取精确身份与真实别名，不扩展整个职责。
+
+返回按关系路径分页：默认20、最大50、单响应不超过256KiB。每页含来源、当前决定/目标修订/分派关系的独立状态；讨论当前正文与决议当时的固定 Document 修订分别提供。直接接收者亲签与 Lead 人工观察保留各自身份，转交、释放和被新决定取代的路径仍可追溯。关联、接受、Run、交付与独立使用是不同证据；不由一条边推定试行成功。试行期限、条件和回看继续读原 Role 权威。
+
+Task 目标的 `taskAcceptanceGap` 说明精确修订的接受缺口：`null` 表示已有相符接受历史（其路径可能在后页），`no-assignment` 表示未登记分派，`not-accepted` 表示该修订尚无接受，`different-task-revision` 表示仅登记了其他修订，`unavailable` 表示固定对象不可读。其他目标不带该字段；这不是新增 Task 状态。只有 Role 链接而没有 Task 链接时保留 Role 来源，讨论未读全前不推断不存在后续任务。
+
+游标签名并绑定项目、调用身份/权限、过滤范围、规范会话及关系代次。复用既有 observation journal，使独立 Document、Stage 和 Discussion 头变化也推进关系代次；关系页通过项目级变化入口失效。代次改变时返回 `resetRequired` 并要求重读，不能伪装跨页固定快照；无变化时按不可变路径键继续，不能在一万项处截断。签名仅在当前协调进程内有效，重启或无效签名要求重新从首屏读取。缺少正式路径是空页，不存在/越权、服务未安装与读取失败仍为错误；前端不能把错误显示成“没有讨论”。更完整的对象正文和版本从原入口读取。Document 来源指向固定原件；Stage 保留固定版本，入口为当前阶段页，核历史仍用既有修订读取。

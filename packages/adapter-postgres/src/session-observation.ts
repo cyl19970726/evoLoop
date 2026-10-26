@@ -85,7 +85,8 @@ export class PgSessionObservation implements SessionObservationReader {
   private source(kind: ObservationSource["kind"], id: string, revision: string | null = null,
     evidence: ObservationSource["evidence"] = "project-record", taskId?: string | null): ObservationSource {
     const segment = kind === "run" ? `runtime?run=${id}` : kind === "role" ? `roles?role=${id}` :
-      kind === "discussion" ? `discussions/${id}` : kind === "message" ? `session-messages/${id}` :
+      kind === "discussion" ? `discussions/${id}` : kind === "document" ? `documents/${id}${revision ? `?revision=${revision}` : ''}` :
+      kind === "stage" ? 'journey' : kind === "message" ? `session-messages/${id}` :
       kind === "task" || kind === "delivery" || kind === "consumer-observation" || kind === "task-assignment" ? `tasks/${taskId ?? id}` : "runtime";
     return { kind, id, revision, evidence, href: this.href(segment) };
   }
@@ -288,6 +289,9 @@ export class PgSessionObservation implements SessionObservationReader {
     if (table === "role_revision") return this.source("role", row.entity_id, row.source_revision);
     if (table === "role_host_link_revision") return this.source("host-link", row.entity_id, row.source_revision);
     if (table === "discussion_event") return this.source("discussion", row.discussion_id ?? row.entity_id, row.entity_id, "session-statement");
+    if (table === "discussion") return this.source("discussion", row.entity_id, row.source_revision);
+    if (table === "process_document" || table === "document_revision") return this.source("document", row.entity_id, row.source_revision);
+    if (table === "project_stage" || table === "stage_revision") return this.source("stage", row.entity_id, row.source_revision);
     if (table.startsWith("session_message")) return this.source("message", row.message_id ?? row.entity_id, row.entity_id);
     if (table === "session_profile") return this.source("session-profile", row.entity_id, row.source_revision);
     if (table === "delivery") return this.source("delivery", row.entity_id, row.source_revision, "project-record", row.task_id);
