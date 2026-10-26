@@ -10,6 +10,10 @@ import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applyResident } from "./resident-hosts.js";
+import { applySessionMessage } from "./session-messages/index.js";
+import type { SessionMessageCommand } from "@evoloop/contracts/session-messages";
+import { applySessionAssignment } from "./session-assignments/index.js";
+import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
 import { applyDiscussion } from "./discussions.js";
@@ -156,6 +160,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
+    if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
@@ -163,6 +168,12 @@ export class WorkflowService {
   }
 
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
+    if (command.type.startsWith("session.message."))
+      return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
+    if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.")) {
+      const result = await applySessionAssignment({ tx, principal, command: command as SessionAssignmentCommand, now });
+      return { result, effects: [{ kind: command.type, entityId: result.entityId, version: result.version! }] };
+    }
     const base = { status: "applied" as const, operationId: command.operationId };
     const actorId = principal.actorId;
     if (command.type === "task.create" || command.type === "task.update") await requireAssignableOwner(tx, command.owner);

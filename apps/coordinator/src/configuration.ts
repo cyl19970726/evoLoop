@@ -69,6 +69,16 @@ const integrationSchema = z.strictObject({
       inputHash:z.string().regex(/^[a-f0-9]{64}$/),expiresAt:z.iso.datetime({offset:true}),
       paths:z.array(z.string().min(1).max(1024)).min(1).max(100)})).max(200).default([]),
   }).optional(),
+  sessionMessages: z.strictObject({
+    enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
+    /** Explicit local protocol qualification; existing deployments default to no execution. */
+    readOnlyProtocolVerified: z.boolean().default(false),
+    grants: z.array(z.strictObject({ projectId: z.uuid(), sessionId: z.uuid(), senderActorId: z.string().min(1).max(100),
+      receiverActorId: z.string().min(1).max(100),
+      receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().min(1).max(100), enabled: z.boolean(),
+    })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
+      "Ordinary conversation grants must be unique per project, recipient Session and sender"),
+  }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
@@ -119,5 +129,5 @@ export async function loadIntegrations(path?: string) {
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
     return { template, hash: delegationTemplateHash(template) };
   };
-  return { runtime, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
+  return { runtime, sessionMessages: configuration.sessionMessages, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
 }

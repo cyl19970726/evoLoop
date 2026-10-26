@@ -73,6 +73,26 @@ Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物
 
 工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态 Run 由有权 Lead 核终态和产物后登记 Delivery；broker worker 按下文签真实提交意图，封存者另留身份。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。当前通用常驻队列及 Desktop 自动唤醒未在此文档声明为可用；后项接续按实际已部署能力和授权核验。
 
+## 观察会话、具体接手与普通消息
+
+构建包含 `work` 的新版 CLI 后，可按真实会话键读取统一观察；升级服务不会自动升级其他工作树中的 CLI。`work list` 返回 owned 与已登记 external 的去重目录，不能拿原生 chat UUID 代替收件 Session。完整字段、分页和当前可用能力以响应及 `help` 为准。
+
+```sh
+npm run --silent cli -- work list --project "$PROJECT_ID" --membership all --limit 20
+npm run --silent cli -- work snapshot "$SESSION_KEY" --project "$PROJECT_ID"
+npm run --silent cli -- work history "$SESSION_KEY" --project "$PROJECT_ID" --limit 20
+npm run --silent cli -- work changes "$SESSION_KEY" --project "$PROJECT_ID" --cursor "$OBSERVATION_CURSOR"
+npm run --silent cli -- work assignment "$TASK_ID" --project "$PROJECT_ID" --history
+npm run --silent cli -- work messages "$SESSION_KEY" --project "$PROJECT_ID" --limit 20
+npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
+```
+
+这些都是只读查询，不唤醒模型。目录、变化、活动和版本历史的游标不可混用；改变身份、项目或筛选后重建读取位置。消息列表是正文／阻塞／回执预览，完整内容和处理答复从消息详情读取。部分结果、来源未同步和缺失资源指标须原样表达，不把 null 改成 0 或把 roleTasks 当每个会话的当前任务。
+
+新写入沿用 `command schema TYPE` 和 `command run FILE` 的幂等回执入口。`session.profile.set` 维护项目展示名与用途；`task.assignment.set` 指定同 Role 的实际会话，建议先 start 固定 Task 再分派。指定 actor 用 `task.assignment.acknowledge` 接手；Lead 的实际人工沟通记录另用 `observeAcceptance`，不能冒用执行者。新队列／直接 Run 不得绕过已有的具体分派；旧输入变更后明确重确认。
+
+`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通对话无需新 Task；新的独立工作仍须 Task 化与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；read 指实际收件身份对原消息的记录，不是发送者看过回复。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通执行还需独立消息 grant、剩余额度和经核准的文件读取范围及工具限制；能力不足时可以保留待处理，不能悄悄借旧预算、换会话或放宽权限。external 继续人工转交。
+
 ## 未知结果与本地回执
 
 CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show ID`、`receipts reconcile ID` 用于找回原始目标、请求和已知结果。`EVOLOOP_STATE_DIR` 可指定仓库外或明确被 Git 忽略的私有本机目录；本机实现按 0700 目录、0600 文件创建且不覆盖已有回执，但不会强制目录位于仓库外。回执不能进入公开 Git。服务端确认的同一 actor、项目权限与 API origin 允许合法令牌轮换后继续核对；旧回执若没有 actor 记录，只能用原令牌。不同 actor 不可据此换身份接管。`EVOLOOP_TIMEOUT_MS` 仅控制等待，不使写入失败变成未提交证明。CLI 将 JSON 结果写 stdout、诊断写 stderr，失败或冲突退出非零；它不自动重试 POST。

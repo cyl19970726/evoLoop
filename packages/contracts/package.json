@@ -21,7 +21,11 @@
     "./references": "./dist/references.js",
     "./evaluation": "./dist/evaluation.js",
     "./orchestration": "./dist/orchestration.js",
-    "./division": "./dist/division.js"
+    "./division": "./dist/division.js",
+    "./session-work": "./dist/session-work.js",
+    "./session-observation": "./dist/session-observation.js",
+    "./session-assignments": "./dist/session-assignments.js",
+    "./session-messages": "./dist/session-messages.js"
   },
   "dependencies": {
     "zod": "4.6.7"

@@ -12,7 +12,10 @@
     "./roles": "./dist/roles/index.js",
     "./delivery": "./dist/delivery/index.js",
     "./references": "./dist/references/index.js",
-    "./orchestration": "./dist/orchestration/index.js"
+    "./orchestration": "./dist/orchestration/index.js",
+    "./session-assignments": "./dist/session-assignments/index.js",
+    "./session-messages": "./dist/session-messages/index.js",
+    "./session-observation": "./dist/session-observation/index.js"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts"

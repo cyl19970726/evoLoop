@@ -8,6 +8,8 @@ import { taskCollaborationCommands } from "./discussions.js";
 import { queueCommandSchema } from "./queues.js";
 import { evaluationCommands } from "./evaluation.js";
 import { residentCommands } from "./resident-hosts.js";
+import { sessionMessageCommands } from "./session-messages.js";
+import { sessionAssignmentCommands } from "./session-assignments.js";
 export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure } from "./workflow.js";
@@ -46,6 +48,8 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...runtimeCommands,
   ...roleCommands,
   ...residentCommands,
+  ...sessionMessageCommands,
+  ...sessionAssignmentCommands,
   ...scheduleCommands,
   ...discussionCommands,
   ...taskCollaborationCommands,

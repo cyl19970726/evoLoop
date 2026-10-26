@@ -6,12 +6,13 @@ import { ApiClient, CliApiError } from "./client.js";
 import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./materials.js";
 import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
+import { sessionWorkPath } from "./session-work.js";
 
 type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop"]);
+const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -65,6 +66,10 @@ const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSche
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
   commands: ["id", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
+    "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
+    "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
+    "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
+    "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "document UUID --project UUID [--revision UUID]", "original DOCUMENT_UUID --project UUID --revision UUID [--out NEW_DIRECTORY]",
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
@@ -152,6 +157,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     return result;
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
+  if (action === "work") {
+    let path: string;
+    try { path = sessionWorkPath(args.words.slice(1), args.options); }
+    catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid Session work read parameters."); }
+    return client.get(`${prefix}${path}`);
+  }
   if (action === "list") {
     check(args, 2, ["project", "limit", "cursor", "task", "knowledge", "loop"]);
     const entity = args.words[1]!, orchestrationList = orchestrationLists[entity], suffix = listPaths[entity];
