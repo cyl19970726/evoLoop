@@ -18,6 +18,8 @@ const documentStatuses = { draft: "草稿", published: "已发布", archived: "�
 const searchPageLimit = 10;
 const searchItemLimit = 500;
 type OwnerName = { title?: string; error?: string };
+type WorkStatusProblem = { kind: "unavailable" | "partial"; diagnostic: string };
+const partialStatusDiagnostic = "接口未返回全部已载入任务的工作进度。";
 
 function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
   const seen = new Set(current.map(item => item.id));
@@ -32,7 +34,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [documents, setDocuments] = useState<Page<Document>>({ items: [], nextCursor: null });
   const [impacts, setImpacts] = useState<Impact[]>([]);
   const [statuses, setStatuses] = useState<Record<string, WorkTaskStatus>>({});
-  const [statusError, setStatusError] = useState("");
+  const [statusProblem, setStatusProblem] = useState<WorkStatusProblem | null>(null);
+  const [statusRetrying, setStatusRetrying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -54,15 +57,15 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const cursorHistory = useRef<{ tasks: Set<string>; documents: Set<string> }>({ tasks: new Set(), documents: new Set() });
   const pageCount = useRef({ tasks: 0, documents: 0 });
   useEffect(() => {
-    let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; setLoading(true); setError(""); setStatuses({}); setStatusError("");
+    let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; setLoading(true); setError(""); setStatuses({}); setStatusProblem(null); setStatusRetrying(false);
     const client = api(token);
     Promise.all([client.tasks(projectId), client.documents(projectId), client.impacts(projectId)]).then(async ([t, d, i]) => {
       if (active) { pages.current = { tasks: t, documents: d }; pageCount.current = { tasks: 1, documents: 1 }; setTasks(t); setDocuments(d); setImpacts(i); setObservedAt(new Date()); }
       if (t.items.length) try {
         const work = await client.workStatuses(projectId,t.items.map(item => item.id));
         if (active) {setStatuses(Object.fromEntries(work.items.map(item => [item.taskId,item])));
-          if (work.items.length !== t.items.length) setStatusError("部分任务的工作状态尚未读回；缺少状态的任务仍可直接阅读。");}
-      } catch (cause) { if (active) setStatusError(`工作状态暂不可读：${errorText(cause)}。已载入任务仍可直接阅读。`); }
+          if (work.items.length !== t.items.length) setStatusProblem({ kind: "partial", diagnostic: partialStatusDiagnostic });}
+      } catch (cause) { if (active) setStatusProblem({ kind: "unavailable", diagnostic: errorText(cause) }); }
     }).catch(cause => { if (active) setError(errorText(cause)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [token, projectId, refresh, recheck]);
@@ -101,9 +104,9 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
           const work = await client.workStatuses(projectId, added.map(item => item.id));
           if (readEpoch === epoch.current) {
             setStatuses(current => ({ ...current, ...Object.fromEntries(work.items.map(item => [item.taskId, item])) }));
-            if (work.items.length !== added.length) setStatusError("部分任务的工作状态尚未读回；缺少状态的任务仍可直接阅读。");
+            if (work.items.length !== added.length) setStatusProblem(current => current ?? { kind: "partial", diagnostic: partialStatusDiagnostic });
           }
-        } catch (cause) { if (readEpoch === epoch.current) setStatusError(`工作状态暂不可读：${errorText(cause)}。已载入任务仍可直接阅读。`); }
+        } catch (cause) { if (readEpoch === epoch.current) setStatusProblem({ kind: "unavailable", diagnostic: errorText(cause) }); }
       }
       return true;
     })();
@@ -144,6 +147,31 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     } catch (cause) { if (readEpoch === epoch.current) setError(errorText(cause)); }
     finally { setBusy(false); }
   }
+  async function retryWorkStatus() {
+    if (statusRetrying) return;
+    const readEpoch = epoch.current;
+    const ids = tasks.items.map(task => task.id);
+    setStatusRetrying(true);
+    try {
+      const next: Record<string, WorkTaskStatus> = {};
+      let partial = false;
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        const batch = ids.slice(offset, offset + 50);
+        const work = await api(token).workStatuses(projectId, batch);
+        if (readEpoch !== epoch.current) return;
+        for (const item of work.items) next[item.taskId] = item;
+        if (work.items.length !== batch.length) partial = true;
+      }
+      if (readEpoch === epoch.current) {
+        setStatuses(next);
+        setStatusProblem(partial ? { kind: "partial", diagnostic: partialStatusDiagnostic } : null);
+      }
+    } catch (cause) {
+      if (readEpoch === epoch.current) setStatusProblem({ kind: "unavailable", diagnostic: errorText(cause) });
+    } finally {
+      if (readEpoch === epoch.current) setStatusRetrying(false);
+    }
+  }
   const pending = impacts.filter(i => i.state === "pending");
   const visibleTasks = tasks.items.filter(t => (view !== "inbox" || t.state === "todo") && (filter === "all" || filter === "open" && (t.state === "todo" || t.state === "in_progress") || t.state === filter) && (kindFilter === "all" || t.kind === kindFilter) &&
     `${t.title} ${t.owner} ${t.id} ${statuses[t.id]?.cognition ? cognitionSummary(statuses[t.id]!).title : ""}`.toLowerCase().includes(query.toLowerCase()))
@@ -175,7 +203,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     return () => { active = false; controller.abort(); };
   }, [token, projectId, refresh, recheck, view, loading, ownerSignature, ownerScope]);
   const resolvedOwners = ownerNames.scope === ownerScope ? ownerNames.values : {};
-  const classificationUnavailable = Boolean(statusError) && !Object.keys(statuses).length;
+  const classificationUnavailable = Boolean(statusProblem) && !Object.keys(statuses).length;
   const {primary:primaryTasks,cognition:cognitionTasks,unknown:unknownTasks,primaryKind}=visibleWorkGroups(visibleTasks,statuses,classificationUnavailable);
   const visibleDocuments = documents.items.filter(d => (documentStatus === "all" || (documentStatus === "active" ? d.status !== "archived" : d.status === documentStatus)) && (kindFilter === "all" || d.kind === kindFilter) && `${d.title} ${d.id}`.toLowerCase().includes(query.toLowerCase()));
   const title = view === "documents" ? "过程文档" : view === "inbox" ? "待判断与复核" : "任务";
@@ -200,7 +228,9 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       {searching && <p className="list-message" role="status">正在搜索后续页面；结果尚未完整。</p>}
       {searchError && <div className="list-message"><Alert kind="error">搜索未完成：{searchError}。当前结果只覆盖已载入项目。</Alert></div>}
       {!loading && !error && <>{view === "documents" ? <div className="table-wrap"><table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table></div> : view === "work" ? <>
-        {statusError && <div className="work-status-warning"><Alert>{statusError}</Alert></div>}
+        {statusProblem && <div className="work-status-warning" role="status"><p>{statusProblem.kind === "partial" ? "部分任务的工作进度尚未读回，已加载任务仍可查看。" : "工作进度暂时无法读取，已加载任务仍可查看。"}</p>
+          <button type="button" disabled={statusRetrying} onClick={() => void retryWorkStatus()}>{statusRetrying ? "正在重试…" : "重试读取工作进度"}</button>
+          <details><summary>查看诊断信息</summary><code>{statusProblem.diagnostic}</code></details></div>}
         <div className="work-status-section"><h2>{primaryKind === "unclassified" ? "已载入任务 · 状态分类暂不可用" : "业务工作"} <span>{primaryTasks.length} 项已载入</span></h2>
           {primaryTasks.length ? <TaskListTable tasks={primaryTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} /> : <p className="work-status-note">{primaryKind === "unclassified" ? "当前尚无已载入任务。" : "已载入部分暂无可确认的业务任务。"}{tasks.nextCursor ? "仍有下一页任务可读取。" : ""}</p>}</div>
         {unknownTasks.length > 0 && <section className="work-status-section work-status-group" aria-label="来源与状态待核对"><h2>来源与状态待核对 <span>{unknownTasks.length} 项已载入</span></h2><p>状态投影未读全，暂不把这些任务归为业务或系统记录。</p><TaskListTable tasks={unknownTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} /></section>}
