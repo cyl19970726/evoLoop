@@ -27,21 +27,24 @@ interface PreparedSessions { runs: Map<string, Row>; work: Map<string, Row>; bus
 const catalog = `WITH hosts AS (
   SELECT h.link_id,h.role_id,h.state,v.host,v.verified_capabilities,v.observed_at_utc,v.version,
     first.created_at_utc AS registered_at,
-    CASE WHEN v.host->>'kind'='external' AND v.host->>'ref' ~
-      '^codex://threads/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-      THEN substring(v.host->>'ref' from 17) END AS external_ref
+    CASE WHEN v.host->>'kind'='external' AND v.host->>'provider'='codex-desktop' THEN
+      CASE WHEN v.host->>'ref' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        THEN lower(v.host->>'ref')
+      WHEN v.host->>'ref' ~ '^codex://threads/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        THEN lower(substring(v.host->>'ref' from 17)) END END AS external_ref
   FROM role_host_link h JOIN role_host_link_revision v ON v.project_id=h.project_id AND v.link_id=h.link_id AND v.version=h.version
   JOIN role_host_link_revision first ON first.project_id=h.project_id AND first.link_id=h.link_id AND first.version=1
   WHERE h.project_id=$1
 ), grouped_hosts AS (
-  SELECT host->>'provider' AS provider,external_ref,
+  SELECT host->>'provider' AS provider,max(external_ref) AS external_ref,
     (array_agg(link_id ORDER BY registered_at,link_id))[1] AS identity,
     (array_agg(link_id ORDER BY registered_at,link_id))[1:20] AS aliases,
     (array_agg(DISTINCT role_id::text))[1:10] AS role_ids,
     bool_or(state='verified') AS verified,bool_and(state='revoked') AS revoked,
-    bool_or(state='verified' AND verified_capabilities ? 'open') AS can_open,
+    bool_or(host->>'provider'='codex-desktop' AND external_ref IS NOT NULL AND state='verified' AND verified_capabilities ? 'open') AS can_open,
     max(observed_at_utc) AS observed_at, count(*) AS alias_count
-  FROM hosts WHERE host->>'kind'='external' GROUP BY host->>'provider',external_ref
+  FROM hosts WHERE host->>'kind'='external'
+    GROUP BY host->>'provider',COALESCE(external_ref,'link:'||link_id::text)
 ), identities AS (
   SELECT 'owned:'||s.session_id::text AS key,'owned'::text AS kind,s.session_id AS identity,
     ARRAY[s.session_id]::uuid[] AS aliases,ARRAY[s.role_id]::text[] AS role_ids,to_jsonb(s) AS runtime,

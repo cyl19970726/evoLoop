@@ -329,3 +329,41 @@ test("100 added Sessions keep directory query count and payload bounded", async 
     assert.equal(new Set([...first.items, ...second.items].map(item => item.key)).size, 100);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 });
+
+test("Codex bare and URI refs share identity; invalid or different refs stay separate and cannot open", async () => {
+  const client = await pool.connect();
+  try {
+    const thread = randomUUID(), distinctThread = randomUUID();
+    const bare = randomUUID(), uriAlias = randomUUID(), otherBare = randomUUID();
+    const invalidA = randomUUID(), invalidB = randomUUID(), otherProtocol = randomUUID(), unverified = randomUUID();
+    await client.query("BEGIN");
+    await addHost(client, bare, { kind: "external", provider: "codex-desktop", ref: thread.toUpperCase() }, "verified");
+    await addHost(client, uriAlias, { kind: "external", provider: "codex-desktop", ref: `codex://threads/${thread}` }, "verified", later);
+    await addHost(client, otherBare, { kind: "external", provider: "codex-desktop", ref: distinctThread }, "verified");
+    await addHost(client, invalidA, { kind: "external", provider: "codex-desktop", ref: "not-a-thread" }, "verified");
+    await addHost(client, invalidB, { kind: "external", provider: "codex-desktop", ref: "also-not-a-thread" }, "verified");
+    await addHost(client, otherProtocol, { kind: "external", provider: "codex-desktop", ref: `other://threads/${randomUUID()}` }, "verified");
+    await addHost(client, unverified, { kind: "external", provider: "codex-desktop", ref: randomUUID() }, "registered");
+    await client.query("COMMIT");
+    const reader = new PgSessionObservation(client, projectId, scope);
+    const same = await reader.snapshot(`external:${uriAlias}`), primary = await reader.snapshot(`external:${bare}`);
+    assert.equal(same?.session.key, primary?.session.key);
+    assert.deepEqual(primary?.session.aliases.map(x => x.kind === "external" && x.linkId), [bare, uriAlias]);
+    assert.equal(primary?.session.capabilities.open.available, true);
+    assert.equal(primary?.session.capabilities.open.ref, thread);
+    const different = await reader.snapshot(`external:${otherBare}`);
+    assert.notEqual(different?.session.key, primary?.session.key);
+    assert.equal(different?.session.capabilities.open.ref, distinctThread);
+    const bad = [];
+    for (const id of [invalidA, invalidB, otherProtocol]) bad.push(await reader.snapshot(`external:${id}`));
+    assert.equal(new Set(bad.map(x => x?.session.key)).size, 3);
+    for (const item of bad) assert.deepEqual(item?.session.capabilities.open, {
+      available: false, reason: "缺少已验证的打开能力或有效聊天引用。", ref: null });
+    assert.equal((await reader.snapshot(`external:${unverified}`))?.session.capabilities.open.available, false);
+    assert.equal(await new PgSessionObservation(client, otherProjectId, scope).snapshot(`external:${bare}`), null);
+    await client.query("BEGIN");
+    await assert.rejects(addHost(client, randomUUID(), { kind: "external", provider: "other-provider", ref: thread }, "verified"),
+      { code: "23514" });
+    await client.query("ROLLBACK");
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+});

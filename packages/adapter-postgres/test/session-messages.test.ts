@@ -257,9 +257,19 @@ test('explicit pre-turn rejection releases occupancy and does not claim a native
 });
 
 test('unqualified native tool profile keeps an ordinary message queued before any Turn',async()=>{
-  const message=item();await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
+  // Another Session may retain an older blocked message. Qualification must be
+  // checked for this recipient independently of that backlog and random UUID order.
+  const earlier={...item(),senderActorId:'blocked-sender',createdAt:'2026-10-25T00:00:00.000Z'};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(earlier));
+  const isolatedSessionId=randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$6,$7,'receiver',$8,$8)`,
+    [projectId,isolatedSessionId,roleId,grant.cwd,'thread-'+isolatedSessionId,'native-'+isolatedSessionId,randomUUID(),now]);
+  const message={...item(),target:{kind:'owned' as const,sessionId:isolatedSessionId}};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
   const roomy=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
-    grantFor:async()=>({...grant,maxTurns:100})});
+    grantFor:async()=>({...grant,sessionId:isolatedSessionId,maxTurns:100})});
   let starts=0;
   const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyReadOnlyThread:async()=>({
     available:false,reason:'Native apps are not explicitly disabled',fingerprint:null}),
