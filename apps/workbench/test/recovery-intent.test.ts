@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Command, Operation } from "@evoloop/contracts";
 import { ApiError } from "../src/api.ts";
 import type { OperationReceipt } from "../src/recovery.ts";
-import { clearRecoveryIntents, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent } from "../src/recoveryIntent.ts";
+import { clearRecoveryIntents, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "../src/recoveryIntent.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const operationId = "22222222-2222-4222-8222-222222222222";
@@ -13,6 +13,8 @@ const command: Command = { type: "task.create", projectId, operationId, taskId,
 const receipt: OperationReceipt = { actorId: "owner", projectId, operationId, taskId,
   commandType: "task.create", createdAt: "2026-10-26T00:00:00Z" };
 const applied = { status: "applied" as const, operationId, entityId: taskId, revisionId: taskId, version: 1, replayed: false };
+// SHA-256 of core canonicalJson({ actorId: "owner", command }).
+const commandHash = "37e82174125e7b03f4a6dd9fff90fdc490c462bc7fc06d258290dcd32ebfac35";
 
 test("same-page recovery reads first and explicitly replays the exact core command after 404", async () => {
   clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
@@ -27,15 +29,32 @@ test("same-page recovery reads first and explicitly replays the exact core comma
 
 test("a now-visible operation is confirmed without replay", async () => {
   clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
-  const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", result: applied } as Operation;
+  const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash, result: applied } as Operation;
   const result = await replayRecoveryIntent(receipt, async () => operation, async () => { throw new Error("must not send"); });
   assert.deepEqual(result, applied);
   clearRecoveryIntents();
 });
 
+test("same ID, actor and type with a different command hash stays unconfirmed", async () => {
+  clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
+  const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash: "different", result: applied } as Operation;
+  assert.equal(await verifyRecoveryOperation(receipt, operation), "mismatch");
+  await assert.rejects(replayRecoveryIntent(receipt, async () => operation,
+    async () => { throw new Error("must not send"); }), /摘要不匹配/);
+  clearRecoveryIntents();
+});
+
+test("a legacy receipt without its original body cannot confirm even a same-ID record", async () => {
+  clearRecoveryIntents();
+  const operation = { id: operationId, projectId, actorId: "owner", commandType: "task.create", commandHash, result: applied } as Operation;
+  assert.equal(await verifyRecoveryOperation(receipt, operation), "unavailable");
+  await assert.rejects(replayRecoveryIntent(receipt, async () => operation,
+    async () => { throw new Error("must not send"); }), /没有完整原命令/);
+});
+
 test("a visible record for another actor cannot clear this receipt or replay", async () => {
   clearRecoveryIntents(); rememberRecoveryIntent("owner", command);
-  const operation = { id: operationId, projectId, actorId: "other", commandType: "task.create", result: applied } as Operation;
+  const operation = { id: operationId, projectId, actorId: "other", commandType: "task.create", commandHash, result: applied } as Operation;
   await assert.rejects(replayRecoveryIntent(receipt, async () => operation,
     async () => { throw new Error("must not send"); }), /不匹配/);
   clearRecoveryIntents();

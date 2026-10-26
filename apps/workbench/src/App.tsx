@@ -15,7 +15,7 @@ import { SchedulingPanel } from "./scheduling/SchedulingPanel";
 import { JourneyBoard } from "./workflow/JourneyBoard";
 import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
 import { addReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
-import { clearRecoveryIntents, forgetRecoveryIntent, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent } from "./recoveryIntent";
+import { clearRecoveryIntents, forgetRecoveryIntent, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "./recoveryIntent";
 
 import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "./ui/returnRoute";
@@ -100,17 +100,15 @@ function OperationCheck({ receipt, token, onConfirmed }: {
   const [status, setStatus] = useState("这次操作可能已提交。请按原操作 ID 核对，确认前不要重复提交。");
   const [busy, setBusy] = useState(false);
   const [canReplay, setCanReplay] = useState(false);
-  function matching(operation: Operation): boolean {
-    return operation.id === receipt.operationId && operation.projectId === receipt.projectId
-      && operation.actorId === receipt.actorId && operation.commandType === receipt.commandType
-      && operation.result.operationId === receipt.operationId;
-  }
   async function check() {
     setBusy(true); setCanReplay(false);
     try {
       const operation: Operation = await api(token).operation(receipt.projectId, receipt.operationId);
-      if (!matching(operation)) {
-        setStatus("操作记录与本地回执不匹配；仍需人工核对，不能据此重发。");
+      const verdict = await verifyRecoveryOperation(receipt, operation);
+      if (verdict !== "match") {
+        setStatus(verdict === "unavailable"
+          ? "已查到同 ID 记录，但当前页面没有完整原命令，无法核对正文摘要。回执保留，需用原始意图与操作记录人工核对。"
+          : "操作记录与原命令摘要不匹配；回执保留，不能据此确认或重发。");
         return;
       }
       onConfirmed(operation.result);
