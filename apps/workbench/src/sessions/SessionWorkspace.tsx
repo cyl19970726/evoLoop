@@ -69,25 +69,33 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     const client = sessionClient(context.token, context.projectId);
     let checking = false;
     let recoveryChecking = false;
+    let latestSnapshotVersion = 0;
     let recoveryTarget: string | null = null;
     cursor.current = null;
     const saved = remember.get(scope) ?? null;
     setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false);
     setHistoryPartial(false); setHistoryLimitations([]); setHistoryError(""); setHistoryBusy(false); setError(""); setLoading(true);
     setRecoveryRead({ status: "loading" });
-    async function readRecovery(sessionId: string) {
-      if (document.visibilityState === "hidden" || recoveryChecking) return;
+    async function readRecovery(sessionId: string, snapshotVersion = latestSnapshotVersion) {
+      if (document.visibilityState === "hidden" || recoveryChecking || !snapshotVersion) return;
       recoveryChecking = true;
       try {
         const view = checkedRecoveryView(await client.recovery(sessionId, controller.signal), context.projectId, sessionId);
-        if (epoch.current === current && recoveryTarget === sessionId) setRecoveryRead({ status: "ready", view });
+        if (epoch.current === current && recoveryTarget === sessionId && requestVersion.current === snapshotVersion)
+          setRecoveryRead({ status: "ready", view });
       } catch (cause) {
-        if (controller.signal.aborted || epoch.current !== current || recoveryTarget !== sessionId) return;
+        if (controller.signal.aborted || epoch.current !== current || recoveryTarget !== sessionId
+          || requestVersion.current !== snapshotVersion) return;
         if (cause instanceof ApiError && cause.status === 404) setRecoveryRead({ status: "unavailable", message: "接口或对象不可用；请核对当前会话与服务记录。" });
         else if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) setRecoveryRead({ status: "forbidden", message: "请核对项目读取权限。" });
         else if (cause instanceof ApiError && cause.status === 0) setRecoveryRead({ status: "failed", message: "连接中断或超时；无法据此判断恢复状态。" });
         else setRecoveryRead({ status: "failed", message: errorText(cause) });
-      } finally { recoveryChecking = false; }
+      } finally {
+        recoveryChecking = false;
+        if (!controller.signal.aborted && epoch.current === current && recoveryTarget === sessionId
+          && latestSnapshotVersion === requestVersion.current && latestSnapshotVersion !== snapshotVersion
+          && document.visibilityState === "visible") void readRecovery(sessionId, latestSnapshotVersion);
+      }
     }
     async function read() {
       const version = ++requestVersion.current;
@@ -98,9 +106,11 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         cursor.current = result.observationCursor;
         rememberSnapshot(scope, result); setSnapshot(result);
         setActivity(old => bounded(old, result.activity)); setError("");
+        latestSnapshotVersion = version;
         recoveryTarget = result.session.kind === "owned" && result.session.target.kind === "owned" ? result.session.target.sessionId : null;
-        if (recoveryTarget) void readRecovery(recoveryTarget);
+        if (recoveryTarget) { setRecoveryRead({ status: "loading" }); void readRecovery(recoveryTarget, version); }
       } catch (cause) { if (!controller.signal.aborted && epoch.current === current && version === requestVersion.current) {
+        recoveryTarget = null;
         setError(errorText(cause)); setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
       } }
       finally { if (epoch.current === current && version === requestVersion.current) setLoading(false); }
