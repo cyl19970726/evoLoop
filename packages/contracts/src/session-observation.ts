@@ -63,7 +63,9 @@ export interface SessionActivity {
   summary: string;
   occurredAt: string | null;
   recordedAt: string;
+  /** Persisted source actor; association with this Session does not make it the author. */
   actorId: string | null;
+  /** Related Task context, not proof that this Session performed the activity. */
   taskId: string | null;
   importance: "important" | "detail";
   source: ObservationSource;
