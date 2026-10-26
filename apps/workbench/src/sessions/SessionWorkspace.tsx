@@ -169,7 +169,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     {tab === "activity" && <><section className="session-workspace-section"><h2>活动</h2><p className="muted">这里也包含关联任务的背景记录；查看每条的来源与登记者，不能据此认定由本 Session 执行。</p>{activity.length ? <ol className="session-activity-list">{activity.map(item => {
       const presented = activityPresentation(item, context.projectId);
       return <li key={item.id}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div><strong>{item.summary}</strong><small>{presented.sourceLabel}</small><details className="session-activity-source"><summary>来源标识</summary><small>{item.source.kind} · <code>{item.source.id}</code>{item.source.revision && <> · 修订 <code>{item.source.revision}</code></>}</small></details></div><span className="session-activity-links">{presented.discussionHref && <a href={presented.discussionHref}>原讨论</a>}{item.taskId && <a href={href(context.projectId, "task", item.taskId)}>关联任务</a>}</span></li>;
-    })}</ol> : <p className="empty">当前范围尚无活动记录。</p>}{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</section>{active && <SessionMessages context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} />}</>}
+    })}</ol> : <p className="empty">当前范围尚无活动记录。</p>}{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</section>{active && <SessionMessages key={current.session.key} context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} />}</>}
     {tab === "queue" && <section className="session-workspace-section"><div className="session-section-head"><div><h2>任务队列</h2><p className="muted">按已确认的顺序逐项处理；排队不表示已开始运行。</p></div><a href={`${href(context.projectId, "runtime")}?view=execution`}>管理受管队列</a></div>{current.queue.length ? <ol className="session-queue-list">{current.queue.map(item => <li key={item.entryId}><span className="session-queue-position" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span><div><strong><a href={href(context.projectId, "task", item.taskId)}>{item.taskTitle}</a></strong><small>{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</small></div></li>)}</ol> : <p className="empty">当前范围没有关联队列条目。</p>}</section>}
     {tab === "results" && <section className="session-workspace-section"><h2>结果与实际使用</h2>{current.results.length ? <ul>{current.results.map(item => <li key={item.deliveryId}><a href={href(context.projectId, "task", item.taskId)}>{item.taskTitle}</a> · 技术结果 {item.technicalResult} · {item.latestUse ? `使用观察：${item.latestUse.result}（${item.latestUse.observerKind}）` : "尚无实际使用观察"}</li>)}</ul> : <p className="empty">当前范围没有交付记录。</p>}</section>}
     {tab === "responsibilities" && <section className="session-workspace-section"><h2>职责与分派</h2>{session.roles.map(role => <p key={role.id}><a href={href(context.projectId, "roles")}>{role.title}</a> · {role.responsibility}</p>)}<h3>具体分派</h3>{current.assignments.length ? <ul>{current.assignments.map(({ assignment, task, stale }) => <li key={`${assignment.taskId}:${assignment.version}`}><a href={href(context.projectId, "task", task.id)}>{task.title}</a> · {stale ? "任务修订已变化，需重新确认" : assignment.state === "accepted" ? `已接手（${assignment.ack?.method === "direct" ? "本人确认" : "负责人观察"}）` : assignment.state === "assigned" ? "待确认" : "已释放"}</li>)}</ul> : <p>没有具体分派。</p>}<details><summary>角色责任范围 · {current.roleTasks.length} 项</summary><p>角色负责这些任务，不表示此 Session 已接手。</p><ul>{current.roleTasks.map(task => <li key={task.id}><a href={href(context.projectId, "task", task.id)}>{task.title}</a></li>)}</ul></details>{active && <AllocationBacklinks context={context} filter={{ sessionKey }} refresh={refresh + readAgain} />}<SessionProfileForm context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} /></section>}
@@ -192,8 +192,13 @@ function SessionProfileForm({ context, snapshot, onApplied }: { context: Mutatio
 
 function SessionMessages({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
   const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
-  const currentMessageScope = useRef("");
-  currentMessageScope.current = `${context.token}\0${context.projectId}\0${snapshot.session.key}`;
+  const messageScope = `${context.token}\0${context.projectId}\0${snapshot.session.key}`;
+  const currentMessageScope = useRef(messageScope);
+  currentMessageScope.current = messageScope;
+  useEffect(() => {
+    currentMessageScope.current = messageScope;
+    return () => { if (currentMessageScope.current === messageScope) currentMessageScope.current = ""; };
+  }, [messageScope]);
   const [messages, setMessages] = useState<SessionMessageRecord[]>([]);
   const [selected, setSelected] = useState<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null } | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -251,7 +256,8 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
     } catch (cause) { setError(errorText(cause)); }
   }
   async function detail(messageId: string) {
-    const scope = currentMessageScope.current;
+    const scope = messageScope;
+    if (currentMessageScope.current !== scope) return;
     try {
       const value = await sessionClient(context.token, context.projectId).message(messageId);
       if (currentMessageScope.current !== scope) return;
@@ -269,8 +275,8 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
     && (selected.message.state === "replied" || selected.message.state === "completed_without_reply" || selected.message.state === "failed");
   return <section className="session-workspace-section"><h2>普通对话</h2><p>{entry.introduction}</p>
     {entry.canSave && entry.sendReason && <p className="muted">保存能力：{entry.sendReason}</p>}
-    <p role="status">自动处理：{entry.executionLabel}。{entry.executionReason}{entry.executionObservedAt && <> 状态读于 {date(entry.executionObservedAt)}。</>}</p>
-    {!entry.canSave ? <Alert>{entry.sendReason || "当前不可保存消息。"}</Alert> : <ActionForm context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={entry.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea" }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content })} onApplied={result => { setReload(value => value + 1); void detail(result.entityId); onApplied(); }} />}
+    <p role="status">自动处理：{entry.executionLabel}。{entry.executionReason}{entry.executionObservedAt && <> 状态读于 {date(entry.executionObservedAt)}；配置变化后请点上方“重新读取”。</>}</p>
+    {!entry.canSave ? <Alert>{entry.sendReason || "当前不可保存消息。"}</Alert> : <ActionForm context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={entry.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea" }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content })} onApplied={result => { if (currentMessageScope.current !== messageScope) return; setReload(value => value + 1); void detail(result.entityId); onApplied(); }} />}
     <h3>消息记录</h3>{loading && <p>正在读取消息…</p>}{error && <Alert kind="error">消息暂不可读取：{error}。<button onClick={() => setReload(value => value + 1)}>重试</button></Alert>}
     {messages.length ? <ul className="session-message-list">{messages.map(item => <li key={item.id}><button type="button" className="quiet" onClick={() => void detail(item.id)}>{item.content.slice(0, 130)}{item.content.length > 130 ? "…" : ""}</button><small>{status[item.state]} · {date(item.createdAt)}</small></li>)}</ul> : !loading && !error && <p className="empty">没有已保存的普通消息。</p>}
     {nextCursor && messages.length < 300 && <button type="button" onClick={() => void more()}>加载更早消息</button>}

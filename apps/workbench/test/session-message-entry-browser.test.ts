@@ -19,7 +19,7 @@ const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, 
 const unavailable = { available: false, reason: "未开放" };
 const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"]
   .map(key => [key, { value: null, unit: "", source: null, scope: "session", observedAt: null, interval: null, unavailableReason: "未记录" }]));
-function snapshot(key: string) {
+function snapshot(key: string, disabledReason: string) {
   const external = key === keys.manual || key === keys.revoked;
   const id = key.slice(key.indexOf(":") + 1);
   const target = external ? { kind: "external", linkId: id } : { kind: "owned", sessionId: id };
@@ -27,7 +27,7 @@ function snapshot(key: string) {
     : key === keys.revoked ? { available: false, reason: "外部连接已撤销。", mode: "unavailable" }
     : { available: true, reason: external ? "外部消息仅保存" : "当前可保存待处理消息", mode: external ? "manual-handoff" : "owned-read-only" };
   const ordinaryExecution = key === keys.disabled ? { state: "disabled", reasonCode: "SESSION_MESSAGES_DISABLED",
-    reason: "普通自动回复未启用；保存后当前不会启动此会话。", observedAt: stamp }
+    reason: disabledReason, observedAt: stamp }
     : key === keys.manual ? { state: "manual", reasonCode: "EXTERNAL_HANDOFF", reason: "需人工转交原会话。", observedAt: stamp }
       : key === keys.revoked ? { state: "blocked", reasonCode: "EXTERNAL_LINK_REVOKED", reason: "已撤销的连接不可人工转交。", observedAt: stamp } : undefined;
   return { session: { key, target, aliases: [], title: key === keys.disabled ? "关闭自动回复的会话" : key === keys.legacy ? "旧版只读会话" : key === keys.revoked ? "已撤销外部会话" : "外部会话",
@@ -44,8 +44,10 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  let disabledReason = "普通自动回复未启用；保存后当前不会启动此会话。";
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
+    if (url.pathname === "/__fixture/update") { disabledReason = "本次重读确认：普通自动回复仍未启用。"; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
@@ -53,7 +55,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
       else if (url.pathname.startsWith(`${root}/session-work/`) && !url.pathname.endsWith("/changes"))
-        value = snapshot(decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length)));
+        value = snapshot(decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length)), disabledReason);
       else if (url.pathname.includes("/recovery") || url.pathname.includes("/hosts/")) { status = 404; value = { message: "测试中不可用" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
@@ -75,6 +77,10 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /未启用.*不会启动此会话/);
   assert.equal(await page.getByText("保存能力：当前可保存待处理消息").count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count() > 0, true);
+  assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /配置变化后请点上方“重新读取”/);
+  await fetch(`${base}/__fixture/update`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: "本次重读确认" }).waitFor();
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.legacy]);
   await page.getByRole("heading", { name: "旧版只读会话" }).waitFor();
