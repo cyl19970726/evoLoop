@@ -22,7 +22,7 @@ const unavailable = { available: false, reason: "fixture unavailable" };
 const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"]
   .map(key => [key, { value: null, unit: "", source: null, scope: "session", observedAt: null, interval: null, unavailableReason: "未记录" }]));
 
-function snapshot(key: string) {
+function snapshot(key: string, updated = false) {
   const external = key === externalKey;
   const id = key.slice(key.indexOf(":") + 1);
   return { session: { key, target: external ? { kind: "external", linkId: id } : { kind: "owned", sessionId: id },
@@ -32,32 +32,41 @@ function snapshot(key: string) {
     capabilities: { observe: unavailable, send: { ...unavailable, mode: "unavailable" },
       open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
     source: { kind: "session", id, revision: null, evidence: "project-record", href: "" }, metadata },
-    observationCursor: "0", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [], activity: [],
+    observationCursor: updated ? "1" : "0", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [],
+    activity: updated && !external ? [{ id: "fresh-activity", sequence: "1", sessionKey: key, kind: "note", summary: "新活动已显示",
+      occurredAt: stamp, recordedAt: stamp, actorId: "reader", taskId: null, importance: "detail",
+      source: { kind: "session", id, revision: null, evidence: "project-record", href: "" } }] : [],
     resources, metadata };
 }
 
-test("owned polling pauses under simulated hidden visibility, refreshes on visible, and external never reads recovery", {
+test("busy owned polling shows a fixture update, pauses under simulated hidden visibility, and external never reads recovery", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const counts = { ownedSnapshot: 0, externalSnapshot: 0, changes: 0, recovery: 0 };
+  let updated = false, changeDelivered = false;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/counts") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(counts)); return; }
+    if (url.pathname === "/__fixture/update") { updated = true; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work/changes`) {
-        counts.changes++; value = { items: [], nextCursor: "0", hasMore: false, resetRequired: false, metadata };
+        counts.changes++;
+        const notify = updated && !changeDelivered && url.searchParams.get("cursor") === "0";
+        if (notify) changeDelivered = true;
+        value = { items: notify ? [{ sessionKeys: [ownedKey] }] : [], nextCursor: changeDelivered ? "1" : "0",
+          hasMore: false, resetRequired: false, metadata };
       } else if (url.pathname.endsWith("/recovery")) {
         counts.recovery++; status = 404; value = { message: "无恢复记录" };
       } else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
       else if (url.pathname.startsWith(`${root}/session-work/`)) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length));
         if (key === externalKey) counts.externalSnapshot++; else counts.ownedSnapshot++;
-        value = snapshot(key);
+        value = snapshot(key, updated);
       }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
@@ -103,6 +112,15 @@ test("owned polling pauses under simulated hidden visibility, refreshes on visib
   assert.equal(returned.ownedSnapshot > hiddenStart.ownedSnapshot, true, "visible event immediately rereads snapshot");
   assert.equal(returned.recovery > hiddenStart.recovery, true, "visible reread requests recovery");
 
+  const beforeUpdate = await readCounts();
+  const injectedAt = Date.now();
+  await fetch(`${base}/__fixture/update`);
+  await page.getByText("新活动已显示").waitFor({ timeout: 8000 });
+  const visibleDelayMs = Date.now() - injectedAt;
+  const afterUpdate = await readCounts();
+  assert.equal(afterUpdate.changes > beforeUpdate.changes, true, "busy poll reads the change cursor");
+  assert.equal(afterUpdate.ownedSnapshot > beforeUpdate.ownedSnapshot, true, "affected change rereads the owned snapshot");
+
   const beforeExternal = await readCounts();
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, externalKey]);
   await page.getByRole("heading", { name: "外部测试会话" }).waitFor();
@@ -112,5 +130,6 @@ test("owned polling pauses under simulated hidden visibility, refreshes on visib
   const externalEnd = await readCounts();
   assert.equal(externalEnd.changes > externalStart.changes, true, "external workspace still polls changes");
   assert.equal(externalEnd.recovery, externalStart.recovery, "external Session never requests recovery");
-  t.diagnostic(JSON.stringify({ visibleStart, visibleEnd, hiddenStart, hiddenEnd, returned, beforeExternal, externalStart, externalEnd }));
+  t.diagnostic(JSON.stringify({ visibleStart, visibleEnd, hiddenStart, hiddenEnd, returned,
+    beforeUpdate, afterUpdate, visibleDelayMs, beforeExternal, externalStart, externalEnd }));
 });
