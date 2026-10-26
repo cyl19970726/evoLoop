@@ -43,4 +43,10 @@ test("external Session keeps manual handoff wording and uses its observed reason
   assert.match(entry.introduction, /外部会话需人工转交/);
   assert.equal(entry.executionReason, "需要人工转交给原会话。");
   assert.equal(entry.sendReason, "外部消息可保存");
+  const revoked = sessionMessageEntry("external", { ...base, send: { available: false, reason: "外部连接已撤销。", mode: "unavailable" },
+    ordinaryExecution: { state: "blocked", reasonCode: "EXTERNAL_LINK_REVOKED", reason: "已撤销的连接不可人工转交。", observedAt } });
+  assert.equal(revoked.canSave, false);
+  assert.match(revoked.introduction, /不能.*保存或转交/);
+  assert.doesNotMatch(revoked.introduction, /需人工转交/);
+  assert.equal(revoked.executionReason, "已撤销的连接不可人工转交。");
 });
