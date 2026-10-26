@@ -6,6 +6,7 @@ import type { DiscussionEvent, DiscussionRecord } from "@evoloop/contracts/discu
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { PgSessionAssignments } from "../src/session-assignments.ts";
 import { PgSessionObservation } from "../src/session-observation.ts";
+import { PgResidentHosts } from "../src/resident-hosts.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -120,6 +121,46 @@ test("directory keeps separate same-Role chats, deduplicates aliases, includes u
     await assert.rejects(new PgSessionObservation(client, projectId, otherScope).directory({ limit: 1, membership: "current", cursor: first.nextCursor! }), { code: "INVALID_CURSOR" });
     await assert.rejects(new PgSessionObservation(client, otherProjectId, scope).directory({ limit: 1, membership: "current", cursor: first.nextCursor! }), { code: "INVALID_CURSOR" });
   } finally { client.release(); }
+});
+
+test("same-Role HostLink events stay with exact Session aliases across snapshot, history and changes", async () => {
+  const client = await pool.connect();
+  try {
+    const reader = new PgSessionObservation(client, projectId, scope);
+    const keyA = `external:${a}`, keyB = `external:${b}`, keyOwned = `owned:${owned}`;
+    const initialA = await reader.snapshot(keyA), initialB = await reader.snapshot(keyB);
+    assert.ok(initialA && initialB);
+    const hosts = (items: { source: { kind: string; id: string } }[]) => items.filter(x => x.source.kind === "host-link").map(x => x.source.id);
+    assert.ok(hosts(initialA.activity).includes(a));
+    assert.ok(hosts(initialA.activity).includes(aAlias));
+    assert.ok(!hosts(initialA.activity).includes(b), "B's HostLink must not appear in A's snapshot activity");
+    assert.deepEqual(hosts(initialB.activity).filter(id => id === a || id === aAlias), []);
+    assert.ok(hosts(initialB.activity).includes(b));
+    assert.ok(!hosts((await reader.history(keyA, { limit: 50 }))!.items).includes(b));
+    assert.ok(hosts((await reader.history(keyB, { limit: 50 }))!.items).includes(b));
+    const ownedHosts = hosts((await reader.snapshot(keyOwned))!.activity);
+    assert.ok(ownedHosts.includes(ownedLink));
+    assert.ok(!ownedHosts.includes(a) && !ownedHosts.includes(b));
+    const roleActivity = initialA.activity.find(x => x.source.kind === "role");
+    assert.equal(roleActivity?.source.id, roleId, "shared Role history is explicitly sourced as Role context");
+
+    const store = new PgResidentHosts(client, projectId);
+    await client.query("BEGIN");
+    for (const linkId of [b, aAlias]) {
+      const old = await store.getHostLink(linkId);
+      assert.ok(old);
+      const updated = { ...old, version: 2, reason: `verified ${linkId}`, createdAtUtc: later };
+      await store.advanceHostLink(updated, 1, updated);
+    }
+    await client.query("COMMIT");
+    const aChanges = await reader.changes({ cursor: initialA.observationCursor, key: keyA, limit: 100 });
+    const bChanges = await reader.changes({ cursor: initialB.observationCursor, key: keyB, limit: 100 });
+    assert.ok(hosts(aChanges.items).includes(aAlias), "A' must aggregate into A");
+    assert.ok(!hosts(aChanges.items).includes(b), "B's later HostLink update must not invalidate A");
+    assert.ok(hosts(bChanges.items).includes(b));
+    assert.ok(!hosts(bChanges.items).includes(aAlias));
+    assert.ok(!hosts((await reader.history(keyA, { limit: 50 }))!.items).includes(b));
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 });
 
 test("profile and accepted assignment remain explicit; role responsibility alone does not become current work", async () => {

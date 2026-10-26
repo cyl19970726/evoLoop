@@ -274,7 +274,7 @@ export class PgSessionObservation implements SessionObservationReader {
         SELECT 1 FROM unnest($7::uuid[],$8::timestamptz[],$9::timestamptz[]) AS w(task_id,start_at,end_at)
         WHERE w.task_id=session_observation_change.task_id AND session_observation_change.occurred_at>=w.start_at
           AND (w.end_at IS NULL OR session_observation_change.occurred_at<w.end_at)))
-      OR (source_table IN ('role_revision','role_host_link_revision') AND role_id=ANY($6::text[])))`,
+      OR (source_table='role_revision' AND role_id=ANY($6::text[])))`,
       params: [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.aliases, tasks.slice(0, 200), row.role_ids,
         windows.map(x => x.task_id), windows.map(x => x.start_at), windows.map(x => x.end_at)], limited: allWindows.length > 200 || tasks.length > 200 };
   }
