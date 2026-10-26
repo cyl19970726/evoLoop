@@ -10,6 +10,7 @@ import { OrchestrationService } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import type { DelegationTemplate } from "@evoloop/contracts/division";
+import type { Transaction } from "@evoloop/contracts/ports";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated PostgreSQL test DB required");
@@ -37,6 +38,14 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   let frozenNow:string|null=null;
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>frozenNow??new Date().toISOString()},ids={next:randomUUID};
+  let migrated=false;
+  const transaction=uow.transaction.bind(uow);
+  // Seed the pre-023 database through its historical ports. The new optional
+  // Session ports only become available after their real 030..032 migrations.
+  uow.transaction=<T>(projectId:string,work:(tx:Transaction)=>Promise<T>)=>transaction(projectId,tx=>{
+    if(!migrated)Object.defineProperties(tx,{sessionAssignments:{value:undefined},sessionMessages:{value:undefined}});
+    return work(tx);
+  });
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(p,id)=>p===pid&&id==="cognition-scope"?
     {projectId:pid,scopeId:id,actorId:researcher,roleId:cognitiveRole,active:true}:null,
@@ -127,6 +136,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0,
     "the pre-migration schema must have no domain columns");
   await migrate(url!,schema);
+  migrated=true;
   await migrate(url!,schema);
   assert.deepEqual((await rowCounts()).rows[0],beforeMigration,"023 and its rerun add no business facts");
   assert.equal((await pool.query("SELECT count(*)::int n FROM task WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);

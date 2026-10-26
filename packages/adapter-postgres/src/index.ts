@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { runner } from "node-pg-migrate";
 import pg, { type PoolClient, type QueryResultRow } from "pg";
 import { PgRuntimeStore } from "./runtime.js";
+import { PgSessionMessages } from "./session-messages.js";
+import { PgSessionAssignments } from "./session-assignments.js";
+import { PgSessionObservation } from "./session-observation.js";
 import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
 import { scheduledSourceFacts } from "./schedule-source.js";
@@ -91,7 +94,10 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 }
 
 class PgReader implements Reader {
+  sessionObservation(scope: string) { return new PgSessionObservation(this.client, this.projectId, scope); }
   readonly queue: PgResidentQueue;
+  readonly sessionMessages: PgSessionMessages;
+  readonly sessionAssignments: PgSessionAssignments;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
   protected readonly residents: PgResidentHosts;
@@ -104,6 +110,8 @@ class PgReader implements Reader {
     queueAuthority: QueueAuthority = {}) {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
+    this.sessionMessages = new PgSessionMessages(client, projectId);
+    this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
     this.residents = new PgResidentHosts(client, projectId);
     this.scheduling = new PgSchedulingQueries(client, projectId);

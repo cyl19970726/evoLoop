@@ -506,6 +506,50 @@ test("restart dispatches a reserved Run with the original Session profile and ne
   } finally { await runner.stop(); }
 });
 
+test("registered Session restores its business profile after an ordinary message before the next Task Turn",async()=>{
+  const persisted={...session,sandbox:'workspace-write' as const};
+  const first:RuntimeRunRecord={...run,id:randomUUID(),state:'requested',nativeTurnId:null};
+  const runs=[first];
+  let readOnly=false,resumes=0,unknown=0;
+  const runtime=Object.assign(new FakeRuntime(),{needsBusinessRestore:()=>readOnly});
+  runtime.resume=async(binding,profile)=>{
+    assert.equal(profile.sandbox,persisted.sandbox);
+    assert.equal(profile.approvalPolicy,persisted.approvalPolicy);
+    resumes++;readOnly=false;return binding;
+  };
+  runtime.startTurn=async()=>{
+    assert.equal(readOnly,false,'ordinary restrictions must be restored before dispatch');
+    return{id:`task-turn-${++runtime.starts}`,status:'inProgress'};
+  };
+  runtime.listTurns=async()=>({data:runs.filter(r=>r.nativeTurnId).map(r=>
+    ({id:r.nativeTurnId!,status:'inProgress',completedAtUtc:null})),nextCursor:null});
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[persisted],
+    listRuntimeRuns:async()=>runs,getRuntimeSession:async()=>persisted} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),beginDispatch:async()=>{},
+    bindTurn:async(_p:string,id:string,turn:RuntimeTurn)=>{
+      const item=runs.find(r=>r.id===id)!;item.state='running';item.nativeTurnId=turn.id;return item;
+    },markRunUnknown:async()=>{unknown++;}} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & typeof runtime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+  try{
+    await runner.start();
+    assert.equal(runtime.starts,1);assert.equal(resumes,1);
+    first.state='completed';
+    // The ordinary adapter retains this gate after its Turn settles, while the
+    // runner still remembers the original business Session registration.
+    readOnly=true;
+    const next:RuntimeRunRecord={...run,id:randomUUID(),operationId:randomUUID(),state:'requested',nativeTurnId:null};
+    runs.push(next);
+    await runner.pump();
+    assert.equal(runtime.starts,2);
+    assert.equal(resumes,2);
+    assert.equal(next.state,'running');
+    assert.equal(unknown,0,'a missing local restore must never create an unknown business start');
+  }finally{await runner.stop();}
+});
+
 test("rehydration of a bound dynamic Session ignores a colliding static grant until current dynamic authority returns",async()=>{
   const dispatchId=randomUUID(),dynamicSession={...session,id:loopIntentId(dispatchId,"session"),
     model:"gpt-6-astra",sandbox:"workspace-write" as const};

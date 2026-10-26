@@ -2,6 +2,7 @@ import type { AppliedResult, BasisSet, Command, Principal, RuntimeRecordEvent, R
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { validateDispatchBasis } from "./basis.js";
+import { requireAssignedSession } from "../session-assignments/dispatch.js";
 import { canonicalEvaluationJson, nextAttemptOrdinal, taskSignature } from "../evaluation/index.js";
 
 type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
@@ -82,6 +83,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
       throw new DomainError("SESSION_NOT_READY", "only a bound ready session can close normally");
     if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id && ["requested", "dispatching", "running", "unknown"].includes(run.state)))
       throw new DomainError("SESSION_BUSY", "session has active or unresolved work");
+    await tx.sessionMessages?.assertSessionVacant(session.id);
     try { await tx.queue?.assertQueueSessionVacant(session.id); }
     catch { throw new DomainError("QUEUE_OCCUPIED", "session has an unreleased queue claim"); }
     const next = { ...session, state: "closing" as const, closeOperationId: command.operationId,
@@ -94,6 +96,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   const session = required(await tx.getRuntimeSession(command.sessionId), "runtime session");
   if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "only a bound project-owned session can run");
   const task = required(await tx.getTask(command.taskId), "task");
+  await requireAssignedSession(tx, task, command.sessionId, !!queueClaim);
   try { await tx.queue?.assertQueueVacant(task.id,session.id,queueClaim?.claimId,queueClaim?.runId,queueClaim?.operationId); }
   catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }
   if(queueClaim && (queueClaim.runId!==command.runId||queueClaim.operationId!==command.operationId||queueClaim.taskId!==task.id||queueClaim.sessionId!==session.id))
@@ -105,6 +108,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id && ["requested", "dispatching", "running", "unknown"].includes(run.state))) {
     throw new DomainError("SESSION_BUSY", "an earlier run in this session is still active or unresolved");
   }
+  await tx.sessionMessages?.assertSessionVacant(session.id);
   if ((await tx.listRuntimeRuns(task.id)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state))) {
     throw new DomainError("TASK_BUSY", "an earlier run for this task is still active or unresolved");
   }

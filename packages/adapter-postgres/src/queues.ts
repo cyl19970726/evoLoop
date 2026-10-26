@@ -107,7 +107,8 @@ export class PgResidentQueue {
   private async assertCurrent(e:ResidentQueueEntry,continuation:boolean):Promise<string|null>{
     const r=await this.client.query(`SELECT t.current_revision_id,t.state AS task_state,t.owner,s.state AS session_state,s.native_thread_id,
       EXISTS(SELECT 1 FROM role_session_binding b WHERE b.project_id=t.project_id AND b.session_id=s.session_id AND b.role_id=$4) AS bound,
-      EXISTS(SELECT 1 FROM runtime_run x WHERE x.project_id=t.project_id AND (x.task_id=t.task_id OR x.session_id=s.session_id) AND x.state IN ('requested','dispatching','running','unknown')) AS busy
+      (EXISTS(SELECT 1 FROM runtime_run x WHERE x.project_id=t.project_id AND (x.task_id=t.task_id OR x.session_id=s.session_id) AND x.state IN ('requested','dispatching','running','unknown'))
+       OR EXISTS(SELECT 1 FROM session_message_processing m WHERE m.project_id=t.project_id AND m.session_id=s.session_id AND m.state IN ('dispatching','running','unknown'))) AS busy
       FROM task t JOIN runtime_session s ON s.project_id=t.project_id AND s.session_id=$3 WHERE t.project_id=$1 AND t.task_id=$2`,[this.projectId,e.taskId,e.sessionId,e.roleId]);
     const f=r.rows[0];if(!f||!['todo','in_progress'].includes(f.task_state)||f.owner!==e.roleId||f.session_state!=='ready'||!f.native_thread_id||!f.bound||f.busy)return null;
     if(!await this.binding(this.client,this.projectId,e.roleId,e.sessionId))return null;
@@ -138,6 +139,10 @@ export class PgResidentQueue {
       }
       throw error;
     }
+    // An ordinary Turn is a temporary native-slot occupant, not a reason to place the business entry on manual hold.
+    const messageBusy=await this.client.query(`SELECT 1 FROM session_message_processing WHERE project_id=$1 AND session_id=$2
+      AND state IN ('dispatching','running','unknown') LIMIT 1`,[this.projectId,e.sessionId]);
+    if(messageBusy.rows[0])throw new Error('SESSION_MESSAGE_BUSY');
     const revision=await this.assertCurrent(e,false);if(!revision){await this.holdResidentQueueEntry(queueId,entryId,'manual_review','current Task, input, Session, grant or Run changed');return null;}
     if(revision!==attempt.taskRevisionId)throw new Error('TASK_REVISION_CONFLICT');
     await this.client.query('INSERT INTO resident_queue_claim(project_id,queue_id,entry_id,claim_id,task_id,session_id,role_id) VALUES($1,$2,$3,$4,$5,$6,$7)',[this.projectId,queueId,entryId,claimId,e.taskId,e.sessionId,e.roleId]);
@@ -154,6 +159,9 @@ export class PgResidentQueue {
     const replay=await this.client.query('SELECT * FROM resident_queue_attempt WHERE project_id=$1 AND operation_id=$2',[this.projectId,a.operationId]);if(replay.rows[0]){const x=attemptOf(replay.rows[0]);if(x.claimId!==claimId||x.runId!==a.runId||x.taskRevisionId!==a.taskRevisionId)throw new Error('OPERATION_CONFLICT');return x;}
     const attempts=await this.listResidentQueueAttempts(claimId);if(await this.countResidentQueueAttempts(c.rows[0].queue_id)>=maxRuns)return null;
     const last=attempts.at(-1);if(!last)return null;const run=await this.client.query('SELECT state FROM runtime_run WHERE project_id=$1 AND run_id=$2',[this.projectId,last.runId]);if(!run.rows[0]||!['completed','failed','interrupted'].includes(run.rows[0].state))return null;
+    const messageBusy=await this.client.query(`SELECT 1 FROM session_message_processing WHERE project_id=$1 AND session_id=$2
+      AND state IN ('dispatching','running','unknown') LIMIT 1`,[this.projectId,e.sessionId]);
+    if(messageBusy.rows[0])throw new Error('SESSION_MESSAGE_BUSY');
     const revision=await this.assertCurrent(e,true);if(!revision||revision!==a.taskRevisionId)return null;
     return this.insertAttempt(claimId,attempts.length+1,a);
   }

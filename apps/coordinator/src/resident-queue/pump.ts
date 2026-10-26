@@ -11,7 +11,8 @@ export class ResidentQueuePump {
   private timer:ReturnType<typeof setInterval>|null=null;
   private busy:Promise<void>|null=null;
   constructor(private readonly deps:{workflow:WorkflowService;credentials():Promise<Principal[]>;
-    enabled():Promise<boolean>;canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void}){}
+    enabled():Promise<boolean>;canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
+    messageBusy?(projectId:string,sessionId:string):Promise<boolean>}){}
   start():void {
     if(this.timer)return;
     this.timer=setInterval(()=>{void this.tick();},this.deps.pollIntervalMs);
@@ -43,6 +44,7 @@ export class ResidentQueuePump {
     for(const entry of entries){
       if(entry.state==="claimed"&&entry.claimId&&!entry.holdCode)await this.releaseIfAccepted(queue,entry,lead);
       if(entry.state!=="queued")continue;
+      if(await this.deps.messageBusy?.(queue.projectId,entry.sessionId))continue;
       if(entry.dependsOn.some(id=>entries.find(x=>x.id===id)?.state!=="released"))continue;
       if(entries.some(prior=>prior.position<entry.position&&prior.sessionId===entry.sessionId&&prior.state!=="released"))continue;
       // A Lead unhold increments the entry version, making one fresh intent possible
@@ -51,9 +53,11 @@ export class ResidentQueuePump {
       const claimId=queueIntentId("claim",...generation);
       const runId=queueIntentId("run",...generation,"1");
       const operationId=queueIntentId("run.reserve",...generation,"1");
-      const result=await this.deps.workflow.execute(lead,{type:"queue.claim",projectId:queue.projectId,
+      let result;
+      try{result=await this.deps.workflow.execute(lead,{type:"queue.claim",projectId:queue.projectId,
         queueId:queue.id,entryId:entry.id,expectedVersion:queue.version,claimId,runId,
-        runOperationId:operationId,operationId});
+        runOperationId:operationId,operationId});}
+      catch(error){if(error instanceof Error&&error.message==='SESSION_MESSAGE_BUSY')return;throw error;}
       if(result.status==="rejected"&&!["QUEUE_NOT_ADOPTED","VERSION_CONFLICT","ENTRY_UNAVAILABLE"].includes(result.code))
         this.deps.onError(new Error(`queue claim ${result.code}`));
       // The next item must observe the committed claim on a fresh queue read.

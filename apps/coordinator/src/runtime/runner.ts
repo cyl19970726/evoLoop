@@ -32,7 +32,11 @@ const faultCategory = (error: unknown): RuntimeFaultCategory => error instanceof
   error instanceof DomainError ? error.code === "FORBIDDEN" ? "authorization" : "verification" : "unavailable";
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
-  isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void };
+  isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
+  startReadOnlyTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
+  qualifyReadOnlyThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
+  needsBusinessRestore?(binding:RuntimeBinding):boolean;
+  markReadOnlyThread?(binding:RuntimeBinding):void };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const marker = (operationId: string) => `[evoloop-run-operation:${operationId}]`;
 const object = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -107,6 +111,7 @@ export class RuntimeRunner {
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
+  nativeAdapter():ManagedRuntime { return this.runtime; }
   status(projectId?: string) {
     const faults = projectId ? [...this.faults.values()].filter(fault => fault.projectId === projectId) : [];
     return { available: this.available && this.runtime.isReady(),
@@ -295,7 +300,7 @@ export class RuntimeRunner {
   private async restore(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) throw new Error("Session authority is no longer available");
     const binding = bindingOf(session);
-    if (!this.registered.has(session.id)) {
+    if (!this.registered.has(session.id) || this.runtime.needsBusinessRestore?.(binding)) {
       await this.runtime.registerBinding(binding);
       await this.runtime.resume(binding, specOf(session));
       this.registered.add(session.id);
