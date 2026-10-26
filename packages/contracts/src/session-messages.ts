@@ -27,17 +27,18 @@ export type SessionMessageProcessingState = "dispatching" | "running" | "unknown
 export interface SessionMessageProcessing {
   projectId: string; id: string; messageId: string; sessionId: string; operationId: string;
   state: SessionMessageProcessingState; nativeTurnId: string | null; response: string | null;
-  failure: string | null; version: number; startedAt: string; updatedAt: string;
+  failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
+  version: number; startedAt: string; updatedAt: string;
 }
 /** A separate, explicit ordinary-conversation grant. Business queue or Loop quotas do not satisfy it. */
 export interface SessionMessageDispatchGrant {
-  projectId: string; sessionId: string; senderActorId: string; receiverRoleId: string;
+  projectId: string; sessionId: string; senderActorId: string; receiverRoleId: string; receiverActorId: string;
   cwd: string; maxTurns: number; enabled: boolean;
 }
 export interface SessionMessageReader {
   getSessionMessage(id: string): Promise<SessionMessageRecord | null>;
   listSessionMessages(target: SessionTarget, limit: number, cursor?: string): Promise<{ items: SessionMessageRecord[]; nextCursor: string | null }>;
-  listPendingSessionMessages(limit: number): Promise<SessionMessageRecord[]>;
+  listPendingSessionMessages(limit: number, offset?: number): Promise<SessionMessageRecord[]>;
   getSessionMessageProcessing(messageId: string): Promise<SessionMessageProcessing | null>;
   countSessionMessageTurns(sessionId: string, senderActorId: string): Promise<number>;
   mustYieldBusiness(sessionId:string):Promise<boolean>;
