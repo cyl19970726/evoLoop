@@ -39,7 +39,7 @@ export function TaskOwner({ token, projectId, owner, readKey }: { token: string;
           setSessions(verified);
           if (bound.size > verified.length)
             setSessionNote("部分绑定记录未能核对到同项目、同职责的会话；未提供其入口。");
-          else if (bound.size === 0) setSessionNote("未登记绑定会话。");
+          else if (bound.size === 0) setSessionNote("该职责暂无已登记的受管会话绑定；任务具体承接请看下方分派。");
         } catch (cause) { if (active) setSessionNote(`会话关联暂不可核对：${errorText(cause)}`); }
       } catch (cause) {
         if (active) setRoleError(cause instanceof ApiError && cause.status === 404 ? "未找到已登记职责" : `职责暂不可核对：${errorText(cause)}`);

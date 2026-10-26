@@ -187,6 +187,8 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 
 协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；各对象显示当前读回的状态、观察时间与下一责任；Run 的终态不能代替任务验收或消费者使用。
 
+`GET /api/projects/:projectId/orchestration/work-status` 为已分页 Task 列表补充最多50项的工作事实，只依赖项目读取权限和已迁移数据库，不依赖自动 Loop、controller 或原生运行时启用。普通启动和受管模式各只注册一次同一读取入口；读取不启动泵、派发或模型。无派发的普通 Task 保持普通工作标签，存储读取失败明确报错，不伪装为没有工作；受管 worker 的读取范围仍由原鉴权限制。
+
 本机受限 ResidentQueue 让 Lead 明示条目顺序、依赖、理由、固定 Task 输入、owned Session、消费者、释放规则与累计 Run 预算，并采纳一个可执行版本。未领取的重排、Task 改版后的队列修订和重新采纳使用 CAS；不能只改正文便沿旧条目启动。领取在同项目事务内核当前 Task、正式绑定、精确 grant、Session ready 与原生 Thread、Task/Session 无在途或未知 Run，并原子记录 claim、Run 预留意图、Journal/outbox；同一 Session 的后项等前项释放，另一个领取不能抢占。所有后续尝试计入同一预算；终态只结束一次 Run，不释放 Task claim。默认核当前通过的 Delivery、Task 关闭及要求的消费者 `used` 后释放；条目预先允许有界释放时，有权 Lead 可对无依赖后项给出释放决定，保留未完任务下一责任。依赖项仍须真实验收。未知原生启动或封存按原操作与 Run 对账，不能重试造成第二次外部执行。[PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的本机原 Session 已按采纳队列完成 A→B 两项真实任务的领取、接续和验收后放行；[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的有界故障回归不能替代其他场景的原生验收，也不能从已领取或 Run 结束推定 Task 被消费者使用。
 
 Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到同项目 TaskRevision、Run、Session 与 DocumentRevision；事件与 `received`、`read`、`adopted`、`resolved` 回执分开，发出不等于读到或采用。答复若改变范围，应先按 Task 版本规则修订；原 Turn 的输入不静默 steering。原 Run 已知终态后，控制者经显式 `queue.continue` 引用此前同一通道的问答，固定答复正文/hash 进入同一 Session 的新 Run 输入。实际收件者可在新 Run 已绑定原生 Turn、正在运行或已完成时签采用回执；仍须同 Task/Session、完整业务输入一致且包含精确答复，不能以采用代替交付或验收。受限工程动作另有 request、review 决定和实际 executor 执行回执：请求固定原 Run 输入 hash、精确 repo/worktree/路径/commit/PR 范围、授权证据和到期；批准不等于外部动作已发生，执行时再核真实 actor 与现行精确 grant，unknown 沿原外部操作 ID 对账。缺配置或权限即阻断，不借 controller 身份代业务执行。原 Session 的真实问答、固定答复采用、消费者使用及受限动作回执已按[当前基线](../roadmap.md#当前基线)分别取证；答复、采用、请求、批准和实际执行各有独立记录。当前没有独立通知消费者，重复 Task 消息和 pump 的回归不表示外部通知传输重投或 Desktop 自动唤醒已验。
@@ -268,3 +270,15 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 第一条端到端试点至少贯穿：来源入库 → 两个 session 的相反解释 → Wiki 维护修订 → PostgreSQL 任务引用固定修订并执行 → 飞书投影与入站协作对账 → 交付后的实际亲用 → 依据效果形成下一任务/职责试行。随后演练文档旧基线写、同基线 Wiki 写、任务出站成功但丢响应、飞书入站冲突与投影删除、来源撤回、协调者重启、知识恢复及新 session 独立消费。每项报告要分开记录“原生能力、官方 Skill/模型行为、项目适配、人工操作、尚未观察”。
 
 当前没有证据可承诺飞书事件完整投递、跨平台恰好一次执行、外部投影立即一致、OpenViking 0.5.0 安全多写者发布、源撤回自动修正全部页、可靠通知送达或 Wiki 比直接材料更高效。S1a 已验证 PG 内部事务、同基线竞争与固定依据；范围见[实测报告](../research/design-review-20261020.md)，不能将其外推到未接入的合同。任何实现只能在验证后的边界内向上暴露能力；升级后重新跑相应案例。更细的测试和代码约定见[开发规范](../development/standards.md)。
+
+## 9. 分工讨论的可信关系反查
+
+角色探索复用 allocation Discussion、固定 Document、Role 与 Task 的正式记录。`GET /api/projects/:projectId/allocation-relations` 恰选 `roleId`、`sessionKey`、`discussionId` 一个过滤器；`GET .../discussions?kind=allocation` 可发现未决或尚无正式关联的讨论。它们都是读取，不创建角色、分派、Run 或权限。写入继续通过既有讨论决定与 `discussion.action.link`、Role 决定/回看和具体任务分派命令。
+
+可信路径是决议的不可变 action event → Role/Task 的固定修订；具体接手者另须匹配同项目、同 Task ID、同 Task 修订的 `accepted` 分派历史。同 Role 的其他会话、仅 assigned、文本 sourceRef 或另一 Task 修订不能补足这条路径。Role 反查只展示该正式关联 Role 及其固定 Task owner 匹配的路径；Session 反查只取精确身份与真实别名，不扩展整个职责。
+
+返回按关系路径分页：默认20、最大50、单响应不超过256KiB。每页含来源、当前决定/目标修订/分派关系的独立状态；讨论当前正文与决议当时的固定 Document 修订分别提供。直接接收者亲签与 Lead 人工观察保留各自身份，转交、释放和被新决定取代的路径仍可追溯。关联、接受、Run、交付与独立使用是不同证据；不由一条边推定试行成功。试行期限、条件和回看继续读原 Role 权威。
+
+Task 目标的 `taskAcceptanceGap` 说明精确修订的接受缺口：`null` 表示已有相符接受历史（其路径可能在后页），`no-assignment` 表示未登记分派，`not-accepted` 表示该修订尚无接受，`different-task-revision` 表示仅登记了其他修订，`unavailable` 表示固定对象不可读。其他目标不带该字段；这不是新增 Task 状态。只有 Role 链接而没有 Task 链接时保留 Role 来源，讨论未读全前不推断不存在后续任务。
+
+游标签名并绑定项目、调用身份/权限、过滤范围、规范会话及关系代次。复用既有 observation journal，使独立 Document、Stage 和 Discussion 头变化也推进关系代次；关系页通过项目级变化入口失效。代次改变时返回 `resetRequired` 并要求重读，不能伪装跨页固定快照；无变化时按不可变路径键继续，不能在一万项处截断。签名仅在当前协调进程内有效，重启或无效签名要求重新从首屏读取。缺少正式路径是空页，不存在/越权、服务未安装与读取失败仍为错误；前端不能把错误显示成“没有讨论”。更完整的对象正文和版本从原入口读取。Document 来源指向固定原件；Stage 保留固定版本，入口为当前阶段页，核历史仍用既有修订读取。
