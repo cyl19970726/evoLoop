@@ -7,8 +7,15 @@ import { codexThreadHref } from "../roles/externalHostEntry";
 /** A directory capability permits a request to open, not proof that the chat received anything. */
 export function sessionOpenHref(session: ObservedSession, host: HostLink | null): string | null {
   if (!session.capabilities.open.available) return null;
-  if (session.kind === "external" && (host?.host.kind !== "external" || host.host.provider !== "codex-desktop")) return null;
-  return codexThreadHref(session.capabilities.open.ref);
+  const observedRef = codexThreadHref(session.capabilities.open.ref);
+  if (!observedRef) return null;
+  if (session.kind === "external") {
+    if (session.target.kind !== "external" || !host || host.id !== session.target.linkId
+      || host.host.kind !== "external" || host.host.provider !== "codex-desktop"
+      || host.state !== "verified" || !host.verifiedCapabilities.includes("open")
+      || codexThreadHref(host.host.ref) !== observedRef) return null;
+  }
+  return observedRef;
 }
 
 export function sessionOriginalRef(session: ObservedSession, host: HostLink | null): string | null {
@@ -37,6 +44,10 @@ export function SessionOpenEntry({ session, token, projectId, currentRead, activ
   const host = current?.host ?? null;
   const fullRef = sessionOriginalRef(session, host);
   const openHref = currentRead ? sessionOpenHref(session, host) : null;
+  const latestReason = host?.state === "revoked" ? "最新连接已撤权。"
+    : host?.state === "registered" ? "最新连接尚未核实。"
+      : host && !host.verifiedCapabilities.includes("open") ? "最新连接未核实打开能力。"
+        : host && !openHref ? "最新连接与会话观察不一致，须重新核对。" : null;
   async function copy() {
     if (!fullRef) return;
     setCopyStatus("");
@@ -50,7 +61,7 @@ export function SessionOpenEntry({ session, token, projectId, currentRead, activ
     {copyStatus === "failed" && <small role="alert">复制失败；可选中上方完整引用手工复制。</small>}
     {session.kind === "external" && !current && <small>正在读取原聊天引用…</small>}
     {current?.error && <small role="alert">原聊天引用暂不可读：{current.error}。</small>}
-    {!openHref && <small>{currentRead ? session.capabilities.open.reason || "打开能力尚未核实。" : "当前状态尚未读回；不能据上次观察请求打开。"}可用完整引用人工查找；这里不表示消息已送达。</small>}
+    {!openHref && <small>{currentRead ? latestReason || session.capabilities.open.reason || "打开能力尚未核实。" : "当前状态尚未读回；不能据上次观察请求打开。"}可用完整引用人工查找；这里不表示消息已送达。</small>}
     {openHref && <small>仅向本机请求打开；是否打开、阅读或收到消息须在原聊天另行核对。</small>}
   </div>;
 }
