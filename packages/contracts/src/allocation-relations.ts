@@ -8,6 +8,8 @@ export type AllocationRelationFilter =
   | { discussionId: string; roleId?: never; sessionKey?: never };
 export type AllocationRelationQuery = AllocationRelationFilter & { limit: number; cursor?: string };
 export type AllocationTargetStatus = 'current' | 'changed' | 'unavailable';
+/** A read-time explanation, not a persisted Task state or proof of execution. */
+export type AllocationTaskAcceptanceGap = 'no-assignment' | 'not-accepted' | 'different-task-revision' | 'unavailable';
 export interface AllocationDiscussionSummary {
   id: string; version: number; status: DiscussionStatus; title: string;
   document: { id: string; revisionId: string };
@@ -15,7 +17,9 @@ export interface AllocationDiscussionSummary {
 }
 export type AllocationRelation =
   | { kind: 'decision-target'; actionEventId: string; target: DiscussionTarget;
-      targetStatus: AllocationTargetStatus }
+      targetStatus: AllocationTargetStatus;
+      /** Task targets only: null means an exact-revision accepted path exists, possibly on another page. */
+      taskAcceptanceGap?: AllocationTaskAcceptanceGap | null }
   | { kind: 'task-recipient'; taskActionEventId: string; task: { id: string; revisionId: string };
       assignment: { version: number; target: SessionTarget; acceptedAt: string;
         method: 'direct' | 'lead-observed'; actorId: string | null; observerActorId: string };
