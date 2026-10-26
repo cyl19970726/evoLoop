@@ -4,6 +4,7 @@ import { api, ApiError, errorText, isUnconfirmed } from "../api";
 import { Alert, ShortId, RevisionBody, date, href, taskListHref } from "../ui/shared";
 import type { MutationContext } from "./ActionForm";
 import { RuntimePanel } from "../runtime/RuntimePanel";
+import { TaskAssignmentPanel } from "../sessions/TaskAssignmentPanel";
 import { ReferencePanel } from "../references/ReferencePanel";
 import { TaskWorkflow } from "./TaskWorkflow";
 import { TaskOwner } from "./TaskOwner";
@@ -275,7 +276,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <DeliveryPanel token={token} detail={detail} projectId={projectId} names={deliveryNames} onChanged={onChanged} />
     </section>
     <section role="tabpanel" id={panelId("runtime")} aria-labelledby={tabId("runtime")} hidden={tab !== "runtime"}>
-      <RuntimePanel context={context} refresh={refresh} task={detail.task} />
+      <TaskAssignmentPanel context={context} task={detail.task} refresh={refresh} />
+      <RuntimePanel context={context} refresh={refresh} task={detail.task} taskDetail={detail} />
       <ReferencePanel key={`refs:${detail.task.currentRevisionId}`} context={context} taskId={detail.task.id} taskRevisionId={detail.task.currentRevisionId} taskVersion={detail.task.version} />
     </section>
     <section role="tabpanel" id={panelId("history")} aria-labelledby={tabId("history")} hidden={tab !== "history"}>

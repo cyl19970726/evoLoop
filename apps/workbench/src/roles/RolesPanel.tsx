@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RoleHandoff, RoleProposal, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
-import { errorText } from "../api";
+import type { HostLink } from "@evoloop/contracts/resident-hosts";
+import { errorText, request } from "../api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../workflow/ActionForm";
 import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
@@ -150,6 +151,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
 }
 
 function RoleCard({ context, role, refresh }: { context: MutationContext; role: RoleRecord; refresh: number }) {
+  const [connectOpen, setConnectOpen] = useState(false);
   const [history, setHistory] = useState<{ revisions: RoleRevision[]; reviews: RoleTrialReview[]; handoffs: RoleHandoff[]; bindings: RoleSessionBinding[] } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -166,6 +168,12 @@ function RoleCard({ context, role, refresh }: { context: MutationContext; role: 
   const p = role.proposal;
   return <details className="workflow-detail" id={`role-${role.id}`} tabIndex={-1}><summary>{p.title} <span className="pill subtle">{classLabel(role)}</span> <span className="pill">{stateLabel[role.state]} · v{role.version}</span></summary>
     <RolePresenceCard token={context.token} projectId={context.projectId} roleId={role.id} roleState={role.state} refresh={refresh} />
+    {(role.state === "trial" || role.state === "active") && <details className="workflow-detail" onToggle={event => setConnectOpen(event.currentTarget.open)}><summary>连接已有 Codex 会话</summary><p>只登记原会话引用，实际打开、读取和人工接单须另行核实；登记不表示自动发送或启动。</p>
+      <ActionForm context={context} review title="登记外部会话" fields={[{ name: "ref", label: "原会话完整引用", hint: "例如 codex://threads/…；请先在原应用核对" }, reasonField]}
+        build={v => ({ type: "host.register", linkId: crypto.randomUUID(), roleId: role.id, expectedRoleVersion: role.version,
+          host: { kind: "external", provider: "codex-desktop", ref: v.ref }, claimedCapabilities: ["open", "read", "manual-claim"], reason: v.reason })} />
+      {connectOpen && <HostVerification context={context} role={role} refresh={refresh} />}
+    </details>}
     <dl><div><dt>目标</dt><dd>{p.goal}</dd></div><div><dt>独立判断</dt><dd>{p.independentResponsibility}</dd></div><div><dt>范围</dt><dd>{p.ownerScope}</dd></div><div><dt>输入</dt><dd>{p.inputs.join("；")}</dd></div><div><dt>可写资产</dt><dd>{p.writableAssets.join("；") || "未列出"}</dd></div><div><dt>交付</dt><dd>{p.deliverables.join("；")}</dd></div><div><dt>触发</dt><dd>{p.triggers.join("；")}</dd></div><div><dt>流程</dt><dd>{p.workflow}</dd></div><div><dt>交接边界</dt><dd>{p.handoffBoundary}</dd></div><div><dt>首项任务</dt><dd><code>{p.firstTaskId}</code></dd></div><div><dt>试行与回看</dt><dd>{p.trialDays} 天 · {stamp(role.reviewAtUtc)}</dd></div><div><dt>退出判据</dt><dd>{p.exitCriteria}</dd></div></dl>
     <h3>提出依据与比较</h3>{p.evidence.map((item, i) => <article className="decision" key={i}><strong>{item.kind}</strong><p>{item.observation}</p><small className="break-anywhere">{item.sourceRef} · {stamp(item.observedAtUtc)}</small></article>)}
     <p>当前基线：{p.baseline}。期望：{p.expectedEffect}。成本上限：{p.costLimit}。</p>
@@ -197,4 +205,26 @@ function RoleCard({ context, role, refresh }: { context: MutationContext; role: 
       <h3>会话绑定</h3>{history.bindings.length === 0 && <p className="empty">尚无已确认绑定的运行会话。</p>}{history.bindings.map(item => <p key={item.id} className="break-anywhere"><code>{item.sessionId}</code> · 职责修订 {item.roleRevisionId} · {stamp(item.createdAtUtc)}</p>)}
     </>}
   </details>;
+}
+
+function HostVerification({ context, role, refresh }: { context: MutationContext; role: RoleRecord; refresh: number }) {
+  const [links, setLinks] = useState<HostLink[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true; setLoading(true); setError("");
+    request<HostLink[]>(context.token, `/api/projects/${encodeURIComponent(context.projectId)}/roles/${encodeURIComponent(role.id)}/hosts`, 15000)
+      .then(items => { if (active) setLinks(items.filter(item => item.projectId === context.projectId && item.roleId === role.id)); })
+      .catch(cause => { if (active) setError(errorText(cause)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [context.token, context.projectId, role.id, refresh]);
+  return <div><h4>核实已登记连接</h4>{loading && <p>正在读取连接…</p>}{error && <Notice error>连接未读回：{error}</Notice>}
+    {links.filter(link => link.host.kind === "external" && link.state !== "revoked").map(link => <details key={link.id} className="workflow-detail"><summary>{link.host.kind === "external" ? link.host.ref : "项目受管会话"} · {link.state === "verified" ? "已核实" : "待核实"}</summary>
+      <p>声称能力：{link.claimedCapabilities.join("、") || "未声明"}；已核能力：{link.state === "verified" ? link.verifiedCapabilities.join("、") || "无" : "未核实"}。</p>
+      {link.state !== "verified" && <ActionForm context={context} review title="核实人工连接能力" fields={[{ name: "verifiedCapabilities", label: "亲自核实的能力", kind: "multi", options: [option("open", "打开原会话"), option("read", "读取原会话"), option("manual-claim", "人工接单")] }, { name: "evidence", label: "核实证据", kind: "textarea" }, reasonField]}
+        build={v => ({ type: "host.verify", linkId: link.id, expectedVersion: link.version, expectedRoleVersion: role.version,
+          verifiedCapabilities: JSON.parse(v.verifiedCapabilities || "[]"), evidence: v.evidence, observedAtUtc: new Date().toISOString(), reason: v.reason })} />}
+    </details>)}
+  </div>;
 }

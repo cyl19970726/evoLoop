@@ -17,7 +17,7 @@ const drafts = new Map<string, Draft>();
 export function clearCommandDrafts() { drafts.clear(); }
 export interface Field {
   name: string; label: string; value?: string; kind?: "text" | "textarea" | "select" | "multi";
-  options?: { value: string; label: string }[]; optional?: boolean; hint?: string;
+  options?: { value: string; label: string }[]; optional?: boolean; hint?: string; advanced?: boolean;
 }
 export function Notice({ children, error = false }: { children: ReactNode; error?: boolean }) {
   return <div className={`notice ${error ? "error" : "info"}`} role={error ? "alert" : "status"}>{children}</div>;
@@ -27,8 +27,8 @@ export function readableDraft(title: string, fields: Field[], values: Record<str
 }
 
 /** Shared command submission preserves the draft and persists the operation ID before any write. */
-export function ActionForm({ context, title, fields, build, review = false, onApplied, initiallyOpen = false }: {
-  context: MutationContext; title: string; fields: Field[]; review?: boolean; initiallyOpen?: boolean;
+export function ActionForm({ context, title, fields, build, review = false, onApplied, initiallyOpen = false, embedded = false }: {
+  context: MutationContext; title: string; fields: Field[]; review?: boolean; initiallyOpen?: boolean; embedded?: boolean;
   build(values: Record<string, string>): Record<string, unknown>; onApplied?: (result: { entityId: string; revisionId?: string }) => void;
 }) {
   const initial = () => Object.fromEntries(fields.map(f => [f.name, f.value ?? (f.kind === "multi" ? "[]" : "")]));
@@ -93,14 +93,16 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
     setDirty(true);
     setDraftSaved(false);
   }
-  return <details className="command-disclosure" data-dirty={dirty ? "true" : undefined} open={initiallyOpen}><summary>{title}</summary><form className="workflow-form" onSubmit={submit}>
-    {fields.map(field => <label key={field.name}>{field.label}
+  const renderField = (field: Field) => <label key={field.name}>{field.label}
       {field.kind === "textarea" ? <textarea name={field.name} autoComplete="off" required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />
         : field.kind === "select" || field.kind === "multi" ? <select name={field.name} required={!field.optional} multiple={field.kind === "multi"} value={field.kind === "multi" ? JSON.parse(values[field.name] || "[]") as string[] : values[field.name]} onChange={e => updateValue(field.name, field.kind === "multi" ? JSON.stringify(Array.from(e.target.selectedOptions, o => o.value)) : e.target.value)}>
           {field.kind !== "multi" && <option value="">请选择</option>}{field.options?.map(o => <option value={o.value} key={o.value}>{o.label}</option>)}
         </select> : <input name={field.name} autoComplete="off" required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />}
       {field.hint && <small>{field.hint}</small>}
-    </label>)}
+    </label>;
+  const form = <form className="workflow-form" data-dirty={dirty ? "true" : undefined} onSubmit={submit}>
+    {fields.filter(field => !field.advanced).map(renderField)}
+    {fields.some(field => field.advanced) && <details className="workflow-detail"><summary>高级选项</summary>{fields.filter(field => field.advanced).map(renderField)}</details>}
     {!allowed && <Notice>当前身份没有{review ? "审阅" : "写入"}权限。</Notice>}
     {context.blocked && <Notice>本项目仍有结果未确认的操作，请先核对上方回执。</Notice>}
     {message && <Notice error={failed}>{message}</Notice>}
@@ -116,7 +118,8 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
         <button type="button" onClick={() => setDraftSaved(true)}>我已手动保存完整草稿</button></>}
     </div>}
     <button type="submit" className="primary" disabled={busy || !allowed || context.blocked || stale || baselineChanged}>{busy ? "保存中…" : title}</button>
-  </form></details>;
+  </form>;
+  return embedded ? form : <details className="command-disclosure" data-dirty={dirty ? "true" : undefined} open={initiallyOpen}><summary>{title}</summary>{form}</details>;
 }
 export const reasonField: Field = { name: "reason", label: "理由与依据", kind: "textarea" };
 export const option = (value: string, label: string) => ({ value, label });

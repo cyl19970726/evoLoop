@@ -5,6 +5,7 @@ import { runtimeClient } from "../runtime/client";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "./ActionForm";
 import { attributableRuns } from "./deliveryRun";
 import { RevisionHistory } from "./RevisionHistory";
+import { useRoleChoices } from "./useRoleChoices";
 
 export const taskStateLabel: Record<TaskRevisionState, string> = {
   todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消",
@@ -15,6 +16,7 @@ export const taskKindLabel = { implementation: "实施", research: "调研", val
 
 export function TaskWorkflow({ context, detail, documents, mode = "actions" }: { context: MutationContext; detail: TaskDetail; documents?: Record<string, DocumentDetail>; mode?: "actions" | "delivery" | "history" }) {
   const task = detail.task;
+  const roleChoices = useRoleChoices(context.token, context.projectId, task.version, mode === "actions");
   const [revisions, setRevisions] = useState<TaskRevision[]>([]);
   const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
   const [runReadError, setRunReadError] = useState("");
@@ -85,10 +87,11 @@ export function TaskWorkflow({ context, detail, documents, mode = "actions" }: {
   return <section className="panel"><div className="panel-head"><h2>任务操作</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
     <p className="muted">正文由任务持有固定文档。提交前核对当前版本；操作结果未知时保留原 ID，不重复发送。</p>
     {task.state === "in_progress" && <Notice>执行范围已固定。需要修改正文、验收、责任者或类型时，先通过下方操作返回待办，再更新并重新开始。</Notice>}
-    {(task.state === "todo" || task.state === "in_progress") && <ActionForm context={context} title="更新任务内容" fields={[
+    {roleChoices.error && <Notice error>职责选择暂不可完整读取：{roleChoices.error}</Notice>}
+    {(task.state === "todo" || task.state === "in_progress") && !roleChoices.loading && !roleChoices.error && <ActionForm context={context} title="更新任务内容" fields={[
       { name: "title", label: "任务名称", value: task.title }, { name: "kind", label: "类型（可选）", kind: "select", optional: true, value: task.kind ?? "", options: [option("implementation", "实施"), option("research", "调研"), option("validation", "验证")] },
-      { name: "content", label: "任务正文（Markdown）", kind: "textarea", value: task.content },
-      { name: "acceptance", label: "独立验收条件", kind: "textarea", value: task.acceptance }, { name: "owner", label: "责任者", value: task.owner }, reasonField,
+      { name: "content", label: "任务内容", kind: "textarea", value: task.content },
+      { name: "acceptance", label: "独立验收条件", kind: "textarea", value: task.acceptance }, { name: "owner", label: "负责角色", kind: "select", value: task.owner, options: roleChoices.options.some(item => item.value === task.owner) ? roleChoices.options : [option(task.owner, "当前负责者（未核为活跃角色）"), ...roleChoices.options] }, reasonField,
     ]} build={v => ({ ...base, type: "task.update", title: v.title, kind: v.kind || null, content: v.content, acceptance: v.acceptance,
       owner: v.owner, documentIds: detail.links.map(link => link.documentId), ...(detail.proposal ? {
         ...(detail.proposal.consumer ? { consumer: detail.proposal.consumer } : {}), useRequired: detail.proposal.useRequired,
