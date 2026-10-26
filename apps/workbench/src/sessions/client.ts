@@ -15,7 +15,7 @@ export function sessionClient(token: string, projectId: string) {
   const base = `/api/projects/${part(projectId)}`;
   const get = <T>(path: string, signal?: AbortSignal) => request<T>(token, path, 15000, { signal });
   return {
-    directory: (options: { cursor?: string; search?: string; membership?: string } = {}, signal?: AbortSignal) =>
+    directory: (options: { limit?: number; cursor?: string; search?: string; membership?: string } = {}, signal?: AbortSignal) =>
       get<SessionDirectory>(`${base}/session-work?${query({ limit: 50, ...options })}`, signal),
     snapshot: (key: string, signal?: AbortSignal) => get<SessionSnapshot>(`${base}/session-work/${part(key)}`, signal),
     changes: (cursor: string, key?: string, signal?: AbortSignal) =>

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import type { DiscussionEvent, DiscussionRecord } from "@evoloop/contracts";
 import { commandSchema } from "@evoloop/contracts";
-import { discussionCopyEnvelope, discussionDecisionPayload } from "../src/discussions/DiscussionPanel.tsx";
+import { discussionCopyEnvelope, discussionDecisionPayload } from "../src/discussions/commands.ts";
 
 test("copied discussion locator is separate from the hash-verified original", () => {
   const body = "# 固定讨论包\n\n相对材料见原固定修订。\n";
