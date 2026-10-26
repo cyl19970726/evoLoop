@@ -44,7 +44,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
       else if (url.pathname === `${p}/tasks/${taskId}` || url.pathname === `${p}/tasks/${otherTaskId}`) {
         const currentTask = url.pathname.endsWith(otherTaskId) ? {...task,id:otherTaskId,currentRevisionId:otherTaskId,title:"另一项任务"} : task;
         value = {task:currentTask,revision:{...currentTask,taskId:currentTask.id,id:currentTask.id,actorId:"owner",reason:"夹具",createdAt},basis:null,
-        links:[],impacts:[],decisions:[],proposal:{stageId},judgements:[],deliveries:[],observations:[],closures:[]};
+        links:[],impacts:[],decisions:[],proposal:{stageId},judgements:[],deliveries:currentTask.id === taskId ? [{
+          projectId,id:"55555555-0000-4000-8000-000000000010",taskId,taskRevisionId:taskId,runId,
+          technicalResult:"passed",technicalEvidence:"已核对",actorId:"owner",createdAt,
+          artifactRef:"https://example.test/report",artifactRevision:"v1",contentHash:"a".repeat(64),
+        }] : [],observations:[],closures:[]};
       }
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
       else if (url.pathname === `${p}/runtime/sessions`) value = [];
@@ -54,6 +58,8 @@ test("built Task page selects the current Loop, preserves manual history and fit
         value = [{projectId,id:second ? otherRunId : runId,taskId:second ? otherTaskId : taskId,taskRevisionId:second ? otherTaskId : taskId,basisSetId:taskId,sessionId:taskId,
           operationId:taskId,input:"",inputHash:"",state:second ? "running" : runState,version:1,nativeTurnId:null,interruptRequested:false,resultSummary:null,actorId:"owner",createdAt,updatedAt:createdAt}];
       }
+      else if (url.pathname === `${p}/runtime/runs/${runId}`) value = {projectId,id:runId,taskId,taskRevisionId:taskId,basisSetId:taskId,sessionId:taskId,
+        operationId:taskId,input:"",inputHash:"",state:"completed",version:2,nativeTurnId:null,interruptRequested:false,resultSummary:null,actorId:"owner",createdAt,updatedAt:createdAt};
       else if (url.pathname === `${p}/orchestration/status`) value = {state:"active",running:true,busy:false,faults:[],lastError:null};
       else if (url.pathname === `${p}/orchestration/tasks/${taskId}/context` || url.pathname === `${p}/orchestration/tasks/${otherTaskId}/context`) value = page([context(oldId,"old-dispatch"),context(newId,"new-dispatch")]);
       else if (url.pathname === `${p}/orchestration/work-status`) {
@@ -113,4 +119,10 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"]`).getByRole("region",{name:"自动循环观察"});
   await nextPanel.getByText(/当前运行 44444444 关联循环 22222222/).waitFor();
   assert.match(await nextPanel.locator(".orch-loop-head h3").innerText(),/22222222/);
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
+  const exactRunLink = pageBrowser.getByRole("link",{name:"核对这次 Run →"});
+  await exactRunLink.waitFor();
+  assert.equal(await exactRunLink.getAttribute("href"),`#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
+  await exactRunLink.click();
+  await pageBrowser.locator(`#runtime-run-${taskId}-${runId}[open]`).waitFor();
 });

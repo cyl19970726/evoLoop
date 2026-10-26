@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
 import { api } from "../api";
 import { runtimeClient } from "../runtime/client";
+import { taskSectionHref } from "../orchestration/navigation";
+import { deliveryRunHref, verifiedDeliveryRun } from "./deliveryRun";
 import { date } from "../ui/shared";
 import { deliveryTarget, verifiedDocumentTitle, type DeliveryArtifactInput, type DeliveryTarget } from "./deliveryPresentation";
 import { EvidenceText } from "./EvidenceText";
@@ -73,15 +75,29 @@ export function DeliveryArtifact({ delivery, projectId, name }: { delivery: Deli
 export function DeliveryPanel({ detail, projectId, token, names, onChanged }: { detail: TaskDetail; projectId: string; token?: string; names: Record<string, ArtifactName>; onChanged: () => void }) {
   const deliveries = detail.deliveries ?? [];
   const latestId = deliveries.at(-1)?.id;
-  const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
+  const [runs, setRuns] = useState<Record<string, RuntimeRunRecord>>({});
   const [runError, setRunError] = useState("");
   useEffect(() => {
     if (!token || !deliveries.some(item => item.runId)) return;
     let active = true;
-    setRuns([]); setRunError("");
-    runtimeClient(token, projectId).runs(detail.task.id)
-      .then(rows => { if (active) setRuns(rows.filter(row => row.projectId === projectId && row.taskId === detail.task.id)); })
-      .catch(() => { if (active) setRunError("来源 Run 暂未读到；不能推断执行修订。"); });
+    setRuns({}); setRunError("");
+    const ids = [...new Set(deliveries.filter(item => item.projectId === projectId && item.taskId === detail.task.id)
+      .map(item => item.runId).filter((id): id is string => !!id))];
+    const client = runtimeClient(token, projectId);
+    let next = 0;
+    const read = async () => {
+      while (active && next < ids.length) {
+        const id = ids[next++];
+        try {
+          const run = await client.run(id);
+          const verified = verifiedDeliveryRun(projectId, detail.task.id, id, run);
+          if (active && verified)
+            setRuns(current => ({ ...current, [id]: verified }));
+          else if (active) setRunError("部分来源 Run 与交付登记的项目或任务不符；对应入口暂不提供。");
+        } catch { if (active) setRunError("部分来源 Run 暂未读到；对应入口暂不提供。"); }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(4, ids.length) }, () => read()));
     return () => { active = false; };
   }, [token, projectId, detail.task.id, detail.task.version, deliveries]);
   return <section className="panel task-records"><div className="panel-head"><h2>交付与使用记录</h2><button type="button" onClick={onChanged}>回读当前状态</button></div>
@@ -92,9 +108,9 @@ export function DeliveryPanel({ detail, projectId, token, names, onChanged }: { 
       <p className="muted">交付登记于 {date(delivery.createdAt)} · 登记者 {delivery.actorId}</p>
       <DeliveryArtifact delivery={delivery} projectId={projectId} name={names[delivery.id]} />
       <p>交付登记 Task 修订 <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}><code>{delivery.taskRevisionId}</code> ↗</a></p>
-      <p>{delivery.runId ? <>明确归属 Run <code>{delivery.runId}</code>；{runs.find(run => run.id === delivery.runId)
-        ? <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(runs.find(run => run.id === delivery.runId)!.taskRevisionId)}`}>实际执行 Task 修订 <code>{runs.find(run => run.id === delivery.runId)!.taskRevisionId}</code> ↗</a>
-        : "实际执行修订待回读"}；<a href={`#/p/${projectId}/runtime`}>核对运行记录 →</a></> : "未声明来源 Run；旧交付不会自动归于任何评价尝试。"}</p>
+      <p>{delivery.runId ? <>登记来源 Run <code>{delivery.runId}</code>；{delivery.projectId === projectId && delivery.taskId === detail.task.id && runs[delivery.runId]
+        ? <><a href={taskSectionHref(projectId, delivery.taskId, { revisionId: runs[delivery.runId].taskRevisionId })}>实际执行 Task 修订 <code>{runs[delivery.runId].taskRevisionId}</code> ↗</a>；<a href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次 Run →</a>；<a href={`#/p/${encodeURIComponent(projectId)}/runtime?session=${encodeURIComponent(runs[delivery.runId].sessionId)}`}>查看对应 Session →</a></>
+        : "来源 Run 尚未核实；运行入口暂不提供"}</> : "未声明来源 Run；旧交付不会自动归于任何评价尝试。"}</p>
       <EvidenceText label="技术检查证据" value={delivery.technicalEvidence} />
       <p className="muted">Run 归属由登记者声明；运行终态不代表交付合格，也不证明产物字节由模型生成。产物修订、哈希与实际内容仍须分别核对。</p>
       <h3>这次交付的使用观察</h3>
