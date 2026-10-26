@@ -50,6 +50,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [create, setCreate] = useState(false);
   const [ownerNames, setOwnerNames] = useState<{ scope: string; values: Record<string, OwnerName> }>({ scope: "", values: {} });
   const epoch = useRef(0);
+  const statusSnapshot = useRef<Record<string, WorkTaskStatus>>({});
   const pages = useRef<{ tasks: Page<Task>; documents: Page<Document> }>({
     tasks: { items: [], nextCursor: null }, documents: { items: [], nextCursor: null },
   });
@@ -57,13 +58,13 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const cursorHistory = useRef<{ tasks: Set<string>; documents: Set<string> }>({ tasks: new Set(), documents: new Set() });
   const pageCount = useRef({ tasks: 0, documents: 0 });
   useEffect(() => {
-    let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; setLoading(true); setError(""); setStatuses({}); setStatusProblem(null); setStatusRetrying(false);
+    let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; statusSnapshot.current = {}; setLoading(true); setError(""); setStatuses({}); setStatusProblem(null); setStatusRetrying(false);
     const client = api(token);
     Promise.all([client.tasks(projectId), client.documents(projectId), client.impacts(projectId)]).then(async ([t, d, i]) => {
       if (active) { pages.current = { tasks: t, documents: d }; pageCount.current = { tasks: 1, documents: 1 }; setTasks(t); setDocuments(d); setImpacts(i); setObservedAt(new Date()); }
       if (t.items.length) try {
         const work = await client.workStatuses(projectId,t.items.map(item => item.id));
-        if (active) {setStatuses(Object.fromEntries(work.items.map(item => [item.taskId,item])));
+        if (active) {const next = Object.fromEntries(work.items.map(item => [item.taskId,item])); statusSnapshot.current = next; setStatuses(next);
           if (work.items.length !== t.items.length) setStatusProblem({ kind: "partial", diagnostic: partialStatusDiagnostic });}
       } catch (cause) { if (active) setStatusProblem({ kind: "unavailable", diagnostic: errorText(cause) }); }
     }).catch(cause => { if (active) setError(errorText(cause)); }).finally(() => { if (active) setLoading(false); });
@@ -103,8 +104,10 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
         if (added.length) try {
           const work = await client.workStatuses(projectId, added.map(item => item.id));
           if (readEpoch === epoch.current) {
-            setStatuses(current => ({ ...current, ...Object.fromEntries(work.items.map(item => [item.taskId, item])) }));
-            if (work.items.length !== added.length) setStatusProblem(current => current ?? { kind: "partial", diagnostic: partialStatusDiagnostic });
+            const next = { ...statusSnapshot.current, ...Object.fromEntries(work.items.map(item => [item.taskId, item])) };
+            statusSnapshot.current = next; setStatuses(next);
+            const missing = pages.current.tasks.items.some(task => !Object.hasOwn(next, task.id));
+            setStatusProblem(current => missing ? current ?? { kind: "partial", diagnostic: partialStatusDiagnostic } : null);
           }
         } catch (cause) { if (readEpoch === epoch.current) setStatusProblem({ kind: "unavailable", diagnostic: errorText(cause) }); }
       }
@@ -154,17 +157,17 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     setStatusRetrying(true);
     try {
       const next: Record<string, WorkTaskStatus> = {};
-      let partial = false;
       for (let offset = 0; offset < ids.length; offset += 50) {
         const batch = ids.slice(offset, offset + 50);
         const work = await api(token).workStatuses(projectId, batch);
         if (readEpoch !== epoch.current) return;
         for (const item of work.items) next[item.taskId] = item;
-        if (work.items.length !== batch.length) partial = true;
       }
       if (readEpoch === epoch.current) {
-        setStatuses(next);
-        setStatusProblem(partial ? { kind: "partial", diagnostic: partialStatusDiagnostic } : null);
+        const merged = { ...statusSnapshot.current, ...next };
+        statusSnapshot.current = merged; setStatuses(merged);
+        const missing = pages.current.tasks.items.some(task => !Object.hasOwn(merged, task.id));
+        setStatusProblem(missing ? { kind: "partial", diagnostic: partialStatusDiagnostic } : null);
       }
     } catch (cause) {
       if (readEpoch === epoch.current) setStatusProblem({ kind: "unavailable", diagnostic: errorText(cause) });
