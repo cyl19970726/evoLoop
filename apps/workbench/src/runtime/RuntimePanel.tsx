@@ -72,8 +72,15 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
             .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:""}),
           targetRunId && uuid.test(targetRunId) ? client.run(targetRunId).then(value => ({value,error:""}))
             .catch(cause => ({value:null,error:errorText(cause)})) : Promise.resolve({value:null,error:targetRunId ? "链接中的 Run ID 无效" : ""})]);
+        const scopedSessions = list.filter(session => session.projectId === context.projectId);
+        if (targetSessionId && uuid.test(targetSessionId) && !scopedSessions.some(session => session.id === targetSessionId)) {
+          try {
+            const exact = await client.session(targetSessionId);
+            if (exact.id === targetSessionId && exact.projectId === context.projectId) scopedSessions.push(exact);
+          } catch { /* Target focus below reports that the Session could not be read. */ }
+        }
         if (active) { const verified = targetRun.value && targetRun.value.id === targetRunId && targetRun.value.projectId === context.projectId && targetRun.value.taskId === task?.id ? targetRun.value : null;
-          setStatus(s); setSessions(list.filter(session => session.projectId === context.projectId)); setRuns(verified && !work.some(run => run.id === verified.id) ? [...work,verified] : work);
+          setStatus(s); setSessions(scopedSessions); setRuns(verified && !work.some(run => run.id === verified.id) ? [...work,verified] : work);
           setTargetRunProblem(targetRunId && !verified ? targetRun.error || "目标 Run 与当前任务不符" : "");
           setRunsForTask(task?.id); setLoadedScope(sessionScope); setAssignmentRead({scope:sessionScope,...assignment}); setError("");
           sequence += 1; if (sequence > 1) setRuntimePoll({taskId:task?.id,sequence}); }
