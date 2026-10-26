@@ -17,7 +17,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(token: string, path: string, timeoutMs: number, init?: RequestInit): Promise<T> {
+async function requestJson<T>(token: string, path: string, timeoutMs: number, init?: RequestInit, allowNull = false): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -34,12 +34,21 @@ export async function request<T>(token: string, path: string, timeoutMs: number,
       const message = typeof details.message === "string" ? details.message : typeof details.error === "string" ? details.error : `请求失败（${response.status}）`;
       throw new ApiError(response.status, message, body);
     }
-    if (body === null || body === undefined) throw new ApiError(0, "响应不完整，操作结果尚未确认");
+    if ((body === null && !allowNull) || body === undefined) throw new ApiError(0, "响应不完整，操作结果尚未确认");
     return body as T;
   } catch (cause) {
     if (cause instanceof ApiError) throw cause;
     throw new ApiError(0, "连接中断或超时，操作结果尚未确认");
   } finally { clearTimeout(timeout); }
+}
+
+export function request<T>(token: string, path: string, timeoutMs: number, init?: RequestInit): Promise<T> {
+  return requestJson<T>(token, path, timeoutMs, init);
+}
+
+/** Only opt-in GET endpoints whose contract explicitly permits JSON null use this. */
+export function requestNullable<T>(token: string, path: string, timeoutMs: number, signal?: AbortSignal): Promise<T | null> {
+  return requestJson<T | null>(token, path, timeoutMs, { signal }, true);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

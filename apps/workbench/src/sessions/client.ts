@@ -2,7 +2,7 @@ import type { SessionActivityPage, SessionChanges, SessionDirectory, SessionSnap
 import type { SessionProfileRecord, TaskSessionAssignment, SessionAssignmentPage } from "@evoloop/contracts/session-assignments";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { ObservationMetadata } from "@evoloop/contracts/session-work";
-import { request } from "../api";
+import { request, requestNullable } from "../api";
 
 const part = encodeURIComponent;
 const query = (values: Record<string, string | number | undefined>) => {
@@ -23,7 +23,7 @@ export function sessionClient(token: string, projectId: string) {
     activities: (key: string, cursor?: string, signal?: AbortSignal) =>
       get<SessionActivityPage>(`${base}/session-work/${part(key)}/activities?${query({ limit: 50, cursor, importance: "all" })}`, signal),
     profile: (key: string, signal?: AbortSignal) => get<SessionProfileRecord | null>(`${base}/session-work/${part(key)}/profile`, signal),
-    assignment: (taskId: string, signal?: AbortSignal) => get<TaskSessionAssignment | null>(`${base}/tasks/${part(taskId)}/assignment`, signal),
+    assignment: (taskId: string, signal?: AbortSignal) => requestNullable<TaskSessionAssignment>(token, `${base}/tasks/${part(taskId)}/assignment`, 15000, signal),
     assignmentHistory: (taskId: string, cursor?: string, signal?: AbortSignal) =>
       get<SessionAssignmentPage<TaskSessionAssignment>>(`${base}/tasks/${part(taskId)}/assignment/history?${query({ limit: 50, cursor })}`, signal),
     messages: (key: string, cursor?: string, signal?: AbortSignal) =>

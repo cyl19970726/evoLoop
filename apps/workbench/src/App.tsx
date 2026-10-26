@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, useLayoutEffect, type FormEvent }
 import type {
   Operation, Principal, Project,
 } from "@evoloop/contracts";
-import { api, ApiError, errorText, type Session } from "./api";
+import { api, errorText, type Session } from "./api";
 import { RuntimePanel } from "./runtime/RuntimePanel";
 import { RolesPanel } from "./roles/RolesPanel";
 import { TeamWorkspace } from "./roles/TeamWorkspace";
@@ -15,6 +15,7 @@ import { SchedulingPanel } from "./scheduling/SchedulingPanel";
 import { JourneyBoard } from "./workflow/JourneyBoard";
 import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableCommand } from "./workflow/ActionForm";
 import { addReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
+import { clearRecoveryIntents, forgetRecoveryIntent, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "./ui/returnRoute";
@@ -98,28 +99,49 @@ function OperationCheck({ receipt, token, onConfirmed }: {
 }) {
   const [status, setStatus] = useState("这次操作可能已提交。请按原操作 ID 核对，确认前不要重复提交。");
   const [busy, setBusy] = useState(false);
+  const [canReplay, setCanReplay] = useState(false);
+  function matching(operation: Operation): boolean {
+    return operation.id === receipt.operationId && operation.projectId === receipt.projectId
+      && operation.actorId === receipt.actorId && operation.commandType === receipt.commandType
+      && operation.result.operationId === receipt.operationId;
+  }
   async function check() {
-    setBusy(true);
+    setBusy(true); setCanReplay(false);
     try {
       const operation: Operation = await api(token).operation(receipt.projectId, receipt.operationId);
-      if (operation.id !== receipt.operationId || operation.projectId !== receipt.projectId
-        || operation.actorId !== receipt.actorId || operation.commandType !== receipt.commandType
-        || operation.result.operationId !== receipt.operationId) {
+      if (!matching(operation)) {
         setStatus("操作记录与本地回执不匹配；仍需人工核对，不能据此重发。");
         return;
       }
       onConfirmed(operation.result);
     } catch (cause) {
-      setStatus(cause instanceof ApiError && cause.status === 404
-        ? "尚未查到操作记录；结果仍未确认。请核对服务状态后继续用同一 ID 查询。"
-        : `暂未核清：${errorText(cause)}`);
+      if (operationNotFound(cause)) {
+        const saved = await recoveryIntent(receipt);
+        setCanReplay(!!saved);
+        setStatus(saved
+          ? "尚未查到操作记录。这不能证明原请求未提交；如服务已恢复，可明确选择按原 ID 和原内容重试。"
+          : "尚未查到操作记录，且当前页面没有完整原命令。只能继续按原 ID 核对；如需恢复，请用原身份和原意图在 CLI 精确处理，随后回到此处核对。旧回执或刷新后的正文无法从页面重建。");
+      } else setStatus(`暂未核清：${errorText(cause)}`);
+    } finally { setBusy(false); }
+  }
+  async function replay() {
+    if (!canReplay || busy) return;
+    setBusy(true); setCanReplay(false);
+    try {
+      const client = api(token);
+      const result = await replayRecoveryIntent(receipt,
+        () => client.operation(receipt.projectId, receipt.operationId), command => client.command(command));
+      onConfirmed(result);
+    } catch (cause) {
+      setStatus(`同 ID 重试结果仍未确认：${errorText(cause)}。回执保留，请继续核对，勿创建新操作。`);
     } finally { setBusy(false); }
   }
   return <Alert kind="error">
     <strong>提交结果待核对</strong><p>{status}</p>
     <p>项目 <ShortId value={receipt.projectId} /> · 对象 <ShortId value={receipt.taskId} /> · 提交于 {date(receipt.createdAt)}</p>
     <p>操作 ID：<code>{receipt.operationId}</code></p>
-    <div className="actions"><button onClick={check} disabled={busy}>{busy ? "核对中…" : "按操作 ID 核对"}</button></div>
+    <div className="actions"><button onClick={() => void check()} disabled={busy}>{busy ? "处理中…" : "按操作 ID 核对"}</button>
+      {canReplay && <button type="button" onClick={() => void replay()} disabled={busy}>按原 ID 和原内容重试</button>}</div>
   </Alert>;
 }
 
@@ -191,9 +213,11 @@ export function App() {
     receiptsRef.current = next;
     setReceipts(next);
     setReceiptStorageAvailable(true);
+    rememberRecoveryIntent(session.principal.actorId, command);
     return true;
   }
   function finishKnown(operationId: string) {
+    forgetRecoveryIntent(operationId);
     replaceReceipts(removeReceipt(receiptsRef.current, operationId));
   }
   useEffect(() => {
@@ -221,11 +245,12 @@ export function App() {
   function logout() {
     if (document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。退出会清除本页草稿，确定退出？")) return;
     if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
-    clearCommandDrafts(); clearSessionSnapshots(); setToken(""); setSession(null);
+    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); setToken(""); setSession(null);
   }
   if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="#/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   const operationChecks = <>{projectReceipts.map(receipt => <div className="global-alert" key={receipt.operationId}><OperationCheck receipt={receipt} token={token} onConfirmed={result => {
+    forgetRecoveryIntent(receipt.operationId);
     setOperationNotice(result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); setRefresh(v => v + 1);
   }} /></div>)}{!projectReceipts.length && <p className="empty">当前身份没有待核对的共同命令回执。知识、外部来源和协作操作的专用回执仍在各自页面核对。</p>}</>;
