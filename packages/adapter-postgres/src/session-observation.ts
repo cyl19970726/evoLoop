@@ -288,7 +288,7 @@ export class PgSessionObservation implements SessionObservationReader {
     if (table === "runtime_session") return this.source("session", row.entity_id, row.source_revision);
     if (table === "role_revision") return this.source("role", row.entity_id, row.source_revision);
     if (table === "role_host_link_revision") return this.source("host-link", row.entity_id, row.source_revision);
-    if (table === "discussion_event") return this.source("discussion", row.discussion_id ?? row.entity_id, row.entity_id, "session-statement");
+    if (table === "discussion_event") return this.source("discussion", row.discussion_id ?? row.entity_id, row.entity_id);
     if (table === "discussion") return this.source("discussion", row.entity_id, row.source_revision);
     if (table === "process_document" || table === "document_revision") return this.source("document", row.entity_id, row.source_revision);
     if (table === "project_stage" || table === "stage_revision") return this.source("stage", row.entity_id, row.source_revision);
@@ -300,12 +300,16 @@ export class PgSessionObservation implements SessionObservationReader {
   }
   private activity(row: Row, key: string): SessionActivity {
     const detail = row.detail ?? {};
+    const discussionLabels: Record<string, string> = { allocation: "分工讨论", direction: "方向讨论", task_collaboration: "任务沟通" };
+    const targetLabels: Record<string, string> = { task: "任务", role: "职责", document: "文档", stage: "阶段" };
+    const discussionTarget = row.source_table === "discussion_event" && row.target_kind && row.target_id
+      ? `讨论关联目标：${targetLabels[row.target_kind] ?? row.target_kind} ${row.target_id}` : null;
     const label: Record<string, string> = { runtime_session: "会话", runtime_run: "业务运行", runtime_record_event: "运行记录", role_revision: "职责修订",
       role_host_link_revision: "接入变化", task_revision: "任务修订", resident_queue_entry: "队列安排", resident_queue_claim: "任务承接",
-      discussion_event: "任务沟通", delivery: "提交成果", consumer_observation: "使用观察", session_message: "会话消息", session_message_processing: "消息处理",
+      discussion_event: discussionLabels[row.discussion_kind] ?? "讨论记录", delivery: "提交成果", consumer_observation: "使用观察", session_message: "会话消息", session_message_processing: "消息处理",
       session_profile: "会话名称与用途", task_session_assignment: "具体分派", session_message_read_receipt: "接收者记录已读" };
     return { id: `${this.projectId}:${row.sequence}`, sequence: String(row.sequence), sessionKey: key,
-      kind: detail.kind ?? row.source_table, summary: clip([label[row.source_table] ?? row.source_table, detail.title, detail.result ?? detail.state,
+      kind: detail.kind ?? row.source_table, summary: clip([label[row.source_table] ?? row.source_table, discussionTarget, detail.title, detail.result ?? detail.state,
         detail.summary].filter(Boolean).join(" · ")), occurredAt: iso(row.occurred_at), recordedAt: iso(row.recorded_at)!,
       actorId: row.actor_id, taskId: row.task_id, importance: "important", source: this.eventSource(row) };
   }
@@ -332,8 +336,10 @@ export class PgSessionObservation implements SessionObservationReader {
     const position = options.cursor ? this.decode(options.cursor, "history", filter) : await this.head();
     if (!/^\d+$/.test(position)) throw new DomainError("INVALID_CURSOR", "历史读取位置无效。");
     const n = scope.params.length;
-    const r = await this.client.query(`SELECT * FROM session_observation_change WHERE project_id=$1 AND ${scope.sql}
-      AND sequence<=$${n + 1}::bigint AND ($${n + 2}::uuid IS NULL OR task_id=$${n + 2}) ORDER BY sequence DESC LIMIT $${n + 3}`,
+    const r = await this.client.query(`SELECT h.*,d.kind AS discussion_kind FROM (
+      SELECT * FROM session_observation_change WHERE project_id=$1 AND ${scope.sql} AND source_table<>'discussion'
+        AND sequence<=$${n + 1}::bigint AND ($${n + 2}::uuid IS NULL OR task_id=$${n + 2}) ORDER BY sequence DESC LIMIT $${n + 3}
+      ) h LEFT JOIN discussion d ON d.project_id=h.project_id AND d.discussion_id=h.discussion_id ORDER BY h.sequence DESC`,
       [...scope.params, position, options.taskId ?? null, options.limit + 1]);
     const chosen = r.rows.slice(0, options.limit); const limits = scope.limited ? ["关联任务或接受窗口仅覆盖前200项，请从原任务读取其余来源。"] : [];
     const items = chosen.map(x => this.activity(x, row.key));
@@ -341,7 +347,7 @@ export class PgSessionObservation implements SessionObservationReader {
     if (items.length < chosen.length) limits.push("历史响应按字节分页，请继续读取下一页。");
     return { items,
       nextCursor: r.rows.length > items.length && items.length ? this.encode("history", (BigInt(items.at(-1)!.sequence) - 1n).toString(), filter) : null,
-      metadata: this.meta(null, ["关联任务历史按真实操作者保留，不表示该会话执行过全部步骤。", ...limits]) };
+      metadata: { ...this.meta(null, ["关联任务历史按真实操作者保留，不表示该会话执行过全部步骤。", ...limits]), partial: limits.length > 0 } };
   }
   async changes(options: { cursor: string; limit: number; key?: string }): Promise<SessionChanges> {
     this.bound(options.limit, 100);
@@ -408,6 +414,7 @@ export class PgSessionObservation implements SessionObservationReader {
     const history = await this.history(key, { limit: 20 });
     const unavailable = (unit: string, reason: string): ObservedResource => ({ value: null, unit, source: null, scope: "session", observedAt: null, interval: null, unavailableReason: reason });
     const limits: string[] = [];
+    if (history?.nextCursor) limits.push("活动首屏仅展示前20项，请从分页历史继续读取。");
     for (const [label, count, max] of [["分派", assigned.length === 20 ? assignments.rows.length : 0, 20], ["职责任务", roleTasks.rows.length, 20],
       ["队列", queue.rows.length, 20], ["成果", results.rows.length, 10], ["问题", questions.rows.length, 20], ["关联历史任务", taskIds.length, 200], ["历史接受窗口", windows.length, 200]] as const)
       if (count > max) limits.push(`${label}首屏仅展示前${max}项，沿原来源读取其余记录。`);
@@ -427,7 +434,9 @@ export class PgSessionObservation implements SessionObservationReader {
         actualModel: unavailable("model", "尚未持久采集实际执行模型。"), inputTokens: unavailable("tokens", "尚未持久采集输入 token。"),
         outputTokens: unavailable("tokens", "尚未持久采集输出 token。"), cost: unavailable("currency", "未采集宿主账单，不作估价。"),
         processMemory: { ...unavailable("bytes", "没有可靠进程映射，共享进程不均摊到会话。"), scope: "runtime-process" } },
-      metadata: this.meta(session.metadata.sourceObservedAt, [...session.metadata.limitations, ...limits]) };
+      metadata: { ...this.meta(session.metadata.sourceObservedAt,
+        [...new Set([...session.metadata.limitations, ...(history?.metadata.limitations ?? []), ...limits])]),
+        partial: session.metadata.partial || !!history?.metadata.partial || limits.length > 0 } };
     return this.boundSnapshot(snapshot);
   }
 }
