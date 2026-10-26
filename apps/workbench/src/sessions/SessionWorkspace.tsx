@@ -202,7 +202,8 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
   const [messages, setMessages] = useState<SessionMessageRecord[]>([]);
   const [selected, setSelected] = useState<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null } | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [listError, setListError] = useState("");
+  const [detailError, setDetailError] = useState("");
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   const olderCursor = useRef<{ expanded: boolean; value: string | null }>({ expanded: false, value: null });
@@ -220,8 +221,8 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
           const byId = new Map([...previous, ...page.items].map(item => [item.id, item]));
           return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 300);
         });
-        setNextCursor(olderCursor.current.expanded ? olderCursor.current.value : page.nextCursor); setError("");
-      } catch (cause) { if (active && !controller.signal.aborted) setError(errorText(cause)); }
+        setNextCursor(olderCursor.current.expanded ? olderCursor.current.value : page.nextCursor); setListError("");
+      } catch (cause) { if (active && !controller.signal.aborted) setListError(errorText(cause)); }
       finally { if (active) setLoading(false); }
     };
     void read();
@@ -252,8 +253,8 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
       const page = await sessionClient(context.token, context.projectId).messages(snapshot.session.key, nextCursor);
       setMessages(old => { const ids = new Set(old.map(item => item.id)); return [...old, ...page.items.filter(item => !ids.has(item.id))].slice(0, 300); });
       olderCursor.current = { expanded: true, value: page.nextCursor };
-      setNextCursor(page.nextCursor);
-    } catch (cause) { setError(errorText(cause)); }
+      setNextCursor(page.nextCursor); setListError("");
+    } catch (cause) { setListError(errorText(cause)); }
   }
   async function detail(messageId: string) {
     const scope = messageScope;
@@ -265,8 +266,8 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
       const target = value.message.target;
       const targetKey = target.kind === "owned" ? `owned:${target.sessionId}` : `external:${target.linkId}`;
       if (targetKey !== snapshot.session.key) throw new Error("消息详情与所选 Session 不符");
-      setSelected(value); setError("");
-    } catch (cause) { if (currentMessageScope.current === scope) setError(errorText(cause)); }
+      setSelected(value); setDetailError("");
+    } catch (cause) { if (currentMessageScope.current === scope) setDetailError(errorText(cause)); }
   }
   const status: Record<SessionMessageRecord["state"], string> = { queued: "待派发", processing: "原会话处理中", replied: "已回复", completed_without_reply: "已完成但无回复", failed: "失败", unknown: "结果未知", cancelled: "已取消", manual_pending: "待人工转交" };
   const canRecordRead = selected?.message.target.kind === "owned" && !selected.message.readReceipt
@@ -277,8 +278,9 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
     {entry.canSave && entry.sendReason && <p className="muted">保存能力：{entry.sendReason}</p>}
     <p role="status">自动处理：{entry.executionLabel}。{entry.executionReason}{entry.executionObservedAt && <> 状态读于 {date(entry.executionObservedAt)}；配置变化后请点上方“重新读取”。</>}</p>
     {!entry.canSave ? <Alert>{entry.sendReason || "当前不可保存消息。"}</Alert> : <ActionForm context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={entry.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea" }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content })} onApplied={result => { if (currentMessageScope.current !== messageScope) return; setReload(value => value + 1); void detail(result.entityId); onApplied(); }} />}
-    <h3>消息记录</h3>{loading && <p>正在读取消息…</p>}{error && <Alert kind="error">消息暂不可读取：{error}。<button onClick={() => setReload(value => value + 1)}>重试</button></Alert>}
-    {messages.length ? <ul className="session-message-list">{messages.map(item => <li key={item.id}><button type="button" className="quiet" onClick={() => void detail(item.id)}>{item.content.slice(0, 130)}{item.content.length > 130 ? "…" : ""}</button><small>{status[item.state]} · {date(item.createdAt)}</small></li>)}</ul> : !loading && !error && <p className="empty">没有已保存的普通消息。</p>}
+    <h3>消息记录</h3>{loading && <p>正在读取消息…</p>}{listError && <Alert kind="error">消息列表暂不可读取：{listError}。<button onClick={() => setReload(value => value + 1)}>重试列表</button></Alert>}
+    {detailError && <Alert kind="error">消息详情暂不可读取：{detailError}。</Alert>}
+    {messages.length ? <ul className="session-message-list">{messages.map(item => <li key={item.id}><button type="button" className="quiet" onClick={() => void detail(item.id)}>{item.content.slice(0, 130)}{item.content.length > 130 ? "…" : ""}</button><small>{status[item.state]} · {date(item.createdAt)}</small></li>)}</ul> : !loading && !listError && <p className="empty">没有已保存的普通消息。</p>}
     {nextCursor && messages.length < 300 && <button type="button" onClick={() => void more()}>加载更早消息</button>}
     {nextCursor && messages.length >= 300 && <p className="muted">当前最多展示 300 条消息；可在原会话查看更早记录。</p>}
     {selected && <div className="session-message-detail"><div className="panel-head"><h3>消息详情 · {status[selected.message.state]}</h3><button type="button" onClick={() => setSelected(null)}>关闭</button></div><p className="muted">发送 {date(selected.message.createdAt)} · 更新 {date(selected.message.updatedAt)}</p><pre>{selected.message.content}</pre>

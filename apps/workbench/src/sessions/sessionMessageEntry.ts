@@ -14,7 +14,8 @@ const executionFallbacks: Record<OrdinaryMessageExecutionCapability["state"], st
 /** The optional read keeps older Session snapshot APIs explicitly unverified. */
 export function sessionMessageEntry(kind: "owned" | "external", capabilities: SessionCapabilities) {
   const execution = capabilities.ordinaryExecution;
-  const state = execution?.state && execution.state in executionLabels ? execution.state : "unknown";
+  const knownState = !!execution && Object.hasOwn(executionLabels, execution.state);
+  const state = knownState ? execution.state : "unknown";
   return {
     canSave: capabilities.send.available,
     actionTitle: kind === "external" ? "保存人工转交" : "保存待处理",
@@ -24,8 +25,8 @@ export function sessionMessageEntry(kind: "owned" | "external", capabilities: Se
         : "此处不能向当前外部会话保存或转交消息；请核对连接状态与权限。"
       : "消息先保存为待处理记录；记录中的“待派发”不表示已送达、已读或已回复。",
     executionLabel: executionLabels[state],
-    executionReason: execution?.reason?.trim() || executionFallbacks[state],
-    executionObservedAt: execution?.observedAt || null,
+    executionReason: knownState ? execution.reason?.trim() || executionFallbacks[state] : executionFallbacks.unknown,
+    executionObservedAt: knownState ? execution.observedAt || null : null,
     sendReason: capabilities.send.reason?.trim() || null,
   };
 }

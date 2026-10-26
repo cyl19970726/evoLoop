@@ -34,6 +34,15 @@ test("older snapshots and unverified execution never imply automatic readiness",
   const readOnly = sessionMessageEntry("owned", { ...base, send: { available: false, reason: "当前身份只有读取权限。", mode: "unavailable" } });
   assert.equal(readOnly.canSave, false);
   assert.equal(readOnly.sendReason, "当前身份只有读取权限。");
+  for (const state of ["ready", "toString"]) {
+    const future = sessionMessageEntry("owned", { ...base, ordinaryExecution: {
+      state, reasonCode: "FUTURE_STATE", reason: "自动回复已就绪。", observedAt,
+    } } as unknown as SessionCapabilities);
+    assert.equal(future.executionLabel, "暂不可核实");
+    assert.match(future.executionReason, /不能预期自动回复/);
+    assert.doesNotMatch(future.executionReason, /已就绪/);
+    assert.equal(future.executionObservedAt, null);
+  }
 });
 
 test("external Session keeps manual handoff wording and uses its observed reason", () => {
