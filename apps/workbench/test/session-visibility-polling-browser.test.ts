@@ -15,6 +15,8 @@ const externalId = "80000003-0000-4000-8000-000000000003";
 const ownedKey = `owned:${ownedId}`;
 const externalKey = `external:${externalId}`;
 const stamp = "2026-10-27T00:00:00.000Z";
+const visiblePollWindowMs = 7500; // Busy Session polling is every five seconds; allow scheduling margin.
+const hiddenPollWindowMs = 11500; // Cross two scheduled ticks while the visibility guard is hidden.
 const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
 const unavailable = { available: false, reason: "fixture unavailable" };
 const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"]
@@ -80,7 +82,7 @@ test("owned polling pauses under simulated hidden visibility, refreshes on visib
   assert.equal((await readCounts()).recovery > 0, true, "owned initial read requests recovery");
 
   const visibleStart = await readCounts();
-  await page.waitForTimeout(5300); // Busy Session's normal five-second polling period.
+  await page.waitForTimeout(visiblePollWindowMs);
   const visibleEnd = await readCounts();
   assert.equal(visibleEnd.changes > visibleStart.changes, true, "visible workspace polls changes");
   assert.equal(visibleEnd.recovery > visibleStart.recovery, true, "visible owned Session polls recovery");
@@ -90,7 +92,7 @@ test("owned polling pauses under simulated hidden visibility, refreshes on visib
   await page.evaluate('Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" }); document.dispatchEvent(new Event("visibilitychange"));');
   assert.equal(await page.evaluate(() => document.visibilityState), "hidden");
   const hiddenStart = await readCounts();
-  await page.waitForTimeout(5300);
+  await page.waitForTimeout(hiddenPollWindowMs);
   const hiddenEnd = await readCounts();
   assert.deepEqual(hiddenEnd, hiddenStart, "hidden guard issues no snapshot, changes, or recovery request across one poll period");
 
@@ -101,12 +103,14 @@ test("owned polling pauses under simulated hidden visibility, refreshes on visib
   assert.equal(returned.ownedSnapshot > hiddenStart.ownedSnapshot, true, "visible event immediately rereads snapshot");
   assert.equal(returned.recovery > hiddenStart.recovery, true, "visible reread requests recovery");
 
+  const beforeExternal = await readCounts();
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, externalKey]);
   await page.getByRole("heading", { name: "外部测试会话" }).waitFor();
   const externalStart = await readCounts();
-  await page.waitForTimeout(5300);
+  assert.equal(externalStart.recovery, beforeExternal.recovery, "external initial read never requests recovery");
+  await page.waitForTimeout(visiblePollWindowMs);
   const externalEnd = await readCounts();
   assert.equal(externalEnd.changes > externalStart.changes, true, "external workspace still polls changes");
   assert.equal(externalEnd.recovery, externalStart.recovery, "external Session never requests recovery");
-  t.diagnostic(JSON.stringify({ visibleStart, visibleEnd, hiddenStart, hiddenEnd, returned, externalStart, externalEnd }));
+  t.diagnostic(JSON.stringify({ visibleStart, visibleEnd, hiddenStart, hiddenEnd, returned, beforeExternal, externalStart, externalEnd }));
 });
