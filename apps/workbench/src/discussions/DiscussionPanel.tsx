@@ -264,7 +264,7 @@ function DiscussionDetail({ context, record, events, choices }: { context: Mutat
       { name: "documentRecoveryReason", label: "为何需要受控恢复", kind: "textarea" as const },
     ] : []),
   ];
-  return <div className="discussion-detail"><h3>{kindLabel[record.kind]} · {statusLabel[record.status]}</h3>
+  return <div className="discussion-detail"><h3>{record.kind === "allocation" ? record.question : kindLabel[record.kind]} <span className="pill">{statusLabel[record.status]}</span></h3>
     {record.status === "decided" && <Notice>{latestDecision?.supersedesDecisionEventId
       ? "决定已纠正。旧决定和历史行动链接仍保留；本次决定的后续对象、执行与亲用待重新核对。"
       : "讨论决定已登记；后续对象、执行与亲用仍待核对。"}</Notice>}
