@@ -3,7 +3,7 @@ import type { RecoveryRead } from "./recoveryPresentation";
 import { recoveryActivationLabel, recoveryBudget, recoveryCauseLabel, recoveryNextActionLabel, recoveryPhaseLabel } from "./recoveryPresentation";
 
 function Unavailable({ read }: { read: Exclude<RecoveryRead, { status: "ready" }> }) {
-  const label = read.status === "loading" ? "正在读取恢复记录…" : read.status === "unsupported" ? "当前服务暂不支持恢复观察。" : read.status === "forbidden" ? "当前身份无权读取恢复记录。" : "恢复记录暂不可读取。";
+  const label = read.status === "loading" ? "正在读取恢复记录…" : read.status === "unavailable" ? "恢复信息暂不可读取。" : read.status === "forbidden" ? "当前身份无权读取恢复记录。" : "恢复记录暂不可读取。";
   return <p className="session-recovery-unavailable" role={read.status === "loading" ? "status" : "alert"}>{label}{read.status !== "loading" && <span> {read.message}</span>}</p>;
 }
 
@@ -14,7 +14,7 @@ export function SessionRecoveryOverview({ read, runtimeState }: { read: Recovery
   return <section className="session-recovery-overview" aria-label="恢复进度">
     <div className="session-recovery-heading"><h2>恢复进度</h2><small>读取于 {date(view.observedAtUtc)}</small></div>
     {gate ? <>
-      <div className="session-recovery-facts"><div><small>当前阶段</small><strong>{runtimeState === "closed" && gate.phase === "open" ? "恢复门开放；会话已关闭" : recoveryPhaseLabel(gate.phase)}</strong></div><div><small>停止或等待原因</small><strong>{gate.reason || "原因尚未记录"}</strong></div><div><small>下一动作</small><strong>{recoveryNextActionLabel(view.nextAction)}</strong></div></div>
+      <div className="session-recovery-facts"><div><small>当前阶段</small><strong>{runtimeState === "closed" && gate.phase === "open" ? "恢复门开放；会话已关闭" : recoveryPhaseLabel(gate.phase)}</strong></div><div><small>停止或等待原因</small><strong>{gate.reason || "原因尚未记录"}</strong></div><div><small>下一动作</small><strong>{recoveryNextActionLabel(view.nextAction, runtimeState)}</strong></div></div>
       {runtimeState === "closed" && <p className="session-recovery-note">该受管 Session 已关闭；恢复阶段不能使它直接接续。请先核对会话生命周期与授权。</p>}
       {gate.causeKind && <p className="session-recovery-context">来源：{recoveryCauseLabel(gate.causeKind)}{gate.causeId && <> <ShortId value={gate.causeId} /></>}{gate.causeState && ` · 保存状态 ${gate.causeState}`} · 更新于 {date(gate.updatedAt)}</p>}
       {gate.phase === "retrying" && <p className="session-recovery-note">仅已批准的原任务重试可接续；其他任务与消息仍等待。实际是否运行请核对 Run。</p>}
@@ -27,7 +27,8 @@ export function SessionRecoveryOverview({ read, runtimeState }: { read: Recovery
       {gate.phase === "awaiting_acceptance" && gate.claimId && <p className="session-recovery-context">等待验收放行的承接：<ShortId value={gate.claimId} /></p>}
       {gate.phase === "open" && <p className="session-recovery-note">仍需满足权限、额度、互斥、任务及交付条件。</p>}
       {gate.decisionOperationId && <p className="session-recovery-context">最近采用决定的操作：<ShortId value={gate.decisionOperationId} /></p>}
-    </> : <p className="session-recovery-note">没有持久恢复记录；这不代表所有运行已核实健康。{recoveryNextActionLabel(view.nextAction)}。</p>}
+    </> : <><p className="session-recovery-note">没有持久恢复记录；这不代表所有运行已核实健康。{recoveryNextActionLabel(view.nextAction, runtimeState)}。</p>
+      {runtimeState === "closed" && view.nextAction !== "normal_work" && <p className="session-recovery-note">该受管 Session 已关闭；没有恢复记录也不能视为可直接接续。</p>}</>}
     {view.partial && <p className="session-recovery-partial">读取范围不完整；队列最多展示 20 项，其他记录需从任务队列核对。</p>}
     <details className="session-recovery-decisions"><summary>正式恢复决定 · {view.decisions.length}{view.decisions.length === 20 && "（最近 20 条）"}</summary>
       {view.decisions.length ? <ol>{view.decisions.slice(0, 20).map(decision => <li key={decision.id}><strong>{decision.kind === "retry_failed" ? "原失败任务重试" : "恢复接续"}</strong> · {date(decision.createdAt)}<p>{decision.reason}</p><small>登记者 {decision.actorId} · 来源 <ShortId value={decision.causeId} />{decision.evidenceRef && ` · 依据 ${decision.evidenceRef}`}</small></li>)}</ol> : <p>尚无正式恢复决定；阶段变化不能当作已批准。</p>}

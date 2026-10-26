@@ -17,6 +17,8 @@ test("all five recovery phases describe permission and waiting rather than infer
   assert.match(recoveryNextActionLabel("await_authorized_retry"), /是否运行以 Run 记录为准/);
   assert.match(recoveryNextActionLabel("await_original_message"), /消息记录为准/);
   assert.match(recoveryNextActionLabel("reconcile_original_operation"), /核对原操作/);
+  assert.match(recoveryNextActionLabel("normal_work", "closed"), /已关闭.*不能直接接续/);
+  assert.match(recoveryNextActionLabel("normal_work", "ready"), /正常工作规则/);
   assert.match(recoveryActivationLabel("unknown"), /结果未知/);
 });
 

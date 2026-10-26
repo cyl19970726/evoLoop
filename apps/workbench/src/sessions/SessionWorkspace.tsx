@@ -78,7 +78,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         if (epoch.current === current && recoveryTarget === sessionId) setRecoveryRead({ status: "ready", view });
       } catch (cause) {
         if (controller.signal.aborted || epoch.current !== current || recoveryTarget !== sessionId) return;
-        if (cause instanceof ApiError && cause.status === 404) setRecoveryRead({ status: "unsupported", message: "请使用支持此观察接口的服务版本。" });
+        if (cause instanceof ApiError && cause.status === 404) setRecoveryRead({ status: "unavailable", message: "接口或对象不可用；请核对当前会话与服务记录。" });
         else if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) setRecoveryRead({ status: "forbidden", message: "请核对项目读取权限。" });
         else if (cause instanceof ApiError && cause.status === 0) setRecoveryRead({ status: "failed", message: "连接中断或超时；无法据此判断恢复状态。" });
         else setRecoveryRead({ status: "failed", message: errorText(cause) });

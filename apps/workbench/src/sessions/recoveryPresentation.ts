@@ -34,7 +34,7 @@ export interface SessionRecoveryView {
 export type RecoveryRead =
   | { status: "loading" }
   | { status: "ready"; view: SessionRecoveryView }
-  | { status: "unsupported" | "forbidden" | "failed"; message: string };
+  | { status: "unavailable" | "forbidden" | "failed"; message: string };
 
 const phaseText: Record<NonNullable<SessionRecoveryView["gate"]>["phase"], string> = {
   open: "可按正常规则接续",
@@ -59,7 +59,9 @@ const activationText: Record<NonNullable<SessionRecoveryView["executionProfile"]
   active: "已登记激活", pending: "待激活", attempting: "激活尝试中，结果未确认", unknown: "激活结果未知，需核对", rejected: "激活被拒绝",
 };
 export const recoveryPhaseLabel = (phase: NonNullable<SessionRecoveryView["gate"]>["phase"]) => phaseText[phase];
-export const recoveryNextActionLabel = (action: string) => nextActionText[action] ?? "下一动作暂无法解释，请核对服务记录";
+export const recoveryNextActionLabel = (action: string, runtimeState?: string | null) =>
+  runtimeState === "closed" && action === "normal_work" ? "会话已关闭；先核对生命周期与授权，不能直接接续"
+    : nextActionText[action] ?? "下一动作暂无法解释，请核对服务记录";
 export const recoveryCauseLabel = (kind: NonNullable<SessionRecoveryView["gate"]>["causeKind"]) => kind ? causeText[kind] : "来源未记录";
 export const recoveryActivationLabel = (state: NonNullable<SessionRecoveryView["executionProfile"]>["activationState"]) => activationText[state];
 
