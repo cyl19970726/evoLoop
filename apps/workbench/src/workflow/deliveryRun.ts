@@ -15,3 +15,8 @@ export function verifiedDeliveryRun(projectId: string, taskId: string, runId: st
 export function deliveryRunHref(projectId: string, taskId: string, runId: string): string {
   return `${taskSectionHref(projectId, taskId, { tab: "runtime" })}&run=${encodeURIComponent(runId)}`;
 }
+
+export function recentDeliveryRunIds(deliveries: readonly { projectId: string; taskId: string; runId: string | null }[], projectId: string, taskId: string): string[] {
+  return [...new Set(deliveries.filter(item => item.projectId === projectId && item.taskId === taskId)
+    .slice(-5).map(item => item.runId).filter((id): id is string => !!id))];
+}

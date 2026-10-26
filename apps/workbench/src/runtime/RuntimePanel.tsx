@@ -64,7 +64,8 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
       if (fetching) return;
       fetching = true;
       try {
-        const [s, list, work, assignment, targetRun] = await Promise.all([client.status(), client.sessions(), client.runs(task?.id),
+        const [s, list, workRead, assignment, targetRun] = await Promise.all([client.status(), client.sessions(), client.runs(task?.id)
+          .then(value => ({value,error:""})).catch(cause => ({value:[] as RuntimeRunRecord[],error:errorText(cause)})),
           task ? sessionClient(context.token, context.projectId).assignment(task.id).then(value => {
             if (value && (value.projectId !== context.projectId || value.taskId !== task.id)) throw new Error("分派响应与当前任务不符");
             return {value,error:""};
@@ -80,9 +81,11 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
           } catch { /* Target focus below reports that the Session could not be read. */ }
         }
         if (active) { const verified = targetRun.value && targetRun.value.id === targetRunId && targetRun.value.projectId === context.projectId && targetRun.value.taskId === task?.id ? targetRun.value : null;
+          const work = workRead.value;
           setStatus(s); setSessions(scopedSessions); setRuns(verified && !work.some(run => run.id === verified.id) ? [...work,verified] : work);
           setTargetRunProblem(targetRunId && !verified ? targetRun.error || "目标 Run 与当前任务不符" : "");
-          setRunsForTask(task?.id); setLoadedScope(sessionScope); setAssignmentRead({scope:sessionScope,...assignment}); setError("");
+          setRunsForTask(workRead.error ? undefined : task?.id); setLoadedScope(sessionScope); setAssignmentRead({scope:sessionScope,...assignment});
+          setError(workRead.error ? `运行列表暂不可读取：${workRead.error}。${verified ? "目标 Run 已单独核对；" : ""}其他运行不能据此推断。` : "");
           sequence += 1; if (sequence > 1) setRuntimePoll({taskId:task?.id,sequence}); }
       } catch (cause) { if (active) setError(errorText(cause)); }
       finally { fetching = false; }

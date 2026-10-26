@@ -1,17 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
-import { api } from "../api";
+import { api, errorText } from "../api";
 import { runtimeClient } from "../runtime/client";
 import { taskSectionHref } from "../orchestration/navigation";
-import { deliveryRunHref, verifiedDeliveryRun } from "./deliveryRun";
+import { deliveryRunHref, recentDeliveryRunIds, verifiedDeliveryRun } from "./deliveryRun";
 import { date } from "../ui/shared";
 import { deliveryTarget, verifiedDocumentTitle, type DeliveryArtifactInput, type DeliveryTarget } from "./deliveryPresentation";
 import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 
 type Delivery = NonNullable<TaskDetail["deliveries"]>[number];
+const emptyDeliveries: Delivery[] = [];
 type ArtifactName = { title: string | null; checked: boolean };
 type Observation = NonNullable<TaskDetail["observations"]>[number];
+type RunRead = { status: "reading" } | { status: "ready"; run: RuntimeRunRecord } | { status: "failed"; message: string };
+
+async function readDeclaredRun(token: string, projectId: string, taskId: string, runId: string): Promise<RuntimeRunRecord> {
+  const run = await runtimeClient(token, projectId).run(runId);
+  const verified = verifiedDeliveryRun(projectId, taskId, runId, run);
+  if (!verified) throw new Error("来源 Run 与交付登记的项目或任务不符");
+  return verified;
+}
 
 export function DeliveryObservation({ observation }: { observation: Observation }) {
   return <div className="history task-observation">
@@ -72,45 +81,53 @@ export function DeliveryArtifact({ delivery, projectId, name }: { delivery: Deli
   </div>;
 }
 
-export function DeliveryPanel({ detail, projectId, token, names, onChanged }: { detail: TaskDetail; projectId: string; token?: string; names: Record<string, ArtifactName>; onChanged: () => void }) {
-  const deliveries = detail.deliveries ?? [];
+export function DeliveryPanel({ detail, projectId, token, names, onChanged, active }: { detail: TaskDetail; projectId: string; token?: string; names: Record<string, ArtifactName>; onChanged: () => void; active: boolean }) {
+  const deliveries = detail.deliveries ?? emptyDeliveries;
   const latestId = deliveries.at(-1)?.id;
-  const [runs, setRuns] = useState<Record<string, RuntimeRunRecord>>({});
-  const [runError, setRunError] = useState("");
+  const [runReads, setRunReads] = useState<Record<string, RunRead>>({});
+  const readEpoch = useRef(0);
   useEffect(() => {
-    if (!token || !deliveries.some(item => item.runId)) return;
-    let active = true;
-    setRuns({}); setRunError("");
-    const ids = [...new Set(deliveries.filter(item => item.projectId === projectId && item.taskId === detail.task.id)
-      .map(item => item.runId).filter((id): id is string => !!id))];
-    const client = runtimeClient(token, projectId);
-    let next = 0;
-    const read = async () => {
-      while (active && next < ids.length) {
-        const id = ids[next++];
-        try {
-          const run = await client.run(id);
-          const verified = verifiedDeliveryRun(projectId, detail.task.id, id, run);
-          if (active && verified)
-            setRuns(current => ({ ...current, [id]: verified }));
-          else if (active) setRunError("部分来源 Run 与交付登记的项目或任务不符；对应入口暂不提供。");
-        } catch { if (active) setRunError("部分来源 Run 暂未读到；对应入口暂不提供。"); }
+    const epoch = ++readEpoch.current;
+    setRunReads({});
+    if (active && token) {
+      const ids = recentDeliveryRunIds(deliveries, projectId, detail.task.id);
+      for (const id of ids) {
+        setRunReads(current => ({ ...current, [id]: { status: "reading" } }));
+        void readDeclaredRun(token, projectId, detail.task.id, id)
+          .then(run => { if (readEpoch.current === epoch) setRunReads(current => ({ ...current, [id]: { status: "ready", run } })); })
+          .catch(cause => { if (readEpoch.current === epoch) setRunReads(current => ({ ...current, [id]: { status: "failed", message: errorText(cause) } })); });
       }
-    };
-    void Promise.all(Array.from({ length: Math.min(4, ids.length) }, () => read()));
-    return () => { active = false; };
-  }, [token, projectId, detail.task.id, detail.task.version, deliveries]);
+    }
+    return () => { if (readEpoch.current === epoch) readEpoch.current++; };
+  }, [active, token, projectId, detail.task.id, detail.task.version, deliveries]);
+  async function readOlderRun(id: string) {
+    if (!active || !token || runReads[id]?.status === "reading") return;
+    const epoch = readEpoch.current;
+    setRunReads(current => ({ ...current, [id]: { status: "reading" } }));
+    try {
+      const run = await readDeclaredRun(token, projectId, detail.task.id, id);
+      if (readEpoch.current === epoch) setRunReads(current => ({ ...current, [id]: { status: "ready", run } }));
+    } catch (cause) {
+      if (readEpoch.current === epoch) setRunReads(current => ({ ...current, [id]: { status: "failed", message: errorText(cause) } }));
+    }
+  }
+  function sourceRun(delivery: Delivery) {
+    if (!delivery.runId) return "未声明来源 Run；旧交付不会自动归于任何评价尝试。";
+    if (delivery.projectId !== projectId || delivery.taskId !== detail.task.id) return "交付来源与当前任务范围不符；运行入口暂不提供。";
+    const read = runReads[delivery.runId];
+    if (read?.status === "ready") return <><a href={taskSectionHref(projectId, delivery.taskId, { revisionId: read.run.taskRevisionId })}>实际执行 Task 修订 <code>{read.run.taskRevisionId}</code> ↗</a>；<a href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次 Run →</a>；<a href={`#/p/${encodeURIComponent(projectId)}/runtime?session=${encodeURIComponent(read.run.sessionId)}`}>查看对应 Session →</a></>;
+    if (read?.status === "reading") return "正在核对来源 Run；运行入口暂不提供。";
+    return <>来源 Run 尚未核实；<button type="button" className="quiet" disabled={!active || !token} onClick={() => void readOlderRun(delivery.runId!)}>核对来源 Run</button>{read?.status === "failed" && <> · {read.message}</>}</>;
+  }
   return <section className="panel task-records"><div className="panel-head"><h2>交付与使用记录</h2><button type="button" onClick={onChanged}>回读当前状态</button></div>
-    {runError && <p className="muted">{runError}</p>}
+    {active && deliveries.length > 5 && <p className="task-fineprint">仅自动核对最近 5 条交付的来源 Run；更早记录可按条核对。</p>}
     {!deliveries.length && <p className="empty">还没有交付；任务状态不代替产物和使用证据。</p>}
     {[...deliveries].reverse().map(delivery => <article className="decision task-delivery-record" key={delivery.id}>
       <h3>{delivery.id === latestId ? "最新交付" : "历史交付"} · 技术检查{delivery.technicalResult === "passed" ? "通过" : "失败"}</h3>
       <p className="muted">交付登记于 {date(delivery.createdAt)} · 登记者 {delivery.actorId}</p>
       <DeliveryArtifact delivery={delivery} projectId={projectId} name={names[delivery.id]} />
       <p>交付登记 Task 修订 <a href={`#/p/${projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}><code>{delivery.taskRevisionId}</code> ↗</a></p>
-      <p>{delivery.runId ? <>登记来源 Run <code>{delivery.runId}</code>；{delivery.projectId === projectId && delivery.taskId === detail.task.id && runs[delivery.runId]
-        ? <><a href={taskSectionHref(projectId, delivery.taskId, { revisionId: runs[delivery.runId].taskRevisionId })}>实际执行 Task 修订 <code>{runs[delivery.runId].taskRevisionId}</code> ↗</a>；<a href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次 Run →</a>；<a href={`#/p/${encodeURIComponent(projectId)}/runtime?session=${encodeURIComponent(runs[delivery.runId].sessionId)}`}>查看对应 Session →</a></>
-        : "来源 Run 尚未核实；运行入口暂不提供"}</> : "未声明来源 Run；旧交付不会自动归于任何评价尝试。"}</p>
+      <p>{delivery.runId && <>登记来源 Run <code>{delivery.runId}</code>；</>}{sourceRun(delivery)}</p>
       <EvidenceText label="技术检查证据" value={delivery.technicalEvidence} />
       <p className="muted">Run 归属由登记者声明；运行终态不代表交付合格，也不证明产物字节由模型生成。产物修订、哈希与实际内容仍须分别核对。</p>
       <h3>这次交付的使用观察</h3>
