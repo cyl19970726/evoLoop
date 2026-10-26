@@ -53,9 +53,22 @@ test("write and project authority fail before any configuration, session or gran
 test("external handoff is manual and never probes native readiness",async()=>{
   const {read,calls}=setup();
   const external:ObservedSession={...observed,key:"external:33333333-3333-4333-8333-333333333333",
-    kind:"external",target:{kind:"external",linkId:"33333333-3333-4333-8333-333333333333"}};
+    kind:"external",target:{kind:"external",linkId:"33333333-3333-4333-8333-333333333333"},
+    capabilities:{...observed.capabilities,send:{available:true,reason:"Manual transfer only",mode:"manual-handoff"}}};
   assert.equal((await read(principal,projectId,external)).state,"manual");
   assert.equal((await read(principal,projectId,external)).reasonCode,"MANUAL_HANDOFF");
+  assert.equal(calls.configuration,0);assert.equal(calls.session,0);
+});
+
+test("revoked or historical external links cannot claim manual handoff",async()=>{
+  const {read,calls}=setup();
+  const external:ObservedSession={...observed,key:"external:33333333-3333-4333-8333-333333333333",
+    kind:"external",target:{kind:"external",linkId:"33333333-3333-4333-8333-333333333333"},
+    membership:"historical",capabilities:{...observed.capabilities,
+      send:{available:false,reason:"会话已关闭或接入已撤销。",mode:"unavailable"}}};
+  const result=await read(principal,projectId,external);
+  assert.equal(result.state,"blocked");assert.equal(result.reasonCode,"SESSION_UNAVAILABLE");
+  assert.equal(result.reason,external.capabilities.send.reason);
   assert.equal(calls.configuration,0);assert.equal(calls.session,0);
 });
 

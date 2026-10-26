@@ -28,8 +28,12 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
       return result("blocked","FORBIDDEN","当前身份不能读取此项目的会话执行状态。");
     if(!principal.permissions.includes("write"))
       return result("blocked","WRITE_REQUIRED","当前身份没有此项目的消息写入权限。");
-    if(observed.target.kind==="external"||observed.kind==="external")
-      return result("manual","MANUAL_HANDOFF","外部会话需要由宿主手工转交消息。");
+    if(observed.target.kind==="external"||observed.kind==="external") {
+      if(observed.capabilities.send.available&&observed.capabilities.send.mode==="manual-handoff")
+        return result("manual","MANUAL_HANDOFF","外部会话需要由宿主手工转交消息。");
+      return result("blocked","SESSION_UNAVAILABLE",
+        observed.capabilities.send.reason??"外部会话已关闭或接入已撤销，当前不能转交消息。");
+    }
     if(observed.kind!=="owned"||observed.target.kind!=="owned"||observed.runtimeState!=="ready"||
       !observed.capabilities.send.available||observed.capabilities.send.mode!=="owned-read-only")
       return result("blocked","SESSION_UNAVAILABLE","此会话当前不能保存并自动处理普通消息。");
