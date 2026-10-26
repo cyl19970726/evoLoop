@@ -46,7 +46,7 @@
 .discussion-exploration-empty{color:#75829a;padding:18px 0}
 .discussion-exploration-empty h2{color:#33435f}
 .discussion-relation-card{position:relative;border:1px solid #e3e8f1;border-radius:7px;padding:15px;margin:11px 0;color:#33435f;overflow-wrap:anywhere}
-.discussion-relation-card strong{font-size:12px}
+.discussion-relation-card strong{display:block;font-size:13px;line-height:1.45}
 .discussion-relation-card p{font-size:11px;line-height:1.6;margin:8px 0}
 .discussion-relation-card small{display:block;font-size:10px;color:#79869a;line-height:1.5}
 .discussion-relation-card details{font-size:10px;margin-top:10px;color:#66748b}

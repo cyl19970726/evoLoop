@@ -161,7 +161,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
         </div>}
         {selected && selected.kind !== "task_collaboration" && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
       </div>
-      {selected?.kind === "allocation" ? <AllocationRelationsPanel context={context} record={selected} refresh={refresh} />
+      {selected?.kind === "allocation" ? <AllocationRelationsPanel context={context} record={selected} refresh={refresh} known={choices} namesReady={!choicesLoading} />
         : <aside className="discussion-exploration-column discussion-exploration-relations" aria-label="正式关系与具体承接"><h2>正式关系与确切承接</h2><p className="muted">选择一条分工讨论后查看正式关系。</p></aside>}
     </div>
   </section>;

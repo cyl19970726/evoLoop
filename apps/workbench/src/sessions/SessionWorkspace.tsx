@@ -8,6 +8,7 @@ import { sessionClient } from "./client";
 import { SessionOpenEntry } from "./SessionOpenEntry";
 import { AllocationBacklinks } from "../discussions/AllocationBacklinks";
 import { queuePosition, queueStateLabel } from "./queuePresentation";
+import { activityPresentation } from "./activityPresentation";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results" | "responsibilities" | "resources";
@@ -35,6 +36,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [activity, setActivity] = useState<SessionActivity[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyPartial, setHistoryPartial] = useState(false);
+  const [historyLimitations, setHistoryLimitations] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>(() => tabFromHash(sessionKey));
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -58,7 +61,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     let checking = false;
     cursor.current = null;
     const saved = remember.get(scope) ?? null;
-    setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false); setError(""); setLoading(true);
+    setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false);
+    setHistoryPartial(false); setHistoryLimitations([]); setError(""); setLoading(true);
     async function read() {
       const version = ++requestVersion.current;
       try {
@@ -107,6 +111,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     try {
       const page = await sessionClient(context.token, context.projectId).activities(sessionKey, historyCursor ?? undefined);
       setActivity(old => bounded(old, page.items)); setHistoryCursor(page.nextCursor); setHistoryLoaded(true);
+      setHistoryPartial(old => old || page.metadata.partial);
+      setHistoryLimitations(old => [...new Set([...old, ...page.metadata.limitations])]);
     } catch (cause) { setHistoryError(errorText(cause)); }
     finally { setHistoryBusy(false); }
   }
@@ -114,16 +120,19 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   if (!current) return <div className="content"><h1>Session</h1>{loading ? <p>正在读取会话工作区…</p> : <Alert kind="error">会话暂不可读取：{error || "未找到当前项目的会话"}。<button onClick={() => setReadAgain(value => value + 1)}>重试</button></Alert>}</div>;
   const session = current.session;
   const work = current.currentWork;
-  const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations])];
+  const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations, ...historyLimitations])];
   return <div className="content session-workspace">
     <div className="session-workspace-head"><div><p className="eyebrow">{session.kind === "owned" ? "项目受管 Session" : "外部连接 Session"} · {session.membership === "current" ? "当前团队" : session.membership === "historical" ? "历史" : "待归类"}</p><h1>{session.title}</h1><p>{session.profile?.purpose || session.roles.map(role => role.responsibility).filter(Boolean).join("；") || "用途尚未登记"}</p></div><div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button><SessionOpenEntry session={session} token={context.token} projectId={context.projectId} currentRead={active && !loading && !error} active={active} /></div></div>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     <section className="session-current-work"><div><small>当前任务</small><strong>{work ? <a href={href(context.projectId, "task", work.id)}>{work.title}</a> : "尚无可确认的当前任务"}</strong><span>{work ? work.relation === "accepted" ? "具体 Session 已接手" : work.relation === "assigned" ? "已分派，待确认接手" : work.relation === "claimed" || work.relation === "run" ? "有正式运行关联" : "角色责任" : "角色责任不等于已接手"}</span></div>{work && <a className="session-task-link" href={href(context.projectId, "task", work.id)}>查看任务</a>}</section>
     <div className="session-workspace-summary"><div><small>运行状态</small><strong>{session.busy === true ? "忙碌" : session.busy === false ? "空闲" : "状态未知"}</strong><span>{session.runtimeState ?? "没有可确认的运行状态"}</span></div><div><small>待处理问题</small><strong>{current.questions.filter(question => !question.answered).length}</strong><span>来自任务讨论记录</span></div><div><small>最近进展</small><strong>{date(session.lastProgressAt ?? undefined)}</strong><span>来源记录时间，未知时不推断</span></div></div>
-    <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}；来源最近观察 {date(current.metadata.sourceObservedAt ?? undefined)}。{current.metadata.partial ? "本页仅展示已读范围。" : ""}</p>
+    <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}；来源最近观察 {date(current.metadata.sourceObservedAt ?? undefined)}。{current.metadata.partial || historyPartial ? "来源仅展示已读范围。" : ""}</p>
     {limitation.length > 0 && <details className="session-workspace-limitations"><summary>来源限制与未确认信息</summary><ul>{limitation.map(item => <li key={item}>{item}</li>)}</ul></details>}
     <nav className="session-workspace-tabs" aria-label="Session 工作区栏目">{(Object.keys(tabLabels) as Tab[]).map(key => <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.location.hash = `${href(context.projectId, "runtime")}?session=${encodeURIComponent(sessionKey)}&tab=${key}`; }}>{tabLabels[key]}{key === "activity" && ` · ${activity.length}`}</button>)}</nav>
-    {tab === "activity" && <><section className="session-workspace-section"><h2>活动</h2>{activity.length ? <ol className="session-activity-list">{activity.map(item => <li key={item.id}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div><strong>{item.summary}</strong><small>{item.source.evidence === "independent-use" ? "独立使用" : item.source.evidence === "session-statement" ? "会话自述" : "项目记录"}</small></div>{item.taskId && <a href={href(context.projectId, "task", item.taskId)}>查看任务</a>}</li>)}</ol> : <p className="empty">当前范围尚无活动记录。</p>}{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</section>{active && <SessionMessages context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} />}</>}
+    {tab === "activity" && <><section className="session-workspace-section"><h2>活动</h2><p className="muted">这里也包含关联任务的背景记录；查看每条的来源与登记者，不能据此认定由本 Session 执行。</p>{activity.length ? <ol className="session-activity-list">{activity.map(item => {
+      const presented = activityPresentation(item, context.projectId);
+      return <li key={item.id}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div><strong>{item.summary}</strong><small>{presented.sourceLabel}</small><details className="session-activity-source"><summary>来源标识</summary><small>{item.source.kind} · <code>{item.source.id}</code>{item.source.revision && <> · 修订 <code>{item.source.revision}</code></>}</small></details></div><span className="session-activity-links">{presented.discussionHref && <a href={presented.discussionHref}>原讨论</a>}{item.taskId && <a href={href(context.projectId, "task", item.taskId)}>关联任务</a>}</span></li>;
+    })}</ol> : <p className="empty">当前范围尚无活动记录。</p>}{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</section>{active && <SessionMessages context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} />}</>}
     {tab === "queue" && <section className="session-workspace-section"><div className="session-section-head"><div><h2>任务队列</h2><p className="muted">按已确认的顺序逐项处理；排队不表示已开始运行。</p></div><a href={`${href(context.projectId, "runtime")}?view=execution`}>管理受管队列</a></div>{current.queue.length ? <ol className="session-queue-list">{current.queue.map(item => <li key={item.entryId}><span className="session-queue-position" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span><div><strong><a href={href(context.projectId, "task", item.taskId)}>{item.taskTitle}</a></strong><small>{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</small></div></li>)}</ol> : <p className="empty">当前范围没有关联队列条目。</p>}</section>}
     {tab === "results" && <section className="session-workspace-section"><h2>结果与实际使用</h2>{current.results.length ? <ul>{current.results.map(item => <li key={item.deliveryId}><a href={href(context.projectId, "task", item.taskId)}>{item.taskTitle}</a> · 技术结果 {item.technicalResult} · {item.latestUse ? `使用观察：${item.latestUse.result}（${item.latestUse.observerKind}）` : "尚无实际使用观察"}</li>)}</ul> : <p className="empty">当前范围没有交付记录。</p>}</section>}
     {tab === "responsibilities" && <section className="session-workspace-section"><h2>职责与分派</h2>{session.roles.map(role => <p key={role.id}><a href={href(context.projectId, "roles")}>{role.title}</a> · {role.responsibility}</p>)}<h3>具体分派</h3>{current.assignments.length ? <ul>{current.assignments.map(({ assignment, task, stale }) => <li key={`${assignment.taskId}:${assignment.version}`}><a href={href(context.projectId, "task", task.id)}>{task.title}</a> · {stale ? "任务修订已变化，需重新确认" : assignment.state === "accepted" ? `已接手（${assignment.ack?.method === "direct" ? "本人确认" : "负责人观察"}）` : assignment.state === "assigned" ? "待确认" : "已释放"}</li>)}</ul> : <p>没有具体分派。</p>}<details><summary>角色责任范围 · {current.roleTasks.length} 项</summary><p>角色负责这些任务，不表示此 Session 已接手。</p><ul>{current.roleTasks.map(task => <li key={task.id}><a href={href(context.projectId, "task", task.id)}>{task.title}</a></li>)}</ul></details>{active && <AllocationBacklinks context={context} filter={{ sessionKey }} refresh={refresh + readAgain} />}<SessionProfileForm context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} /></section>}
