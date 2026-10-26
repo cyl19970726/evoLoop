@@ -183,6 +183,73 @@ test("fresh runner retains an unverified prior archive attempt until exact nativ
   } finally { await runner.stop(); }
 });
 
+test("readback failure after a durable archive attempt remains unknown and cannot replay", async t => {
+  for (const sample of [
+    { name: "fresh runner first read times out", alreadyAttempted: true,
+      error: new RuntimeUnknownError("thread/list", 8, "private reply lost") },
+    { name: "empty archive acknowledgement then post-read is rejected", alreadyAttempted: false,
+      error: new RuntimeServerError("thread/list", 8, -32600, "private native read rejection") },
+  ] as const) await t.test(sample.name, async () => {
+    const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(),
+      closeAttemptedAt: sample.alreadyAttempted ? new Date().toISOString() : null };
+    let reads = 0, archives = 0, marks = 0, confirms = 0, inspections = 0;
+    class ReadFailureRuntime extends FakeRuntime {
+      async isThreadArchived() {
+        reads++;
+        if (sample.alreadyAttempted || reads === 2) throw sample.error;
+        return false;
+      }
+      async archiveThread() { archives++; } // Native's empty acknowledgement proves nothing.
+      override async inspect(binding: RuntimeBinding) { inspections++; return super.inspect(binding); }
+    }
+    const native = new ReadFailureRuntime();
+    const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+      listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+    const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+      markSessionArchiveAttempt: async () => { marks++; closing.closeAttemptedAt = new Date().toISOString(); },
+      confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
+    const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & ReadFailureRuntime,
+      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+      canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+    try {
+      await runner.start();
+      assert.equal(closing.state, "closing"); assert.equal(confirms, 0);
+      assert.equal(archives, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(marks, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(inspections, sample.alreadyAttempted ? 0 : 1);
+      assert.deepEqual(runner.status(projectId).faults.map(f => [f.phase, f.category]),
+        [["session_close", "unknown_outcome"]]);
+      assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /private reply|private native/);
+      await runner.pump();
+      assert.equal(archives, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(marks, sample.alreadyAttempted ? 0 : 1);
+      assert.equal(confirms, 0);
+      assert.deepEqual(runner.status(projectId).faults.map(f => f.category), ["unknown_outcome"]);
+    } finally { await runner.stop(); }
+  });
+});
+
+test("failed archive precheck stops before durable attempt or native write", async () => {
+  const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
+  let archives = 0, marks = 0, inspections = 0, confirms = 0;
+  class FailedPrecheckRuntime extends FakeRuntime {
+    async isThreadArchived() { throw new RuntimeUnknownError("thread/list", 8, "precheck unavailable"); }
+    async archiveThread() { archives++; }
+    override async inspect(_binding: RuntimeBinding) { inspections++; return {}; }
+  }
+  const native = new FailedPrecheckRuntime();
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing],
+    listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    markSessionArchiveAttempt: async () => { marks++; }, confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & FailedPrecheckRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try { await runner.start(); assert.equal(closing.state, "closing"); assert.equal(closing.closeAttemptedAt, null);
+    assert.equal(archives, 0); assert.equal(marks, 0); assert.equal(inspections, 0); assert.equal(confirms, 0);
+  } finally { await runner.stop(); }
+});
+
 test("archive failure keeps a redacted rejection or unknown timeout category without replay", async t => {
   for (const sample of [
     { name: "explicit native rejection", error: new RuntimeServerError("thread/archive", 7, -32600, "no rollout found; secret=private"), category: "native_rejected" },

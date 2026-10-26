@@ -265,14 +265,25 @@ export class RuntimeRunner {
     const binding = bindingOf(session);
     await this.runtime.registerBinding(binding);
     // Readback comes before any write, including after a restart or lost acknowledgement.
-    if (await this.runtime.isThreadArchived(binding)) {
+    const retainUnverifiedAttempt = () => {
+      const prior = this.faults.get(this.faultKey(session.projectId,"session_close",session.id));
+      if (prior?.category !== "native_rejected" && prior?.category !== "authorization")
+        this.recordFault(session.projectId,"session_close",null,session.id,undefined,"unknown_outcome");
+    };
+    let archivedBefore: boolean;
+    try { archivedBefore = await this.runtime.isThreadArchived(binding); }
+    catch (error) {
+      // Before an attempt, a failed precheck must stop archive; after one, its outcome stays unknown.
+      if (!session.closeAttemptedAt) throw error;
+      retainUnverifiedAttempt();
+      return false;
+    }
+    if (archivedBefore) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
       return true;
     }
     if (session.closeAttemptedAt) {
-      const prior = this.faults.get(this.faultKey(session.projectId,"session_close",session.id));
-      if (prior?.category !== "native_rejected" && prior?.category !== "authorization")
-        this.recordFault(session.projectId,"session_close",null,session.id,undefined,"unknown_outcome");
+      retainUnverifiedAttempt();
       return false;
     }
     if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
@@ -286,7 +297,14 @@ export class RuntimeRunner {
       // Only an explicit native rejection is classifiable; lost replies remain unknown.
       if (error instanceof RuntimeServerError) archiveCategory = faultCategory(error);
     }
-    if (await this.runtime.isThreadArchived(binding)) {
+    let archivedAfter: boolean;
+    try { archivedAfter = await this.runtime.isThreadArchived(binding); }
+    catch {
+      // The archive may have happened even when verification itself fails.
+      this.recordFault(session.projectId,"session_close",null,session.id,undefined,archiveCategory);
+      return false;
+    }
+    if (archivedAfter) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
       return true;
     }
