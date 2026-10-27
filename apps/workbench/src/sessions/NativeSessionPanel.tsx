@@ -94,9 +94,11 @@ export function NativeSessionPanel({ projectId, sessionId, questions, progress, 
   onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
 }) {
   const visibleQuestions = questions.filter(request => request.sessionId === sessionId);
+  const openQuestions = visibleQuestions.filter(request => request.state === "pending" || request.state === "response_saved");
+  const closedQuestions = visibleQuestions.filter(request => request.state === "resolved" || request.state === "unavailable");
   const visibleProgress = progress?.sessionId === sessionId ? progress : null;
   return <div className="native-session-panel">
-    {visibleQuestions.map(request => <NativeQuestionCard key={request.id} request={request} projectId={projectId} readHealthy={!readError} onAnswer={onAnswer} />)}
+    {openQuestions.map(request => <NativeQuestionCard key={request.id} request={request} projectId={projectId} readHealthy={!readError} onAnswer={onAnswer} />)}
     {readError && <p className="native-panel-warning" role="alert">原生状态暂不可读取：{readError}。保留上次内容仅供核对，请重新读取后再回答。</p>}
     {visibleProgress && <section className="native-progress-card"><div className="native-panel-heading"><div><span className="native-panel-kicker">来自原生 Turn 的有界观察</span><h2>原生执行进度</h2></div><span className="native-panel-state">{visibleProgress.state === "running" ? "运行中" : visibleProgress.state === "waiting" ? "等待回答" : visibleProgress.state === "completed" ? "Turn 已结束" : visibleProgress.state === "failed" ? "执行失败" : "状态待核对"}</span></div>
       <p className="native-panel-context">观察于 {date(visibleProgress.observedAt ?? undefined)} · 来源 {visibleProgress.source}{visibleProgress.partial && " · 仅显示已读范围"}</p>
@@ -104,5 +106,8 @@ export function NativeSessionPanel({ projectId, sessionId, questions, progress, 
       <p className="native-progress-usage">Token 用量：{visibleProgress.inputTokens === null && visibleProgress.outputTokens === null ? "暂无可信用量" : `输入 ${visibleProgress.inputTokens ?? "未提供"} · 输出 ${visibleProgress.outputTokens ?? "未提供"}`}。进度通知不代替最终结果与交付验收。</p>
       {visibleProgress.threadId && visibleProgress.turnId && <details className="native-panel-ids"><summary>原生 Turn 身份</summary><p>Thread <code>{visibleProgress.threadId}</code> · Turn <code>{visibleProgress.turnId}</code></p></details>}
     </section>}
+    {closedQuestions.length > 0 && <details className="native-question-history"><summary>已结束的原生提问 · {closedQuestions.length}</summary>
+      {closedQuestions.map(request => <NativeQuestionCard key={request.id} request={request} projectId={projectId} readHealthy={!readError} onAnswer={onAnswer} />)}
+    </details>}
   </div>;
 }
