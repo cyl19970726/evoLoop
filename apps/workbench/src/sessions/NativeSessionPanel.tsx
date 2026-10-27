@@ -4,14 +4,21 @@ import { date, href } from "../ui/shared";
 /** A bounded display model. The API adapter supplies only verified, project-owned facts. */
 export interface NativeQuestionView {
   id: string;
+  version: number;
   sessionId: string;
-  threadId: string;
+  threadId: string | null;
   turnId: string;
+  itemId: string | null;
+  sourceKind: "run" | "message" | "unbound";
+  sourceId: string | null;
   taskId: string | null;
   requestedAt: string;
-  source: string;
-  answerable: boolean;
+  isBlocking: boolean;
+  state: "pending" | "response_saved" | "resolved" | "unavailable";
+  canReply: boolean;
   unavailableReason: string | null;
+  respondedBy: string | null;
+  respondedAt: string | null;
   questions: Array<{ id: string; header: string; prompt: string; secret: boolean; allowOther: boolean;
     options: Array<{ label: string; description: string; value: string }> }>;
 }
@@ -35,7 +42,7 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
   request: NativeQuestionView;
   projectId: string;
   readHealthy: boolean;
-  onAnswer(requestId: string, answers: Record<string, string>): Promise<void>;
+  onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [other, setOther] = useState<Record<string, boolean>>({});
@@ -47,19 +54,20 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
   const complete = request.questions.length > 0 && request.questions.every(item => !!answers[item.id]?.trim());
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || uncertain || submitted || !readHealthy || !request.answerable || !complete) return;
+    if (busy || uncertain || submitted || !readHealthy || request.state !== "pending" || !request.canReply || !complete) return;
     setBusy(true); setProblem("");
-    try { await onAnswer(request.id, Object.fromEntries(Object.entries(answers).map(([key, value]) => [key, value.trim()]))); setSubmitted(true); }
+    try { await onAnswer(request.id, request.version, Object.fromEntries(Object.entries(answers).map(([key, value]) => [key, [value.trim()]]))); setSubmitted(true); }
     catch (cause) {
       setProblem(cause instanceof Error ? cause.message : "回答结果未能确认；请按原请求回读。");
       setUncertain(true);
     } finally { setBusy(false); }
   }
   return <article className="native-question-card">
-    <div className="native-panel-heading"><div><span className="native-panel-kicker">原生执行请求</span><h3>等待回答</h3></div><span className="native-panel-state">{request.answerable && readHealthy && !uncertain && !submitted ? "当前可回答" : "需回读确认"}</span></div>
-    <p className="native-panel-context">{request.source} · 请求于 {date(request.requestedAt)}{request.taskId && <> · <a href={href(projectId, "task", request.taskId)}>关联任务</a></>}</p>
-    <details className="native-panel-ids"><summary>原生请求身份</summary><dl><div><dt>请求</dt><dd><code>{request.id}</code></dd></div><div><dt>Thread</dt><dd><code>{request.threadId}</code></dd></div><div><dt>Turn</dt><dd><code>{request.turnId}</code></dd></div></dl></details>
-    <form onSubmit={event => void submit(event)}>{request.questions.map(item => <fieldset key={item.id} disabled={!request.answerable || !readHealthy || uncertain || submitted || busy}>
+    <div className="native-panel-heading"><div><span className="native-panel-kicker">原生执行请求</span><h3>{request.state === "pending" ? "等待回答" : "原生提问记录"}</h3></div><span className="native-panel-state">{request.state === "response_saved" ? "答复已提交" : request.state === "resolved" ? "原生请求已结束" : request.state === "unavailable" ? "请求不可用" : submitted ? "答复已提交，待回读" : request.canReply && readHealthy && !uncertain ? "当前可回答" : "需回读确认"}</span></div>
+    <p className="native-panel-context">{request.sourceKind === "run" ? "关联 Run" : request.sourceKind === "message" ? "关联普通消息" : "暂未绑定业务来源"}{request.sourceId && <> <code>{request.sourceId.slice(0, 8)}</code></>} · 请求于 {date(request.requestedAt)} · {request.isBlocking ? "阻塞当前 Turn" : "非阻塞提问"}{request.taskId && <> · <a href={href(projectId, "task", request.taskId)}>关联任务</a></>}</p>
+    <details className="native-panel-ids"><summary>原生请求身份</summary><dl><div><dt>请求</dt><dd><code>{request.id}</code></dd></div>{request.threadId && <div><dt>Thread</dt><dd><code>{request.threadId}</code></dd></div>}<div><dt>Turn</dt><dd><code>{request.turnId}</code></dd></div>{request.itemId && <div><dt>Item</dt><dd><code>{request.itemId}</code></dd></div>}</dl></details>
+    {request.respondedBy && <p className="native-panel-context">答复者 {request.respondedBy} · {date(request.respondedAt ?? undefined)}；此记录不表示模型已采用答案。</p>}
+    <form onSubmit={event => void submit(event)}>{request.questions.map(item => <fieldset key={item.id} disabled={request.state !== "pending" || !request.canReply || !readHealthy || uncertain || submitted || busy}>
       <legend>{item.header || "需要你的回答"}</legend><p>{item.prompt}</p>
       {item.options.length ? <><div className="native-question-options">{item.options.map(choice => <label key={choice.value}><input type="radio" name={`${request.id}:${item.id}`} value={choice.value} checked={!other[item.id] && answers[item.id] === choice.value} onChange={() => { setOther(old => ({ ...old, [item.id]: false })); setAnswers(old => ({ ...old, [item.id]: choice.value })); }} /><span>{choice.label}{choice.description && <small>{choice.description}</small>}</span></label>)}
         {item.allowOther && <label><input type="radio" name={`${request.id}:${item.id}`} checked={!!other[item.id]} onChange={() => { setOther(old => ({ ...old, [item.id]: true })); setAnswers(old => ({ ...old, [item.id]: "" })); }} />其他回答</label>}</div>
@@ -72,7 +80,7 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
       {request.unavailableReason && <p className="native-panel-warning">{request.unavailableReason}</p>}
       {submitted && <p className="native-panel-warning">回答已提交；请回读原请求状态，不重复发送。</p>}
       {problem && <p className="native-panel-warning" role="alert">{problem}</p>}
-      <div className="native-panel-footer"><small>回答将返回这一原生请求；保存或发送状态须回读确认。</small><button type="submit" className="primary" disabled={!request.answerable || !readHealthy || uncertain || submitted || busy || !complete}>{busy ? "提交中…" : submitted ? "等待回读" : "确认回答"}</button></div>
+      <div className="native-panel-footer"><small>回答将返回这一原生请求；提交后须回读原生状态。</small>{request.state === "pending" && <button type="submit" className="primary" disabled={!request.canReply || !readHealthy || uncertain || submitted || busy || !complete}>{busy ? "提交中…" : submitted ? "等待回读" : "确认回答"}</button>}</div>
     </form>
   </article>;
 }
@@ -83,7 +91,7 @@ export function NativeSessionPanel({ projectId, sessionId, questions, progress, 
   questions: NativeQuestionView[];
   progress: NativeProgressView | null;
   readError: string | null;
-  onAnswer(requestId: string, answers: Record<string, string>): Promise<void>;
+  onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
 }) {
   const visibleQuestions = questions.filter(request => request.sessionId === sessionId);
   const visibleProgress = progress?.sessionId === sessionId ? progress : null;
