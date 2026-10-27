@@ -27,6 +27,7 @@ import { NativeInputBridge } from "./runtime/native-input.js";
 import { NativeInputService } from "@evoloop/core/native-input";
 import { NativeObservationService } from "@evoloop/core/native-observation";
 import { NativeObservationBridge } from "./runtime/native-observation.js";
+import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
@@ -324,11 +325,8 @@ let managedCliBroker: WorkerCredentialBroker | null = null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
   cliEntryForRun: async (session, run) => {
     if (!session || session.id !== run.sessionId || session.projectId !== run.projectId || session.state !== "ready") return null;
-    const issued = await managedCliBroker?.lookup(run.id);
-    if (issued && issued.metadataWithoutSecret.scope.projectId === run.projectId &&
-        issued.metadataWithoutSecret.scope.taskId === run.taskId &&
-        issued.metadataWithoutSecret.scope.sessionId === run.sessionId)
-      return {command: issued.wrapperPath, actorId: issued.principal.actorId};
+    const brokered = await brokeredCliForRun(managedCliBroker, session, run);
+    if (brokered) return brokered;
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,
       run.projectId, session.id, session.actorId, run.taskId) : null;

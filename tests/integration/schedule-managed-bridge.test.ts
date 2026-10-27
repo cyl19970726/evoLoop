@@ -17,6 +17,9 @@ import { WorkerCredentialBroker } from "../../apps/coordinator/src/workers/crede
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import { ManagedLoopRunner } from "../../apps/coordinator/src/orchestration/runner.js";
 import { createWorkerSealer } from "../../apps/coordinator/src/orchestration/seal.js";
+import { brokeredCliForRun } from "../../apps/coordinator/src/runtime/brokered-cli.js";
+import { buildLightweightInput } from "../../apps/coordinator/src/runtime/lightweight-input.js";
+import { fixedDocumentSummary } from "../../apps/coordinator/src/runtime/materials.js";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || new URL(url).pathname !== "/evoloop_schedule_bridge_test")
@@ -97,7 +100,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   const scheduleId = randomUUID(), revisionId = randomUUID();
   const command = { type: "schedule.create", scheduleId, revisionId, timezone: "UTC",
     rule: { kind: "once", atUtc: planned }, misfire: { kind: "latest" }, overlap: "skip",
-    template: { title: "Recurring check", content: "# Do scheduled check", acceptance: "Record result",
+    template: { title: "Recurring check", content: `# Do scheduled check\n${"Read the fixed occurrence. ".repeat(55)}`, acceptance: "Record result",
       owner: business, managedTarget: { loopId, stageId } },
     authorization: { scopeId: "schedule-scope", roleId: business, authorizedBy: owner, expiresAtUtc: null },
     reason: "Create managed Schedule", watermarkUtc: now, state: "active" };
@@ -199,6 +202,28 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   }, "business Run");
   const childRun = child.runtimeRunId!;
   assert.equal((await workflow.getRuntimeRun(principal(), projectId, childRun)).taskId, taskId);
+  const childWorker = await broker.lookup(childRun);
+  assert(childWorker, "runner issued the business worker credential");
+  const reservedRun = await workflow.getRuntimeRun(principal(), projectId, childRun);
+  const reservedSession = await workflow.getRuntimeSession(principal(), projectId, reservedRun.sessionId);
+  const bootstrap = await brokeredCliForRun(broker, reservedSession, reservedRun);
+  assert.deepEqual(bootstrap, { command: childWorker.wrapperPath, actorId: childWorker.principal.actorId });
+  const fixedTask = await workflow.getTaskRevision(principal(), projectId, reservedRun.taskId, reservedRun.taskRevisionId);
+  assert(fixedTask.basis);
+  const primary = await workflow.getDocumentPayloadRevision(principal(), projectId,
+    fixedTask.revision.contentDocumentId, fixedTask.revision.contentRevisionId);
+  const nativeInput = buildLightweightInput(reservedRun, fixedTask.revision, fixedTask.basis,
+    [fixedDocumentSummary(primary)], bootstrap);
+  const handoff = JSON.parse(nativeInput.input.split("\n")[1]!) as {
+    cliBootstrap: {command:string;actorId:string}; taskPreview: {truncated:boolean};
+    runInstructionRead: {command:string};
+  };
+  assert.equal(handoff.taskPreview.truncated, true, "the real scheduled Task needs its CLI to read full text");
+  assert.equal(handoff.cliBootstrap.command, childWorker.wrapperPath);
+  assert.equal(handoff.cliBootstrap.actorId, childWorker.principal.actorId);
+  assert.match(handoff.runInstructionRead.command, new RegExp(`run-input ${childRun}`));
+  assert.equal(await brokeredCliForRun(broker, reservedSession, {...reservedRun,taskId:randomUUID()}), null,
+    "another Task cannot borrow this worker's CLI");
   assert.equal(child.parentDispatchId, parentId);
   await runner.pump();
   assert.equal((await orchestration.listDispatches(principal(), projectId, loopId)).items
