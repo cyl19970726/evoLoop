@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { isUnconfirmed } from "../api";
-import { date, href } from "../ui/shared";
+import { date } from "../ui/shared";
 
 /** A bounded display model. The API adapter supplies only verified, project-owned facts. */
 export interface NativeQuestionView {
@@ -48,10 +48,11 @@ export interface NativeProgressView {
     modelContextWindow: number | null; observedAt: string };
 }
 
-function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
+function NativeQuestionCard({ request, projectId, readHealthy, onAnswer, taskHref }: {
   request: NativeQuestionView;
   projectId: string;
   readHealthy: boolean;
+  taskHref(id: string): string;
   onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -80,7 +81,7 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
   }
   return <article className="native-question-card">
     <div className="native-panel-heading"><div><span className="native-panel-kicker">原生执行请求</span><h3>{request.state === "pending" ? "等待回答" : "原生提问记录"}</h3></div><span className="native-panel-state">{request.state === "response_saved" ? request.responseOutcome === "submitted" ? "已发送，待结果" : request.responseOutcome === "unknown" ? "发送结果未确认" : "答复已保存" : request.state === "resolved" ? "原生请求已结束" : request.state === "unavailable" ? "请求不可用" : submitted ? "已保存，待回读" : request.canReply && readHealthy && !uncertain ? "当前可回答" : "需回读确认"}</span></div>
-    <p className="native-panel-context">{request.sourceKind === "run" ? "关联 Run" : request.sourceKind === "message" ? "关联普通消息" : "暂未绑定业务来源"}{request.sourceId && <> <code>{request.sourceId.slice(0, 8)}</code></>} · 请求于 {date(request.requestedAt)} · {request.isBlocking ? "阻塞当前 Turn" : "非阻塞提问"}{request.taskId && <> · <a href={href(projectId, "task", request.taskId)}>关联任务</a></>}</p>
+    <p className="native-panel-context">{request.sourceKind === "run" ? "关联 Run" : request.sourceKind === "message" ? "关联普通消息" : "暂未绑定业务来源"}{request.sourceId && <> <code>{request.sourceId.slice(0, 8)}</code></>} · 请求于 {date(request.requestedAt)} · {request.isBlocking ? "阻塞当前 Turn" : "非阻塞提问"}{request.taskId && <> · <a href={taskHref(request.taskId)}>关联任务</a></>}</p>
     <details className="native-panel-ids"><summary>原生请求身份</summary><dl><div><dt>请求</dt><dd><code>{request.id}</code></dd></div>{request.threadId && <div><dt>Thread</dt><dd><code>{request.threadId}</code></dd></div>}{request.turnId && <div><dt>Turn</dt><dd><code>{request.turnId}</code></dd></div>}{request.itemId && <div><dt>Item</dt><dd><code>{request.itemId}</code></dd></div>}</dl></details>
     {request.respondedBy && <p className="native-panel-context">答复者 {request.respondedBy} · {date(request.respondedAt ?? undefined)}；此记录不表示模型已采用答案。</p>}
     {request.responseOutcome === "unknown" && <p className="native-panel-warning">原生发送结果未确认。请核对原请求状态，不要重复回答。</p>}
@@ -108,8 +109,8 @@ const staleReasonLabel: Record<string, string> = { disconnected: "原生连接�
   projection_unavailable: "进度记录暂不可读取", restart: "原生连接已重启" };
 const tokens = (value: number | null) => value === null ? "未提供" : value.toLocaleString("zh-CN");
 
-function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
-  progress: NativeProgressView; projectId: string; currentRead: boolean; waiting: boolean;
+function NativeProgressCard({ progress, currentRead, waiting, taskHref }: {
+  progress: NativeProgressView; currentRead: boolean; waiting: boolean; taskHref(id: string): string;
 }) {
   const fresh = currentRead && progress.freshness === "live";
   const turn = progress.turn;
@@ -146,11 +147,11 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
     {progress.plan && <details className="native-progress-detail"><summary>计划步骤 · Turn {progress.plan.turnId}</summary><ol>{progress.plan.steps.map((step, index) => <li key={`${index}:${step.step}`}>{stepState(step.status)} · {step.step}</li>)}</ol>{progress.plan.explanation && <p>{progress.plan.explanation}</p>}<small>观察于 {date(progress.plan.observedAt)}{progress.plan.truncated && " · 原生内容已截断"}</small></details>}
     {progress.diff && <details className="native-progress-detail"><summary>变更通知来源 · Turn {progress.diff.turnId}</summary><p>工作区只展示通知，不展示原生变更文本；请在受权的原生历史中核对内容。</p><small>观察于 {date(progress.diff.observedAt)}{progress.diff.truncated && " · 原生通知文本已截断"}</small></details>}
     <p className="native-progress-usage">{fresh ? "累计 Token" : "上次记录的累计 Token"}：输入 {tokens(progress.usage?.total.inputTokens ?? null)} · 输出 {tokens(progress.usage?.total.outputTokens ?? null)} · 总计 {tokens(progress.usage?.total.totalTokens ?? null)}。{progress.usage && <>其中缓存输入 {tokens(progress.usage.total.cachedInputTokens)}、推理输出 {tokens(progress.usage.total.reasoningOutputTokens)} 是子项，不重复相加；用量观察于 {date(progress.usage.observedAt)}。</>}未提供实际费用。原生事件不代替 Turn 终态、Run 结果或交付验收。</p>
-    <details className="native-panel-ids"><summary>原生进度来源</summary><p>Thread <code>{progress.threadId}</code>{turn && <> · Turn <code>{turn.id}</code>{turn.source && <> · {turn.source.kind === "run" ? "Run" : "普通消息"} <code>{turn.source.id}</code>{turn.source.taskId && <> · <a href={href(projectId, "task", turn.source.taskId)}>关联任务</a></>}</>}</>}</p></details>
+    <details className="native-panel-ids"><summary>原生进度来源</summary><p>Thread <code>{progress.threadId}</code>{turn && <> · Turn <code>{turn.id}</code>{turn.source && <> · {turn.source.kind === "run" ? "Run" : "普通消息"} <code>{turn.source.id}</code>{turn.source.taskId && <> · <a href={taskHref(turn.source.taskId)}>关联任务</a></>}</>}</>}</p></details>
   </section>;
 }
 
-export function NativeSessionPanel({ projectId, sessionId, questions, progress, progressError, progressCurrentRead, readError, replyBlockedReason, onAnswer }: {
+export function NativeSessionPanel({ projectId, sessionId, questions, progress, progressError, progressCurrentRead, readError, replyBlockedReason, onAnswer, taskHref, section = "all" }: {
   projectId: string;
   sessionId: string;
   questions: NativeQuestionView[];
@@ -160,19 +161,21 @@ export function NativeSessionPanel({ projectId, sessionId, questions, progress, 
   readError: string | null;
   replyBlockedReason: string | null;
   onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
+  taskHref(id: string): string;
+  section?: "all" | "questions" | "diagnostics";
 }) {
   const visibleQuestions = questions.filter(request => request.sessionId === sessionId);
   const openQuestions = visibleQuestions.filter(request => request.state === "pending" || request.state === "response_saved");
   const closedQuestions = visibleQuestions.filter(request => request.state === "resolved" || request.state === "unavailable");
   const visibleProgress = progress?.sessionId === sessionId && progress.projectId === projectId ? progress : null;
   return <div className="native-session-panel">
-    {openQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
-    {readError && <p className="native-panel-warning" role="alert">原生状态暂不可读取：{readError}。保留上次内容仅供核对，请重新读取后再回答。</p>}
-    {replyBlockedReason && openQuestions.length > 0 && <p className="native-panel-warning">{replyBlockedReason}</p>}
-    {progressError && <p className="native-panel-warning" role="alert">原生进度暂不可显示：{progressError}</p>}
-    {visibleProgress && <NativeProgressCard progress={visibleProgress} projectId={projectId} currentRead={progressCurrentRead} waiting={!!visibleProgress.turn && openQuestions.some(request => request.state === "pending" && request.isBlocking && request.turnId === visibleProgress.turn?.id)} />}
-    {closedQuestions.length > 0 && <details className="native-question-history"><summary>已结束的原生提问 · {closedQuestions.length}</summary>
-      {closedQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
+    {section !== "diagnostics" && openQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} taskHref={taskHref} />)}
+    {section !== "diagnostics" && readError && <p className="native-panel-warning" role="alert">原生状态暂不可读取：{readError}。保留上次内容仅供核对，请重新读取后再回答。</p>}
+    {section !== "diagnostics" && replyBlockedReason && openQuestions.length > 0 && <p className="native-panel-warning">{replyBlockedReason}</p>}
+    {section !== "questions" && progressError && <p className="native-panel-warning" role="alert">原生进度暂不可显示：{progressError}</p>}
+    {section !== "questions" && visibleProgress && <NativeProgressCard progress={visibleProgress} currentRead={progressCurrentRead} waiting={!!visibleProgress.turn && openQuestions.some(request => request.state === "pending" && request.isBlocking && request.turnId === visibleProgress.turn?.id)} taskHref={taskHref} />}
+    {section !== "questions" && closedQuestions.length > 0 && <details className="native-question-history"><summary>已结束的原生提问 · {closedQuestions.length}</summary>
+      {closedQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} taskHref={taskHref} />)}
     </details>}
   </div>;
 }

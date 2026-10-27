@@ -95,11 +95,12 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /未启用.*不会启动此会话/);
   assert.equal(await page.getByText("保存能力：当前可保存待处理消息").count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count() > 0, true);
+  assert.equal(await page.getByLabel("消息内容").getAttribute("placeholder"), "写消息给当前 Session…");
+  assert.ok((await page.getByLabel("消息内容").boundingBox())!.height < 55, "the empty composer stays compact");
   assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /配置变化后请点上方“重新读取”/);
   await fetch(`${base}/__fixture/update`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await page.getByRole("status").filter({ hasText: "本次重读确认" }).waitFor();
-  await page.locator(".command-disclosure").filter({ hasText: "保存待处理" }).first().locator("summary").click();
   await page.getByLabel("消息内容").fill("保存后的消息详情");
   await page.getByRole("button", { name: "保存待处理", exact: true }).click();
   await page.getByText(/消息列表暂不可读取：列表暂不可读/).waitFor();
@@ -126,7 +127,8 @@ test("Session message entry distinguishes saving, execution and manual handoff",
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
   await page.getByRole("heading", { name: "已撤销外部会话" }).waitFor();
-  assert.match(await page.locator(".session-workspace-section").filter({ hasText: "普通对话" }).first().innerText(), /不能向当前外部会话保存或转交消息/);
+  await page.getByText("消息处理规则").click();
+  assert.match(await page.locator(".session-workspace-section").filter({ hasText: "对话" }).first().innerText(), /不能向当前外部会话保存或转交消息/);
   assert.equal(await page.getByText("外部连接已撤销。", { exact: true }).count(), 1);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count(), 0);
 });
