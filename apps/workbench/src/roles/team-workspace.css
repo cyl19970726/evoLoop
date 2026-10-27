@@ -64,5 +64,5 @@
 .allocation-backlink-groups>li>details{margin-top:8px}
 .allocation-backlink-relations{display:grid;gap:8px;margin-top:10px}
 .allocation-backlink-relations .discussion-relation-card{margin:0;background:#fff}
-@media(max-width:1100px){.discussion-exploration-grid{grid-template-columns:minmax(190px,.8fr) minmax(320px,1.3fr)}.discussion-exploration-relations{grid-column:1/-1;min-height:0}}
-@media(max-width:690px){.team-workspace .discussion-toolbar{align-items:stretch;flex-direction:column}.discussion-exploration-grid{grid-template-columns:1fr;gap:12px}.discussion-exploration-column{min-height:0;padding:18px}.discussion-exploration-relations{grid-column:auto}}
+@media(max-width:1250px){.discussion-exploration-grid{grid-template-columns:minmax(190px,.8fr) minmax(320px,1.3fr)}.discussion-exploration-relations{grid-column:1/-1;min-height:0}}
+@media(max-width:850px){.team-workspace .discussion-toolbar{align-items:stretch;flex-direction:column}.discussion-exploration-grid{grid-template-columns:1fr;gap:12px}.discussion-exploration-column{min-height:0;padding:18px}.discussion-exploration-relations{grid-column:auto}}
