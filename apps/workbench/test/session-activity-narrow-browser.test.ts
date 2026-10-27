@@ -19,6 +19,14 @@ const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTo
 const runId = "95000003-0000-4000-8000-000000000003";
 const messageId = "95000005-0000-4000-8000-000000000005";
 const taskId = "95000004-0000-4000-8000-000000000004";
+const olderResult = { deliveryId: "old-delivery", taskId, taskTitle: "最近真实成果", technicalResult: "failed",
+  artifactRef: "old-report", artifactRevision: "old", contentHash: "a".repeat(64), submittedAt: "2026-10-27T05:32:41.000Z", latestUse: null,
+  source: { kind: "delivery", id: "old-delivery", revision: null, evidence: "project-record", href: "" } };
+const recentResult = { ...olderResult, deliveryId: "new-delivery", technicalResult: "passed", artifactRevision: "new",
+  source: { ...olderResult.source, id: "new-delivery" },
+  submittedAt: "2026-10-27T05:34:07.000Z", latestUse: { result: "used", observer: "reviewer", observerKind: "human",
+    createdAt: "2026-10-27T05:41:08.000Z", source: { kind: "consumer-observation", id: "use-new", revision: null,
+      evidence: "independent-use", href: "" } } };
 const longUrl = `https://example.test/results/${"a".repeat(96)}?sha256=${"b".repeat(64)}`;
 const activity = { id: "activity-long-run", sequence: "2", sessionKey, kind: "run.bound",
   summary: `旧 Run completed · ${longUrl} · ${"c".repeat(64)}`, occurredAt: stamp, recordedAt: stamp,
@@ -51,7 +59,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   let includeMessage = false, includeQuestion = false, messageReplied = false, runCompleted = false, holdTrace = false, traceHeld = false;
   let scenario: "normal" | "failed" | "unknown" = "normal";
   let lifecycle: "ready" | "closing" | "closed" = "ready";
-  let lateMessage = false, completedClaim = false;
+  let lateMessage = false, completedClaim = false, messageWithoutWork = false;
   let releaseTrace: (() => void) | null = null;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
@@ -68,11 +76,11 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     if (url.pathname === "/__fixture/release-trace") { releaseTrace?.(); res.end("ok"); return; }
     if (url.pathname === "/__fixture/failed") { scenario = "failed"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/unknown") { scenario = "unknown"; res.end("ok"); return; }
-    if (url.pathname === "/__fixture/ready-message") { lifecycle = "ready"; lateMessage = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/ready-message") { lifecycle = "ready"; lateMessage = true; messageWithoutWork = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/closing") { lifecycle = "closing"; lateMessage = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/closed") { lifecycle = "closed"; res.end("ok"); return; }
-    if (url.pathname === "/__fixture/completed-claim") { lifecycle = "ready"; lateMessage = false; completedClaim = true; runCompleted = true; res.end("ok"); return; }
-    if (url.pathname === "/__fixture/active-run") { completedClaim = false; runCompleted = false; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/completed-claim") { lifecycle = "ready"; lateMessage = false; messageWithoutWork = false; completedClaim = true; runCompleted = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/active-run") { completedClaim = false; runCompleted = false; messageWithoutWork = false; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
@@ -82,13 +90,15 @@ test("long Run activity and expanded source stay inside the Session page at mobi
         totals: { current: 1, historical: 0, unclassified: 0 }, attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: 0, unclassifiedSessions: 0 } };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) {
         value = idle
-        ? { ...snapshot, session: { ...snapshot.session, busy: false, latestBusinessRun: null },
+        ? { ...snapshot, session: { ...snapshot.session, busy: false, currentTask: null, latestBusinessRun: null }, currentWork: null,
+          results: [olderResult, recentResult],
           activity: [...snapshot.activity.map(item => item.id === "run-business" && runCompleted ? { ...item, summary: "业务运行 · completed" } : item.id === "activity-long-run" && runCompleted ? { ...item, source: { ...item.source, revision: "updated-source" } } : item), ...(includeMessage ? [messageActivity] : [])],
           nativeInputRequests: includeQuestion ? [{ id: "question-1", version: 1, sessionId, turnId: "turn", itemId: "item-1", isBlocking: true,
             state: "pending", canReply: false, reason: "当前不可回答", createdAt: stamp, response: null,
             source: { kind: "run", runId, taskId }, questions: [{ id: "q", header: "确认", question: "是否继续？", isOther: false, options: null }] }] : [],
           nativeObservation: { ...snapshot.nativeObservation, status: "idle", currentTurn: null, items: [] } }
-        : { ...snapshot, session: { ...snapshot.session, runtimeState: lifecycle, busy: !completedClaim,
+        : { ...snapshot, currentWork: messageWithoutWork ? null : snapshot.currentWork,
+          session: { ...snapshot.session, runtimeState: lifecycle, busy: !completedClaim,
           latestBusinessRun: { ...snapshot.session.latestBusinessRun, state: completedClaim ? "completed" : "running" } },
           nativeObservation: lateMessage ? { ...snapshot.nativeObservation, currentTurn: { ...snapshot.nativeObservation.currentTurn,
             source: { kind: "message", messageId, processingId: messageId, actorId: "reader", operationId: messageId } } } : snapshot.nativeObservation,
@@ -150,6 +160,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await fetch(`${base}/__fixture/ready-message`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await page.locator(".session-status-badge").getByText("消息处理中").waitFor();
+  await page.locator(".session-current-work").getByText("正在回复消息").waitFor();
   await fetch(`${base}/__fixture/closing`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await page.locator(".session-status-badge").getByText("关闭中").waitFor();
@@ -237,6 +248,10 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
   await page.locator(".session-status-badge").getByText("空闲").waitFor();
+  const recentWork = page.locator(".session-current-work");
+  await recentWork.getByText("最近真实成果", { exact: true }).waitFor();
+  await recentWork.getByText("技术结果：passed · 已记录使用", { exact: false }).waitFor();
+  assert.equal(await recentWork.getByText("已有交付待核对").count(), 0, "older failed Delivery cannot override newer used Delivery");
   await page.getByLabel("活动范围").selectOption("important");
   const idleItem = page.locator(".session-activity-list li").first();
   await idleItem.getByText("历史记录：运行中").waitFor();

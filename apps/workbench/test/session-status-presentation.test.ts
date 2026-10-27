@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { currentWorkRelationLabel, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
+import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
+import type { SessionResult } from "@evoloop/contracts/session-observation";
 
 test("owned lifecycle takes priority over activity and only ready can be idle", () => {
   for (const [runtimeState, expected] of [["reserved", "已预留"], ["creating", "创建中"], ["closing", "关闭中"], ["unknown", "生命周期待核对"], ["closed", "已关闭"]] as const) {
@@ -22,11 +23,36 @@ test("external sessions keep unverified activity separate from owned lifecycle",
 
 test("only a ready owned Session with confirmed no activity is called idle", () => {
   for (const state of ["reserved", "creating", "closing", "unknown", "closed", null] as const) {
-    assert.notEqual(sessionIdleSummary({ kind: "owned", runtimeState: state, busy: false }, false), "当前空闲");
+    assert.notEqual(sessionIdleSummary({ kind: "owned", runtimeState: state, busy: false }), "当前空闲");
   }
-  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }, false), "当前空闲");
-  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }, true), "当前空闲 · 已有交付待核对");
-  assert.equal(sessionIdleSummary({ kind: "external", runtimeState: null, busy: null }, false), "外部会话状态需核对");
+  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }), "当前空闲");
+  assert.equal(sessionIdleSummary({ kind: "external", runtimeState: null, busy: null }), "外部会话状态需核对");
+});
+
+test("latest fixed Delivery, not an older observation for the same Task, drives the idle summary", () => {
+  const result = (deliveryId: string, submittedAt: string, use: "used" | "failed" | "notUsed" | null) => ({
+    deliveryId, taskId: "task-1", taskTitle: "从用户视角审核 Session 协作总体计划", technicalResult: "passed", submittedAt,
+    latestUse: use ? { result: use, createdAt: submittedAt, observer: "reviewer", observerKind: "human", source: {} } : null,
+  }) as SessionResult;
+  const older = result("old", "2026-10-27T05:32:41Z", null);
+  const recent = result("new", "2026-10-27T05:34:07Z", "used");
+  assert.equal(latestSessionResult([older, recent]), recent, "source order cannot make the old null observation current");
+  assert.equal(sessionResultUseLabel(latestSessionResult([older, recent])!), "已记录使用");
+  assert.equal(latestSessionResult([recent, older]), recent);
+  assert.equal(latestSessionResult([result("older-failed", "2026-10-27T05:33:00Z", "failed"), recent]), recent);
+  assert.equal(sessionResultUseLabel(latestSessionResult([recent, result("newer", "2026-10-27T06:00:00Z", "failed")])!), "使用观察失败");
+  assert.equal(sessionResultUseLabel(latestSessionResult([recent, result("newest", "2026-10-27T07:00:00Z", null)])!), "尚无实际使用观察");
+  assert.equal(sessionResultUseLabel(result("not-used", "2026-10-27T07:00:00Z", "notUsed")), "已记录未使用");
+  assert.equal(sessionResultUseLabel(older), "尚无实际使用观察");
+  assert.equal(latestSessionResult([]), null);
+  const ready = { kind: "owned" as const, runtimeState: "ready", busy: false };
+  assert.equal(idleSessionResult(ready, null, [older, recent]), recent);
+  assert.equal(idleSessionResult(ready, null, []), null);
+  assert.equal(idleSessionResult(ready, { id: "task-1" } as Parameters<typeof idleSessionResult>[1], [recent]), null);
+  for (const runtimeState of ["closing", "closed", "unknown"])
+    assert.equal(idleSessionResult({ ...ready, runtimeState }, null, [recent]), null);
+  assert.equal(idleSessionResult({ ...ready, busy: true }, null, [recent]), null);
+  assert.equal(idleSessionResult({ kind: "external", runtimeState: null, busy: false }, null, [recent]), null);
 });
 
 test("late message progress cannot mask a closing or closed owned Session", () => {
