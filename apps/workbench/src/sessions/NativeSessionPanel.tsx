@@ -113,6 +113,7 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
 }) {
   const fresh = currentRead && progress.freshness === "live";
   const turn = progress.turn;
+  const turnEnded = turn !== null && ["completed", "failed", "interrupted"].includes(turn.status);
   const stateLabel = !fresh ? "观察待核对" : progress.status === "notLoaded" ? "原生会话尚未加载"
     : progress.status === "systemError" ? "原生观察异常" : waiting ? "等待回答"
     : turn?.status === "completed" ? "Turn 已结束" : turn?.status === "failed" ? "Turn 执行失败"
@@ -125,9 +126,9 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
   const partial = progress.items.length === 10 || progress.items.some(item => item.truncated)
     || !!progress.plan?.truncated || !!progress.diff?.truncated;
   const planDone = progress.plan?.steps.filter(step => step.status === "completed").length ?? 0;
-  const itemState = (status: keyof typeof itemStateLabel) => fresh ? itemStateLabel[status]
+  const itemState = (status: keyof typeof itemStateLabel) => turnEnded && status === "inProgress" ? "Turn 结束时结果未确认" : fresh ? itemStateLabel[status]
     : status === "inProgress" ? "当时进行中，当前待核对" : `上次记录：${itemStateLabel[status]}`;
-  const stepState = (status: keyof typeof stepStateLabel) => fresh ? stepStateLabel[status]
+  const stepState = (status: keyof typeof stepStateLabel) => turnEnded && status === "inProgress" ? "Turn 结束时结果未确认" : fresh ? stepStateLabel[status]
     : status === "inProgress" ? "当时进行中，当前待核对" : `上次记录：${stepStateLabel[status]}`;
   const staleReason = progress.staleReason ? staleReasonLabel[progress.staleReason] ?? "原因待核对" : null;
   return <section className="native-progress-card">
@@ -135,6 +136,8 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
     <p className="native-panel-context">最近事件 {date(progress.lastEventAt)} · 记录于 {date(progress.observedAt)} · {partial ? "仅展示最近有界范围" : "仅展示已观察到的事件"}</p>
     {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{staleReason ? ` 原因：${staleReason}。` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
     {fresh && progress.status === "systemError" && <p className="native-panel-warning">原生状态报告异常；请结合固定 Run 和原生终态核对。</p>}
+    {turnEnded && (progress.items.some(item => item.status === "inProgress") || progress.plan?.steps.some(step => step.status === "inProgress")) &&
+      <p className="native-panel-warning">本轮已结束，部分工具或计划步骤的结果尚未确认；这些记录不代表仍在执行。</p>}
     <div className="native-progress-facts"><div><small>{fresh && stateLabel === "运行中" && tool?.status === "inProgress" ? "当前工具" : "最近工具活动"}</small><strong>{tool ? `${tool.name} · ${itemState(tool.status)}` : "暂无可确认的工具活动"}</strong></div>
       <div><small>计划进展</small><strong>{progress.plan ? `${fresh ? "" : "上次记录："}${planDone}/${progress.plan.steps.length} 步已完成${progress.plan.truncated ? " · 已截断" : ""}` : "暂无可确认的计划变化"}</strong></div>
       <div><small>{fresh ? "变更通知" : "上次变更通知"}</small><strong>{progress.diff ? progress.diff.hasContent ? "已观察到变更；内容需在受权原生历史核对" : "已观察到变更通知" : "暂无可确认的变更"}{progress.diff?.truncated ? " · 已截断" : ""}</strong></div></div>
