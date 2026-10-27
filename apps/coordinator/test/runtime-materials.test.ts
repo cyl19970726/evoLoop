@@ -62,7 +62,7 @@ test("normal Run sends a bounded fixed manifest for an 11.8 KiB HTML and 1.4 MB 
     workflow: { ...workflow, getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
       requestedDocumentId === contentDocumentId ? primary : fixedDesign } as never,
     trusted: {} as never, principals: [principal], canWrite: () => true,
-    cliEntryForRun: async () => "/usr/local/bin/python3 /private/fixed-cli.py",
+    cliEntryForRun: async () => ({command:"/usr/local/bin/python3 /private/fixed-cli.py",actorId:"recipient"}),
     allowedCwd: async () => true, hasGrant: () => true,
     readDocumentOriginal: async () => { throw new Error("normal first input must not read original bytes"); } });
   const packet = await (designRunner as unknown as { lightweightInput(p: Principal, r: RuntimeRunRecord): Promise<{ input: string; byteLength: number; contentHash: string }> }).lightweightInput(principal, run);

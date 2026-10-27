@@ -15,8 +15,12 @@ const utf8 = (bytes: Uint8Array): string => {
 export class FixedBodyCache {
   private entries = new Map<string, { bytes: Buffer; expiresAt: number }>();
   private used = 0;
+  private loading = new Map<string, Promise<Buffer>>();
+  private loadingBytes = 0;
+  private waiters: Array<() => void> = [];
   constructor(readonly maxBytes = 24 * 1024 * 1024, private readonly ttlMs = 60_000) {}
   get bytesUsed() { return this.used; }
+  get bytesLoading() { return this.loadingBytes; }
   get(key: string): Buffer | null {
     const entry = this.entries.get(key);
     if (!entry) return null;
@@ -39,6 +43,27 @@ export class FixedBodyCache {
     }
     this.entries.set(key, { bytes, expiresAt: Date.now() + this.ttlMs });
     this.used += bytes.length;
+  }
+  async load(key: string, expectedBytes: number, reader: () => Promise<Buffer>): Promise<Buffer> {
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > this.maxBytes)
+      return fail("Fixed body exceeds the bounded read capacity");
+    for (;;) {
+      const cached = this.get(key);
+      if (cached) return cached;
+      const current = this.loading.get(key);
+      if (current) return current;
+      if (this.loadingBytes + expectedBytes <= this.maxBytes) break;
+      await new Promise<void>(resolve => this.waiters.push(resolve));
+    }
+    this.loadingBytes += expectedBytes;
+    const pending = Promise.resolve().then(reader).then(bytes => { this.set(key, bytes); return bytes; }).finally(() => {
+      this.loading.delete(key);
+      this.loadingBytes -= expectedBytes;
+      const waiting = this.waiters.splice(0);
+      for (const wake of waiting) wake();
+    });
+    this.loading.set(key, pending);
+    return pending;
   }
 }
 
@@ -65,14 +90,15 @@ export async function fixedPart(options: OriginalReaderOptions, principal: Princ
   // Authorization and the current registration are checked on every page; only a verified main body is cached.
   const cacheKey = blobId === undefined ? JSON.stringify([principal.actorId, revision.projectId,
     revision.documentId, revision.id, registered.id, registered.contentHash, registered.size]) : null;
-  const cached = cacheKey ? cache?.get(cacheKey) : null;
-  if (cached) return cached;
-  const read = await blobStore.read(registered);
-  if (read.status !== "available") return fail("Fixed resource is unavailable");
-  if (read.bytes.length !== registered.size || sha(read.bytes) !== registered.contentHash) return fail("Fixed resource hash mismatch");
-  const verified = Buffer.from(read.bytes);
-  if (cacheKey) { utf8(verified); cache?.set(cacheKey, verified); }
-  return verified;
+  const readVerified = async () => {
+    const read = await blobStore.read(registered);
+    if (read.status !== "available") return fail("Fixed resource is unavailable");
+    if (read.bytes.length !== registered.size || sha(read.bytes) !== registered.contentHash) return fail("Fixed resource hash mismatch");
+    const verified = Buffer.from(read.bytes);
+    if (cacheKey) utf8(verified);
+    return verified;
+  };
+  return cacheKey && cache ? cache.load(cacheKey, registered.size, readVerified) : readVerified();
 }
 
 export function bodyPage(bytes: Buffer, cursor: number, limit: number) {

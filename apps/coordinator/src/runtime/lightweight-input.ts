@@ -4,6 +4,7 @@ import type { FixedDocumentSummary } from "./materials.js";
 import { PreflightError } from "./preflight-report.js";
 
 export const lightweightInputProtocol = "evoloop-lightweight-v1";
+export interface CliBootstrap { command: string; actorId: string }
 const maxInputBytes = 256 * 1024;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -24,7 +25,7 @@ function preview(value: string, maxBytes: number) {
 
 /** This is the exact native Turn message; the Run inputHash still hashes run.input alone. */
 export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevision, basis: BasisSet,
-  documents: FixedDocumentSummary[], cliBootstrap: string | null = null) {
+  documents: FixedDocumentSummary[], cliBootstrap: CliBootstrap | null = null) {
   if (revision.id !== run.taskRevisionId || revision.taskId !== run.taskId ||
       basis.id !== run.basisSetId || basis.taskRevisionId !== run.taskRevisionId ||
       hash(run.input) !== run.inputHash ||
@@ -35,8 +36,8 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
   const source = (document: FixedDocumentSummary) => ({ role: document.documentId === revision.contentDocumentId &&
     document.revisionId === revision.contentRevisionId ? "primary" : "basis", ...document });
   const inlineInput = Buffer.byteLength(run.input, "utf8") <= 16 * 1024 ? run.input : null;
-  const needsCli = inlineInput === null || Buffer.byteLength(revision.content, "utf8") > 1200 ||
-    Buffer.byteLength(revision.acceptance, "utf8") > 1200 ||
+  const taskPreview = preview(revision.content, 1200), acceptancePreview = preview(revision.acceptance, 1200);
+  const needsCli = inlineInput === null || taskPreview.truncated || acceptancePreview.truncated ||
     documents.some(document => document.documentId !== revision.contentDocumentId ||
       document.revisionId !== revision.contentRevisionId || document.bodyBytes === null || document.assetCount > 0);
   if (!cliBootstrap && needsCli)
@@ -46,13 +47,13 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     taskRevisionId: run.taskRevisionId, basisSetId: run.basisSetId,
     runId: run.id, sessionId: run.sessionId, operationId: run.operationId,
     title: revision.title,
-    taskPreview: preview(revision.content, 1200), acceptancePreview: preview(revision.acceptance, 1200),
+    taskPreview, acceptancePreview,
     runInstructionPreview: { ...preview(run.input, 4096), inputHash: run.inputHash },
     runInstructionExactInline: inlineInput,
-    cliBootstrap: cliBootstrap ? { command: cliBootstrap, source: "configured-session-run" } : null,
+    cliBootstrap: cliBootstrap ? { ...cliBootstrap, source: "verified-run-binding" } : null,
     runInstructionRead: {
       requiredBeforeAction: true, inputHash: run.inputHash, totalBytes: Buffer.byteLength(run.input, "utf8"),
-      command: cliBootstrap ? `${cliBootstrap} run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE` : null,
+      command: cliBootstrap ? `${cliBootstrap.command} run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE` : null,
       subcommand: `run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE`,
       path: `/api/projects/${run.projectId}/runtime/runs/${run.id}/input`,
     },

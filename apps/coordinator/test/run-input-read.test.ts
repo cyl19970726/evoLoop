@@ -19,13 +19,13 @@ test("a long answered queue continuation stays on the fixed Run and can be read 
   const basis = { id: basisSetId, taskRevisionId, members: [{ documentId, revisionId }] } as BasisSet;
   const packet = buildLightweightInput(run, revision, basis, [{ documentId, revisionId, contentHash: hash(body),
     format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body), assetCount: 0, assetBytes: 0 }],
-    "/usr/local/bin/python3 /private/fixed-cli.py");
+    {command:"/usr/local/bin/python3 /private/fixed-cli.py",actorId:"recipient"});
   assert.ok(packet.byteLength < 16_000);
   assert.ok(!packet.input.includes(answer));
   assert.match(packet.input, /run-input/);
   assert.match(packet.input, /requiredBeforeAction":true/);
   assert.match(packet.input, new RegExp(run.inputHash));
-  assert.match(packet.input, /configured-session-run/);
+  assert.match(packet.input, /verified-run-binding/);
   assert.match(packet.input, /\/usr\/local\/bin\/python3 \/private\/fixed-cli\.py run-input/);
   assert.throws(() => buildLightweightInput(run, revision, basis, [{ documentId, revisionId,
     contentHash: hash(body), format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body),
@@ -63,4 +63,37 @@ test("a short encoded token never makes a cleaned Run preview look complete", ()
   assert.equal(handoff.runInstructionRead.command, null, "no unconfigured PATH command is advertised");
   assert.doesNotMatch(handoff.runInstructionPreview.text, /A{300}|B{300}/);
   assert.equal(runInputPage(run).body, input);
+  const hiddenRequirement = `# Task\nFollow exact value ${"C".repeat(300)}`;
+  const redactedRevision = { ...revision, content: hiddenRequirement };
+  const hiddenDocument = [{ documentId, revisionId, contentHash: hash(hiddenRequirement),
+    format: "markdown" as const, mediaType: "text/markdown", bodyBytes: Buffer.byteLength(hiddenRequirement),
+    assetCount: 0, assetBytes: 0 }];
+  assert.throws(() => buildLightweightInput(run, redactedRevision, basis, hiddenDocument), /CLI_ENTRY_UNAVAILABLE/);
+  const withCli = buildLightweightInput(run, redactedRevision, basis, hiddenDocument,
+    {command:"/usr/local/bin/python3 /private/fixed-cli.py",actorId:"recipient"});
+  assert.equal((JSON.parse(withCli.input.split("\n")[1]!) as {taskPreview:{truncated:boolean}}).taskPreview.truncated, true);
+});
+
+test("a stable Session CLI still packages each Task's own sealed document revision", () => {
+  const projectId=randomUUID(), sessionId=randomUUID(), cli={command:"/private/approved-wrapper",actorId:"recipient"};
+  const packetFor=(content:string)=>{
+    const taskId=randomUUID(),taskRevisionId=randomUUID(),basisSetId=randomUUID();
+    const documentId=randomUUID(),revisionId=randomUUID(),input="Complete this fixed Task";
+    const run={projectId,id:randomUUID(),taskId,taskRevisionId,basisSetId,sessionId,operationId:randomUUID(),
+      input,inputHash:hash(input)} as RuntimeRunRecord;
+    const revision={projectId,taskId,id:taskRevisionId,title:"Task",content,contentDocumentId:documentId,
+      contentRevisionId:revisionId,acceptance:"Done"} as TaskRevision;
+    const basis={id:basisSetId,taskRevisionId,members:[{documentId,revisionId}]} as BasisSet;
+    const packet=buildLightweightInput(run,revision,basis,[{documentId,revisionId,contentHash:hash(content),
+      format:"markdown",mediaType:"text/markdown",bodyBytes:Buffer.byteLength(content),assetCount:0,assetBytes:0}],cli);
+    return {packet:JSON.parse(packet.input.split("\n")[1]!) as {taskId:string;fixedDocuments:Array<{revisionId:string}>;
+      cliBootstrap:{command:string}},taskId,revisionId};
+  };
+  const first=packetFor("First fixed source"),second=packetFor("Second fixed source");
+  assert.equal(first.packet.cliBootstrap.command,second.packet.cliBootstrap.command);
+  assert.equal(first.packet.taskId,first.taskId);
+  assert.equal(second.packet.taskId,second.taskId);
+  assert.equal(first.packet.fixedDocuments[0]?.revisionId,first.revisionId);
+  assert.equal(second.packet.fixedDocuments[0]?.revisionId,second.revisionId);
+  assert.notEqual(first.revisionId,second.revisionId);
 });

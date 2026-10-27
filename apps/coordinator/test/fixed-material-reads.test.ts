@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import Fastify from "fastify";
 import type { Principal, TaskRevision, BasisSet } from "@evoloop/contracts";
 import type { DocumentPayloadRevision, DocumentPayloadUnitOfWork, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
@@ -40,7 +41,7 @@ test("fixed catalog, UTF-8 pages and one asset stay pinned, bounded and verified
   const uow = { read: async (_project: string, fn: (reader: { getRegisteredBlob(id: string): Promise<RegisteredDocumentBlob | null> }) => Promise<unknown>) =>
     fn({ getRegisteredBlob: async blobId => { registrationReads++; return registrations.get(blobId) ?? null; } }) } as DocumentPayloadUnitOfWork;
   const blobs = { read: async (payload: { id: string }) => {
-    if (payload.id === payloadId) bodyReads++;
+    if (payload.id === payloadId) { bodyReads++; await delay(10); }
     const found = content.get(payload.id);
     return found ? { status: "available", bytes: found, payload } : { status: "unavailable", reason: "missing", payload };
   } } as BlobStore;
@@ -73,7 +74,10 @@ test("fixed catalog, UTF-8 pages and one asset stay pinned, bounded and verified
     assert.equal(manifest.documents[0].assets[0].contentHash, digest(assetBytes));
     assert.ok(!catalog.body.includes("base64") && !catalog.body.includes(body.slice(0, 30)));
     const path = `${prefix}/documents/${documentId}/revisions/${revisionId}`;
-    const first = (await get(`${path}/body?limit=5`)).json();
+    const [firstResponse, concurrentResponse] = await Promise.all([
+      get(`${path}/body?limit=5`), get(`${path}/body?limit=5`)]);
+    const first = firstResponse.json();
+    assert.equal(concurrentResponse.statusCode, 200);
     assert.equal(first.body, "第"); assert.equal(first.startByte, 0); assert.equal(first.endByte, 3);
     assert.equal(first.nextCursor, "3"); assert.equal(first.truncated, true);
     const second = (await get(`${path}/body?cursor=3&limit=5`)).json();
@@ -107,4 +111,23 @@ test("verified body cache is bounded and evicts least recently used bytes", () =
   cache.set("oversize", Buffer.alloc(11));
   assert.equal(cache.get("oversize"), null);
   assert.ok(cache.bytesUsed <= 10);
+});
+
+test("cold reads share one verified load and distinct loads respect the byte budget", async () => {
+  const cache = new FixedBodyCache(10, 60_000);
+  let release!: () => void, reads = 0, active = 0, peak = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const reader = async () => { reads++; active++; peak = Math.max(peak, active); await gate; active--; return Buffer.alloc(6); };
+  const first = cache.load("one", 6, reader);
+  const same = cache.load("one", 6, reader);
+  const other = cache.load("two", 6, reader);
+  await delay(5);
+  assert.equal(reads, 1);
+  assert.equal(cache.bytesLoading, 6);
+  release();
+  await Promise.all([first, same, other]);
+  assert.equal(reads, 2, "the same key has one load; the second key waits for capacity");
+  assert.equal(peak, 1);
+  assert.ok(cache.bytesUsed <= 10);
+  assert.equal(cache.bytesLoading, 0);
 });

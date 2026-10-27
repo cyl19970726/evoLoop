@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadIntegrations } from "../src/configuration.ts";
+import { loadIntegrations, selectMaterialCli } from "../src/configuration.ts";
 
 test("native input is a default-off capability of the fixed 0.164 child", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-input-config-")), path = join(dir, "integrations.json");
@@ -17,14 +17,21 @@ test("native input is a default-off capability of the fixed 0.164 child", async 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test("material CLI entry is an exact Session actor and Task binding with a command-only path", async () => {
+test("material CLI entry follows exact Session and recipient across Tasks, with optional Task override", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-material-cli-config-")), path = join(dir, "integrations.json");
   const entry = { projectId: "00000000-0000-4000-8000-000000000001",
-    sessionId: "00000000-0000-4000-8000-000000000002", taskId: "00000000-0000-4000-8000-000000000003",
-    actorId: "actual-session-actor", command: "/usr/local/bin/python3 /private/approved-cli.py" };
+    sessionId: "00000000-0000-4000-8000-000000000002",
+    sessionActorId: "requesting-owner", cliActorId: "actual-recipient", command: "/usr/local/bin/python3 /private/approved-cli.py" };
   try {
     await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[entry]}}));
     assert.deepEqual((await loadIntegrations(path)).runtime?.materialCli[0], entry);
+    const firstTask = "00000000-0000-4000-8000-000000000003", secondTask = "00000000-0000-4000-8000-000000000004";
+    assert.deepEqual(selectMaterialCli([entry], entry.projectId, entry.sessionId, entry.sessionActorId, firstTask), entry);
+    assert.deepEqual(selectMaterialCli([entry], entry.projectId, entry.sessionId, entry.sessionActorId, secondTask), entry,
+      "one recipient CLI serves the next Task on the same Session");
+    assert.equal(selectMaterialCli([entry], entry.projectId, entry.sessionId, "other-actor", secondTask), null);
+    const override = {...entry,taskId:secondTask,command:"/private/other-cli"};
+    assert.deepEqual(selectMaterialCli([entry,override],entry.projectId,entry.sessionId,entry.sessionActorId,secondTask),override);
     await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[entry,entry]}}));
     await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
     await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[{...entry,command:"/usr/local/bin/python3 /private/x.py;cat /secret"}]}}));
