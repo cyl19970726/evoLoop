@@ -181,7 +181,7 @@ export class PgResidentQueue {
     await this.client.query('SELECT session_recovery_slot_lock($1,$2)',[this.projectId,e.sessionId]);
     const gate=await this.client.query('SELECT phase,retry_run_id,claim_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,e.sessionId]);
     if(gate.rows[0]?.phase!=='open'&&
-      !(gate.rows[0]?.phase==='retrying'&&gate.rows[0]?.retry_run_id===a.runId&&gate.rows[0]?.claim_id===claimId))
+      !(['retrying','reworking'].includes(gate.rows[0]?.phase)&&gate.rows[0]?.retry_run_id===a.runId&&gate.rows[0]?.claim_id===claimId))
       throw new DomainError('SESSION_RECOVERY_REQUIRED','Only the explicitly permitted failed Run successor may reserve');
     if(e.holdCode)throw new Error('QUEUE_HOLD_REQUIRES_DECISION');
     const replay=await this.client.query('SELECT * FROM resident_queue_attempt WHERE project_id=$1 AND operation_id=$2',[this.projectId,a.operationId]);if(replay.rows[0]){const x=attemptOf(replay.rows[0]);if(x.claimId!==claimId||x.runId!==a.runId||x.taskRevisionId!==a.taskRevisionId)throw new Error('OPERATION_CONFLICT');return x;}
