@@ -5,6 +5,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 export type NativeInputReplyCommand = Extract<Command,{type:'session.input.reply'}>;
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const validText = (value:string,max:number) => value.length>0 && value.trim().length>0 && value.length<=max;
+const latestUtc=(...values:string[]):string=>new Date(Math.max(...values.map(value=>Date.parse(value)))).toISOString();
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:
   value&&typeof value==='object'?`{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`:
   JSON.stringify(value);
@@ -99,7 +100,7 @@ export class NativeInputService {
       const store=tx.nativeInputs;if(!store)return null;const value=await store.get(projectId,id);
       if(!value||value.connectionId!==connectionId||['resolved','unavailable'].includes(value.state))return value;
       const next:NativeInputRecord={...value,state:reason==='native_resolved'?'resolved':'unavailable',reason,
-        version:value.version+1,updatedAt:at};await store.update(next,value.version);return next;
+        version:value.version+1,updatedAt:latestUtc(value.updatedAt,at,this.deps.clock.now())};await store.update(next,value.version);return next;
     });
   }
   async invalidateConnections(projectId:string,currentConnectionId:string):Promise<void>{
@@ -117,7 +118,8 @@ export class NativeInputService {
     return this.deps.uow.transaction(projectId,async tx=>{
       const store=tx.nativeInputs;if(!store)return null;const v=await store.get(projectId,id);
       if(!v||v.connectionId!==connectionId||v.response?.outcome!=='attempted')return v;
-      const next:NativeInputRecord={...v,version:v.version+1,updatedAt:at,response:{...v.response,outcome,submittedAt:outcome==='submitted'?at:null}};
+      const next:NativeInputRecord={...v,version:v.version+1,updatedAt:latestUtc(v.updatedAt,at,this.deps.clock.now()),
+        response:{...v.response,outcome,submittedAt:outcome==='submitted'?at:null}};
       await store.update(next,v.version);return next;
     });
   }
