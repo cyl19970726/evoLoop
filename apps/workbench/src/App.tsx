@@ -274,20 +274,46 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   // Visited pages stay mounted for this authenticated project. No form text or token is persisted.
   const cache = useRef(new Map<string, Route>());
   const positions = useRef(new Map<string, number>());
-  const key = `${route.section}:${route.id ?? ""}:${route.revision ?? ""}:${route.action ?? ""}`;
+  const key = `${route.section}:${route.id ?? ""}:${route.revision ?? ""}:${route.action ?? ""}:${route.session ?? ""}`;
+  const positionKey = `evoloop:scroll:${context.principal.actorId}:${context.projectId}:${key}`;
   cache.current.set(key, route);
   useLayoutEffect(() => {
-    const handle = requestAnimationFrame(() => {
-      window.scrollTo(0, route.section === "runtime" && route.session ? 0 : positions.current.get(key) ?? 0);
+    let position = positions.current.get(key);
+    if (position === undefined) {
+      try { position = Number(sessionStorage.getItem(positionKey)) || 0; } catch { position = 0; }
+    }
+    let cancelled = false, frame = 0, handle = 0;
+    const stop = () => { cancelled = true; cancelAnimationFrame(handle); };
+    const restore = () => {
+      if (cancelled) return;
+      window.scrollTo(0, position);
+      if (Math.abs(window.scrollY - position) > 2 && ++frame < 120) handle = requestAnimationFrame(restore);
+    };
+    handle = requestAnimationFrame(() => {
+      restore();
       document.querySelector<HTMLElement>(`[data-page-key="${CSS.escape(key)}"] h1`)?.focus({ preventScroll: true });
     });
-    return () => cancelAnimationFrame(handle);
-  }, [key, route.session]);
+    window.addEventListener("wheel", stop, { once: true });
+    window.addEventListener("touchstart", stop, { once: true });
+    return () => { stop(); window.removeEventListener("wheel", stop); window.removeEventListener("touchstart", stop); };
+  }, [key, positionKey]);
   useEffect(() => {
-    const remember = () => positions.current.set(key, window.scrollY);
-    window.addEventListener("evoloop:will-navigate", remember);
-    return () => window.removeEventListener("evoloop:will-navigate", remember);
-  }, [key]);
+    const remember = () => {
+      positions.current.set(key, window.scrollY);
+      try { sessionStorage.setItem(positionKey, String(window.scrollY)); } catch { /* optional position persistence */ }
+    };
+    let leaving = false;
+    const beforeLink = (event: MouseEvent) => {
+      const target = event.target;
+      const link = target instanceof Element ? target.closest<HTMLAnchorElement>('a[href^="#/p/"]') : null;
+      if (link && link.hash !== window.location.hash) { remember(); leaving = true; }
+    };
+    const onScroll = () => { if (!leaving) remember(); };
+    document.addEventListener("click", beforeLink, true);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("pagehide", remember);
+    return () => { document.removeEventListener("click", beforeLink, true); window.removeEventListener("scroll", onScroll); window.removeEventListener("pagehide", remember); };
+  }, [key, positionKey]);
   const { projectId, token, principal } = context;
   function page(r: Route, active: boolean) {
     if (["work", "inbox", "documents"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox" | "documents"} />;

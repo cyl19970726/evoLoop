@@ -2,6 +2,7 @@ import type { SessionActivityPage, SessionChanges, SessionDirectory, SessionSnap
 import type { SessionProfileRecord, TaskSessionAssignment, SessionAssignmentPage } from "@evoloop/contracts/session-assignments";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { ObservationMetadata } from "@evoloop/contracts/session-work";
+import type { RuntimeWorkTrace } from "@evoloop/contracts/runtime";
 import type { SessionRecoveryView } from "./recoveryPresentation";
 import { request, requestNullable } from "../api";
 
@@ -31,5 +32,7 @@ export function sessionClient(token: string, projectId: string) {
     messages: (key: string, cursor?: string, signal?: AbortSignal) =>
       get<{ items: SessionMessageRecord[]; nextCursor: string | null; metadata: ObservationMetadata }>(`${base}/session-work/${part(key)}/messages?${query({ limit: 50, cursor })}`, signal),
     message: (id: string, signal?: AbortSignal) => get<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null; metadata: ObservationMetadata }>(`${base}/session-messages/${part(id)}`, signal),
+    trace: (runId: string, cursor?: string, signal?: AbortSignal) =>
+      get<RuntimeWorkTrace>(`${base}/runtime/runs/${part(runId)}/trace?${query({ cursor })}`, signal),
   };
 }

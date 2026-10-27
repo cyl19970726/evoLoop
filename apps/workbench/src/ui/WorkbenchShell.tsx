@@ -20,7 +20,8 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
   const projectId = route.projectId!;
   const current = route.section === "task" || route.section === "create-task" || route.section === "journey" || route.section === "inbox" || route.section === "evaluations" ? "work"
     : ["document", "knowledge", "repository"].includes(route.section) ? "documents"
-      : ["roles", "discussions", "collaboration"].includes(route.section) ? "runtime" : route.section;
+      : ["roles", "discussions", "collaboration"].includes(route.section) ? "runtime"
+        : route.section === "runtime" && route.session ? "" : route.section;
   const isKnowledge = route.section === "knowledge";
   const link = (section: Section, title: string, Icon: typeof Home) => <a key={section} href={href(projectId, section)} className={current === section ? "selected" : ""} aria-current={current === section ? "page" : undefined} onClick={() => setOpen(false)}><Icon size={18} aria-hidden="true" /><span>{title}</span></a>;
   const sidebar = <>

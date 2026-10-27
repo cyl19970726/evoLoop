@@ -135,6 +135,13 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   selectedRevision?: string;
   onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean | Promise<boolean>; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean; active: boolean;
 }) {
+  const routeQuery = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+  const proposedReturn = routeQuery.get("return");
+  const sessionReturn = active && routeQuery.get("actor") === context.principal.actorId
+    && proposedReturn?.startsWith(`${href(projectId, "runtime")}?`)
+    && new URLSearchParams(proposedReturn.split("?")[1] ?? "").get("session")?.match(/^(owned|external):[0-9a-f-]{36}$/i)
+    ? proposedReturn : null;
+  const sessionReturnTitle = routeQuery.get("returnTitle")?.slice(0, 80).trim() || "Session";
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
@@ -248,6 +255,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     }
   }
   return <div className="content task-page">
+    {sessionReturn && <a className="back" href={sessionReturn}>← 返回【{sessionReturnTitle}】</a>}
     <a className="back" href={taskListHref(projectId)}>← 返回任务列表</a>
     <div className="task-read-status"><span>{reading ? "正在核对当前任务…" : observedAt ? `当前任务读于 ${date(observedAt.toISOString())}` : "当前任务尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前任务</button></div>
     {selectedRevision && <Alert>正在查看固定历史任务修订 <ShortId value={selectedRevision} />。下方页首是当前任务摘要；历史面板单独列出当时状态与依据。<a href={href(projectId, "task", id)}>返回当前任务</a></Alert>}
