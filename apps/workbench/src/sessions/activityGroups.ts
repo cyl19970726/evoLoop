@@ -6,7 +6,7 @@ export interface ActivityGroup { key: string; items: SessionActivity[]; latest: 
 export function groupActivities(items: SessionActivity[]): ActivityGroup[] {
   const groups = new Map<string, SessionActivity[]>();
   for (const item of items) {
-    const key = `${item.source.kind}:${item.source.id}:${item.taskId ?? ""}`;
+    const key = `${item.source.kind}:${item.source.id}`;
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
   return [...groups].map(([key, values]) => ({ key, items: values, latest: values[0]! }));

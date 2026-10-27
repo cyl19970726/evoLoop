@@ -9,10 +9,10 @@ const event = (id: string, sourceId: string, taskId: string | null): SessionActi
   importance: "important", source: { kind: "run", id: sourceId, revision: null, evidence: "project-record", href: "" },
 });
 
-test("activity grouping joins one recorded Run but keeps background Task context and another Run separate", () => {
+test("activity grouping joins identical Run sources even when event Task metadata differs", () => {
   const groups = groupActivities([
     event("4", "run-a", "task-a"), event("3", "run-a", "task-a"),
     event("2", "run-b", "task-a"), event("1", "run-a", "task-b"),
   ]);
-  assert.deepEqual(groups.map(group => group.items.map(item => item.id)), [["4", "3"], ["2"], ["1"]]);
+  assert.deepEqual(groups.map(group => group.items.map(item => item.id)), [["4", "3", "1"], ["2"]]);
 });

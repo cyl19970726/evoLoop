@@ -8,7 +8,9 @@ test("owned lifecycle takes priority over activity and only ready can be idle", 
     assert.equal(sessionStatusLabel({ kind: "owned", runtimeState, busy: true }), expected);
   }
   assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }), "空闲");
-  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }), "有在途或未知结果");
+  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }), "结果待核对");
+  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true, latestBusinessRun: { state: "running" } }), "运行中");
+  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true, latestBusinessRun: { state: "dispatching" } }), "启动中");
   assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: null, busy: false }), "生命周期未知");
   assert.equal(sessionLifecycleLabel({ kind: "owned", runtimeState: "closed", busy: false }), "已关闭");
 });

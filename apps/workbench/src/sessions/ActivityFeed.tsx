@@ -17,10 +17,12 @@ function cachedDetails(scope: string): Record<string, Detail> {
   return Object.fromEntries([...traceCache].filter(([key]) => key.startsWith(`${scope}\0`)).map(([key, value]) => [key.slice(scope.length + 1), value]));
 }
 
-export function ActivityFeed({ items, filter, onFilter, open, onOpen, projectId, sessionKey, token, taskHref }: {
+export function ActivityFeed({ items, filter, onFilter, open, onOpen, projectId, sessionKey, token, taskHref, taskTitle, currentRunId }: {
   items: SessionActivity[]; filter: ActivityFilter; onFilter(value: ActivityFilter): void;
   open: string[]; onOpen(value: string[]): void; projectId: string; sessionKey: string; token: string;
   taskHref(id: string): string;
+  taskTitle(id: string): string | null;
+  currentRunId: string | null;
 }) {
   const scope = `${token}\0${projectId}\0${sessionKey}`;
   const [details, setDetails] = useState<Record<string, Detail>>(() => cachedDetails(scope));
@@ -64,12 +66,16 @@ export function ActivityFeed({ items, filter, onFilter, open, onOpen, projectId,
       const expanded = open.includes(group.key);
       const detail = details[group.key];
       const presented = activityPresentation(item, projectId);
+      const taskIds = [...new Set(group.items.map(event => event.taskId).filter((id): id is string => !!id))];
+      const linkedTaskId = taskIds.length === 1 ? taskIds[0]! : null;
+      const runState = group.items.find(event => event.kind === "runtime_run")?.summary.split(" · ").at(-1);
+      const runStateLabel = ({ running: "运行中", dispatching: "启动中", requested: "待启动", completed: "已结束", failed: "失败", interrupted: "已中断", unknown: "结果待核对" } as Record<string, string>)[runState ?? ""] ?? "进展待核对";
+      const title = item.source.kind === "run" ? `${linkedTaskId && taskTitle(linkedTaskId) || "业务运行"} · ${item.source.id === currentRunId ? runStateLabel : `历史记录：${runStateLabel}`}` : item.summary;
       return <li key={group.key}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div className="session-activity-card"><button type="button" className="session-activity-toggle" aria-expanded={expanded} onClick={() => {
         onOpen(expanded ? open.filter(key => key !== group.key) : [...open, group.key]);
         if (!expanded && !detail) void load(group);
-      }}><strong>{item.summary}</strong><small>{group.items.length > 1 ? `${group.items.length} 条记录 · ` : ""}{presented.sourceLabel}</small></button>
+      }}><strong>{title}</strong><small>{group.items.length > 1 ? `${group.items.length} 条记录 · ` : ""}{item.source.kind === "run" ? "项目运行记录" : presented.sourceLabel}</small></button>
         {expanded && <div className="session-activity-detail">
-          {group.items.length > 1 && <ol>{group.items.map(event => <li key={event.id}><time>{date(event.occurredAt ?? event.recordedAt)}</time><span>{event.summary}</span></li>)}</ol>}
           {detail?.state === "loading" && <p role="status">正在读取来源详情…</p>}
           {detail?.state === "error" && <p role="alert">详情暂不可用：{detail.message} <button type="button" onClick={() => void load(group)}>重试</button></p>}
           {detail?.state === "message" && <><p>消息状态：{detail.status}</p><pre>{detail.content}</pre>{detail.response && <><h3>原会话回复</h3><pre>{detail.response}</pre></>}{detail.failure && <p role="alert">处理失败：{detail.failure}</p>}</>}
@@ -86,7 +92,7 @@ export function ActivityFeed({ items, filter, onFilter, open, onOpen, projectId,
           {item.source.kind !== "run" && item.source.kind !== "message" && <p>此来源当前没有可读取的执行正文；可查看原始来源和关联任务。</p>}
           <details><summary>原始事件与来源</summary><ol>{group.items.map(event => <li key={event.id}>{date(event.recordedAt)} · {event.summary} · {event.actorId || "登记者未记录"} · <code>{event.source.kind}:{event.source.id}</code>{event.source.revision && <> · 修订 <code>{event.source.revision}</code></>}</li>)}</ol></details>
         </div>}
-      </div><span className="session-activity-links">{item.taskId && <a href={taskHref(item.taskId)}>查看任务</a>}{presented.discussionHref && <a href={presented.discussionHref}>原讨论</a>}</span></li>;
+      </div><span className="session-activity-links">{linkedTaskId && <a href={taskHref(linkedTaskId)}>查看任务</a>}{presented.discussionHref && <a href={presented.discussionHref}>原讨论</a>}</span></li>;
     })}</ol> : <p className="empty">当前已读范围没有符合筛选条件的活动。</p>}
   </section>;
 }

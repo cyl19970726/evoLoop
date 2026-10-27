@@ -21,6 +21,7 @@ export function clearCommandDrafts() { drafts.clear(); }
 export interface Field {
   name: string; label: string; value?: string; kind?: "text" | "textarea" | "select" | "multi";
   options?: { value: string; label: string }[]; optional?: boolean; hint?: string; advanced?: boolean;
+  placeholder?: string; autoGrow?: boolean;
 }
 export function Notice({ children, error = false }: { children: ReactNode; error?: boolean }) {
   return <div className={`notice ${error ? "error" : "info"}`} role={error ? "alert" : "status"}>{children}</div>;
@@ -100,7 +101,7 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
     setDraftSaved(false);
   }
   const renderField = (field: Field) => <label key={field.name}>{field.label}
-      {field.kind === "textarea" ? <textarea name={field.name} autoComplete="off" required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />
+      {field.kind === "textarea" ? <textarea name={field.name} autoComplete="off" required={!field.optional} value={values[field.name]} placeholder={field.placeholder} rows={field.autoGrow ? 1 : undefined} ref={node => { if (node && field.autoGrow) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 120)}px`; } }} onChange={e => updateValue(field.name, e.target.value)} />
         : field.kind === "select" || field.kind === "multi" ? <select name={field.name} required={!field.optional} multiple={field.kind === "multi"} value={field.kind === "multi" ? JSON.parse(values[field.name] || "[]") as string[] : values[field.name]} onChange={e => updateValue(field.name, field.kind === "multi" ? JSON.stringify(Array.from(e.target.selectedOptions, o => o.value)) : e.target.value)}>
           {field.kind !== "multi" && <option value="">请选择</option>}{field.options?.map(o => <option value={o.value} key={o.value}>{o.label}</option>)}
         </select> : <input name={field.name} autoComplete="off" required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />}

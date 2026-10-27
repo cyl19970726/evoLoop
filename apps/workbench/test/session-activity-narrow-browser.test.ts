@@ -19,26 +19,34 @@ const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTo
 const runId = "95000003-0000-4000-8000-000000000003";
 const taskId = "95000004-0000-4000-8000-000000000004";
 const longUrl = `https://example.test/results/${"a".repeat(96)}?sha256=${"b".repeat(64)}`;
-const activity = { id: "activity-long-run", sequence: "1", sessionKey, kind: "run.completed",
+const activity = { id: "activity-long-run", sequence: "2", sessionKey, kind: "run.bound",
   summary: `旧 Run completed · ${longUrl} · ${"c".repeat(64)}`, occurredAt: stamp, recordedAt: stamp,
-  actorId: "worker", taskId, importance: "important",
+  actorId: "runtime-coordinator", taskId: null, importance: "important",
   source: { kind: "run", id: runId, revision: "d".repeat(80), evidence: "project-record", href: "" } };
+const runActivity = { ...activity, id: "run-business", sequence: "1", kind: "runtime_run",
+  summary: "业务运行 · running", actorId: "lead", taskId };
 const snapshot = { session: { key: sessionKey, target: { kind: "owned", sessionId }, aliases: [], title: "窄屏活动测试会话",
-  profile: null, kind: "owned", roles: [], membership: "current", membershipReason: "测试", runtimeState: "ready", busy: false,
-  currentTask: null, latestBusinessRun: null, lastProgressAt: null, capabilities: { observe: unavailable,
+  profile: { displayName: "窄屏活动测试会话", purpose: "按固定设计完成 Session 体验并交付独立验收。", tenure: "temporary", membership: "current" }, kind: "owned", roles: [], membership: "current", membershipReason: "测试", runtimeState: "ready", busy: true,
+  currentTask: { id: taskId, title: "关联的真实任务", state: "in_progress", relation: "claimed" }, latestBusinessRun: { id: runId, taskId, state: "running", updatedAt: stamp }, lastProgressAt: stamp, capabilities: { observe: unavailable,
     send: { ...unavailable, mode: "unavailable" }, open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
   source: { kind: "session", id: sessionId, revision: null, evidence: "project-record", href: "" }, metadata },
-  observationCursor: "1", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [],
-  activity: [activity], resources, metadata };
+  observationCursor: "2", currentWork: { id: taskId, title: "关联的真实任务", state: "in_progress", relation: "claimed" }, assignments: [], roleTasks: [], queue: [], results: [], questions: [],
+  activity: [activity, runActivity], resources: { ...resources, configuredModel: { ...resources.configuredModel, value: "gpt-6-sol" } }, metadata,
+  nativeObservation: { projectId, sessionId, threadId: "fixture-thread", version: 1, observedAt: stamp, lastEventAt: stamp,
+    freshness: "live", staleReason: null, status: "active", currentTurn: { id: "turn", status: "inProgress", source: null },
+    items: [{ id: "tool", kind: "commandExecution", name: "检查工作区", status: "inProgress", summary: "读取文件", truncated: false }],
+    plan: null, diff: null, usage: null } };
 
 test("long Run activity and expanded source stay inside the Session page at mobile and desktop widths", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let denyTrace = true;
+  let idle = false;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/allow-trace") { denyTrace = false; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/idle") { idle = true; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
@@ -46,7 +54,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [snapshot.session], nextCursor: null, observationCursor: "1", metadata,
         totals: { current: 1, historical: 0, unclassified: 0 }, attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: 0, unclassifiedSessions: 0 } };
-      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) value = snapshot;
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) value = idle
+        ? { ...snapshot, session: { ...snapshot.session, busy: false, latestBusinessRun: null },
+          nativeObservation: { ...snapshot.nativeObservation, status: "idle", currentTurn: null, items: [] } } : snapshot;
       else if (url.pathname === `${root}/tasks/${taskId}`) {
         const task = { projectId, id: taskId, version: 1, currentRevisionId: taskId, title: "关联的真实任务", content: "任务正文", contentDocumentId: taskId,
           contentRevisionId: taskId, kind: "implementation", acceptance: "可返回来源", owner: "reader", state: "in_progress", basisSetId: null,
@@ -86,8 +96,18 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
   assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
-  await item.getByText("旧 Run completed", { exact: false }).waitFor();
-  await item.getByRole("button", { name: /旧 Run completed/ }).click();
+  await item.getByText("关联的真实任务 · 运行中", { exact: false }).waitFor();
+  assert.equal(await page.locator(".native-progress-card").isVisible(), false, "healthy progress is in collapsed Session information");
+  assert.ok((await page.locator(".session-feed").boundingBox())!.y < 1000, "activity is visible in the first screen");
+  await page.locator(".session-information > summary").click();
+  await page.locator(".native-progress-card").waitFor({ state: "visible" });
+  await page.getByRole("heading", { name: "原聊天入口" }).waitFor();
+  await page.locator(".session-information > summary").click();
+  if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) for (const width of [390, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.screenshot({ path: `/tmp/evoloop-first-screen-active-${width}.png` });
+  }
+  await item.getByRole("button", { name: /关联的真实任务 · 运行中/ }).click();
   await item.getByText("详情暂不可用").waitFor();
   await fetch(`${base}/__fixture/allow-trace`);
   await item.getByRole("button", { name: "重试" }).click();
@@ -109,8 +129,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) await page.screenshot({ path: `/tmp/evoloop-activity-${width}.png`, fullPage: true });
   }
   await page.getByLabel("活动范围").selectOption("all");
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 390, height: 520 });
   await page.evaluate(() => window.scrollTo(0, 500));
+  await page.waitForFunction(() => window.scrollY > 0);
   await page.getByRole("link", { name: "查看任务" }).first().click();
   await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).waitFor();
   await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
@@ -126,4 +147,19 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByText("第一页真实输出").waitFor();
+  await fetch(`${base}/__fixture/idle`);
+  await page.reload();
+  await page.getByLabel("访问令牌").fill("fixture-token");
+  await page.getByRole("button", { name: "进入", exact: true }).click();
+  await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
+  await page.locator(".session-status-badge").getByText("空闲").waitFor();
+  await page.getByLabel("活动范围").selectOption("important");
+  const idleItem = page.locator(".session-activity-list li").first();
+  await idleItem.getByText("历史记录：运行中").waitFor();
+  if (await idleItem.getByRole("button", { name: /历史记录：运行中/ }).getAttribute("aria-expanded") === "true") await idleItem.getByRole("button", { name: /历史记录：运行中/ }).click();
+  if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) for (const width of [390, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `/tmp/evoloop-first-screen-idle-${width}.png` });
+  }
 });

@@ -56,3 +56,11 @@
 .session-results li,.session-results code{overflow-wrap:anywhere;word-break:break-word}
 .session-feed select{background:#fff;color:#263858}.session-activity-list>li{content-visibility:auto;contain-intrinsic-size:auto 95px}.session-composer-host :focus-visible{scroll-margin-bottom:190px}
 .session-task-summary{background:#f8faff;border:1px solid #e1e8f4;border-radius:7px;padding:12px 16px;margin:0 0 18px}.session-task-summary h3{margin:0 0 8px}.session-task-summary p{margin:5px 0;overflow-wrap:anywhere}
+
+.session-information{margin:10px 0 14px;padding:9px 12px;border:1px solid #dce4f0;border-radius:7px;background:#fff}
+.session-info-open{margin-top:10px;padding:12px 16px;border:1px solid #e3e9f4;border-radius:7px;background:#f8faff}.session-info-open h2{font-size:13px;margin:0 0 8px}.session-info-open .session-original-entry{max-width:none}
+.session-composer-host .workflow-form textarea{min-height:38px;height:38px;max-height:120px;resize:none;padding:8px 10px}.session-composer-host .workflow-form label{font-size:0;gap:0}.session-composer-host .workflow-form textarea{font-size:13px}.session-composer-host .workflow-form{flex-wrap:wrap}.session-composer-host .workflow-form>button{min-height:38px}
+
+.session-composer-hint{display:block;margin-top:4px;color:#7b8799;font-size:11px;line-height:1.35}
+
+.session-run-attention{margin:0 0 10px;padding:9px 12px;border:1px solid #ead8af;border-radius:6px;background:#fff9e9;color:#77531d;font-size:12px}.session-run-attention a{margin:0 3px}

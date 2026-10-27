@@ -150,7 +150,7 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
   </section>;
 }
 
-export function NativeSessionPanel({ projectId, sessionId, questions, progress, progressError, progressCurrentRead, readError, replyBlockedReason, onAnswer }: {
+export function NativeSessionPanel({ projectId, sessionId, questions, progress, progressError, progressCurrentRead, readError, replyBlockedReason, onAnswer, section = "all" }: {
   projectId: string;
   sessionId: string;
   questions: NativeQuestionView[];
@@ -160,18 +160,19 @@ export function NativeSessionPanel({ projectId, sessionId, questions, progress, 
   readError: string | null;
   replyBlockedReason: string | null;
   onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
+  section?: "all" | "questions" | "diagnostics";
 }) {
   const visibleQuestions = questions.filter(request => request.sessionId === sessionId);
   const openQuestions = visibleQuestions.filter(request => request.state === "pending" || request.state === "response_saved");
   const closedQuestions = visibleQuestions.filter(request => request.state === "resolved" || request.state === "unavailable");
   const visibleProgress = progress?.sessionId === sessionId && progress.projectId === projectId ? progress : null;
   return <div className="native-session-panel">
-    {openQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
-    {readError && <p className="native-panel-warning" role="alert">原生状态暂不可读取：{readError}。保留上次内容仅供核对，请重新读取后再回答。</p>}
-    {replyBlockedReason && openQuestions.length > 0 && <p className="native-panel-warning">{replyBlockedReason}</p>}
-    {progressError && <p className="native-panel-warning" role="alert">原生进度暂不可显示：{progressError}</p>}
-    {visibleProgress && <NativeProgressCard progress={visibleProgress} projectId={projectId} currentRead={progressCurrentRead} waiting={!!visibleProgress.turn && openQuestions.some(request => request.state === "pending" && request.isBlocking && request.turnId === visibleProgress.turn?.id)} />}
-    {closedQuestions.length > 0 && <details className="native-question-history"><summary>已结束的原生提问 · {closedQuestions.length}</summary>
+    {section !== "diagnostics" && openQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
+    {section !== "diagnostics" && readError && <p className="native-panel-warning" role="alert">原生状态暂不可读取：{readError}。保留上次内容仅供核对，请重新读取后再回答。</p>}
+    {section !== "diagnostics" && replyBlockedReason && openQuestions.length > 0 && <p className="native-panel-warning">{replyBlockedReason}</p>}
+    {section !== "questions" && progressError && <p className="native-panel-warning" role="alert">原生进度暂不可显示：{progressError}</p>}
+    {section !== "questions" && visibleProgress && <NativeProgressCard progress={visibleProgress} projectId={projectId} currentRead={progressCurrentRead} waiting={!!visibleProgress.turn && openQuestions.some(request => request.state === "pending" && request.isBlocking && request.turnId === visibleProgress.turn?.id)} />}
+    {section !== "questions" && closedQuestions.length > 0 && <details className="native-question-history"><summary>已结束的原生提问 · {closedQuestions.length}</summary>
       {closedQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
     </details>}
   </div>;
