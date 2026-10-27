@@ -104,6 +104,8 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
 
 const itemStateLabel = { inProgress: "进行中", completed: "已结束", failed: "失败", declined: "已拒绝" } as const;
 const stepStateLabel = { pending: "待进行", inProgress: "进行中", completed: "已完成" } as const;
+const staleReasonLabel: Record<string, string> = { disconnected: "原生连接已断开", connection_unavailable: "当前原生连接不可用",
+  projection_unavailable: "进度记录暂不可读取", restart: "原生连接已重启" };
 const tokens = (value: number | null) => value === null ? "未提供" : value.toLocaleString("zh-CN");
 
 function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
@@ -127,10 +129,11 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
     : status === "inProgress" ? "当时进行中，当前待核对" : `上次记录：${itemStateLabel[status]}`;
   const stepState = (status: keyof typeof stepStateLabel) => fresh ? stepStateLabel[status]
     : status === "inProgress" ? "当时进行中，当前待核对" : `上次记录：${stepStateLabel[status]}`;
+  const staleReason = progress.staleReason ? staleReasonLabel[progress.staleReason] ?? "原因待核对" : null;
   return <section className="native-progress-card">
     <div className="native-panel-heading"><div><span className="native-panel-kicker">原生事件的有界观察</span><h2>原生执行进度</h2></div><span className="native-panel-state">{stateLabel}</span></div>
     <p className="native-panel-context">最近事件 {date(progress.lastEventAt)} · 记录于 {date(progress.observedAt)} · {partial ? "仅展示最近有界范围" : "仅展示已观察到的事件"}</p>
-    {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{progress.staleReason ? ` 原因：${progress.staleReason}` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
+    {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{staleReason ? ` 原因：${staleReason}。` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
     {fresh && progress.status === "systemError" && <p className="native-panel-warning">原生状态报告异常；请结合固定 Run 和原生终态核对。</p>}
     <div className="native-progress-facts"><div><small>{fresh && stateLabel === "运行中" ? "当前工具" : "最近工具活动"}</small><strong>{tool ? `${tool.name} · ${itemState(tool.status)}` : "暂无可确认的工具活动"}</strong></div>
       <div><small>计划进展</small><strong>{progress.plan ? `${fresh ? "" : "上次记录："}${planDone}/${progress.plan.steps.length} 步已完成${progress.plan.truncated ? " · 已截断" : ""}` : "暂无可确认的计划变化"}</strong></div>
