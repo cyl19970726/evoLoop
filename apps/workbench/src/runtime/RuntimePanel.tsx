@@ -12,6 +12,7 @@ import { ResidentQueuePanel } from "../queues/ResidentQueuePanel";
 import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread";
 import { RoleTemplateSummary } from "../roles/RoleTemplateSummary";
 import { sessionClient } from "../sessions/client";
+import { sessionHref } from "../sessions/SessionNavigation";
 import { eligibleOwnedSessions } from "../sessions/assignmentEligibility";
 import { taskRunFromHash } from "../orchestration/navigation";
 import "./session-focus.css";
@@ -220,6 +221,7 @@ function SessionCard({context,session,focused,anchor,role}:{context:MutationCont
   return <details ref={ref} className="workflow-detail runtime-session-card" id={anchor ? `runtime-session-${session.id}` : undefined}>
     <summary><SessionRoleLabel projectId={context.projectId} roleId={session.roleId} role={role} /> · {sessionState[session.state]} · Session {session.id.slice(0, 8)}</summary>
     <dl><div><dt>职责 ID</dt><dd>{session.roleId}</dd></div><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>权限</dt><dd>{session.sandbox}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
+    {session.projectId === context.projectId && uuid.test(session.id) && <p><a href={sessionHref(context.projectId, `owned:${session.id}`)}>查看此 Session 工作区</a></p>}
     {role?.error && <Notice error>{role.error}；当前仅显示登记 ID。</Notice>}
     {session.state === "unknown" && <Notice error>创建结果未知，不能用新 ID 重复创建来代替核对。</Notice>}
     {session.state === "ready" && <details className="workflow-detail"><summary>关闭本项目受管会话</summary><Notice>先核对在途运行、队列占用和未确认结果。关闭请求与原生线程实际归档分别留证；不能把请求成功当成已经关闭。</Notice>
@@ -242,6 +244,8 @@ function RunCard({ context, run, mayAbandon, anchorId }: { context: MutationCont
   const [error,setError] = useState("");
   return <details className="workflow-detail runtime-run-card" id={anchorId}><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
     <p>任务修订 <code>{run.taskRevisionId}</code></p><p>依据集合 <code>{run.basisSetId}</code></p>
+    <p>登记的 Session <code>{run.sessionId}</code>{run.projectId === context.projectId && uuid.test(run.sessionId) && <> · <a href={sessionHref(context.projectId, `owned:${run.sessionId}`)}>查看此 Run 登记的 Session 工作区</a></>}</p>
+    <p className="muted">此链接只定位来源会话；Run 的状态不代表任务验收或当前接手。</p>
     {run.state === "unknown" && <Notice error>派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
     {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="workflow-detail"><summary>复核只读派发并保留失败记录</summary><p>仅适用于没有绑定 Turn 的只读运行。放弃会关闭旧会话的后续派发；不证明外部未执行，也不自动重发。</p><ActionForm context={context} review title="复核并放弃未知只读派发" fields={[reasonField,{name:"evidence",label:"所属线程历史与失败原因核对证据",kind:"textarea"}]} build={v=>({type:"runtime.run.abandonReadOnly",runId:run.id,expectedVersion:run.version,...v})} /></details>}
     {run.resultSummary && <p className="history-body">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}
