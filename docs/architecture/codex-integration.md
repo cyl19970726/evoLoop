@@ -121,6 +121,21 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 定时器属于 evoLoop：日程定义、触发实例、去重与恢复水位存 PostgreSQL，具体归属以 [ScheduleStore 合同](contracts.md#7-schedulestore-与触发实例)为准；每次需要执行的到期工作形成独立 Task。飞书日程视图若需要则经 connector 投影，不成为另一权威。触发先回读 PostgreSQL 当前状态、知识固定修订和已登记在途 Turn，再决定是否派发；定时通知或 `turn/start` 回执不证明工作被采用。协调服务由事件加对账触发完成回收与认知下一步，不能等 worker 自己想起发消息。App Server 文档没有提供供此设计依赖的通用 cron 方法；宿主产品自身“计划任务”需要独立接入与验证，不隐式代替此调度器。无人值守任务碰到审批或权限不足时进入待人处理；可安全运行范围与 SDK 批处理选择留给试点决定。
 
+### 原生提问与业务问答
+
+原生 `item/tool/requestUserInput` 是当前连接上的 RPC。适配器为它分配内部请求句柄和连接代号，保留原生 request ID 的字符串／数字类型及精确 Thread、Turn、Item；业务服务只按已保存的 Turn 绑定 Run 或普通消息，绑定回执未到时显示归属待核，不猜测最近任务。Task 沟通通道的答复作为后续 Run 的固定输入，不能替代对当前 RPC 的回答，也不为普通消息伪造 Task。
+
+首期桥接文字和选项，问题与答复均有数量和字节限制。`session.input.reply` 经现行身份、项目权限、发起者或复核者、Session 执行授权和活连接校验；先提交署名回复意图，再由现有 runner 周期在同一连接尝试一次发送。`response_saved` 表示已保存，`submitted` 只表示已写入本地原生连接；没有原生答复采用证明。发送结果未知不重发，重启不会向新连接重放旧 RPC。`serverRequest/resolved` 可由回复或原生清理触发，`resolved` 不能解释为采用、任务完成或验收。断线、旧连接及授权撤销使请求不可答，不另设宿主倒计时或默认选项。
+
+原生 response 没有通用取消枚举，本期不提供伪造的取消答复；原生清理和已有运行中断沿原流程记录。MCP URL／设备认证／通用表单以及 secret 问题明确显示不支持，不保存其敏感载荷，也不默认同意。桥接能处理原生已发出的请求，不代表任意运行模式都会暴露提问工具；固定 0.164 默认只在 Plan 模式开放该工具，且只允许 root Agent；Default 需要开发中的 `default_mode_request_user_input` 特性。`runtime.nativeUserInput` 默认关闭，启用只给本服务拥有的 App Server 子进程传配置，不修改用户全局文件或切换业务为 Plan。Default 提问的 `isBlocking=false` 必须原样显示，不能包装为执行审批闸。工具可达条件、部署版本、真实原生试验与使用者验收分别核对。[官方 App Server 说明](https://learn.chatgpt.com/docs/app-server)
+
+| 能力 | 原生负责 | evoLoop 负责 | 本片边界 |
+| --- | --- | --- | --- |
+| 提问与选项 | 工具可达性、请求寿命、原 RPC 及清理 | 精确来源、身份、回复意图与人类入口 | 文字／选项；0.164 Default 局部开关，非阻塞、root 限制 |
+| Task 问答 | 在后续 Turn 消费固定输入 | Task／Document 修订、通道及后续 Run | 不回答旧的连接 RPC |
+| 历史读取 | Turn／Item 分页与原件 | 已绑定身份、预算、续读和诚实的 partial | 不复制全量原生历史 |
+| 状态、工具、计划与用量 | 原生事件事实 | 有界观察与来源／新鲜度 | 单独切片，不把本片接线当已交付 |
+
 ## 状态与恢复规则
 
 适配器至少区分 `requested`、`accepted`、`running`、`turn_completed`／`turn_failed`／`turn_interrupted`、`unknown`；任务层使用 PostgreSQL TaskStore 的状态机，飞书同步另有 Sync 状态。`turn/completed.status = completed` 只表示 Codex Turn 结束，随后仍需核对 Item 最终状态、文件／检查结果、交付物和使用反馈。`item/completed` 是 Item 的最终观察，增量 delta 不是最终文本。审批请求由客户端按既有授权及服务端策略路由，记录决定依据；需要人的判断时才转交授权人，不能擅自放宽权限或默认接受未知请求。[官方事件与审批说明](https://learn.chatgpt.com/docs/app-server#approvals)

@@ -62,6 +62,8 @@ Task 与 Document 的单一正文、类型和状态遵循[任务与过程文档]
 
 普通消息与业务 Run 共用同一 Session、Thread、adapter 和 full/never/联网执行配置；消息不切换专用进程、工具集或只读资格门。共享 Session 忙碌时，展示原消息仍在排队及具体原因；sender/receiver grant 与 `maxTurns` 预算继续说明身份和成本。`ordinaryExecution` 在原生 Thread start/resume 明确回执 full/never 前保持 `unverified`／`unknown`；`thread/read` 没有权限字段不能推断已 active 或回执丢失。消息回复、处理结果和业务对象权限分别表达。GUI 阅读桥仍按 Run 的 reader、路由和证据范围限制业务对象访问；OS full access 不移除 Task/Document 授权边界，也不改变 Document iframe sandbox。后台控制原语完成不自动代表当前服务已启用，当前执行能力沿 Session snapshot 的实际回执读取。
 
+原生运行中的文字／选项提问单独显示在对应 Session，带准确的运行或消息来源、待答／已保存／原生已清理／不可用状态和真实回复者。它不改变 Task 状态，也不要求新建验收任务。允许的发起者或项目复核者可回复当前仍有效的问题；保存回复、发入原生连接、原生清理和答案实际采用分别表达。已失效问题提供原因，不让用户在新连接补答旧请求。不支持的表单、认证和敏感问题诚实显示能力边界。具体桥接合同及运行模式限制见[原生提问](../architecture/codex-integration.md#原生提问与业务问答)；工程接线通过不代替当前环境的真实可达性与亲用验收。
+
 本机已部署 [PR #90](https://github.com/cyl19970726/evoLoop/pull/90) 的分页、固定文档反向 Task、当前版提示与 Mermaid 阅读，[PR #97](https://github.com/cyl19970726/evoLoop/pull/97) 的来源 Run 返访回读，以及 [PR #98](https://github.com/cyl19970726/evoLoop/pull/98) 的最小首页、负责人名称、七模板和宿主入口。首页先按 Task 的 `in_progress` 状态列出真实工作，包含未入队项，再独立呈现队列占用、下一顺位和暂停原因；任务状态不代表模型正在运行。读取时间、分页截断和未展开项明确显示，尚无可靠项目级汇总的待答问题保留原 Task 入口。独立代理已实际核对进行中任务与空闲队列边界、四已建三未建职责、精确 Role 定位、原 Session 历史，以及普通任务列表→固定交付→来源 Run→返回的路径。当前内建浏览器的安全策略拒绝原生聊天协议，页面只记录打开请求，提供完整引用和人工查找说明；复制提示已见，系统剪贴板效果和外部聊天实际打开仍未验证，不绕过安全策略或宣称自动唤醒。部署、隔离浏览器回归、代理实际使用和人类亲用分别记录，当前阶段证据见[路线](../roadmap.md#当前基线)，数据边界见[职责与队列合同](../architecture/contracts.md#5-coordinator派发交接与恢复)。
 
 ## 信息层级与共同约定

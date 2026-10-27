@@ -245,7 +245,9 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
     journalBefore034,'034 configured snapshot backfill must not invent a new native event');
   assert.equal((await client.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence,headBefore034);
   const names034=(await client.query('SELECT name FROM pgmigrations ORDER BY run_on,name')).rows.map(row=>row.name);
-  assert.equal(names034.length,35);assert.equal(names034.at(-1),'036_session_full_execution');
+  assert.equal(names034.length,36);assert.equal(names034.at(-1),'037_native_user_input');
+  assert.equal((await client.query('SELECT count(*)::int AS count FROM session_native_input_request')).rows[0].count,0,
+    '037 must not invent native questions or reply intents from historical Sessions');
   assert.equal((await client.query('SELECT count(*)::int AS count FROM native_execution_environment')).rows[0].count,0,
     '035 must preserve legacy operation without inventing verified native ownership from ready Sessions');
   for(const table of ['runtime_session','runtime_run','session_message_processing'])

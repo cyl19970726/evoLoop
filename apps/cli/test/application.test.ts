@@ -34,6 +34,22 @@ test("an unauthenticated fresh Agent can discover help, IDs, exact command schem
   assert.ok(JSON.parse(requestSchema.stdout).properties.pageType.enum.includes("concept"));
   assert.match(JSON.parse((await run(["id"])).stdout).id, /^[\da-f-]{36}$/);
 });
+test("native input CLI reads retain the owned Session and request identity", async () => {
+  const p = "00000000-0000-4000-8000-000000000001", id = "00000000-0000-4000-8000-000000000002";
+  const urls: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    urls.push(new URL(String(url)).pathname); return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  });
+  try {
+    const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: p };
+    assert.equal((await run(["read", "session", id, "--inputs"], env)).code, 0);
+    assert.equal((await run(["read", "native-input", id], env)).code, 0);
+    assert.deepEqual(urls, [`/api/projects/${p}/runtime/sessions/${id}/inputs`, `/api/projects/${p}/session-inputs/${id}`]);
+    const schema = JSON.parse((await run(["command", "schema", "session.input.reply"])).stdout);
+    assert.ok(schema.required.includes("answers")); assert.ok(schema.required.includes("expectedVersion"));
+    assert.equal(schema.properties.actorId, undefined); assert.equal(schema.properties.connectionId, undefined);
+  } finally { fetch.mock.restore(); }
+});
 test("evaluation CLI reads preserve fixed revision, attempt and source identities", async () => {
   const p = "00000000-0000-4000-8000-000000000001", e = "00000000-0000-4000-8000-000000000002";
   const r = "00000000-0000-4000-8000-000000000003", a = "00000000-0000-4000-8000-000000000004";

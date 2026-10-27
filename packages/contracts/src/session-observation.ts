@@ -112,7 +112,16 @@ export interface ObservedResource {
   interval: { from: string; to: string } | null;
   unavailableReason: string | null;
 }
+/** A human-facing projection; native RPC and connection identifiers stay private. */
+export interface NativeInputView {
+  id: string; sessionId: string; version: number; turnId: string | null; itemId: string | null;
+  questions: import("./native-input.js").NativeInputQuestion[];
+  isBlocking: boolean; state: import("./native-input.js").NativeInputRecord["state"];
+  source: import("./native-input.js").NativeInputSource | null; canReply: boolean; reason: string | null;
+  response: import("./native-input.js").NativeInputResponse | null; createdAt: string; updatedAt: string;
+}
 export interface SessionSnapshot {
+  nativeInputRequests?: NativeInputView[];
   session: ObservedSession;
   observationCursor: string;
   currentWork: ObservedTask | null;

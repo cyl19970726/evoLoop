@@ -7,6 +7,7 @@ import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
+import type { NativeInputBridge } from "./runtime/native-input.js";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
@@ -41,6 +42,7 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  nativeInputs?: NativeInputBridge;
   /** Read-only, snapshot-only projection. Must not initialize native processes or perform dispatch. */
   messageExecution?: (principal: Principal, projectId: string, session: ObservedSession) => Promise<OrdinaryMessageExecutionCapability>;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
@@ -115,6 +117,10 @@ export async function buildServer(options: {
   app.get("/api/session", async request => ({ principal: who(request.principal), capabilities: currentCapabilities(request.principal) }));
   app.post("/api/commands", async (request, reply) => {
     const command = commandSchema.parse(request.body);
+    if (command.type === "session.input.reply") {
+      if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问回复。");
+      await options.nativeInputs.requireReply(who(request.principal), command.projectId, command.inputRequestId);
+    }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
         command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" &&
@@ -190,9 +196,27 @@ export async function buildServer(options: {
         : { state: "unknown", reasonCode: "EXECUTION_STATUS_UNAVAILABLE",
           reason: "此服务未提供普通消息执行状态；可保存不代表能够自动回复。", observedAt: new Date().toISOString() },
     },
+  }), async (principal, projectId, snapshot) => ({ ...snapshot,
+    ...(options.nativeInputs && snapshot.session.target.kind === "owned" ? {
+      nativeInputRequests: await options.nativeInputs.views(principal, projectId, snapshot.session.target.sessionId),
+    } : {}),
   }));
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
+  });
+  app.get("/api/projects/:projectId/runtime/sessions/:id/inputs", async request => {
+    const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
+    const principal = who(request.principal);
+    await options.service.getRuntimeSession(principal, p.projectId, p.id);
+    if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问观察。");
+    return { items: await options.nativeInputs.views(principal, p.projectId, p.id), limit: 20 };
+  });
+  app.get("/api/projects/:projectId/session-inputs/:id", async request => {
+    const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
+    const principal = who(request.principal);
+    await options.service.getProject(principal, p.projectId);
+    if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问观察。");
+    return options.nativeInputs.one(principal, p.projectId, p.id);
   });
   app.get("/api/projects/:projectId/runtime/sessions/:id/history", async request => {
     const p = params(request.params);

@@ -3,7 +3,7 @@ import type { Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
-import type { ObservedSession } from "@evoloop/contracts/session-observation";
+import type { ObservedSession, SessionSnapshot } from "@evoloop/contracts/session-observation";
 
 const id = z.uuid();
 const key = z.string().min(1).max(128).regex(/^(owned|external):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/);
@@ -19,7 +19,8 @@ const principalOf = (request: { principal: Principal | null }): Principal => {
 /** Read-only routes; the service enforces the same project and principal fence on each request. */
 export function registerSessionWorkRoutes(app: FastifyInstance, service: SessionObservationService,
   present: (principal: Principal, session: ObservedSession) => ObservedSession = (_principal, session) => session,
-  presentSnapshot: (principal: Principal, projectId: string, session: ObservedSession) => Promise<ObservedSession> = async (_principal, _projectId, session) => session): void {
+  presentSnapshot: (principal: Principal, projectId: string, session: ObservedSession) => Promise<ObservedSession> = async (_principal, _projectId, session) => session,
+  enrichSnapshot: (principal: Principal, projectId: string, snapshot: SessionSnapshot) => Promise<SessionSnapshot> = async (_principal, _projectId, snapshot) => snapshot): void {
   app.get("/api/projects/:projectId/session-work", async request => {
     const { projectId } = z.strictObject({ projectId: id }).parse(request.params);
     const options = z.strictObject({ limit: limit50, cursor: cursor.optional(), search: z.string().trim().max(240).optional(),
@@ -58,7 +59,8 @@ export function registerSessionWorkRoutes(app: FastifyInstance, service: Session
     const principal = principalOf(request);
     const snapshot = await service.snapshot(principal, projectId, sessionKey);
     // Execution configuration is read only for the selected snapshot, never once per directory row.
-    return { ...snapshot, session: await presentSnapshot(principal, projectId, present(principal, snapshot.session)) };
+    return enrichSnapshot(principal, projectId, { ...snapshot,
+      session: await presentSnapshot(principal, projectId, present(principal, snapshot.session)) });
   });
   app.get("/api/projects/:projectId/tasks/:id/assignment/history", request => {
     const { projectId, id: taskId } = z.strictObject({ projectId: id, id }).parse(request.params);
