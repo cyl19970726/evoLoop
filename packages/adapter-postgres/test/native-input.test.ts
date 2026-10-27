@@ -65,6 +65,13 @@ test('capture waits for exact Turn source; reply uses actor and CAS; attempted i
   assert.equal((await service.get(projectId,c.id))?.response?.outcome,'submitted');
 });
 
+test('native input activity links to its real Session rather than a nonexistent Task',async()=>{
+  const page=await uow.read(projectId,r=>r.sessionObservation!('native-input-test').history(`owned:${sessionId}`,{limit:50,importance:'all'}));
+  const entries=page!.items.filter(item=>item.kind==='session_native_input_request');
+  assert.ok(entries.length>0);
+  assert.ok(entries.every(item=>item.source.kind==='session'&&item.source.id===sessionId));
+});
+
 test('typed native IDs and reconnect invalidation remain isolated',async()=>{
   const one=capture(2,'turn-two'),two={...capture('2','turn-three'),itemId:'other-item'};
   await service.capture(one);await service.capture(two);
