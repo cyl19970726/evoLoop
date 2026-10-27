@@ -23,13 +23,13 @@ test("native progress keeps source, freshness and cumulative usage separate from
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let mode: "live" | "waiting" | "recentTool" | "stale" | "notLoaded" | "foreign" | "fail" |
-    "completed" | "failed" | "interrupted" = "live";
+    "completed" | "failed" | "interrupted" | "completedWaiting" = "live";
   const observation = () => ({ projectId, sessionId: mode === "foreign" ? "other-session" : sessionId,
     threadId: "thread-1", version: 3, observedAt: stamp, lastEventAt: stamp,
     freshness: mode === "stale" ? "stale" : "live", staleReason: mode === "stale" ? "disconnected" : null,
     status: mode === "notLoaded" ? "notLoaded" : "active",
     currentTurn: mode === "notLoaded" ? null : { id: "turn-1",
-      status: mode === "completed" || mode === "failed" || mode === "interrupted" ? mode : "inProgress", startedAt: 1793059200,
+      status: mode === "completedWaiting" ? "completed" : mode === "completed" || mode === "failed" || mode === "interrupted" ? mode : "inProgress", startedAt: 1793059200,
       source: { kind: "run", runId: "94000004-0000-4000-8000-000000000004",
         operationId: "94000005-0000-4000-8000-000000000005", actorId: "operator", taskId,
         taskRevisionId: "94000006-0000-4000-8000-000000000006" } },
@@ -49,7 +49,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
       open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
     source: { kind: "session", id: sessionId, revision: null, evidence: "project-record", href: "" }, metadata },
     observationCursor: "0", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [], activity: [],
-    resources, metadata, nativeInputRequests: mode === "waiting" ? [{ id: "94000007-0000-4000-8000-000000000007",
+    resources, metadata, nativeInputRequests: mode === "waiting" || mode === "completedWaiting" ? [{ id: "94000007-0000-4000-8000-000000000007",
       sessionId, version: 1, turnId: "turn-1", itemId: "question-1", isBlocking: true, state: "pending",
       questions: [{ id: "answer", header: "请回答", question: "继续执行吗？", isOther: false, options: null }],
       source: null, canReply: false, reason: "等待授权回答者", response: null, createdAt: stamp, updatedAt: stamp }] : [],
@@ -58,7 +58,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/set") { const next = url.searchParams.get("mode");
       if (next === "live" || next === "waiting" || next === "recentTool" || next === "stale" || next === "notLoaded" || next === "foreign" || next === "fail" ||
-        next === "completed" || next === "failed" || next === "interrupted") mode = next;
+        next === "completed" || next === "failed" || next === "interrupted" || next === "completedWaiting") mode = next;
       res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
@@ -129,6 +129,15 @@ test("native progress keeps source, freshness and cumulative usage separate from
     assert.equal(await card.getByText("1/2 步已完成", { exact: true }).count(), 1,
       "ending a Turn does not invent tool results or completed plan steps");
   }
+
+  // Native Turn completion and native request cleanup are distinct notifications and may arrive apart.
+  await fetch(`${base}/__fixture/set?mode=completedWaiting`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await card.getByText("Turn 已结束", { exact: true }).waitFor({ timeout: 2000 });
+  assert.equal(await card.getByText("等待回答", { exact: true }).count(), 0,
+    "a pending cleanup notification cannot hide the observed terminal Turn");
+  assert.equal(await page.locator(".native-question-card").count(), 1,
+    "the UI must not invent a native request resolution merely because its Turn ended");
 
   await fetch(`${base}/__fixture/set?mode=stale`);
   await page.getByRole("button", { name: "重新读取" }).click();

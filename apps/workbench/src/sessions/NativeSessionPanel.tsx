@@ -115,9 +115,10 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
   const turn = progress.turn;
   const turnEnded = turn !== null && ["completed", "failed", "interrupted"].includes(turn.status);
   const stateLabel = !fresh ? "观察待核对" : progress.status === "notLoaded" ? "原生会话尚未加载"
-    : progress.status === "systemError" ? "原生观察异常" : waiting ? "等待回答"
+    : progress.status === "systemError" ? "原生观察异常"
     : turn?.status === "completed" ? "Turn 已结束" : turn?.status === "failed" ? "Turn 执行失败"
     : turn?.status === "interrupted" ? "Turn 已中断"
+    : waiting ? "等待回答"
     : progress.status === "active" && turn?.status === "inProgress" ? "运行中"
     : progress.status === "idle" && turn?.status !== "inProgress" ? "当前空闲" : "状态待核对";
   const tool = fresh && progress.status === "active" && turn?.status === "inProgress"
