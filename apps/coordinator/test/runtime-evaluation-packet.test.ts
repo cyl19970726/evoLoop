@@ -112,7 +112,7 @@ function createFixture(options: { evaluation?: boolean; failMaterial?: "missing"
   ]);
   let currentRun: RuntimeRunRecord = {
     projectId, id: randomUUID(), taskId, taskRevisionId, basisSetId: basisId, sessionId, operationId,
-    input: definition.case.commonInput, inputHash: "frozen-input-hash", state: "requested", version: 1,
+    input: definition.case.commonInput, inputHash: sha(definition.case.commonInput), state: "requested", version: 1,
     nativeTurnId: null, interruptRequested: false, resultSummary: null, actorId,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     ...(options.evaluation ? { evaluationBinding: { evaluationId, revisionId: evaluationRevisionId, caseId, conditionId,
@@ -188,6 +188,7 @@ function createFixture(options: { evaluation?: boolean; failMaterial?: "missing"
   };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    cliEntryForRun: async () => "python3 /private/fixed-cli.py",
     readDocumentOriginal: async () => { throw new Error("inline fixture needs no Blob"); },
     readEvaluationMaterial, blobsForPrincipal: async () => blobStore });
   return { runner, runtime, get run() { return currentRun; }, blobs, get preparedCount() { return preparedCount; },
@@ -201,7 +202,7 @@ test("evaluation Run sends the exact verified external packet and packet readbac
     await fixture.runner.start();
     assert.equal(fixture.runtime.starts, 1, JSON.stringify({ status: fixture.runner.status(), rejected: fixture.rejected, run: fixture.run }));
     assert.equal(fixture.attached, 1);
-    assert.equal(fixture.run.inputHash, "frozen-input-hash");
+    assert.equal(fixture.run.inputHash, sha(definition.case.commonInput));
     const packet = fixture.run.evaluationPacket!;
     const payload = evaluationPacketBlobPayload(packet.payloadRef, projectId, packet.contentHash);
     const blob = fixture.blobs.get(payload.id)!;

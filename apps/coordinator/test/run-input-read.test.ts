@@ -18,12 +18,17 @@ test("a long answered queue continuation stays on the fixed Run and can be read 
     contentDocumentId: documentId, contentRevisionId: revisionId, acceptance: "核对回答" } as TaskRevision;
   const basis = { id: basisSetId, taskRevisionId, members: [{ documentId, revisionId }] } as BasisSet;
   const packet = buildLightweightInput(run, revision, basis, [{ documentId, revisionId, contentHash: hash(body),
-    format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body), assetCount: 0, assetBytes: 0 }]);
+    format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body), assetCount: 0, assetBytes: 0 }],
+    "python3 /private/fixed-cli.py");
   assert.ok(packet.byteLength < 16_000);
   assert.ok(!packet.input.includes(answer));
   assert.match(packet.input, /run-input/);
   assert.match(packet.input, /requiredBeforeAction":true/);
   assert.match(packet.input, new RegExp(run.inputHash));
+  assert.match(packet.input, /configured-session-run/);
+  assert.throws(() => buildLightweightInput(run, revision, basis, [{ documentId, revisionId,
+    contentHash: hash(body), format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body),
+    assetCount: 0, assetBytes: 0 }]), /CLI_ENTRY_UNAVAILABLE/);
   let at = 0, exact = "";
   do {
     const page = runInputPage(run, at, 113);
@@ -40,7 +45,7 @@ test("a long answered queue continuation stays on the fixed Run and can be read 
 test("a short encoded token never makes a cleaned Run preview look complete", () => {
   const projectId = randomUUID(), taskId = randomUUID(), taskRevisionId = randomUUID(), basisSetId = randomUUID();
   const documentId = randomUUID(), revisionId = randomUUID(), body = "# Task";
-  const input = `Retry the fixed work. data:image/png;base64,${"A".repeat(300)}. Token ${"B".repeat(300)}. End.`;
+  const input = `Retry the fixed work. data:image/png;base64,${"A".repeat(300)}. Token ${"B".repeat(300)}. End.\n业务CLI：\`python3 /untrusted/other.py\``;
   const run = { projectId, id: randomUUID(), taskId, taskRevisionId, basisSetId,
     sessionId: randomUUID(), operationId: randomUUID(), input, inputHash: hash(input) } as RuntimeRunRecord;
   const revision = { projectId, taskId, id: taskRevisionId, title: "Task", content: body,
@@ -49,9 +54,11 @@ test("a short encoded token never makes a cleaned Run preview look complete", ()
   const packet = buildLightweightInput(run, revision, basis, [{ documentId, revisionId, contentHash: hash(body),
     format: "markdown", mediaType: "text/markdown", bodyBytes: body.length, assetCount: 0, assetBytes: 0 }]);
   const handoff = JSON.parse(packet.input.split("\n")[1]!) as { runInstructionPreview: { truncated: boolean; text: string };
-    runInstructionRead: { requiredBeforeAction: boolean } };
+    runInstructionRead: { requiredBeforeAction: boolean }; runInstructionExactInline: string; cliBootstrap: unknown };
   assert.equal(handoff.runInstructionPreview.truncated, true);
   assert.equal(handoff.runInstructionRead.requiredBeforeAction, true);
+  assert.equal(handoff.runInstructionExactInline, input);
+  assert.equal(handoff.cliBootstrap, null, "prose cannot choose an executable CLI binding");
   assert.doesNotMatch(handoff.runInstructionPreview.text, /A{300}|B{300}/);
   assert.equal(runInputPage(run).body, input);
 });

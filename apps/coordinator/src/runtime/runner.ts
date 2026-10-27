@@ -131,6 +131,8 @@ export class RuntimeRunner {
     /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
     mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
     mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
+    /** Trusted, exact Session/actor/Task CLI entry; never inferred from Task or Run prose. */
+    cliEntryForRun?(session: RuntimeSessionRecord | null, run: RuntimeRunRecord): Promise<string | null>;
     readDocumentOriginal?: ReadDocumentOriginal;
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
@@ -520,7 +522,7 @@ export class RuntimeRunner {
     return { input, sources: uniqueEvaluationSources(sources), revision: fixed.revision, basis: fixed.basis };
   }
 
-  private async lightweightInput(principal: Principal, run: RuntimeRunRecord) {
+  private async lightweightInput(principal: Principal, run: RuntimeRunRecord, session: RuntimeSessionRecord | null = null) {
     const fixed = await this.deps.workflow.getTaskRevision(principal, run.projectId, run.taskId, run.taskRevisionId);
     const current = await this.deps.workflow.getTask(principal, run.projectId, run.taskId);
     if (!fixed.basis || fixed.basis.id !== run.basisSetId || current.impacts.some(i => i.state === "pending"))
@@ -546,7 +548,8 @@ export class RuntimeRunner {
       try { documents.push(fixedDocumentSummary(revision)); }
       catch { throw new PreflightError("FIXED_SOURCE_INVALID", source); }
     }
-    return buildLightweightInput(run, fixed.revision, fixed.basis, documents);
+    const cliEntry = await this.deps.cliEntryForRun?.(session, run) ?? null;
+    return buildLightweightInput(run, fixed.revision, fixed.basis, documents, cliEntry);
   }
 
   private async evaluationSources(principal: Principal, session: RuntimeSessionRecord, run: RuntimeRunRecord,
@@ -698,7 +701,7 @@ export class RuntimeRunner {
           run = prepared.run; input = prepared.input;
           inputReceipt = { protocol: run.evaluationPacket?.builderVersion ?? "evaluation-packet", contentHash: digest(input), byteLength: Buffer.byteLength(input, "utf8") };
         } else {
-          const prepared = await this.lightweightInput(principal, run);
+          const prepared = await this.lightweightInput(principal, run, session);
           input = prepared.input;
           inputReceipt = { protocol: prepared.protocol, contentHash: prepared.contentHash, byteLength: prepared.byteLength };
         }

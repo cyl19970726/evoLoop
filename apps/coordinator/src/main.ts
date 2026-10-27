@@ -2,7 +2,7 @@ import { withObservedSources } from "./knowledge/observed-repository.js";
 import { readExternalMaterials } from "./references/materials.js";
 import { createReferenceDependencies } from "./references/routes.js";
 import { GitDocumentSource } from "@evoloop/adapter-git-documents";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -320,6 +320,18 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   return adapter;
 } : null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+  cliEntryForRun: async (session, run) => {
+    if (!session || session.id !== run.sessionId || session.projectId !== run.projectId || session.state !== "ready") return null;
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const entry = current.runtime?.enabled ? current.runtime.materialCli.find(value =>
+      value.projectId === run.projectId && value.sessionId === session.id && value.actorId === session.actorId &&
+      value.taskId === run.taskId) : null;
+    if (!entry) return null;
+    const script = entry.command.split(" ").at(-1)!;
+    try { if (!(await stat(script)).isFile()) return null; }
+    catch { return null; }
+    return entry.command;
+  },
   workerTraceAuthority: (identity, targetRunId) =>
     workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),

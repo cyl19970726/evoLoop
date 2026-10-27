@@ -17,6 +17,21 @@ test("native input is a default-off capability of the fixed 0.164 child", async 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("material CLI entry is an exact Session actor and Task binding with a command-only path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "evoloop-material-cli-config-")), path = join(dir, "integrations.json");
+  const entry = { projectId: "00000000-0000-4000-8000-000000000001",
+    sessionId: "00000000-0000-4000-8000-000000000002", taskId: "00000000-0000-4000-8000-000000000003",
+    actorId: "actual-session-actor", command: "python3 /private/approved-cli.py" };
+  try {
+    await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[entry]}}));
+    assert.deepEqual((await loadIntegrations(path)).runtime?.materialCli[0], entry);
+    await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[entry,entry]}}));
+    await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
+    await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[{...entry,command:"python3 /private/x.py;cat /secret"}]}}));
+    await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("ordinary message grants have independent bounds, actual receiver identity without an obsolete readonly switch", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-message-config-"));
   const path = join(dir, "integrations.json");
