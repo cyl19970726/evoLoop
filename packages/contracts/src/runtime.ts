@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { EvaluationFixedRef } from "./evaluation.js";
 import type { ExecutionProfileSnapshot, SessionExecutionProfile } from "./session-recovery.js";
 
-export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000) });
+export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000), turnCursor: z.string().min(1).max(2048).optional() });
 
 const id = z.uuid();
 const text = z.string().trim().min(1).max(4000);
@@ -140,15 +140,21 @@ export interface RuntimeWorkPage extends RuntimePage<RuntimeWorkItem> {
 }
 export interface RuntimeWorkTrace {
   runId: string;
+  nativeTurnId: string;
   source: "owned-native-history";
   observedAt: string;
-  turn: RuntimeTurn;
+  turn: RuntimeTurn | null;
+  turnMetadata: { status: "found" | "partial" | "not_found"; nextTurnCursor: string | null };
   items: RuntimeWorkItem[];
   unsupportedCount: number;
   truncated: boolean;
   nextCursor: string | null;
   completeness: "complete" | "partial";
   limits: { maxPages: number; maxItems: number; maxFieldChars: number };
+}
+export interface RuntimeReconcilePartial {
+  status: "partial"; changed: false; projectId: string; runId: string; nativeTurnId: string;
+  expectedVersion: number; nextTurnCursor: string; reason: string;
 }
 
 export interface RuntimeEvent {

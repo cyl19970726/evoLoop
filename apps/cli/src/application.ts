@@ -13,7 +13,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -78,7 +78,7 @@ const help = {
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
-    `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor CURSOR for run --trace]`,
+    `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor ITEM_CURSOR --turn-cursor TURN_CURSOR for run --trace]`,
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
@@ -234,8 +234,8 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   if (action === "candidate" || action === "operation") { check(args, 2, ["project"]); return client.get(`${prefix}/${action === "candidate" ? "knowledge/candidates" : "operations"}/${uuid(args.words[1], action)}`); }
   if (action === "read") {
-    check(args, 3, ["project", "cursor", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
-    if (option(args, "cursor") && !(kind === "run" && selected === "trace")) throw new UsageError("--cursor applies only to read run --trace.");
+    check(args, 3, ["project", "cursor", "turn-cursor", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
+    if ((option(args, "cursor") || option(args, "turn-cursor")) && !(kind === "run" && selected === "trace")) throw new UsageError("--cursor and --turn-cursor apply only to read run --trace.");
     const orchestration = orchestrationReads[kind];
     if (orchestration) {
       if (selected && !orchestration.modes.includes(selected)) throw new UsageError("Unsupported orchestration read mode.");
@@ -248,7 +248,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       if (!found) throw new ReceiptError("OBJECT_NOT_FOUND", "Object was absent from this bounded authorized list; global absence is not proven.");
       return found;
     }
-    return client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${option(args, "cursor") ? `?cursor=${encodeURIComponent(option(args, "cursor")!)}` : ""}`);
+    const query = new URLSearchParams();
+    if (option(args, "cursor")) query.set("cursor", option(args, "cursor")!);
+    if (option(args, "turn-cursor")) query.set("turnCursor", option(args, "turn-cursor")!);
+    return client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${query.size ? `?${query}` : ""}`);
   }
   throw new UsageError("Unknown command; use help.");
 }

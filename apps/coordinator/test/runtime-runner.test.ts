@@ -1015,8 +1015,11 @@ test("explicit reviewer readback corrects only a settled owned turn without repl
   const observed = { ...run, state: "interrupted" as const, nativeTurnId: "turn-1", version: 4 };
   const runtime = new FakeRuntime();
   let settled = false;
-  runtime.listTurns = async () => ({ data: [{ id: "turn-1", status: settled ? "completed" : "interrupted",
-    completedAtUtc: settled ? "2026-10-20T12:14:44.000Z" : null }], nextCursor: null });
+  let oldTurn = false;
+  runtime.listTurns = async (_binding, cursor) => oldTurn && cursor !== "old-page" ?
+    { data: [], nextCursor: cursor ? "old-page" : "middle-page" } :
+    { data: [{ id: "turn-1", status: settled ? "completed" : "interrupted",
+      completedAtUtc: settled ? "2026-10-20T12:14:44.000Z" : null }], nextCursor: null };
   runtime.listItems = async () => ({ data: [{ id: "message-1", type: "agentMessage", phase: "final_answer", text: "Finished" }], nextCursor: null });
   const calls: unknown[][] = [];
   const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
@@ -1033,8 +1036,14 @@ test("explicit reviewer readback corrects only a settled owned turn without repl
     await assert.rejects(() => runner.reconcile({ actorId: "outsider", projectIds: [projectId], permissions: ["read", "review"] }, projectId, observed.id, 4, "review"), /authority/);
     await assert.rejects(() => runner.reconcile({ ...reviewer, permissions: [...reviewer.permissions] }, projectId, observed.id, 4, "review"), /no settled terminal/);
     assert.equal(calls.length, 0);
+    oldTurn = true;
+    const partial = await runner.reconcile({ ...reviewer, permissions: [...reviewer.permissions] }, projectId, observed.id, 4, "review");
+    assert.deepEqual(partial, { status: "partial", changed: false, projectId, runId: observed.id,
+      nativeTurnId: "turn-1", expectedVersion: 4, nextTurnCursor: "old-page", reason: "review" });
+    assert.equal(calls.length, 0, "partial readback never invokes the trusted write");
     settled = true;
-    const result = await runner.reconcile({ ...reviewer, permissions: [...reviewer.permissions] }, projectId, observed.id, 4, "Native readback after transient projection");
+    const result = await runner.reconcile({ ...reviewer, permissions: [...reviewer.permissions] }, projectId, observed.id, 4, "Native readback after transient projection", "old-page");
+    assert.ok("state" in result);
     assert.equal(result.state, "completed");
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.[2], "turn-1");
@@ -1088,13 +1097,17 @@ test("read-only history and result page owned data without native resume or turn
 test("work trace requires reviewer authority and keeps unsupported and page limits explicit", async () => {
   const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
   let originalGrant = true, nativeReads = 0;
+  let oldTurn = false;
   let ownedSession = session;
   const runtime = new FakeRuntime() as FakeRuntime & Pick<RuntimePort, "readWorkPage">;
-  runtime.listTurns = async () => {
+  runtime.listTurns = async (_binding, cursor) => {
     nativeReads++;
+    if (oldTurn) return { data: cursor === "old-page" ? [{ id: "turn-1", status: "completed", completedAtUtc: "2026-10-20T12:14:44.000Z" }] : [],
+      nextCursor: cursor === "old-page" ? null : cursor ? "old-page" : "middle-page" };
     return { data: [{ id: "turn-1", status: "completed", completedAtUtc: "2026-10-20T12:14:44.000Z" }], nextCursor: null };
   };
-  runtime.readWorkPage = async (_binding, _turnId, cursor) => {
+  runtime.readWorkPage = async (_binding, turnId, cursor) => {
+    assert.equal(turnId, "turn-1");
     nativeReads++;
     return {
       data: [{ id: cursor ? "cmd-2" : "cmd-1", kind: "command", name: "echo", status: "completed", exitCode: 0,
@@ -1123,6 +1136,14 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
     assert.equal(trace.truncated, true);
     assert.equal(trace.completeness, "partial");
     assert.equal(runtime.starts, 0);
+    oldTurn = true;
+    const partial = await runner.trace(reviewer, projectId, observed.id);
+    assert.equal(partial.nativeTurnId, "turn-1");
+    assert.equal(partial.turn, null);
+    assert.deepEqual(partial.turnMetadata, { status: "partial", nextTurnCursor: "old-page" });
+    assert.equal(partial.items.length, 2, "bound Items remain readable before Turn metadata is reached");
+    const continued = await runner.trace(reviewer, projectId, observed.id, undefined, undefined, partial.turnMetadata.nextTurnCursor!);
+    assert.equal(continued.turn?.id, "turn-1");
     const beforeRevocation = nativeReads;
     originalGrant = false;
     await assert.rejects(() => runner.trace(reviewer, projectId, observed.id), /授权已失效/);

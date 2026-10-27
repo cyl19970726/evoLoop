@@ -705,10 +705,10 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
-    // Pinned 0.154 defaults to newest first. State it explicitly so bounded
-    // ordinary-message recovery always searches the most recent native Turns.
+    // Metadata-only listing is supported by pinned 0.164; 0.154 has no itemsView.
     const result = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 100,
-      sortDirection:'desc', ...(cursor ? { cursor } : {}) }));
+      sortDirection:'desc', ...(this.expectedVersion === "codex-cli 0.164.0-alpha.11.1" ? { itemsView: "notLoaded" } : {}),
+      ...(cursor ? { cursor } : {}) }));
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
     return { data: turns as RuntimeTurn[], nextCursor: nonempty(result?.nextCursor) ? result.nextCursor : null };

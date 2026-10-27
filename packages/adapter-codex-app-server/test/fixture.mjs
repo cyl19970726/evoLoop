@@ -146,8 +146,9 @@ for await (const line of lines) {
       send({id,result:{data:sequenceInputs.map((_,index)=>({id:`turn-${index+1}`,status:"completed",completedAt:1792498484+index})).reverse(),nextCursor:null}});
       continue;
     }
-    if (mode === "history-newest") {
-      if (params.sortDirection !== "desc" || params.limit !== 100) {
+    if (mode === "history-newest" || mode === "history-newest-0164") {
+      if (params.sortDirection !== "desc" || params.limit !== 100 ||
+          (mode === "history-newest-0164" ? params.itemsView !== "notLoaded" : "itemsView" in params)) {
         send({id,error:{code:-32602,message:"ordinary history did not request newest first"}});continue;
       }
       const data=params.cursor ? [{id:"older-100",status:"completed",completedAt:1792498484}] :

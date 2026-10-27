@@ -244,8 +244,8 @@ export async function buildServer(options: {
         !request.workerIdentity && !principal.permissions.includes("review"))
       throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法读取原生工作轨迹。");
-    const query = z.object({ cursor: z.string().min(1).max(2048).optional() }).parse(request.query);
-    return options.runtime.trace(principal, p.projectId!, p.id!, query.cursor, request.workerIdentity ?? undefined);
+    const query = z.object({ cursor: z.string().min(1).max(2048).optional(), turnCursor: z.string().min(1).max(2048).optional() }).parse(request.query);
+    return options.runtime.trace(principal, p.projectId!, p.id!, query.cursor, request.workerIdentity ?? undefined, query.turnCursor);
   });
   app.post("/api/projects/:projectId/runtime/runs/:id/reconcile", async request => {
     const p = params(request.params);
@@ -261,7 +261,7 @@ export async function buildServer(options: {
       grant.authorizationScope === session.authorizationScope && grant.cwd === session.cwd && grant.sandbox === session.sandbox)) {
       throw new DomainError("FORBIDDEN", "当前身份没有此运行所属会话的执行授权。");
     }
-    return options.runtime.reconcile(principal, p.projectId!, p.id!, body.expectedVersion, body.reason);
+    return options.runtime.reconcile(principal, p.projectId!, p.id!, body.expectedVersion, body.reason, body.turnCursor);
   });
   app.get("/api/projects/:projectId/goals", async request => {
     const p = params(request.params); const q = pageSchema.parse(request.query);

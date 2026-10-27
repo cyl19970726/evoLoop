@@ -91,12 +91,12 @@ test("run trace CLI uses a named read and optional cursor", async () => {
     seen.push(String(url)); return new Response(JSON.stringify({ source: "owned-native-history" }), { status: 200 });
   });
   try {
-    const result = await run(["read", "run", runId, "--trace", "--cursor", "page-2"],
+    const result = await run(["read", "run", runId, "--trace", "--cursor", "page-2", "--turn-cursor", "older-turns"],
       { EVOLOOP_TOKEN: "private-fixture", EVOLOOP_PROJECT: project });
     assert.equal(result.code, 0);
     assert.equal(JSON.parse(result.stdout).source, "owned-native-history");
     assert.equal(new URL(seen[0]!).pathname + new URL(seen[0]!).search,
-      `/api/projects/${project}/runtime/runs/${runId}/trace?cursor=page-2`);
+      `/api/projects/${project}/runtime/runs/${runId}/trace?cursor=page-2&turnCursor=older-turns`);
     assert.equal((await run(["read", "run", runId, "--cursor", "page-2"],
       { EVOLOOP_TOKEN: "private-fixture", EVOLOOP_PROJECT: project })).code, 2);
   } finally { mocked.mock.restore(); }

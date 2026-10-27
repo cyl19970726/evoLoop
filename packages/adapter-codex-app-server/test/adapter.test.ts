@@ -682,6 +682,17 @@ test('bounded message history starts with the newest native Turn even after one 
   assert.equal((await adapter.listTurns(binding,first.nextCursor)).data[0]?.id,'older-100');
 });
 
+test('pinned 0.164 requests Turn metadata without loading Items',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'history-newest-0164'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:'evoloop-codex-app-server'};
+  await adapter.registerBinding(binding);
+  assert.equal((await adapter.listTurns(binding)).data[0]?.id,'turn-1');
+});
+
 
 test("read and resume reject a changed native session tree", async t => {
   const adapter = await open("changed-session"); t.after(() => adapter.close());
