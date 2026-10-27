@@ -11,6 +11,8 @@ import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, 
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applyResident } from "./resident-hosts.js";
 import { applySessionMessage } from "./session-messages/index.js";
+import { applyNativeInputReply } from "./native-input/index.js";
+export { NativeInputService } from "./native-input/index.js";
 import type { SessionMessageCommand } from "@evoloop/contracts/session-messages";
 import { applySessionAssignment } from "./session-assignments/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
@@ -176,6 +178,8 @@ export class WorkflowService {
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("session.message."))
       return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
+    if (command.type === "session.input.reply")
+      return applyNativeInputReply(tx, principal, command, now);
     if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.")) {
       const result = await applySessionAssignment({ tx, principal, command: command as SessionAssignmentCommand, now });
       return { result, effects: [{ kind: command.type, entityId: result.entityId, version: result.version! }] };
