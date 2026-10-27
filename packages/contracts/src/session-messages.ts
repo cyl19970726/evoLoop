@@ -28,6 +28,8 @@ export interface SessionMessageProcessing {
   projectId: string; id: string; messageId: string; sessionId: string; operationId: string;
   state: SessionMessageProcessingState; nativeTurnId: string | null; response: string | null;
   failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
+  /** Fixed by the same transaction as the original processing's native-start permit. */
+  nativeEnvironmentEpoch?: number | null;
   version: number; startedAt: string; updatedAt: string;
 }
 /** A separate, explicit ordinary-conversation grant. Business queue or Loop quotas do not satisfy it. */

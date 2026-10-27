@@ -16,12 +16,28 @@ let loadedBusinessResume = false;
 let genericMessageBusinessResumed = false;
 let turnStarts = 0;
 let configReads = 0;
+let requirementsReads = 0;
 let threadReads = 0;
 let observedResumes = 0;
 let lastTurnModel = null;
 let loadedBusinessInput = null;
+const purposeRequests = () => [
+  {id:900,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}},
+  {id:901,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",namespace:"business",tool:"browser_snapshot",arguments:{}}},
+  {id:902,method:"item/commandExecution/requestApproval",params:{threadId:thread.id,turnId:"turn-1",command:"echo forbidden"}},
+  {id:903,method:"applyPatchApproval",params:{conversationId:thread.id,callId:"patch-1"}},
+  {id:904,method:"mcpServer/elicitation/request",params:{threadId:thread.id}},
+  {id:905,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}},
+];
+const earlyPurposeDecisions = [];
 for await (const line of lines) {
   const message = JSON.parse(line);
+  if (mode === "message-purpose-callbacks" && Number.isInteger(message.id) && message.id >= 900 && message.id <= 915 && !message.method) {
+    if (message.id < 910) earlyPurposeDecisions.push({requestId:message.id,result:message.result??null,error:message.error??null});
+    send({method:"fixture/purposeDecision",params:{threadId:thread.id,requestId:message.id,
+      ...(message.result?{result:message.result}:{}),...(message.error?{error:message.error}:{})}});
+    continue;
+  }
   if (message.method === "initialized") { initialized = true; continue; }
   if (message.id === approvalId && pendingCreateId !== null) {
     const expected = mode === "prebind-unsupported" ? message.error?.code === -32000 : message.result?.decision === "decline";
@@ -31,8 +47,9 @@ for await (const line of lines) {
     continue;
   }
   if (message.id === approvalId) { send({ method: "fixture/approvalDecision", params: { threadId: thread.id, decision: message.result?.decision ?? null } }); continue; }
-  if (message.id === toolId || message.id === toolId+1) {
-    send({method:"fixture/toolDecision",params:{threadId:thread.id,turnId:"turn-1",result:message.result}});
+  if (message.id === toolId || message.id === toolId+1 ||
+    (mode === "dynamic-cold-resume" && message.id >= toolId+2 && message.id <= toolId+5)) {
+    send({method:"fixture/toolDecision",params:{threadId:thread.id,turnId:"turn-1",requestId:message.id,result:message.result}});
     if (mode==="dynamic-replay" && message.id===toolId) send({id:toolId+1,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}});
     continue;
   }
@@ -43,8 +60,9 @@ for await (const line of lines) {
   }
   const { id, method, params } = message;
   if (method === "initialize") {
-    if ((mode.startsWith("dynamic") || mode.startsWith("message-profile")) && params.capabilities?.experimentalApi !== true) process.exit(2);
-    if (!mode.startsWith("dynamic") && !mode.startsWith("message-profile") && params.capabilities?.experimentalApi === true) process.exit(2);
+    if ((mode.startsWith("dynamic") || mode.startsWith("message-profile") || mode.startsWith("message-0164") || mode === "message-purpose-callbacks") && params.capabilities?.experimentalApi !== true) process.exit(2);
+    if (!mode.startsWith("dynamic") && !mode.startsWith("message-profile") && !mode.startsWith("message-0164") && mode !== "message-purpose-callbacks" && params.capabilities?.experimentalApi === true) process.exit(2);
+    if (mode === "message-purpose-callbacks") for (const request of purposeRequests()) send(request);
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
@@ -58,12 +76,82 @@ for await (const line of lines) {
       {...disabled,enabled:true}:disabled;
     const appOverride=mode==='message-profile-app-override'?{'write-app':{enabled:true}}:{};
     const filesystem=mode==='message-profile-broad'?{'/tmp/evoloop-fixture':'read',':root':'read'}:{'/tmp/evoloop-fixture':'read'};
+    const is0164Message=mode.startsWith('message-0164');
+    if(is0164Message&&params.includeLayers!==true)process.exit(2);
+    if(is0164Message&&(mode==='message-0164-apps-feature-enabled'||
+      (mode==='message-0164-post-resume-drift'&&configReads>2)))features.apps=true;
+    if(is0164Message&&mode==='message-0164-plugins-feature-enabled')features.plugins=true;
+    const mcpServers=is0164Message?{'fixture-disabled':{command:'fixture-mcp',enabled:mode==='message-0164-mcp-enabled'}}:
+      mode==='message-profile-disabled-mcp'?{'fixture-disabled':{command:'fixture-mcp',enabled:false}}:{};
+    const plugins=is0164Message?{_default:{enabled:mode==='message-0164-plugin-default-enabled'},
+      'fixture-plugin':{enabled:mode==='message-0164-plugin-enabled'}}:{};
+    const origins={};
+    if(is0164Message){
+      for(const path of ['apps._default.enabled','features.apps','features.plugins','plugins._default.enabled'])
+        origins[path]={name:{type:'sessionFlags'},version:'fixture-session-flags'};
+      if(mode!=='message-0164-mcp-missing-origin')
+        origins['mcp_servers.fixture-disabled.enabled']={name:{type:'sessionFlags'},version:'fixture-session-flags'};
+      origins['plugins.fixture-plugin.enabled']={name:{type:'sessionFlags'},version:'fixture-session-flags'};
+    }
+    const layers=is0164Message?[
+      {name:{type:'sessionFlags'},version:'fixture-session-flags',config:{
+        mcp_servers:{'fixture-disabled':{enabled:false}},apps:{_default:disabled},
+        features:{apps:false,plugins:false},plugins:{_default:{enabled:false},'fixture-plugin':{enabled:false}}}},
+      {name:{type:'user',file:'/tmp/fixture-config.toml',profile:null},version:'fixture-user',config:{}},
+      ...(mode==='message-0164-managed-layer'?[{name:{type:'enterpriseManaged',id:'fixture',name:'managed'},version:'fixture-managed',config:{}}]:[]),
+    ]:undefined;
     send({id,result:{config:{apps:{_default:appDefault,...appOverride},
       features,web_search:'disabled',tools:{web_search:null},browser_use:null,computer_use:null,
       orchestrator:{mcp:{enabled:false},skills:{enabled:false}},
-      mcp_servers:{},plugins:{},permissions:{evoloop_message_read:{filesystem,network:{enabled:false}}}},origins:{}}});continue;
+      mcp_servers:mcpServers,plugins,permissions:{evoloop_message_read:{filesystem,network:{enabled:false}}}},
+      origins,...(layers?{layers}:{})}});continue;
+  }
+  if(method==='config/requirements/read'&&mode.startsWith('message-0164')){
+    requirementsReads++;
+    if(mode==='message-0164-requirements-read-error'){
+      send({id,error:{code:-32000,message:'fixture requirements unavailable'}});continue;
+    }
+    if(mode==='message-0164-requirements-missing-shape'){
+      send({id,result:{supportsIndependentSpeedModes:null}});continue;
+    }
+    let requirements=null;
+    if(mode==='message-0164-requirement-apps-true')requirements={featureRequirements:{apps:true}};
+    if(mode==='message-0164-requirement-plugins-true')requirements={featureRequirements:{plugins:true}};
+    if(mode==='message-0164-requirement-sensitive-true')requirements={featureRequirements:{browser_use:true}};
+    if(mode==='message-0164-requirement-unknown-true')requirements={featureRequirements:{future_tool_surface:true}};
+    if(mode==='message-0164-requirement-bad-feature-map')requirements={featureRequirements:'not-a-map'};
+    if(mode==='message-0164-requirement-false-only')requirements={featureRequirements:{apps:false,plugins:false,browser_use:false}};
+    if(mode==='message-0164-requirements-post-resume-drift'&&requirementsReads>2)
+      requirements={featureRequirements:{apps:false}};
+    if(mode==='message-0164-requirements-post-resume-true'&&requirementsReads>2)
+      requirements={featureRequirements:{future_tool_surface:true}};
+    send({id,result:{requirements,supportsIndependentSpeedModes:null}});continue;
   }
   if (method === "mcpServerStatus/list") {
+    if(mode.startsWith('message-0164')){
+      if(params.detail!=='full'||params.limit!==100)process.exit(2);
+      const status={name:'fixture-disabled',runtimeStatus:'disabled',pluginId:null,authStatus:'unsupported',
+        tools:{},toolsError:null,resources:[],resourceTemplates:[]};
+      if(mode==='message-0164-inventory-enabled')status.runtimeStatus='connected';
+      if(mode==='message-0164-inventory-auth-unknown')status.authStatus='unknown';
+      if(mode==='message-0164-inventory-tools-error')status.toolsError={message:'fixture error'};
+      if(mode==='message-0164-inventory-tools')status.tools={write:{name:'write'}};
+      if(mode==='message-0164-inventory-new-id')status.name='unconfigured-server';
+      if(mode==='message-0164-inventory-missing'){
+        send({id,result:{data:[],nextCursor:null}});continue;
+      }
+      if(mode==='message-0164-inventory-no-cursor'){
+        send({id,result:{data:[status]}});continue;
+      }
+      if(mode==='message-0164-inventory-page-loop'){
+        send({id,result:{data:params.cursor?[status]:[],nextCursor:'repeated'}});continue;
+      }
+      if(mode==='message-0164-inventory-paged'){
+        if(!params.cursor){send({id,result:{data:[],nextCursor:'page-2'}});continue;}
+        send({id,result:{data:[status],nextCursor:null}});continue;
+      }
+      send({id,result:{data:[status],nextCursor:null}});continue;
+    }
     send({id,result:{data:mode==='message-profile-mcp'?[{name:'write-capable',tools:{write:{name:'write',inputSchema:{}}}}]:[],nextCursor:null}});continue;
   }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
@@ -80,7 +168,31 @@ for await (const line of lines) {
     }
     send({ id, result: { thread } }); continue;
   }
+  if (method === "thread/resume" && mode === "dynamic-cold-resume") {
+    if (params.dynamicTools !== undefined) {send({id,error:{code:-32602,message:"resume must not redeclare native tools"}});continue;}
+    observedResumes++;
+  }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
+  if(method==='thread/resume'&&mode.startsWith('message-0164')){
+    if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.model!=='gpt-6-sol'||
+      params.permissions!=='evoloop_message_read'||params.approvalPolicy!=='never'||
+      params.sandbox!==undefined||params.config!==undefined||params.excludeTurns!==true){
+      send({id,error:{code:-32602,message:'ordinary cold resume request was not exact'}});continue;
+    }
+    const ordinaryThread={...thread,model:'gpt-6-sol',status:{type:'idle',activeFlags:[]}};
+    observedResumes++;
+    const response={thread:ordinaryThread,model:'gpt-6-sol',modelProvider:'openai',cwd:thread.cwd,
+      approvalPolicy:'never',sandbox:{type:'readOnly',networkAccess:false},
+      activePermissionProfile:{id:'evoloop_message_read',extends:null}};
+    if(mode==='message-0164-resume-wrong-thread')response.thread={...ordinaryThread,id:'other-thread'};
+    if(mode==='message-0164-resume-wrong-session')response.thread={...ordinaryThread,sessionId:'other-session'};
+    if(mode==='message-0164-resume-wrong-profile')response.activePermissionProfile={id:'other',extends:null};
+    if(mode==='message-0164-resume-wrong-network')response.sandbox.networkAccess=true;
+    if(mode==='message-0164-resume-wrong-approval')response.approvalPolicy='on-request';
+    if(mode==='message-0164-resume-wrong-model')response.model='other-model';
+    if(mode==='message-0164-resume-wrong-cwd')response.cwd='/tmp/other-cwd';
+    send({id,result:response});continue;
+  }
   if (method === "thread/resume" && mode.startsWith("profile-transition")) {
     observedResumes++;
     if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.model!=="new-model"||
@@ -167,6 +279,9 @@ for await (const line of lines) {
       mode === "foreign-samecwd" ? [foreign, owned] : [owned] : [], nextCursor: null } }); continue;
   }
   if (method === "thread/resume" || method === "thread/read") {
+    if (mode === "message-purpose-callbacks" && method === "thread/read") {
+      for (const request of purposeRequests()) send({...request,id:request.id+10});
+    }
     if (method === "thread/read") threadReads++;
     const observedEnvironment = mode === "env-observe" && method === "thread/read" ? {
       HOME: process.env.HOME ?? null, CODEX_HOME: process.env.CODEX_HOME ?? null,
@@ -179,13 +294,14 @@ for await (const line of lines) {
       NODE_OPTIONS: process.env.NODE_OPTIONS ?? null,
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
-    const nativeThread={...thread,status:{type:mode==='message-profile-active'||
+    const nativeThread={...thread,...(mode.startsWith('message-0164')?{model:'gpt-6-sol'}:{}),status:{type:mode==='message-profile-active'||
       (mode==='message-profile-activity-race'&&threadReads>=3)?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
       ...(method === "thread/resume" && genericMessageBusinessResumed ? {
         model:"fixture-model",modelProvider:"openai",cwd:thread.cwd,approvalPolicy:"on-request",
         sandbox:{type:"workspaceWrite",writableRoots:[],networkAccess:true},activePermissionProfile:null} : {}),
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
+      ...(mode === "message-purpose-callbacks" ? {earlyPurposeDecisions} : {}),
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list") {
@@ -267,7 +383,7 @@ for await (const line of lines) {
         send({id,error:{code:-32602,message:"business turn did not regain exact profile"}});continue;
       }
     }
-    const startedTurnId=mode.startsWith("message-profile-loaded")?`turn-${turnStarts}`:"turn-1";
+    const startedTurnId=mode.startsWith("message-profile-loaded")||mode==="dynamic-cold-resume"?`turn-${turnStarts}`:"turn-1";
     send({ id, result: { turn: { id: startedTurnId, status: "inProgress" } } });
     send({ method: "item/started", params: { threadId: "unowned", turnId: "x" } });
     send({ method: "turn/started", params: { threadId: thread.id, turn: { id: startedTurnId, status: "inProgress" } } });
@@ -278,7 +394,13 @@ for await (const line of lines) {
       send({ id: 853, method: "unreviewed/serverRequest", params: { threadId: thread.id } });
     }
     if (mode === "approval") send({ id: approvalId, method: "item/commandExecution/requestApproval", params: { threadId: thread.id, turnId: "turn-1", command: "echo fixture" } });
-    if (mode.startsWith("dynamic")) send({id:toolId,method:"item/tool/call",params:{
+    if (mode==="dynamic-cold-resume") {
+      const id=toolId+(turnStarts-1)*2;
+      send({id,method:"item/tool/call",params:{threadId:thread.id,turnId:startedTurnId,
+        callId:`trusted-${turnStarts}`,tool:"browser_snapshot",arguments:{}}});
+      send({id:id+1,method:"item/tool/call",params:{threadId:thread.id,turnId:startedTurnId,
+        callId:`stale-${turnStarts}`,tool:"legacy_write",arguments:{}}});
+    } else if (mode.startsWith("dynamic")) send({id:toolId,method:"item/tool/call",params:{
       threadId:mode==="dynamic-foreign"?"other-thread":thread.id,
       turnId:mode==="dynamic-wrong-turn"?"other-turn":"turn-1",callId:"call-1",
       tool:mode==="dynamic-unknown-tool"?"shell":"browser_snapshot",arguments:mode==="dynamic-url"?{url:"https://example.com"}:{}}});

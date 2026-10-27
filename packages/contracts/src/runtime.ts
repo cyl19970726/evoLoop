@@ -24,6 +24,8 @@ export interface RuntimeSessionRecord {
   model: string | null; sandbox: "read-only" | "workspace-write"; approvalPolicy: "on-request" | "untrusted";
   state: RuntimeSessionState; version: number; nativeThreadId: string | null; nativeSessionId: string | null;
   operationId: string; actorId: string; createdAt: string; updatedAt: string;
+  /** Persisted native-start permit; null/absent for historical unmanaged Sessions. */
+  nativeEnvironmentEpoch?: number | null;
   closeOperationId?: string | null; closeAttemptedAt?: string | null; closeVerifiedAt?: string | null;
   /** Adopted configured profile and its native activation status. */
   executionProfile?: SessionExecutionProfile | null;
@@ -33,6 +35,8 @@ export interface RuntimeRunRecord {
   sessionId: string; operationId: string; input: string; inputHash: string;
   state: RuntimeRunState; version: number; nativeTurnId: string | null;
   interruptRequested: boolean; resultSummary: string | null; actorId: string; createdAt: string; updatedAt: string;
+  /** Immutable native environment used for this original dispatch, never inferred from the current child. */
+  nativeEnvironmentEpoch?: number | null;
   evaluationBinding?: { evaluationId: string; revisionId: string; caseId: string; conditionId: string;
     sourceTaskRevisionId: string; actualTaskRevisionId: string; attemptId: string } | null;
   evaluationPacket?: EvaluationPacketBinding | null;

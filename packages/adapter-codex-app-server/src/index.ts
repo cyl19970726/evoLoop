@@ -116,8 +116,12 @@ export interface CodexAppServerOptions {
   executable?: string;
   expectedVersion?: string;
   requestTimeoutMs?: number;
+  /** Optional startup handshake deadline; other RPCs retain requestTimeoutMs. */
+  initializationTimeoutMs?: number;
   dynamicToolTimeoutMs?: number;
   clientVersion?: string;
+  /** Fixed at construction. Message processes can only use owned read-only conversation RPCs. */
+  purpose?: "business" | "message";
   /** Enables pinned experimental named-permission selection for ordinary Session turns at process startup. */
   enableRestrictedMessagePermissions?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
@@ -171,19 +175,25 @@ export class CodexAppServerAdapter implements RuntimePort {
   private ready = false;
   private readonly executable: string;
   private readonly timeout: number;
+  private readonly initializationTimeout: number;
   private readonly dynamicToolTimeout: number;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly expectedVersion: PinnedProtocolVersion;
+  readonly #purpose: "business" | "message";
 
   constructor(private readonly options: CodexAppServerOptions = {}) {
+    this.#purpose = options.purpose ?? "business";
+    if (this.#purpose !== "business" && this.#purpose !== "message") throw new RuntimeProtocolError("invalid adapter purpose");
     this.executable = options.executable ?? "codex";
     this.timeout = options.requestTimeoutMs ?? 15_000;
+    this.initializationTimeout = options.initializationTimeoutMs ?? this.timeout;
     this.dynamicToolTimeout = options.dynamicToolTimeoutMs ?? 30_000;
     this.environment = childEnvironment(options.environment ?? process.env);
     const expectedVersion = options.expectedVersion ?? "codex-cli 0.154.0";
     if (!(expectedVersion in PINNED_PROTOCOLS)) throw new RuntimeProtocolError("unsupported Codex CLI protocol version");
     this.expectedVersion = expectedVersion as PinnedProtocolVersion;
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
+    if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
   }
   isReady(): boolean { return this.ready && !!this.child; }
@@ -211,8 +221,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     lines.on("close", () => this.disconnect("stdout closed"));
     try {
       const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" },
-        ...((this.options.dynamicTools && this.options.callDynamicTool)||this.options.enableRestrictedMessagePermissions ?
-          {capabilities:{experimentalApi:true}} : {}) }));
+        ...(((this.#purpose === "business" && this.options.dynamicTools && this.options.callDynamicTool)||this.options.enableRestrictedMessagePermissions) ?
+          {capabilities:{experimentalApi:true}} : {}) }, this.initializationTimeout));
       if (!result || !nonempty(result.userAgent) || !nonempty(result.platformFamily)) throw new RuntimeProtocolError("invalid initialize response");
       this.send({ method: "initialized" });
       this.ready = true;
@@ -237,7 +247,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private async probeSchema(): Promise<void> {
     const directory = await mkdtemp(resolve(tmpdir(), "evoloop-codex-schema-"));
     try {
-      const experimental=!!(this.options.dynamicTools && this.options.callDynamicTool)||!!this.options.enableRestrictedMessagePermissions;
+      const experimental=(this.#purpose === "business" && !!(this.options.dynamicTools && this.options.callDynamicTool))||!!this.options.enableRestrictedMessagePermissions;
       await execFileAsync(this.executable, ["app-server", "generate-json-schema", ...(experimental ? ["--experimental"] : []), "--out", directory], {
         timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
       });
@@ -252,14 +262,14 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private request(method: string, params: unknown, timeoutMs = this.timeout): Promise<unknown> {
     if (!this.child) return Promise.reject(new RuntimeProtocolError("App Server not open"));
     const id = this.nextId++;
     return new Promise((resolveResult, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new RuntimeUnknownError(method, id, "response timeout"));
-      }, this.timeout);
+      }, timeoutMs);
       this.pending.set(id, { method, resolve: resolveResult, reject, timer });
       try { this.send({ id, method, params }); }
       catch (error) {
@@ -302,6 +312,24 @@ export class CodexAppServerAdapter implements RuntimePort {
     const id = message.id;
     if ((typeof id !== "number" && typeof id !== "string") || !nonempty(message.method)) { this.disconnect("invalid server request"); return; }
     const params = object(message.params);
+    // A message process must be deny-only from its first native callback, including
+    // callbacks sent before initialize or trusted binding registration. Never consult
+    // declaredTools or a supplied business bridge in this purpose.
+    if (this.#purpose === "message") {
+      if (message.method === "item/tool/call") {
+        this.send({id,result:{contentItems:[{type:"inputText",text:"Tool unavailable"}],success:false}});
+        return;
+      }
+      if (APPROVAL_METHODS.has(message.method)) {
+        const legacy = message.method === "applyPatchApproval" || message.method === "execCommandApproval";
+        this.send({id,result:{decision:legacy?"denied":"decline"}});
+        return;
+      }
+      if (message.method === "mcpServer/elicitation/request") {
+        this.send({id,result:{action:"decline"}});
+        return;
+      }
+    }
     const threadId = params?.threadId ?? params?.conversationId;
     const binding = nonempty(threadId) ? this.bindings.get(threadId) : undefined;
     const creating = !binding && nonempty(threadId) && APPROVAL_METHODS.has(message.method) ? this.pendingCreate : null;
@@ -433,7 +461,12 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (!this.ready) throw new RuntimeProtocolError("App Server not ready");
   }
 
+  private businessOnly(): void {
+    if (this.#purpose === "message") throw new RuntimeProtocolError("business native operation unavailable in message adapter");
+  }
+
   async create(spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
+    this.businessOnly();
     if (!this.ready) throw new RuntimeProtocolError("App Server not ready");
     if (!nonempty(spec.sessionId) || !nonempty(spec.roleId) || !nonempty(spec.projectId) || !nonempty(spec.authorizationScope) || !spec.cwd.startsWith("/") || resolve(spec.cwd) !== spec.cwd) throw new RuntimeProtocolError("invalid session scope or cwd");
     if (spec.sandbox !== "read-only" && spec.sandbox !== "workspace-write") throw new RuntimeProtocolError("invalid sandbox");
@@ -459,6 +492,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
 
   async resume(binding: RuntimeBinding, spec: RuntimeSessionSpec, dispatchOperationId?: string): Promise<RuntimeBinding> {
+    this.businessOnly();
     this.owned(binding);
     if(dispatchOperationId!==undefined&&!nonempty(dispatchOperationId))
       throw new RuntimeProtocolError('business restore operation ID is empty');
@@ -477,10 +511,32 @@ export class CodexAppServerAdapter implements RuntimePort {
       binding.resumeProfile.approvalPolicy !== spec.approvalPolicy ||
       (binding.resumeProfile.executionProfileRevisionId??null)!==(spec.executionProfileRevisionId??null))
       throw new RuntimeProtocolError("resume profile does not match registered binding");
+    // The native rollout may retain an old declaration. Rebuild the host allowlist
+    // only from the current trusted business scope, and keep it empty until the
+    // exact owned resume is acknowledged. A failed provider or native RPC cannot
+    // leave an earlier allowlist open.
+    this.declaredTools.delete(binding.nativeThreadId);
     const config = await this.options.threadConfig?.(spec);
     if (spec.sandbox === "workspace-write" &&
       typeof config?.["sandbox_workspace_write.network_access"] !== "boolean")
       throw new RuntimeProtocolError("workspace resume lacks an exact current network grant");
+    let currentTools:DynamicToolSpec[]|undefined;
+    if (this.options.dynamicTools && this.options.callDynamicTool) {
+      try { currentTools=await this.options.dynamicTools(spec); }
+      catch { throw new RuntimeProtocolError("current dynamic tool declaration is unavailable"); }
+    }
+    const currentNames = new Set<string>();
+    if (currentTools !== undefined) {
+      if (!Array.isArray(currentTools)) throw new RuntimeProtocolError("invalid current dynamic tool declaration");
+      for (const tool of currentTools) {
+        const declaration=object(tool);
+        if (declaration?.type !== "function" || !nonempty(declaration.name) ||
+          !nonempty(declaration.description) || !object(declaration.inputSchema) ||
+          currentNames.has(declaration.name))
+          throw new RuntimeProtocolError("invalid current dynamic tool declaration");
+        currentNames.add(declaration.name);
+      }
+    }
     const result = object(await this.request("thread/resume", { threadId: binding.nativeThreadId,
       excludeTurns: true, cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}),
       sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
@@ -494,6 +550,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       this.assertRevisedProfileReply(result,binding,spec,networkAccess);
     this.businessTurnPolicies.set(binding.nativeThreadId,{sandboxPolicy:spec.sandbox==='read-only'?{type:'readOnly',networkAccess:false}:
       {type:'workspaceWrite',writableRoots:[],networkAccess:config?.['sandbox_workspace_write.network_access']===true},approvalPolicy:spec.approvalPolicy});
+    if (currentNames.size) this.declaredTools.set(binding.nativeThreadId,currentNames);
     if(this.readOnlyThreads.has(binding.nativeThreadId))
       this.businessRestorePrepared.set(binding.nativeThreadId,dispatchOperationId!);
     return binding;
@@ -574,6 +631,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   /** Called only after the coordinator has durably claimed this one revision's activation. */
   async activateExecutionProfile(current:RuntimeBinding,target:RuntimeSessionSpec,
     revisionId:string,operationId:string):Promise<RuntimeBinding>{
+    this.businessOnly();
     const revised=await this.authorizeRevision(current,target,revisionId,operationId);
     if(!sameBinding(this.bindings.get(current.nativeThreadId)!,current))
       throw new RuntimeProtocolError('execution profile activation was already attempted in this adapter');
@@ -599,6 +657,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   /** Read-only reconciliation of a lost resume reply; never repeats the original native operation. */
   async inspectExecutionProfileActivation(current:RuntimeBinding,target:RuntimeSessionSpec,
     revisionId:string,operationId:string):Promise<RuntimeBinding|null>{
+    this.businessOnly();
     const revised=await this.authorizeRevision(current,target,revisionId,operationId);
     const result=object(await this.request('thread/read',{threadId:current.nativeThreadId,includeTurns:false}));
     const thread=object(result?.thread);
@@ -633,10 +692,27 @@ export class CodexAppServerAdapter implements RuntimePort {
       return{available:false,reason,fingerprint:null};};
     if(!binding.resumeProfile)return unavailable('Owned Session has no verified resume profile');
     try{
-      const configReply=object(await this.request('config/read',{cwd:binding.cwd,includeLayers:false}));
+      const verified0164MessagePath=this.#purpose==='message'&&this.expectedVersion==='codex-cli 0.164.0-alpha.11.1';
+      const configReply=object(await this.request('config/read',{cwd:binding.cwd,includeLayers:verified0164MessagePath}));
+      const requirementsReply=verified0164MessagePath?
+        object(await this.request('config/requirements/read',{})):null;
       const config=object(configReply?.config);
       const origins=object(configReply?.origins);
-      if(!config||!origins)return unavailable('Effective native tool configuration is unreadable');
+      if(!configReply||!config||!origins)return unavailable('Effective native tool configuration is unreadable');
+      if(verified0164MessagePath&&(!requirementsReply||!Object.hasOwn(requirementsReply,'requirements')||
+        (requirementsReply.requirements!==null&&!object(requirementsReply.requirements))||
+        (requirementsReply.supportsIndependentSpeedModes!==undefined&&
+          requirementsReply.supportsIndependentSpeedModes!==null&&
+          typeof requirementsReply.supportsIndependentSpeedModes!=='boolean')))
+        return unavailable('Native managed requirements could not be read in the pinned response shape');
+      const requirements=verified0164MessagePath?object(requirementsReply?.requirements):null;
+      const featureRequirements=requirements?.featureRequirements;
+      if(verified0164MessagePath&&featureRequirements!=null){
+        const featureMap=object(featureRequirements);
+        if(!featureMap||Object.entries(featureMap).some(([key,value])=>typeof value!=='boolean'||
+          (value===true&&!new Set(['api_key_cyber_access_programs','api_key_model_discovery','mentions_v2']).has(key))))
+          return unavailable('Managed feature requirements enable an unverified native capability');
+      }
       // Codex 0.154 config/read uses AppsConfig {_default, ...perAppId}, not AppConfig at the root.
       // An app can override the disabled default, so every explicit app must also be disabled.
       const apps=object(config.apps),appDefault=object(apps?._default);
@@ -667,7 +743,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       }
       for(const key of ['mcp_servers','plugins']){
         const value=object(config[key]);
-        if(!value||Object.keys(value).length>0)
+        if(!value||(!verified0164MessagePath&&Object.keys(value).length>0))
           return unavailable('Native MCP or plugin configuration is not empty');
       }
       if(config.browser_use!=null||config.computer_use!=null||config.web_search!=='disabled'||
@@ -686,11 +762,79 @@ export class CodexAppServerAdapter implements RuntimePort {
       if(features&&Object.entries(features).some(([key,value])=>
         /app|plugin|mcp|browser|computer|multi_agent|tool_suggest/i.test(key)&&value!==false&&value!==null))
         return unavailable('Native external tool feature is not disabled');
-      const inventory=object(await this.request('mcpServerStatus/list',{
-        threadId:binding.nativeThreadId,limit:100,detail:'toolsAndAuthOnly',
-      }));
-      if(!inventory||!Array.isArray(inventory.data)||inventory.data.length>0||inventory.nextCursor!==null)
-        return unavailable('Owned native thread has MCP servers or incomplete tool inventory');
+      const mcpServers=object(config.mcp_servers),plugins=object(config.plugins);
+      if(!mcpServers||!plugins)return unavailable('Native MCP or plugin configuration is unreadable');
+      if(!verified0164MessagePath&&(Object.keys(mcpServers).length>0||Object.keys(plugins).length>0))
+        return unavailable('Native MCP or plugin configuration is not empty');
+      if(verified0164MessagePath){
+        // The 0.164 permission-profile route is intentionally narrower than legacy loaded rejoin:
+        // only its immutable message-purpose adapter may accept known, explicitly disabled sources.
+        const layers=configReply.layers;
+        if(!Array.isArray(layers)||layers.some(raw=>{
+          const layer=object(raw),source=object(layer?.name);
+          // Managed/project config layers are outside this narrow path; formal requirements are read below.
+          return !source||!['sessionFlags','user','system','packagedDefaults'].includes(String(source.type));
+        }))return unavailable('Native policy sources or managed requirements are not fully verifiable');
+        const sessionLayers=layers.map(object).filter((layer):layer is Record<string,unknown>=>
+          object(layer?.name)?.type==='sessionFlags');
+        const pathValue=(value:unknown,parts:string[]):unknown=>parts.reduce<unknown>((current,key)=>object(current)?.[key],value);
+        const knownDenialOrigin=(parts:string[]):boolean=>{
+          const path=parts.join('.'),origin=object(origins[path]),source=object(origin?.name);
+          if(source?.type!=='sessionFlags'||sessionLayers.length!==1)return false;
+          const sessionLayer=sessionLayers[0];
+          if(!sessionLayer)return false;
+          const layerSource=object(sessionLayer.name);
+          return origin?.version===sessionLayer.version&&layerSource?.type==='sessionFlags'&&
+            pathValue(sessionLayer.config,parts)===false;
+        };
+        for(const path of [['features','apps'],['features','plugins'],['apps','_default','enabled'],['plugins','_default','enabled']])
+          if(!knownDenialOrigin(path))return unavailable('A required native deny has no verified source');
+        const pluginDefault=object(plugins['_default']);
+        if(object(apps['_default'])?.enabled!==false||features?.apps!==false||features?.plugins!==false||
+          pluginDefault?.enabled!==false)
+          return unavailable('Native Apps or plugins are not denied by the effective message policy');
+        for(const [serverId,rawServer] of Object.entries(mcpServers)){
+          if(!serverId||serverId==='_default'||object(rawServer)?.enabled!==false||
+            !knownDenialOrigin(['mcp_servers',serverId,'enabled']))
+            return unavailable('A configured MCP server is not explicitly disabled by a verified source');
+        }
+        for(const [pluginId,rawPlugin] of Object.entries(plugins)){
+          if(pluginId==='_default')continue;
+          const plugin=object(rawPlugin);
+          if(!plugin||(plugin.enabled!==undefined&&plugin.enabled!==false)||
+            Object.keys(plugin).some(key=>key!=='enabled')||
+            (plugin.enabled===false&&!knownDenialOrigin(['plugins',pluginId,'enabled'])))
+            return unavailable('A plugin has an unverified or enabled override');
+        }
+      }
+      const expectedServerIds=new Set(Object.keys(mcpServers));
+      const seenServerIds=new Set<string>(),seenCursors=new Set<string>();
+      let cursor:string|undefined,complete=false;
+      for(let page=0;page<20;page++){
+        const inventory=object(await this.request('mcpServerStatus/list',{
+          threadId:binding.nativeThreadId,limit:100,detail:verified0164MessagePath?'full':'toolsAndAuthOnly',
+          ...(cursor?{cursor}:{}),
+        }));
+        if(!inventory||!Array.isArray(inventory.data)||inventory.data.length>100)
+          return unavailable('Owned native thread has an unreadable MCP inventory');
+        for(const rawEntry of inventory.data){
+          const entry=object(rawEntry),serverId=entry?.name;
+          if(!verified0164MessagePath||typeof serverId!=='string'||!expectedServerIds.has(serverId)||seenServerIds.has(serverId)||
+            entry?.runtimeStatus!=='disabled'||entry?.pluginId!==null||entry?.toolsError!==null||
+            !object(entry.tools)||Object.keys(entry.tools as Record<string,unknown>).length!==0||
+            entry.authStatus!=='unsupported'||!Array.isArray(entry.resources)||entry.resources.length!==0||
+            !Array.isArray(entry.resourceTemplates)||entry.resourceTemplates.length!==0||
+            Object.entries(entry).some(([key,value])=>/(?:error|failure)/i.test(key)&&value!=null))
+            return unavailable('Owned native thread has an unexpected, enabled or incompletely verified MCP server');
+          seenServerIds.add(serverId);
+        }
+        if(inventory.nextCursor===null){complete=true;break;}
+        if(!nonempty(inventory.nextCursor)||seenCursors.has(inventory.nextCursor))
+          return unavailable('Owned native MCP inventory pagination is invalid');
+        seenCursors.add(inventory.nextCursor);cursor=inventory.nextCursor;
+      }
+      if(!complete||seenServerIds.size!==expectedServerIds.size)
+        return unavailable('Owned native MCP inventory is incomplete or does not match configured server IDs');
       if(!this.options.enableRestrictedMessagePermissions)
         return unavailable('Restricted named-permission protocol was not enabled when the native adapter started');
       const profiles=object(config.permissions),profile=object(profiles?.[ORDINARY_PERMISSION_PROFILE]);
@@ -707,7 +851,8 @@ export class CodexAppServerAdapter implements RuntimePort {
         policy:'evoloop-native-readonly-v1',
         owner:binding.owner,sessionId:binding.sessionId,nativeThreadId:binding.nativeThreadId,
         nativeSessionId:binding.nativeSessionId,cwd:binding.cwd,profile:binding.resumeProfile,
-        config,origins,inventory:[],
+        requirements:requirementsReply,
+        verified0164MessagePath,config,origins,layers:configReply.layers,inventory:[...seenServerIds].sort(),
       })).digest('hex');
       const prior=this.readOnlyQualifications.get(binding.nativeThreadId);
       if(prior&&prior.fingerprint!==fingerprint)return unavailable('Native tool profile changed; requalification is required');
@@ -728,18 +873,39 @@ export class CodexAppServerAdapter implements RuntimePort {
     const rechecked=await this.qualifyReadOnlyThread(binding);
     if(!rechecked.available||rechecked.fingerprint!==proof.fingerprint)
       throw new RuntimeProtocolError('native read-only tool profile changed before Turn start');
+    const verified0164MessagePath=this.#purpose==='message'&&this.expectedVersion==='codex-cli 0.164.0-alpha.11.1';
+    let expectedModel=binding.resumeProfile.model;
+    if(verified0164MessagePath&&!expectedModel){
+      const before=object(await this.request('thread/read',{threadId:binding.nativeThreadId,includeTurns:false}));
+      const beforeThread=object(before?.thread);
+      if(beforeThread?.id!==binding.nativeThreadId||beforeThread?.sessionId!==binding.nativeSessionId||
+        beforeThread?.cwd!==binding.cwd||object(beforeThread.status)?.type!=='idle'||!nonempty(beforeThread.model))
+        throw new RuntimeProtocolError('ordinary resume lacks an exact owned idle model baseline');
+      expectedModel=beforeThread.model;
+    }
     this.readOnlyQualifications.delete(binding.nativeThreadId);
     // This does not alter the saved resumeProfile. The next business Turn must explicitly carry its exact policy.
     this.readOnlyThreads.add(binding.nativeThreadId);
     this.businessRestorePrepared.delete(binding.nativeThreadId);
     const result=object(await this.request('thread/resume',{
       threadId:binding.nativeThreadId,excludeTurns:true,cwd:binding.cwd,
-      ...(binding.resumeProfile.model?{model:binding.resumeProfile.model}:{}),
+      ...(expectedModel?{model:expectedModel}:{}),
       permissions:ORDINARY_PERMISSION_PROFILE,approvalPolicy:'never',
     }));
     const thread=object(result?.thread);
     if(thread?.id!==binding.nativeThreadId||thread?.sessionId!==binding.nativeSessionId||thread?.cwd!==binding.cwd)
       throw new RuntimeUnknownError('thread/resume',null,'read-only resume acknowledgement unavailable');
+    if(verified0164MessagePath){
+      const activeProfile=object(result?.activePermissionProfile),sandbox=object(result?.sandbox);
+      if(!nonempty(expectedModel)||result?.model!==expectedModel||thread.model!==expectedModel||result?.cwd!==binding.cwd||
+        result?.approvalPolicy!=='never'||sandbox?.type!=='readOnly'||sandbox.networkAccess!==false||
+        activeProfile?.id!==ORDINARY_PERMISSION_PROFILE||activeProfile.extends!==null)
+        throw new RuntimeUnknownError('thread/resume',null,'read-only native profile readback was incomplete or mismatched');
+      const afterResume=await this.qualifyReadOnlyThread(binding);
+      if(!afterResume.available||afterResume.fingerprint!==rechecked.fingerprint)
+        throw new RuntimeProtocolError('native message policy changed during cold Thread resume');
+      this.readOnlyQualifications.delete(binding.nativeThreadId);
+    }
     if(!await this.nativeThreadIdle(binding))
       throw new RuntimeProtocolError('owned native thread became active before ordinary Turn start');
     const started=object(await this.request('turn/start',{
@@ -760,6 +926,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
 
   async archiveThread(binding: RuntimeBinding): Promise<void> {
+    this.businessOnly();
     this.owned(binding);
     // 0.154.0 returns an empty acknowledgement. The coordinator must verify archive separately.
     await this.request("thread/archive", { threadId: binding.nativeThreadId });
@@ -832,6 +999,7 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async startTurn(binding: RuntimeBinding, input: string, operationId: string,
     executionProfile?: ExecutionProfileSnapshot | null): Promise<RuntimeTurn> {
+    this.businessOnly();
     this.owned(binding);
     if(this.profileTransitionThreads.has(binding.nativeThreadId))
       throw new RuntimeProtocolError('execution profile activation has not been confirmed');
@@ -867,6 +1035,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
 
   async interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void> {
+    this.businessOnly();
     this.owned(binding);
     if (!nonempty(turnId)) throw new RuntimeProtocolError("turn ID required");
     await this.request("turn/interrupt", { threadId: binding.nativeThreadId, turnId });

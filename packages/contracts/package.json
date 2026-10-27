@@ -27,7 +27,8 @@
     "./session-assignments": "./dist/session-assignments.js",
     "./session-messages": "./dist/session-messages.js",
     "./allocation-relations": "./dist/allocation-relations.js",
-    "./session-recovery": "./dist/session-recovery.js"
+    "./session-recovery": "./dist/session-recovery.js",
+    "./native-execution": "./dist/native-execution.js"
   },
   "dependencies": {
     "zod": "4.6.7"
