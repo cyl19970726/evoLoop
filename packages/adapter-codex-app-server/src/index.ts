@@ -124,6 +124,8 @@ export interface CodexAppServerOptions {
   initializationTimeoutMs?: number;
   dynamicToolTimeoutMs?: number;
   clientVersion?: string;
+  /** Enable pinned 0.164 native request_user_input on this child only; never writes user configuration. */
+  nativeUserInput?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
   /** Actual child exit evidence, independent of a transport EOF. */
@@ -232,6 +234,10 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.environment = childEnvironment(options.environment ?? process.env);
     const expectedVersion = options.expectedVersion ?? "codex-cli 0.154.0";
     if (!(expectedVersion in PINNED_PROTOCOLS)) throw new RuntimeProtocolError("unsupported Codex CLI protocol version");
+    if(options.nativeUserInput!==undefined&&typeof options.nativeUserInput!=='boolean')
+      throw new RuntimeProtocolError('nativeUserInput must be boolean');
+    if(options.nativeUserInput&&expectedVersion!=='codex-cli 0.164.0-alpha.11.1')
+      throw new RuntimeProtocolError('nativeUserInput requires pinned Codex CLI 0.164');
     this.expectedVersion = expectedVersion as PinnedProtocolVersion;
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
@@ -273,6 +279,12 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
   onDisconnect(listener: (reason: string) => void): () => void { this.disconnects.add(listener); return () => this.disconnects.delete(listener); }
 
+  private appServerArguments():string[]{
+    return this.options.nativeUserInput===true?
+      ['-c','features.default_mode_request_user_input=true','app-server','--stdio']:
+      ['app-server','--stdio'];
+  }
+
   /** Probe the installed CLI before it can receive any project request. */
   async open(): Promise<void> {
     if (this.closed) throw new RuntimeProtocolError("adapter closed");
@@ -287,7 +299,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       if (version !== this.expectedVersion) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${this.expectedVersion}, got ${version}`);
       await this.probeSchema();
     }
-    const child = spawn(this.executable, this.options.spawnArgs ?? ["app-server", "--stdio"], {
+    const child = spawn(this.executable, this.options.spawnArgs ?? this.appServerArguments(), {
       stdio: ["pipe", "pipe", "pipe"], env: this.environment,
     });
     this.child = child;

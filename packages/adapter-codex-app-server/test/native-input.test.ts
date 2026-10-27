@@ -28,6 +28,15 @@ async function opened(mode:string,version='codex-cli 0.164.0-alpha.11.1',observe
 }
 const requests=(events:NativeInputEvent[])=>events.filter(event=>event.type==='requested').map(event=>event.request);
 const closed=(events:NativeInputEvent[])=>events.filter(event=>event.type==='closed');
+
+test('native input launch flag is scoped to the owned 0.164 App Server child',()=>{
+  const normal=new CodexAppServerAdapter({expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+  const enabled=new CodexAppServerAdapter({expectedVersion:'codex-cli 0.164.0-alpha.11.1',nativeUserInput:true});
+  const args=(adapter:CodexAppServerAdapter)=>(adapter as unknown as {appServerArguments():string[]}).appServerArguments();
+  assert.deepEqual(args(normal),['app-server','--stdio']);
+  assert.deepEqual(args(enabled),['-c','features.default_mode_request_user_input=true','app-server','--stdio']);
+  assert.throws(()=>new CodexAppServerAdapter({expectedVersion:'codex-cli 0.154.0',nativeUserInput:true}),RuntimeProtocolError);
+});
 async function trigger(adapter:CodexAppServerAdapter,binding:RuntimeBinding,events:NativeInputEvent[],count=1){
   const ready=pending<void>(resolveReady=>{
     const listener=(event:NativeInputEvent)=>{if(event.type==='requested'&&requests(events).length>=count){remove();resolveReady();}};
