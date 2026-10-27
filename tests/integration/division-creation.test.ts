@@ -67,8 +67,8 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   const template:DelegationTemplate={id:randomUUID(),revision:1,projectId,goalId,loopId,existingRoleIds:[],
     cognitionRoleIds:[],newRoleAllocation:{maxTotal:1,requiredState:"trial",creation:{allowProposeAndAcceptTrial:true,maxTrialDays:1}},
     firstTaskId,actorId:controller,authorizationScopeId:"creation-trial",decisionActorIds:[cognition],
-    allowedChoices:["new-role"],cwd:"/tmp/evoloop-m3-creation-fixture",model:"fixture",sandbox:"read-only",
-    networkAccess:false,approvalPolicy:"on-request",expiresAtUtc:new Date(Date.now()+20*60_000).toISOString()};
+    allowedChoices:["new-role"],cwd:"/tmp/evoloop-m3-creation-fixture",model:"fixture",sandbox:"danger-full-access",
+    networkAccess:true,approvalPolicy:"never",expiresAtUtc:new Date(Date.now()+20*60_000).toISOString()};
   const templateHash=sha(JSON.stringify(template));
   const deps={now:clock.now,nextId:randomUUID,hash:sha,
     getDelegationTemplate:async(p:string,id:string)=>p===projectId&&id===template.id?{template,hash:templateHash}:null,
@@ -96,7 +96,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   await issue(service,cognition,{type:"dispatch.start",dispatchId:parent.entityId,claimToken:token});
   const sessionId=randomUUID(),runId=randomUUID(),cwd="/tmp/evoloop-m3-creation-fixture";
   await wf(cognition,{type:"runtime.session.reserve",sessionId,roleId:cognitionRole,cwd,
-    authorizationScope:"cognition-scope",model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:"cognition-scope",model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:cognitionRole,
     cwd,authorizationScope:"cognition-scope",nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});

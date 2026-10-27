@@ -13,18 +13,24 @@ const absolute = z.string().min(1).max(1024).regex(/^\//);
 const grant = z.strictObject({
   projectId: z.uuid(), actorId: z.string().min(1).max(100), roleId: z.string().min(1).max(4000),
   authorizationScope: z.string().min(1).max(4000), cwd: absolute,
-  sandbox: z.enum(["read-only", "workspace-write"]),
+  // Legacy grants remain readable for original-operation reconciliation. New reservations require full execution.
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("danger-full-access"),
   model: z.string().min(1).max(100).optional(),
-  networkAccess: z.boolean().default(false),
-  approvalPolicy: z.enum(["on-request", "untrusted"]).default("on-request"),
-});
+  networkAccess: z.boolean().optional(),
+  approvalPolicy: z.enum(["on-request", "untrusted", "never"]).optional(),
+}).transform(value => ({...value,
+  networkAccess:value.networkAccess ?? (value.sandbox === "danger-full-access"),
+  approvalPolicy:value.approvalPolicy ?? (value.sandbox === "danger-full-access" ? "never" as const : "on-request" as const),
+})).refine(value => value.sandbox !== "danger-full-access" ||
+  value.networkAccess && value.approvalPolicy === "never",
+  "Full execution requires normal networking and never approval");
 export type RuntimeGrant = Omit<z.infer<typeof grant>, "networkAccess" | "approvalPolicy" | "model"> &
   Partial<Pick<z.infer<typeof grant>, "networkAccess" | "approvalPolicy">> & {model?: string | null | undefined};
 export function runtimeThreadConfig(grants: RuntimeGrant[], spec: RuntimeSessionSpec): Record<string, unknown> | undefined {
   const current=grants.find(value => value.actorId === spec.actorId && value.projectId === spec.projectId &&
     value.roleId === spec.roleId && value.authorizationScope === spec.authorizationScope && value.cwd === spec.cwd &&
     value.sandbox === spec.sandbox && (value.model ?? null) === (spec.model ?? null) &&
-    (value.approvalPolicy ?? "on-request") === spec.approvalPolicy);
+    (value.approvalPolicy ?? (value.sandbox === "danger-full-access" ? "never" : "on-request")) === spec.approvalPolicy);
   return current && spec.sandbox === "workspace-write"
     ? {"sandbox_workspace_write.network_access": current.networkAccess === true} : undefined;
 }
@@ -71,8 +77,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   sessionMessages: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
-    /** Explicit local protocol qualification; existing deployments default to no execution. */
-    readOnlyProtocolVerified: z.boolean().default(false),
+    /** Deprecated compatibility key; conversation execution uses the Session's full profile. */
+    readOnlyProtocolVerified: z.boolean().optional(),
     grants: z.array(z.strictObject({ projectId: z.uuid(), sessionId: z.uuid(), senderActorId: z.string().min(1).max(100),
       receiverActorId: z.string().min(1).max(100),
       receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().min(1).max(100), enabled: z.boolean(),
@@ -81,8 +87,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
-    /** Exact locally reviewed App Server protocol; absence preserves the 0.154 default. */
-    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1"]).default("0.154.0"),
+    /** Exact locally reviewed App Server protocol; new configurations use the reviewed 0.164 interface. */
+    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1"]).default("0.164.0-alpha.11.1"),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
     browserRead: z.strictObject({scopePath:absolute,playwrightModulePath:absolute}).optional(),
     delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>
@@ -119,7 +125,7 @@ export async function loadIntegrations(path?: string) {
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
     g.authorizationScope === scope.authorizationScope && g.cwd === scope.cwd && g.sandbox === scope.sandbox &&
     (scope.model === undefined || (g.model ?? null) === scope.model) &&
-    (scope.approvalPolicy === undefined || (g.approvalPolicy ?? "on-request") === scope.approvalPolicy));
+    (scope.approvalPolicy === undefined || (g.approvalPolicy ?? (g.sandbox === "danger-full-access" ? "never" : "on-request")) === scope.approvalPolicy));
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
     if (!allowedRuntimeCwds(projectId).includes(cwd) &&
       !(runtime?.enabled && runtime.delegationTemplates.some(t => t.projectId === projectId && t.cwd === cwd))) return false;

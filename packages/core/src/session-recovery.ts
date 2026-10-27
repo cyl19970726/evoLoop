@@ -3,7 +3,7 @@ import { DomainError, type Transaction } from '@evoloop/contracts/ports';
 import type { ExecutionProfileRevision, SessionRecoveryCommand } from '@evoloop/contracts/session-recovery';
 
 export interface RecoveryAuthority {
-  canRevise(principal:Principal,session:RuntimeSessionRecord,model:string):Promise<boolean>;
+  canRevise(principal:Principal,session:RuntimeSessionRecord,target:{model:string;sandbox:'danger-full-access';approvalPolicy:'never'}):Promise<boolean>;
 }
 const need=<T>(value:T|null|undefined,label:string):T=>{if(value==null)throw new DomainError('NOT_FOUND',label+' unavailable');return value;};
 const active=new Set(['requested','dispatching','running','unknown']);
@@ -33,13 +33,17 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
       throw new DomainError('EXECUTION_PROFILE_CONFLICT','Execution profile changed');
     if(['attempting','unknown'].includes(profile.activationState))
       throw new DomainError('PROFILE_ACTIVATION_UNRESOLVED','Reconcile the original activation before changing its target');
-    if(session.model===command.model)throw new DomainError('EXECUTION_PROFILE_UNCHANGED','The selected model is unchanged');
+    if(command.sandbox!=='danger-full-access'||command.approvalPolicy!=='never')
+      throw new DomainError('EXECUTION_PROFILE_INVALID','The target must use the approved full-access execution policy');
+    if(session.model===command.model&&session.sandbox===command.sandbox&&session.approvalPolicy===command.approvalPolicy)
+      throw new DomainError('EXECUTION_PROFILE_UNCHANGED','The selected execution profile is unchanged');
     if(await recovery.isDynamicSession(session.id))throw new DomainError('DYNAMIC_PROFILE_FIXED','A delegated Session keeps its fixed template execution profile');
-    if(!authority||!await authority.canRevise(principal,session,command.model))
-      throw new DomainError('FORBIDDEN','The exact static Session model grant is not current');
+    if(!authority||!await authority.canRevise(principal,session,{model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy}))
+      throw new DomainError('FORBIDDEN','The exact static Session execution grant is not current');
     const revision:ExecutionProfileRevision={...profile.revision,projectId:session.projectId,sessionId:session.id,
       revisionId:nextId(),previousRevisionId:profile.revision.revisionId,version:profile.revision.version+1,
-      model:command.model,provenance:'revised',operationId:command.operationId,actorId:principal.actorId,
+      model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy,
+      provenance:'revised',operationId:command.operationId,actorId:principal.actorId,
       reason:command.reason,evidenceRef:command.evidenceRef,createdAt:now};
     await recovery.adoptExecutionProfile(revision,session.version);
     return {result:{status:'applied' as const,operationId:command.operationId,entityId:session.id,version:session.version+1,revisionId:revision.revisionId},

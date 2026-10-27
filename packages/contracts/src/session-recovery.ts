@@ -4,7 +4,9 @@ const id=z.uuid(), text=z.string().trim().min(1).max(4000), version=z.number().i
 const base={projectId:id,operationId:id};
 export const sessionRecoveryCommands=[
   z.strictObject({...base,type:z.literal('runtime.session.executionProfile.revise'),sessionId:id,
-    expectedVersion:version,expectedExecutionProfileRevisionId:id,model:text,evidenceRef:text,reason:text}),
+    expectedVersion:version,expectedExecutionProfileRevisionId:id,model:text,
+    sandbox:z.literal('danger-full-access').default('danger-full-access'),
+    approvalPolicy:z.literal('never').default('never'),evidenceRef:text,reason:text}),
   z.strictObject({...base,type:z.literal('runtime.session.recovery.resume'),sessionId:id,
     expectedVersion:version,expectedCauseId:id,resumeMessageId:id.nullable(),evidenceRef:text,reason:text}),
 ];
@@ -14,8 +16,8 @@ export type ExecutionProfileActivation='active'|'pending'|'attempting'|'unknown'
 
 /** Configured launch policy. This is not provider-reported per-Turn model telemetry. */
 export interface ExecutionProfileSnapshot {
-  revisionId:string;version:number;model:string|null;sandbox:'read-only'|'workspace-write';
-  approvalPolicy:'on-request'|'untrusted';cwd:string;authorizationScope:string;
+  revisionId:string;version:number;model:string|null;sandbox:'read-only'|'workspace-write'|'danger-full-access';
+  approvalPolicy:'on-request'|'untrusted'|'never';cwd:string;authorizationScope:string;
   provenance:'reserved'|'legacy_session_identity'|'revised';
 }
 export interface ExecutionProfileRevision extends ExecutionProfileSnapshot {

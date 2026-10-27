@@ -7,6 +7,7 @@ import type { loadIntegrations } from "../configuration.js";
 export interface MessageExecutionReaderDeps {
   loadConfiguration():Promise<Pick<Awaited<ReturnType<typeof loadIntegrations>>,"runtime"|"sessionMessages">>;
   runtimeAvailable():boolean;
+  canExecuteSession(session:RuntimeSessionRecord):Promise<boolean>;
   isProjectWriter(projectId:string,actorId:string):Promise<boolean>;
   readSession(projectId:string,sessionId:string):Promise<RuntimeSessionRecord|null>;
   turnsUsed(projectId:string,sessionId:string,senderActorId:string):Promise<number>;
@@ -35,7 +36,7 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
         observed.capabilities.send.reason??"外部会话已关闭或接入已撤销，当前不能转交消息。");
     }
     if(observed.kind!=="owned"||observed.target.kind!=="owned"||observed.runtimeState!=="ready"||
-      !observed.capabilities.send.available||observed.capabilities.send.mode!=="owned-read-only")
+      !observed.capabilities.send.available||observed.capabilities.send.mode!=="owned-conversation")
       return result("blocked","SESSION_UNAVAILABLE","此会话当前不能保存并自动处理普通消息。");
     try{
       const session=await deps.readSession(projectId,observed.target.sessionId);
@@ -51,9 +52,12 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
         return result("disabled","RUNTIME_DISABLED","会话运行功能未启用；保存消息不会启动原生回复。");
       if(!deps.runtimeAvailable())
         return result("blocked","RUNTIME_UNAVAILABLE","会话运行器当前不可用；保存消息不会启动原生回复。");
-      if(!messages.readOnlyProtocolVerified)
-        return result("unverified","READ_ONLY_PROTOCOL_UNVERIFIED","本轮原生只读协议尚未核准；保存消息不保证回复。");
+      if(session.sandbox!=="danger-full-access"||session.approvalPolicy!=="never"||
+        session.executionProfile && session.executionProfile.activationState!=="active")
+        return result("blocked","EXECUTION_PROFILE_NOT_ACTIVE","此会话的完整执行配置尚未生效；消息保留待处理。");
 
+      if(!await deps.canExecuteSession(session))
+        return result("blocked","SESSION_EXECUTION_GRANT_MISSING","此会话的当前执行授权不可用；消息保留待处理。");
       const grant=messages.grants.find(item=>item.enabled&&item.projectId===projectId&&
         item.sessionId===session.id&&item.senderActorId===principal.actorId&&
         item.receiverRoleId===session.roleId&&item.cwd===session.cwd&&
@@ -71,8 +75,8 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
         return result("blocked","MESSAGE_BUDGET_EXHAUSTED","此发送人与会话的普通回复额度已用完。");
       if(observed.busy===true)
         return result("blocked","SESSION_BUSY","会话正在处理另一项工作，普通回复需等待。");
-      return result("unverified","READ_ONLY_NATIVE_UNVERIFIED",
-        "配置准入已核对；执行前仍需验证原生只读权限、Task 答复顺序与持久门禁。保存消息不保证回复。");
+      return result("unverified","NATIVE_EXECUTION_UNVERIFIED",
+        "配置准入已核对；执行前仍需核对原生完整执行配置、Task 答复顺序与持久占用。保存消息不保证回复。");
     }catch{
       return result("unknown","EXECUTION_STATUS_UNAVAILABLE","暂时无法核对普通回复执行状态，请稍后重试。");
     }

@@ -41,7 +41,7 @@ import { staticRunSessionAvailable } from "./references/source-run.js";
 import { BrowserReadBridge, createPlaywrightBrowserBackend, matchesBrowserRun, readerTokenForScope } from "./runtime/browser-read.js";
 import type { BrowserReadScope } from "./runtime/browser-read.js";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
-import type { RuntimeBinding } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -265,7 +265,6 @@ const browserRead = runtimeConfig?.enabled && runtimeConfig.browserRead ? new Br
 }) : null;
 const runtimeFactory = runtimeConfig?.enabled ? () => {
   const adapter = new CodexAppServerAdapter({
-  enableRestrictedMessagePermissions: integrations.sessionMessages?.enabled ?? false,
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   expectedVersion: `codex-cli ${runtimeConfig.protocolVersion}`,
   verifyBinding: async binding => {
@@ -356,9 +355,20 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canW
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });
 try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
+const currentSessionExecutionAuthority = async (session:RuntimeSessionRecord) => {
+  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  if(!current.runtime?.enabled||session.sandbox!=="danger-full-access"||session.approvalPolicy!=="never"||
+    !hasCurrentStudyReviewer(await currentIdentity(),session.projectId,session.actorId)||
+    !await current.allowedRuntimeCwd(session.projectId,session.cwd))return false;
+  return currentSessionGrant(pool,session,()=>current.hasRuntimeGrant({projectId:session.projectId,
+    actorId:session.actorId,roleId:session.roleId,authorizationScope:session.authorizationScope,
+    cwd:session.cwd,sandbox:session.sandbox,model:session.model,approvalPolicy:session.approvalPolicy}),
+    dynamicAdmission?()=>dynamicAdmission.canStartConversation(session):undefined);
+};
 const messageService = new SessionMessageService({ uow, clock, ids, grantFor: async (message, session) => {
   const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
-  if (!current?.enabled || !current.readOnlyProtocolVerified || !await currentProjectWriter(message.projectId, message.senderActorId)) return null;
+  if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)||
+    !await currentSessionExecutionAuthority(session)) return null;
   const grant = current.grants.find(g => g.enabled && g.projectId === message.projectId && g.sessionId === session.id &&
     g.senderActorId === message.senderActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd);
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
@@ -367,12 +377,13 @@ const messageService = new SessionMessageService({ uow, clock, ids, grantFor: as
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
-  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))], canWrite: lease.canWrite,
+  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
+  canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   pollIntervalMs: integrations.sessionMessages?.pollIntervalMs ?? 2000,
   canStart: async message => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
-    if (!current?.enabled || !current.readOnlyProtocolVerified) {
-      await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用或只读宿主能力未经本轮核准，消息保留待处理。");
+    if (!current?.enabled) {
+      await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用，消息保留待处理。");
       return false;
     }
     return businessBeforeMessage(message);
@@ -417,6 +428,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
     loadConfiguration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
     runtimeAvailable: () => runner?.status().available === true,
     isProjectWriter: currentProjectWriter,
+    canExecuteSession: currentSessionExecutionAuthority,
     readSession: (projectId, sessionId) => uow.read(projectId, reader => reader.getRuntimeSession(sessionId)),
     turnsUsed: (projectId, sessionId, senderActorId) => uow.read(projectId, async reader => {
       if (!reader.sessionMessages) throw new Error("Message persistence is unavailable");
@@ -458,8 +470,10 @@ async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
   try { messagePump?.stop(); residentQueue.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
   finally {
-    try { if (runner) await runner.stop(); }
-    finally { try { await lease.release(); } finally { await pool.end(); } }
+    // Keep the coordinator lease while a native child may still be alive.
+    // stop() only succeeds after the owned child's actual exit is observed.
+    if (runner) await runner.stop();
+    try { await lease.release(); } finally { await pool.end(); }
   }
 }
 process.once("SIGINT", () => void shutdown());

@@ -184,7 +184,7 @@ export class PgSessionObservation implements SessionObservationReader {
     const unavailable = (reason: string) => ({ available: false, reason });
     const sendEligible = row.kind === "owned" ? row.runtime?.state === "ready" : !row.historical;
     const send = sendEligible ? row.kind === "owned"
-      ? { available: true, reason: "可保存排队；执行还需独立授权、剩余额度和逐轮只读核验。", mode: "owned-read-only" as const }
+      ? { available: true, reason: "可保存排队；执行仍需精确授权、剩余额度和当前完整执行配置。", mode: "owned-conversation" as const }
       : { available: true, reason: "仅可保存人工转交；不证明已经送达或被读取。", mode: "manual-handoff" as const }
       : { ...unavailable("会话已关闭或接入已撤销。"), mode: "unavailable" as const };
     const canOpen = !!row.can_open && !!row.external_ref && !row.historical;

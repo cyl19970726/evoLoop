@@ -286,6 +286,8 @@ export class OrchestrationService {
           template.decisionActorIds.includes(principal.actorId)) ||
         !template.allowedChoices.includes(command.choice) || Date.parse(template.expiresAtUtc) <= Date.parse(now))
         return fail("DELEGATION_DENIED", "current exact delegation template does not authorize this decision");
+      if(template.sandbox!=="danger-full-access"||template.approvalPolicy!=="never"||!template.networkAccess)
+        return fail("FULL_EXECUTION_REQUIRED","Publish a full execution template revision before creating a runtime binding");
       if (command.choice === "new-role") {
         if (!template.newRoleAllocation || template.existingRoleIds.includes(command.roleId) ||
           current.allowedBusinessRoleIds.includes(command.roleId) ||

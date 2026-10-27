@@ -77,7 +77,7 @@ test("runtime handoff receipts are ordered, actor-attributed observations", asyn
   const cwd = "/tmp/evoloop-runtime-handoff";
   const authorizationScope = "project-workspace:handoff-test";
   applied(await issue(owner, { type: "runtime.session.reserve", sessionId, roleId: owner.actorId, cwd,
-    authorizationScope, sandbox: "workspace-write", approvalPolicy: "on-request" }));
+    authorizationScope, sandbox: "danger-full-access", approvalPolicy: "never" }));
   await runtime.beginSessionCreate(projectId, sessionId);
   await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId,
     roleId: owner.actorId, cwd, authorizationScope, nativeThreadId: "handoff-thread", nativeSessionId: "handoff-session" });

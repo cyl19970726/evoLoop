@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { runner } from "node-pg-migrate";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal, RuntimeBinding } from "@evoloop/contracts";
@@ -49,7 +51,9 @@ const rejected = (result: CommandResult, code: string) => {
 };
 
 test("reviewers can abandon only uncertain unbound read-only runs while preserving the record", async t => {
-  await migrate(url, schema);
+  const migrations=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
+  await runner({databaseUrl:url,dir:migrations,migrationsTable:"pgmigrations",schema,
+    createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:34,log:()=>{}});
   t.after(async () => {
     await pool.end();
     const cleanup = new pg.Client({ connectionString: url });
@@ -73,11 +77,12 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
     return { taskId, version: ready.version! };
   };
 
-  const session = async (sandbox: "read-only" | "workspace-write", label: string, bind = true) => {
+  const session = async (label: string, bind = true) => {
     const sessionId = randomUUID();
     const cwd = `/tmp/evoloop-runtime-abandon/${label}`;
     const authorizationScope = `project-workspace:${label}`;
-    await own({ type: "runtime.session.reserve", sessionId, roleId: "runtime-owner", cwd, authorizationScope, sandbox, approvalPolicy: "on-request" });
+    await own({ type: "runtime.session.reserve", sessionId, roleId: "runtime-owner", cwd, authorizationScope,
+      sandbox: "danger-full-access", approvalPolicy: "never" });
     await runtime.beginSessionCreate(projectId, sessionId);
     if (bind) {
       const binding: RuntimeBinding = { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: "runtime-owner", cwd, authorizationScope,
@@ -87,20 +92,35 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
     return sessionId;
   };
 
-  const uncertainRun = async (sandbox: "read-only" | "workspace-write", label: string, bindNativeTurn = false) => {
+  const historicalUncertainRun = async (sandbox: "read-only" | "workspace-write", label: string, bindNativeTurn = false) => {
     const task = await readyTask(`Run ${label}`);
-    const sessionId = await session(sandbox, label);
-    const runId = randomUUID();
-    const receipt = applied(await issue(owner, { type: "runtime.run.reserve", runId, taskId: task.taskId, sessionId, expectedVersion: task.version, input: `Run ${label}` }));
-    await runtime.beginDispatch(projectId, runId);
-    if (bindNativeTurn) {
-      await runtime.bindTurn(projectId, runId, { id: `turn-${label}`, status: "running" }, { kind: "startReply", operationId: receipt.operationId });
-    }
-    await runtime.markRunUnknown(projectId, runId, `Coordinator lost the start result for ${label}`);
-    return { task, sessionId, runId, receipt };
+    const sessionId=randomUUID(),runId=randomUUID(),operationId=randomUUID();
+    const cwd=`/tmp/evoloop-runtime-abandon/${label}`,authorizationScope=`project-workspace:${label}`;
+    const fixed=await workflow.getTask(owner,projectId,task.taskId);
+    assert.ok(fixed.basis?.id);
+    const now=new Date().toISOString(),input=`Run ${label}`,nativeTurnId=bindNativeTurn?`turn-${label}`:null;
+    await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+      state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,'runtime-owner',$3,$4,$5,'on-request','ready',3,$6,$7,$8,'runtime-owner',$9,$9)`,
+      [projectId,sessionId,cwd,authorizationScope,sandbox,`thread-${label}`,`session-${label}`,randomUUID(),now]);
+    await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
+      operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'unknown',$10,$11,'runtime-owner',$12,$12)`,
+      [projectId,runId,task.taskId,fixed.revision.id,fixed.basis.id,sessionId,operationId,input,deps.hasher.hash(input),
+        bindNativeTurn?4:3,nativeTurnId,now]);
+    await pool.query(`INSERT INTO runtime_record_event(project_id,event_id,run_id,session_id,kind,detail,native_turn_id,
+      actor_id,created_at) VALUES($1,$2,$3,$4,'run.unknown',$5,$6,'runtime-coordinator',$7)`,
+      [projectId,randomUUID(),runId,sessionId,`Coordinator lost the start result for ${label}`,nativeTurnId,now]);
+    return {task,sessionId,runId};
   };
 
-  const eligible = await uncertainRun("read-only", "eligible");
+  // These three historical operations were persisted before the full-policy
+  // migration; current commands must never manufacture a new read-only Run.
+  const eligible=await historicalUncertainRun("read-only","eligible");
+  const writable=await historicalUncertainRun("workspace-write","workspace-write");
+  const knownTurn=await historicalUncertainRun("read-only","known-turn",true);
+  await migrate(url,schema);
+  assert.equal((await workflow.getRuntimeRun(owner,projectId,eligible.runId)).executionProfile?.sandbox,"read-only");
   const beforeRunEvents = await workflow.listRuntimeEvents(owner, projectId, eligible.runId);
   const beforeSessionEvents = await workflow.listRuntimeSessionEvents(owner, projectId, eligible.sessionId);
   const stale = { type: "runtime.run.abandonReadOnly", runId: eligible.runId, expectedVersion: 2, reason: "Reviewed", evidence: "Start response unavailable" };
@@ -152,15 +172,15 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   const closedSessionRun = randomUUID();
   rejected(await issue(owner, { type: "runtime.run.reserve", runId: closedSessionRun, taskId: eligible.task.taskId,
     sessionId: eligible.sessionId, expectedVersion: eligible.task.version + 1, input: "Must require a fresh session" }), "SESSION_NOT_READY");
-  const unboundSessionId = await session("read-only", "unbound", false);
+  const unboundSessionId = await session("unbound", false);
   rejected(await issue(owner, { type: "runtime.run.reserve", runId: randomUUID(), taskId: eligible.task.taskId,
     sessionId: unboundSessionId, expectedVersion: eligible.task.version + 1, input: "Reserved session is insufficient" }), "SESSION_NOT_READY");
-  const freshSessionId = await session("read-only", "fresh-ready");
+  const freshSessionId = await session("fresh-ready");
   applied(await issue(owner, { type: "runtime.run.reserve", runId: randomUUID(), taskId: eligible.task.taskId,
-    sessionId: freshSessionId, expectedVersion: eligible.task.version + 1, input: "A new run needs a ready authorized session" }));
+    sessionId: freshSessionId, expectedVersion: eligible.task.version, input: "A new run needs a ready authorized session" }));
 
   const pendingTask = await readyTask("Run not yet dispatched");
-  const pendingSessionId = await session("read-only", "not-dispatched");
+  const pendingSessionId = await session("not-dispatched");
   const pendingRunId = randomUUID();
   await issue(owner, { type: "runtime.run.reserve", runId: pendingRunId, taskId: pendingTask.taskId,
     sessionId: pendingSessionId, expectedVersion: pendingTask.version, input: "Still only requested" });
@@ -169,13 +189,11 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   assert.equal((await workflow.getRuntimeRun(owner, projectId, pendingRunId)).state, "requested");
   assert.equal((await workflow.getRuntimeSession(owner, projectId, pendingSessionId)).state, "ready");
 
-  const writable = await uncertainRun("workspace-write", "workspace-write");
   rejected(await issue(reviewer, { type: "runtime.run.abandonReadOnly", runId: writable.runId, expectedVersion: 3,
     reason: "Review", evidence: "Must not abandon writable session" }), "RUN_NOT_ABANDONABLE");
   assert.equal((await workflow.getRuntimeRun(owner, projectId, writable.runId)).state, "unknown");
   assert.equal((await workflow.getRuntimeSession(owner, projectId, writable.sessionId)).state, "ready");
 
-  const knownTurn = await uncertainRun("read-only", "known-turn", true);
   assert.equal((await workflow.getRuntimeRun(owner, projectId, knownTurn.runId)).nativeTurnId, "turn-known-turn");
   rejected(await issue(reviewer, { type: "runtime.run.abandonReadOnly", runId: knownTurn.runId, expectedVersion: 4,
     reason: "Review", evidence: "A native turn is known" }), "RUN_NOT_ABANDONABLE");

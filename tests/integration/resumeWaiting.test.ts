@@ -74,7 +74,7 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   await managed(cognition,{type:"dispatch.claim",dispatchId,claimToken:token,leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await managed(cognition,{type:"dispatch.start",dispatchId,claimToken:token});
   const sessionId=randomUUID(),runId=randomUUID();
-  await official(reviewer,{type:"runtime.session.reserve",sessionId,roleId:cognitiveRole,cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+  await official(reviewer,{type:"runtime.session.reserve",sessionId,roleId:cognitiveRole,cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:cognitiveRole,cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});
   await official(reviewer,{type:"runtime.run.reserve",runId,taskId:cognitiveTask,sessionId,expectedVersion:2,input:"Review fixed Issue"});
@@ -115,7 +115,7 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await managed(cognition,{type:"dispatch.start",dispatchId:resumedDispatch,claimToken:resumedClaim});
   await official(reviewer,{type:"runtime.session.reserve",sessionId:resumedSession,roleId:cognitiveRole,
-    cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,resumedSession);
   await runtime.bindSession(projectId,resumedSession,{owner:"evoloop-codex-app-server",projectId,
     sessionId:resumedSession,roleId:cognitiveRole,cwd:"/tmp/evoloop-resume-test",authorizationScope:scope,

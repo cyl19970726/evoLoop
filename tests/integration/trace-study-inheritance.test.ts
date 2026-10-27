@@ -65,7 +65,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const sourceSessionId=randomUUID(),sourceRunId=randomUUID(),inputHash=hash("source input");
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,'/fixture','source-scope','read-only','on-request','ready',1,$4,$5,$6,$7,now(),now())`,
+    VALUES($1,$2,$3,'/fixture','source-scope','danger-full-access','never','ready',1,$4,$5,$6,$7,now(),now())`,
     [projectId,sourceSessionId,sourceRole,randomUUID(),randomUUID(),randomUUID(),controllerId]);
   await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
     input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
@@ -184,7 +184,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const readerSessionId=randomUUID(),readerRunId=randomUUID();
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,'/fixture','cognitive-scope','read-only','on-request','ready',1,$4,$5,$6,$7,now(),now())`,
+    VALUES($1,$2,$3,'/fixture','cognitive-scope','danger-full-access','never','ready',1,$4,$5,$6,$7,now(),now())`,
     [projectId,readerSessionId,role,randomUUID(),randomUUID(),randomUUID(),controllerId]);
   await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
     input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
@@ -379,8 +379,8 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
       referenceDeps as never,who,reference,proof),
     runtime:{pump:async()=>{}},
     controller:async(_project,roleId)=>roleId===role?{principal:controller,
-      authorizationScopeId:"cognitive-scope",cwd:"/fixture",sandbox:"read-only",
-      approvalPolicy:"on-request"}:null,
+      authorizationScopeId:"cognitive-scope",cwd:"/fixture",sandbox:"danger-full-access",
+      approvalPolicy:"never"}:null,
     credential:{lookup:async()=>null,issue:async()=>({principal:controller,wrapperPath:"/fixture/worker"})},
     sealSubmission:async()=>({status:"absent"}),now:()=>new Date().toISOString(),
     canWrite:()=>true} as never);
@@ -426,7 +426,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const signedSessionId=randomUUID(),signedRunId=randomUUID();
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,'/fixture','cognitive-scope','read-only','on-request','ready',1,$4,$5,$6,$7,now(),now())`,
+    VALUES($1,$2,$3,'/fixture','cognitive-scope','danger-full-access','never','ready',1,$4,$5,$6,$7,now(),now())`,
     [projectId,signedSessionId,role,randomUUID(),randomUUID(),randomUUID(),controllerId]);
   await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
     input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)

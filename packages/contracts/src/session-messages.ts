@@ -27,6 +27,7 @@ export type SessionMessageProcessingState = "dispatching" | "running" | "unknown
 export interface SessionMessageProcessing {
   projectId: string; id: string; messageId: string; sessionId: string; operationId: string;
   state: SessionMessageProcessingState; nativeTurnId: string | null; response: string | null;
+  /** Legacy field name retained for immutable processing records; new values identify the full Session admission profile. */
   failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
   /** Fixed by the same transaction as the original processing's native-start permit. */
   nativeEnvironmentEpoch?: number | null;

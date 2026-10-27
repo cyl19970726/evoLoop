@@ -56,7 +56,7 @@ async function seed(): Promise<{projectId:string; taskId:string; taskRevisionId:
     await tx.insertTask(task); await tx.insertTaskRevision(revision); await tx.insertSealedBasisSet(basis);
   });
   const directId = randomUUID(), wikiId = randomUUID();
-  const environment = { cwd:"/tmp/evoloop-evaluation-test",authorizationScope:"evaluation-case",sandbox:"read-only" as const,approvalPolicy:"on-request" as const };
+  const environment = { cwd:"/tmp/evoloop-evaluation-test",authorizationScope:"evaluation-case",sandbox:"danger-full-access" as const,approvalPolicy:"never" as const };
   const definition: EvaluationDefinition = { ownerTaskId:taskId,question:"Does fixed Wiki change this case?",
     protocol:{kind:"document",id:sourceId,revision:sourceRevisionId,contentHash:hash(sourceBody)},
     case:{id:randomUUID(),taskId,sourceTaskRevisionId:taskRevisionId,
@@ -88,8 +88,8 @@ async function publishBasis(fixture:Awaited<ReturnType<typeof seed>>):Promise<vo
 async function readySession(projectId:string):Promise<string> {
   const sessionId = randomUUID();
   await uow.transaction(projectId,tx=>tx.insertRuntimeSession({projectId,id:sessionId,roleId:actor,
-    cwd:"/tmp/evoloop-evaluation-test",authorizationScope:"evaluation-case",model:"test-model",sandbox:"read-only",
-    approvalPolicy:"on-request",state:"ready",version:1,nativeThreadId:`native-${sessionId}`,nativeSessionId:`native-${sessionId}`,
+    cwd:"/tmp/evoloop-evaluation-test",authorizationScope:"evaluation-case",model:"test-model",sandbox:"danger-full-access",
+    approvalPolicy:"never",state:"ready",version:1,nativeThreadId:`native-${sessionId}`,nativeSessionId:`native-${sessionId}`,
     operationId:randomUUID(),actorId:actor,createdAt:now,updatedAt:now}));
   return sessionId;
 }
@@ -149,7 +149,7 @@ test("attempt binds Run and fixed revision; corrections append, missing cost rem
   });
   const runId = randomUUID(), sessionId = randomUUID(), attemptId = randomUUID();
   const session: RuntimeSessionRecord = {projectId:fixture.projectId,id:sessionId,roleId:actor,cwd:"/tmp/evoloop-evaluation-test",
-    authorizationScope:"evaluation-case",model:"test-model",sandbox:"read-only",approvalPolicy:"on-request",state:"reserved",
+    authorizationScope:"evaluation-case",model:"test-model",sandbox:"danger-full-access",approvalPolicy:"never",state:"reserved",
     version:1,nativeThreadId:null,nativeSessionId:null,operationId:randomUUID(),actorId:actor,createdAt:now,updatedAt:now};
   const binding = {evaluationId,revisionId,caseId:fixture.definition.case.id,
     conditionId:fixture.definition.conditions[0].id,sourceTaskRevisionId:fixture.taskRevisionId,
@@ -364,7 +364,7 @@ async function officialCase() {
     basis:[{documentId:sourceId,revisionId:source.revisionId!}],reason:"Seal comparison inputs"});
   const frozen=await workflow.getEvaluationSourceTask(p,projectId,taskId);
   const environment={cwd:"/tmp/evoloop-evaluation-test",authorizationScope:"evaluation-case",
-    sandbox:"read-only" as const,approvalPolicy:"on-request" as const};
+    sandbox:"danger-full-access" as const,approvalPolicy:"never" as const};
   const directId=randomUUID(),wikiId=randomUUID(),caseId=randomUUID();
   const protocol={kind:"document" as const,id:sourceId,revision:source.revisionId!,contentHash:hash(sourceBody)};
   const definition:EvaluationDefinition={ownerTaskId:taskId,question:"Does the fixed Wiki change this answer?",protocol,

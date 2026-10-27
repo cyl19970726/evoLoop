@@ -39,11 +39,12 @@ test("disabled execution keeps ready owned message storage available and snapsho
     loadConfiguration:async()=>({runtime:configurationMode==="enabled"
       ? {enabled:true,protocolVersion:"0.164.0-alpha.11.1" as const,grants:[],delegationTemplates:[]} : undefined,
     sessionMessages:configurationMode==="missing" ? undefined : {
-      enabled:configurationMode==="enabled",pollIntervalMs:2000,readOnlyProtocolVerified:true,
+      enabled:configurationMode==="enabled",pollIntervalMs:2000,
       grants:exactGrant ? [{projectId,sessionId,senderActorId:actorId,receiverActorId,receiverRoleId:roleId,
         cwd:"/tmp/evoloop-message-execution",maxTurns:1,enabled:true}] : [],
     }}),
     runtimeAvailable:()=>runtimeUp,
+    canExecuteSession:async()=>true,
     isProjectWriter:async(project,actor)=>project===projectId&&(actor===actorId||actor===receiverActorId),
     readSession:(project,session)=>uow.read(project,reader=>reader.getRuntimeSession(session)),
     turnsUsed:(project,session,sender)=>uow.read(project,reader=>reader.sessionMessages!.countSessionMessageTurns(session,sender)),
@@ -61,7 +62,7 @@ test("disabled execution keeps ready owned message storage available and snapsho
     [projectId,now,otherProjectId]);
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,'/tmp/evoloop-message-execution','project','read-only','on-request','ready',1,$4,$4,$5,$6,$7,$7)`,
+    VALUES($1,$2,$3,'/tmp/evoloop-message-execution','project','danger-full-access','never','ready',1,$4,$4,$5,$6,$7,$7)`,
     [projectId,sessionId,roleId,`native-${sessionId}`,randomUUID(),receiverActorId,now]);
   await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
     content,state,version,created_at,updated_at)
@@ -91,7 +92,7 @@ test("disabled execution keeps ready owned message storage available and snapsho
   const initialCapabilities=initial.json<{session:{capabilities:{send:{available:boolean;mode:string};
     ordinaryExecution:{state:string;reasonCode:string;reason:string;observedAt:string}}}}>().session.capabilities;
   assert.deepEqual({available:initialCapabilities.send.available,mode:initialCapabilities.send.mode},
-    {available:true,mode:"owned-read-only"},"ready bound storage remains usable while the executor is disabled");
+    {available:true,mode:"owned-conversation"},"ready bound storage remains usable while the executor is disabled");
   assert.equal(initialCapabilities.ordinaryExecution.state,"disabled");
   assert.equal(initialCapabilities.ordinaryExecution.reasonCode,"SESSION_MESSAGES_DISABLED");
   assert.ok(initialCapabilities.ordinaryExecution.reason.length>0);

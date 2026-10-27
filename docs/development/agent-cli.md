@@ -89,11 +89,11 @@ npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 
 这些都是只读查询，不唤醒模型。目录、变化、活动和版本历史的游标不可混用；改变身份、项目或筛选后重建读取位置。消息列表是正文／阻塞／回执预览，完整内容和处理答复从消息详情读取。部分结果、来源未同步和缺失资源指标须原样表达，不把 null 改成 0 或把 roleTasks 当每个会话的当前任务。
 
-先从snapshot区分`session.capabilities.send`与`ordinaryExecution`：前者仅表示可保存；后者给出当前普通自动处理是否关闭、被可靠的准入条件阻挡、仍未核原生权限，或仅能人工转交。缺少字段、读取失败和`unknown`都不能当作已启用。即使返回`unverified`且说明配置准入通过，也不证明只读宿主工具已核准或会产生回复；真正处理仍以消息详情里的processing/native Turn与结果为准。snapshot查询本身不启动原生进程、不探测工具，也不派发Task或消息。工作台可保存而执行关闭时，应显示“保存待处理”和当前不会自动回复的原因，不能仅提示“保存不代表回复”。
+先从 snapshot 区分 `session.capabilities.send` 与 `ordinaryExecution`：前者表示身份可保存对话；后者是运行观察，不是消息专用工具或只读资格门。新 Session 固定 full/never/联网。只有原生 `thread/start` 或 `thread/resume` 明确确认 full/never 权限才标 active；`thread/read` 没有权限字段时仍是 `unverified`／`unknown`，不能把历史可读当作 active，也不能判成权限回执丢失。snapshot 查询本身不启动原生进程、不派发 Task 或消息，实际处理仍以消息详情的 native Turn 和结果为准。
 
 新写入沿用 `command schema TYPE` 和 `command run FILE` 的幂等回执入口。`session.profile.set` 维护项目展示名与用途；`task.assignment.set` 指定同 Role 的实际会话，建议先 start 固定 Task 再分派。指定 actor 用 `task.assignment.acknowledge` 接手；Lead 的实际人工沟通记录另用 `observeAcceptance`，不能冒用执行者。新队列／直接 Run 不得绕过已有的具体分派；旧输入变更后明确重确认。
 
-`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通对话无需新 Task；新的独立工作仍须 Task 化与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；read 指实际收件身份对原消息的记录，不是发送者看过回复。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通执行还需独立消息 grant、剩余额度和经核准的文件读取范围及工具限制；能力不足时可以保留待处理，不能悄悄借旧预算、换会话或放宽权限。external 继续人工转交。
+`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通对话无需新 Task；新的独立工作仍须 Task 化与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；read 指实际收件身份对原消息的记录，不是发送者看过回复。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
 
 ## 未知结果与本地回执
 
@@ -114,8 +114,8 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 1. **定职责和首项工作。** 现有负责人核清职责缺口、范围、替代办法、试行期限及回看条件。用 `task.create` 建 todo Task，写明真实工作、验收、首任 owner 和所需来源；已有正式 Role 时直接沿用。
 2. **接受试行并交接。** 按 `command schema role.propose` 引用未完成的首 Task 提案；有 review 权限者按 `command schema role.decide` 作 `accept-trial` 决定。回读 Role 修订；若首任 owner 不同，在 todo 状态按正式 Task 更新与交接规则转给新 Role，并回读新版本。交接记录不代替 Task owner 变更。
-3. **固定任务依据和授权。** 负责人读取 Task 正文与关联原件，按 `task.start` 封存本轮依据并进入 in_progress。另落实项目、Role、actor、scope 的当前精确 runtime grant，核目录、模型、沙箱、审批及所需网络能力；Role 文本和其他 Role 的 grant 不授执行权。
-4. **建立并绑定承载。** 按 `command schema runtime.session.reserve` 预留 Session；runner 创建 owned Thread 后，回读原生身份和实际目录，确认为 `ready`。再按 `command schema role.bindSession` 绑定同项目、同 Role 的项目 `sessionId`；不能填 Desktop chat ID 或原生 session ID。
+3. **固定任务依据和授权。** 负责人读取 Task 正文与关联原件，按 `task.start` 封存本轮依据并进入 in_progress。另落实项目、Role、actor、scope 的当前精确 runtime grant，核目录、模型和业务对象访问范围；新 Session 的 OS 执行配置固定为 `danger-full-access`、`approvalPolicy: never`、正常网络。Role 文本和其他 Role 的 grant 不授业务对象访问权。
+4. **建立并绑定承载。** 按 `command schema runtime.session.reserve` 预留 Session；schema 的新 Session 默认是 full/never，正常调用无需覆写该策略。runner 创建 owned Thread 后，只有收到 full/never 的原生权限确认并回读身份和实际目录，才将执行态标为 `active`；无确认或回执不完整保留 unknown。再按 `command schema role.bindSession` 绑定同项目、同 Role 的项目 `sessionId`；不能填 Desktop chat ID 或原生 session ID。
 5. **派发并核运行。** 按 `command schema runtime.run.reserve` 提供当前 Task 版本、ready Session 与固定工作输入，回读 Turn 和终态。Task 须 in_progress 且 owner 与 Session Role 一致，Task 和 Session 均无在途或 unknown Run；普通后续 Turn 可复用空闲 ready Session，评价尝试须另建 Session。结果不明时按[原操作恢复](#未知结果与本地回执)核对。
 6. **核产物与交付。** 负责人亲验产物、检查、Run 终态与输入一致性后，以自身授权执行 `delivery.record`，提供 `runId`、真实产物引用、修订/hash 与检查证据，结构以命令 schema 为准。按原 Task 判据关闭；仅声明 `useRequired` 时才要求指定消费者真实 `used` 观察。
 
@@ -144,15 +144,15 @@ Task 写清问题、希望改变的结果和唯一当前责任后，Lead 按实�
 
 本次实现新增的命令先用 `command schema TYPE` 读取准确输入；纯事务决定使用 `command run FILE` 和唯一 operationId。需要复核时，`read session SESSION_UUID --recovery` 读取当前配置档案、激活状态、gate、最近正式决定、各关联队列额度与下一动作；`read session SESSION_UUID --events` 查看原生配置激活记录，`read resident-queue QUEUE_UUID --attempts` 对照 attempt 与Run状态，`read run RUN_UUID` 读Run绑定的 Task 修订、inputHash 和启动时配置快照。跨越写入回执未知时另用 `operation OPERATION_UUID` 或 `receipts reconcile` 回读原操作；回读缺字段、权限或存储错误必须保留为未知，不能显示为零或空成功。
 
-Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也不会自动更新本机或全局 CLI。缺省仍选 `0.154.0`；采用 `0.164.0-alpha.11.1` 前，配置保管人应检查将要执行的二进制版本和对应标准／实验 schema 指纹，再由 Lead 显式选择，例如配置片段 `{"runtime":{"enabled":true,"protocolVersion":"0.164.0-alpha.11.1"}}`。版本或 schema 不匹配时停止接入，不绕过固定校验。该候选的 `currentTime/read` 只返回精确绑定 owned Thread 的只读时间；`model/list` 能列出模型不能证明 Turn 接受了该模型或实际使用了它，模型确认仍由 Lead 和真实运行证据完成。
+Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也不会自动更新本机或全局 CLI。缺省为 `0.164.0-alpha.11.1`；启动前检查将要执行的二进制版本及对应标准／实验 schema 指纹。版本或 schema 不匹配时停止接入，不绕过固定校验。该版本的 `currentTime/read` 只返回精确绑定 owned Thread 的只读时间；`model/list` 能列出模型不能证明 Turn 接受了该模型或实际使用了它，模型确认仍由 Lead 和真实运行证据完成。旧配置的 `readOnlyProtocolVerified` 仅解析兼容保留，忽略其值，不再要求设置或作为新 Session 准入条件。
 
-`runtime.session.executionProfile.revise` 需要项目 write/review、当前有效项目复核者、Session 与 executionProfile revision 的预期版本、Lead 已核的模型证据和理由。它只提交新的不可变 configured launch profile，不启动原生 Turn；profile 变为 pending，不会解除原恢复门槛；已明确允许的业务 Run 可先登记 requested 意图，但原生 Turn 和普通消息须等待配置肯定回读。runner 只为这次获准业务尝试，对原 Thread 持久登记一次显式配置 activation 后再调用宿主。只有肯定配置回读才标为 active；activation unknown 时只读取原 Thread 与操作证据，不重复 resume。即使只读对账确认 active，也须另由有权者执行 `runtime.session.recovery.resume`，回读成功本身不会启动后续工作。`read session --recovery` 中的 configured model、active revision 和 activation state 是不同字段；Run 快照表示它启动时的配置，不证明 provider 对该 Turn 实际用了此模型。实际运行模型须由 Lead 另行确认，逐 Turn telemetry 未持久采集时保持未知。
+`runtime.session.executionProfile.revise` 需要项目 write/review、当前有效项目复核者、Session 与 executionProfile revision 的预期版本、Lead 已核的目标模型证据和理由。命令保留原字段并将 sandbox 固定为 `danger-full-access`、approval 固定为 `never`；它只提交新的不可变 profile revision，不修改 Session ID、原 Thread 或旧 Run snapshot，也不伪造 Run。随后以单独 durable activation 在原 Thread 应用配置。只有原生 resume/start 回执明确确认 full/never 权限才标为 active；回执未知或不完整时保留 unknown，不能靠 `thread/read` 判为丢失或成功。新 App Server 进程可以恢复未加载的旧 Thread；同一进程中已加载的 Thread 若权限回显不符，保持 unknown。即使 profile 已 active，仍须有权者另行执行 `runtime.session.recovery.resume` 才能解除对应 gate；activation 本身不启动后续业务。`read session --recovery` 的 configured model、active revision 与 activation state 是不同字段；Run snapshot 记录启动配置，不证明 provider 实际使用模型。逐 Turn telemetry 未持久采集时保持未知。
 
 `queue.extendBudget` 由登记该队列的当前控制者提出，须同时给 `expectedVersion`、`expectedMaxRuns`、严格更大的 `maxRuns`、`evidenceRef` 与理由。它保留旧 attempts 与 decisions，不自动 unhold、adopt 或启动；读取新队列 version 后须重新采纳。`queue.retryFailed` 只接受原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 状态，不把 `interrupted` 改写为 `failed`，禁止 `unknown`／`completed`。每次都由控制者显式复核影响、固定输入与原 claim，并要求 Run version/inputHash、当前 Task 修订、`expectedExecutionProfileRevisionId` 指定的受审目标配置、gate version、队列 version、原 claim、pin 消息、原因及依据全部精确匹配。输入检查比较原 Task 的固定业务签名，确保工作内容未变；新 Run 使用新沟通通道和执行封套，因此同时留存 sourceRun/sourceInputHash 和新 Run 的实际 inputHash，不伪称两份完整 Run 输入 hash 一致。retry 消耗同队列预算且最多为来源 Run 创建一个 successor，不自动重试。
 
 若故障时已有原消息 M 排队，retry 成功前 M 不会启动；指定 A retry 确认 completed 后，仅该 pin M 获一次处理许可。M 成功后 gate 停在 awaiting acceptance；Lead 仍须按原规则核交付、Task close、声明消费者 used（如适用）并对原 claim 执行 accepted release，随后才开放 B。若条目已按预先授权的有界规则正式释放，gate 也不会自动开放；有权者须再执行 `runtime.session.recovery.resume`，并保留有界释放来源。依赖该条目的 B 仍须看到 `accepted` release，有界释放不满足依赖，也不能改变 A 的原 accepted 规则。无 claim 的普通消息失败等其他可恢复情形，也由 `runtime.session.recovery.resume` 在 exact cause/gate version 和已对账结果下登记显式决定；未处理的原排队消息保持 pin；已终态或取消的原消息只可经正式 resume 清 pin，不可换成新消息或重播，也不接管尚未结算的 unknown。任何 failure/unknown 都保留并重新阻断，不清除、不自动重试；额度已获授权仅使有界命令可用，不构成无限执行授权。本段记录的是本次实现合同，真实原生模型接受、A→原 M→B 和 Lead 的实际验收仍后置。
 
-排查消息后的业务接续时，读取原 Run 事件与运行状态中的具体失败阶段：`business_profile_restore`、`run_start` 和 `run_bind` 分别表示准备业务策略、发起任务 Turn 与保存绑定。已加载 Thread 的 `thread/resume` 回显不单独证明业务权限已恢复，下一业务 `turn/start` 须显式使用原固定 profile。新的 `run.dispatchRejected` 只由本次精确的恢复 RPC 拒绝证据产生；旧 unknown 不能凭相似机制、没有 Turn ID 或暂时未找到历史而改成 failed。真正的启动／绑定回执未知继续按原 Run 和 operation 对账，不重发消息、不新建替代 Run，也不重置队列成本。
+排查时沿原 Run／消息 operation 与 Thread 回读具体阶段。启动、绑定或权限确认回执未知时保留 unknown，只对账原 ID；不得换消息、创建替代 Run 或将原失败事实改写为成功。普通消息不另有业务 profile restore 阶段。
 
 核当前记录可从 `list roles`、`read role ROLE_ID --bindings`、`list sessions`、`list runs` 和 `task TASK_ID` 开始，均带实际 `--project`；详情按 `help` 使用 `read session` / `read run`。Role 列表可分页；Session/Run 列表当前不接受 `--limit` 或 `--cursor`。用绑定关联 Session，再用 Run 关联 Task，不从会话名称猜当前任务。私有 ID、地址与回执放过程报告，不放公开规范。普通工作台是否能直接找到同样关系，须另做实际阅读验证；API 可读不等于页面可见，列表或讨论区缺口不能用文档说明冒充前端已补齐。
 

@@ -50,7 +50,7 @@ test("PG role trial, immutable review, explicit task handoff and retirement gate
   targetResult = await run(cmd("role.review", target, { expectedVersion: targetResult.version, decision: "activate", effectEvidence: "readiness improved", effectEvidenceRefs: ["task:release-review"], costEvidence: "one hour", costEvidenceRefs: ["run:cost-report"], baselineComparison: "better than baseline", reason: "retain" }), "2026-10-27T10:00:00.000Z");
   const ownedSessionId = randomUUID();
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,'/tmp/fixture','scope','read-only','on-request','ready',1,$4,$5,$6,'manager',now(),now())`, [projectId,ownedSessionId,target,`fixture-thread-${randomUUID()}`,`fixture-session-${randomUUID()}`,randomUUID()]);
+    VALUES($1,$2,$3,'/tmp/fixture','scope','danger-full-access','never','ready',1,$4,$5,$6,'manager',now(),now())`, [projectId,ownedSessionId,target,`fixture-thread-${randomUUID()}`,`fixture-session-${randomUUID()}`,randomUUID()]);
   targetResult = await run(cmd("role.bindSession", target, { expectedVersion: targetResult.version, sessionId: ownedSessionId, note: "reserved runtime identity confirmed" }));
   assert.equal((await store.transaction(projectId, tx => tx.listSessionBindings(target))).length, 1);
   assert.equal((await store.transaction(projectId, tx => tx.getRole(source)))?.state, "trial", "review expiry alone does not create a permanent role");
@@ -72,7 +72,7 @@ test("PG role trial, immutable review, explicit task handoff and retirement gate
   sourceResult = await run(cmd("role.ackHandoff", source, { expectedVersion: sourceResult.version, handoffId, note: "new owner confirmed" }));
   const sessionId = randomUUID();
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,'/tmp/fixture','scope','read-only','on-request','unknown',1,$4,'manager',now(),now())`, [projectId,sessionId,source,randomUUID()]);
+    VALUES($1,$2,$3,'/tmp/fixture','scope','danger-full-access','never','unknown',1,$4,'manager',now(),now())`, [projectId,sessionId,source,randomUUID()]);
   await assert.rejects(() => run(cmd("role.retire", source, { expectedVersion: sourceResult.version, reason: "close", knowledgeDisposition: "task handoff acknowledged", runtimeDisposition: "runtime remains unknown" })), (error: unknown) => error instanceof RoleRuleError && error.code === "RETIREMENT_BLOCKED");
   await pool.query("UPDATE runtime_session SET state='closed',version=2,updated_at=now() WHERE project_id=$1 AND session_id=$2", [projectId,sessionId]);
   sourceResult = await run(cmd("role.retire", source, { expectedVersion: sourceResult.version, reason: "handoff checked", knowledgeDisposition: "knowledge reviewed with new owner", runtimeDisposition: "all sessions closed" }));

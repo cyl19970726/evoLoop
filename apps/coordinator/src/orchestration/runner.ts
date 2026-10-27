@@ -27,8 +27,8 @@ export interface ManagedRoleProfile {
   authorizationScopeId: string;
   cwd: string;
   model?: string | undefined;
-  sandbox: "read-only" | "workspace-write";
-  approvalPolicy: "on-request" | "untrusted";
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: "on-request" | "untrusted" | "never";
   skillPath?: string | undefined;
 }
 export interface ManagedWorkerCredential { principal: Principal; wrapperPath: string }
@@ -462,6 +462,8 @@ export class ManagedLoopRunner {
     const sessionId = loopIntentId(dispatch.id, "session");
     const session = await this.deps.workflow.getRuntimeSession(profile.principal, loop.projectId, sessionId).catch(() => null);
     if (!session) {
+      if(profile.sandbox!=="danger-full-access"||profile.approvalPolicy!=="never")
+        throw new Error("FULL_EXECUTION_REQUIRED: revise the frozen runtime profile before creating a Session");
       applied(await this.deps.workflow.execute(profile.principal, { type: "runtime.session.reserve", projectId: loop.projectId,
         operationId: loopIntentId(dispatch.id, "session.reserve"), sessionId, roleId: dispatch.recipientRoleId,
         authorizationScope: profile.authorizationScopeId, cwd: profile.cwd, sandbox: profile.sandbox,

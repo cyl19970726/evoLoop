@@ -1,9 +1,8 @@
 import type { AppliedResult, Principal } from "@evoloop/contracts";
 import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
-import type { RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { RuntimeTurn, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
-import { permitNativeStartup } from '../runtime/native-admission.js';
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -61,7 +60,7 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
 }
 
 export interface SessionMessageServiceDeps {uow:UnitOfWork;clock:Clock;ids:IdFactory;
-  grantFor(message:SessionMessageRecord,session:{projectId:string;id:string;roleId:string;cwd:string}):Promise<SessionMessageDispatchGrant|null>;
+  grantFor(message:SessionMessageRecord,session:RuntimeSessionRecord):Promise<SessionMessageDispatchGrant|null>;
 }
 /** Trusted coordinator path. No public command can claim a native turn or change processing evidence. */
 export class SessionMessageService {
@@ -74,6 +73,8 @@ export class SessionMessageService {
     const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
     if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
+    if(session.sandbox!=='danger-full-access'||session.approvalPolicy!=='never')
+      throw new DomainError('FULL_EXECUTION_REQUIRED','Upgrade the Session execution profile before conversation execution');
     const grant=await this.deps.grantFor(item,session);
     if(!grant||!grant.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||
       grant.senderActorId!==item.senderActorId||grant.receiverRoleId!==session.roleId||grant.cwd!==session.cwd||
@@ -108,19 +109,17 @@ export class SessionMessageService {
   async isBusy(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>await r.sessionMessages?.hasActiveSessionMessage(sessionId)??false);}
   async noteBlocked(projectId:string,messageId:string,reason:string|null){await this.deps.uow.transaction(projectId,async tx=>{
     await tx.sessionMessages?.setSessionMessageBlockedReason(messageId,reason);});}
-  async beginDispatch(projectId:string,messageId:string,processingId:string,operationId:string,readOnlyPolicyFingerprint:string,nativeEnvironmentEpoch?:number):Promise<SessionMessageProcessing>{
+  async beginDispatch(projectId:string,messageId:string,processingId:string,operationId:string,readOnlyPolicyFingerprint:string):Promise<SessionMessageProcessing>{
     return this.deps.uow.transaction(projectId,async tx=>{
-      if(!/^[a-f0-9]{64}$/.test(readOnlyPolicyFingerprint))throw new DomainError('POLICY_PROOF_MISSING','native read-only policy proof is required');
+      if(!/^[a-f0-9]{64}$/.test(readOnlyPolicyFingerprint))throw new DomainError('POLICY_PROOF_MISSING','Session execution admission fingerprint is required');
       const {item,session,grant}=await this.admission(projectId,messageId,tx);
       const store=tx.sessionMessages!;
       await store.assertSessionVacant(session.id);
       await tx.recovery?.assertStartupAllowed(session.id,'message',messageId);
-      await permitNativeStartup(tx,{kind:'message',projectId,sessionId:session.id,operationId,messageId},nativeEnvironmentEpoch);
       const now=this.deps.clock.now();
       const processing:SessionMessageProcessing={projectId,id:processingId,messageId,sessionId:session.id,operationId,
         receiverActorId:grant.receiverActorId,
         state:'dispatching',nativeTurnId:null,response:null,failure:null,readOnlyPolicyFingerprint,
-        ...(nativeEnvironmentEpoch!==undefined?{nativeEnvironmentEpoch}:{}),
         version:1,startedAt:now,updatedAt:now};
       await store.insertSessionMessageProcessing(processing);
       await store.updateSessionMessage({...item,state:'processing',blockedReason:null,version:item.version+1,updatedAt:now},item.version);

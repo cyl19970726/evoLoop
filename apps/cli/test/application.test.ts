@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { test, mock } from "node:test";
+import { commandSchema } from "@evoloop/contracts";
 import { runCli } from "../src/application.ts";
 
 async function run(args: string[], env: Record<string, string | undefined> = {}) {
@@ -145,4 +146,25 @@ test("the CLI entry point reads resident queue attempts and preserves ordinary r
       `/api/projects/${project}/runtime/sessions/${queue}/recovery`,
     ]);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
+
+test("CLI discovers the single full execution policy and rejects new restricted Sessions",async()=>{
+  const discovery=await run(["command","schema","runtime.session.reserve"]);
+  assert.equal(discovery.code,0);
+  const schema=JSON.parse(discovery.stdout);
+  assert.equal(schema.properties.sandbox.const,"danger-full-access");
+  assert.equal(schema.properties.sandbox.default,"danger-full-access");
+  assert.equal(schema.properties.approvalPolicy.const,"never");
+  const input={type:"runtime.session.reserve",projectId:"00000000-0000-4000-8000-000000000001",
+    operationId:"00000000-0000-4000-8000-000000000002",sessionId:"00000000-0000-4000-8000-000000000003",
+    roleId:"developer",cwd:"/project",authorizationScope:"project"};
+  const parsed=commandSchema.parse(input);
+  assert.equal(parsed.type,"runtime.session.reserve");
+  if(parsed.type==="runtime.session.reserve"){
+    assert.equal(parsed.sandbox,"danger-full-access");assert.equal(parsed.approvalPolicy,"never");
+  }
+  for(const sandbox of ["read-only","workspace-write"])
+    assert.equal(commandSchema.safeParse({...input,sandbox}).success,false);
+  assert.equal(commandSchema.safeParse({...input,approvalPolicy:"on-request"}).success,false);
 });

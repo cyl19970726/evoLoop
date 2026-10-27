@@ -840,7 +840,7 @@ function divisionFixture() {
     existingRoleIds: [workerRoleId], cognitionRoleIds: [], newRoleAllocation: null, firstTaskId: taskId,
     actorId: "delegated-worker", authorizationScopeId: "scope:division", decisionActorIds: [cognition.actorId],
     allowedChoices: ["same-role-instance", "temporary-assignment"], cwd: "/tmp/evoloop-divison-test", model: "test-model",
-    sandbox: "read-only", networkAccess: false, approvalPolicy: "on-request", expiresAtUtc: "2026-10-24T00:00:00.000Z" };
+    sandbox: "danger-full-access", networkAccess: true, approvalPolicy: "never", expiresAtUtc: "2026-10-24T00:00:00.000Z" };
   const decision = () => cmd({ type: "division.decide", decisionId: randomUUID(), loopId,
     expectedLoopVersion: h.data.loops.get(loopId)!.version, sourceEventId: source1, parentDispatchId,
     documentId, documentRevisionId, documentContentHash: "a".repeat(64), firstTaskId: taskId,

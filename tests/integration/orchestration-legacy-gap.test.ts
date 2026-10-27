@@ -70,7 +70,7 @@ test("old dispatch.gap event without run or task version recovers from immutable
   await managed({type:"dispatch.start",dispatchId:dispatch.entityId,claimToken});
   const sessionId=randomUUID(),runId=randomUUID();
   await official({type:"runtime.session.reserve",sessionId,roleId:role,cwd:"/tmp/evoloop-legacy-gap-test",authorizationScope:scope,
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:role,
     cwd:"/tmp/evoloop-legacy-gap-test",authorizationScope:scope,nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});

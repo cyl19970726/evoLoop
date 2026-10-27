@@ -33,7 +33,7 @@ before(async()=>{
     await c.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Recovery test',$2)",[project,at]);
     await c.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$5,$6,'worker',$7,$7)`,
+      VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$5,$6,'worker',$7,$7)`,
       [project,session,role,grant.cwd,`native-${session}`,randomUUID(),at]);
     await c.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
       VALUES($1,$2,'Task',1,$3,'task','draft')`,[project,document,documentRevision]);
@@ -102,7 +102,7 @@ test('recording an original Run as unknown and later marking its interrupt inten
     await c.query('BEGIN');
     await c.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$5,$6,'worker',$7,$7)`,
+      VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$5,$6,'worker',$7,$7)`,
       [project,unknownSession,role,grant.cwd,`native-${unknownSession}`,randomUUID(),now]);
     await c.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
       VALUES($1,$2,'Uncertain Task',1,$3,'task','draft')`,[project,unknownDocument,unknownDocumentRevision]);
@@ -155,7 +155,7 @@ test('unknown message processing may record original operation metadata without 
     await c.query('BEGIN');
     await c.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$5,$6,'worker',$7,$7)`,
+      VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$5,$6,'worker',$7,$7)`,
       [project,s,role,grant.cwd,`native-${s}`,randomUUID(),now]);
     await c.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
       content,state,version,created_at,updated_at) VALUES($1,$2,$3,'owned',$4,'sender','Original M','queued',1,$5,$5)`,
@@ -230,22 +230,24 @@ test('configured execution profile is immutable per Run and unknown activation n
     assert.equal(sessionRecoveryCommands[0].safeParse({type:'runtime.session.executionProfile.revise',
       projectId:project,operationId:randomUUID(),sessionId:session,expectedVersion:base.version,
       expectedExecutionProfileRevisionId:base.executionProfile?.revision.revisionId,
-      model:'new-model',evidenceRef:'review://grant',reason:'Controlled revision'}).success,true,
+      model:'new-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'review://grant',reason:'Controlled revision'}).success,true,
       'reserved SQL profile ID must satisfy the public UUID contract');
     assert.equal((await tx.getRuntimeRun(run))!.executionProfile?.revisionId,base.executionProfile?.revision.revisionId);
   });
   const c=await pool.connect();try{await c.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$5,$6,'worker',$7,$7)`,
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$5,$6,'worker',$7,$7)`,
     [project,another,role,grant.cwd,`native-${another}`,randomUUID(),now]);}finally{c.release();}
   await uow.transaction(project,async tx=>{
     const original=(await tx.getRuntimeSession(another))!;
     const profile=original.executionProfile!;
     await tx.recovery!.adoptExecutionProfile({...profile.revision,revisionId,previousRevisionId:profile.revision.revisionId,
-      version:2,model:'configured-new-model',provenance:'revised',operationId,actorId:'lead',reason:'Reviewed model grant',
+      version:2,model:'configured-new-model',sandbox:'danger-full-access',approvalPolicy:'never',
+      provenance:'revised',operationId,actorId:'lead',reason:'Reviewed model grant',
       evidenceRef:'review://model',createdAt:now},1);
     const changed=(await tx.getRuntimeSession(another))!;
     assert.equal(changed.model,'configured-new-model');
+    assert.equal(changed.sandbox,'danger-full-access');assert.equal(changed.approvalPolicy,'never');
     assert.equal(changed.executionProfile?.activationState,'pending');
     assert.equal(changed.executionProfile?.activeRevisionId,profile.revision.revisionId);
     assert.equal((await tx.recovery!.getRecoveryGate(another))!.phase,'open');
@@ -253,7 +255,7 @@ test('configured execution profile is immutable per Run and unknown activation n
     await tx.recovery!.assertStartupAllowed(another,'run',pendingRunId);
     await tx.insertRuntimeRun({...prior,id:pendingRunId,sessionId:another,operationId:randomUUID(),state:'requested',
       version:1,nativeTurnId:null,executionProfile:{revisionId,version:2,model:'configured-new-model',
-        sandbox:'workspace-write',approvalPolicy:'on-request',cwd:grant.cwd,authorizationScope:'project',provenance:'revised'},
+        sandbox:'danger-full-access',approvalPolicy:'never',cwd:grant.cwd,authorizationScope:'project',provenance:'revised'},
       createdAt:now,updatedAt:now});
     await assert.rejects(tx.recovery!.assertStartupAllowed(another,'run',pendingRunId),/profile/i,
       'persisted requested Run cannot dispatch before native activation is positively confirmed');
@@ -294,13 +296,14 @@ test('explicit native rejection and failed unstarted Run permit a new target whi
     const initial=(await tx.getRuntimeSession(session))!;
     const lastActive=initial.executionProfile!.revision.revisionId;
     await tx.recovery!.adoptExecutionProfile({...initial.executionProfile!.revision,
-      revisionId:firstRevision,previousRevisionId:lastActive,version:2,model:'rejected-target',provenance:'revised',
+      revisionId:firstRevision,previousRevisionId:lastActive,version:2,model:'rejected-target',
+      sandbox:'danger-full-access',approvalPolicy:'never',provenance:'revised',
       operationId:firstOperation,actorId:'lead',reason:'Reviewed static model grant',evidenceRef:'review://first',createdAt:at},
       initial.version);
     const prior=(await tx.getRuntimeRun(run))!;
     await tx.insertRuntimeRun({...prior,id:requestedId,operationId:randomUUID(),state:'requested',version:1,
       nativeTurnId:null,executionProfile:{revisionId:firstRevision,version:2,model:'rejected-target',
-        sandbox:initial.sandbox,approvalPolicy:initial.approvalPolicy,cwd:initial.cwd,
+        sandbox:'danger-full-access',approvalPolicy:'never',cwd:initial.cwd,
         authorizationScope:initial.authorizationScope,provenance:'revised'},createdAt:at,updatedAt:at});
     assert.equal(await tx.recovery!.beginExecutionProfileActivation(session,firstRevision,firstOperation),true);
     await tx.recovery!.settleExecutionProfileActivation(session,firstRevision,'rejected','Native RPC rejected exact revision');
@@ -323,6 +326,11 @@ test('explicit native rejection and failed unstarted Run permit a new target whi
       'new target does not erase failed Run, claim, or original message cause');
     assert.equal((await tx.getRuntimeRun(requestedId))!.executionProfile?.revisionId,firstRevision,
       'failed Run keeps its original fixed launch profile');
+    assert.equal(await tx.recovery!.beginExecutionProfileActivation(session,secondRevision,secondOperation),true,
+      'reviewed replacement can activate without inventing a Run while the original failure stays blocked');
+    await tx.recovery!.settleExecutionProfileActivation(session,secondRevision,'active','Exact replacement profile confirmed');
+    const afterActivation=(await tx.recovery!.getRecoveryGate(session))!;
+    assert.equal(afterActivation.phase,'blocked');assert.equal(afterActivation.causeId,requestedId);
   });
 });
 
@@ -347,7 +355,7 @@ test('failed claimed A permits only its exact retry, then original M and accepte
     await client.query('INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed) VALUES($1,$2,$3,$4,true)',[p,t,tr,b]);
     await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,
       native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,'/tmp/recovery-chain','project','read-only','on-request','ready',1,$4,$4,$5,'lead',now(),now())`,
+      VALUES($1,$2,$3,'/tmp/recovery-chain','project','danger-full-access','never','ready',1,$4,$4,$5,'lead',now(),now())`,
       [p,s,r,'native-'+s,randomUUID()]);
     await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
       VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`,[p,r,rr]);
@@ -453,7 +461,7 @@ test('failed claimed A permits only its exact retry, then original M and accepte
   const old=await pool.connect();try{await old.query('BEGIN');
     await old.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,
       approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,'/tmp/recovery-chain','project','read-only','on-request','ready',1,$4,$4,$5,'lead',now(),now())`,
+      VALUES($1,$2,$3,'/tmp/recovery-chain','project','danger-full-access','never','ready',1,$4,$4,$5,'lead',now(),now())`,
       [p,boundedSession,r,'native-'+boundedSession,randomUUID()]);
     await old.query(`INSERT INTO resident_queue(project_id,queue_id,version,adopted_version,max_runs,adopted_by,adopted_at,reason,actor_id)
       VALUES($1,$2,1,1,2,'lead',now(),'Reviewed bounded release','lead')`,[p,boundedQueue]);
@@ -584,7 +592,7 @@ test('new reserved Session activates only its original configured revision on fi
   const id=randomUUID(),operationId=randomUUID(),at=new Date().toISOString();
   await uow.transaction(project,async tx=>{
     await tx.insertRuntimeSession({projectId:project,id,roleId:role,cwd:grant.cwd,
-      authorizationScope:'project',model:'reserved-model',sandbox:'read-only',approvalPolicy:'on-request',
+      authorizationScope:'project',model:'reserved-model',sandbox:'danger-full-access',approvalPolicy:'never',
       state:'reserved',version:1,nativeThreadId:null,nativeSessionId:null,operationId,actorId:'lead',
       closeOperationId:null,closeAttemptedAt:null,closeVerifiedAt:null,createdAt:at,updatedAt:at});
     const reserved=(await tx.getRuntimeSession(id))!;
@@ -594,7 +602,7 @@ test('new reserved Session activates only its original configured revision on fi
     assert.equal(sessionRecoveryCommands[0].safeParse({type:'runtime.session.executionProfile.revise',projectId:project,
       operationId:randomUUID(),sessionId:id,expectedVersion:1,
       expectedExecutionProfileRevisionId:reserved.executionProfile?.revision.revisionId,
-      model:'future-model',evidenceRef:'review://future',reason:'Future revision'}).success,true);
+      model:'future-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'review://future',reason:'Future revision'}).success,true);
     await tx.updateRuntimeSession({...reserved,state:'creating',version:2,updatedAt:new Date().toISOString()},1);
     const creating=(await tx.getRuntimeSession(id))!;
     assert.equal(creating.executionProfile?.activationState,'pending');

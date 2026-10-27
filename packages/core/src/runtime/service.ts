@@ -5,7 +5,6 @@ import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
-import { permitNativeStartup } from './native-admission.js';
 
 export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory }
 const internalActor = "runtime-coordinator";
@@ -67,6 +66,8 @@ export class RuntimeWorkflowService {
         adopted.revision.revisionId!==revisionId||adopted.revision.operationId!==operationId||
         adopted.activeRevisionId!==current.resumeProfile.executionProfileRevisionId||
         adopted.revision.model!==target.model||saved.model!==adopted.revision.model||
+        adopted.revision.sandbox!==target.sandbox||saved.sandbox!==adopted.revision.sandbox||
+        adopted.revision.approvalPolicy!==target.approvalPolicy||saved.approvalPolicy!==adopted.revision.approvalPolicy||
         target.executionProfileRevisionId!==revisionId||
         target.actorId!==saved.actorId||target.projectId!==projectId||target.sessionId!==saved.id||
         target.roleId!==saved.roleId||target.cwd!==saved.cwd||
@@ -74,7 +75,8 @@ export class RuntimeWorkflowService {
         target.approvalPolicy!==saved.approvalPolicy)return false;
       const previous=adopted.activeRevisionId?
         await reader.recovery?.getExecutionProfileRevision(saved.id,adopted.activeRevisionId):null;
-      return !!previous&&previous.model===current.resumeProfile.model&&
+      return !!previous&&adopted.revision.previousRevisionId===previous.revisionId&&
+        previous.model===current.resumeProfile.model&&
         previous.sandbox===current.resumeProfile.sandbox&&
         previous.approvalPolicy===current.resumeProfile.approvalPolicy&&
         previous.cwd===current.cwd&&previous.authorizationScope===current.authorizationScope;
@@ -147,15 +149,13 @@ export class RuntimeWorkflowService {
       kind, safeDetail(detail), nativeTurnId, internalActor, this.deps.clock.now(), cursor, itemsDigest));
   }
 
-  async beginSessionCreate(projectId: string, sessionId: string, nativeEnvironmentEpoch?: number): Promise<RuntimeSessionRecord> {
+  async beginSessionCreate(projectId: string, sessionId: string): Promise<RuntimeSessionRecord> {
     return this.deps.uow.transaction(projectId, async tx => {
       // Match execution-profile adoption for a reserved Session: gate before its row.
       await tx.recovery?.lockRecoveryGate(sessionId);
       const current = required(await (tx.lockRuntimeSession?.(sessionId) ?? tx.getRuntimeSession(sessionId)), "runtime session");
       if (current.state !== "reserved") throw new DomainError("SESSION_NOT_RESERVED", "session create was already attempted");
-      await permitNativeStartup(tx, {kind:'session-create',projectId,sessionId,operationId:current.operationId}, nativeEnvironmentEpoch);
-      const next = { ...current, state: "creating" as const, version: current.version + 1, updatedAt: this.deps.clock.now(),
-        ...(nativeEnvironmentEpoch !== undefined ? {nativeEnvironmentEpoch} : {}) };
+      const next = { ...current, state: "creating" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeSession(next, current.version);
       await this.emit(tx, null, sessionId, "session.creating", "External thread creation may now begin", null, projectId);
       return next;
@@ -195,7 +195,7 @@ export class RuntimeWorkflowService {
     });
   }
 
-  async beginDispatch(projectId: string, runId: string, nativeEnvironmentEpoch?: number): Promise<RuntimeRunRecord> {
+  async beginDispatch(projectId: string, runId: string): Promise<RuntimeRunRecord> {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "requested") throw new DomainError("RUN_NOT_REQUESTED", "turn start was already attempted");
@@ -219,9 +219,7 @@ export class RuntimeWorkflowService {
       const revision = required(await tx.getTaskRevision(task.id, current.taskRevisionId), "task revision");
       const basis = required(revision.basisSetId ? await tx.getBasisSet(task.id, revision.id, revision.basisSetId) : null, "sealed basis");
       await validateDispatchBasis(tx, task.id, basis);
-      await permitNativeStartup(tx, {kind:'run',projectId,sessionId:session.id,operationId:current.operationId}, nativeEnvironmentEpoch);
-      const next = { ...current, state: "dispatching" as const, version: current.version + 1, updatedAt: this.deps.clock.now(),
-        ...(nativeEnvironmentEpoch !== undefined ? {nativeEnvironmentEpoch} : {}) };
+      const next = { ...current, state: "dispatching" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
       await this.emit(tx, runId, current.sessionId, "run.dispatching", "External turn/start may now begin", null, projectId);
       return next;

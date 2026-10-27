@@ -13,7 +13,8 @@ const oldRevision:ExecutionProfileRevision={projectId,sessionId,revisionId:oldRe
   model:'old-model',sandbox:'workspace-write',approvalPolicy:'on-request',cwd:'/tmp/owned-project',
   authorizationScope:'task:approved',provenance:'reserved',previousRevisionId:null,
   operationId:randomUUID(),actorId,reason:'initial',evidenceRef:null,createdAt:now};
-const revision:ExecutionProfileRevision={...oldRevision,revisionId,version:2,model:'new-model',
+const revision:ExecutionProfileRevision={...oldRevision,revisionId,version:2,model:'old-model',
+  sandbox:'danger-full-access',approvalPolicy:'never',
   provenance:'revised',previousRevisionId:oldRevisionId,operationId};
 const session:RuntimeSessionRecord={projectId,id:sessionId,roleId:'approved-role',cwd:revision.cwd,
   authorizationScope:revision.authorizationScope,model:revision.model,sandbox:revision.sandbox,
@@ -23,10 +24,10 @@ const session:RuntimeSessionRecord={projectId,id:sessionId,roleId:'approved-role
     activationOperationId:operationId,attemptedAt:now,activationEvidence:null}};
 const binding:RuntimeBinding={sessionId,projectId,roleId:session.roleId,nativeThreadId:'owned-thread',
   nativeSessionId:'owned-tree',cwd:session.cwd,authorizationScope:session.authorizationScope,
-  owner:'evoloop-codex-app-server',resumeProfile:{actorId,model:'old-model',sandbox:session.sandbox,
-    approvalPolicy:session.approvalPolicy,executionProfileRevisionId:oldRevisionId}};
+  owner:'evoloop-codex-app-server',resumeProfile:{actorId,model:'old-model',sandbox:oldRevision.sandbox,
+    approvalPolicy:oldRevision.approvalPolicy,executionProfileRevisionId:oldRevisionId}};
 const target:RuntimeSessionSpec={actorId,projectId,sessionId,roleId:session.roleId,cwd:session.cwd,
-  authorizationScope:session.authorizationScope,model:'new-model',sandbox:session.sandbox,
+  authorizationScope:session.authorizationScope,model:'old-model',sandbox:session.sandbox,
   approvalPolicy:session.approvalPolicy,executionProfileRevisionId:revisionId};
 
 test('trusted activation proof requires the original Thread, last active revision and operation',async()=>{
@@ -36,6 +37,7 @@ test('trusted activation proof requires the original Thread, last active revisio
   assert.equal(await service.verifyExecutionProfileActivation(projectId,binding,target,revisionId,operationId),true);
   assert.equal(await service.verifyExecutionProfileActivation(projectId,{...binding,nativeThreadId:'foreign'},target,revisionId,operationId),false);
   assert.equal(await service.verifyExecutionProfileActivation(projectId,binding,{...target,model:'other-model'},revisionId,operationId),false);
+  assert.equal(await service.verifyExecutionProfileActivation(projectId,binding,{...target,sandbox:'workspace-write'},revisionId,operationId),false);
   assert.equal(await service.verifyExecutionProfileActivation(projectId,binding,target,revisionId,randomUUID()),false);
   session.executionProfile!.activationState='active';session.executionProfile!.activeRevisionId=revisionId;
   assert.equal(await service.verifyExecutionProfileActivation(projectId,binding,target,revisionId,operationId),false);
@@ -60,7 +62,8 @@ test('binding registration cannot inherit a different business sandbox after pro
   const service=new RuntimeWorkflowService({uow:{read:async(_project:string,action:(reader:unknown)=>Promise<unknown>)=>
     action({getRuntimeSession:async()=>active})} as UnitOfWork,
     clock:{now:()=>now},ids:{next:randomUUID}});
-  const approved:RuntimeBinding={...binding,resumeProfile:{...binding.resumeProfile!,model:'new-model',
+  const approved:RuntimeBinding={...binding,resumeProfile:{...binding.resumeProfile!,model:'old-model',
+    sandbox:'danger-full-access',approvalPolicy:'never',
     executionProfileRevisionId:revisionId}};
   await service.verifyBinding(projectId,approved);
   await assert.rejects(()=>service.verifyBinding(projectId,binding),/registered native profile differs/);

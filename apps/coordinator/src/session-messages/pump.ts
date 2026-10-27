@@ -7,9 +7,8 @@ import { RuntimeProtocolError, RuntimeUnknownError } from '@evoloop/adapter-code
 import { bindingOf, finalMessages } from '../runtime/runner.js';
 
 type MessageRuntime={isReady():boolean;registerBinding(binding:RuntimeBinding):Promise<void>;
-  markReadOnlyThread?(binding:RuntimeBinding):void;
-  qualifyReadOnlyThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
-  startReadOnlyTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
+  qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
+  startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   listTurns(binding:RuntimeBinding,cursor?:string):Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding:RuntimeBinding,turnId:string,cursor?:string):Promise<RuntimePage<unknown>>};
 const marker=(operationId:string)=>`[evoloop-message-operation:${operationId}]`;
@@ -75,10 +74,10 @@ export class SessionMessagePump {
       }
       if(!await this.deps.canStart(message))return;
       await runtime.registerBinding(binding);
-      if(!runtime.startReadOnlyTurn||!runtime.qualifyReadOnlyThread){
-        await this.deps.service.noteBlocked(message.projectId,message.id,'Native read-only tool verification is unavailable');return;
+      if(!runtime.startConversationTurn||!runtime.qualifyConversationThread){
+        await this.deps.service.noteBlocked(message.projectId,message.id,'Native Session execution profile verification is unavailable');return;
       }
-      const qualification=await runtime.qualifyReadOnlyThread(binding);
+      const qualification=await runtime.qualifyConversationThread(binding);
       if(!qualification.available||!qualification.fingerprint){
         await this.deps.service.noteBlocked(message.projectId,message.id,qualification.reason);return;
       }
@@ -90,8 +89,8 @@ export class SessionMessagePump {
         }
         throw error;
       }
-      const input=`${marker(record.operationId)}\nOrdinary Session conversation. Read-only explanation and clarification only. Do not perform business work, edit files, send messages, or claim Task completion.\n${message.context?`Fixed Task context: ${message.context.taskId}@${message.context.taskRevisionId}\n`:''}${message.content}`;
-      try{const turn=await runtime.startReadOnlyTurn(binding,input,record.operationId);
+      const input=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not by itself record Task delivery or acceptance.\n${message.context?`Fixed Task context: ${message.context.taskId}@${message.context.taskRevisionId}\n`:''}${message.content}`;
+      try{const turn=await runtime.startConversationTurn(binding,input,record.operationId);
         await this.deps.service.bindTurn(message.projectId,message.id,turn);}
       catch(error){
         if(error instanceof RuntimeProtocolError && !(error instanceof RuntimeUnknownError))
@@ -102,8 +101,6 @@ export class SessionMessagePump {
     }
     if(!record)return;
     await runtime.registerBinding(binding);
-    // After restart, reapply the native gate before reading a still-active ordinary Turn.
-    runtime.markReadOnlyThread?.(binding);
     // Bound the automatic native read: at most two pages for a known Turn and
     // the first 20 listed Turns for an unknown start. A miss remains unknown.
     const first=await runtime.listTurns(binding);

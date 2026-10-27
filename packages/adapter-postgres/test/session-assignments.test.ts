@@ -73,7 +73,7 @@ test("official queue and direct Run commands cannot bypass a concrete external a
   await accepted({ type: "task.start", projectId, operationId: randomUUID(), taskId: tid, expectedVersion: 1, reason: "Freeze before assignment" });
   const task = (await workflow.getTask(principal, projectId, tid)).task;
   await accepted({ type: "runtime.session.reserve", projectId, operationId: randomUUID(), sessionId: sid, roleId,
-    cwd: "/tmp/evoloop-assignment", authorizationScope: "test", sandbox: "read-only", approvalPolicy: "on-request" });
+    cwd: "/tmp/evoloop-assignment", authorizationScope: "test", sandbox: "danger-full-access", approvalPolicy: "never" });
   await runtime.beginSessionCreate(projectId, sid);
   const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sid)))!;
   await runtime.bindSession(projectId, sid, { owner: "evoloop-codex-app-server", projectId, sessionId: sid, roleId,

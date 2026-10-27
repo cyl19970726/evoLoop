@@ -75,7 +75,7 @@ test('one intent survives duplicate dispatch and holds the Session after termina
     await setup.query(`INSERT INTO basis_member(project_id,task_id,task_revision_id,basis_set_id,document_id,document_revision_id) VALUES($1,$2,$3,$4,$5,$6)`,[p,task,rev,basis,doc,dr]);
     await setup.query(`UPDATE basis_set SET sealed=true WHERE project_id=$1 AND task_id=$2 AND basis_set_id=$3`,[p,task,basis]);
     await setup.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,'/tmp/queue','project','read-only','on-request','ready',1,$4,$5,$6,'lead',now(),now())`,[p,session,role,'thread-'+session,'native-'+session,randomUUID()]);
+      VALUES($1,$2,$3,'/tmp/queue','project','danger-full-access','never','ready',1,$4,$5,$6,'lead',now(),now())`,[p,session,role,'thread-'+session,'native-'+session,randomUUID()]);
     await setup.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
       VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`,[p,role,roleRev]);
     await setup.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
@@ -129,7 +129,7 @@ test('official Task and Run lifecycle releases A only after current consumer acc
     await apply({type:'task.create',projectId:p,operationId:randomUUID(),taskId,title,content:`# ${title}`,acceptance:'Consumer uses result',owner:role});
     await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Fix initial input'});
   }
-  await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId:session,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+  await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId:session,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
   await runtime.beginSessionCreate(p,session);
   await runtime.bindSession(p,session,await withExecutionProfile(p,session,{owner:'evoloop-codex-app-server',projectId:p,sessionId:session,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:'thread-'+session,nativeSessionId:'native-'+session}));
   const bind=await pool.connect();try{await bind.query('BEGIN');await bind.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc) VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,session,roleRev]);await bind.query('COMMIT');}catch(e){await bind.query('ROLLBACK');throw e;}finally{bind.release();}
@@ -202,7 +202,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Fix source'});
   await apply({type:'task.create',projectId:p,operationId:randomUUID(),taskId:taskBId,title:'Build B',content:'Wait for A',acceptance:'Accepted B',owner:role});
   await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId:taskBId,expectedVersion:1,reason:'Fix source'});
-  await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+  await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
   await native.beginSessionCreate(p,sessionId);
   await native.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));
   await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
@@ -459,7 +459,7 @@ test('first queue claim and old Loop reserve serialize on an idle shared Session
       await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Seal input'});
     }
     await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,
-      cwd:'/tmp/queue-race',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+      cwd:'/tmp/queue-race',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
     await trusted.beginSessionCreate(p,sessionId);
     await trusted.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
       cwd:'/tmp/queue-race',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));
@@ -577,7 +577,7 @@ test('failed consumer use can continue the same claim from amended input without
     content:'Initial fixed work',acceptance:'Consumer can use the result',owner:role});
   await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Seal A input'});
   await apply({type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId:role,
-    cwd:'/tmp/queue',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+    cwd:'/tmp/queue',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
   await native.beginSessionCreate(p,sessionId);
   await native.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,sessionId,roleId:role,
     cwd:'/tmp/queue',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));

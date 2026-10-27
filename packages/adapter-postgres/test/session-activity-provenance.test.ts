@@ -38,7 +38,7 @@ before(async () => {
       VALUES($1,$2,$3,1,'active','{"title":"Shared role"}'::jsonb,'lead','fixture',$4,$4)`, [project, role, roleRevision, at]);
     for (const session of [ownedX, ownedY]) await q(client, `INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
       sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,'/tmp','fixture','read-only','on-request','ready',1,$4,$4,$5,'lead',$6,$6)`,
+      VALUES($1,$2,$3,'/tmp','fixture','danger-full-access','never','ready',1,$4,$4,$5,'lead',$6,$6)`,
       [project, session, role, `native-${session}`, id(), at]);
     await q(client, `INSERT INTO project_goal(project_id,goal_id,version,outcome,constraints,consumer,authority,scope,owner,actor_id,created_at)
       VALUES($1,$2,1,'Fixture','none','lead','lead','test','lead','lead',$3)`, [project, goal, at]);

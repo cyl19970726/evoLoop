@@ -54,7 +54,7 @@ before(async () => {
     for (const sessionId of [owned, ownedUnbound]) {
       await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,
         state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-        VALUES($1,$2,$3,'/tmp','fixture',NULL,'read-only','on-request','ready',1,$4,$4,$5,'lead',$6,$6)`,
+        VALUES($1,$2,$3,'/tmp','fixture',NULL,'danger-full-access','never','ready',1,$4,$4,$5,'lead',$6,$6)`,
         [projectId, sessionId, roleId, `native-${sessionId}`, randomUUID(), now]);
     }
     await client.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
@@ -104,7 +104,7 @@ test("directory keeps separate same-Role chats, deduplicates aliases, includes u
     assert.equal(aSession?.capabilities.send.available, true);
     assert.equal(aSession?.capabilities.send.mode, "manual-handoff");
     assert.equal(aSession?.capabilities.open.available, true);
-    assert.equal(current.items.find(item => item.key === `owned:${owned}`)?.capabilities.send.mode, "owned-read-only");
+    assert.equal(current.items.find(item => item.key === `owned:${owned}`)?.capabilities.send.mode, "owned-conversation");
     assert.equal(current.items.find(item => item.key === `owned:${owned}`)?.capabilities.open.available, false);
     await new PgSessionAssignments(client, projectId).saveSessionProfile({ projectId,
       target: { kind: "external", linkId: aAlias }, version: 1, displayName: "Alias title", purpose: "Alias metadata",

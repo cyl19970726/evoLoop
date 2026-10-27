@@ -24,7 +24,7 @@ function fixture() {
   const state = { task: { ...task }, revisions: [sourceRevision], bases: [basis], definitions: [] as EvaluationRevision[],
     attempts: [] as EvaluationAttempt[], assessments: [] as EvaluationAssessment[], conclusions: [] as EvaluationConclusion[], runs: [] as any[],
     events: [] as any[], deliveries: [] as Delivery[], sessions: [{ projectId, id: id(10), roleId: "evaluator", cwd: "/tmp/eval", authorizationScope: "project",
-      model: "model-a", sandbox: "read-only", approvalPolicy: "on-request", state: "ready", version: 2,
+      model: "model-a", sandbox: "danger-full-access", approvalPolicy: "never", state: "ready", version: 2,
       nativeThreadId: "native", nativeSessionId: "session", operationId: id(11), actorId: "reviewer",
       createdAt: "2026-10-21T00:00:00Z", updatedAt: "2026-10-21T00:00:00Z" }] };
   const tx = {
@@ -160,9 +160,9 @@ async function definition(tx: Transaction): Promise<EvaluationDefinition> {
       commonInput: "Answer using fixed materials", materials: [{ kind: "document", id: primaryId, revision: id(6), contentHash: hash }],
       criteria: "Check the fixed result" },
     conditions: [
-      { id: id(21), kind: "direct", wikiRefs: null, model: "model-a", environment: { cwd: "/tmp/eval", authorizationScope: "project", sandbox: "read-only", approvalPolicy: "on-request" } },
+      { id: id(21), kind: "direct", wikiRefs: null, model: "model-a", environment: { cwd: "/tmp/eval", authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" } },
       { id: id(22), kind: "wiki", wikiRefs: [{ kind: "wiki", id: id(23), revision: id(24), contentHash: hash }],
-        model: "model-a", environment: { cwd: "/tmp/eval", authorizationScope: "project", sandbox: "read-only", approvalPolicy: "on-request" } },
+        model: "model-a", environment: { cwd: "/tmp/eval", authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" } },
     ], limits: "Tool access isolation is unverified" };
 }
 

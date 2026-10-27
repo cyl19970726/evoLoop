@@ -6,6 +6,7 @@ import pg from "pg";
 import { runner } from "node-pg-migrate";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { PgSessionObservation } from "../src/session-observation.ts";
+import { PgSessionRecovery } from "../src/session-recovery.ts";
 import { sessionRecoveryCommands } from '@evoloop/contracts/session-recovery';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -244,7 +245,7 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
     journalBefore034,'034 configured snapshot backfill must not invent a new native event');
   assert.equal((await client.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence,headBefore034);
   const names034=(await client.query('SELECT name FROM pgmigrations ORDER BY run_on,name')).rows.map(row=>row.name);
-  assert.equal(names034.length,34);assert.equal(names034.at(-1),'035_native_execution_environment');
+  assert.equal(names034.length,35);assert.equal(names034.at(-1),'036_session_full_execution');
   assert.equal((await client.query('SELECT count(*)::int AS count FROM native_execution_environment')).rows[0].count,0,
     '035 must preserve legacy operation without inventing verified native ownership from ready Sessions');
   for(const table of ['runtime_session','runtime_run','session_message_processing'])
@@ -258,6 +259,7 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
   assert.equal(sessionRecoveryCommands[0].safeParse({type:'runtime.session.executionProfile.revise',projectId,
     operationId:randomUUID(),sessionId,expectedVersion:1,
     expectedExecutionProfileRevisionId:legacyProfile.revisionId,model:'reviewed-model',
+    sandbox:'danger-full-access',approvalPolicy:'never',
     evidenceRef:'review://upgrade',reason:'Controlled legacy revision'}).success,true,
     'legacy SQL profile ID must satisfy the public UUID contract');
   const blocked=(await client.query('SELECT * FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',
@@ -323,4 +325,83 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
   assert.deepEqual((await client.query("SELECT name FROM pgmigrations ORDER BY run_on, name")).rows.map(row=>row.name),names034);
   assert.deepEqual((await client.query(`SELECT to_jsonb(c) AS row FROM session_observation_change c WHERE project_id=$1 ORDER BY sequence`, [projectId])).rows,
     projectionBeforeRepeat.rows, "repeat migration cannot duplicate the legacy projection");
+});
+
+test('036 upgrades an idle legacy Session by immutable same-model revision without rewriting its Run or opening an unknown gate',async()=>{
+  const oldRun=(await client.query('SELECT execution_profile_snapshot FROM runtime_run WHERE project_id=$1 AND run_id=$2',
+    [projectId,runId])).rows[0].execution_profile_snapshot;
+  const old=(await client.query('SELECT * FROM session_execution_profile_revision WHERE project_id=$1 AND session_id=$2 ORDER BY version',
+    [projectId,sessionId])).rows[0];
+  const revisionId=randomUUID(),operationId=randomUUID();
+  const rejectedInsert=`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,
+    approval_policy,state,version,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/legacy','project','legacy-model','read-only','on-request','reserved',1,$4,'legacy-author',now(),now())`;
+  await assert.rejects(client.query(rejectedInsert,[projectId,randomUUID(),roleId,randomUUID()]),
+    /full-access execution policy/);
+  await assert.rejects(client.query(`UPDATE runtime_session SET sandbox='danger-full-access',approval_policy='never',
+    version=version+1 WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]),
+    /adopted immutable profile revision/);
+  await client.query('BEGIN');
+  try{
+    const recovery=new PgSessionRecovery(client,projectId);
+    await recovery.adoptExecutionProfile({projectId,sessionId,revisionId,version:2,previousRevisionId:old.revision_id,
+      model:old.model,sandbox:'danger-full-access',approvalPolicy:'never',cwd:old.cwd,
+      authorizationScope:old.authorization_scope,provenance:'revised',operationId,actorId:'legacy-reviewer',
+      reason:'Reviewed full permission upgrade',evidenceRef:'review://full-policy',createdAt:new Date().toISOString()},1);
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');throw error;}
+  const sessionAfter=(await client.query('SELECT version,model,sandbox,approval_policy FROM runtime_session WHERE project_id=$1 AND session_id=$2',
+    [projectId,sessionId])).rows[0];
+  assert.equal(sessionAfter.version,2);assert.equal(sessionAfter.model,old.model);
+  assert.equal(sessionAfter.sandbox,'danger-full-access');assert.equal(sessionAfter.approval_policy,'never');
+  assert.deepEqual((await client.query('SELECT * FROM session_execution_profile_revision WHERE project_id=$1 AND session_id=$2 AND revision_id=$3',
+    [projectId,sessionId,old.revision_id])).rows[0],old,'old immutable revision is unchanged');
+  assert.deepEqual((await client.query('SELECT execution_profile_snapshot FROM runtime_run WHERE project_id=$1 AND run_id=$2',
+    [projectId,runId])).rows[0].execution_profile_snapshot,oldRun,'old Run keeps its launch policy');
+  assert.equal((await client.query('SELECT phase FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',
+    [projectId,sessionId])).rows[0].phase,'open');
+  await client.query('BEGIN');
+  try{
+    const recovery=new PgSessionRecovery(client,projectId);
+    assert.equal(await recovery.beginExecutionProfileActivation(sessionId,revisionId,operationId),true,
+      'vacant Session may activate its adopted profile without manufacturing a Run');
+    await recovery.settleExecutionProfileActivation(sessionId,revisionId,'unknown','Lost native acknowledgement');
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');throw error;}
+  const gate=(await client.query('SELECT phase,cause_kind,cause_id,retry_run_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',
+    [projectId,sessionId])).rows[0];
+  assert.equal(gate.phase,'blocked');assert.equal(gate.cause_kind,'execution_profile');
+  assert.equal(gate.cause_id,revisionId);assert.equal(gate.retry_run_id,null);
+  await assert.rejects(client.query(`UPDATE runtime_session SET sandbox='read-only',approval_policy='on-request',
+    version=version+1 WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]),
+    /adopted immutable profile revision/);
+});
+
+test('036 standalone activation of a second idle legacy Session keeps an open gate open only after confirmed settlement',async()=>{
+  const before=(await client.query(`SELECT s.version,s.model,s.sandbox,s.approval_policy,s.cwd,s.authorization_scope,
+    p.revision_id,p.version AS profile_version FROM runtime_session s
+    JOIN session_execution_profile h ON h.project_id=s.project_id AND h.session_id=s.session_id
+    JOIN session_execution_profile_revision p ON p.project_id=h.project_id AND p.session_id=h.session_id AND p.revision_id=h.revision_id
+    WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,laterSessionId])).rows[0];
+  assert.equal(before.sandbox,'read-only');assert.equal(before.approval_policy,'on-request');
+  const revisionId=randomUUID(),operationId=randomUUID(),recovery=new PgSessionRecovery(client,projectId);
+  await client.query('BEGIN');
+  try{
+    await recovery.adoptExecutionProfile({projectId,sessionId:laterSessionId,revisionId,
+      version:before.profile_version+1,previousRevisionId:before.revision_id,model:before.model,
+      sandbox:'danger-full-access',approvalPolicy:'never',cwd:before.cwd,
+      authorizationScope:before.authorization_scope,provenance:'revised',operationId,
+      actorId:'legacy-reviewer',reason:'Reviewed second full policy',evidenceRef:'review://second',
+      createdAt:new Date().toISOString()},before.version);
+    assert.equal(await recovery.beginExecutionProfileActivation(laterSessionId,revisionId,operationId),true);
+    assert.equal((await recovery.getRecoveryGate(laterSessionId))!.phase,'open');
+    await recovery.settleExecutionProfileActivation(laterSessionId,revisionId,'active','Exact original Thread confirmed');
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');throw error;}
+  const after=(await client.query(`SELECT h.activation_state,h.active_revision_id,g.phase,g.cause_id
+    FROM session_execution_profile h JOIN session_recovery_gate g
+      ON g.project_id=h.project_id AND g.session_id=h.session_id
+    WHERE h.project_id=$1 AND h.session_id=$2`,[projectId,laterSessionId])).rows[0];
+  assert.equal(after.activation_state,'active');assert.equal(after.active_revision_id,revisionId);
+  assert.equal(after.phase,'open');assert.equal(after.cause_id,null);
 });

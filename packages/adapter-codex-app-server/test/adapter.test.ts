@@ -8,8 +8,9 @@ import { mapWorkItem } from "../src/work-trace.js";
 import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 
 const fixture = resolve(import.meta.dirname, "fixture.mjs");
-const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", sandbox: "read-only", approvalPolicy: "on-request" };
-const restoreSpec: RuntimeSessionSpec = { ...spec, actorId: "original-actor" };
+const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", model:"gpt-6-sol", sandbox: "danger-full-access", approvalPolicy: "never" };
+const fullSpec:RuntimeSessionSpec={...spec};
+const restoreSpec: RuntimeSessionSpec = { ...spec };
 // Whole-repository parallel tests can delay fake-child startup. Keep each test's
 // short request deadline for the deliberately lost native operation.
 const testAdapter = (options: CodexAppServerOptions): CodexAppServerAdapter =>
@@ -22,6 +23,205 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
 test("only the two reviewed CLI protocol versions can be selected", () => {
   assert.throws(() => testAdapter({ expectedVersion: "codex-cli 0.165.0" }), /unsupported Codex CLI protocol version/);
   assert.throws(() => testAdapter({ expectedVersion: "0.164.0-alpha.11.1" }), /unsupported Codex CLI protocol version/);
+});
+
+test('transport EOF does not prove child exit and close waits for the actual receipt',async t=>{
+  const exits:Array<{pid:number;code:number|null;signal:NodeJS.Signals|null}>=[];
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'stdout-eof-live'],
+    onExited:receipt=>{exits.push(receipt);}});
+  let pid=0;
+  const disconnected=new Promise<void>(resolveDisconnected=>adapter.onDisconnect(()=>resolveDisconnected()));
+  t.after(async()=>{if(pid)try{process.kill(pid,'SIGKILL');}catch{}await adapter.close().catch(()=>undefined);});
+  await adapter.open();
+  const child=(adapter as unknown as {ownedProcess:{pid?:number}}).ownedProcess;
+  pid=child.pid!;
+  assert.equal(adapter.hasProcessHandle(),true);
+  await disconnected;
+  assert.deepEqual(exits,[]);
+  let closed=false;
+  const closing=adapter.close().then(()=>{closed=true;});
+  await new Promise(resolveWait=>setTimeout(resolveWait,100));
+  assert.equal(closed,false);
+  process.kill(pid,'SIGKILL');
+  await closing;
+  assert.deepEqual(exits,[{pid,code:null,signal:'SIGKILL'}]);
+  assert.equal(adapter.hasProcessHandle(),true);
+});
+
+for(const expectedVersion of ['codex-cli 0.154.0','codex-cli 0.164.0-alpha.11.1'] as const){
+  test(`${expectedVersion} creates and runs the exact full native policy`,async t=>{
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-normal'],expectedVersion});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding=await adapter.create(fullSpec);
+    assert.equal(binding.resumeProfile?.sandbox,'danger-full-access');
+    assert.equal(binding.resumeProfile?.approvalPolicy,'never');
+    assert.equal((await adapter.startTurn(binding,'business','run-op')).id,'turn-1');
+    assert.equal((await adapter.resume(binding,fullSpec)).nativeThreadId,binding.nativeThreadId);
+  });
+}
+
+test('same full Thread can receive an ordinary Turn with its native tools intact',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-normal'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'too early','message-op'),RuntimeProtocolError);
+  const admission=await adapter.qualifyConversationThread(binding);
+  assert.equal(admission.available,true,admission.reason);
+  assert.match(admission.fingerprint??'',/^[a-f0-9]{64}$/);
+  assert.equal((await adapter.startConversationTurn(binding,'ordinary message','message-op')).id,'turn-1');
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+});
+
+test('full conversation Turn retains current trusted dynamic tool callback',async t=>{
+  let bridgeCalls=0;
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-dynamic'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',
+    dynamicTools:async()=>[{type:'function',name:'browser_snapshot',description:'Read browser',inputSchema:{}}],
+    callDynamicTool:async()=>{bridgeCalls++;return{contentItems:[{type:'inputText',text:'fixture observation'}],success:true};}});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  const decision=new Promise<void>(resolveDecision=>adapter.onEvent(event=>{
+    if(event.method==='fixture/toolDecision')resolveDecision();
+  }));
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  await adapter.startConversationTurn(binding,'ordinary message','message-op');
+  await decision;
+  assert.equal(bridgeCalls,1);
+});
+
+test('full sequence keeps message and business inputs on one owned Thread',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-sequence'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  assert.equal((await adapter.startConversationTurn(binding,'message-marker','message-op')).id,'turn-1');
+  assert.equal((await adapter.startTurn(binding,'business-marker','business-op')).id,'turn-2');
+  const turns=await adapter.listTurns(binding);
+  assert.deepEqual(turns.data.map(turn=>turn.id),['turn-2','turn-1']);
+  assert.equal(((await adapter.listItems(binding,'turn-1')).data[0] as {text:string})?.text,'message-marker');
+  assert.equal(((await adapter.listItems(binding,'turn-2')).data[0] as {text:string})?.text,'business-marker');
+  assert.deepEqual(await adapter.inspect(binding).then(value=>{
+    const result=value as {observedTurnStarts:number;observedResumes:number;lastTurnModel:string};
+    return {starts:result.observedTurnStarts,resumes:result.observedResumes,model:result.lastTurnModel};
+  }),{starts:2,resumes:1,model:'gpt-6-sol'});
+});
+
+test('default-model full Session survives persisted resume and an ordinary message',async t=>{
+  const {model:_configuredModel,...defaultSpec}=fullSpec;
+  const original=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-default'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+  t.after(()=>original.close());await original.open();
+  const binding=await original.create(defaultSpec);
+  assert.equal(binding.resumeProfile?.model,null);
+  await original.close();
+  const restored=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-default'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true});
+  t.after(()=>restored.close());await restored.open();await restored.registerBinding(binding);
+  assert.equal((await restored.resume(binding,defaultSpec)).nativeThreadId,binding.nativeThreadId);
+  assert.equal((await restored.startTurn(binding,'first business Run','run-op')).id,'turn-1');
+  assert.equal((await restored.qualifyConversationThread(binding)).available,true);
+  assert.equal((await restored.startConversationTurn(binding,'ordinary','message-op')).id,'turn-1');
+  const observed=await restored.inspect(binding) as {observedResumes:number;observedTurnStarts:number};
+  assert.equal(observed.observedResumes,2);
+  assert.equal(observed.observedTurnStarts,2);
+});
+
+for(const mode of ['full-resume-wrong-model','full-resume-thread-model-mismatch'] as const){
+  test(`${mode} rejects an inconsistent native model reply`,async t=>{
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+    t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+    await assert.rejects(()=>adapter.resume(binding,fullSpec),
+      error=>error instanceof RuntimeUnknownError&&error.method==='thread/resume');
+  });
+}
+
+for(const mode of ['full-unloaded','full-unloaded-lost-resume','full-unloaded-wrong-policy'] as const){
+  test(`${mode} requires one exact full resume before an ordinary Turn`,async t=>{
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,requestTimeoutMs:100});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:fullSpec.sessionId,roleId:fullSpec.roleId,
+      projectId:fullSpec.projectId,nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',
+      cwd:fullSpec.cwd,authorizationScope:fullSpec.authorizationScope,owner:'evoloop-codex-app-server',
+      resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'danger-full-access',approvalPolicy:'never'}};
+    await adapter.registerBinding(binding);
+    assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+    if(mode==='full-unloaded'){
+      assert.equal((await adapter.startConversationTurn(binding,'ordinary','message-op')).id,'turn-1');
+      assert.equal((await adapter.startTurn(binding,'business','run-op')).id,'turn-2');
+    }else await assert.rejects(()=>adapter.startConversationTurn(binding,'ordinary','message-op'),
+      error=>error instanceof RuntimeUnknownError&&error.method==='thread/resume');
+    await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
+    const observed=await adapter.inspect(binding) as {observedResumes:number;observedTurnStarts:number};
+    assert.equal(observed.observedResumes,1);
+    assert.equal(observed.observedTurnStarts,mode==='full-unloaded'?2:0);
+  });
+}
+
+test('unloaded default-model Session starts its first ordinary message after one full resume',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-unloaded-default'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:fullSpec.sessionId,roleId:fullSpec.roleId,
+    projectId:fullSpec.projectId,nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',
+    cwd:fullSpec.cwd,authorizationScope:fullSpec.authorizationScope,owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'original-actor',model:null,sandbox:'danger-full-access',approvalPolicy:'never'}};
+  await adapter.registerBinding(binding);
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  assert.equal((await adapter.startConversationTurn(binding,'first ordinary message','message-op')).id,'turn-1');
+  assert.equal(binding.resumeProfile?.model,null);
+  const observed=await adapter.inspect(binding) as {observedResumes:number;observedTurnStarts:number};
+  assert.deepEqual([observed.observedResumes,observed.observedTurnStarts],[1,1]);
+});
+
+test('full creation and resume reject native policy mismatches without inventing success',async t=>{
+  const badCreate=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-start-wrong'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+  t.after(()=>badCreate.close());await badCreate.open();
+  await assert.rejects(()=>badCreate.create(fullSpec),error=>error instanceof RuntimeUnknownError&&error.method==='thread/start');
+  const badResume=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-resume-wrong'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
+  t.after(()=>badResume.close());await badResume.open();const binding=await badResume.create(fullSpec);
+  await assert.rejects(()=>badResume.resume(binding,fullSpec),RuntimeUnknownError);
+});
+
+test('historical read-only Thread cannot enter full conversation or claim activation from model-only readback',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-loaded-old'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
+    authorizeExecutionProfileActivation:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const current:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'old-model',
+      sandbox:'read-only',approvalPolicy:'on-request',executionProfileRevisionId:'old-revision'}};
+  await adapter.registerBinding(current);
+  assert.equal((await adapter.qualifyConversationThread(current)).available,false);
+  const target={...fullSpec,executionProfileRevisionId:'new-revision'};
+  await assert.rejects(()=>adapter.activateExecutionProfile(current,target,'new-revision','profile-op'),RuntimeUnknownError);
+  assert.equal(await adapter.inspectExecutionProfileActivation(current,target,'new-revision','profile-op'),null);
+  assert.equal((await adapter.inspect(current) as {observedTurnStarts:number}).observedTurnStarts,0);
+});
+
+test('lost full conversation start stays unknown and is never replayed',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-lost'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',requestTimeoutMs:100});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'ordinary message','message-op'),
+    error=>error instanceof RuntimeUnknownError&&error.method==='turn/start');
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+});
+
+test('lost full business start cannot replay the same operation in the adapter',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-lost'],
+    expectedVersion:'codex-cli 0.164.0-alpha.11.1',requestTimeoutMs:100});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  await assert.rejects(()=>adapter.startTurn(binding,'business','run-op'),
+    error=>error instanceof RuntimeUnknownError&&error.method==='turn/start');
+  await assert.rejects(()=>adapter.startTurn(binding,'replay','run-op'),RuntimeProtocolError);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
 });
 
 test("version mismatch and changed standard or experimental schema stop before App Server startup", async t => {
@@ -40,7 +240,7 @@ exit 1
   await assert.rejects(()=>wrongVersion.open(),/CLI version mismatch/);
   for(const experimental of [false,true]){
     const adapter=testAdapter({executable,expectedVersion:"codex-cli 0.164.0-alpha.11.1",
-      enableRestrictedMessagePermissions:experimental});
+      ...(experimental?{dynamicTools:async()=>[],callDynamicTool:async()=>({contentItems:[],success:false})}:{})});
     await assert.rejects(()=>adapter.open(),/schema changed/);
   }
   await assert.rejects(()=>import("node:fs/promises").then(fs=>fs.stat(join(directory,"started"))),{code:"ENOENT"});
@@ -71,7 +271,7 @@ for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.
     assert.equal((replies.get(853)!.error as {code:number}).code, -32601);
   });
 
-  test(`${expectedVersion} retains owned business RPCs, unknown start, and ordinary policy restoration`, async t => {
+  test(`${expectedVersion} retains owned business RPCs and native history`, async t => {
     const business = testAdapter({ executable: process.execPath, spawnArgs:[fixture,"normal"],
       expectedVersion, requestTimeoutMs:500 });
     t.after(()=>business.close()); await business.open();
@@ -85,22 +285,6 @@ for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.
     await business.archiveThread(owned);
     assert.equal(await business.isThreadArchived(owned),true);
 
-    const ordinary = testAdapter({ executable:process.execPath,spawnArgs:[fixture,"message-profile"],
-      expectedVersion,requestTimeoutMs:500,enableRestrictedMessagePermissions:true,
-      verifyBinding:async()=>true,
-      threadConfig:async()=>({"sandbox_workspace_write.network_access":true}) });
-    t.after(()=>ordinary.close()); await ordinary.open();
-    const messageBinding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
-      authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
-      resumeProfile:{actorId:"original-actor",model:null,sandbox:"workspace-write",approvalPolicy:"on-request"}};
-    await ordinary.registerBinding(messageBinding);
-    assert.equal((await ordinary.qualifyReadOnlyThread(messageBinding)).available,true);
-    assert.equal((await ordinary.startReadOnlyTurn(messageBinding,"ordinary question","message-op")).id,"turn-1");
-    await assert.rejects(()=>ordinary.startTurn(messageBinding,"business","business-op"),RuntimeProtocolError);
-    await ordinary.resume(messageBinding,{...restoreSpec,model:null,sandbox:"workspace-write"},"business-op");
-    assert.equal((await ordinary.startTurn(messageBinding,"fixed business input","business-op")).id,"turn-1");
-    assert.equal((await ordinary.listTurns(messageBinding)).data[0]?.id,"turn-1");
   });
 
   test(`${expectedVersion} keeps an unacknowledged native Turn start unknown`, async t => {
@@ -365,7 +549,7 @@ test("restores only a binding accepted by the trusted store", async t => {
   const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, "normal"], verifyBinding: async binding => binding.nativeThreadId === "thread-owned" && binding.authorizationScope === "task:fixture" });
   t.after(() => adapter.close()); await adapter.open();
   const binding: RuntimeBinding = { sessionId: "session-1", roleId: "role-1", projectId: "project-1", nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd, authorizationScope: "task:fixture", owner: "evoloop-codex-app-server",
-    resumeProfile:{actorId:"original-actor",model:null,sandbox:"read-only",approvalPolicy:"on-request"} };
+    resumeProfile:{actorId:"original-actor",model:"gpt-6-sol",sandbox:"danger-full-access",approvalPolicy:"never"} };
   await adapter.registerBinding(binding);
   assert.deepEqual(await adapter.resume(binding, restoreSpec), binding);
   await assert.rejects(() => adapter.registerBinding({ ...binding, nativeThreadId: "desktop-thread" }), RuntimeProtocolError);
@@ -384,16 +568,14 @@ test("new owned Threads retain their first execution profile revision in the ada
 
 test("resuming a persisted Session reapplies its exact native profile", async t => {
   const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, "resume-profile"],
-    verifyBinding: async () => true,
-    threadConfig: async session => session.actorId === "original-actor" && session.roleId === spec.roleId &&
-      session.model === "gpt-6-astra" ? {"sandbox_workspace_write.network_access": true} : undefined });
+    verifyBinding: async () => true });
   t.after(() => adapter.close()); await adapter.open();
   const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId,
     nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd,
     authorizationScope: spec.authorizationScope, owner: "evoloop-codex-app-server",
-    resumeProfile:{actorId:"original-actor",model:"gpt-6-astra",sandbox:"workspace-write",approvalPolicy:"on-request"} };
+    resumeProfile:{actorId:"original-actor",model:"gpt-6-astra",sandbox:"danger-full-access",approvalPolicy:"never"} };
   await adapter.registerBinding(binding);
-  const profile = { ...spec, actorId: "original-actor", model: "gpt-6-astra", sandbox: "workspace-write" as const };
+  const profile = { ...spec, model: "gpt-6-astra" };
   assert.deepEqual(await adapter.resume(binding, profile), binding);
   await assert.rejects(() => adapter.resume(binding, { ...profile, roleId: "other-role" }), RuntimeProtocolError);
   await assert.rejects(() => adapter.resume(binding, { ...profile, cwd: "/tmp/other" }), RuntimeProtocolError);
@@ -412,14 +594,14 @@ test(`${expectedVersion} approved execution profile revision changes only the ow
   const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, "profile-transition"],
     expectedVersion,
     verifyBinding: async () => true, authorizeExecutionProfileActivation: async () => authorized,
-    threadConfig: async () => ({ "sandbox_workspace_write.network_access": false }) });
+    threadConfig: async () => undefined });
   t.after(() => adapter.close()); await adapter.open();
   const prior: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId,
     nativeThreadId: "thread-owned", nativeSessionId: "thread-owned", cwd: spec.cwd,
     authorizationScope: spec.authorizationScope, owner: "evoloop-codex-app-server",
-    resumeProfile: { actorId: "original-actor", model: "old-model", sandbox: "workspace-write",
-      approvalPolicy: "on-request", executionProfileRevisionId: priorRevisionId } };
-  const target: RuntimeSessionSpec = { ...restoreSpec, model: "new-model", sandbox: "workspace-write",
+    resumeProfile: { actorId: "original-actor", model: "old-model", sandbox: "danger-full-access",
+      approvalPolicy: "never", executionProfileRevisionId: priorRevisionId } };
+  const target: RuntimeSessionSpec = { ...restoreSpec, model: "new-model", sandbox: "danger-full-access",approvalPolicy:"never",
     executionProfileRevisionId: revisionId };
   await adapter.registerBinding(prior);
   await assert.rejects(() => adapter.activateExecutionProfile(prior, target, revisionId, operationId), RuntimeProtocolError);
@@ -432,7 +614,7 @@ test(`${expectedVersion} approved execution profile revision changes only the ow
   await assert.rejects(() => adapter.registerBinding(prior), RuntimeProtocolError);
   await assert.rejects(() => adapter.startTurn(prior, "business", "run-op"), RuntimeProtocolError);
   await adapter.startTurn(revised, "business", "run-op", { revisionId,version:2,model:"new-model",
-    sandbox:"workspace-write",approvalPolicy:"on-request",cwd:spec.cwd,
+    sandbox:"danger-full-access",approvalPolicy:"never",cwd:spec.cwd,
     authorizationScope:spec.authorizationScope,provenance:"revised" });
   const observed = await adapter.inspect(revised) as { lastTurnModel: string; observedTurnStarts: number };
   assert.equal(observed.lastTurnModel, "new-model");
@@ -446,13 +628,13 @@ test("lost execution profile acknowledgement is reconciled by one read of the or
   const operationId="00000000-0000-4000-8000-000000000113";
   const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,"profile-transition-lost"],
     requestTimeoutMs:50,verifyBinding:async()=>true,authorizeExecutionProfileActivation:async()=>true,
-    threadConfig:async()=>({"sandbox_workspace_write.network_access":false})});
+    threadConfig:async()=>undefined});
   t.after(()=>adapter.close());await adapter.open();
   const old:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
     nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,authorizationScope:spec.authorizationScope,
     owner:"evoloop-codex-app-server",resumeProfile:{actorId:"original-actor",model:"old-model",
-      sandbox:"workspace-write",approvalPolicy:"on-request",executionProfileRevisionId:oldRevisionId}};
-  const target:RuntimeSessionSpec={...restoreSpec,model:"new-model",sandbox:"workspace-write",
+      sandbox:"danger-full-access",approvalPolicy:"never",executionProfileRevisionId:oldRevisionId}};
+  const target:RuntimeSessionSpec={...restoreSpec,model:"new-model",sandbox:"danger-full-access",approvalPolicy:"never",
     executionProfileRevisionId:revisionId};
   await adapter.registerBinding(old);
   await assert.rejects(()=>adapter.activateExecutionProfile(old,target,revisionId,operationId),
@@ -465,19 +647,19 @@ test("lost execution profile acknowledgement is reconciled by one read of the or
 });
 
 test("an inconsistent native model acknowledgement cannot activate the revised business profile",async t=>{
-  for(const mode of ["profile-transition-wrong-model","profile-transition-broad"]){
+  for(const mode of ["profile-transition-wrong-model","profile-transition-wrong-policy"]){
   const oldRevisionId="00000000-0000-4000-8000-000000000121";
   const revisionId="00000000-0000-4000-8000-000000000122";
   const adapter=testAdapter({executable:process.execPath,
     spawnArgs:[fixture,mode],verifyBinding:async()=>true,
     authorizeExecutionProfileActivation:async()=>true,
-    threadConfig:async()=>({"sandbox_workspace_write.network_access":false})});
+    threadConfig:async()=>undefined});
   t.after(()=>adapter.close());await adapter.open();
   const current:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
     nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,authorizationScope:spec.authorizationScope,
     owner:"evoloop-codex-app-server",resumeProfile:{actorId:"original-actor",model:"old-model",
-      sandbox:"workspace-write",approvalPolicy:"on-request",executionProfileRevisionId:oldRevisionId}};
-  const target:RuntimeSessionSpec={...restoreSpec,model:"new-model",sandbox:"workspace-write",
+      sandbox:"danger-full-access",approvalPolicy:"never",executionProfileRevisionId:oldRevisionId}};
+  const target:RuntimeSessionSpec={...restoreSpec,model:"new-model",sandbox:"danger-full-access",approvalPolicy:"never",
     executionProfileRevisionId:revisionId};
   await adapter.registerBinding(current);
   await assert.rejects(()=>adapter.activateExecutionProfile(current,target,revisionId,
@@ -487,314 +669,9 @@ test("an inconsistent native model acknowledgement cannot activate the revised b
   }
 });
 
-test("resume explicitly revokes inherited workspace network access on the same Thread", async t => {
-  let network:boolean|null = true;
-  const adapter = testAdapter({ executable: process.execPath, spawnArgs:[fixture,"resume-network-transition"],
-    verifyBinding:async()=>true, threadConfig:async()=>network===null ? undefined : {"sandbox_workspace_write.network_access":network} });
-  t.after(()=>adapter.close()); await adapter.open();
-  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-    nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
-    authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
-    resumeProfile:{actorId:"original-actor",model:"gpt-6-astra",sandbox:"workspace-write",approvalPolicy:"on-request"}};
-  await adapter.registerBinding(binding);
-  const profile={...restoreSpec,model:"gpt-6-astra",sandbox:"workspace-write" as const};
-  await adapter.resume(binding,profile);
-  network=false;
-  await adapter.resume(binding,profile);
-  network=null;
-  await assert.rejects(()=>adapter.resume(binding,profile),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.resume(binding,{...profile,sandbox:"read-only"}),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.resume(binding,{...profile,actorId:"other-actor"}),RuntimeProtocolError);
-});
-
-test("a read-only bound Session cannot resume as a workspace writer",async t=>{
-  const adapter=await open();t.after(()=>adapter.close());
-  const binding=await adapter.create(spec);
-  await assert.rejects(()=>adapter.resume(binding,{...restoreSpec,sandbox:"workspace-write"}),RuntimeProtocolError);
-});
-
-test('ordinary messages require the restricted protocol at native startup',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'normal'],requestTimeoutMs:500,
-    verifyBinding:async()=>true,threadConfig:async()=>({'sandbox_workspace_write.network_access':true})});
-  t.after(()=>adapter.close());await adapter.open();
-  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-    owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-astra',sandbox:'workspace-write',approvalPolicy:'on-request'}};
-  await adapter.registerBinding(binding);
-  const proof=await adapter.qualifyReadOnlyThread(binding);
-  assert.equal(proof.available,false);
-  assert.match(proof.reason,/named-permission protocol was not enabled/);
-  await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op'),RuntimeProtocolError);
-  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  await adapter.resume(binding,{...restoreSpec,model:'gpt-6-astra',sandbox:'workspace-write'});
-  assert.equal((await adapter.startTurn(binding,'business','business-op')).id,'turn-1');
-});
-
-for(const mode of ['message-profile-apps-enabled','message-profile-app-override','message-profile-mcp',
-  'message-profile-broad','message-profile-active']){
-  test(`ordinary ${mode} is blocked before any native Turn`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
-      verifyBinding:async()=>true,requestTimeoutMs:500,enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    const proof=await adapter.qualifyReadOnlyThread(binding);
-    assert.equal(proof.available,false);assert.equal(proof.fingerprint,null);
-    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'hello','op'),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  });
-}
-
-for(const mode of ['message-0164-positive','message-0164-inventory-paged','message-0164-requirement-false-only']){
-  test(`0.164 immutable message-purpose adapter qualifies known disabled nonempty MCP configuration (${mode})`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],purpose:'message',
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,requestTimeoutMs:500,
-      enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    const proof=await adapter.qualifyReadOnlyThread(binding);
-    assert.equal(proof.available,true,proof.reason);assert.match(proof.fingerprint??'',/^[a-f0-9]{64}$/);
-    assert.equal((await adapter.startReadOnlyTurn(binding,'ordinary message','message-op')).id,'turn-1');
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
-  });
-}
-
-for(const mode of [
-  'message-0164-mcp-enabled','message-0164-mcp-missing-origin','message-0164-apps-feature-enabled',
-  'message-0164-plugins-feature-enabled','message-0164-plugin-default-enabled','message-0164-plugin-enabled',
-  'message-0164-managed-layer','message-0164-inventory-enabled','message-0164-inventory-auth-unknown',
-  'message-0164-inventory-tools-error','message-0164-inventory-tools','message-0164-inventory-new-id',
-  'message-0164-inventory-missing','message-0164-inventory-no-cursor','message-0164-inventory-page-loop',
-  'message-0164-requirements-read-error','message-0164-requirements-missing-shape',
-  'message-0164-requirement-apps-true','message-0164-requirement-plugins-true',
-  'message-0164-requirement-sensitive-true','message-0164-requirement-unknown-true',
-  'message-0164-requirement-bad-feature-map',
-]){
-  test(`0.164 message-purpose nonempty native source is rejected before Turn (${mode})`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],purpose:'message',
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,requestTimeoutMs:500,
-      enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    const proof=await adapter.qualifyReadOnlyThread(binding);
-    assert.equal(proof.available,false,proof.reason);assert.equal(proof.fingerprint,null);
-    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'ordinary message','message-op'),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  });
-}
-
-for(const mode of ['message-0164-resume-wrong-thread','message-0164-resume-wrong-session',
-  'message-0164-resume-wrong-profile','message-0164-resume-wrong-network',
-  'message-0164-resume-wrong-approval','message-0164-resume-wrong-model','message-0164-resume-wrong-cwd']){
-  test(`0.164 cold ordinary resume readback mismatch cannot start a Turn (${mode})`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],purpose:'message',
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,requestTimeoutMs:500,
-      enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'ordinary message','message-op'),
-      error=>error instanceof RuntimeUnknownError&&error.method==='thread/resume');
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  });
-}
-
-test('0.164 message policy is read again after cold resume before Turn start',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'message-0164-post-resume-drift'],
-    purpose:'message',expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
-    requestTimeoutMs:500,enableRestrictedMessagePermissions:true});
-  t.after(()=>adapter.close());await adapter.open();
-  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-    owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-      approvalPolicy:'on-request'}};
-  await adapter.registerBinding(binding);
-  assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-  await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'ordinary message','message-op'),RuntimeProtocolError);
-  const state=await adapter.inspect(binding) as {observedTurnStarts:number;observedResumes:number};
-  assert.equal(state.observedResumes,1);assert.equal(state.observedTurnStarts,0);
-});
-
-for(const mode of ['message-0164-requirements-post-resume-drift','message-0164-requirements-post-resume-true']){
-  test(`0.164 managed requirements are re-read after cold resume (${mode})`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],purpose:'message',
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
-      requestTimeoutMs:500,enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'ordinary message','message-op'),RuntimeProtocolError);
-    const state=await adapter.inspect(binding) as {observedTurnStarts:number;observedResumes:number};
-    assert.equal(state.observedResumes,1);assert.equal(state.observedTurnStarts,0);
-  });
-}
-
-for(const expectedVersion of ['codex-cli 0.154.0','codex-cli 0.164.0-alpha.11.1']){
-  test(`${expectedVersion} default business-purpose adapter keeps the legacy empty-map qualification rule`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'message-profile-disabled-mcp'],
-      expectedVersion,requestTimeoutMs:500,verifyBinding:async()=>true,enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    const proof=await adapter.qualifyReadOnlyThread(binding);
-    assert.equal(proof.available,false,proof.reason);assert.equal(proof.fingerprint,null);
-    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'ordinary message','message-op'),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  });
-}
-
-for(const mode of ['message-profile','message-profile-reject','message-profile-timeout']){
-  test(`ordinary ${mode} uses cwd-only permissions and preserves later business policy`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
-      verifyBinding:async()=>true,requestTimeoutMs:300,enableRestrictedMessagePermissions:true,
-      threadConfig:async()=>({'sandbox_workspace_write.network_access':true})});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    const proof=await adapter.qualifyReadOnlyThread(binding);
-    assert.equal(proof.available,true,proof.reason);
-    assert.match(proof.fingerprint??'',/^[a-f0-9]{64}$/);
-    if(mode==='message-profile')assert.equal((await adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op')).id,'turn-1');
-    else await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:op] hello','op'),
-      mode==='message-profile-timeout'?RuntimeUnknownError:RuntimeServerError);
-    await assert.rejects(()=>adapter.startTurn(binding,'business','business-op'),RuntimeProtocolError);
-    await adapter.resume(binding,{...restoreSpec,sandbox:'workspace-write'},'business-op');
-    assert.equal((await adapter.startTurn(binding,'business','business-op')).id,'turn-1');
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
-  });
-}
-
-for (const expectedVersion of ['codex-cli 0.154.0','codex-cli 0.164.0-alpha.11.1'] as const) {
-for (const sandbox of ['read-only','workspace-write'] as const) {
-  test(`${expectedVersion} loaded ordinary Thread prepares the exact ${sandbox} business Turn even when resume echoes the named profile`, async t => {
-    const revisionId='00000000-0000-4000-8000-000000000171';
-    const adapter=testAdapter({executable:process.execPath,
-      spawnArgs:[fixture,`message-profile-loaded-${expectedVersion.endsWith('0.154.0')?'legacy-':''}${sandbox}`],expectedVersion,
-      verifyBinding:async()=>true,requestTimeoutMs:300,enableRestrictedMessagePermissions:true,
-      threadConfig:async()=>({'sandbox_workspace_write.network_access':false})});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox,
-        approvalPolicy:'on-request',executionProfileRevisionId:revisionId}};
-    const profile:RuntimeSessionSpec={...restoreSpec,model:'gpt-6-sol',sandbox,executionProfileRevisionId:revisionId};
-    const snapshot={revisionId,version:1,model:'gpt-6-sol',sandbox,approvalPolicy:'on-request' as const,
-      cwd:spec.cwd,authorizationScope:spec.authorizationScope,provenance:'revised' as const};
-    await adapter.registerBinding(binding);
-    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-    await adapter.startReadOnlyTurn(binding,'[evoloop-message-operation:m] hello','m');
-    await assert.rejects(()=>adapter.startTurn(binding,'premature','business-op',snapshot),RuntimeProtocolError);
-    await assert.rejects(()=>adapter.resume(binding,profile),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedResumes:number}).observedResumes,1);
-    assert.deepEqual(await adapter.resume(binding,profile,'business-op'),binding);
-    assert.equal(adapter.needsBusinessRestore(binding),true);
-    await assert.rejects(()=>adapter.startTurn(binding,'wrong Run','another-operation',snapshot),RuntimeProtocolError);
-    assert.equal((await adapter.startTurn(binding,'business','business-op',snapshot)).id,'turn-2');
-    assert.equal(adapter.needsBusinessRestore(binding),false);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
-  });
-}
-}
-
-for (const suffix of ['wrong-model','foreign','different-policy']) {
-  test(`loaded ordinary rejoin with ${suffix} cannot prepare a business Turn`,async t=>{
-    const revisionId='00000000-0000-4000-8000-000000000172';
-    const adapter=testAdapter({executable:process.execPath,
-      spawnArgs:[fixture,`message-profile-loaded-read-only-${suffix}`],
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
-      enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request',executionProfileRevisionId:revisionId}};
-    await adapter.registerBinding(binding);
-    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-    await adapter.startReadOnlyTurn(binding,'ordinary','m');
-    await assert.rejects(()=>adapter.resume(binding,{...restoreSpec,model:'gpt-6-sol',
-      executionProfileRevisionId:revisionId},'b'),suffix==='foreign'?RuntimeProtocolError:RuntimeUnknownError);
-    await assert.rejects(()=>adapter.startTurn(binding,'business','b'),RuntimeProtocolError);
-    assert.equal(adapter.needsBusinessRestore(binding),true);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
-  });
-}
-
-for (const suffix of ['lost','reject']) {
-  test(`a ${suffix} business start leaves the ordinary tool gate in place and cannot replay in the adapter`,async t=>{
-    const revisionId='00000000-0000-4000-8000-000000000173';
-    const adapter=testAdapter({executable:process.execPath,
-      spawnArgs:[fixture,`message-profile-loaded-read-only-${suffix}`],requestTimeoutMs:500,
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
-      enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'read-only',
-        approvalPolicy:'on-request',executionProfileRevisionId:revisionId}};
-    const profile:RuntimeSessionSpec={...restoreSpec,model:'gpt-6-sol',executionProfileRevisionId:revisionId};
-    const snapshot={revisionId,version:1,model:'gpt-6-sol',sandbox:'read-only' as const,
-      approvalPolicy:'on-request' as const,cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      provenance:'revised' as const};
-    await adapter.registerBinding(binding);
-    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-    await adapter.startReadOnlyTurn(binding,'ordinary','m');
-    await adapter.resume(binding,profile,'b');
-    await assert.rejects(()=>adapter.startTurn(binding,'business','b',snapshot),
-      error=>suffix==='lost' ? error instanceof RuntimeUnknownError&&error.method==='turn/start' :
-        error instanceof RuntimeServerError);
-    assert.equal(adapter.needsBusinessRestore(binding),true);
-    await assert.rejects(()=>adapter.startTurn(binding,'repeat','b',snapshot),RuntimeProtocolError);
-    await assert.rejects(()=>adapter.resume(binding,profile,'b'),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,2);
-    await adapter.resume(binding,profile,'b-new');
-    assert.equal((await adapter.startTurn(binding,'new authorized Run','b-new',snapshot)).id,'turn-3');
-    assert.equal(adapter.needsBusinessRestore(binding),false);
-    await assert.rejects(()=>adapter.startTurn(binding,'replay old Run','b',snapshot),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,3);
-  });
-}
-
-for(const mode of ['message-profile-drift','message-profile-activity-race']){
-  test(`ordinary ${mode} is rechecked before native Turn start`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
-      verifyBinding:async()=>true,enableRestrictedMessagePermissions:true});
-    t.after(()=>adapter.close());await adapter.open();
-    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      owner:'evoloop-codex-app-server',resumeProfile:{actorId:'original-actor',model:null,sandbox:'workspace-write',approvalPolicy:'on-request'}};
-    await adapter.registerBinding(binding);
-    assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-    await assert.rejects(()=>adapter.startReadOnlyTurn(binding,'hello','op'),RuntimeProtocolError);
-    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  });
-}
-
 test('bounded message history starts with the newest native Turn even after one hundred older Turns',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'message-profile-history'],
-    verifyBinding:async()=>true,enableRestrictedMessagePermissions:true});
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'history-newest'],
+    verifyBinding:async()=>true});
   t.after(()=>adapter.close());await adapter.open();
   const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
     nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
@@ -826,74 +703,6 @@ test("experimental tool is declared only for the selected thread and dispatches 
   const decision=await result as {result:unknown};
   assert.deepEqual(calls,["thread-owned:turn-1:browser_snapshot"]);
   assert.deepEqual(decision.result,{contentItems:[{type:"inputText",text:"approved text"}],success:true});
-});
-
-test("message purpose denies early and owned native callbacks without invoking business bridges", async t => {
-  let declarations=0,toolCalls=0,toolCancels=0,approvalDecisions=0,approvalObservers=0;
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,"message-purpose-callbacks"],
-    purpose:"message",requestTimeoutMs:500,enableRestrictedMessagePermissions:true,verifyBinding:async()=>true,
-    dynamicTools:async()=>{declarations++;return [{type:"function",name:"browser_snapshot",description:"business bridge",inputSchema:{type:"object"}}];},
-    callDynamicTool:async()=>{toolCalls++;return {contentItems:[{type:"inputText",text:"business result"}],success:true};},
-    cancelDynamicTool:async()=>{toolCancels++;},
-    decideApproval:async()=>{approvalDecisions++;return "accept";},
-  });
-  t.after(()=>adapter.close());
-  adapter.onApprovalRequest(()=>{approvalObservers++;});
-  await adapter.open();
-  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-    nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
-    authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
-    resumeProfile:{actorId:"original-actor",model:null,sandbox:"read-only",approvalPolicy:"on-request"}};
-  await adapter.registerBinding(binding);
-  const late=new Map<number,Record<string,unknown>>();
-  const settled=new Promise<void>(resolveSettled=>adapter.onEvent(event=>{
-    if(event.method!=="fixture/purposeDecision")return;
-    const value=event.params as Record<string,unknown>;
-    if((value.requestId as number)<910)return;
-    late.set(value.requestId as number,value);
-    if(late.size===6)resolveSettled();
-  }));
-  const read=await adapter.inspect(binding) as {earlyPurposeDecisions:{requestId:number;result?:Record<string,unknown>;error?:Record<string,unknown>}[]};
-  await settled;
-  assert.deepEqual(read.earlyPurposeDecisions.map(value=>value.requestId),[900,901,902,903,904,905]);
-  const all=[...read.earlyPurposeDecisions,...late.values()];
-  assert.equal(all.length,12);
-  for(const value of all){
-    const id=value.requestId;
-    if(id===900||id===901||id===905||id===910||id===911||id===915)
-      assert.equal((value.result as {success:boolean})?.success,false,`tool request ${id}`);
-    else if(id===902||id===912)
-      assert.equal((value.result as {decision:string})?.decision,"decline",`approval request ${id}`);
-    else if(id===903||id===913)
-      assert.equal((value.result as {decision:string})?.decision,"denied",`legacy approval request ${id}`);
-    else assert.equal((value.result as {action:string})?.action,"decline",`elicitation request ${id}`);
-  }
-  assert.deepEqual({declarations,toolCalls,toolCancels,approvalDecisions,approvalObservers},
-    {declarations:0,toolCalls:0,toolCancels:0,approvalDecisions:0,approvalObservers:0});
-  await assert.rejects(()=>adapter.create(spec),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.resume(binding,restoreSpec),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.activateExecutionProfile(binding,{...restoreSpec,model:"other"},"revision-2","activation-op"),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.inspectExecutionProfileActivation(binding,{...restoreSpec,model:"other"},"revision-2","activation-op"),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.startTurn(binding,"business","business-op"),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.archiveThread(binding),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.interruptTurn(binding,"turn-1"),RuntimeProtocolError);
-  assert.equal((await adapter.inspect(binding) as {observedResumes:number;observedTurnStarts:number}).observedResumes,0);
-  assert.equal((await adapter.qualifyReadOnlyThread(binding)).available,true);
-  assert.equal((await adapter.startReadOnlyTurn(binding,"ordinary message","message-op")).id,"turn-1");
-  assert.equal((await adapter.listTurns(binding)).data[0]?.id,"turn-1");
-  assert.equal(toolCalls,0);
-});
-
-test("message purpose is fixed before initialize even if its caller later changes options", async t => {
-  const options:CodexAppServerOptions={purpose:"message",executable:process.execPath,
-    spawnArgs:[fixture,"normal"],requestTimeoutMs:500,
-    dynamicTools:async()=>[{type:"function",name:"browser_snapshot",description:"business",inputSchema:{type:"object"}}],
-    callDynamicTool:async()=>({contentItems:[{type:"inputText",text:"business"}],success:true})};
-  const adapter=testAdapter(options);
-  t.after(()=>adapter.close());
-  options.purpose="business";
-  await adapter.open(); // `normal` fixture rejects accidental experimental business tool initialization.
-  await assert.rejects(()=>adapter.create(spec),RuntimeProtocolError);
 });
 
 test("experimental tool rejects foreign thread, unknown tool and replay", async t => {
@@ -946,7 +755,7 @@ test("restored native binding stays fail-closed when its tool declaration cannot
   const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
     nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
     authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
-    resumeProfile:{actorId:"original-actor",model:null,sandbox:"read-only",approvalPolicy:"on-request"}};
+    resumeProfile:{actorId:"original-actor",model:"gpt-6-sol",sandbox:"danger-full-access",approvalPolicy:"never"}};
   await adapter.registerBinding(binding);
   await adapter.resume(binding, restoreSpec);
   const result=new Promise<unknown>(resolve=>adapter.onEvent(event=>{if(event.method==="fixture/toolDecision")resolve(event.params);}));
@@ -957,9 +766,9 @@ test("restored native binding stays fail-closed when its tool declaration cannot
   assert.equal(calls,0);
 });
 
-test("cold business resume uses only current trusted tool names and clears them on revocation or provider failure",async t=>{
+test("persisted business resume uses only current trusted tool names and clears them on revocation or provider failure",async t=>{
   let declarations=0,bridges=0;
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,"dynamic-cold-resume"],
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,"dynamic-persisted-resume"],
     requestTimeoutMs:500,verifyBinding:async()=>true,
     dynamicTools:async()=>{
       declarations++;
@@ -973,7 +782,7 @@ test("cold business resume uses only current trusted tool names and clears them 
   const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
     nativeThreadId:"thread-owned",nativeSessionId:"thread-owned",cwd:spec.cwd,
     authorizationScope:spec.authorizationScope,owner:"evoloop-codex-app-server",
-    resumeProfile:{actorId:"original-actor",model:null,sandbox:"read-only",approvalPolicy:"on-request"}};
+    resumeProfile:{actorId:"original-actor",model:"gpt-6-sol",sandbox:"danger-full-access",approvalPolicy:"never"}};
   await adapter.registerBinding(binding);
   const decisions=new Map<number,{success:boolean}>();
   let target=0,wake:(()=>void)|null=null;

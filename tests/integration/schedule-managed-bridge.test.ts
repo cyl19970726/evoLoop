@@ -152,7 +152,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
     orchestration, workflow, runtime: fixtureRuntime,
     controller: async (_project, roleId) => ({ principal: principal(),
       authorizationScopeId: roleId === cognition ? "cognition-scope" : "business-scope",
-      cwd: directory, sandbox: "read-only", approvalPolicy: "on-request" }),
+      cwd: directory, sandbox: "danger-full-access", approvalPolicy: "never" }),
     credential: broker,
     sealSubmission: createWorkerSealer({ workflow, orchestration, credential: broker,
       controller: () => principal(), now: () => now }), now: () => now, canWrite: () => true });

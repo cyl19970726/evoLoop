@@ -101,7 +101,7 @@ test("a todo Task can explicitly retain a published older source without an impa
 
   const sessionId = randomUUID(), runId = randomUUID();
   applied(await issue({ type: "runtime.session.reserve", sessionId, roleId: principal.actorId, cwd: "/tmp/evoloop-retention-fixture",
-    authorizationScope: "task:fixture", sandbox: "read-only", approvalPolicy: "on-request" }));
+    authorizationScope: "task:fixture", sandbox: "danger-full-access", approvalPolicy: "never" }));
   await trusted.beginSessionCreate(projectId, sessionId);
   await trusted.bindSession(projectId, sessionId, { projectId, sessionId, roleId: principal.actorId,
     cwd: "/tmp/evoloop-retention-fixture", authorizationScope: "task:fixture", nativeThreadId: "fixture-owned-thread",

@@ -86,6 +86,8 @@ export function dynamicRuntimeAdmission(pool: Pick<Pool, "query">, getTemplate: 
         loopIntentId(found.dispatch.id,"run") === runId && found.dispatch.taskId === taskId;
     },
     canCreateSession: async (session: RuntimeSessionRecord) => (await match(spec(session)))?.dispatch.state === "dispatching",
+    /** A retained full Session may converse after its original Dispatch settles; current binding and template still apply. */
+    canStartConversation: async (session: RuntimeSessionRecord) => !!await match(spec(session)),
     canStartRun: async (run: RuntimeRunRecord, session: RuntimeSessionRecord) => {
       const found = await match(spec(session));
       return !!found && found.dispatch.state === "dispatching" && found.dispatch.taskId === run.taskId &&
