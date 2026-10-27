@@ -23,6 +23,7 @@ test("native question stays bound to its Session and one exact operation, then d
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let state: "pending" | "response_saved" | "resolved" = "pending";
+  let outcome: "pending" | "submitted" = "pending";
   let version = 1;
   let wrongSession = false;
   let failSnapshot = false;
@@ -36,7 +37,8 @@ test("native question stays bound to its Session and one exact operation, then d
       taskId: "93000006-0000-4000-8000-000000000006", taskRevisionId: "93000007-0000-4000-8000-000000000007" },
     canReply: state === "pending", reason: state === "resolved" ? "native_resolved" : null,
     response: state === "pending" ? null : { operationId: String(command?.operationId), actorId: "operator",
-      answers: { choice: ["采用当前布局"] }, savedAt: stamp, attemptedAt: null, submittedAt: null, outcome: "pending" },
+      answers: { choice: ["采用当前布局"] }, savedAt: stamp, attemptedAt: null,
+      submittedAt: outcome === "submitted" ? stamp : null, outcome },
     createdAt: stamp, updatedAt: stamp });
   const snapshot = () => ({ session: { key: sessionKey, target: { kind: "owned", sessionId }, aliases: [], title: "原生提问测试会话",
     profile: null, kind: "owned", roles: [], membership: "current", membershipReason: "fixture", runtimeState: "busy", busy: true,
@@ -51,6 +53,7 @@ test("native question stays bound to its Session and one exact operation, then d
     if (url.pathname === "/__fixture/set") {
       const next = url.searchParams.get("state");
       if (next === "pending" || next === "response_saved" || next === "resolved") state = next;
+      if (url.searchParams.get("outcome") === "submitted") outcome = "submitted";
       wrongSession = url.searchParams.has("wrongSession"); failSnapshot = url.searchParams.has("failSnapshot");
       res.end("ok"); return;
     }
@@ -100,6 +103,10 @@ test("native question stays bound to its Session and one exact operation, then d
   assert.equal(command?.inputRequestId, requestId);
   assert.equal(command?.expectedVersion, 1);
   assert.equal(await question.getByRole("button", { name: "确认回答" }).count(), 0, "saved reply cannot be sent again");
+
+  await fetch(`${base}/__fixture/set?state=response_saved&outcome=submitted`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await question.getByText("已发送，待结果").waitFor();
 
   await fetch(`${base}/__fixture/set?state=resolved`);
   await page.getByRole("button", { name: "重新读取" }).click();
