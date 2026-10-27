@@ -26,6 +26,8 @@ export function SessionRecoveryOverview({ read, runtimeState, queueHref }: { rea
       {gate.phase === "retrying" && <p className="session-recovery-note">仅已批准的原任务重试可接续；其他任务与消息仍等待。实际是否运行请核对 Run。</p>}
       {gate.phase === "retrying" && gate.retryRunId && <p className="session-recovery-context">获准重试的 Run：<ShortId value={gate.retryRunId} /></p>}
       {gate.phase === "retrying" && gate.retryRunId && <FullRecoveryId label="获准重试的 Run" value={gate.retryRunId} />}
+      {gate.phase === "reworking" && <p className="session-recovery-note">仅本次获准的原任务返工 Run 可启动；其他任务和普通消息继续等待。</p>}
+      {gate.phase === "reworking" && gate.retryRunId && <FullRecoveryId label="获准返工的 Run" value={gate.retryRunId} />}
       {gate.phase === "blocked" && <p className="session-recovery-note">后续任务与普通消息不可启动；需要先核对失败或未知结果，再由负责人决定恢复。</p>}
       {gate.phase === "message_pending" && <p className="session-recovery-note">仅原排队消息可接续；实际处理和回复请核对消息记录。</p>}
       {gate.phase === "message_pending" && gate.resumeMessageId && <p className="session-recovery-context">等待的原消息：<ShortId value={gate.resumeMessageId} /></p>}

@@ -10,6 +10,7 @@ const phaseText: Record<NonNullable<SessionRecoveryView["gate"]>["phase"], strin
   open: "可按正常规则接续",
   blocked: "已停止接续",
   retrying: "等待原任务重试",
+  reworking: "原任务返工中",
   message_pending: "等待原排队消息",
   awaiting_acceptance: "等待交付与验收",
 };
@@ -17,6 +18,7 @@ const nextActionText: Record<string, string> = {
   reconcile_original_operation: "先核对原操作结果",
   review_recovery_decision: "等待负责人明确恢复决定",
   await_authorized_retry: "等待已批准的原任务重试；是否运行以 Run 记录为准",
+  await_authorized_rework: "等待已批准的同任务返工；是否运行以 Run 记录为准",
   await_original_message: "等待处理原消息；是否回复以消息记录为准",
   record_delivery_use_and_accepted_release: "等待交付、实际使用与验收放行",
   dispatch_authorized_business_attempt: "配置待在已授权业务尝试中激活",
@@ -44,6 +46,7 @@ export const recoverySourceStateLabel = (state: string) => sourceStateText.get(s
 export function recoveryReasonSummary(gate: RecoveryGate): string {
   if (gate.phase === "open") return "恢复门已开放；具体恢复依据请核对原始记录";
   if (gate.phase === "retrying") return "原任务重试已获批准，等待执行结果核对";
+  if (gate.phase === "reworking") return "同一承接的返工已获批准，等待本次运行结果";
   if (gate.phase === "message_pending") return "等待原排队消息处理";
   if (gate.phase === "awaiting_acceptance") return "等待交付与验收放行";
   if (gate.causeKind === "run") {

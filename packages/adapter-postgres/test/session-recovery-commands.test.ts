@@ -77,7 +77,7 @@ test('formal commands preserve failure, fixed business input and original M thro
   await apply({type:'runtime.session.executionProfile.revise',sessionId,expectedVersion:session.version,expectedExecutionProfileRevisionId:session.executionProfile!.revision.revisionId,model:'reviewed-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'fixture://exact-grant-and-provider',reason:'Explicit controlled revision'});
   const revised=await workflow.getRuntimeSession(lead,projectId,sessionId);
   assert.equal(revised.executionProfile!.activationState,'pending');assert.deepEqual((await workflow.getRuntimeRun(lead,projectId,runA)).executionProfile,oldProfile);
-  const budget={type:'queue.extendBudget',projectId,queueId,expectedVersion:1,expectedMaxRuns:2,maxRuns:3,evidenceRef:'fixture://cost-decision',reason:'One reviewed failed retry',operationId:randomUUID()};
+  const budget={type:'queue.extendBudget',projectId,queueId,expectedVersion:1,expectedMaxRuns:2,maxRuns:4,evidenceRef:'fixture://cost-decision',reason:'One reviewed failed retry and one reviewed rework',operationId:randomUUID()};
   const extended=await apply(budget);assert.deepEqual(await workflow.execute(lead,budget as any),extended);
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.phase,'blocked');
   await apply({type:'queue.adopt',queueId,expectedVersion:2});
@@ -98,7 +98,9 @@ test('formal commands preserve failure, fixed business input and original M thro
   await native.recordTurn(projectId,retryId,'retry-turn','completed','Fixed result from the original business input');
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.phase,'message_pending');
   const lateM=randomUUID();await apply({type:'session.message.post',messageId:lateM,target:{kind:'owned',sessionId},content:'A later message must not replace original M'});
-  await assert.rejects(messages.beginDispatch(projectId,lateM,randomUUID(),randomUUID(),'a'.repeat(64)),/recovery|gate/i);
+  await assert.rejects(uow.transaction(projectId,tx=>tx.recovery!.assertStartupAllowed(sessionId,'message',lateM)),
+    /recovery gate blocks startup/);
+  await assert.rejects(messages.beginDispatch(projectId,lateM,randomUUID(),randomUUID(),'a'.repeat(64)));
   await messages.beginDispatch(projectId,originalM,randomUUID(),randomUUID(),'a'.repeat(64));
   const messageTurn:any={id:'original-message-turn',status:'inProgress',startedAtUtc:clock.now(),completedAtUtc:null};
   await messages.bindTurn(projectId,originalM,messageTurn);
@@ -108,14 +110,56 @@ test('formal commands preserve failure, fixed business input and original M thro
   const bOp=randomUUID(),bRun=randomUUID(),bClaim=randomUUID();
   const bCommand:any={type:'queue.claim',projectId,operationId:bOp,queueId,entryId:entryB,claimId:bClaim,runId:bRun,runOperationId:bOp,expectedVersion:2};
   const blocked=await workflow.execute(lead,bCommand);assert.equal(blocked.status,'rejected');
-  const delivery=await apply({type:'delivery.record',taskId:taskA,runId:retryId,expectedVersion:(await workflow.getTask(lead,projectId,taskA)).task.version,artifactRef:'fixture:fixed-result',artifactRevision:'fixture-v1',contentHash:hash('Fixed result'),technicalResult:'passed',technicalEvidence:'Controlled fixture consumed',reason:'Fixed delivery'});
+  const originalMessage=await messages.detail(projectId,originalM);
+  const priorCause=(await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.causeId;
+  const priorRetryDecisions=(await workflow.getSessionRecovery(lead,projectId,sessionId)).decisions.filter(d=>d.kind==='retry_failed').length;
+  const beforeRework=await workflow.getTask(lead,projectId,taskA);
+  await apply({type:'task.reopen',taskId:taskA,expectedVersion:beforeRework.task.version,reason:'Independent review requires correction'});
+  const todo=await workflow.getTask(lead,projectId,taskA);
+  await apply({type:'task.update',taskId:taskA,expectedVersion:todo.task.version,title:todo.task.title,
+    content:`${todo.task.content}\nCorrect independently reviewed defect`,acceptance:todo.task.acceptance,
+    owner:roleId,reason:'Amend the fixed business input for rework'});
+  const updated=await workflow.getTask(lead,projectId,taskA);
+  await apply({type:'task.start',taskId:taskA,expectedVersion:updated.task.version,reason:'Seal rework source'});
+  const fixedRework=await workflow.getTask(lead,projectId,taskA);
+  await apply({type:'queue.amend',queueId,entryId:entryA,expectedVersion:2,
+    taskRevisionId:fixedRework.task.currentRevisionId,reason:'Review exact amended Task input'});
+  await apply({type:'queue.adopt',queueId,expectedVersion:3});
+  const completedRetry=await workflow.getRuntimeRun(lead,projectId,retryId);
+  const awaiting=(await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!;
+  const reworkId=randomUUID(),reworkOp=randomUUID();
+  const rework={type:'queue.continue',projectId,operationId:reworkOp,queueId,entryId:entryA,claimId,
+    runId:reworkId,runOperationId:reworkOp,reason:'Lead approves exact same-claim correction',answeredQuestions:[],
+    rework:{expectedGateVersion:awaiting.version,sourceRunId:retryId,
+      expectedSourceRunVersion:completedRetry.version,expectedSourceInputHash:completedRetry.inputHash,
+      expectedExecutionProfileRevisionId:completedRetry.executionProfile!.revisionId,
+      evidenceRef:'fixture://independent-review-correction'}};
+  const reworkResult=await apply(rework);
+  assert.deepEqual(await workflow.execute(lead,rework as any),reworkResult);
+  const permitted=(await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!;
+  assert.equal(permitted.phase,'reworking');assert.equal(permitted.retryRunId,reworkId);
+  assert.equal(permitted.causeId,priorCause);assert.equal(permitted.resumeMessageId,originalM);
+  assert.equal((await workflow.getResidentQueue(lead,projectId,queueId)).entries[1]!.state,'queued');
+  await assert.rejects(uow.transaction(projectId,tx=>tx.recovery!.assertStartupAllowed(sessionId,'message',lateM)),
+    /recovery gate blocks startup/);
+  await assert.rejects(messages.beginDispatch(projectId,lateM,randomUUID(),randomUUID(),'a'.repeat(64)));
+  await native.beginDispatch(projectId,reworkId);await native.bindTurn(projectId,reworkId,{id:'rework-turn'},
+    {kind:'startReply',operationId:reworkOp});
+  await native.recordTurn(projectId,reworkId,'rework-turn','completed','Corrected fixed result');
+  const afterRework=(await workflow.getSessionRecovery(lead,projectId,sessionId));
+  assert.equal(afterRework.gate!.phase,'awaiting_acceptance');
+  assert.equal(afterRework.gate!.resumeMessageId,originalM);
+  assert.equal(afterRework.decisions.filter(d=>d.kind==='retry_failed').length,priorRetryDecisions);
+  assert.deepEqual(await messages.detail(projectId,originalM),originalMessage);
+  assert.equal(await uow.read(projectId,tx=>tx.sessionMessages!.countSessionMessageTurns(sessionId,'lead')),1);
+  const delivery=await apply({type:'delivery.record',taskId:taskA,runId:reworkId,expectedVersion:(await workflow.getTask(lead,projectId,taskA)).task.version,artifactRef:'fixture:corrected-result',artifactRevision:'fixture-v2',contentHash:hash('Corrected result'),technicalResult:'passed',technicalEvidence:'Controlled fixture consumed',reason:'Corrected delivery'});
   await apply({type:'observation.record',taskId:taskA,deliveryId:delivery.revisionId,observer:'lead',observerKind:'agent',result:'used',evidence:'Read exact fixture result',reason:'Independent fixture consumption'});
   await apply({type:'task.close',taskId:taskA,expectedVersion:(await workflow.getTask(lead,projectId,taskA)).task.version,deliveryId:delivery.revisionId,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'Accept fixture A'});
   await apply({type:'queue.release',queueId,entryId:entryA,claimId});
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.phase,'open');
-  const finalOp=randomUUID();await apply({...bCommand,operationId:finalOp,runOperationId:finalOp});
+  const finalOp=randomUUID();await apply({...bCommand,expectedVersion:3,operationId:finalOp,runOperationId:finalOp});
   assert.equal((await workflow.getRuntimeRun(lead,projectId,bRun)).executionProfile!.model,'reviewed-model');
-  view=await workflow.getSessionRecovery(lead,projectId,sessionId);assert.equal(view.queues[0]!.attemptsUsed,3);assert.equal(view.queues[0]!.attemptsRemaining,0);
+  view=await workflow.getSessionRecovery(lead,projectId,sessionId);assert.equal(view.queues[0]!.attemptsUsed,4);assert.equal(view.queues[0]!.attemptsRemaining,0);
   assert.equal(await uow.read(projectId,tx=>tx.sessionMessages!.countSessionMessageTurns(sessionId,'lead')),1);
 });
 

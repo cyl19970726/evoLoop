@@ -11,7 +11,7 @@ export const sessionRecoveryCommands=[
     expectedVersion:version,expectedCauseId:id,resumeMessageId:id.nullable(),evidenceRef:text,reason:text}),
 ];
 export type SessionRecoveryCommand=z.infer<typeof sessionRecoveryCommands[number]>;
-export type RecoveryPhase='open'|'blocked'|'retrying'|'message_pending'|'awaiting_acceptance';
+export type RecoveryPhase='open'|'blocked'|'retrying'|'reworking'|'message_pending'|'awaiting_acceptance';
 export type ExecutionProfileActivation='active'|'pending'|'attempting'|'unknown'|'rejected';
 
 /** Configured launch policy. This is not provider-reported per-Turn model telemetry. */
@@ -48,7 +48,7 @@ export interface SessionRecoveryView {
   sessionId:string;executionProfile:SessionExecutionProfile|null;gate:SessionRecoveryGate|null;
   decisions:SessionRecoveryDecision[];
   queues:Array<{queueId:string;version:number;adoptedVersion:number|null;maxRuns:number;attemptsUsed:number;attemptsRemaining:number}>;
-  nextAction:'reconcile_original_operation'|'review_recovery_decision'|'await_authorized_retry'|
+  nextAction:'reconcile_original_operation'|'review_recovery_decision'|'await_authorized_retry'|'await_authorized_rework'|
     'await_original_message'|'record_delivery_use_and_accepted_release'|'dispatch_authorized_business_attempt'|'normal_work';
   partial:boolean;observedAtUtc:string;
 }
@@ -66,5 +66,9 @@ export interface SessionRecoveryTransaction extends SessionRecoveryReader {
   beginExecutionProfileActivation(sessionId:string,revisionId:string,operationId:string):Promise<boolean>;
   settleExecutionProfileActivation(sessionId:string,revisionId:string,state:'active'|'unknown'|'rejected',evidence:string):Promise<void>;
   saveRecoveryDecision(decision:SessionRecoveryDecision,next:SessionRecoveryGate,expectedVersion:number):Promise<void>;
+  /** The queue.continue transaction grants one exact same-claim rework Run. */
+  authorizeRework(sessionId:string,queueId:string,entryId:string,taskId:string,claimId:string,sourceRunId:string,
+    sourceRunVersion:number,expectedGateVersion:number,newRunId:string,operationId:string,
+    actorId:string,reason:string,evidenceRef:string,nowUtc:string):Promise<void>;
   assertStartupAllowed(sessionId:string,kind:'run'|'message',id:string):Promise<void>;
 }

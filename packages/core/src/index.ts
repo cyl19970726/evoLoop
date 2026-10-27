@@ -866,7 +866,8 @@ export class WorkflowService {
         return {queueId:q.id,version:q.version,adoptedVersion:q.adoptedVersion,maxRuns:q.maxRuns,attemptsUsed,attemptsRemaining:Math.max(0,q.maxRuns-attemptsUsed)};
       }));
       const nextAction:SessionRecoveryView['nextAction']=gate?.phase==='blocked'?(causeUnresolved||['attempting','unknown'].includes(session.executionProfile?.activationState??'')?'reconcile_original_operation':'review_recovery_decision'):
-        gate?.phase==='retrying'?'await_authorized_retry':gate?.phase==='message_pending'?'await_original_message':
+        gate?.phase==='retrying'?'await_authorized_retry':gate?.phase==='reworking'?'await_authorized_rework':
+        gate?.phase==='message_pending'?'await_original_message':
         gate?.phase==='awaiting_acceptance'?'record_delivery_use_and_accepted_release':
         session.executionProfile?.activationState==='pending'?'dispatch_authorized_business_attempt':'normal_work';
       return {sessionId,executionProfile:session.executionProfile??null,gate,decisions,queues,nextAction,
