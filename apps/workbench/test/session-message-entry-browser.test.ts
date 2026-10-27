@@ -130,3 +130,75 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   assert.equal(await page.getByText("外部连接已撤销。", { exact: true }).count(), 1);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count(), 0);
 });
+
+test("the authenticated receiver can record a read while its exact message Turn is running", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
+}, async t => {
+  const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  const messageId = "70000006-0000-4000-8000-000000000006";
+  let mode: "running" | "queued" | "dispatching" | "unknown" | "otherActor" | "otherSession" = "queued";
+  let read: { actorId: string; evidence: string; at: string } | null = null;
+  const writes: Array<Record<string, unknown>> = [];
+  const message = () => ({ projectId, id: messageId, operationId: messageId,
+    target: { kind: "owned", sessionId: ownedId }, senderActorId: "sender", content: "Original running message",
+    context: null, replyToMessageId: null, state: mode === "queued" ? "queued" : mode === "unknown" ? "unknown" : "processing",
+    version: 2, blockedReason: null, readReceipt: read, createdAt: stamp, updatedAt: stamp });
+  const processing = () => mode === "queued" ? null : { projectId, id: messageId, messageId,
+    sessionId: mode === "otherSession" ? legacyId : ownedId, operationId: messageId,
+    receiverActorId: mode === "otherActor" ? "another-receiver" : "receiver",
+    state: mode === "dispatching" ? "dispatching" : mode === "unknown" ? "unknown" : "running",
+    nativeTurnId: mode === "dispatching" ? null : "original-turn", response: null, failure: null,
+    version: 2, startedAt: stamp, updatedAt: stamp };
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1"), root = `/api/projects/${projectId}`;
+    if (url.pathname === "/__fixture/set") { mode = url.searchParams.get("mode") as typeof mode; res.end("ok"); return; }
+    if (url.pathname.startsWith("/api/")) {
+      let value: unknown = { items: [], nextCursor: null }, status = 200;
+      if (url.pathname === "/api/session") value = { principal: { actorId: "receiver", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(keys.disabled)}`) value = snapshot(keys.disabled, "测试中不派发消息");
+      else if (url.pathname.endsWith("/messages")) value = { items: [message()], nextCursor: null, metadata };
+      else if (url.pathname === `${root}/session-messages/${messageId}`) value = { message: message(), processing: processing(), metadata };
+      else if (url.pathname === "/api/commands" && req.method === "POST") {
+        let body = ""; for await (const chunk of req) body += String(chunk);
+        const command = JSON.parse(body); writes.push(command);
+        read = { actorId: "receiver", evidence: command.evidence, at: stamp };
+        value = { status: "applied", operationId: command.operationId, entityId: messageId, version: 2 };
+      } else if (url.pathname.includes("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
+      res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
+    }
+    try { const body = await readFile(join(dist, url.pathname === "/" ? "index.html" : url.pathname));
+      res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(url.pathname)] ?? "text/html" }); res.end(body);
+    } catch { res.writeHead(404); res.end(); }
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
+    ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(keys.disabled)}`);
+  await page.getByLabel("访问令牌").fill("fixture-token");
+  await page.getByRole("button", { name: "进入", exact: true }).click();
+  await page.getByRole("heading", { name: "关闭自动回复的会话" }).waitFor();
+  const detail = page.locator(".session-message-detail");
+  for (const state of ["queued", "dispatching", "unknown", "otherActor", "otherSession"] as const) {
+    await fetch(`${base}/__fixture/set?mode=${state}`);
+    await page.getByRole("button", { name: /Original running message/ }).click();
+    await detail.waitFor();
+    assert.equal(await detail.getByText("记录本人已读原消息", { exact: true }).count(), 0, `${state} cannot sign a read`);
+    await detail.getByRole("button", { name: "关闭", exact: true }).click();
+  }
+  await fetch(`${base}/__fixture/set?mode=running`);
+  await page.getByRole("button", { name: /Original running message/ }).click();
+  const form = detail.locator(".command-disclosure").filter({ hasText: "记录本人已读原消息" });
+  await form.waitFor({ timeout: 2000 });
+  await form.locator("summary").click();
+  await form.getByLabel("阅读证据").fill("Read the original message in this running Turn");
+  await form.getByRole("button", { name: "记录本人已读原消息", exact: true }).click();
+  await detail.getByText("已读回执：Read the original message in this running Turn", { exact: false }).waitFor();
+  await detail.getByRole("heading", { name: "消息详情 · 原会话处理中" }).waitFor();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].type, "session.message.receipt"); assert.equal(writes[0].messageId, messageId);
+  assert.equal(writes[0].stage, "read"); assert.equal(writes[0].actorId, undefined);
+  assert.equal(await detail.getByText(/原生 Turn 结束后/).count(), 0);
+});
