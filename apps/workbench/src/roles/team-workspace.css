@@ -30,26 +30,30 @@
 .team-workspace .discussion-prepare{margin:0 0 16px;padding:0 2px 12px}
 .team-workspace .discussion-prepare>summary{color:#315dc1}
 .team-workspace .discussion-prepare .workflow-form{max-width:780px}
-.discussion-exploration-grid{display:grid;grid-template-columns:minmax(190px,.67fr) minmax(320px,1.27fr) minmax(245px,.9fr);gap:10px;align-items:start}
-.discussion-exploration-column{min-width:0;min-height:520px;padding:19px;background:#fff;border:1px solid var(--border);border-radius:8px}
-.discussion-exploration-column h2{font-size:16px;color:#273758;margin:0 0 12px}
-.discussion-exploration-column .muted{font-size:12px;line-height:1.6}
-.discussion-kind-filter{display:grid;gap:5px;margin:8px 0 14px;color:#66748b;font-size:11px}
-.discussion-kind-filter select{width:100%;padding:8px;border:1px solid #dce1eb;border-radius:6px;background:#fff;color:#2b3857;font-size:12px}
-.discussion-exploration-list .discussion-list{display:grid;grid-template-columns:1fr;gap:8px;margin:14px 0}
-.discussion-exploration-list .discussion-list button{padding:12px;border:1px solid #e3e8f1;box-shadow:none}
-.discussion-exploration-list .discussion-list button strong{font-size:12px;color:#2a3b5c}
-.discussion-exploration-list .discussion-list button span,.discussion-exploration-list .discussion-list button small{font-size:11px;line-height:1.5}
+.discussion-exploration-grid{display:grid;grid-template-columns:minmax(205px,.72fr) minmax(360px,1.42fr) minmax(265px,.9fr);gap:14px;align-items:start}
+.discussion-exploration-column{min-width:0;min-height:520px;padding:22px;background:#fff;border:1px solid #e1e6f0;border-radius:10px;box-shadow:0 3px 16px rgba(37,57,98,.035)}
+.discussion-exploration-column h2{font-size:16px;color:#273758;margin:0 0 14px;line-height:1.4}
+.discussion-exploration-column .muted{font-size:12px;line-height:1.65;color:#708099}
+.discussion-kind-filter{display:grid;gap:7px;margin:10px 0 16px;color:#66748b;font-size:12px}
+.discussion-kind-filter select{width:100%;padding:9px 10px;border:1px solid #dce1eb;border-radius:7px;background:#fff;color:#2b3857;font-size:12px}
+.discussion-exploration-list .discussion-list{display:grid;grid-template-columns:1fr;gap:8px;margin:16px 0}
+.discussion-exploration-list .discussion-list button{position:relative;width:100%;padding:14px 14px 14px 17px;border:1px solid #e3e8f1;border-radius:8px;box-shadow:none;background:#fff;text-align:left;transition:background .15s ease,border-color .15s ease}
+.discussion-exploration-list .discussion-list button:hover{background:#f7f9fd;border-color:#c8d5ec}
+.discussion-exploration-list .discussion-list button.active{background:#f0f5ff;border-color:#a8c0f0}
+.discussion-exploration-list .discussion-list button.active::before{content:"";position:absolute;left:-1px;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:#315fd1}
+.discussion-exploration-list .discussion-list button strong{display:block;font-size:13px;line-height:1.45;color:#283858}
+.discussion-exploration-list .discussion-list button span,.discussion-exploration-list .discussion-list button small{font-size:12px;line-height:1.5;color:#728098}
+.discussion-exploration-list .discussion-list button small{margin-top:8px}
 .discussion-exploration-main .discussion-detail{border-top:0;margin-top:0;padding-top:0}
-.discussion-exploration-main .discussion-detail>h3:first-child{font-size:16px;color:#273758}
-.discussion-exploration-main .discussion-detail>p{font-size:12px;line-height:1.7}
+.discussion-exploration-main .discussion-detail>h3:first-child{font-size:18px;color:#273758;line-height:1.45}
+.discussion-exploration-main .discussion-detail>p{font-size:13px;line-height:1.7}
 .discussion-exploration-empty{color:#75829a;padding:18px 0}
 .discussion-exploration-empty h2{color:#33435f}
-.discussion-relation-card{position:relative;border:1px solid #e3e8f1;border-radius:7px;padding:15px;margin:11px 0;color:#33435f;overflow-wrap:anywhere}
-.discussion-relation-card strong{display:block;font-size:13px;line-height:1.45}
-.discussion-relation-card p{font-size:11px;line-height:1.6;margin:8px 0}
-.discussion-relation-card small{display:block;font-size:10px;color:#79869a;line-height:1.5}
-.discussion-relation-card details{font-size:10px;margin-top:10px;color:#66748b}
+.discussion-relation-card{position:relative;border:1px solid #e3e8f1;border-radius:8px;padding:16px;margin:12px 0;color:#33435f;background:#fff;overflow-wrap:anywhere}
+.discussion-relation-card strong{display:block;font-size:13px;line-height:1.5}
+.discussion-relation-card p{font-size:12px;line-height:1.65;margin:9px 0}
+.discussion-relation-card small{display:block;font-size:11px;color:#79869a;line-height:1.55}
+.discussion-relation-card details{font-size:11px;margin-top:10px;color:#66748b}
 .discussion-relation-card ul{padding-left:16px;overflow-wrap:anywhere}
 .discussion-relation-error{background:#fff1ef;color:#994a3b;border-radius:6px;padding:10px;font-size:11px;line-height:1.6}
 .allocation-backlinks{border:1px solid #e3e8f1;border-radius:7px;padding:16px;margin:18px 0;background:#fafbfe}
@@ -60,5 +64,5 @@
 .allocation-backlink-groups>li>details{margin-top:8px}
 .allocation-backlink-relations{display:grid;gap:8px;margin-top:10px}
 .allocation-backlink-relations .discussion-relation-card{margin:0;background:#fff}
-@media(max-width:1100px){.discussion-exploration-grid{grid-template-columns:minmax(180px,.8fr) minmax(320px,1.3fr)}.discussion-exploration-relations{grid-column:1/-1;min-height:0}}
-@media(max-width:690px){.team-workspace .discussion-toolbar{align-items:stretch;flex-direction:column}.discussion-exploration-grid{grid-template-columns:1fr}.discussion-exploration-column{min-height:0}.discussion-exploration-relations{grid-column:auto}}
+@media(max-width:1100px){.discussion-exploration-grid{grid-template-columns:minmax(190px,.8fr) minmax(320px,1.3fr)}.discussion-exploration-relations{grid-column:1/-1;min-height:0}}
+@media(max-width:690px){.team-workspace .discussion-toolbar{align-items:stretch;flex-direction:column}.discussion-exploration-grid{grid-template-columns:1fr;gap:12px}.discussion-exploration-column{min-height:0;padding:18px}.discussion-exploration-relations{grid-column:auto}}
