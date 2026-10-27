@@ -121,8 +121,10 @@ test("native question stays bound to its Session and one exact operation, then d
   await fetch(`${base}/__fixture/set?state=resolved`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await question.waitFor({ state: "detached" });
+  await page.locator(".session-information > summary").click();
   await page.getByText("已结束的原生提问").waitFor();
   assert.equal(await question.count(), 0, "closed question leaves the active area");
+  await page.locator(".session-information > summary").click();
 
   await fetch(`${base}/__fixture/set?state=pending&wrongSession=1`);
   await page.getByRole("button", { name: "重新读取" }).click();

@@ -50,6 +50,8 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   let traceMode: "partial" | "long" | "complete" | "fresh" = "partial";
   let includeMessage = false, includeQuestion = false, messageReplied = false, runCompleted = false, holdTrace = false, traceHeld = false;
   let scenario: "normal" | "failed" | "unknown" = "normal";
+  let lifecycle: "ready" | "closing" | "closed" = "ready";
+  let lateMessage = false, completedClaim = false;
   let releaseTrace: (() => void) | null = null;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
@@ -66,6 +68,10 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     if (url.pathname === "/__fixture/release-trace") { releaseTrace?.(); res.end("ok"); return; }
     if (url.pathname === "/__fixture/failed") { scenario = "failed"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/unknown") { scenario = "unknown"; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/closing") { lifecycle = "closing"; lateMessage = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/closed") { lifecycle = "closed"; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/completed-claim") { lifecycle = "ready"; lateMessage = false; completedClaim = true; runCompleted = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/active-run") { completedClaim = false; runCompleted = false; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
@@ -81,7 +87,11 @@ test("long Run activity and expanded source stay inside the Session page at mobi
             state: "pending", canReply: false, reason: "当前不可回答", createdAt: stamp, response: null,
             source: { kind: "run", runId, taskId }, questions: [{ id: "q", header: "确认", question: "是否继续？", isOther: false, options: null }] }] : [],
           nativeObservation: { ...snapshot.nativeObservation, status: "idle", currentTurn: null, items: [] } }
-        : { ...snapshot, activity: [...snapshot.activity.map(item => item.id === "run-business" && runCompleted ? { ...item, summary: "业务运行 · completed" } : item.id === "activity-long-run" && runCompleted ? { ...item, source: { ...item.source, revision: "updated-source" } } : item), ...(includeMessage ? [messageActivity] : [])] };
+        : { ...snapshot, session: { ...snapshot.session, runtimeState: lifecycle, busy: !completedClaim,
+          latestBusinessRun: { ...snapshot.session.latestBusinessRun, state: completedClaim ? "completed" : "running" } },
+          nativeObservation: lateMessage ? { ...snapshot.nativeObservation, currentTurn: { ...snapshot.nativeObservation.currentTurn,
+            source: { kind: "message", messageId, actorId: "reader", operationId: messageId } } } : snapshot.nativeObservation,
+          activity: [...snapshot.activity.map(item => item.id === "run-business" && runCompleted ? { ...item, summary: "业务运行 · completed" } : item.id === "activity-long-run" && runCompleted ? { ...item, source: { ...item.source, revision: "updated-source" } } : item), ...(includeMessage ? [messageActivity] : [])] };
         if (scenario === "failed") value = { ...(value as object), session: { ...snapshot.session, busy: false,
           latestBusinessRun: { ...snapshot.session.latestBusinessRun, state: "failed" } }, nativeInputRequests: [] };
         if (scenario === "unknown") value = { ...(value as object), session: { ...snapshot.session, runtimeState: "unknown", busy: false,
@@ -135,7 +145,22 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
-  await page.locator(".session-current-work").getByText("已认领，待运行", { exact: false }).waitFor();
+  await page.locator(".session-current-work").getByText("已认领，本次运行中", { exact: false }).waitFor();
+  await fetch(`${base}/__fixture/closing`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.locator(".session-status-badge").getByText("关闭中").waitFor();
+  assert.equal(await page.locator(".session-workspace-head").getByText("消息处理中").count(), 0, "late message does not mask closing");
+  await fetch(`${base}/__fixture/closed`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.locator(".session-status-badge").getByText("已关闭").waitFor();
+  await fetch(`${base}/__fixture/completed-claim`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.locator(".session-current-work").getByText("最近一次执行已结束，结果待核对", { exact: false }).waitFor();
+  assert.equal(await page.locator(".session-current-work").getByText("已认领，待运行", { exact: false }).count(), 0, "completed claim is not pending run");
+  await page.locator(".session-activity-list").getByText("历史记录：已结束", { exact: false }).waitFor();
+  await fetch(`${base}/__fixture/active-run`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.locator(".session-current-work").getByText("已认领，本次运行中", { exact: false }).waitFor();
   assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
   async function showTool(index: number) { const tool = page.locator(".session-trace-item").nth(index); await tool.locator("summary").waitFor(); if (await tool.getAttribute("open") === null) await tool.locator("summary").click(); }
