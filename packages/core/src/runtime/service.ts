@@ -100,7 +100,7 @@ export class RuntimeWorkflowService {
     return this.deps.uow.read(projectId,async reader=>{
       if(!reader.recovery)throw new DomainError("CAPABILITY_UNAVAILABLE","Session recovery gate unavailable");
       const gate=required(await reader.recovery.getRecoveryGate(sessionId),"Session recovery gate");
-      return gate.phase==='open'||gate.phase==='retrying'&&gate.retryRunId===runId;
+      return gate.phase==='open'||['retrying','reworking'].includes(gate.phase)&&gate.retryRunId===runId;
     });
   }
 

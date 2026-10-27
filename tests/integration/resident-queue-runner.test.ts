@@ -64,9 +64,12 @@ class FakeManagedRuntime {
   async interruptTurn(){throw new Error('No interrupt expected');}
 }
 
-for(const lostReply of [false,true]) test(lostReply ?
+for(const scenario of ['normal','lost','rework-completed','rework-failed','rework-unknown'] as const) test(scenario==='lost' ?
   'queue native start reply unknown survives runner restart and reconciles original Run without another start' :
+  scenario.startsWith('rework') ? `completed failed-retry claim permits reviewed rework then ${scenario.slice(7)}` :
   'queue native start reply binds and settles original Run on its original Session',async t=>{
+  const lostReply=scenario==='lost';
+  const rework=scenario.startsWith('rework');
   const schema=`el_queue_runner_${randomUUID().replaceAll('-','').slice(0,16)}`;
   await migrate(database!,schema);
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
@@ -104,6 +107,12 @@ for(const lostReply of [false,true]) test(lostReply ?
   await apply({type:'task.create',projectId,operationId:randomUUID(),taskId,title:'Build fixed artifact',
     content:'# Fixed scope\nProduce one test artifact.',acceptance:'Consumer can inspect the artifact',owner:roleId});
   await apply({type:'task.start',projectId,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Seal Task input'});
+  const followingTaskId=randomUUID(),followingEntryId=randomUUID();
+  if(rework){
+    await apply({type:'task.create',projectId,operationId:randomUUID(),taskId:followingTaskId,title:'Dependent next Task',
+      content:'Wait until the original claim is accepted',acceptance:'Original Task is complete',owner:roleId});
+    await apply({type:'task.start',projectId,operationId:randomUUID(),taskId:followingTaskId,expectedVersion:1,reason:'Seal dependent Task'});
+  }
   await apply({type:'runtime.session.reserve',projectId,operationId:randomUUID(),sessionId,roleId,
     cwd:'/tmp/evoloop-queue-runner-test',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
   await trusted.beginSessionCreate(projectId,sessionId);
@@ -114,9 +123,13 @@ for(const lostReply of [false,true]) test(lostReply ?
     VALUES($1,$2,$3,$4,$5,$6,'owned',now())`,
   [projectId,randomUUID(),roleId,sessionId,roleRevisionId,controller.actorId]);
   const task=(await workflow.getTask(controller,projectId,taskId)).task;
-  await apply({type:'queue.create',projectId,operationId:randomUUID(),queueId,maxRuns:1,
+  await apply({type:'queue.create',projectId,operationId:randomUUID(),queueId,maxRuns:rework?4:1,
     reason:'One bounded smoke Run',entries:[{id:entryId,taskId,taskRevisionId:task.currentRevisionId,
-      sessionId,roleId,dependsOn:[],consumerId:controller.actorId,useRequired:true,releaseRule:'accepted'}]});
+      sessionId,roleId,dependsOn:[],consumerId:controller.actorId,useRequired:true,releaseRule:'accepted'},
+      ...(rework?[{id:followingEntryId,taskId:followingTaskId,
+        taskRevisionId:(await workflow.getTask(controller,projectId,followingTaskId)).task.currentRevisionId,
+        sessionId,roleId,dependsOn:[entryId],consumerId:controller.actorId,useRequired:true,
+        releaseRule:'accepted' as const}]:[])]});
   await apply({type:'queue.adopt',projectId,operationId:randomUUID(),queueId,expectedVersion:1});
   const errors:unknown[]=[];
   const queuePump=new ResidentQueuePump({workflow,credentials:async()=>[controller],enabled:async()=>true,
@@ -138,6 +151,112 @@ for(const lostReply of [false,true]) test(lostReply ?
     AND kind='runtime.run.requested'`,[projectId,attempt.operationId])).rowCount,1);
   const channel=(await workflow.listDiscussions(controller,projectId)).items.find(x=>x.collaboration?.runId===attempt.runId)!;
   assert.equal(channel?.collaboration?.recipientActorId,businessActor);
+  if(rework){
+    const failed=await trusted.rejectDispatch(projectId,attempt.runId,'Controlled native preflight failure');
+    assert.equal(failed.state,'failed');
+    const blocked=await workflow.getSessionRecovery(controller,projectId,sessionId);
+    assert.equal(blocked.gate?.phase,'blocked');
+    const retryRunId=randomUUID(),retryOperationId=randomUUID();
+    await apply({type:'queue.retryFailed',projectId,operationId:retryOperationId,queueId,entryId,
+      claimId:claimed.claimId!,runId:retryRunId,runOperationId:retryOperationId,expectedVersion:1,
+      expectedGateVersion:blocked.gate!.version,sourceRunId:failed.id,expectedSourceRunVersion:failed.version,
+      expectedTaskRevisionId:failed.taskRevisionId,
+      expectedExecutionProfileRevisionId:(await workflow.getRuntimeSession(controller,projectId,sessionId)).executionProfile!.revision.revisionId,
+      expectedInputHash:failed.inputHash,resumeMessageId:null,evidenceRef:'Reviewed original failure',reason:'One exact retry'});
+    await trusted.beginDispatch(projectId,retryRunId);
+    await trusted.bindTurn(projectId,retryRunId,{id:'retry-turn',status:'inProgress'},
+      {kind:'startReply',operationId:retryOperationId});
+    await trusted.recordTurn(projectId,retryRunId,'retry-turn','completed','Retry completed');
+    assert.equal((await workflow.getSessionRecovery(controller,projectId,sessionId)).gate?.phase,'awaiting_acceptance');
+    const unchangedRun=await workflow.getRuntimeRun(controller,projectId,retryRunId);
+    const unchangedGate=(await workflow.getSessionRecovery(controller,projectId,sessionId)).gate!;
+    const unchangedOp=randomUUID();
+    const unchanged=await workflow.execute(controller,{type:'queue.continue',projectId,operationId:unchangedOp,
+      queueId,entryId,claimId:claimed.claimId!,runId:randomUUID(),runOperationId:unchangedOp,
+      reason:'An unchanged Task must remain blocked',answeredQuestions:[],
+      rework:{expectedGateVersion:unchangedGate.version,sourceRunId:unchangedRun.id,
+        expectedSourceRunVersion:unchangedRun.version,expectedSourceInputHash:unchangedRun.inputHash,
+        expectedExecutionProfileRevisionId:unchangedRun.executionProfile!.revisionId,
+        evidenceRef:'A review comment alone cannot substitute changed Task input'}});
+    assert.equal(unchanged.status==='rejected'?unchanged.code:null,'CONTINUATION_INPUT_UNCHANGED');
+    const before=await workflow.getTask(controller,projectId,taskId);
+    await apply({type:'task.reopen',projectId,operationId:randomUUID(),taskId,
+      expectedVersion:before.task.version,reason:'Independent review requested rework'});
+    const todo=await workflow.getTask(controller,projectId,taskId);
+    await apply({type:'task.update',projectId,operationId:randomUUID(),taskId,expectedVersion:todo.task.version,
+      title:todo.task.title,content:`${todo.task.content}\nAddress reviewed correction`,
+      acceptance:todo.task.acceptance,owner:roleId,reason:'Fix reviewed defect'});
+    const revised=await workflow.getTask(controller,projectId,taskId);
+    await apply({type:'task.start',projectId,operationId:randomUUID(),taskId,
+      expectedVersion:revised.task.version,reason:'Reseal reviewed rework'});
+    const fixed=await workflow.getTask(controller,projectId,taskId);
+    const amendment=await workflow.execute(controller,{type:'queue.amend',projectId,operationId:randomUUID(),
+      queueId,entryId,expectedVersion:1,taskRevisionId:fixed.task.currentRevisionId,
+      reason:'Adopt the reviewed revised Task'});
+    assert.equal(amendment.status,'applied',JSON.stringify(amendment));
+    await apply({type:'queue.adopt',projectId,operationId:randomUUID(),queueId,expectedVersion:2});
+    const reworkOperationId=randomUUID(),reworkRunId=randomUUID();
+    const retry=await workflow.getRuntimeRun(controller,projectId,retryRunId);
+    const awaiting=(await workflow.getSessionRecovery(controller,projectId,sessionId)).gate!;
+    const reworkCommand={type:'queue.continue' as const,projectId,
+      operationId:reworkOperationId,queueId,entryId,claimId:claimed.claimId!,runId:reworkRunId,
+      runOperationId:reworkOperationId,reason:'Lead approved one reviewed correction',answeredQuestions:[],
+      rework:{expectedGateVersion:awaiting.version,sourceRunId:retry.id,expectedSourceRunVersion:retry.version,
+        expectedSourceInputHash:retry.inputHash,
+        expectedExecutionProfileRevisionId:retry.executionProfile!.revisionId,
+        evidenceRef:'Independent review of original delivery requested a correction'}};
+    const noPermit=await workflow.execute(controller,{...reworkCommand,operationId:randomUUID(),runOperationId:randomUUID(),rework:undefined});
+    assert.equal(noPermit.status==='rejected'?noPermit.code:null,'SESSION_RECOVERY_REQUIRED');
+    const stale=await workflow.execute(controller,{...reworkCommand,operationId:randomUUID(),runOperationId:randomUUID(),
+      rework:{...reworkCommand.rework,expectedGateVersion:awaiting.version-1}});
+    assert.equal(stale.status==='rejected'?stale.code:null,'VERSION_CONFLICT');
+    const wrongSource=await workflow.execute(controller,{...reworkCommand,operationId:randomUUID(),runOperationId:randomUUID(),
+      rework:{...reworkCommand.rework,sourceRunId:failed.id}});
+    assert.equal(wrongSource.status==='rejected'?wrongSource.code:null,'REWORK_SOURCE_MISMATCH');
+    const wrongProfile=await workflow.execute(controller,{...reworkCommand,operationId:randomUUID(),runOperationId:randomUUID(),
+      rework:{...reworkCommand.rework,expectedExecutionProfileRevisionId:randomUUID()}});
+    assert.equal(wrongProfile.status==='rejected'?wrongProfile.code:null,'EXECUTION_PROFILE_CONFLICT');
+    const invalidAnswerOp=randomUUID();
+    const invalidAnswer=await workflow.execute(controller,{...reworkCommand,operationId:invalidAnswerOp,runOperationId:invalidAnswerOp,
+      answeredQuestions:[{questionEventId:randomUUID(),answerEventId:randomUUID()}]});
+    assert.equal(invalidAnswer.status==='rejected'?invalidAnswer.code:null,'CONTINUATION_ANSWER_MISMATCH');
+    assert.equal((await workflow.getSessionRecovery(controller,projectId,sessionId)).gate?.phase,'awaiting_acceptance',
+      'an invalid answer must roll back its provisional rework permit');
+    assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,2);
+    const wrongActor=await workflow.execute({...controller,actorId:'other-controller'},{...reworkCommand,
+      operationId:randomUUID(),runOperationId:randomUUID()});
+    assert.equal(wrongActor.status==='rejected'?wrongActor.code:null,'QUEUE_ACTOR_MISMATCH');
+    const continued=await workflow.execute(controller,reworkCommand);
+    assert.equal(continued.status,'applied',JSON.stringify(continued));
+    assert.deepEqual(await workflow.execute(controller,reworkCommand),continued);
+    assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,3);
+    const permitted=(await workflow.getSessionRecovery(controller,projectId,sessionId)).gate!;
+    assert.equal(permitted.phase,'reworking');assert.equal(permitted.retryRunId,reworkRunId);
+    assert.equal(permitted.causeId,failed.id,'original failed Run remains the recovery cause');
+    assert.equal(await trusted.canStartRecoveredRun(projectId,sessionId,randomUUID()),false);
+    await assert.rejects(uow.transaction(projectId,tx=>tx.recovery!.assertStartupAllowed(sessionId,'message',randomUUID())),
+      /recovery gate blocks startup/);
+    const extraOp=randomUUID();
+    const extra=await workflow.execute(controller,{...reworkCommand,operationId:extraOp,runOperationId:extraOp,
+      runId:randomUUID()});
+    assert.equal(extra.status==='rejected'?extra.code:null,'SESSION_RECOVERY_REQUIRED');
+    await trusted.beginDispatch(projectId,reworkRunId);
+    if(scenario==='rework-unknown')await trusted.markRunUnknown(projectId,reworkRunId,'Native result unresolved');
+    else{
+      await trusted.bindTurn(projectId,reworkRunId,{id:`${scenario}-turn`,status:'inProgress'},
+        {kind:'startReply',operationId:reworkOperationId});
+      await trusted.recordTurn(projectId,reworkRunId,`${scenario}-turn`,
+        scenario==='rework-completed'?'completed':'failed','Controlled rework outcome');
+    }
+    const outcome=(await workflow.getSessionRecovery(controller,projectId,sessionId)).gate!;
+    assert.equal(outcome.phase,scenario==='rework-completed'?'awaiting_acceptance':'blocked');
+    if(scenario!=='rework-completed')assert.equal(outcome.causeId,reworkRunId);
+    await queuePump.tick();
+    assert.equal((await workflow.getResidentQueue(controller,projectId,queueId)).entries[1]?.state,'queued',
+      'dependent Task stays behind the unaccepted original claim');
+    assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,3);
+    return;
+  }
   const fake=new FakeManagedRuntime(lostReply);
   const makeRunner=()=>new RuntimeRunner({runtimeFactory:()=>fake as unknown as RuntimePort & FakeManagedRuntime,
     workflow,trusted,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});

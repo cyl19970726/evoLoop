@@ -253,10 +253,42 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
         next.queueId,next.claimId,next.retryRunId,next.resumeMessageId,next.decisionOperationId,next.updatedAt,expectedVersion]);
     if(!r.rowCount)throw conflict('Recovery gate changed');
   }
+  async authorizeRework(sessionId:string,queueId:string,entryId:string,taskId:string,claimId:string,sourceRunId:string,
+    sourceRunVersion:number,expectedGateVersion:number,newRunId:string,operationId:string,
+    actorId:string,reason:string,evidenceRef:string,nowUtc:string):Promise<void>{
+    if(!reason.trim()||!evidenceRef.trim())throw new DomainError('REWORK_EVIDENCE_REQUIRED','Reviewed rework requires a reason and evidence');
+    // Match the queue adapter's queue -> claim -> Session slot lock order.
+    const queue=await this.client.query('SELECT actor_id,version,adopted_version FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',
+      [this.projectId,queueId]);
+    const claim=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2 FOR UPDATE',
+      [this.projectId,claimId]);
+    if(queue.rows[0]?.actor_id!==actorId||queue.rows[0].version!==queue.rows[0].adopted_version||
+      claim.rows[0]?.queue_id!==queueId||claim.rows[0].entry_id!==entryId||
+      claim.rows[0].task_id!==taskId||claim.rows[0].session_id!==sessionId||claim.rows[0].released_at)
+      throw new DomainError('CLAIM_MISMATCH','Only the adopted original controller and active claim may rework');
+    const latest=await this.client.query(`SELECT a.run_id,r.state,r.version FROM resident_queue_attempt a
+      JOIN runtime_run r ON r.project_id=a.project_id AND r.run_id=a.run_id
+      WHERE a.project_id=$1 AND a.claim_id=$2 ORDER BY a.sequence DESC LIMIT 1`,[this.projectId,claimId]);
+    if(latest.rows[0]?.run_id!==sourceRunId||latest.rows[0].state!=='completed'||
+      latest.rows[0].version!==sourceRunVersion)
+      throw new DomainError('REWORK_SOURCE_MISMATCH','The latest original-claim Run is not the reviewed completion');
+    await this.slot(sessionId);
+    const gate=await this.client.query('SELECT * FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2 FOR UPDATE',
+      [this.projectId,sessionId]);
+    if(gate.rows[0]?.version!==expectedGateVersion||gate.rows[0].phase!=='awaiting_acceptance'||
+      gate.rows[0].queue_id!==queueId||gate.rows[0].claim_id!==claimId||gate.rows[0].retry_run_id||
+      gate.rows[0].cause_kind!=='run'||!['failed','interrupted'].includes(gate.rows[0].cause_state))
+      throw new DomainError('VERSION_CONFLICT','Recovery gate is no longer awaiting this claim');
+    const changed=await this.client.query(`UPDATE session_recovery_gate SET phase='reworking',retry_run_id=$3,
+      decision_operation_id=$4,reason=$5,version=version+1,updated_at=$6
+      WHERE project_id=$1 AND session_id=$2 AND version=$7`,
+      [this.projectId,sessionId,newRunId,operationId,reason,nowUtc,expectedGateVersion]);
+    if(changed.rowCount!==1)throw new DomainError('VERSION_CONFLICT','Rework permit changed');
+  }
   async assertStartupAllowed(sessionId:string,kind:'run'|'message',id:string):Promise<void>{
     const gate=await this.lockRecoveryGate(sessionId);
     const profile=await this.getCurrentExecutionProfile(sessionId);
-    const permitted=gate.phase==='open'||(kind==='run'&&gate.phase==='retrying'&&gate.retryRunId===id)||
+    const permitted=gate.phase==='open'||(kind==='run'&&['retrying','reworking'].includes(gate.phase)&&gate.retryRunId===id)||
       (kind==='message'&&gate.phase==='message_pending'&&gate.resumeMessageId===id);
     if(!permitted)throw new DomainError('RECOVERY_BLOCKED','Session recovery gate blocks startup');
     if(profile?.activationState==='active')return;

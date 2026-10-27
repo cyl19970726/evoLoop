@@ -171,6 +171,8 @@ Codex App Server 协议版本由本机运行配置显式固定；省略时维持
 
 受管 Session 的启动失败或结果未知会在项目事务内阻断该 Session 后续 Run 与普通消息启动，保留失败来源、原 Task claim 和最早已排队消息；结果未知先沿原 Run／消息 ID 只读对账，不自动重发，也不清除失败事实。Lead 的 `queue.retryFailed` 只针对原 claim 最新、已确认 `failed` 或 `interrupted` 的 Run；retry 不改写来源 Run 的终态，也不把 `interrupted` 重新命名为 `failed`，并仍禁止 `unknown`／`completed`。只要业务 Task 输入未变，新 Run 的输入仍包含原 Run 固定输入，但会创建新的沟通通道和执行封套，因此保存并区分来源 Run/inputHash 与新 Run 实际 inputHash，不能把字节不同的两个输入称为同一 hash。每次 retry 都要求控制者复核影响、固定输入与原 claim，消耗同队列累计预算，且不自动重试。retry 成功后只允许恢复原来 pin 的那条 queued 消息一次；消息完成后保持 `awaiting_acceptance`，直到原 claim 的交付、消费者使用、Task 验收与 accepted release 满足既有条件，才开放下一个启动。任何后续失败或未知都会重新阻断。
 
+已完成 retry 且原 claim 仍等待验收时，独立复核可要求同 Task 返工。若依据是业务输入变更，控制者先修订并重新封存 Task 业务输入、amend 并 readopt 队列；若依据是合法问答，则固定前一 Task 通道的真实问答。随后以 `queue.continue.rework` 固定 gate 版本、最近 completed Run 的 ID/version/inputHash、active 执行配置及依据。项目事务只为此原 claim 的一个新 Run 进入 `reworking`，PG 启动栅栏和 attempt 追加只认该 Run；旧失败来源、retry 决定、消息 pin 和累计预算不变。完成后回 `awaiting_acceptance`，失败或未知重回 `blocked`；其他 Task、claim、Run 或普通消息均不因返工许可开放。若业务输入未改且无合法问答，或来源、身份、权限、预算、配置、采纳版本不符，事务拒绝且不留下许可。
+
 `runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。
 
 分工管理者能读取任务负荷、结果、使用反馈和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 session 可提出，分工管理者不控制全部业务任务。[方向出处](../references/lineage.md)
