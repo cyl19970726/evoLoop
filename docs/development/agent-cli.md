@@ -101,6 +101,12 @@ npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 
 回复前核对 `canReply`、精确来源、问题与版本，再用 `command schema session.input.reply` 和普通 `command run FILE` 提交 `inputRequestId`、`expectedVersion` 与 `answers`（问题 ID 对应字符串数组）。每题必须作答，未开放其他答案的选项须使用原标签；身份来自认证，不能替别人署名。仅原发起者或本项目复核者在当前授权与原连接仍有效时可答。命令 `applied` 只证明回复保存；继续回读 `response.outcome` 区分 pending、attempted、submitted 和 unknown。submitted 不证明原生采用，resolved 也可能是中断或清理。发送未知不重发旧请求，不以新 ID 换连接作答。首期没有原生提问取消命令；不支持的表单／认证／secret 问题显示原因。原生工具是否在当前运行模式可用须另核，不能用 fixture 接线成功代替真实可达性。
 
+### 读取原生当前观察
+
+`work snapshot owned:SESSION_ID --project PROJECT_ID` 的 `nativeObservation` 与 `read session SESSION_ID --observation --project PROJECT_ID` 返回同一有界观察。`null` 表示尚无该投影，不能推断从未运行。先核 `freshness`、`lastEventAt`、精确 Turn 和来源，再读工具／计划／diff 预览；旧连接或不可用 Session 的 `stale` 事实只供核对。该只读入口不唤醒模型，也不凭通知改变 Run、Task 或交付验收。
+
+`usage.total` 保留原生 Thread 累计快照，`usage.last` 保留原生范围；重复读数不累加，缓存和推理指标是子集。null 保持未知，不据此估价或把配置模型当逐 Turn 实际用模。投影、预览、分页历史及固定原件分别阅读，不把截断摘要当完整证据。
+
 ## 未知结果与本地回执
 
 CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show ID`、`receipts reconcile ID` 用于找回原始目标、请求和已知结果。`EVOLOOP_STATE_DIR` 可指定仓库外或明确被 Git 忽略的私有本机目录；本机实现按 0700 目录、0600 文件创建且不覆盖已有回执，但不会强制目录位于仓库外。回执不能进入公开 Git。服务端确认的同一 actor、项目权限与 API origin 允许合法令牌轮换后继续核对；旧回执若没有 actor 记录，只能用原令牌。不同 actor 不可据此换身份接管。`EVOLOOP_TIMEOUT_MS` 仅控制等待，不使写入失败变成未提交证明。CLI 将 JSON 结果写 stdout、诊断写 stderr，失败或冲突退出非零；它不自动重试 POST。

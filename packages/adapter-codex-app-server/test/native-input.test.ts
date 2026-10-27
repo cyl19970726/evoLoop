@@ -71,6 +71,9 @@ test('blocking text input preserves typed RPC id and answers only after explicit
   await adapter.respondToInput(capture.id,capture.connectionId,{name:['Alice']});
   assert.equal(adapter.hasPendingInput(capture.id,capture.connectionId),false);
   const [reply]=await replies;
+  assert.equal(reply.projectId,spec.projectId);
+  assert.equal(reply.sessionId,spec.sessionId);
+  assert.equal(reply.threadId,binding.nativeThreadId);
   assert.deepEqual((reply.params as {result:unknown}).result,{answers:{name:{answers:['Alice']}}});
   await new Promise(resolveWait=>setTimeout(resolveWait,10));
   assert.equal(closed(events)[0]?.reason,'native_resolved');

@@ -134,7 +134,15 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 | 提问与选项 | 工具可达性、请求寿命、原 RPC 及清理 | 精确来源、身份、回复意图与人类入口 | 文字／选项；0.164 Default 局部开关，非阻塞、root 限制 |
 | Task 问答 | 在后续 Turn 消费固定输入 | Task／Document 修订、通道及后续 Run | 不回答旧的连接 RPC |
 | 历史读取 | Turn／Item 分页与原件 | 已绑定身份、预算、续读和诚实的 partial | 不复制全量原生历史 |
-| 状态、工具、计划与用量 | 原生事件事实 | 有界观察与来源／新鲜度 | 单独切片，不把本片接线当已交付 |
+| 状态、工具、计划与用量 | 原生事件事实 | 有界当前投影与精确来源／新鲜度 | 只读快照；非最终 Run 或业务验收权威 |
+
+### 有界原生观察
+
+适配器只给已登记的 owned Thread 事件附上项目与 Session 身份。现有 runner 接收状态、Turn、工具 Item 完成、计划、diff 与 Token 通知，按原生连接顺序归并当前观察，在既有周期写入 `session_native_observation`；每个 Session 一行，不另起业务队列或保存完整通知流。最多显示 10 个工具、20 个计划步骤、8 KiB diff，整个投影不超过 24 KiB；原生 reasoning、delta 和完整工具参数／输出不入投影。截断和未知值保留原意。
+
+来源按精确 Turn 关联 Run 或普通消息，绑定回执未到时保持未绑定。旧 Turn 的 Item、计划及 diff 不替换当前 Turn；Item 完成不因晚到 started 倒退。有原生 `Turn.startedAt` 证据时拒绝更早 Turn 抢占当前观察，时间缺失或相同时不推测先后。投影不是可重放的全量事件审计；断线、重启或 Session 不可用时保留最后读数并标过期，等待新连接的实际事实。
+
+Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能累加；`last` 保留原生提供的范围，不能用自行计算的相邻快照差值冒充。cached input 已包含在 input，reasoning output 已包含在 output；不再相加。缺失指标为未知，配置模型不当作实际逐 Turn 用模，没有原生费用时不推测货币成本。Session snapshot 与 CLI 读取相同当前投影和时间；5 秒前端查询与 runner 周期内合并不是实时推送或延迟保证。变化游标只触发刷新，进度刷新不刷进业务活动历史，也不增加 `runtime_record_event` 或修改 Run／Task 终态。
 
 ## 状态与恢复规则
 

@@ -26,18 +26,26 @@ export interface NativeQuestionView {
 }
 
 export interface NativeProgressView {
+  projectId: string;
   sessionId: string;
-  threadId: string | null;
-  turnId: string | null;
-  state: "running" | "waiting" | "unknown" | "completed" | "failed";
-  observedAt: string | null;
-  source: string;
-  partial: boolean;
-  currentTool: string | null;
-  planSummary: string | null;
-  changeSummary: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
+  threadId: string;
+  observedAt: string;
+  lastEventAt: string;
+  freshness: "live" | "stale";
+  staleReason: string | null;
+  status: "notLoaded" | "idle" | "systemError" | "active" | null;
+  turn: null | { id: string; status: "inProgress" | "completed" | "interrupted" | "failed" | "unknown";
+    source: null | { kind: "run" | "message"; id: string; taskId: string | null } };
+  items: Array<{ id: string; kind: string; name: string; status: "inProgress" | "completed" | "failed" | "declined";
+    summary: string; truncated: boolean }>;
+  plan: null | { turnId: string; steps: Array<{ step: string; status: "pending" | "inProgress" | "completed" }>;
+    explanation: string | null; truncated: boolean; observedAt: string };
+  diff: null | { turnId: string; hasContent: boolean; truncated: boolean; observedAt: string };
+  usage: null | { turnId: string; total: { inputTokens: number | null; cachedInputTokens: number | null;
+    outputTokens: number | null; reasoningOutputTokens: number | null; totalTokens: number | null };
+    last: { inputTokens: number | null; cachedInputTokens: number | null; outputTokens: number | null;
+      reasoningOutputTokens: number | null; totalTokens: number | null };
+    modelContextWindow: number | null; observedAt: string };
 }
 
 function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
@@ -94,11 +102,61 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer }: {
   </article>;
 }
 
-export function NativeSessionPanel({ projectId, sessionId, questions, progress, readError, replyBlockedReason, onAnswer }: {
+const itemStateLabel = { inProgress: "进行中", completed: "已结束", failed: "失败", declined: "已拒绝" } as const;
+const stepStateLabel = { pending: "待进行", inProgress: "进行中", completed: "已完成" } as const;
+const staleReasonLabel: Record<string, string> = { disconnected: "原生连接已断开", connection_unavailable: "当前原生连接不可用",
+  projection_unavailable: "进度记录暂不可读取", restart: "原生连接已重启" };
+const tokens = (value: number | null) => value === null ? "未提供" : value.toLocaleString("zh-CN");
+
+function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
+  progress: NativeProgressView; projectId: string; currentRead: boolean; waiting: boolean;
+}) {
+  const fresh = currentRead && progress.freshness === "live";
+  const turn = progress.turn;
+  const turnEnded = turn !== null && ["completed", "failed", "interrupted"].includes(turn.status);
+  const stateLabel = !fresh ? "观察待核对" : progress.status === "notLoaded" ? "原生会话尚未加载"
+    : progress.status === "systemError" ? "原生观察异常"
+    : turn?.status === "completed" ? "Turn 已结束" : turn?.status === "failed" ? "Turn 执行失败"
+    : turn?.status === "interrupted" ? "Turn 已中断"
+    : waiting ? "等待回答"
+    : progress.status === "active" && turn?.status === "inProgress" ? "运行中"
+    : progress.status === "idle" && turn?.status !== "inProgress" ? "当前空闲" : "状态待核对";
+  const tool = fresh && progress.status === "active" && turn?.status === "inProgress"
+    ? progress.items.filter(item => item.status === "inProgress").at(-1) ?? progress.items.at(-1)
+    : progress.items.at(-1);
+  const partial = progress.items.length === 10 || progress.items.some(item => item.truncated)
+    || !!progress.plan?.truncated || !!progress.diff?.truncated;
+  const planDone = progress.plan?.steps.filter(step => step.status === "completed").length ?? 0;
+  const itemState = (status: keyof typeof itemStateLabel) => turnEnded && status === "inProgress" ? "Turn 结束时结果未确认" : fresh ? itemStateLabel[status]
+    : status === "inProgress" ? "当时进行中，当前待核对" : `上次记录：${itemStateLabel[status]}`;
+  const stepState = (status: keyof typeof stepStateLabel) => turnEnded && status === "inProgress" ? "Turn 结束时结果未确认" : fresh ? stepStateLabel[status]
+    : status === "inProgress" ? "当时进行中，当前待核对" : `上次记录：${stepStateLabel[status]}`;
+  const staleReason = progress.staleReason ? staleReasonLabel[progress.staleReason] ?? "原因待核对" : null;
+  return <section className="native-progress-card">
+    <div className="native-panel-heading"><div><span className="native-panel-kicker">原生事件的有界观察</span><h2>原生执行进度</h2></div><span className="native-panel-state">{stateLabel}</span></div>
+    <p className="native-panel-context">最近事件 {date(progress.lastEventAt)} · 记录于 {date(progress.observedAt)} · {partial ? "仅展示最近有界范围" : "仅展示已观察到的事件"}</p>
+    {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{staleReason ? ` 原因：${staleReason}。` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
+    {fresh && progress.status === "systemError" && <p className="native-panel-warning">原生状态报告异常；请结合固定 Run 和原生终态核对。</p>}
+    {turnEnded && (progress.items.some(item => item.status === "inProgress") || progress.plan?.steps.some(step => step.status === "inProgress")) &&
+      <p className="native-panel-warning">本轮已结束，部分工具或计划步骤的结果尚未确认；这些记录不代表仍在执行。</p>}
+    <div className="native-progress-facts"><div><small>{fresh && stateLabel === "运行中" && tool?.status === "inProgress" ? "当前工具" : "最近工具活动"}</small><strong>{tool ? `${tool.name} · ${itemState(tool.status)}` : "暂无可确认的工具活动"}</strong></div>
+      <div><small>计划进展</small><strong>{progress.plan ? `${fresh ? "" : "上次记录："}${planDone}/${progress.plan.steps.length} 步已完成${progress.plan.truncated ? " · 已截断" : ""}` : "暂无可确认的计划变化"}</strong></div>
+      <div><small>{fresh ? "变更通知" : "上次变更通知"}</small><strong>{progress.diff ? progress.diff.hasContent ? "已观察到变更；内容需在受权原生历史核对" : "已观察到变更通知" : "暂无可确认的变更"}{progress.diff?.truncated ? " · 已截断" : ""}</strong></div></div>
+    {progress.items.length > 0 && <details className="native-progress-detail"><summary>最近工具活动 · {progress.items.length} 项</summary><ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong> · {itemState(item.status)}{item.truncated && " · 名称已截断"}</li>)}</ol></details>}
+    {progress.plan && <details className="native-progress-detail"><summary>计划步骤 · Turn {progress.plan.turnId}</summary><ol>{progress.plan.steps.map((step, index) => <li key={`${index}:${step.step}`}>{stepState(step.status)} · {step.step}</li>)}</ol>{progress.plan.explanation && <p>{progress.plan.explanation}</p>}<small>观察于 {date(progress.plan.observedAt)}{progress.plan.truncated && " · 原生内容已截断"}</small></details>}
+    {progress.diff && <details className="native-progress-detail"><summary>变更通知来源 · Turn {progress.diff.turnId}</summary><p>工作区只展示通知，不展示原生变更文本；请在受权的原生历史中核对内容。</p><small>观察于 {date(progress.diff.observedAt)}{progress.diff.truncated && " · 原生通知文本已截断"}</small></details>}
+    <p className="native-progress-usage">{fresh ? "累计 Token" : "上次记录的累计 Token"}：输入 {tokens(progress.usage?.total.inputTokens ?? null)} · 输出 {tokens(progress.usage?.total.outputTokens ?? null)} · 总计 {tokens(progress.usage?.total.totalTokens ?? null)}。{progress.usage && <>其中缓存输入 {tokens(progress.usage.total.cachedInputTokens)}、推理输出 {tokens(progress.usage.total.reasoningOutputTokens)} 是子项，不重复相加；用量观察于 {date(progress.usage.observedAt)}。</>}未提供实际费用。原生事件不代替 Turn 终态、Run 结果或交付验收。</p>
+    <details className="native-panel-ids"><summary>原生进度来源</summary><p>Thread <code>{progress.threadId}</code>{turn && <> · Turn <code>{turn.id}</code>{turn.source && <> · {turn.source.kind === "run" ? "Run" : "普通消息"} <code>{turn.source.id}</code>{turn.source.taskId && <> · <a href={href(projectId, "task", turn.source.taskId)}>关联任务</a></>}</>}</>}</p></details>
+  </section>;
+}
+
+export function NativeSessionPanel({ projectId, sessionId, questions, progress, progressError, progressCurrentRead, readError, replyBlockedReason, onAnswer }: {
   projectId: string;
   sessionId: string;
   questions: NativeQuestionView[];
   progress: NativeProgressView | null;
+  progressError: string | null;
+  progressCurrentRead: boolean;
   readError: string | null;
   replyBlockedReason: string | null;
   onAnswer(requestId: string, expectedVersion: number, answers: Record<string, string[]>): Promise<void>;
@@ -106,17 +164,13 @@ export function NativeSessionPanel({ projectId, sessionId, questions, progress, 
   const visibleQuestions = questions.filter(request => request.sessionId === sessionId);
   const openQuestions = visibleQuestions.filter(request => request.state === "pending" || request.state === "response_saved");
   const closedQuestions = visibleQuestions.filter(request => request.state === "resolved" || request.state === "unavailable");
-  const visibleProgress = progress?.sessionId === sessionId ? progress : null;
+  const visibleProgress = progress?.sessionId === sessionId && progress.projectId === projectId ? progress : null;
   return <div className="native-session-panel">
     {openQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
     {readError && <p className="native-panel-warning" role="alert">原生状态暂不可读取：{readError}。保留上次内容仅供核对，请重新读取后再回答。</p>}
     {replyBlockedReason && openQuestions.length > 0 && <p className="native-panel-warning">{replyBlockedReason}</p>}
-    {visibleProgress && <section className="native-progress-card"><div className="native-panel-heading"><div><span className="native-panel-kicker">来自原生 Turn 的有界观察</span><h2>原生执行进度</h2></div><span className="native-panel-state">{visibleProgress.state === "running" ? "运行中" : visibleProgress.state === "waiting" ? "等待回答" : visibleProgress.state === "completed" ? "Turn 已结束" : visibleProgress.state === "failed" ? "执行失败" : "状态待核对"}</span></div>
-      <p className="native-panel-context">观察于 {date(visibleProgress.observedAt ?? undefined)} · 来源 {visibleProgress.source}{visibleProgress.partial && " · 仅显示已读范围"}</p>
-      <div className="native-progress-facts"><div><small>当前工具</small><strong>{visibleProgress.currentTool ?? "暂无可确认的工具活动"}</strong></div><div><small>计划进展</small><strong>{visibleProgress.planSummary ?? "暂无可确认的计划变化"}</strong></div><div><small>变更摘要</small><strong>{visibleProgress.changeSummary ?? "暂无可确认的变更"}</strong></div></div>
-      <p className="native-progress-usage">Token 用量：{visibleProgress.inputTokens === null && visibleProgress.outputTokens === null ? "暂无可信用量" : `输入 ${visibleProgress.inputTokens ?? "未提供"} · 输出 ${visibleProgress.outputTokens ?? "未提供"}`}。进度通知不代替最终结果与交付验收。</p>
-      {visibleProgress.threadId && visibleProgress.turnId && <details className="native-panel-ids"><summary>原生 Turn 身份</summary><p>Thread <code>{visibleProgress.threadId}</code> · Turn <code>{visibleProgress.turnId}</code></p></details>}
-    </section>}
+    {progressError && <p className="native-panel-warning" role="alert">原生进度暂不可显示：{progressError}</p>}
+    {visibleProgress && <NativeProgressCard progress={visibleProgress} projectId={projectId} currentRead={progressCurrentRead} waiting={!!visibleProgress.turn && openQuestions.some(request => request.state === "pending" && request.isBlocking && request.turnId === visibleProgress.turn?.id)} />}
     {closedQuestions.length > 0 && <details className="native-question-history"><summary>已结束的原生提问 · {closedQuestions.length}</summary>
       {closedQuestions.map(request => <NativeQuestionCard key={`${projectId}:${request.sessionId}:${request.id}`} request={request} projectId={projectId} readHealthy={!readError && !replyBlockedReason} onAnswer={onAnswer} />)}
     </details>}

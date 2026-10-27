@@ -28,7 +28,8 @@
     "./session-messages": "./dist/session-messages.js",
     "./allocation-relations": "./dist/allocation-relations.js",
     "./session-recovery": "./dist/session-recovery.js",
-    "./native-input": "./dist/native-input.js"
+    "./native-input": "./dist/native-input.js",
+    "./native-observation": "./dist/native-observation.js"
   },
   "dependencies": {
     "zod": "4.6.7"

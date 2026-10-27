@@ -44,7 +44,9 @@ test("native input CLI reads retain the owned Session and request identity", asy
     const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: p };
     assert.equal((await run(["read", "session", id, "--inputs"], env)).code, 0);
     assert.equal((await run(["read", "native-input", id], env)).code, 0);
-    assert.deepEqual(urls, [`/api/projects/${p}/runtime/sessions/${id}/inputs`, `/api/projects/${p}/session-inputs/${id}`]);
+    assert.equal((await run(["read", "session", id, "--observation"], env)).code, 0);
+    assert.deepEqual(urls, [`/api/projects/${p}/runtime/sessions/${id}/inputs`, `/api/projects/${p}/session-inputs/${id}`,
+      `/api/projects/${p}/runtime/sessions/${id}/observation`]);
     const schema = JSON.parse((await run(["command", "schema", "session.input.reply"])).stdout);
     assert.ok(schema.required.includes("answers")); assert.ok(schema.required.includes("expectedVersion"));
     assert.equal(schema.properties.actorId, undefined); assert.equal(schema.properties.connectionId, undefined);

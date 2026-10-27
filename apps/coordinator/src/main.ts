@@ -25,6 +25,8 @@ import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
 import { NativeInputBridge } from "./runtime/native-input.js";
 import { NativeInputService } from "@evoloop/core/native-input";
+import { NativeObservationService } from "@evoloop/core/native-observation";
+import { NativeObservationBridge } from "./runtime/native-observation.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
@@ -276,6 +278,11 @@ const currentSessionExecutionAuthority = async (session:RuntimeSessionRecord) =>
     dynamicAdmission?()=>dynamicAdmission.canStartConversation(session):undefined);
 };
 const nativeInputService = new NativeInputService({ uow, clock, ids });
+const nativeObservation = new NativeObservationBridge({ service: new NativeObservationService({ uow, clock }),
+  canWrite: lease.canWrite, now: clock.now,
+  session: (projectId, sessionId) => uow.read(projectId, reader => reader.getRuntimeSession(sessionId)),
+  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
+});
 const nativeInputs = new NativeInputBridge({ service: nativeInputService, canWrite: lease.canWrite,
   now: clock.now,
   projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
@@ -312,7 +319,7 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   if (browserRead) adapter.onDisconnect(() => { void browserRead.close(); });
   return adapter;
 } : null;
-const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs,
+const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
   workerTraceAuthority: (identity, targetRunId) =>
     workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),
@@ -435,7 +442,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   sessionWork: new SessionObservationService({ uow }),
   allocationRelations: new AllocationRelationsService({ uow }),
-  sessionMessages: messageService, nativeInputs,
+  sessionMessages: messageService, nativeInputs, nativeObservation,
   messageExecution: createMessageExecutionReader({
     loadConfiguration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
     runtimeAvailable: () => runner?.status().available === true,

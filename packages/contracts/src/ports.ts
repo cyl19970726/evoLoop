@@ -14,6 +14,7 @@ import type { SessionMessageReader, SessionMessageTransaction } from "./session-
 import type { SessionAssignmentReader, SessionAssignmentTransaction } from "./session-assignments.js";
 import type { SessionObservationReader } from "./session-observation.js";
 import type { NativeInputReader, NativeInputTransaction } from "./native-input.js";
+import type { NativeObservationReader, NativeObservationTransaction } from "./native-observation.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
@@ -22,6 +23,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   queue?: QueueReader;
   sessionMessages?: SessionMessageReader;
   nativeInputs?: NativeInputReader;
+  nativeObservation?: NativeObservationReader;
   sessionAssignments?: SessionAssignmentReader;
   sessionObservation?(scope: string): SessionObservationReader;
   allocationRelations?(scope: string): AllocationRelationsReader;
@@ -98,6 +100,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   queue?: QueueTransaction;
   sessionMessages?: SessionMessageTransaction;
   nativeInputs?: NativeInputTransaction;
+  nativeObservation?: NativeObservationTransaction;
   sessionAssignments?: SessionAssignmentTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
