@@ -155,10 +155,10 @@ interface Pending { method: string; resolve: (value: unknown) => void; reject: (
 interface PendingNativeInput { capture: NativeInputCapture; requestId: string | number; attempted: boolean }
 
 const nativeRequestKey=(value:unknown):string|null=>
-  typeof value==='string'&&value.length>0?`s:${value}`:
+  typeof value==='string'&&value.length>0&&value.trim().length>0&&value.length<=1024?`s:${value}`:
     typeof value==='number'&&Number.isSafeInteger(value)?`n:${value}`:null;
 const boundedText=(value:unknown,max:number):value is string=>
-  typeof value==='string'&&value.length>0&&value.length<=max;
+  typeof value==='string'&&value.length>0&&value.trim().length>0&&value.length<=max;
 
 /** Parse only the pinned text/options subset. Secret or oversized prompts never enter a capture. */
 function nativeInputQuestions(value:unknown):NativeInputQuestion[]|null{
@@ -175,12 +175,14 @@ function nativeInputQuestions(value:unknown):NativeInputQuestion[]|null{
     let options:NativeInputQuestion['options']=null;
     if(question.options!=null){
       if(!Array.isArray(question.options)||question.options.length>8)return null;
-      options=[];
+      options=question.options.length?[]:null;
+      const labels=new Set<string>();
       for(const value of question.options){
         const option=object(value);
         if(!option||!boundedText(option.label,240)||
-          typeof option.description!=='string'||option.description.length>1000)return null;
-        options.push({label:option.label,description:option.description});
+          typeof option.description!=='string'||option.description.length>1000||labels.has(option.label))return null;
+        labels.add(option.label);
+        options!.push({label:option.label,description:option.description});
       }
     }
     questions.push({id:question.id,header:question.header,question:question.question,
@@ -436,23 +438,33 @@ export class CodexAppServerAdapter implements RuntimePort {
     const isTool=method==='item/tool/requestUserInput';
     const validIdentity=params?.threadId===binding.nativeThreadId;
     if(!validIdentity){unsupported('Unregistered thread');return;}
+    if(!boundedText(binding.nativeThreadId,1024)||
+      (isTool&&!boundedText(params?.turnId,1024))||
+      (params?.turnId!=null&&!boundedText(params.turnId,1024))){
+      unsupported('Native input identity is unavailable');return;
+    }
     const supportedProtocol=this.expectedVersion==='codex-cli 0.164.0-alpha.11.1'&&this.experimental;
     const observer=this.nativeInputListeners.size>0;
     const questions=isTool?nativeInputQuestions(params?.questions):null;
     const secret=isTool&&Array.isArray(params?.questions)&&params.questions.some(value=>object(value)?.isSecret===true);
-    const supported=!!(isTool&&supportedProtocol&&observer&&
-      nonempty(params?.turnId)&&nonempty(params?.itemId)&&typeof params?.isBlocking==='boolean'&&questions);
-    const reason=supported?null:!isTool?'MCP_ELICITATION_UNSUPPORTED':
+    let supported=!!(isTool&&supportedProtocol&&observer&&
+      boundedText(params?.itemId,1024)&&typeof params?.isBlocking==='boolean'&&questions);
+    let reason=supported?null:!isTool?'MCP_ELICITATION_UNSUPPORTED':
       secret?'SECRET_INPUT_UNSUPPORTED':!supportedProtocol?'NATIVE_INPUT_PROTOCOL_UNAVAILABLE':
       !observer?'NATIVE_INPUT_OBSERVER_UNAVAILABLE':'NATIVE_INPUT_SHAPE_UNSUPPORTED';
     const capture:NativeInputCapture={
       projectId:binding.projectId,sessionId:binding.sessionId,id:randomUUID(),connectionId:this.connectionId,
       nativeRequestId:id as string|number,threadId:binding.nativeThreadId,
-      turnId:nonempty(params?.turnId)?params.turnId:null,itemId:nonempty(params?.itemId)?params.itemId:'',
+      turnId:boundedText(params?.turnId,1024)?params.turnId:null,
+      itemId:boundedText(params?.itemId,1024)?params.itemId:null,
       method:method as NativeInputCapture['method'],questions:supported?questions!:[],
       isBlocking:typeof params?.isBlocking==='boolean'?params.isBlocking:false,
       supported,unavailableReason:reason,observedAt:new Date().toISOString(),
     };
+    if(supported&&new TextEncoder().encode(JSON.stringify(capture)).byteLength>32768){
+      supported=false;reason='NATIVE_INPUT_TOO_LARGE';
+      capture.supported=false;capture.questions=[];capture.unavailableReason=reason;
+    }
     if(!observer){unsupported(reason!);return;}
     if(supported){
       this.pendingNativeInputs.set(capture.id,{capture,requestId:id as string|number,attempted:false});

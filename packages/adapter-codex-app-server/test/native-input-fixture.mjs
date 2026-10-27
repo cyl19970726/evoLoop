@@ -8,6 +8,12 @@ const request=(id=1)=>({id,method:'item/tool/requestUserInput',params:{
   threadId:thread.id,turnId:'turn-1',itemId:'item-1',isBlocking:mode!=='nonblocking',
   questions:mode==='secret'?[{...question(),question:'private PIN',isSecret:true}]:
     mode==='budget'?Array.from({length:4},(_,index)=>question(`q${index}`)):
+    mode==='large-budget'?Array.from({length:3},(_,index)=>({...question(`q${index}`),
+      question:'Q'.repeat(4000),options:Array.from({length:8},(_,choice)=>({
+        label:`${index}-${choice}-${'L'.repeat(225)}`,description:'D'.repeat(1000)}))})):
+    mode==='empty-options'?[{...question(),options:[]}]:
+    mode==='duplicate-options'?[{...question(),options:[{label:'Same',description:'First'},{label:'Same',description:'Second'}]}]:
+    mode==='blank-question-id'?[{...question(),id:'   '}]:
     mode==='options'?[{...question('choice'),options:[{label:'Alpha',description:'First'},{label:'Beta',description:'Second'}],isOther:true}]:
     [question()],autoResolutionMs:1,
 }});

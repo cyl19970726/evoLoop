@@ -68,7 +68,7 @@ test('blocking text input preserves typed RPC id and answers only after explicit
   assert.equal((await adapter.inspect(binding) as {turnStarts:number}).turnStarts,0);
 });
 
-for(const mode of ['nonblocking','options'] as const){
+for(const mode of ['nonblocking','options','empty-options'] as const){
   test(`${mode} input retains blocking flag and answer shape`,async t=>{
     const {adapter,binding,events}=await opened(mode);t.after(()=>adapter.close());
     const replies=nativeReply(adapter);
@@ -76,6 +76,7 @@ for(const mode of ['nonblocking','options'] as const){
     assert.equal(capture.supported,true);
     assert.equal(capture.isBlocking,mode!=='nonblocking');
     if(mode==='options')assert.deepEqual(capture.questions[0]?.options?.map(value=>value.label),['Alpha','Beta']);
+    if(mode==='empty-options')assert.equal(capture.questions[0]?.options,null);
     await adapter.respondToInput(capture.id,capture.connectionId,mode==='options'?{choice:['Beta']}:{name:['free text']});
     assert.ok((await replies)[0]);
   });
@@ -157,7 +158,8 @@ test('request before owned binding is denied without capturing or starting a Tur
   assert.equal(capture.supported,true);
 });
 
-for(const mode of ['secret','budget','mcp','mcp-url','mcp-device'] as const){
+for(const mode of ['secret','budget','large-budget','duplicate-options','blank-question-id',
+  'mcp','mcp-url','mcp-device'] as const){
   test(`${mode} remains readable but unsupported without sensitive payload or selection`,async t=>{
     const {adapter,binding,events}=await opened(mode);t.after(()=>adapter.close());
     const replies=nativeReply(adapter);
@@ -165,7 +167,11 @@ for(const mode of ['secret','budget','mcp','mcp-url','mcp-device'] as const){
     assert.equal(capture.supported,false);
     assert.deepEqual(capture.questions,[]);
     assert.equal(adapter.hasPendingInput(capture.id,capture.connectionId),false);
-    if(mode.startsWith('mcp'))assert.equal(capture.turnId,null);
+    if(mode.startsWith('mcp')){
+      assert.equal(capture.turnId,null);
+      assert.equal(capture.itemId,null);
+    }
+    if(mode==='large-budget')assert.equal(capture.unavailableReason,'NATIVE_INPUT_TOO_LARGE');
     assert.equal(JSON.stringify(capture).includes('private'),false);
     const [reply]=await replies;
     if(mode.startsWith('mcp'))assert.deepEqual((reply.params as {result:unknown}).result,{action:'decline'});
