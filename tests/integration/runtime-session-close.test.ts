@@ -34,14 +34,14 @@ test("CLI close command reaches HTTP admission and stores one durable owned clos
   assert.equal(created.status, "applied");
   const now = new Date().toISOString();
   await uow.transaction(projectId, tx => tx.insertRuntimeSession({ projectId, id: sessionId,
-    roleId: "operator", cwd, authorizationScope: "project", model: null, sandbox: "read-only",
-    approvalPolicy: "on-request", state: "ready", version: 2, nativeThreadId: "owned-thread",
+    roleId: "operator", cwd, authorizationScope: "project", model: null, sandbox: "danger-full-access",
+    approvalPolicy: "never", state: "ready", version: 2, nativeThreadId: "owned-thread",
     nativeSessionId: "owned-session", operationId: randomUUID(), actorId, createdAt: now, updatedAt: now }));
   const runtime = { status: () => ({ available: true, error: null }) } as RuntimeRunner;
   const app = await buildServer({ service: workflow, credentials: [{ token, actorId,
     projectIds: [projectId], permissions: ["read", "write", "review"] }], runtime,
     hasRuntimeGrant: scope => scope.projectId === projectId && scope.actorId === actorId &&
-      scope.roleId === "operator" && scope.authorizationScope === "project" && scope.cwd === cwd && scope.sandbox === "read-only" });
+      scope.roleId === "operator" && scope.authorizationScope === "project" && scope.cwd === cwd && scope.sandbox === "danger-full-access" });
   const origin = await app.listen({ host: "127.0.0.1", port: 0 });
   t.after(async () => {
     await app.close(); await pool.end(); await rm(directory, { recursive: true, force: true });

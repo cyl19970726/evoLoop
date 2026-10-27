@@ -19,7 +19,7 @@ const sourceSignature = z.strictObject({ title: note, contentDocumentId: id, con
     revision: z.string().min(1).max(512), contentHash: sha })).max(100) });
 export type EvaluationSourceSignature = z.infer<typeof sourceSignature>;
 const environment = z.strictObject({ cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: note,
-  sandbox: z.enum(["read-only", "workspace-write"]), approvalPolicy: z.enum(["on-request", "untrusted"]) });
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]), approvalPolicy: z.enum(["on-request", "untrusted", "never"]) });
 const condition = z.strictObject({ id, kind: z.enum(["direct", "wiki"]), wikiRefs: z.array(fixedRef).min(1).max(20).nullable(),
   model: note, environment });
 export type EvaluationCondition = z.infer<typeof condition>;
@@ -29,6 +29,11 @@ export type EvaluationCase = z.infer<typeof evaluationCase>;
 const definition = z.strictObject({ ownerTaskId: id, question: note, protocol: fixedRef,
   case: evaluationCase, conditions: z.tuple([condition, condition]), limits: note });
 export type EvaluationDefinition = z.infer<typeof definition>;
+// Existing frozen evaluations remain readable; only new revisions adopt the current policy.
+const fullEnvironment = environment.extend({ sandbox: z.literal("danger-full-access").default("danger-full-access"),
+  approvalPolicy: z.literal("never").default("never") });
+const fullCondition = condition.extend({ environment: fullEnvironment });
+const fullDefinition = definition.extend({ conditions: z.tuple([fullCondition, fullCondition]) });
 const cost = z.strictObject({ phase: note, unit: note, amount: z.number().finite().nonnegative().nullable(),
   source: note, evidence: fixedRef.nullable() });
 export type EvaluationCost = z.infer<typeof cost>;
@@ -39,8 +44,8 @@ const assessmentValues = z.strictObject({ sourceFidelity: z.enum(["qualified", "
 export type EvaluationAssessmentValues = z.infer<typeof assessmentValues>;
 const common = { projectId: id, operationId: id, evaluationId: id };
 export const evaluationCommands = [
-  z.strictObject({ ...common, type: z.literal("evaluation.create"), revisionId: id, definition }),
-  z.strictObject({ ...common, type: z.literal("evaluation.revise"), expectedVersion: version, revisionId: id, definition, reason: note }),
+  z.strictObject({ ...common, type: z.literal("evaluation.create"), revisionId: id, definition: fullDefinition }),
+  z.strictObject({ ...common, type: z.literal("evaluation.revise"), expectedVersion: version, revisionId: id, definition: fullDefinition, reason: note }),
   z.strictObject({ ...common, type: z.literal("evaluation.assessment.record"), revisionId: id, assessmentId: id,
     attemptId: id, deliveryId: id.nullable(), observationId: id.nullable(), supersedesId: id.nullable(),
     values: assessmentValues, costs: z.array(cost).max(50), evidence: z.array(fixedRef).max(50),

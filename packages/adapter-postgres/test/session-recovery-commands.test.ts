@@ -35,7 +35,7 @@ before(async()=>{
     await apply({type:'task.create',taskId,title,content:'Read the fixed source and report a concrete result',acceptance:'Consumer uses the fixed result',owner:roleId,consumer:'lead',useRequired:true});
     await apply({type:'task.start',taskId,expectedVersion:1,reason:'Pin original business input'});
   }
-  await apply({type:'runtime.session.reserve',sessionId,roleId,cwd:'/tmp/recovery-command-test',authorizationScope:'project',model:'original-model',sandbox:'read-only',approvalPolicy:'on-request'},business);
+  await apply({type:'runtime.session.reserve',sessionId,roleId,cwd:'/tmp/recovery-command-test',authorizationScope:'project',model:'original-model',sandbox:'danger-full-access',approvalPolicy:'never'},business);
   await native.beginSessionCreate(projectId,sessionId);
   const session=await workflow.getRuntimeSession(lead,projectId,sessionId);
   await native.bindSession(projectId,sessionId,{owner:'evoloop-codex-app-server',projectId,sessionId,roleId,cwd:session.cwd,authorizationScope:session.authorizationScope,nativeThreadId:'same-thread',nativeSessionId:'same-session',
@@ -74,7 +74,7 @@ test('formal commands preserve failure, fixed business input and original M thro
   assert.equal(view.gate!.phase,'blocked');assert.equal(view.gate!.resumeMessageId,originalM);
   await assert.rejects(messages.beginDispatch(projectId,originalM,randomUUID(),randomUUID(),'a'.repeat(64)),/recovery|gate/i);
   const session=await workflow.getRuntimeSession(lead,projectId,sessionId);
-  await apply({type:'runtime.session.executionProfile.revise',sessionId,expectedVersion:session.version,expectedExecutionProfileRevisionId:session.executionProfile!.revision.revisionId,model:'reviewed-model',evidenceRef:'fixture://exact-grant-and-provider',reason:'Explicit controlled revision'});
+  await apply({type:'runtime.session.executionProfile.revise',sessionId,expectedVersion:session.version,expectedExecutionProfileRevisionId:session.executionProfile!.revision.revisionId,model:'reviewed-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'fixture://exact-grant-and-provider',reason:'Explicit controlled revision'});
   const revised=await workflow.getRuntimeSession(lead,projectId,sessionId);
   assert.equal(revised.executionProfile!.activationState,'pending');assert.deepEqual((await workflow.getRuntimeRun(lead,projectId,runA)).executionProfile,oldProfile);
   const budget={type:'queue.extendBudget',projectId,queueId,expectedVersion:1,expectedMaxRuns:2,maxRuns:3,evidenceRef:'fixture://cost-decision',reason:'One reviewed failed retry',operationId:randomUUID()};
@@ -123,7 +123,7 @@ for(const messageOutcome of ['completed','failed'] as const)test(`bounded releas
   const taskId=randomUUID(),sid=randomUUID(),qid=randomUUID(),eid=randomUUID(),claim=randomUUID(),failedId=randomUUID(),mid=randomUUID();
   await apply({type:'task.create',taskId,title:'Bounded unfinished result',content:'Read fixed source',acceptance:'Lead chooses a bounded next responsibility',owner:roleId});
   await apply({type:'task.start',taskId,expectedVersion:1,reason:'Pin bounded fixture'});
-  await apply({type:'runtime.session.reserve',sessionId:sid,roleId,cwd:'/tmp/recovery-command-test',authorizationScope:'project',model:'original-model',sandbox:'read-only',approvalPolicy:'on-request'},business);
+  await apply({type:'runtime.session.reserve',sessionId:sid,roleId,cwd:'/tmp/recovery-command-test',authorizationScope:'project',model:'original-model',sandbox:'danger-full-access',approvalPolicy:'never'},business);
   const creating=await native.beginSessionCreate(projectId,sid);
   await native.bindSession(projectId,sid,{owner:'evoloop-codex-app-server',projectId,sessionId:sid,roleId,cwd:creating.cwd,authorizationScope:creating.authorizationScope,nativeThreadId:`bounded-thread-${sid}`,nativeSessionId:`bounded-session-${sid}`,
     resumeProfile:{actorId:creating.actorId,model:creating.model,sandbox:creating.sandbox,approvalPolicy:creating.approvalPolicy,executionProfileRevisionId:creating.executionProfile!.revision.revisionId}});
@@ -137,7 +137,7 @@ for(const messageOutcome of ['completed','failed'] as const)test(`bounded releas
   await native.recordTurn(projectId,failedId,`bounded-failure-turn-${sid}`,'failed','Controlled bounded source failure');
   const failed=await workflow.getRuntimeRun(lead,projectId,failedId);
   const beforeProfile=await workflow.getRuntimeSession(lead,projectId,sid);
-  await apply({type:'runtime.session.executionProfile.revise',sessionId:sid,expectedVersion:beforeProfile.version,expectedExecutionProfileRevisionId:beforeProfile.executionProfile!.revision.revisionId,model:'bounded-reviewed-model',evidenceRef:'fixture://bounded-profile',reason:'Reviewed fixture profile'});
+  await apply({type:'runtime.session.executionProfile.revise',sessionId:sid,expectedVersion:beforeProfile.version,expectedExecutionProfileRevisionId:beforeProfile.executionProfile!.revision.revisionId,model:'bounded-reviewed-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'fixture://bounded-profile',reason:'Reviewed fixture profile'});
   const target=(await workflow.getRuntimeSession(lead,projectId,sid)).executionProfile!.revision;
   const gate=(await workflow.getSessionRecovery(lead,projectId,sid)).gate!;
   const retryId=randomUUID(),retryOp=randomUUID();

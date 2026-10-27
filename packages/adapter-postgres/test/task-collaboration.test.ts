@@ -69,7 +69,7 @@ test("Task Discussion and fixed-reference events survive PostgreSQL readback, CA
     await tx.insertSealedBasisSet({ projectId, taskId, taskRevisionId, id: basisId, sealed: true,
       members: [{ documentId: sourceId, revisionId: sourceRevisionId }, { documentId: primaryId, revisionId: primaryRevisionId }] });
     await tx.insertRuntimeSession({ projectId, id: sessionId, roleId: "worker-role", cwd: "/tmp/worker",
-      authorizationScope: "test", model: null, sandbox: "read-only", approvalPolicy: "on-request",
+      authorizationScope: "test", model: null, sandbox: "danger-full-access", approvalPolicy: "never",
       state: "ready", version: 1, nativeThreadId: "thread", nativeSessionId: "native-session",
       operationId: randomUUID(), actorId: "controller", createdAt: now, updatedAt: now });
     await tx.insertRuntimeRun({ projectId, id: runId, taskId, taskRevisionId, basisSetId: basisId, sessionId,
@@ -119,7 +119,7 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
     basis: [{ documentId: sourceId, revisionId: source.revisionId }], reason: "Begin" });
   const sessionId = randomUUID(), cwd = "/tmp/p1c-continuation", authorizationScope = "project:p1c";
   await execute(issuer, { type: "runtime.session.reserve", sessionId, roleId: worker.actorId, cwd,
-    authorizationScope, sandbox: "workspace-write", approvalPolicy: "on-request" });
+    authorizationScope, sandbox: "danger-full-access", approvalPolicy: "never" });
   await runtime.beginSessionCreate(projectId, sessionId);
   const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
   await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId,

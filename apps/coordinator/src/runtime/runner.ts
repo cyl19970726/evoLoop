@@ -48,10 +48,8 @@ const dispatchFailureDetail = (error: unknown): string => {
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
-  startReadOnlyTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
-  qualifyReadOnlyThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
-  needsBusinessRestore?(binding:RuntimeBinding):boolean;
-  markReadOnlyThread?(binding:RuntimeBinding):void;
+  startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
+  qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
   inspectExecutionProfileActivation?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding|null> };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -131,6 +129,7 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
   nativeAdapter():ManagedRuntime { return this.runtime; }
+  nativeStartsAvailable():boolean { return this.available && !this.recovering && !this.stopped && this.deps.canWrite(); }
   status(projectId?: string) {
     const faults = projectId ? [...this.faults.values()].filter(fault => fault.projectId === projectId) : [];
     return { available: this.available && this.runtime.isReady(),
@@ -224,11 +223,12 @@ export class RuntimeRunner {
     this.available = false;
     if (this.busy) await this.busy;
     this.unsubscribeDisconnect?.(); this.unsubscribeApproval?.();
-    try { await this.runtime.close(); } catch { /* replacement still proceeds */ }
-    this.runtime = this.deps.runtimeFactory();
-    this.registered.clear(); this.interruptAttempted.clear();
-    this.attachRuntime();
     try {
+      // A replacement must wait for proof that the previous owned child exited.
+      await this.runtime.close();
+      this.runtime = this.deps.runtimeFactory();
+      this.registered.clear(); this.interruptAttempted.clear();
+      this.attachRuntime();
       await this.runtime.open();
       for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
       this.serviceError = null;
@@ -261,18 +261,26 @@ export class RuntimeRunner {
           continue;
         }
         const sessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
+        const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
         for (const session of sessions) {
           if (session.state === "ready" || session.state === "closed") this.clearFault(projectId, session.id);
           if (session.state === "reserved") {
             try { await this.create(session); }
             catch (error) { this.recordFault(projectId,"session_create",error,session.id); }
           }
+          if (session.state === "ready" && session.executionProfile &&
+              ["pending","attempting","unknown"].includes(session.executionProfile.activationState) &&
+              !runs.some(run=>run.sessionId===session.id&&["requested","dispatching","running","unknown"].includes(run.state))) {
+            try {
+              if(await this.authorized(session) && await this.deps.allowedCwd(session.projectId,session.cwd))
+                await this.executionBinding(session);
+            } catch(error) { this.recordFault(projectId,"profile_activation",error,session.id); }
+          }
           if (session.state === "closing") {
             try { if (await this.closeSession(session)) this.clearFault(projectId,session.id); }
             catch (error) { this.recordFault(projectId,"session_close",error,session.id); }
           }
         }
-        const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
         for (const run of runs) {
           if (["completed","failed","interrupted"].includes(run.state)) { this.clearFault(projectId,run.sessionId,run.id);continue; }
           try { if (await this.process(principal, run)) this.clearFault(projectId,run.sessionId,run.id); }
@@ -350,30 +358,30 @@ export class RuntimeRunner {
       this.recordFault(session.projectId,"session_create",error,session.id,undefined,"unknown_outcome");
     }
   }
-  private async restore(session: RuntimeSessionRecord, operationId: string): Promise<RuntimeBinding> {
+  private async resumeForRun(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) throw new Error("Session authority is no longer available");
     const binding = bindingOf(session);
-    if (!this.registered.has(session.id) || this.runtime.needsBusinessRestore?.(binding)) {
+    if (!this.registered.has(session.id)) {
       await this.runtime.registerBinding(binding);
-      await this.runtime.resume(binding, specOf(session), operationId);
+      await this.runtime.resume(binding, specOf(session));
       this.registered.add(session.id);
     }
     return binding;
   }
-  /** Pending revisions are activated only for the one already reserved Run. A lost reply is read back, never resent. */
-  private async executionBinding(session:RuntimeSessionRecord,run:RuntimeRunRecord):Promise<RuntimeBinding|null>{
+  /** An adopted revision is its own durable activation intent. A lost reply is read back, never resent. */
+  private async executionBinding(session:RuntimeSessionRecord,run?:RuntimeRunRecord):Promise<RuntimeBinding|null>{
     const profile=session.executionProfile;
     if(!profile)return this.readBinding(session);
-    if(!run.executionProfile||run.executionProfile.revisionId!==profile.revision.revisionId||
+    if(run && (!run.executionProfile||run.executionProfile.revisionId!==profile.revision.revisionId||
       run.executionProfile.model!==profile.revision.model||run.executionProfile.sandbox!==session.sandbox||
       run.executionProfile.approvalPolicy!==session.approvalPolicy||run.executionProfile.cwd!==session.cwd||
-      run.executionProfile.authorizationScope!==session.authorizationScope)
+      run.executionProfile.authorizationScope!==session.authorizationScope))
       throw new DomainError("EXECUTION_PROFILE_MISMATCH","Run's fixed launch profile differs from its Session revision");
     if(profile.activationState==='active')return this.readBinding(session);
     if(profile.activationState==='rejected'){
       // The native operation was explicitly rejected before any Turn was sent. Keep the
       // immutable Run as a terminal failed attempt so a later revision requires a new Run.
-      await this.deps.trusted.rejectDispatch(run.projectId,run.id,
+      if(run)await this.deps.trusted.rejectDispatch(run.projectId,run.id,
         'Native Thread rejected this execution profile before Turn start');
       return null;
     }
@@ -383,11 +391,11 @@ export class RuntimeRunner {
     if(!previousId)throw new DomainError("EXECUTION_PROFILE_MISSING","last confirmed execution profile revision is unavailable");
     const previous=await this.deps.trusted.getExecutionProfileRevision(session.projectId,session.id,previousId);
     if(previous.projectId!==session.projectId||previous.sessionId!==session.id||
-      previous.sandbox!==session.sandbox||previous.approvalPolicy!==session.approvalPolicy||
       previous.cwd!==session.cwd||previous.authorizationScope!==session.authorizationScope)
       throw new DomainError("EXECUTION_PROFILE_MISMATCH","previous execution profile changed immutable Session identity");
     const prior=bindingOf(session);
-    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,executionProfileRevisionId:previous.revisionId};
+    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,sandbox:previous.sandbox,
+      approvalPolicy:previous.approvalPolicy,executionProfileRevisionId:previous.revisionId};
     const target=specOf(session),revisionId=profile.revision.revisionId,operationId=profile.revision.operationId;
     if(profile.activationState==='pending'){
       const permit=await this.deps.trusted.beginExecutionProfileActivation(session.projectId,session.id,revisionId,operationId);
@@ -395,7 +403,7 @@ export class RuntimeRunner {
         try{
           const revised=await this.runtime.activateExecutionProfile(prior,target,revisionId,operationId);
           await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,
-            'active','Exact original Thread and configured model confirmed by thread/resume');
+            'active','Exact original Thread and complete execution profile confirmed by thread/resume');
           this.registered.add(session.id);
           return revised;
         }catch(error){
@@ -403,9 +411,9 @@ export class RuntimeRunner {
           await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,state,
             state==='rejected'?'Native thread/resume explicitly rejected the chosen profile':
               'Native profile activation outcome is uncertain; original Thread requires readback');
-          this.recordFault(session.projectId,'profile_activation',error,session.id,run.id,
+          this.recordFault(session.projectId,'profile_activation',error,session.id,run?.id,
             state==='unknown'?'unknown_outcome':faultCategory(error));
-          if(state==='rejected')await this.deps.trusted.rejectDispatch(run.projectId,run.id,
+          if(state==='rejected'&&run)await this.deps.trusted.rejectDispatch(run.projectId,run.id,
             'Native Thread rejected this execution profile before Turn start');
           return null;
         }
@@ -415,11 +423,11 @@ export class RuntimeRunner {
       const revised=await this.runtime.inspectExecutionProfileActivation(prior,target,revisionId,operationId);
       if(!revised)return null;
       await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,
-        'active','Exact original Thread configured model confirmed by read-only thread/read');
+        'active','Exact original Thread and full configured execution profile independently confirmed');
       this.registered.add(session.id);
       return revised;
     }catch(error){
-      this.recordFault(session.projectId,'profile_activation',error,session.id,run.id,'verification');
+      this.recordFault(session.projectId,'profile_activation',error,session.id,run?.id,'verification');
       return null;
     }
   }
@@ -640,9 +648,9 @@ export class RuntimeRunner {
       await this.deps.trusted.beginDispatch(run.projectId, run.id);
       let startBinding: RuntimeBinding;
       try {
-        // The durable Run dispatch permit precedes both native business-profile
-        // restoration and turn/start. An uncertain resume is never retried.
-        startBinding = await this.restore(session, run.operationId);
+        // Persist the original intent before resuming the same full-permission Thread
+        // and starting its Turn. An uncertain resume is never retried.
+        startBinding = await this.resumeForRun(session);
       } catch (error) {
         if (error instanceof RuntimeServerError && error.method === "thread/resume") {
           await this.deps.trusted.rejectDispatch(run.projectId, run.id,

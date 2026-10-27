@@ -111,8 +111,8 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     template={id:randomUUID(),revision:1,projectId,goalId,loopId,existingRoleIds:[divisionRoleId],
       cognitionRoleIds:[],newRoleAllocation:null,firstTaskId:divisionTaskId,actorId:controllerId,
       authorizationScopeId:"division-scope",decisionActorIds:[controllerId],
-      allowedChoices:["temporary-assignment"],cwd,model:"fixture",sandbox:"read-only",networkAccess:false,
-      approvalPolicy:"on-request",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
+      allowedChoices:["temporary-assignment"],cwd,model:"fixture",sandbox:"danger-full-access",networkAccess:true,
+      approvalPolicy:"never",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
     templateHash=hash(JSON.stringify(template));
   }
   const sourceTaskId=randomUUID(),carrierTaskId=randomUUID();
@@ -125,7 +125,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     const sessionId=randomUUID(),runId=randomUUID(),input=`source ${index}`;
     await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,
       approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,'source-scope','read-only','on-request','ready',1,$5,$6,$7,$8,now(),now())`,
+      VALUES($1,$2,$3,$4,'source-scope','danger-full-access','never','ready',1,$5,$6,$7,$8,now(),now())`,
       [projectId,sessionId,business,cwd,randomUUID(),randomUUID(),randomUUID(),controllerId]);
     await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
       operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
@@ -182,7 +182,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     orchestration,workflow:runnerWorkflow,runtime:{pump:async()=>{}},canWrite:()=>true,now:clock.now,
     controller:async(_project,requiredRole)=>[role,business].includes(requiredRole)?{principal:controller,
       authorizationScopeId:requiredRole===role?scope:"business-scope",cwd,model:"fixture",
-      sandbox:"read-only",approvalPolicy:"on-request"}:null,
+      sandbox:"danger-full-access",approvalPolicy:"never"}:null,
     credential:{lookup:async()=>null,issue:async(identity)=>{credentials.push(identity.runId);
       return businessBroker&&identity.kind==="business"?businessBroker.issue(identity):
         {principal:principal(`worker-${identity.runId}`),wrapperPath:`/fixture/${"w".repeat(180)}`};}},
@@ -202,7 +202,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   await wf({type:"task.start",taskId,expectedVersion:4,reason:"Fix original Run"});
   const oldSession=randomUUID(),oldRun=randomUUID();
   await wf({type:"runtime.session.reserve",sessionId:oldSession,roleId:role,cwd,authorizationScope:scope,
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,oldSession);
   await runtime.bindSession(projectId,oldSession,{owner:"evoloop-codex-app-server",projectId,sessionId:oldSession,
     roleId:role,cwd,authorizationScope:scope,nativeThreadId:`fixture-${oldSession}`,
@@ -282,7 +282,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   assert.equal((await workflow.getTask(controller,projectId,taskId)).task.state,"in_progress");
   const newSession=loopIntentId(next.id,"session"),newRun=loopIntentId(next.id,"run");
   await wf({type:"runtime.session.reserve",sessionId:newSession,roleId:role,cwd,authorizationScope:scope,
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,newSession);
   await runtime.bindSession(projectId,newSession,{owner:"evoloop-codex-app-server",projectId,sessionId:newSession,
     roleId:role,cwd,authorizationScope:scope,nativeThreadId:`fixture-${newSession}`,
@@ -443,7 +443,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,3);
   const thirdSession=loopIntentId(third.id,"session"),thirdRun=loopIntentId(third.id,"run");
   await wf({type:"runtime.session.reserve",sessionId:thirdSession,roleId:role,cwd,
-    authorizationScope:scope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:scope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,thirdSession);
   await runtime.bindSession(projectId,thirdSession,{owner:"evoloop-codex-app-server",projectId,
     sessionId:thirdSession,roleId:role,cwd,authorizationScope:scope,nativeThreadId:`fixture-${thirdSession}`,
@@ -530,7 +530,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     oldBusinessRevision=oldStart.revisionId!;
     const oldSession=randomUUID();oldBusinessRun=randomUUID();
     await wf({type:"runtime.session.reserve",sessionId:oldSession,roleId:business,cwd,
-      authorizationScope:"business-scope",sandbox:"read-only",approvalPolicy:"on-request"});
+      authorizationScope:"business-scope",sandbox:"danger-full-access",approvalPolicy:"never"});
     await runtime.beginSessionCreate(projectId,oldSession);
     await runtime.bindSession(projectId,oldSession,{owner:"evoloop-codex-app-server",projectId,
       sessionId:oldSession,roleId:business,cwd,authorizationScope:"business-scope",

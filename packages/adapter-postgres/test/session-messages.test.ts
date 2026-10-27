@@ -21,12 +21,18 @@ const qualified='a'.repeat(64);
 function item(id=randomUUID()):SessionMessageRecord{return{projectId,id,operationId:randomUUID(),target:{kind:'owned',sessionId},
   senderActorId:'sender',content:'What changed?',context:null,replyToMessageId:null,state:'queued',version:1,
   blockedReason:null,readReceipt:null,createdAt:now,updatedAt:now};}
-async function reviewBlockedMessage(messageId:string):Promise<void>{
+async function seedFullSession(id:string):Promise<void>{
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8)`,
+    [projectId,id,roleId,grant.cwd,'thread-'+id,'native-'+id,randomUUID(),now]);
+}
+async function reviewBlockedMessage(messageId:string,targetSessionId=sessionId):Promise<void>{
   await uow.transaction(projectId,async tx=>{
-    const gate=await tx.recovery!.lockRecoveryGate(sessionId);
+    const gate=await tx.recovery!.lockRecoveryGate(targetSessionId);
     assert.equal(gate.phase,'blocked');assert.equal(gate.causeKind,'message');assert.equal(gate.causeId,messageId);
     const operationId=randomUUID(),at=new Date().toISOString();
-    await tx.recovery!.saveRecoveryDecision({projectId,id:operationId,sessionId,kind:'resume',
+    await tx.recovery!.saveRecoveryDecision({projectId,id:operationId,sessionId:targetSessionId,kind:'resume',
       expectedGateVersion:gate.version,causeId:messageId,sourceRunId:null,sourceInputHash:null,retryRunId:null,
       resumeMessageId:gate.resumeMessageId,actorId:'lead',reason:'Explicitly reviewed known original message outcome',
       evidenceRef:'review://original-message',createdAt:at},
@@ -39,7 +45,7 @@ before(async()=>{
   await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,$3)',[projectId,'Message test',now]);
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$6,$7,'receiver',$8,$8)`,
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8)`,
     [projectId,sessionId,roleId,grant.cwd,'thread-'+sessionId,'native-'+sessionId,randomUUID(),now]);
 });
 after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();
@@ -158,9 +164,10 @@ test('unknown native start only reads original history marker and never resends'
     grantFor:async()=>({...grant,maxTurns:10})});
   const operationId=randomUUID();await roomy.beginDispatch(projectId,message.id,randomUUID(),operationId,qualified);
   await roomy.markUnknown(projectId,message.id,'lost native acknowledgement');
-  let starts=0,readOnlyGates=0,found=false;
-  const runtime={isReady:()=>true,registerBinding:async()=>{},markReadOnlyThread:()=>{readOnlyGates++;},
-    startReadOnlyTurn:async()=>{starts++;throw new Error('must not resend');},
+  let starts=0,qualifications=0,found=false;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConversationThread:async()=>{qualifications++;return{available:true,reason:'',fingerprint:qualified};},
+    startConversationTurn:async()=>{starts++;throw new Error('must not resend');},
     listTurns:async()=>({data:found?[{id:'recovered-turn',status:'completed',completedAtUtc:now}]:[],nextCursor:null}),
     listItems:async()=>({data:[{id:'input',type:'userMessage',text:`[evoloop-message-operation:${operationId}] original`},
       {id:'answer',type:'agentMessage',phase:'final_answer',text:'A visible reply'}],nextCursor:null})};
@@ -169,17 +176,21 @@ test('unknown native start only reads original history marker and never resends'
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>errors.push(e)});
   await pump.tick();assert.equal(starts,0);assert.equal((await service.get(projectId,message.id)).state,'unknown');
   found=true;await pump.tick();assert.equal(starts,0);assert.equal((await service.get(projectId,message.id)).state,'replied');
+  assert.equal((await service.processing(projectId,message.id))?.operationId,operationId);
   assert.equal((await service.processing(projectId,message.id))?.response,'A visible reply');
-  assert.equal(readOnlyGates,2);assert.deepEqual(errors,[]);
+  assert.equal(qualifications,0,'reconciliation reads the original marker without a new admission or Turn start');
+  assert.deepEqual(errors,[]);
   assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.phase,'blocked');
   await reviewBlockedMessage(message.id);
 });
 
 test('direct ordinary processing INSERT cannot cross an active Task Run',async()=>{
   const c=await pool.connect();
+  const isolatedSessionId=randomUUID();
   const taskId=randomUUID(),taskRevisionId=randomUUID(),basisId=randomUUID(),docId=randomUUID(),docRevisionId=randomUUID();
-  const message=item();
+  const message={...item(),target:{kind:'owned' as const,sessionId:isolatedSessionId}};
   try{
+    await seedFullSession(isolatedSessionId);
     await c.query('BEGIN');
     await c.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,adopted_revision_id,kind,status)
       VALUES($1,$2,'Task',1,$3,$3,'task','published')`,[projectId,docId,docRevisionId]);
@@ -199,25 +210,25 @@ test('direct ordinary processing INSERT cannot cross an active Task Run',async()
     await c.query('UPDATE basis_set SET sealed=true WHERE project_id=$1 AND task_id=$2 AND basis_set_id=$3',[projectId,taskId,basisId]);
     await c.query(`INSERT INTO session_message_schedule(project_id,session_id,must_yield_business,updated_at)
       VALUES($1,$2,true,now()) ON CONFLICT(project_id,session_id) DO UPDATE
-      SET must_yield_business=true,updated_at=now()`,[projectId,sessionId]);
+      SET must_yield_business=true,updated_at=now()`,[projectId,isolatedSessionId]);
     const businessRunId=randomUUID();
     await c.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,actor_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,'Task input','hash','requested',1,'receiver',now(),now())`,
-      [projectId,businessRunId,taskId,taskRevisionId,basisId,sessionId,randomUUID()]);
+      [projectId,businessRunId,taskId,taskRevisionId,basisId,isolatedSessionId,randomUUID()]);
     assert.equal((await c.query('SELECT must_yield_business FROM session_message_schedule WHERE project_id=$1 AND session_id=$2',
-      [projectId,sessionId])).rows[0]?.must_yield_business,true);
+      [projectId,isolatedSessionId])).rows[0]?.must_yield_business,true);
     await c.query(`UPDATE runtime_run SET state='dispatching',version=2,updated_at=now()
       WHERE project_id=$1 AND run_id=$2`,[projectId,businessRunId]);
     assert.equal((await c.query('SELECT must_yield_business FROM session_message_schedule WHERE project_id=$1 AND session_id=$2',
-      [projectId,sessionId])).rows[0]?.must_yield_business,true);
+      [projectId,isolatedSessionId])).rows[0]?.must_yield_business,true);
     await c.query(`UPDATE runtime_run SET state='running',native_turn_id='business-turn',version=3,updated_at=now()
       WHERE project_id=$1 AND run_id=$2`,[projectId,businessRunId]);
     assert.equal((await c.query('SELECT must_yield_business FROM session_message_schedule WHERE project_id=$1 AND session_id=$2',
-      [projectId,sessionId])).rows[0]?.must_yield_business,false);
+      [projectId,isolatedSessionId])).rows[0]?.must_yield_business,false);
     await c.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
-      VALUES($1,$2,$3,'owned',$4,'sender','ordinary','queued',1,now(),now())`,[projectId,message.id,message.operationId,sessionId]);
+      VALUES($1,$2,$3,'owned',$4,'sender','ordinary','queued',1,now(),now())`,[projectId,message.id,message.operationId,isolatedSessionId]);
     await assert.rejects(()=>c.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,read_only_policy_fingerprint,version,started_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,'receiver','dispatching',$6,1,now(),now())`,[projectId,randomUUID(),message.id,sessionId,randomUUID(),qualified]),
+      VALUES($1,$2,$3,$4,$5,'receiver','dispatching',$6,1,now(),now())`,[projectId,randomUUID(),message.id,isolatedSessionId,randomUUID(),qualified]),
       /Session occupied by Task Run/);
     await c.query('ROLLBACK');
   }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
@@ -245,7 +256,7 @@ test('creator may message their Session, but only the granted worker may attest 
   const ownedSessionId=randomUUID();
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$6,$7,'lead',$8,$8)`,
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'lead',$8,$8)`,
     [projectId,ownedSessionId,roleId,grant.cwd,'thread-'+ownedSessionId,'native-'+ownedSessionId,randomUUID(),now]);
   const id=randomUUID();
   const post={type:'session.message.post' as const,projectId,operationId:randomUUID(),messageId:id,
@@ -267,27 +278,30 @@ test('creator may message their Session, but only the granted worker may attest 
 });
 
 test('explicit pre-turn rejection releases occupancy and does not claim a native Turn or read receipt',async()=>{
-  const first=item(),second=item();
+  const isolatedSessionId=randomUUID();
+  await seedFullSession(isolatedSessionId);
+  const first={...item(),target:{kind:'owned' as const,sessionId:isolatedSessionId}},
+    second={...item(),target:{kind:'owned' as const,sessionId:isolatedSessionId}};
   await uow.transaction(projectId,async tx=>{await tx.sessionMessages!.insertSessionMessage(first);await tx.sessionMessages!.insertSessionMessage(second);});
   const roomy=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
-    grantFor:async()=>({...grant,maxTurns:10})});
-  const before=await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,'sender'));
+    grantFor:async()=>({...grant,sessionId:isolatedSessionId,maxTurns:10})});
+  const before=await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(isolatedSessionId,'sender'));
   await roomy.beginDispatch(projectId,first.id,randomUUID(),randomUUID(),qualified);
-  await roomy.failBeforeStart(projectId,first.id,'Native rejected read-only policy before turn/start');
+  await roomy.failBeforeStart(projectId,first.id,'Native rejected full execution profile before turn/start');
   assert.equal((await roomy.get(projectId,first.id)).state,'failed');
   assert.equal((await roomy.processing(projectId,first.id))?.nativeTurnId,null);
-  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,'sender')),before);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(isolatedSessionId,'sender')),before);
   const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:first.id,
     stage:'read' as const,evidence:'I saw it'};
   await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
     {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/real native Turn/);
-  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.resumeMessageId,second.id);
-  await reviewBlockedMessage(first.id);
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(isolatedSessionId)))?.resumeMessageId,second.id);
+  await reviewBlockedMessage(first.id,isolatedSessionId);
   await roomy.beginDispatch(projectId,second.id,randomUUID(),randomUUID(),qualified);
   await roomy.failBeforeStart(projectId,second.id,'Native rejected before turn/start');
 });
 
-test('unqualified native tool profile keeps an ordinary message queued before any Turn',async()=>{
+test('unqualified current full execution profile keeps an ordinary message queued before any Turn',async()=>{
   // Another Session may retain an older blocked message. Qualification must be
   // checked for this recipient independently of that backlog and random UUID order.
   const earlier={...item(),senderActorId:'blocked-sender',createdAt:'2026-10-25T00:00:00.000Z'};
@@ -295,21 +309,21 @@ test('unqualified native tool profile keeps an ordinary message queued before an
   const isolatedSessionId=randomUUID();
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$6,$7,'receiver',$8,$8)`,
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8)`,
     [projectId,isolatedSessionId,roleId,grant.cwd,'thread-'+isolatedSessionId,'native-'+isolatedSessionId,randomUUID(),now]);
   const message={...item(),target:{kind:'owned' as const,sessionId:isolatedSessionId}};
   await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
   const roomy=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     grantFor:async()=>({...grant,sessionId:isolatedSessionId,maxTurns:100})});
   let starts=0;
-  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyReadOnlyThread:async()=>({
-    available:false,reason:'Native apps are not explicitly disabled',fingerprint:null}),
-    startReadOnlyTurn:async()=>{starts++;throw new Error('must not start');},
+  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({
+    available:false,reason:'Full execution profile has not been verified',fingerprint:null}),
+    startConversationTurn:async()=>{starts++;throw new Error('must not start');},
     listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
   const pump=new SessionMessagePump({service:roomy,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
   await pump.tick();
   const saved=await service.get(projectId,message.id);
-  assert.equal(saved.state,'queued');assert.match(saved.blockedReason??'',/Native apps/);
+  assert.equal(saved.state,'queued');assert.equal(saved.blockedReason,'Full execution profile has not been verified');
   assert.equal(await service.processing(projectId,message.id),null);assert.equal(starts,0);
 });

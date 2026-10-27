@@ -14,12 +14,12 @@ const principal:Principal={actorId:"lead",projectIds:[projectId],permissions:["r
 const observed:ObservedSession={key:`owned:${sessionId}`,target:{kind:"owned",sessionId},aliases:[],
   title:"Receiver",profile:null,kind:"owned",roles:[],membership:"current",membershipReason:"assigned",
   runtimeState:"ready",busy:false,currentTask:null,latestBusinessRun:null,lastProgressAt:null,
-  capabilities:{observe:{available:true,reason:null},send:{available:true,reason:null,mode:"owned-read-only"},
+  capabilities:{observe:{available:true,reason:null},send:{available:true,reason:null,mode:"owned-conversation"},
     open:{available:true,reason:null,ref:null},interrupt:{available:false,reason:null},close:{available:false,reason:null}},
   source:{kind:"session",id:sessionId,revision:null,evidence:"project-record",href:"/session"},
   metadata:{generatedAt:at,sourceObservedAt:null,partial:false,limitations:[]}};
 const session:RuntimeSessionRecord={projectId,id:sessionId,roleId,cwd,authorizationScope:"fixed-role",
-  model:"gpt-6-sol",sandbox:"read-only",approvalPolicy:"on-request",state:"ready",version:2,
+  model:"gpt-6-sol",sandbox:"danger-full-access",approvalPolicy:"never",state:"ready",version:2,
   nativeThreadId:"owned-thread",nativeSessionId:"owned-native-session",operationId:"reserve-op",
   actorId:"worker",createdAt:at,updatedAt:at};
 const grant={projectId,sessionId,senderActorId:"lead",receiverActorId:"worker",receiverRoleId:roleId,
@@ -32,6 +32,7 @@ function setup(overrides:Partial<MessageExecutionReaderDeps>={}){
       sessionMessages:{enabled:true,pollIntervalMs:2000,readOnlyProtocolVerified:true,grants:[grant]},
     };},
     runtimeAvailable:()=>{calls.runtime++;return true;},
+    canExecuteSession:async()=>true,
     isProjectWriter:async(_project,actor)=>{calls.writer++;return actor==="lead"||actor==="worker";},
     readSession:async()=>{calls.session++;return session;},
     turnsUsed:async()=>{calls.turns++;return 0;},
@@ -102,17 +103,21 @@ test("unsaveable, unready and unbound owned Sessions never gain execution status
   }
 });
 
-test("protocol and exact current grant checks stay honest, including receiver identity and cwd",async()=>{
+test("full execution and exact current grants stay honest, including receiver identity and cwd",async()=>{
   const protocolOff=setup({loadConfiguration:async()=>({runtime:{enabled:true,protocolVersion:"0.164.0-alpha.11.1",grants:[],delegationTemplates:[]},
     sessionMessages:{enabled:true,pollIntervalMs:2000,readOnlyProtocolVerified:false,grants:[grant]}})});
-  assert.equal((await protocolOff.read(principal,projectId,observed)).reasonCode,"READ_ONLY_PROTOCOL_UNVERIFIED");
-  assert.equal(protocolOff.calls.writer,0);
+  assert.equal((await protocolOff.read(principal,projectId,observed)).reasonCode,"NATIVE_EXECUTION_UNVERIFIED",
+    "the retired readonly switch does not gate ordinary full-permission conversations");
+  const oldProfile=setup({readSession:async()=>({...session,sandbox:"read-only",approvalPolicy:"on-request"})});
+  assert.equal((await oldProfile.read(principal,projectId,observed)).reasonCode,"EXECUTION_PROFILE_NOT_ACTIVE");
   for(const faulty of [[],[{...grant,enabled:false}],[{...grant,senderActorId:"other"}],
     [{...grant,receiverActorId:"lead"}],[{...grant,receiverRoleId:"other"}],[{...grant,cwd:"/other"}]]){
     const {read}=setup({loadConfiguration:async()=>({runtime:{enabled:true,protocolVersion:"0.164.0-alpha.11.1",grants:[],delegationTemplates:[]},
       sessionMessages:{enabled:true,pollIntervalMs:2000,readOnlyProtocolVerified:true,grants:faulty}})});
     assert.equal((await read(principal,projectId,observed)).reasonCode,"MESSAGE_GRANT_MISSING");
   }
+  const runtimeGrantRevoked=setup({canExecuteSession:async()=>false});
+  assert.equal((await runtimeGrantRevoked.read(principal,projectId,observed)).reasonCode,"SESSION_EXECUTION_GRANT_MISSING");
   const receiverRevoked=setup({isProjectWriter:async(_project,actor)=>actor==="lead"});
   assert.equal((await receiverRevoked.read(principal,projectId,observed)).reasonCode,"MESSAGE_GRANT_MISSING");
   const staleCwd=setup({cwdIsCurrent:async()=>false});
@@ -126,12 +131,12 @@ test("budget and busy hold execution, and a fully configured path remains unveri
   assert.equal((await busy.read(principal,projectId,{...observed,busy:true})).reasonCode,"SESSION_BUSY");
   const ready=setup();
   const result=await ready.read(principal,projectId,observed);
-  assert.equal(result.state,"unverified");assert.equal(result.reasonCode,"READ_ONLY_NATIVE_UNVERIFIED");
-  assert.equal(result.observedAt,at);assert.match(result.reason,/原生只读/);
+  assert.equal(result.state,"unverified");assert.equal(result.reasonCode,"NATIVE_EXECUTION_UNVERIFIED");
+  assert.equal(result.observedAt,at);assert.match(result.reason,/原生完整执行/);
 });
 
 test("dependency failures are sanitized and never expose native or configuration secrets",async()=>{
-  for(const key of ["loadConfiguration","readSession","isProjectWriter","turnsUsed","cwdIsCurrent"] as const){
+  for(const key of ["loadConfiguration","readSession","isProjectWriter","turnsUsed","cwdIsCurrent","canExecuteSession"] as const){
     const {read}=setup({[key]:async()=>{throw new Error("secret-token /private/config.toml");}} as Partial<MessageExecutionReaderDeps>);
     const result=await read(principal,projectId,observed);
     assert.equal(result.state,"unknown");assert.equal(result.reasonCode,"EXECUTION_STATUS_UNAVAILABLE");

@@ -103,7 +103,7 @@ worker 文档路由仅接受显式修订及原件读取，拒绝无版本详情�
 
 scope 须在目标 Thread 创建前就绪，创建后补文件不会为既有 Thread 增加工具。运行页依赖的 Loop、派发任务、判断及工作状态 GET 也须按实际记录逐项核定；预选 child ID 不能推出尚未产生的 Inbox 或 worker 判断 ID。需要等待首认知产物时，可沿已有暂停与结算流程，在实际 child 已请求且尚未创建线程时完成准备，再恢复承接；暂停前后的明确边界见[本机准备顺序](../development/local-run.md#受管-worker-只读浏览器候选)。这不增加通用 Loop 跟随权限，也不允许在 GUI 在途时静默替换 scope。
 
-GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原 worker 的 workspace-write 可继续用于获准目录中的 CLI 回执、报告和 `worker.submit`。宿主使用仅本项目 read 的独立 reader，令牌不交给模型；若该 reader 被拒，应报告实际失败，不能借负责人令牌补查。浏览器没有持久用户资料，只接受本机明确 origin 的获准 GET，拒绝跨站、重定向、写方法、WebSocket、service worker 和下载。它仍与协调服务同属本机用户，不宣称隔离恶意同用户进程或代替原生文件权限。
+GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Session 本身维持 full/never/正常网络，宿主另用仅本项目 read 的 reader、精确路由和 Run scope 限定业务对象读取，令牌不交给模型。若 reader 被拒，应报告实际失败，不能借负责人令牌补查。浏览器没有持久用户资料，只接受本机明确 origin 的获准 GET，拒绝跨站、重定向、写方法、WebSocket、service worker 和下载。OS full access 不取消业务对象授权，也不宣称隔离恶意同用户进程。
 
 工作列表会随新任务产生而变化，阶段页还须逐页读取任务及其详情，不能靠预先猜任务 ID 支撑完整页面。scope 可显式开启默认关闭的 `followTaskList`：仅从白名单内本项目的 `tasks?limit=50` 开始，宿主完整验证成功响应中的项目、任务 ID 和分页游标后，派生精确下一页、已见任务的根详情，以及该页按响应顺序组成的精确工作状态 GET。根详情含现有完整 TaskDetail，并非只有 ID 或状态。独立的 `followDocumentList` 同样默认关闭，只从明确批准的 `documents?limit=50` 追随实际游标读取文档列表页，不派生 Document 详情、修订或原件权限。
 
@@ -127,17 +127,17 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 
 断线或超时后按 `operationId` 回读 PostgreSQL Journal、Task 与 outbox → 对已知 `threadId` 用 `thread/read`／分页历史定位 Turn／Item → 将证据落到操作状态。能证实效果已发生则续跟踪；能证实未发生才考虑重发；没有足够 ID 或证据则保持 `unknown`，不盲重试。App Server 的请求 ID 仅用于连接上的请求／响应匹配；本机 schema 中可选的 `clientUserMessageId` 未经验证为跨重试的去重机制。重启先处理未知派发和待验收成果，再领取新任务。通知无已验证全局重放游标；持久历史分页与 PostgreSQL 本体对账是恢复依据；飞书绑定按需另行对账。
 
-恢复写入前，runner 从持久 Session 重建 actor、项目、Role、scope、cwd、model、sandbox 与 approval profile，并重新核对现行授权；适配器再核它与已登记原生绑定一致。静态和动态来源分别查各自授权，动态授权已撤销时不得借同名静态 grant 恢复。`thread/resume` 显式传入当前 `cwd`、`model`、`sandbox`、`approvalPolicy` 与获准的配置，不能只恢复 Thread ID 而继承旧执行权限。`workspace-write` 的 `sandbox_workspace_write.network_access` 必须是现行 grant 的明确布尔值：禁止联网传 `false`，缺少授权则拒绝恢复，不以省略配置代替降权。旧式 binding 缺少完整 profile 时可保留只读历史，不能恢复写入。这里的恢复校验不授予新 Task 或工程动作的执行权。
+新 Session 一律固定为 `danger-full-access`、`approvalPolicy: never` 并启用正常网络。`thread/start` 与 `thread/resume` 都须显式传入当前完整配置并核对原生回执；Session 持久档案、Thread 历史可读或 `thread/read` 都不能代替执行权限回执。旧 Session、Run 与 profile snapshot 保留其原值，不因新默认值改写。恢复仍核 actor、项目、Role、scope、cwd、绑定和现行授权；授权校验不授予新 Task 或工程动作的对象权限。
 
 第一版只管理该适配器自己创建、登记的 Thread。本页固定实验已观察到独立 App Server 可读桌面线程元数据、桌面可读新建线程历史及一次宿主通知的真实消费；UI 同步、自动控制、跨进程审批及多写行为仍**未验证**。`thread/list` 提供发现能力，但不授权扫描或接管用户全部历史。部署形态从本地 stdio 改为远程、需要修改账号认证或使用实验 API 时，先做版本固定、权限与协议验证，再扩大承诺。
 
 ### 受控 Session 恢复与执行配置
 
-本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 只读对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。
+本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。普通消息与业务 Run 共用完全相同的 Session 执行档案，不存在消息专用权限恢复阶段。
 
 `queue.retryFailed` 只允许原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 原状态，不把 `interrupted` 改写成 `failed`，并禁止 `unknown` 或 `completed`。每次都由控制者显式复核影响、固定业务输入与原 claim，核对 Run version/inputHash、Task 固定修订和完整业务输入签名、Session 空闲、当前绑定及精确 grant，并消耗队列同一累计预算。新 Run 固定来源 Run/inputHash，但开新 Task 沟通通道并使用新的执行封套，所以新 Run 的实际输入 hash 会独立计算；业务输入完全不变不等于两个完整输入字节相同。明确 retry 决定只许可这一个新 Run，不自动清除门槛或启动下一项。A retry 确认完成后才可启动原来 pin 的 M 一次；M 完成后进入等待验收，必须核通过交付、真实消费者使用（如要求）、Task close 与原 claim accepted release，才重新开放 Session 并允许 B。retry 或 M 再失败／未知则重新阻断。没有自动无限重试，也不靠新队列重置历史额度。
 
-受控 `queue.extendBudget` 由原登记队列控制者在旧上限与当前队列版本上 CAS，明确提供新上限、理由和依据；只扩大额度并留下历史，不重置已用 attempts、不自动 unhold／adopt 或派发。新队列版本重新采纳后才具备后续执行资格。若条目预先允许的有界释放已正式记录，Session gate 仍不会自动开放；有权者须另作 `runtime.session.recovery.resume`，记录保留有界释放来源，且依赖该条目的后项仍要求 `accepted` release，有界释放不能满足依赖或改变原规则。`runtime.session.executionProfile.revise` 则是纯事务的配置修订：本次只可按精确授权修改 model，Session ID、Thread、cwd、scope、sandbox 与 approval 不变，也不直接调用原生宿主或解除 gate。runner 以原 Thread、显式完整配置执行单次 activation 并核配置回读；明确成功才把修订标为 active。activation 结果 unknown 时只读原 Thread 对账，不重放激活操作；即使只读回读确认 active，仍须另作显式 `runtime.session.recovery.resume`，不会自动启动后续工作。每个 Run 保存启动时的配置快照；这是 launch policy，不是 provider 对该 Turn 实际用模的遥测。真实原生恢复与模型接受仍由 Lead 在隔离验收中确认。
+受控 `queue.extendBudget` 由原登记队列控制者在旧上限与当前队列版本上 CAS，明确提供新上限、理由和依据；只扩大额度并留下历史，不重置已用 attempts、不自动 unhold／adopt 或派发。新队列版本重新采纳后才具备后续执行资格。若条目预先允许的有界释放已正式记录，Session gate 仍不会自动开放；有权者须另作 `runtime.session.recovery.resume`，记录保留有界释放来源，且依赖该条目的后项仍要求 `accepted` release，有界释放不能满足依赖或改变原规则。`runtime.session.executionProfile.revise` 保留原字段合同并要求新目标为 `danger-full-access`／`never`；可修订配置，不改变 Session ID、原 Thread 或旧 Run snapshot，也不伪造 Run。它先提交不可变 profile revision，再用独立持久 activation 记录在原 Thread 上应用并核原生回执。原有两条常驻 Session profile 可各自正式修订到 full/never；即使 model 未变，也保存该策略变更为新 revision。只有收到精确 full/never 权限确认才标为 active；回执丢失或不完整为 unknown，不能因 `thread/read` 能读历史而推断权限丢失或修订成功。新 App Server 进程可对已卸载的旧 Thread 尝试 `thread/resume`；同进程仍加载且回显权限不符时保持 unknown，不报成功。每个 Run 保存启动时配置快照；这是 launch policy，不是 provider 对该 Turn 实际用模的遥测。
 
 状态机、命令和读取字段属于本次代码实现合同；原生模型运行、失败恢复、原 M 单次执行、accepted 后开放 B 仍以后续真实原生验收为准，不能从代码或隔离测试宣称上线或通过。
 
@@ -153,7 +153,7 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 | `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
 | `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
 
-本机已固定支持 `codex-cli 0.154.0` 与显式候选 `codex-cli 0.164.0-alpha.11.1`；前者继续可用，配置字段 `runtime.protocolVersion` 缺省仍为 `0.154.0`，不会因安装了较新 CLI 而自动切换。适配器启动前逐一核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查、自动选新协议或更改全局 CLI。由配置保管人先检查所选二进制和 schema，再显式采用候选版本；例如以下只是运行配置片段，不代表安装路径或凭据：
+本机支持 `codex-cli 0.154.0` 与 `codex-cli 0.164.0-alpha.11.1`；当前默认协议为 `0.164.0-alpha.11.1`。适配器启动前核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查或更改全局 CLI。以下只是可选运行配置片段，不代表安装路径或凭据：
 
 ```json
 {"runtime":{"enabled":true,"protocolVersion":"0.164.0-alpha.11.1"}}
@@ -165,29 +165,15 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实，原
 
 ## 普通消息与业务执行共用原会话
 
-普通消息使用独立持久处理记录，不复用带 Task／basis 外键的业务 Run，也不制造假任务。它与 Task Run 共用原生会话占用：数据库拒绝两类在途／unknown 执行并存；队列的长期 Task claim 与最后业务 attempt 保留。原任务的有效答复先接续，最早普通消息与可执行业务轮次按持久公平标记交替；业务真正绑定 running Turn 后才清除让行标记，不能在 requested 时提前放行另一条消息。
+普通消息使用独立的持久消息与回执记录，不复用带 Task／basis 关系的业务 Run，也不制造假任务；但消息和业务工作都沿同一个 Session、Thread、App Server adapter 与 full/never execution profile 运行，使用正常工具和网络配置。新 Session 固定 `danger-full-access`、`approvalPolicy: never`、网络开启；消息不再切换到消息专用进程、purpose、sandbox、工具集或只读准入门槛，也没有消息后的业务权限恢复状态机。既有消息 sender/receiver grant 与 `maxTurns` 继续约束身份和成本，业务对象仍按各自 project/Task/Document 权限校验；OS 执行权限不会删除这些对象边界。
 
-普通消息还受 Session recovery gate 约束：gate blocked 时不因普通消息到了就自动启动。已知失败 claim 的 retry 必须先按原 Run 显式决定；只有对应 retry 成功后，启动权才临时落到故障时 pin 的原 queued 消息。该消息处理完成后不自动放行后续业务 Run，而是等待原 Task 的验收和 accepted release。消息失败／结果 unknown 也会阻断同 Session 后续启动；unknown 先只读对账，不能通过发一条新消息或 `resume` 代替原结果核验。
+消息保存、原生接受、处理结束、完整回复和收件 actor 的显式 read 是不同事实。消息不需要创建 Task；独立工作仍须按正常规则 Task 化。Run 与消息共用 Session 槽位、公平调度、持久 recovery gate 与 unknown 对账；消息历史上的 grant 和预算继续保留，不代表另一权限档位。发送、处理和业务结果不得互相冒充。外部 Desktop HostLink 仍只有已核能力的人工转交，不自动唤醒或接管聊天。
 
-工作台与CLI的Session snapshot把保存和执行分开：`capabilities.send.available`仅表示当前身份能否保存消息，不证明运行器、精确消息grant或原生工具权限已就绪。协调器在单个snapshot追加`capabilities.ordinaryExecution`，返回`state`、稳定`reasonCode`、解释和`observedAt`；`disabled`说明执行未启用，`blocked`说明已知配置、身份、额度或占用阻止执行，`manual`表示外部人工转交，读取失败为`unknown`。配置及持久准入通过仍只报`unverified`，不把未核的只读原生权限称为就绪。目录和旧服务可缺此字段，消费者按未知处理，不推定启用。
+`capabilities.send` 表示可保存对话，采用 `owned-conversation` 标识 owned 会话；`capabilities.ordinaryExecution` 是当前配置准入观察，条件通过仍为 `unverified`，不保证下一次回复。每次消息先持久记录原操作，再以同一 full/never profile 正常 `thread/resume` 原 Thread，核精确权限回执后启动 Turn；这也覆盖服务重启后的 `notLoaded` Thread，不增加消息专用进程。`thread/read` 没有权限字段，不能替代权限修订的 full/never 确认；消息 Turn 完成、配置 active 与业务 Task 验收各自记录。权限变更回执丢失或不完整时保留 unknown，并沿原操作核对。
 
-此状态读取只核当前运行配置、现行项目身份、精确Session grant及已有累计消息计数，不启动原生进程、不扫描外部工具、不调用任务答复接续或消息派发。每次真正派发仍重新核准入、原生权限与持久槽位；snapshot不是启动承诺。消息执行关闭不撤销保存能力，owned消息可继续保存为queued；运行器未启用或不可用时，后续pump也未必能补写blockedReason，界面须在保存前显示独立执行状态。启用后原queued消息仍按现行grant检查，不静默取消或替换历史。
+迁移 035 及更早存下的 Session、Run 与 profile 快照保持历史原值，不依赖冷切迁移或启动时重写。迁移 036 退役旧 cold 启动围栏，保留 035 控制行和原 epoch 不变；新建 Session 统一 full/never。不能把旧 readonly/workspace profile 重新解释成新权限。普通消息与业务共享这套新 Session 默认。GUI 阅读桥仍可按单个 Run 使用精确只读 reader、路由与证据范围；这只是业务对象读取范围，不能视为 OS sandbox，也不改变 Document iframe sandbox。
 
-发送只证明消息已保存。明确未派发前可由发送者撤回；processing／unknown 不能靠 cancel 假报已停。原生请求超时沿原消息、操作和 Thread 历史标记回查，不盲目重启；正常结束但没有完整答复时记录 completed_without_reply。外部 Desktop HostLink 只有人工转交，不能据此伪造自动送达或唤醒。
-
-普通模式单独配置精确 Session、发送者、实际接收 actor、Role、目录和有界 turn grant，不借 Task 队列或 Loop 的额度。`RuntimeSession.actorId` 是创建／控制身份，不等于业务执行者；原消息 read 回执只接受实际处理所固定的收件 actor，创建者、发送者读取回复不能代签 Session 已读。
-
-普通会话默认只解释、查询和澄清，不取得仓库或业务写权限。文件系统只读沙箱本身仍可能读取整个宿主，也不约束 MCP 远程写，因此不能只发提示词或设置 readOnly。受管消息须先核固定版本协议、明确禁用的应用／插件／MCP 工具面和同 Thread 的工具目录，再选择经核准的项目只读权限 profile；范围、工具或恢复能力不明时保留 queued 与原因。下一业务 Turn 必须重新应用原业务权限，不能让普通消息的限制永久污染会话，或让普通消息继承旧写权限。
-
-消息专用适配器的 purpose 在构造时固定，从初始化开始就在进入业务后端前拒绝动态工具、审批升级及业务原生操作；此门不依赖稍后加入的 binding、声明缓存或只读标记。旧历史可以保留动态工具声明，声明存在不赋予客户端执行权。业务适配器保持独立，不能把消息实例临时改成业务实例。此限制不替代原生 MCP、Apps、插件、文件和网络资格检查。
-
-共享 App Server 的冷切基础使用一条显式采纳的持久环境记录，保存 epoch、目标原消息、进程身份、退出及策略核实证据；Run、消息 processing 与 Session recovery gate 继续各守原合同。 目标策略的预期 hash 与有效配置读回的证据指纹分别记录：核实须覆盖原目标，不能要求二者字节相等或事后改写预期；真正启动所用 epoch 由同一事务固定到原 Run、processing 或 Session，后续切换不回写旧关联。迁移不从 ready 回填已核实，也不自动启用控制；无记录只表示兼容旧运行方式。采纳后，新启动须在原 Session／gate 事务中取得精确 epoch 许可，数据库同时核相同原操作；已有操作的结算和 unknown 对账继续通过。切换事务只锁环境行，不能反向锁 Session／队列，避免排空自锁。
-
-冷切编排先关闭新准入，等待已获准的实际执行自然结算；requested 不等于原生已启动。可配置排空期限到达且尚未发出切换动作时，撤销准备、恢复原业务准入，消息保持 queued。开始原生动作后必须核旧 child 退出、新 child 身份已持久登记及有效策略，再放行目标消息；任何回执未知都保留原控制与操作，不自动另开进程。消息回复与业务环境恢复分别核实，恢复失败不放行新业务 Run。当前基础原语和替身检查不证明控制器已接通部署，也不放宽现有工具面资格；完整冷切、原会话实跑和消费者使用另行验收。
-
-消息后的业务恢复区分“重接 Thread、准备策略”和“策略已随业务 Turn 应用”。已加载的 Thread 可能只在 `thread/resume` 时重新接入，回显仍为普通消息的命名只读权限与 `never`；这不能当作业务策略已应用的证明。适配器仅在原 Thread／Session／目录／模型及已知普通消息权限精确匹配时接受该重接结果，并保留只读门槛。获得原 Run 的持久启动许可后，单次 `turn/start` 必须显式携带固定业务 profile 的 model、cwd、sandboxPolicy 与 approvalPolicy；成功回执后才确认业务策略切换。冷恢复回显与模型修订 activation 仍须各自的严格核验，不能把普通消息的例外推广为任意配置不符也可运行。[App Server 的 Turn 配置覆盖](https://learn.chatgpt.com/docs/app-server#turns)是对应的原生入口；配置快照仍不等于 provider 的逐 Turn 模型遥测。
-
-业务恢复拒绝、任务 Turn 启动回执未知和启动成功但持久绑定失败分别记录阶段；只保留安全的方法名、错误代码和分类，不保存原生错误中的路径或正文。只有本次明确收到 `thread/resume` 拒绝、尚未调用任务 `turn/start`，且 Run 仍是原 operation 的未绑定 dispatching 时，才可登记新的 `run.dispatchRejected` 失败并阻断 Session。恢复回执丢失、Turn 启动结果不明或绑定未保存仍保留 unknown，只沿原操作对账；不得用新代码、耗时或历史中暂缺 Turn 反推并改写旧 unknown。
+当前验证是 fake adapter 与专用 PostgreSQL 检查；尚无 Lead 对该策略的实际原生使用、发布或部署验收。历史 CLI 0.154.0 实验保留为当时证据，不代表当前默认或新权限实跑。真实模型／页面使用与消费者采用仍另行核验。
 
 owned Thread 由 evoLoop 排他派发；不能同时用其他原生客户端向同一 Thread 发送输入。数据库占用只协调本系统的写者，原生空闲检查不能阻止外部客户端在检查后抢先启动；当前协议可能将后到输入转入已有 Turn，未提供跨客户端的原子“仅空闲时启动”保证。外部 Desktop 聊天继续走人工转交。
 
@@ -197,7 +183,7 @@ owned Thread 由 evoLoop 排他派发；不能同时用其他原生客户端向�
 
 本轮扩展原 coordinator 与工作台，继续使用原项目、Task／Document ID、固定修订及既有链接。030 只回填可重建的观察元数据并建立变化索引，031／032 添加消息、具体分派和展示记录；不搬迁或重写旧正文、运行记录、Blob 和知识内容。已有任务没有具体分派时仍沿用原规则，有明确分派时才增加匹配检查。
 
-真实环境须按[停写备份与空目标恢复](../development/local-run.md#停写备份与空目标恢复)先备份 PostgreSQL、外部 Blob 和知识快照，再由维护者在同一入口协调迁移与前后端、CLI 升级。沿用原数据库和外部存储路径及身份配置；新消息执行默认关闭，另行核准权限配置与额度。新增迁移不提供自动降级；启动新版本前须确认迁移完成，恢复备份也必须在独立空目标核对，不能以回退源码撤销升级后产生的数据。
+真实环境须按[停写备份与空目标恢复](../development/local-run.md#停写备份与空目标恢复)先备份 PostgreSQL、外部 Blob 和知识快照，再由维护者在同一入口协调迁移与前后端、CLI 升级。沿用原数据库和外部存储路径及身份配置；新 Session 使用完整常规执行配置，sender/receiver 授权和预算仍逐项核对。迁移不改旧 profile 快照或历史 Run，也不依赖冷切；启动新版本前须确认迁移完成，恢复备份也必须在独立空目标核对，不能以回退源码撤销升级后产生的数据。
 
 ## 隔离实测与生产能力分开
 

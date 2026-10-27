@@ -772,19 +772,18 @@ test("restart dispatches a reserved Run with the original Session profile and ne
   } finally { await runner.stop(); }
 });
 
-test("registered Session restores its business profile after an ordinary message before the next Task Turn",async()=>{
-  const persisted={...session,sandbox:'workspace-write' as const};
+test("registered full Session keeps the same execution profile across conversations and Task Turns",async()=>{
+  const persisted={...session,sandbox:'danger-full-access' as const,approvalPolicy:'never' as const};
   const first:RuntimeRunRecord={...run,id:randomUUID(),state:'requested',nativeTurnId:null};
   const runs=[first];
-  let readOnly=false,resumes=0,unknown=0,canStart=true;
-  const runtime=Object.assign(new FakeRuntime(),{needsBusinessRestore:()=>readOnly});
+  let resumes=0,unknown=0,canStart=true;
+  const runtime=new FakeRuntime();
   runtime.resume=async(binding,profile)=>{
     assert.equal(profile.sandbox,persisted.sandbox);
     assert.equal(profile.approvalPolicy,persisted.approvalPolicy);
-    resumes++;readOnly=false;return binding;
+    resumes++;return binding;
   };
   runtime.startTurn=async()=>{
-    assert.equal(readOnly,false,'ordinary restrictions must be restored before dispatch');
     return{id:`task-turn-${++runtime.starts}`,status:'inProgress'};
   };
   runtime.listTurns=async()=>({data:runs.filter(r=>r.nativeTurnId).map(r=>
@@ -804,21 +803,19 @@ test("registered Session restores its business profile after an ordinary message
     await runner.start();
     assert.equal(runtime.starts,1);assert.equal(resumes,1);
     first.state='completed';
-    // The ordinary adapter retains this gate after its Turn settles, while the
-    // runner still remembers the original business Session registration.
-    readOnly=true;
+    // A completed conversation keeps the same full Session profile and registration.
     const next:RuntimeRunRecord={...run,id:randomUUID(),operationId:randomUUID(),state:'requested',nativeTurnId:null};
     runs.push(next);
     canStart=false;
     await runner.pump();
     assert.equal(runtime.starts,1);assert.equal(resumes,1,
-      'blocked gate must not restore the writable business profile');
+      'blocked Task must not start another Turn');
     canStart=true;
     await runner.pump();
     assert.equal(runtime.starts,2);
-    assert.equal(resumes,2);
+    assert.equal(resumes,1,'a conversation does not create a permission restore cycle');
     assert.equal(next.state,'running');
-    assert.equal(unknown,0,'a missing local restore must never create an unknown business start');
+    assert.equal(unknown,0,'normal profile reuse does not invent an unknown result');
   }finally{await runner.stop();}
 });
 
@@ -828,7 +825,7 @@ test("two runners with a positive gate hint restore and start only after the sin
   let release!:()=>void;
   const bothAtPermit=new Promise<void>(resolve=>{release=resolve;});
   const makeRuntime=()=>{
-    const native=Object.assign(new FakeRuntime(),{needsBusinessRestore:()=>true});
+    const native=new FakeRuntime();
     native.resume=async binding=>{events.push('resume');resumes++;return binding;};
     native.startTurn=async()=>{events.push('turn');starts++;return{id:'one-turn',status:'inProgress'};};
     native.listTurns=async()=>({data:[{id:'one-turn',status:'inProgress',completedAtUtc:null}],nextCursor:null});
@@ -1229,4 +1226,59 @@ test("native read rejection reports a read-specific error without private protoc
     });
     assert.equal(runtime.starts, 0);
   } finally { await runner.stop(); }
+});
+
+
+test("recovery cannot replace an owned child until close confirms its exit",async()=>{
+  class ExitRuntime extends FakeRuntime {
+    exitConfirmed=false;
+    async close(){if(!this.exitConfirmed)throw new Error("Owned child exit is unconfirmed");await super.close();}
+  }
+  const original=new ExitRuntime(),replacement=new FakeRuntime();let factories=0;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>{factories++;return factories===1?original:replacement;},
+    workflow:{} as WorkflowService,trusted,principals:[],canWrite:()=>true,
+    allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();original.disconnect("lost transport");
+    await assert.rejects(runner.recover(),/exit is unconfirmed/);
+    assert.equal(factories,1,"a second writer cannot be instantiated after a failed close");
+    assert.equal(replacement.isReady(),false);assert.equal(runner.nativeStartsAvailable(),false);
+    original.exitConfirmed=true;
+    await runner.recover();assert.equal(factories,2);assert.equal(replacement.isReady(),true);
+  }finally{original.exitConfirmed=true;await runner.stop();}
+});
+
+test("a versioned full profile activates on the original idle Thread without manufacturing a Task Run",async()=>{
+  const oldRevisionId=randomUUID(),revisionId=randomUUID(),operationId=randomUUID();
+  const previous={projectId,sessionId:session.id,revisionId:oldRevisionId,version:1,model:"gpt-6-sol",
+    sandbox:"read-only" as const,approvalPolicy:"on-request" as const,cwd:session.cwd,
+    authorizationScope:session.authorizationScope,provenance:"legacy_session_identity" as const,
+    previousRevisionId:null,operationId:randomUUID(),actorId,reason:"historical profile",evidenceRef:null,
+    createdAt:new Date().toISOString()};
+  const revision={...previous,revisionId,version:2,previousRevisionId:oldRevisionId,operationId,
+    sandbox:"danger-full-access" as const,approvalPolicy:"never" as const,provenance:"revised" as const};
+  const target:RuntimeSessionRecord={...session,model:revision.model,sandbox:revision.sandbox,approvalPolicy:revision.approvalPolicy,
+    executionProfile:{revision,activeRevisionId:oldRevisionId,activationState:"pending",activationOperationId:null,
+      attemptedAt:null,activationEvidence:null}};
+  let activations=0,permits=0;
+  const runtime=Object.assign(new FakeRuntime(),{
+    activateExecutionProfile:async(current:RuntimeBinding,spec:RuntimeSessionSpec)=>{
+      activations++;assert.equal(current.nativeThreadId,target.nativeThreadId);
+      assert.equal(current.resumeProfile?.sandbox,"read-only");assert.equal(spec.sandbox,"danger-full-access");
+      assert.equal(spec.approvalPolicy,"never");return {...current,resumeProfile:{...current.resumeProfile!,
+        sandbox:spec.sandbox,approvalPolicy:spec.approvalPolicy,executionProfileRevisionId:revisionId}};
+    },inspectExecutionProfileActivation:async()=>null});
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[target],listRuntimeRuns:async()=>[]} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),getExecutionProfileRevision:async()=>previous,
+    beginExecutionProfileActivation:async()=>{permits++;return true;},
+    settleExecutionProfileActivation:async(_p:string,_s:string,id:string,state:"active")=>{
+      assert.equal(id,revisionId);target.executionProfile!.activationState=state;target.executionProfile!.activeRevisionId=id;}} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime,workflow,trusted,
+    principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{await runner.start();await runner.pump();assert.equal(permits,1);assert.equal(activations,1);
+    assert.equal(target.executionProfile?.activationState,"active");assert.equal(runtime.starts,0);assert.equal(runtime.creates,0);
+    assert.equal(target.nativeThreadId,session.nativeThreadId);
+  }finally{await runner.stop();}
 });

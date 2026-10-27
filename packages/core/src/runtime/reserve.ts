@@ -59,6 +59,8 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     return { result: applied(command.operationId, run.id, run.version + 1), effects: [{ kind: "runtime.run.interruptRequested", entityId: run.id, version: run.version + 1 }] };
   }
   if (command.type === "runtime.session.reserve") {
+    if (command.sandbox !== "danger-full-access" || command.approvalPolicy !== "never")
+      throw new DomainError("FULL_EXECUTION_REQUIRED", "New Sessions require the full execution profile");
     if (await tx.getRuntimeSession(command.sessionId)) throw new DomainError("ALREADY_EXISTS", "runtime session exists");
     if (command.cwd.split("/").some((segment, index) => index > 0 && (segment === "" || segment === "." || segment === ".."))) {
       throw new DomainError("INVALID_CWD", "runtime cwd must be a normalized absolute path");
@@ -95,6 +97,8 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
 
   const session = required(await tx.getRuntimeSession(command.sessionId), "runtime session");
   if (session.state !== "ready" || !session.nativeThreadId) throw new DomainError("SESSION_NOT_READY", "only a bound project-owned session can run");
+  if (session.sandbox !== "danger-full-access" || session.approvalPolicy !== "never")
+    throw new DomainError("FULL_EXECUTION_REQUIRED", "Upgrade the Session execution profile before starting new work");
   await tx.recovery?.assertStartupAllowed(session.id,'run',command.runId);
   const task = required(await tx.getTask(command.taskId), "task");
   await requireAssignedSession(tx, task, command.sessionId, !!queueClaim);

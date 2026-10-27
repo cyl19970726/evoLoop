@@ -17,7 +17,7 @@ const operationId = randomUUID();
 const token = "r".repeat(40);
 const cwd = process.cwd();
 const grant = { projectId, actorId: "reviewer", roleId: "temporary-role", authorizationScope: "task:bounded",
-  cwd, sandbox: "read-only" as const };
+  cwd, sandbox: "danger-full-access" as const, approvalPolicy: "never" as const };
 const credentials = [
   { token, actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] as const },
   { token: "w".repeat(40), actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] as const },
@@ -25,14 +25,14 @@ const credentials = [
 const headers = { authorization: `Bearer ${token}` };
 const command = { type: "runtime.session.reserve", projectId, operationId, sessionId,
   roleId: grant.roleId, authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox,
-  approvalPolicy: "on-request" };
+  approvalPolicy: "never" };
 
-test("runtime protocol version defaults to the reviewed 0.154 schema and accepts only explicit 0.164", async () => {
+test("runtime protocol version defaults to the reviewed 0.164 schema and preserves explicit legacy configuration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "evoloop-runtime-version-"));
   const file = join(directory, "integrations.json");
   try {
     await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[]}}));
-    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.154.0");
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.164.0-alpha.11.1");
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.164.0-alpha.11.1",grants:[]}}));
     assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.164.0-alpha.11.1");
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.165.0",grants:[]}}));
@@ -109,7 +109,7 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
       const changedScope = await app.inject({ method: "POST", url: "/api/commands", headers, payload: { ...command, authorizationScope: "all" } });
       assert.equal(changedScope.statusCode, 403);
       const changedSandbox = await app.inject({ method: "POST", url: "/api/commands", headers, payload: { ...command, sandbox: "workspace-write" } });
-      assert.equal(changedSandbox.statusCode, 403);
+      assert.equal(changedSandbox.statusCode, 400);
       assert.equal(calls, 0);
       const allowed = await app.inject({ method: "POST", url: "/api/commands", headers, payload: command });
       assert.equal(allowed.statusCode, 200, allowed.body);
@@ -396,4 +396,20 @@ test("closed Session keeps its Run metadata readable but denies trace through HT
     assert.equal(trace.statusCode, 403, trace.body);
     assert.equal(nativeReads, 0);
   } finally { await app.close(); }
+});
+
+
+test("current grants default to full execution while legacy missing fields retain their original limits",async()=>{
+  const directory=await mkdtemp(join(tmpdir(),"evoloop-full-defaults-")),file=join(directory,"integrations.json");
+  const {sandbox:_sandbox,approvalPolicy:_approval,...identity}=grant;
+  const load=async (value:unknown)=>{await writeFile(file,JSON.stringify({runtime:{enabled:true,grants:[value]}}));return loadIntegrations(file);};
+  try{
+    const current=(await load(identity)).runtime!.grants[0]!;
+    assert.equal(current.sandbox,"danger-full-access");assert.equal(current.approvalPolicy,"never");assert.equal(current.networkAccess,true);
+    const legacy=(await load({...identity,sandbox:"workspace-write"})).runtime!.grants[0]!;
+    assert.equal(legacy.approvalPolicy,"on-request");assert.equal(legacy.networkAccess,false);
+    for(const invalid of [{...identity,sandbox:"danger-full-access",networkAccess:false},
+      {...identity,sandbox:"danger-full-access",approvalPolicy:"on-request"}])
+      await assert.rejects(load(invalid),/Invalid integration configuration/);
+  }finally{await rm(directory,{recursive:true,force:true});}
 });

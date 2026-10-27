@@ -76,7 +76,7 @@ test("session close intent and verification survive PostgreSQL readback without 
   await uow.transaction(p.id, async tx => {
     await tx.insertProject(p);
     await tx.insertRuntimeSession({ projectId: p.id, id: sessionId, roleId: "operator", cwd: "/tmp/owned",
-      authorizationScope: "project", model: null, sandbox: "read-only", approvalPolicy: "on-request",
+      authorizationScope: "project", model: null, sandbox: "danger-full-access", approvalPolicy: "never",
       state: "ready", version: 1, nativeThreadId: "native-owned", nativeSessionId: "native-session",
       operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
   });

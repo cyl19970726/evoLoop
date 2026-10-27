@@ -95,7 +95,7 @@ test("PG method records a choice, then permits only its original todo Task throu
   await issue(owner,{type:"dispatch.start",dispatchId:parent.entityId,claimToken:token});
   const sessionId=randomUUID(),runId=randomUUID();
   await wf({type:"runtime.session.reserve",sessionId,roleId:cognition,cwd:join(tmpdir(),"method-fixture"),
-    authorizationScope:"cognition-scope",model:"fixture-model",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:"cognition-scope",model:"fixture-model",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,
     roleId:cognition,cwd:join(tmpdir(),"method-fixture"),authorizationScope:"cognition-scope",
@@ -241,7 +241,7 @@ test("PG method records a choice, then permits only its original todo Task throu
   await wf({type:"task.start",taskId:firstTaskId,expectedVersion:2,reason:"Start fixed method Task"});
   const childSession=randomUUID(),childRun=randomUUID(),childInput="Execute the fixed method Task";
   await wf({type:"runtime.session.reserve",sessionId:childSession,roleId:business,cwd:join(tmpdir(),"method-fixture"),
-    authorizationScope:"business-scope",model:"fixture-model",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:"business-scope",model:"fixture-model",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,childSession);
   await runtime.bindSession(projectId,childSession,{owner:"evoloop-codex-app-server",projectId,sessionId:childSession,
     roleId:business,cwd:join(tmpdir(),"method-fixture"),authorizationScope:"business-scope",
@@ -319,7 +319,7 @@ test("PG final cognition decision prevents a late method child before budget or 
   await issue({type:"dispatch.start",dispatchId:parent.entityId,claimToken});
   const sessionId=randomUUID(),runId=randomUUID(),cwd=join(tmpdir(),"method-late-fixture");
   await wf({type:"runtime.session.reserve",sessionId,roleId:cognition,cwd,authorizationScope:"cognition-scope",
-    model:"fixture-model",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture-model",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,
     roleId:cognition,cwd,authorizationScope:"cognition-scope",nativeThreadId:`fixture-${sessionId}`,

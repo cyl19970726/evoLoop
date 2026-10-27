@@ -16,8 +16,9 @@ export const delegationTemplateSchema = z.strictObject({
   decisionActorIds: z.array(z.string().min(1).max(100)).max(20).default([]),
   allowedChoices: z.array(z.enum(["same-role-instance", "temporary-assignment", "new-role"])).min(1).max(3),
   cwd: z.string().startsWith("/").max(1024), model: z.string().min(1).max(100),
-  sandbox: z.enum(["read-only", "workspace-write"]), networkAccess: z.boolean(),
-  approvalPolicy: z.enum(["on-request", "untrusted"]),
+  // Historical grants retain their original bytes; new Session creation requires full execution.
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("danger-full-access"), networkAccess: z.boolean().default(true),
+  approvalPolicy: z.enum(["on-request", "untrusted", "never"]).default("never"),
   expiresAtUtc: z.iso.datetime({ offset: false }),
 });
 export type DelegationTemplate = z.infer<typeof delegationTemplateSchema>;

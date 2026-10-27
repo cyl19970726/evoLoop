@@ -64,7 +64,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     existingRoleIds:[roleId],cognitionRoleIds:[],newRoleAllocation:null,firstTaskId,
     actorId:controller,authorizationScopeId:"division-scope",decisionActorIds:[researcher],
     allowedChoices:["temporary-assignment"],cwd:"/tmp/evoloop-division-closure-fixture",model:"fixture",
-    sandbox:"read-only",networkAccess:false,approvalPolicy:"on-request",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
+    sandbox:"danger-full-access",networkAccess:true,approvalPolicy:"never",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
   const templateHash=hash(JSON.stringify(template));
   let scope:{projectId:string;loopId:string;taskId:string;runId:string;roleId:string;kind:string}|null=null;
   const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash,
@@ -131,7 +131,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1 AND domain_id IS NOT NULL",[pid])).rows[0].n,0);
   const cognitiveSession=randomUUID(),cognitiveRun=randomUUID(),cwd=template.cwd;
   await applied(researcher,{type:"runtime.session.reserve",sessionId:cognitiveSession,roleId:cognitiveRole,cwd,
-    authorizationScope:"cognition-scope",model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:"cognition-scope",model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(pid,cognitiveSession);
   await bindOwned(cognitiveSession,cognitiveRole,cwd,"cognition-scope");
   await applied(researcher,{type:"runtime.run.reserve",runId:cognitiveRun,taskId:parentTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Choose"});
@@ -186,7 +186,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   await applied(controller,{type:"task.start",taskId:firstTaskId,expectedVersion:2,reason:"Start receiving work"});
   const sessionId=randomUUID(),runId=randomUUID();
   await applied(controller,{type:"runtime.session.reserve",sessionId,roleId,cwd,authorizationScope:"division-scope",
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(pid,sessionId);
   await bindOwned(sessionId,roleId,cwd,"division-scope");
   const receivingRun=await applied(controller,{type:"runtime.run.reserve",runId,taskId:firstTaskId,sessionId,expectedVersion:3,input:"Receive"});

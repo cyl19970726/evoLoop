@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadIntegrations } from "../src/configuration.ts";
 
-test("ordinary message grants have independent bounds, actual receiver identity and fail-closed qualification", async () => {
+test("ordinary message grants have independent bounds, actual receiver identity without an obsolete readonly switch", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-message-config-"));
   const path = join(dir, "integrations.json");
   const grant = { projectId: "00000000-0000-4000-8000-000000000001", sessionId: "00000000-0000-4000-8000-000000000002",
@@ -13,7 +13,7 @@ test("ordinary message grants have independent bounds, actual receiver identity 
   try {
     await writeFile(path, JSON.stringify({ sessionMessages: { enabled: true, grants: [grant] } }));
     const config = await loadIntegrations(path);
-    assert.equal(config.sessionMessages?.readOnlyProtocolVerified, false);
+    assert.equal(config.sessionMessages?.readOnlyProtocolVerified, undefined);
     assert.equal(config.sessionMessages?.grants[0]?.maxTurns, 2);
     assert.equal(config.residentQueue, undefined);
     await writeFile(path, JSON.stringify({ sessionMessages: { enabled: true, grants: [{ ...grant, maxTurns: 0 }] } }));

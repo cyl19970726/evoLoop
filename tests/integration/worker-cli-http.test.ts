@@ -144,7 +144,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await orchestrate({type:"dispatch.start",dispatchId:dispatch.entityId,claimToken});
   const sessionId=randomUUID(),runId=randomUUID(),input="Read fixed source and choose one next action";
   await issue({type:"runtime.session.reserve",sessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:cognitiveRole,
     cwd:directory,authorizationScope:cognitiveScope,nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});
@@ -258,7 +258,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:childDispatch.entityId,claimToken:businessClaim});
   await issue({type:"runtime.session.reserve",sessionId:businessSessionId,roleId:businessRole,cwd:directory,authorizationScope:businessScope,
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,businessSessionId);
   await runtime.bindSession(projectId,businessSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:businessSessionId,
     roleId:businessRole,cwd:directory,authorizationScope:businessScope,nativeThreadId:`fixture-${businessSessionId}`,
@@ -327,7 +327,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:observationDispatch.entityId,claimToken:observationClaim});
   await issue({type:"runtime.session.reserve",sessionId:observationSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,observationSessionId);
   await runtime.bindSession(projectId,observationSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:observationSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -396,7 +396,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:continuationDispatch.entityId,claimToken:continuationClaim});
   await issue({type:"runtime.session.reserve",sessionId:continuationSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,continuationSessionId);
   await runtime.bindSession(projectId,continuationSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:continuationSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -477,7 +477,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:newGoalDispatch.entityId,claimToken:newGoalClaim});
   await issue({type:"runtime.session.reserve",sessionId:newGoalSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,newGoalSessionId);
   await runtime.bindSession(projectId,newGoalSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:newGoalSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -570,7 +570,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:secondDispatch.entityId,claimToken:secondClaim});
   await issue({type:"runtime.session.reserve",sessionId:secondSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
-    model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,secondSessionId);
   await runtime.bindSession(projectId,secondSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:secondSessionId,
     roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,nativeThreadId:`fixture-${secondSessionId}`,nativeSessionId:`fixture-${secondSessionId}`});
@@ -679,7 +679,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:observedDispatch.entityId,claimToken:observedClaim});
   await issue({type:"runtime.session.reserve",sessionId:observedSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,observedSessionId);
   await runtime.bindSession(projectId,observedSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:observedSessionId,
     roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -717,7 +717,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:unrelatedDispatch.entityId,claimToken:cognitionSourceClaim});
   await issue({type:"runtime.session.reserve",sessionId:cognitionSourceSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,cognitionSourceSessionId);
   await runtime.bindSession(projectId,cognitionSourceSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:cognitionSourceSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -764,7 +764,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:observationRecoveryDispatch.entityId,claimToken:gapJudgementClaim});
   await issue({type:"runtime.session.reserve",sessionId:gapJudgementSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,gapJudgementSessionId);
   await runtime.bindSession(projectId,gapJudgementSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:gapJudgementSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -798,7 +798,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(wrapper,["read","goal",randomUUID()],1)).error?.code,"FORBIDDEN");
   assert.equal((await cli(wrapper,["get",`/api/projects/${projectId}/runtime`],1)).error?.code,"FORBIDDEN");
   assert.equal((await workerCommand(wrapper,{type:"runtime.session.reserve",sessionId:randomUUID(),roleId:cognitiveRole,
-    cwd:directory,authorizationScope:cognitiveScope,sandbox:"read-only",approvalPolicy:"on-request"},1)).error?.code,"FORBIDDEN");
+    cwd:directory,authorizationScope:cognitiveScope,sandbox:"danger-full-access",approvalPolicy:"never"},1)).error?.code,"FORBIDDEN");
   assert.ok(run.revisionId);
 
   // A fresh loop receives a verified terminal intent gap after the original Task moved to another Goal.
@@ -822,7 +822,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await orchestrate({type:"dispatch.start",dispatchId:original.entityId,claimToken:gapClaim});
   await issue({type:"task.start",taskId:gapTaskId,expectedVersion:1,reason:"Managed start after dispatch request"});
   await issue({type:"runtime.session.reserve",sessionId:gapSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,gapSessionId);
   await runtime.bindSession(projectId,gapSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:gapSessionId,
     roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -867,7 +867,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
   await issue({type:"runtime.session.reserve",sessionId:recoverySessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,recoverySessionId);
   await runtime.bindSession(projectId,recoverySessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:recoverySessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -958,7 +958,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await orchestrate({type:"dispatch.start",dispatchId:unresolved.entityId,claimToken:unknownClaim});
   await issue({type:"task.start",taskId:unknownTaskId,expectedVersion:3,reason:"Prepare unresolved Run"});
   await issue({type:"runtime.session.reserve",sessionId:unknownSessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,unknownSessionId);
   await runtime.bindSession(projectId,unknownSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:unknownSessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,
@@ -1034,7 +1034,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await orchestrate({type:"dispatch.start",dispatchId:referenceDispatch.entityId,claimToken:referenceClaim});
   await issue({type:"runtime.session.reserve",sessionId:referenceRecoverySessionId,roleId:cognitiveRole,cwd:directory,
-    authorizationScope:cognitiveScope,model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:cognitiveScope,model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,referenceRecoverySessionId);
   await runtime.bindSession(projectId,referenceRecoverySessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:referenceRecoverySessionId,roleId:cognitiveRole,cwd:directory,authorizationScope:cognitiveScope,

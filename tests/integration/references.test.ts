@@ -112,7 +112,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
       [projectId,taskId,newRev,runBasisId]);
     await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,'researcher','/fixture','task','read-only','on-request','ready',1,$3,$4,$5,'reviewer',now(),now())`,
+      VALUES($1,$2,'researcher','/fixture','task','danger-full-access','never','ready',1,$3,$4,$5,'reviewer',now(),now())`,
       [projectId,sessionId,randomUUID(),randomUUID(),randomUUID()]);
     await client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
       input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
@@ -137,7 +137,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
       [projectId,taskId,consumerRev,readerBasisId]);
     await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,'researcher','/fixture','task','read-only','on-request','ready',1,$3,$4,$5,'reviewer',now(),now())`,
+      VALUES($1,$2,'researcher','/fixture','task','danger-full-access','never','ready',1,$3,$4,$5,'reviewer',now(),now())`,
       [projectId,readerSessionId,randomUUID(),randomUUID(),randomUUID()]);
     await client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
       input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
@@ -306,7 +306,7 @@ test("CLI Run-reference request crosses HTTP review and persists a fixed consume
       await client.query("INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at) VALUES($1,$2,$3,1,'Task','Review','reviewer','todo',null,$4,$5,null,'reviewer','fixture',now())",[projectId,taskId,rev,doc,docRev]);
     }
     await client.query("INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed) VALUES($1,$2,$3,$4,true)",[projectId,sourceTaskId,sourceRev,basisId]);
-    await client.query("INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at) VALUES($1,$2,'researcher','/fixture','task','read-only','on-request','ready',1,$3,$4,$5,'reviewer',now(),now())",[projectId,sessionId,randomUUID(),randomUUID(),randomUUID()]);
+    await client.query("INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at) VALUES($1,$2,'researcher','/fixture','task','danger-full-access','never','ready',1,$3,$4,$5,'reviewer',now(),now())",[projectId,sessionId,randomUUID(),randomUUID(),randomUUID()]);
     await client.query("INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'synthetic test input',$8,'completed',1,$9,'reviewer',now(),now())",[projectId,runId,sourceTaskId,sourceRev,basisId,sessionId,randomUUID(),inputHash,randomUUID()]);
     await client.query("COMMIT");
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}

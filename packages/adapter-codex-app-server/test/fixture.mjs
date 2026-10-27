@@ -10,45 +10,31 @@ let toolId = 801;
 let pendingCreateId = null;
 let turnListReads = 0;
 let archived = mode === "already-archived";
-let transitionResumes = 0;
-let ordinaryResumed = false;
-let loadedBusinessResume = false;
-let genericMessageBusinessResumed = false;
 let turnStarts = 0;
-let configReads = 0;
-let requirementsReads = 0;
-let threadReads = 0;
 let observedResumes = 0;
 let lastTurnModel = null;
-let loadedBusinessInput = null;
-const purposeRequests = () => [
-  {id:900,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}},
-  {id:901,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",namespace:"business",tool:"browser_snapshot",arguments:{}}},
-  {id:902,method:"item/commandExecution/requestApproval",params:{threadId:thread.id,turnId:"turn-1",command:"echo forbidden"}},
-  {id:903,method:"applyPatchApproval",params:{conversationId:thread.id,callId:"patch-1"}},
-  {id:904,method:"mcpServer/elicitation/request",params:{threadId:thread.id}},
-  {id:905,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}},
-];
-const earlyPurposeDecisions = [];
+const sequenceInputs = [];
+let unloaded = mode.startsWith('full-unloaded');
 for await (const line of lines) {
   const message = JSON.parse(line);
-  if (mode === "message-purpose-callbacks" && Number.isInteger(message.id) && message.id >= 900 && message.id <= 915 && !message.method) {
-    if (message.id < 910) earlyPurposeDecisions.push({requestId:message.id,result:message.result??null,error:message.error??null});
-    send({method:"fixture/purposeDecision",params:{threadId:thread.id,requestId:message.id,
-      ...(message.result?{result:message.result}:{}),...(message.error?{error:message.error}:{})}});
+  if (message.method === "initialized") {
+    initialized = true;
+    if(mode==='stdout-eof-live'){
+      process.on('SIGTERM',()=>{});
+      process.stdout.end();
+    }
     continue;
   }
-  if (message.method === "initialized") { initialized = true; continue; }
   if (message.id === approvalId && pendingCreateId !== null) {
     const expected = mode === "prebind-unsupported" ? message.error?.code === -32000 : message.result?.decision === "decline";
     if (!expected) { process.exit(2); }
-    send({ id: pendingCreateId, result: { thread } });
+    send({ id: pendingCreateId, result: { thread:{...thread,model:"gpt-6-sol"},model:"gpt-6-sol",modelProvider:"openai",cwd:thread.cwd,approvalPolicy:"never",sandbox:{type:"dangerFullAccess"} } });
     pendingCreateId = null;
     continue;
   }
   if (message.id === approvalId) { send({ method: "fixture/approvalDecision", params: { threadId: thread.id, decision: message.result?.decision ?? null } }); continue; }
   if (message.id === toolId || message.id === toolId+1 ||
-    (mode === "dynamic-cold-resume" && message.id >= toolId+2 && message.id <= toolId+5)) {
+    (mode === "dynamic-persisted-resume" && message.id >= toolId+2 && message.id <= toolId+5)) {
     send({method:"fixture/toolDecision",params:{threadId:thread.id,turnId:"turn-1",requestId:message.id,result:message.result}});
     if (mode==="dynamic-replay" && message.id===toolId) send({id:toolId+1,method:"item/tool/call",params:{threadId:thread.id,turnId:"turn-1",callId:"call-1",tool:"browser_snapshot",arguments:{}}});
     continue;
@@ -60,100 +46,11 @@ for await (const line of lines) {
   }
   const { id, method, params } = message;
   if (method === "initialize") {
-    if ((mode.startsWith("dynamic") || mode.startsWith("message-profile") || mode.startsWith("message-0164") || mode === "message-purpose-callbacks") && params.capabilities?.experimentalApi !== true) process.exit(2);
-    if (!mode.startsWith("dynamic") && !mode.startsWith("message-profile") && !mode.startsWith("message-0164") && mode !== "message-purpose-callbacks" && params.capabilities?.experimentalApi === true) process.exit(2);
-    if (mode === "message-purpose-callbacks") for (const request of purposeRequests()) send(request);
+    if ((mode.startsWith("dynamic") || mode==='full-dynamic') && params.capabilities?.experimentalApi !== true) process.exit(2);
+    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && params.capabilities?.experimentalApi === true) process.exit(2);
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
-  if (method === "config/read") {
-    const disabled = {enabled:false,destructive_enabled:false,open_world_enabled:false};
-    configReads++;
-    const features=Object.fromEntries(['apps','plugins','recommended_plugins','remote_plugin','plugin_sharing',
-      'enable_mcp_apps','browser_use','browser_use_external','computer_use','multi_agent','multi_agent_v2',
-      'tool_suggest','in_app_browser','in_app_local_automation'].map(key=>[key,false]));
-    const appDefault=mode==='message-profile-apps-enabled'||(mode==='message-profile-drift'&&configReads>1)?
-      {...disabled,enabled:true}:disabled;
-    const appOverride=mode==='message-profile-app-override'?{'write-app':{enabled:true}}:{};
-    const filesystem=mode==='message-profile-broad'?{'/tmp/evoloop-fixture':'read',':root':'read'}:{'/tmp/evoloop-fixture':'read'};
-    const is0164Message=mode.startsWith('message-0164');
-    if(is0164Message&&params.includeLayers!==true)process.exit(2);
-    if(is0164Message&&(mode==='message-0164-apps-feature-enabled'||
-      (mode==='message-0164-post-resume-drift'&&configReads>2)))features.apps=true;
-    if(is0164Message&&mode==='message-0164-plugins-feature-enabled')features.plugins=true;
-    const mcpServers=is0164Message?{'fixture-disabled':{command:'fixture-mcp',enabled:mode==='message-0164-mcp-enabled'}}:
-      mode==='message-profile-disabled-mcp'?{'fixture-disabled':{command:'fixture-mcp',enabled:false}}:{};
-    const plugins=is0164Message?{_default:{enabled:mode==='message-0164-plugin-default-enabled'},
-      'fixture-plugin':{enabled:mode==='message-0164-plugin-enabled'}}:{};
-    const origins={};
-    if(is0164Message){
-      for(const path of ['apps._default.enabled','features.apps','features.plugins','plugins._default.enabled'])
-        origins[path]={name:{type:'sessionFlags'},version:'fixture-session-flags'};
-      if(mode!=='message-0164-mcp-missing-origin')
-        origins['mcp_servers.fixture-disabled.enabled']={name:{type:'sessionFlags'},version:'fixture-session-flags'};
-      origins['plugins.fixture-plugin.enabled']={name:{type:'sessionFlags'},version:'fixture-session-flags'};
-    }
-    const layers=is0164Message?[
-      {name:{type:'sessionFlags'},version:'fixture-session-flags',config:{
-        mcp_servers:{'fixture-disabled':{enabled:false}},apps:{_default:disabled},
-        features:{apps:false,plugins:false},plugins:{_default:{enabled:false},'fixture-plugin':{enabled:false}}}},
-      {name:{type:'user',file:'/tmp/fixture-config.toml',profile:null},version:'fixture-user',config:{}},
-      ...(mode==='message-0164-managed-layer'?[{name:{type:'enterpriseManaged',id:'fixture',name:'managed'},version:'fixture-managed',config:{}}]:[]),
-    ]:undefined;
-    send({id,result:{config:{apps:{_default:appDefault,...appOverride},
-      features,web_search:'disabled',tools:{web_search:null},browser_use:null,computer_use:null,
-      orchestrator:{mcp:{enabled:false},skills:{enabled:false}},
-      mcp_servers:mcpServers,plugins,permissions:{evoloop_message_read:{filesystem,network:{enabled:false}}}},
-      origins,...(layers?{layers}:{})}});continue;
-  }
-  if(method==='config/requirements/read'&&mode.startsWith('message-0164')){
-    requirementsReads++;
-    if(mode==='message-0164-requirements-read-error'){
-      send({id,error:{code:-32000,message:'fixture requirements unavailable'}});continue;
-    }
-    if(mode==='message-0164-requirements-missing-shape'){
-      send({id,result:{supportsIndependentSpeedModes:null}});continue;
-    }
-    let requirements=null;
-    if(mode==='message-0164-requirement-apps-true')requirements={featureRequirements:{apps:true}};
-    if(mode==='message-0164-requirement-plugins-true')requirements={featureRequirements:{plugins:true}};
-    if(mode==='message-0164-requirement-sensitive-true')requirements={featureRequirements:{browser_use:true}};
-    if(mode==='message-0164-requirement-unknown-true')requirements={featureRequirements:{future_tool_surface:true}};
-    if(mode==='message-0164-requirement-bad-feature-map')requirements={featureRequirements:'not-a-map'};
-    if(mode==='message-0164-requirement-false-only')requirements={featureRequirements:{apps:false,plugins:false,browser_use:false}};
-    if(mode==='message-0164-requirements-post-resume-drift'&&requirementsReads>2)
-      requirements={featureRequirements:{apps:false}};
-    if(mode==='message-0164-requirements-post-resume-true'&&requirementsReads>2)
-      requirements={featureRequirements:{future_tool_surface:true}};
-    send({id,result:{requirements,supportsIndependentSpeedModes:null}});continue;
-  }
-  if (method === "mcpServerStatus/list") {
-    if(mode.startsWith('message-0164')){
-      if(params.detail!=='full'||params.limit!==100)process.exit(2);
-      const status={name:'fixture-disabled',runtimeStatus:'disabled',pluginId:null,authStatus:'unsupported',
-        tools:{},toolsError:null,resources:[],resourceTemplates:[]};
-      if(mode==='message-0164-inventory-enabled')status.runtimeStatus='connected';
-      if(mode==='message-0164-inventory-auth-unknown')status.authStatus='unknown';
-      if(mode==='message-0164-inventory-tools-error')status.toolsError={message:'fixture error'};
-      if(mode==='message-0164-inventory-tools')status.tools={write:{name:'write'}};
-      if(mode==='message-0164-inventory-new-id')status.name='unconfigured-server';
-      if(mode==='message-0164-inventory-missing'){
-        send({id,result:{data:[],nextCursor:null}});continue;
-      }
-      if(mode==='message-0164-inventory-no-cursor'){
-        send({id,result:{data:[status]}});continue;
-      }
-      if(mode==='message-0164-inventory-page-loop'){
-        send({id,result:{data:params.cursor?[status]:[],nextCursor:'repeated'}});continue;
-      }
-      if(mode==='message-0164-inventory-paged'){
-        if(!params.cursor){send({id,result:{data:[],nextCursor:'page-2'}});continue;}
-        send({id,result:{data:[status],nextCursor:null}});continue;
-      }
-      send({id,result:{data:[status],nextCursor:null}});continue;
-    }
-    send({id,result:{data:mode==='message-profile-mcp'?[{name:'write-capable',tools:{write:{name:'write',inputSchema:{}}}}]:[],nextCursor:null}});continue;
-  }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
   if (mode === "timeout" && method === "turn/start") continue;
@@ -166,38 +63,22 @@ for await (const line of lines) {
         params: { threadId: thread.id, command: "echo fixture" } });
       continue;
     }
-    send({ id, result: { thread } }); continue;
+    if(params.sandbox==='danger-full-access'){
+      const nativeThread={...thread,model:params.model??'gpt-6-sol'};
+      send({id,result:{thread:nativeThread,model:nativeThread.model,modelProvider:'openai',cwd:thread.cwd,
+        approvalPolicy:params.approvalPolicy,
+        sandbox:mode==='full-start-wrong'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}}});continue;
+    }
+    send({id,error:{code:-32602,message:"new fixture Session requires full policy"}});continue;
   }
-  if (method === "thread/resume" && mode === "dynamic-cold-resume") {
+  if (method === "thread/resume" && mode === "dynamic-persisted-resume") {
     if (params.dynamicTools !== undefined) {send({id,error:{code:-32602,message:"resume must not redeclare native tools"}});continue;}
-    observedResumes++;
   }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
-  if(method==='thread/resume'&&mode.startsWith('message-0164')){
-    if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.model!=='gpt-6-sol'||
-      params.permissions!=='evoloop_message_read'||params.approvalPolicy!=='never'||
-      params.sandbox!==undefined||params.config!==undefined||params.excludeTurns!==true){
-      send({id,error:{code:-32602,message:'ordinary cold resume request was not exact'}});continue;
-    }
-    const ordinaryThread={...thread,model:'gpt-6-sol',status:{type:'idle',activeFlags:[]}};
-    observedResumes++;
-    const response={thread:ordinaryThread,model:'gpt-6-sol',modelProvider:'openai',cwd:thread.cwd,
-      approvalPolicy:'never',sandbox:{type:'readOnly',networkAccess:false},
-      activePermissionProfile:{id:'evoloop_message_read',extends:null}};
-    if(mode==='message-0164-resume-wrong-thread')response.thread={...ordinaryThread,id:'other-thread'};
-    if(mode==='message-0164-resume-wrong-session')response.thread={...ordinaryThread,sessionId:'other-session'};
-    if(mode==='message-0164-resume-wrong-profile')response.activePermissionProfile={id:'other',extends:null};
-    if(mode==='message-0164-resume-wrong-network')response.sandbox.networkAccess=true;
-    if(mode==='message-0164-resume-wrong-approval')response.approvalPolicy='on-request';
-    if(mode==='message-0164-resume-wrong-model')response.model='other-model';
-    if(mode==='message-0164-resume-wrong-cwd')response.cwd='/tmp/other-cwd';
-    send({id,result:response});continue;
-  }
   if (method === "thread/resume" && mode.startsWith("profile-transition")) {
     observedResumes++;
     if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.model!=="new-model"||
-      params.sandbox!=="workspace-write"||params.approvalPolicy!=="on-request"||
-      params.config?.["sandbox_workspace_write.network_access"]!==false){
+      params.sandbox!=="danger-full-access"||params.approvalPolicy!=="never"){
       send({id,error:{code:-32602,message:"profile transition was not exact"}});continue;
     }
     thread.model=params.model;
@@ -205,61 +86,25 @@ for await (const line of lines) {
     send({id,result:{thread:{...thread,status:{type:"idle",activeFlags:[]}},
       model:mode==="profile-transition-wrong-model"?"old-model":params.model,
       modelProvider:"openai",cwd:thread.cwd,approvalPolicy:params.approvalPolicy,
-      sandbox:{type:"workspaceWrite",writableRoots:mode==="profile-transition-broad"?["/private"]:[],
-        networkAccess:false}}});continue;
+      sandbox:{type:mode==="profile-transition-wrong-policy"?"readOnly":"dangerFullAccess"}}});continue;
   }
-  if (method === "thread/resume" && mode === "resume-profile") {
-    if (params.threadId !== thread.id || params.cwd !== thread.cwd || params.model !== "gpt-6-astra" ||
-      params.sandbox !== "workspace-write" || params.approvalPolicy !== "on-request" ||
-      params.config?.["sandbox_workspace_write.network_access"] !== true || params.excludeTurns !== true) {
-      send({ id, error: { code: -32602, message: "resume lost the authorized profile" } }); continue;
-    }
-  }
-  if (method === "thread/resume" && mode === "resume-network-transition") {
-    const expected = transitionResumes++ === 0;
-    if (params.threadId !== thread.id || params.cwd !== thread.cwd || params.model !== "gpt-6-astra" ||
-      params.sandbox !== "workspace-write" || params.approvalPolicy !== "on-request" ||
-      params.config?.["sandbox_workspace_write.network_access"] !== expected || params.excludeTurns !== true) {
-      send({id,error:{code:-32602,message:"resume did not apply current network profile"}}); continue;
-    }
-  }
-  if (method === "thread/resume" && mode.startsWith("message-profile-loaded")) {
+  if(method==='thread/resume'&&params.sandbox==='danger-full-access'){
     observedResumes++;
-    const originalSandbox=mode.includes("workspace")?"workspace-write":"read-only";
-    if (params.permissions === "evoloop_message_read") {
-      if (params.model !== "gpt-6-sol" || params.approvalPolicy !== "never" || params.sandbox !== undefined) {
-        send({id,error:{code:-32602,message:"ordinary profile was not exact"}});continue;
+    if(mode.startsWith('full-unloaded')){
+      if(params.threadId!==thread.id||params.cwd!==thread.cwd||
+        (mode==='full-unloaded-default'?params.model!=null:params.model!=='gpt-6-sol')||
+        params.approvalPolicy!=='never'||params.excludeTurns!==true){
+        send({id,error:{code:-32602,message:'full recovery profile mismatch'}});continue;
       }
-      ordinaryResumed=true;
-    } else {
-      if (!ordinaryResumed || params.model !== "gpt-6-sol" || params.sandbox !== originalSandbox ||
-        params.approvalPolicy !== "on-request" || params.cwd !== thread.cwd ||
-        (originalSandbox==="workspace-write" && params.config?.["sandbox_workspace_write.network_access"] !== false)) {
-        send({id,error:{code:-32602,message:"business restoration request was not exact"}});continue;
-      }
-      loadedBusinessResume=true;
+      unloaded=false;
+      if(mode==='full-unloaded-lost-resume')continue;
     }
-    const nativeThread={...thread,status:{type:"idle",activeFlags:[]},model:"gpt-6-sol"};
-    send({id,result:{thread:mode.endsWith("foreign")&&loadedBusinessResume?
-      {...nativeThread,sessionId:"foreign"}:nativeThread,
-      model:mode.endsWith("wrong-model")?"foreign-model":"gpt-6-sol",modelProvider:"openai",cwd:thread.cwd,
-      approvalPolicy:"never",sandbox:{type:"readOnly",networkAccess:false},
-      ...(mode.includes("legacy")?{}:{activePermissionProfile:{
-        id:mode.endsWith("different-policy")?"foreign_policy":"evoloop_message_read",extends:null}})}});continue;
-  }
-  if (method === "thread/resume" && mode.startsWith("message-profile")) {
-    if (params.permissions === "evoloop_message_read") {
-      if (params.approvalPolicy !== "never" || params.sandbox !== undefined || params.config !== undefined) {
-        send({id,error:{code:-32602,message:"ordinary resume has elevated policy"}}); continue;
-      }
-      ordinaryResumed = true;
-    } else if (params.sandbox === "workspace-write") {
-      if (!ordinaryResumed || params.approvalPolicy !== "on-request" || params.config?.["sandbox_workspace_write.network_access"] !== true) {
-        send({id,error:{code:-32602,message:"business profile not restored"}}); continue;
-      }
-      ordinaryResumed = false;
-      genericMessageBusinessResumed = true;
-    } else {send({id,error:{code:-32602,message:"unexpected profile"}});continue;}
+    const nativeModel=mode==='full-resume-wrong-model'||mode==='full-resume-thread-model-mismatch'?'other-model':params.model??'gpt-6-sol';
+    const nativeThread={...thread,model:nativeModel,status:{type:'idle',activeFlags:[]},...(mode==='changed-session'?{sessionId:'different-session'}:{})};
+    send({id,result:{thread:nativeThread,model:mode==='full-resume-thread-model-mismatch'?'gpt-6-sol':nativeModel,modelProvider:'openai',cwd:thread.cwd,
+      approvalPolicy:params.approvalPolicy,
+      sandbox:mode==='full-resume-wrong'||mode==='full-loaded-old'||mode==='full-unloaded-wrong-policy'?
+        {type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}}});continue;
   }
   if (method === "thread/archive") {
     if (params.threadId !== thread.id) { send({ id, error: { code: -32602, message: "foreign thread" } }); continue; }
@@ -279,10 +124,6 @@ for await (const line of lines) {
       mode === "foreign-samecwd" ? [foreign, owned] : [owned] : [], nextCursor: null } }); continue;
   }
   if (method === "thread/resume" || method === "thread/read") {
-    if (mode === "message-purpose-callbacks" && method === "thread/read") {
-      for (const request of purposeRequests()) send({...request,id:request.id+10});
-    }
-    if (method === "thread/read") threadReads++;
     const observedEnvironment = mode === "env-observe" && method === "thread/read" ? {
       HOME: process.env.HOME ?? null, CODEX_HOME: process.env.CODEX_HOME ?? null,
       PATH: process.env.PATH ?? null, HTTPS_PROXY: process.env.HTTPS_PROXY ?? null,
@@ -294,24 +135,18 @@ for await (const line of lines) {
       NODE_OPTIONS: process.env.NODE_OPTIONS ?? null,
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
-    const nativeThread={...thread,...(mode.startsWith('message-0164')?{model:'gpt-6-sol'}:{}),status:{type:mode==='message-profile-active'||
-      (mode==='message-profile-activity-race'&&threadReads>=3)?'active':'idle',activeFlags:[]}};
+    const nativeThread={...thread,...(mode.startsWith('full-')||mode==='full-sequence'?{model:unloaded?null:'gpt-6-sol'}:{}),status:{type:unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
-      ...(method === "thread/resume" && genericMessageBusinessResumed ? {
-        model:"fixture-model",modelProvider:"openai",cwd:thread.cwd,approvalPolicy:"on-request",
-        sandbox:{type:"workspaceWrite",writableRoots:[],networkAccess:true},activePermissionProfile:null} : {}),
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
-      ...(mode === "message-purpose-callbacks" ? {earlyPurposeDecisions} : {}),
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list") {
     turnListReads++;
-    if (mode.startsWith("message-profile-loaded")) {
-      const businessVisible=turnStarts>=2&&(!mode.endsWith("lost")&&!mode.endsWith("reject")||turnStarts>=3);
-      send({id,result:{data:[...(businessVisible?[{id:`turn-${turnStarts}`,status:"inProgress",completedAt:null}]:[]),
-        ...(turnStarts>=1?[{id:"turn-1",status:"completed",completedAt:1792498484}]:[])],nextCursor:null}});continue;
+    if (mode === "full-sequence") {
+      send({id,result:{data:sequenceInputs.map((_,index)=>({id:`turn-${index+1}`,status:"completed",completedAt:1792498484+index})).reverse(),nextCursor:null}});
+      continue;
     }
-    if (mode === "message-profile-history") {
+    if (mode === "history-newest") {
       if (params.sortDirection !== "desc" || params.limit !== 100) {
         send({id,error:{code:-32602,message:"ordinary history did not request newest first"}});continue;
       }
@@ -326,8 +161,11 @@ for await (const line of lines) {
     }], nextCursor: null } }); continue;
   }
   if (method === "thread/items/list") {
-    if (mode.startsWith("message-profile-loaded")&&params.turnId===`turn-${turnStarts}`&&turnStarts>=2) {
-      send({id,result:{data:loadedBusinessInput?[{turnId:params.turnId,item:{id:"business-input",type:"userMessage",text:loadedBusinessInput}}]:[],nextCursor:null}});continue;
+    if (mode === "full-sequence") {
+      const index=Number(/^turn-(\d+)$/.exec(params.turnId)?.[1])-1;
+      if(!Number.isInteger(index)||index<0||index>=sequenceInputs.length){send({id,error:{code:-32602,message:"unknown fixture turn"}});continue;}
+      send({id,result:{data:[{turnId:params.turnId,item:{id:`input-${index+1}`,type:"userMessage",text:sequenceInputs[index]}},
+        {turnId:params.turnId,item:{id:`reply-${index+1}`,type:"agentMessage",phase:"final_answer",text:`reply-${index+1}`}}],nextCursor:null}});continue;
     }
     if (mode === "work-trace") {
       const items = params.cursor ? [
@@ -346,47 +184,32 @@ for await (const line of lines) {
   if (method === "turn/interrupt") { send({ id, result: {} }); send({ method: "turn/completed", params: { threadId: thread.id, turn: { id: params.turnId, status: "interrupted" } } }); continue; }
   if (method === "turn/start") {
     turnStarts++;
+    if(unloaded){send({id,error:{code:-32000,message:'ThreadNotLoaded'}});continue;}
+    if(mode.startsWith('full-')){
+      if(params.sandboxPolicy?.type!=='dangerFullAccess'||params.approvalPolicy!=='never'||
+        params.cwd!==thread.cwd||
+        (mode==='full-default'||mode==='full-unloaded-default'?params.model!=null&&params.model!=='gpt-6-sol':params.model!=='gpt-6-sol')){
+        send({id,error:{code:-32602,message:'full Turn policy missing'}});continue;
+      }
+      if(mode==='full-lost')continue;
+    }
+    if(mode==='full-sequence'){
+      if(params.sandboxPolicy?.type!=='dangerFullAccess'||params.approvalPolicy!=='never'||
+        params.cwd!==thread.cwd||params.model!=='gpt-6-sol'||!Array.isArray(params.input)||
+        params.input.length!==1||params.input[0]?.type!=='text'){
+        send({id,error:{code:-32602,message:'full sequence Turn policy or input missing'}});continue;
+      }
+      sequenceInputs.push(params.input[0].text);lastTurnModel=params.model;
+    }
     if(mode.startsWith("profile-transition")){
       lastTurnModel=params.model;
       if(params.model!=="new-model") {send({id,error:{code:-32602,message:"new model absent from Turn start"}});continue;}
     }
-    if (mode.startsWith("message-profile-loaded")) {
-      if (!loadedBusinessResume) {
-        if (!ordinaryResumed || params.permissions!=="evoloop_message_read" ||
-          params.approvalPolicy!=="never" || params.sandboxPolicy!==undefined || params.cwd!==thread.cwd) {
-          send({id,error:{code:-32602,message:"ordinary Turn was not exact"}});continue;
-        }
-      } else {
-        const expectedSandbox=mode.includes("workspace")?"workspaceWrite":"readOnly";
-        if (params.model!=="gpt-6-sol" || params.permissions!==undefined ||
-          params.approvalPolicy!=="on-request" || params.sandboxPolicy?.type!==expectedSandbox ||
-          params.sandboxPolicy.networkAccess!==false || params.cwd!==thread.cwd ||
-          (expectedSandbox==="workspaceWrite" && JSON.stringify(params.sandboxPolicy.writableRoots)!=="[]")) {
-          send({id,error:{code:-32602,message:"business Turn did not use exact original overrides"}});continue;
-        }
-        if (mode.endsWith("reject")&&turnStarts===2) {send({id,error:{code:-32602,message:"business Turn rejected"}});continue;}
-        if (mode.endsWith("lost")&&turnStarts===2) continue;
-        lastTurnModel=params.model;
-        loadedBusinessInput=params.input?.[0]?.text??null;
-        ordinaryResumed=false;
-      }
-    } else if (mode.startsWith("message-profile")) {
-      if (ordinaryResumed) {
-        if (params.approvalPolicy !== "never" || params.permissions !== "evoloop_message_read" ||
-          params.sandboxPolicy !== undefined || params.cwd !== thread.cwd) {
-          send({id,error:{code:-32602,message:"ordinary turn not read-only"}});continue;
-        }
-        if (mode === "message-profile-reject") {send({id,error:{code:-32602,message:"fixture rejected ordinary start"}});continue;}
-        if (mode === "message-profile-timeout") continue;
-      } else if (params.approvalPolicy !== "on-request" || params.sandboxPolicy?.type !== "workspaceWrite" ||
-        params.sandboxPolicy.networkAccess !== true || params.cwd !== thread.cwd) {
-        send({id,error:{code:-32602,message:"business turn did not regain exact profile"}});continue;
-      }
-    }
-    const startedTurnId=mode.startsWith("message-profile-loaded")||mode==="dynamic-cold-resume"?`turn-${turnStarts}`:"turn-1";
+    const startedTurnId=mode==="dynamic-persisted-resume"||mode==="full-sequence"||mode==='full-unloaded'?`turn-${turnStarts}`:"turn-1";
     send({ id, result: { turn: { id: startedTurnId, status: "inProgress" } } });
     send({ method: "item/started", params: { threadId: "unowned", turnId: "x" } });
     send({ method: "turn/started", params: { threadId: thread.id, turn: { id: startedTurnId, status: "inProgress" } } });
+    if(mode==='full-sequence')send({method:"turn/completed",params:{threadId:thread.id,turn:{id:startedTurnId,status:"completed",completedAt:1792498484+turnStarts-1}}});
     if (mode === "protocol-0164") {
       send({ id: 850, method: "currentTime/read", params: { threadId: thread.id } });
       send({ id: 851, method: "currentTime/read", params: { threadId: "foreign-thread" } });
@@ -394,7 +217,9 @@ for await (const line of lines) {
       send({ id: 853, method: "unreviewed/serverRequest", params: { threadId: thread.id } });
     }
     if (mode === "approval") send({ id: approvalId, method: "item/commandExecution/requestApproval", params: { threadId: thread.id, turnId: "turn-1", command: "echo fixture" } });
-    if (mode==="dynamic-cold-resume") {
+    if(mode==='full-dynamic')send({id:toolId,method:'item/tool/call',params:{
+      threadId:thread.id,turnId:startedTurnId,callId:'full-call',tool:'browser_snapshot',arguments:{}}});
+    if (mode==="dynamic-persisted-resume") {
       const id=toolId+(turnStarts-1)*2;
       send({id,method:"item/tool/call",params:{threadId:thread.id,turnId:startedTurnId,
         callId:`trusted-${turnStarts}`,tool:"browser_snapshot",arguments:{}}});

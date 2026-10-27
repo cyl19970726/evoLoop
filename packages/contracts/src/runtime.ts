@@ -9,7 +9,7 @@ const text = z.string().trim().min(1).max(4000);
 const common = { projectId: id, operationId: id };
 export const runtimeCommands = [
   z.strictObject({ ...common, type:z.literal("runtime.handoff.record"),runId:id,stage:z.enum(["received","read","adopted","effect"]),evidence:text }),
-  z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(), sandbox: z.enum(["read-only", "workspace-write"]), approvalPolicy: z.enum(["on-request", "untrusted"]) }),
+  z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(), sandbox: z.literal("danger-full-access").default("danger-full-access"), approvalPolicy: z.literal("never").default("never") }),
   z.strictObject({ ...common, type: z.literal("runtime.session.close"), sessionId: id, expectedVersion: z.number().int().positive(), reason: text }),
   z.strictObject({ ...common, type: z.literal("runtime.run.reserve"), runId: id, taskId: id, sessionId: id, expectedVersion: z.number().int().positive(), input: text,
     evaluation: z.strictObject({ evaluationId: id, revisionId: id, caseId: id, conditionId: id }).optional() }),
@@ -21,7 +21,7 @@ export type RuntimeSessionState = "reserved" | "creating" | "ready" | "closing" 
 export type RuntimeRunState = "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown";
 export interface RuntimeSessionRecord {
   projectId: string; id: string; roleId: string; cwd: string; authorizationScope: string;
-  model: string | null; sandbox: "read-only" | "workspace-write"; approvalPolicy: "on-request" | "untrusted";
+  model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access"; approvalPolicy: "on-request" | "untrusted" | "never";
   state: RuntimeSessionState; version: number; nativeThreadId: string | null; nativeSessionId: string | null;
   operationId: string; actorId: string; createdAt: string; updatedAt: string;
   /** Persisted native-start permit; null/absent for historical unmanaged Sessions. */
@@ -79,8 +79,8 @@ export interface RuntimeBinding {
   authorizationScope: string;
   owner: "evoloop-codex-app-server";
   /** Persisted Session profile for an exact native resume; omitted only for legacy read-only inspection. */
-  resumeProfile?: { actorId: string; model: string | null; sandbox: "read-only" | "workspace-write";
-    approvalPolicy: "on-request" | "untrusted"; executionProfileRevisionId?: string };
+  resumeProfile?: { actorId: string; model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access";
+    approvalPolicy: "on-request" | "untrusted" | "never"; executionProfileRevisionId?: string };
 }
 
 export interface RuntimeSessionSpec {
@@ -93,8 +93,8 @@ export interface RuntimeSessionSpec {
   authorizationScope: string;
   model?: string;
   executionProfileRevisionId?: string;
-  sandbox: "read-only" | "workspace-write";
-  approvalPolicy: "on-request" | "untrusted";
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: "on-request" | "untrusted" | "never";
 }
 
 export interface RuntimeTurn {
@@ -170,8 +170,8 @@ export interface RuntimeApprovalRequest {
 
 export interface RuntimePort {
   create(spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
-  /** A business restore following an ordinary Turn requires the durably dispatched Run operation ID. */
-  resume(binding: RuntimeBinding, spec: RuntimeSessionSpec, dispatchOperationId?: string): Promise<RuntimeBinding>;
+  /** Resume the owned Thread with the current versioned execution profile. */
+  resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
   inspect(binding: RuntimeBinding): Promise<unknown>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;

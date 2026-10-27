@@ -56,7 +56,7 @@ JS
 }
 ```
 
-日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope`、绝对路径 `cwd` 和 `sandbox`（`read-only` 或 `workspace-write`）；确认实际项目目录和授权后才启用。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份和集成配置在启动时读取，修改后重启。
+日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope` 与绝对路径 `cwd`；每个新 Session 固定 `danger-full-access`、`approvalPolicy: never` 和正常网络。精确授权仍限定 actor、项目、Role、scope 与业务对象，不要把 OS 执行权限理解为项目数据授权。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份和集成配置在启动时读取，修改后重启。
 
 如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。`maintainerId` 必须与实际发布/对账身份的 `actorId` 一致，且该身份具有对应项目的 review 权限；任意标签或另一个未配置的身份不会取得维护权。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
 
@@ -70,9 +70,9 @@ npm start
 
 ## 受管自动循环候选
 
-在独立数据库迁移至 **016** 后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 read/write/review 权限的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含现有精确授权字段，可增加 `model`、`approvalPolicy` 和默认关闭的 `networkAccess`。同一项目/actor/职责/scope/目录/sandbox 的重复 profile 被拒绝；各 actor 的网络授权互不借用。当前网络启用只适用于明确授权的 workspace-write profile。
+在独立数据库迁移至当前代码要求的最新版本（含 **036**）后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 read/write/review 权限的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含精确 actor、项目、Role、scope、目录和模型字段；新 Session 均按 full/never/联网创建，不再按职责选择 sandbox 或消息专用 profile。同一项目/actor/职责/scope/目录的重复 profile 被拒绝。
 
-worker 的 `cwd` 应是专用、私有、允许写工作文件的目录；原件权限另按项目引用验证。`workerRoot` 保存 0700/0600 的短期凭据和 wrapper，不能位于开发 checkout。CLI 回执放在其获准工作目录的 `.local/worker-receipts/RUN_ID`，避免只读密钥目录与 sandbox 写目录混用。不要把真实配置、令牌、回执、原始 session 或外部正文提交 Git。配置在启动时读取，变更需要重启；撤销 broker 凭据与暂停 Loop 是不同操作。
+worker 的 `cwd` 是启动上下文，不是文件读取白名单；当前 Session 有完整 OS 执行权限和正常网络。仓库、Task、Document 等业务对象仍由各自精确身份和 API 授权约束。`workerRoot` 保存 0700/0600 的短期凭据和 wrapper，不能位于开发 checkout。CLI 回执放在获准的私有工作目录 `.local/worker-receipts/RUN_ID`。不要把真实配置、令牌、回执、原始 session 或外部正文提交 Git。配置在启动时读取，变更需要重启；撤销 broker 凭据与暂停 Loop 是不同操作。
 
 凭据到期或撤销后，私有 metadata 仍用于判定历史角色及排除认知自反馈；保留这些元数据，不能把删除整个 worker 目录当成令牌清理方式。当前版本尚未把这项历史分类迁到独立数据库记录。已确认终态缺署名提交会留下缺口、释放并发，并可在原 Loop 预算内进入去重的认知恢复；未知原生结果继续占用并沿原 ID 对账。校准 `credentialTtlMs` 只影响新签发凭据，不复活旧运行，具体边界见[缺提交恢复](agent-cli.md#受管执行与自动接续)。
 
@@ -110,17 +110,17 @@ npm run --silent cli -- list tasks --project "$PROJECT_ID"
 
 命令需稳定的 `operationId`、`projectId`；修改已有对象还需读入的 `expectedVersion`。同一 ID、身份和内容返回原回执；不同内容复用 ID 被拒绝。结果未知时先查 `/api/projects/PROJECT_ID/operations/OPERATION_ID`；404 只表示当次未查到，不能证明外部动作没发生。未知 Turn 必须按已有原生 thread 和 operation 标记对账，不能换 ID 盲目重派。工作台临时恢复索引在当前标签页 `sessionStorage`，不存令牌或正文；关闭标签页可能失去索引，重要操作应另存 ID。
 
-Codex 适配基于本机核过的 **codex-cli 0.154.0** App Server 协议。受控 `gpt-6-astra` owned Turn 已真实完成，重启后可读回完整答复；当前账号对默认 `gpt-6.1-sol` 请求返回 400，需按实际能力选择。另一次后续运行曾在原生 `completedAt` 为空时过早记为 interrupted，约 89 秒后才报告 completed；终态闸已修复，普通工作台显式复核将同一 Turn 的记录更正为 completed，旧事件保留并追加有署名的 `run.reconciled`，Task/Basis 未改。后续新运行报告实际读到固定 Wiki 和所需源码，但原生 Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对安装版本、授权目录和隔离真实任务；CLI 升级须重新核 schema、审批、终态、断线与恢复。HTML/CSS/SVG 原件的二次重写已在真实浏览器核对背景、SVG 与空 sandbox，脚本仍按静态隔离规则不执行。结果未知时保留原操作并人工核对，审批默认拒绝越权请求。
+历史受控 `gpt-6-astra` owned Turn 使用 **codex-cli 0.154.0**，曾完成并在重启后读回答复；该记录保留为当时实测。当前 App Server 默认协议改为 **0.164.0-alpha.11.1**。0.154 的历史模型实跑不证明新 full/never 配置已在 Lead 的真实 Session 使用。较早终态误判修复及原事件追加记录仍是既有事实；Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
 
 App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
 
-重启或恢复已有 owned Session 前，核持久 Session 的 actor、Role、scope、cwd、model、sandbox、approvalPolicy 及其静态或动态现行 grant，先对账在途和未知 Run。恢复请求会将完整执行配置重新传入原 `thread/resume`；`workspace-write` 的联网设置显式传 `true` 或 `false`，原生降权效果仍须在有 Turn 的原 Session 回读验证。动态授权失效不能借静态授权继续。缺完整 profile 的旧 binding 只供历史读取；修复授权后仍沿原 Session、Thread 和操作对账，不换身份掩盖失败。
+重启或恢复 owned Session 前，核持久 actor、Role、scope、cwd、model、sandbox、approvalPolicy 与当前业务授权，先对账在途和未知 Run。新 Session 用 `danger-full-access`、`never` 与正常网络；旧 Session、旧 Run 和其配置快照保持原值。恢复时对原 `thread/resume` 明确传入完整配置；新 App Server 可恢复未加载的旧 Thread，同进程已加载而权限回显不符时保持 unknown。只有原生线程/恢复/启动回执明确确认 full/never 权限才标记 active；`thread/read` 不含权限时不能作为丢失回执或恢复成功的证据。模型修订使用原 Thread 上独立、持久的 activation，不创建假 Run，也不改旧 Run snapshot；配置 revision、activation 状态与 provider 实际模型遥测分开记录。旧 readonly protocol 检查字段 `readOnlyProtocolVerified` 仅为解析兼容保留，忽略其值，不要求设置，也不作为新 Session 的准入条件。动态授权失效不能借静态授权继续。
 
 验证要分三层记录：fixture 回归检查参数与拒权分支；固定安装版本的无推理协议实验核参数接受及返回策略；部署后在原 Task、Session、Thread 上执行真实 CLI 并回读服务端产物。前两层不证明原业务故障已恢复，Turn 结束或本地报告文件也不等于已提交、验收或使用。
 
 ## 受管 worker 只读浏览器候选
 
-这是为本机 GUI 体验任务增加的可选实验入口。常规任务仍使用业务 skill＋CLI；浏览器不替代 `worker.submit` 或独立消费者的 used 观察。当前 origin 固定为 `http://127.0.0.1:55431`，不是任意站点浏览能力。启用前核对安装的 Codex 0.154.0 稳定及实验 schema、实验初始化与动态工具声明，再按下表准备精确 scope；隔离检查通过后还须真实 worker 调用和原路径验收。
+这是为本机 GUI 体验任务增加的可选实验入口。常规任务仍使用业务 skill＋CLI；浏览器不替代 `worker.submit` 或独立消费者的 used 观察。当前 origin 固定为 `http://127.0.0.1:55431`，不是任意站点浏览能力。启用前核对所选安装版本及实验 schema、实验初始化与动态工具声明，再按下表准备精确 scope；隔离检查通过后还须真实 worker 调用和原路径验收。
 
 在既有 runtime 配置中额外提供 `browserRead: { scopePath, playwrightModulePath }`。两者为绝对路径；scope 放仓库外、当前用户所有的普通 `0600` 文件，拒绝符号链接。`playwrightModulePath` 指向明确安装且核过的 Playwright 模块入口，Chromium 由该安装提供；未配置时不加载它，不为此全局安装技能、插件或依赖。
 
@@ -129,7 +129,7 @@ App Server、版本检查与协议探测使用同一份明确的子进程环境�
 | `enabled`、`origin`、`expiresAtUtc` | 明确 true、上述精确本机 origin 和绝对 UTC 截止时间。 |
 | `projectId`、`taskId`、`contentRevisionId` | 原 GUI Task 及正常任务更新后已批准的主正文修订。不得用正文相同来跳过 TaskRevision 比较。 |
 | `sessionId`、`runId`、`runOperationId` | 唯一预选身份，可从已明确预分配的普通 child Dispatch ID 按 `loopIntentId` 推导；不用首次匹配或历史 Run。 |
-| `roleId`、`authorizationScope`、`authorizationKind`、`cwd`、`sandbox` | 当前候选只服务 `temporary-experience`，授权种类为 static 或 dynamic；其余字段与原执行 profile 精确一致。GUI 只读不要求把原 workspace-write 改成 read-only。 |
+| `roleId`、`authorizationScope`、`authorizationKind`、`cwd` | 当前候选只服务 `temporary-experience`，授权种类为 static 或 dynamic；Session 执行为 full/never/联网。GUI 读取仍只使用此 scope 下精确配置的 reader、路由和 Run 证据；完整 OS 权限不会扩大业务对象授权。 |
 | `readerActorId` | 派生新身份文件时保留所有原 actor/token，只新增一个恰好有本项目 `read` 的独立 reader；不覆写原身份文件。令牌只由宿主读取。 |
 | `entryRouteKey`、`routes` | 唯一普通入口与最多 32 个精确只读路由；每项有 `key`、`hash` 及最多 30 个必要 GET `apiPaths`，全部限同项目。先按普通 UI 观察所需路由和 API，不开放项目任意路径。 |
 | `followTaskList` | 默认 false。确需工作列表与阶段关联时显式 true，并在 `apiPaths` 列明本项目精确 `tasks?limit=50` 起点；仅从实际成功页派生下一页、已见 Task 根详情及该页原顺序的精确工作状态 GET。 |

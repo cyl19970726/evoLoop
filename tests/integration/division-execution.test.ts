@@ -64,8 +64,8 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   const template:DelegationTemplate={id:randomUUID(),revision:1,projectId:pid,goalId,loopId,
     existingRoleIds:[roleId],cognitionRoleIds:[],newRoleAllocation:null,firstTaskId,
     actorId:owner,authorizationScopeId:scope,decisionActorIds:[cognition],
-    allowedChoices:["temporary-assignment"],cwd,model:"fixture-model",sandbox:"workspace-write",
-    networkAccess:false,approvalPolicy:"on-request",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
+    allowedChoices:["temporary-assignment"],cwd,model:"fixture-model",sandbox:"danger-full-access",
+    networkAccess:true,approvalPolicy:"never",expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
   const templateHash=hash(JSON.stringify(template));let templateCurrent=true;
   const orchestration=new OrchestrationService({store,now:clock.now,nextId:randomUUID,hash,
     getDelegationTemplate:async(p,id)=>templateCurrent&&p===pid&&id===template.id?{template,hash:templateHash}:null,
@@ -139,7 +139,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   await issue(cognition,{type:"dispatch.start",dispatchId:parent.entityId,claimToken:token});
   const cognitiveSession=randomUUID(),cognitiveRun=randomUUID();
   await wf(cognition,{type:"runtime.session.reserve",sessionId:cognitiveSession,roleId:cognitiveRole,cwd,
-    authorizationScope:"cognitive-scope",model:"fixture-model",sandbox:"read-only",approvalPolicy:"on-request"});
+    authorizationScope:"cognitive-scope",model:"fixture-model",sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(pid,cognitiveSession);
   await runtime.bindSession(pid,cognitiveSession,{owner:"evoloop-codex-app-server",projectId:pid,sessionId:cognitiveSession,
     roleId:cognitiveRole,cwd,authorizationScope:"cognitive-scope",nativeThreadId:`fixture-${cognitiveSession}`,
@@ -210,11 +210,11 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     authorizationScope:scope,cwd,model:template.model,sandbox:template.sandbox,
     approvalPolicy:template.approvalPolicy}),true);
   const collidingStatic=[{projectId:pid,actorId:owner,roleId,authorizationScope:scope,cwd,
-    sandbox:"workspace-write" as const,networkAccess:true}];
-  assert.deepEqual(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
+    sandbox:"danger-full-access" as const,model:"other-model",networkAccess:true,approvalPolicy:"never" as const}];
+  assert.equal(await runtimeThreadConfigForSession(collidingStatic,{projectId:pid,sessionId,actorId:owner,
     roleId,authorizationScope:scope,cwd,sandbox:template.sandbox,model:template.model,
-    approvalPolicy:template.approvalPolicy},admission),{"sandbox_workspace_write.network_access":false},
-    "the binding's networkAccess=false is explicit and overrides a colliding static true grant");
+    approvalPolicy:template.approvalPolicy},admission),undefined,
+    "full-access native policy requires no workspace-only network override from a colliding static grant");
   await wf(owner,{type:"task.start",taskId:firstTaskId,expectedVersion:taskVersion,reason:"Start child"});
   await wf(owner,{type:"runtime.session.reserve",sessionId,roleId,cwd,authorizationScope:scope,
     model:template.model,sandbox:template.sandbox,approvalPolicy:template.approvalPolicy});
@@ -295,12 +295,15 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     decisionId:randomUUID(),dispatchId:childId,runId,kind:"failed",reason:"Fixture delivery failed",
     evidenceRefs:[]} as never);
   assert.equal(decision.entityType,"decision");
+  assert.equal(await admission.canStartConversation(await workflow.getRuntimeSession(principal(owner),pid,sessionId)),true,
+    "a settled Dispatch keeps its exact full Session conversation authority while its template is current");
   await issue(owner,{type:"division.revoke",loopId,expectedLoopVersion:
     (await orchestration.getLoop(principal(owner),pid,loopId))!.version,bindingId:binding.entityId,
     reason:"Withdraw new starts"});
   templateCurrent=false;
   const session=(await workflow.getRuntimeSession(principal(owner),pid,sessionId));
   assert.equal(await admission.canCreateSession(session),false);
+  assert.equal(await admission.canStartConversation(session),false,"conversation cannot bypass a withdrawn dynamic template");
   assert.equal(await currentSessionGrant(pool,session,()=>true,()=>admission.canCreateSession(session)),false,
     "revoked dynamic binding does not fall back to the colliding static grant");
   assert.equal(await admission.canStartRun((await workflow.getRuntimeRun(principal(owner),pid,runId)),session),false);

@@ -58,6 +58,9 @@ export async function applyEvaluation({ tx, command, principal, now }: Context):
     if (command.type === "evaluation.create" && current) throw new DomainError("ALREADY_EXISTS", "Evaluation exists");
     if (command.type === "evaluation.revise" && (!current || current.version !== command.expectedVersion))
       throw new DomainError("VERSION_CONFLICT", "Evaluation definition changed", current?.version);
+    if(command.definition.conditions.some(value=>value.environment.sandbox!=="danger-full-access"||
+      value.environment.approvalPolicy!=="never"))
+      throw new DomainError("FULL_EXECUTION_REQUIRED","New evaluation revisions require full Session execution");
     await validateDefinition(tx, command.definition, command.type === "evaluation.create");
     if (current && current.definition.case.taskId !== command.definition.case.taskId)
       throw new DomainError("EVALUATION_TASK_CHANGED", "A revision cannot move the evaluation to another case Task");

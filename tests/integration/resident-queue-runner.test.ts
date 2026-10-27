@@ -100,7 +100,7 @@ for(const lostReply of [false,true]) test(lostReply ?
     content:'# Fixed scope\nProduce one test artifact.',acceptance:'Consumer can inspect the artifact',owner:roleId});
   await apply({type:'task.start',projectId,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Seal Task input'});
   await apply({type:'runtime.session.reserve',projectId,operationId:randomUUID(),sessionId,roleId,
-    cwd:'/tmp/evoloop-queue-runner-test',authorizationScope:'project',sandbox:'read-only',approvalPolicy:'on-request'});
+    cwd:'/tmp/evoloop-queue-runner-test',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
   await trusted.beginSessionCreate(projectId,sessionId);
   const nativeThreadId=`thread-${sessionId}`;
   await trusted.bindSession(projectId,sessionId,{owner:'evoloop-codex-app-server',projectId,sessionId,roleId,

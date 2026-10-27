@@ -70,7 +70,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
 
   const sessionId = randomUUID();
   const sessionOperation = randomUUID();
-  const reserveSession = { type: "runtime.session.reserve", sessionId, roleId: "runtime-owner", cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", sandbox: "workspace-write", approvalPolicy: "on-request" };
+  const reserveSession = { type: "runtime.session.reserve", sessionId, roleId: "runtime-owner", cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", sandbox: "danger-full-access", approvalPolicy: "never" };
   const sessionReceipt = applied(await issue(reserveSession, sessionOperation));
   assert.deepEqual(await issue(reserveSession, sessionOperation), sessionReceipt);
   assert.equal((await runtime.beginSessionCreate(projectId, sessionId)).state, "creating");

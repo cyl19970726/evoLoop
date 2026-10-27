@@ -96,7 +96,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const cognitiveSession=randomUUID(),cognitiveRun=randomUUID();
   assert.equal((await workflow.execute(principal(actor),{type:"runtime.session.reserve",projectId,operationId:randomUUID(),
     sessionId:cognitiveSession,roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
-    model:"test-model",sandbox:"read-only",approvalPolicy:"on-request"})).status,"applied");
+    model:"test-model",sandbox:"danger-full-access",approvalPolicy:"never"})).status,"applied");
   await runtime.beginSessionCreate(projectId,cognitiveSession);
   await runtime.bindSession(projectId,cognitiveSession,{owner:"evoloop-codex-app-server",projectId,sessionId:cognitiveSession,
     roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
@@ -169,7 +169,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const sessionId=randomUUID(),runId=randomUUID();
   const session=await workflow.execute(principal(worker),{type:"runtime.session.reserve",projectId,operationId:randomUUID(),
     sessionId,roleId:businessRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:scopeId,
-    model:"test-model",sandbox:"read-only",approvalPolicy:"on-request"});
+    model:"test-model",sandbox:"danger-full-access",approvalPolicy:"never"});
   assert.equal(session.status,"applied",JSON.stringify(session));
   await runtime.beginSessionCreate(projectId,sessionId);
   await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,
@@ -486,7 +486,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const template:DelegationTemplate={id:randomUUID(),revision:1,projectId,goalId,loopId:lateLoopId,
     existingRoleIds:[],cognitionRoleIds:[cognitiveRole],newRoleAllocation:{maxTotal:1,requiredState:"trial"},firstTaskId:divisionTaskId,
     actorId:"trial-worker",authorizationScopeId:"trial-scope",decisionActorIds:[],allowedChoices:["new-role"],
-    cwd:"/tmp",model:"test-model",sandbox:"read-only",networkAccess:false,approvalPolicy:"on-request",
+    cwd:"/tmp",model:"test-model",sandbox:"danger-full-access",networkAccess:true,approvalPolicy:"never",
     expiresAtUtc:new Date(Date.now()+86_400_000).toISOString()};
   const templateHash=sha(JSON.stringify(template));
   let templateCurrent=true;
@@ -613,7 +613,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await issue(actor,{type:"dispatch.start",dispatchId:sqlParent.entityId,claimToken:sqlClaim});
   assert.equal((await workflow.execute(principal(actor),{type:"runtime.session.reserve",projectId,operationId:randomUUID(),
     sessionId:sqlSessionId,roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,
-    model:"test-model",sandbox:"read-only",approvalPolicy:"on-request"})).status,"applied");
+    model:"test-model",sandbox:"danger-full-access",approvalPolicy:"never"})).status,"applied");
   await runtime.beginSessionCreate(projectId,sqlSessionId);
   await runtime.bindSession(projectId,sqlSessionId,{owner:"evoloop-codex-app-server",projectId,sessionId:sqlSessionId,
     roleId:cognitiveRole,cwd:"/tmp/evoloop-orchestration-test",authorizationScope:cognitiveScope,

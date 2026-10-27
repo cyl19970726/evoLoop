@@ -95,7 +95,7 @@ test("worker PG facts bind fixed Run sources and current Goal/Stage scope",async
   const newTask=(await workflow.getTask(principal(owner),projectId,newTaskId)).task;
   const reserve=async(id:string,role:string,actorId:string)=>{
     const sessionId=randomUUID(),runId=randomUUID();
-    await issue({type:"runtime.session.reserve",sessionId,roleId:role,cwd:"/tmp/evoloop-worker-facts",authorizationScope:"fact-scope",model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"},actorId);
+    await issue({type:"runtime.session.reserve",sessionId,roleId:role,cwd:"/tmp/evoloop-worker-facts",authorizationScope:"fact-scope",model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"},actorId);
     await runtime.beginSessionCreate(projectId,sessionId);
     await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:role,
       cwd:"/tmp/evoloop-worker-facts",authorizationScope:"fact-scope",nativeThreadId:`fixture-${sessionId}`,nativeSessionId:`fixture-${sessionId}`});

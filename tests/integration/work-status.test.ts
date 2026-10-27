@@ -98,7 +98,7 @@ test("paged work status uses exact project facts and separates formal cognition 
   // no confirmed launch profile and cannot advance a Run into an unknown Turn.
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,'researcher','/isolated-fixture','fixture','read-only','on-request','ready',1,$6,$6,$3,$4,$5,$5)`,
+    VALUES($1,$2,'researcher','/isolated-fixture','fixture','danger-full-access','never','ready',1,$6,$6,$3,$4,$5,$5)`,
     [projectId,sessionId,randomUUID(),ownerId,fixedTime,`fixture-native-${sessionId}`]);
   await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
     operation_id,input,input_hash,state,version,actor_id,created_at,updated_at)

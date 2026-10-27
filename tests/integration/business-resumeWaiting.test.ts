@@ -100,7 +100,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
       inputVersion=started.version;}
     const sessionId=randomUUID(),runId=randomUUID();
     await wf({type:"runtime.session.reserve",sessionId,roleId:role,cwd:"/tmp/evoloop-business-resume-test",
-      authorizationScope:role===cognition?"cognitive-scope":"business-scope",model:"fixture",sandbox:"read-only",approvalPolicy:"on-request"});
+      authorizationScope:role===cognition?"cognitive-scope":"business-scope",model:"fixture",sandbox:"danger-full-access",approvalPolicy:"never"});
     await runtime.beginSessionCreate(projectId,sessionId);
     await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:role,
       cwd:"/tmp/evoloop-business-resume-test",authorizationScope:role===cognition?"cognitive-scope":"business-scope",
@@ -229,7 +229,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   await issue({type:"dispatch.start",dispatchId:newDispatch.entityId,claimToken});
   await wf({type:"runtime.session.reserve",sessionId:newSessionId,roleId:cognition,
     cwd:"/tmp/evoloop-business-resume-test",authorizationScope:"cognitive-scope",model:"fixture",
-    sandbox:"read-only",approvalPolicy:"on-request"});
+    sandbox:"danger-full-access",approvalPolicy:"never"});
   await runtime.beginSessionCreate(projectId,newSessionId);
   await runtime.bindSession(projectId,newSessionId,{owner:"evoloop-codex-app-server",projectId,
     sessionId:newSessionId,roleId:cognition,cwd:"/tmp/evoloop-business-resume-test",

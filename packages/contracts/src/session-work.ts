@@ -36,7 +36,7 @@ export interface OrdinaryMessageExecutionCapability {
 export interface SessionCapabilities {
   observe: SessionActionCapability;
   /** Persistence capability only; runtime execution is described separately. */
-  send: SessionActionCapability & { mode: "owned-read-only" | "manual-handoff" | "unavailable" };
+  send: SessionActionCapability & { mode: "owned-conversation" | "manual-handoff" | "unavailable" };
   /** Added by the coordinator on snapshots; older responses and directory items may omit it. */
   ordinaryExecution?: OrdinaryMessageExecutionCapability;
   open: SessionActionCapability & { ref: string | null };

@@ -117,7 +117,7 @@ test("cursor binds identity and filter, and a committed generation change requir
     const second=await r.list({discussionId:d,limit:1,cursor:first.nextCursor!}); assert.notEqual(second.items[0]?.id,first.items[0]?.id);
     await q(c, `INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,'/tmp','fixture','read-only','on-request','reserved',1,$4,'lead',$5,$5)`, [p,id(),role,id(),now]);
+      VALUES($1,$2,$3,'/tmp','fixture','danger-full-access','never','reserved',1,$4,'lead',$5,$5)`, [p,id(),role,id(),now]);
     const reset=await r.list({discussionId:d,limit:1,cursor:first.nextCursor!});
     assert.equal(reset.resetRequired,true); assert.deepEqual(reset.items,[]);
   } finally {c.release();}

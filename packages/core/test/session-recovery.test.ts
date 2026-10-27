@@ -77,13 +77,16 @@ test('budget extension belongs to the registered controller and does not resume 
   await assert.rejects(applyQueue(f.tx,f.reader,{...f.principal,actorId:'other'} as any,c,{nowUtc:now,nextId:randomUUID}),/registered controller/);
   await assert.rejects(applyQueue(f.tx,f.reader,f.principal as any,{...c,maxRuns:2},{nowUtc:now,nextId:randomUUID}),/increase/);
 });
-test('profile revision requires exact authority and cannot bypass unknown native work',async()=>{
-  const f=await fixture();const c:any={type:'runtime.session.executionProfile.revise',projectId:f.projectId,operationId:randomUUID(),sessionId:f.sessionId,expectedVersion:3,expectedExecutionProfileRevisionId:f.profileId,model:'reviewed-new-model',evidenceRef:'Provider and exact grant reviewed',reason:'Controlled change'};
+test('profile revision upgrades the same model with exact authority and cannot bypass unknown native work',async()=>{
+  const f=await fixture();const c:any={type:'runtime.session.executionProfile.revise',projectId:f.projectId,operationId:randomUUID(),sessionId:f.sessionId,expectedVersion:3,expectedExecutionProfileRevisionId:f.profileId,model:'approved-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'Provider and exact grant reviewed',reason:'Controlled change'};
   const tx:any={...f.reader,recovery:f.recovery};
   await assert.rejects(applySessionRecovery(tx,f.principal as any,c,now,randomUUID),/exact static/);
   let adopted:any;f.recovery.adoptExecutionProfile=async(r:any,v:number)=>{adopted=r;assert.equal(v,3);};
-  await applySessionRecovery(tx,f.principal as any,c,now,randomUUID,{canRevise:async()=>true});
-  assert.equal(adopted.previousRevisionId,f.profileId);assert.equal(adopted.model,'reviewed-new-model');assert.equal(f.getGate().phase,'blocked');
+  await applySessionRecovery(tx,f.principal as any,c,now,randomUUID,{canRevise:async(_p:any,_s:any,target:any)=>{
+    assert.deepEqual(target,{model:'approved-model',sandbox:'danger-full-access',approvalPolicy:'never'});return true;}});
+  assert.equal(adopted.previousRevisionId,f.profileId);assert.equal(adopted.model,'approved-model');
+  assert.equal(adopted.sandbox,'danger-full-access');assert.equal(adopted.approvalPolicy,'never');
+  assert.equal(f.getGate().phase,'blocked');
   f.recovery.isDynamicSession=async()=>true;
   await assert.rejects(applySessionRecovery(tx,f.principal as any,c,now,randomUUID,{canRevise:async()=>true}),/delegated Session/);
   f.recovery.isDynamicSession=async()=>false;

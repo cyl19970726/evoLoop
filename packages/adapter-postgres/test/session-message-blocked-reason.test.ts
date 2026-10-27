@@ -32,7 +32,7 @@ before(async()=>{
   await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,$3)',[projectId,'Blocked reason test',now]);
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,$3,$4,'project','workspace-write','on-request','ready',1,$5,$6,$7,'receiver',$8,$8)`,
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8)`,
     [projectId,sessionId,roleId,baseGrant.cwd,`thread-${sessionId}`,`native-${sessionId}`,randomUUID(),now]);
   await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
 });
@@ -40,19 +40,19 @@ after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});a
   try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
 
 test('stable blockers do not churn message revisions, observation head or journal; eligibility clears only at dispatch',async()=>{
-  let readyQueue=false,configured=true,qualified=false,reason='Native profile not ready';
+  let readyQueue=false,configured=true,qualified=false,reason='Full execution profile is not verified';
   let starts=0,historyReads=0,qualifications=0,registrations=0;
   const errors:unknown[]=[];
-  const native:{isReady:()=>boolean;registerBinding:()=>Promise<void>;qualifyReadOnlyThread?:()=>Promise<{available:boolean;reason:string;fingerprint:string|null}>;
-    startReadOnlyTurn:()=>Promise<{id:string;status:string}>;listTurns:()=>Promise<{data:Array<{id:string;status:string;completedAtUtc:null}>;nextCursor:null}>;
+  const native:{isReady:()=>boolean;registerBinding:()=>Promise<void>;qualifyConversationThread?:()=>Promise<{available:boolean;reason:string;fingerprint:string|null}>;
+    startConversationTurn:()=>Promise<{id:string;status:string}>;listTurns:()=>Promise<{data:Array<{id:string;status:string;completedAtUtc:null}>;nextCursor:null}>;
     listItems:()=>Promise<{data:unknown[];nextCursor:null}>}={
       isReady:()=>true,registerBinding:async()=>{registrations++;},
-      qualifyReadOnlyThread:async()=>{qualifications++;return{available:qualified,reason,fingerprint:qualified?'a'.repeat(64):null};},
-      startReadOnlyTurn:async()=>{starts++;return{id:'fixture-native-turn',status:'inProgress'};},
+      qualifyConversationThread:async()=>{qualifications++;return{available:qualified,reason,fingerprint:qualified?'a'.repeat(64):null};},
+      startConversationTurn:async()=>{starts++;return{id:'fixture-native-turn',status:'inProgress'};},
       listTurns:async()=>{historyReads++;return{data:[{id:'fixture-native-turn',status:'inProgress',completedAtUtc:null}],nextCursor:null};},
       listItems:async()=>{historyReads++;return{data:[],nextCursor:null};},
     };
-  const qualify=native.qualifyReadOnlyThread;
+  const qualify=native.qualifyConversationThread;
   const queueId=randomUUID(),entryId=randomUUID();
   const workflow={listResidentQueues:async()=>readyQueue?[{id:queueId,version:1,adoptedVersion:1,actorId:'lead',entries:[
     {id:entryId,sessionId,state:'queued',holdCode:null,dependsOn:[],position:0}]}]:[]} as unknown as WorkflowService;
@@ -79,8 +79,8 @@ test('stable blockers do not churn message revisions, observation head or journa
     assert.equal(await service.processing(projectId,messageId),null);
     assert.equal(starts,0);assert.equal(historyReads,0);assert.deepEqual(errors,[]);
   };
-  await pump.tick();await stable('Native profile not ready');
-  let prior=await snapshot();reason='Native permission profile changed';await pump.tick();
+  await pump.tick();await stable('Full execution profile is not verified');
+  let prior=await snapshot();reason='Full execution profile verification changed';await pump.tick();
   let changed=await snapshot();assert.equal(changed.version,prior.version+1);assert.equal(changed.changes,prior.changes+1);
   assert.equal(BigInt(changed.head),BigInt(prior.head)+1n);await stable(reason);
 
@@ -97,14 +97,14 @@ test('stable blockers do not churn message revisions, observation head or journa
   assert.equal(changed.blockedReason,'Ordinary message dispatch is disabled');
   assert.equal(qualifications,beforeGrantQualification);await stable(changed.blockedReason!);
 
-  configured=true;native.qualifyReadOnlyThread=undefined;
+  configured=true;native.qualifyConversationThread=undefined;
   prior=await snapshot();await pump.tick();changed=await snapshot();
   assert.equal(changed.version,prior.version+1);assert.equal(changed.changes,prior.changes+1);
   assert.equal(BigInt(changed.head),BigInt(prior.head)+1n);
-  assert.equal(changed.blockedReason,'Native read-only tool verification is unavailable');
+  assert.equal(changed.blockedReason,'Native Session execution profile verification is unavailable');
   assert.equal(qualifications,beforeGrantQualification);await stable(changed.blockedReason!);
 
-  native.qualifyReadOnlyThread=qualify;
+  native.qualifyConversationThread=qualify;
   await pool.query(`INSERT INTO session_message_schedule(project_id,session_id,must_yield_business,updated_at)
     VALUES($1,$2,true,$3)`,[projectId,sessionId,now]);
   readyQueue=true;prior=await snapshot();await pump.tick();changed=await snapshot();

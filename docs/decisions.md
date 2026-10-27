@@ -43,6 +43,7 @@
 | DEC-031 | Task 正文统一由 Document 保存，任务使用四态并在原任务内验收 | content 承载完整说明，acceptance 留 Task；一次创建 Task 与主正文，固定修订防止改写执行依据。Task 类型轻量可选、Doc 用途与格式分开；Task 仅 todo/in_progress/done/cancelled，默认不增待验收状态或验收子 Task。skill 指导清楚正文、必要图与有理由的固定链接；后续增强按实际使用证据决定。迁移和验收以路线 C5 为准。 |
 
 | DEC-032 | 按完整功能场景连接所有模块，并区分 System Session 与业务 Session；分工研究真实工作后演进职责 | 认知和分工承担系统责任；业务职责初期覆盖架构、产品、开发流程规范、功能开发，并按需创建临时体验实例。认知综合 Task/Document、仓库、Wiki 与使用反馈规划工作；分工研究现有 Session 的真实 trace、任务类型、负担与结果再试行拆分。一次性执行、周期检查、issue 回流修复和复测见[功能场景规划](product/functional-scenarios.md)。分类是产品责任模型，不表示新增权限等级或已实现代码枚举；唤醒、hook、自动接续和逐 Session 关闭仍须设计与验证。 |
+| DEC-033 | 所有新建 Session 使用 `danger-full-access`、`approvalPolicy: never` 与正常网络；普通消息和业务工作共享原 Session、Thread、adapter 与工具面 | 取代消息专用进程／purpose、只读权限资格门与业务权限恢复状态机。既有 sender/receiver grant 和 `maxTurns` 预算继续限定身份与成本；project/Task/Document 授权不变。旧 Session、Run 与 profile snapshots 保留历史值，不经冷切迁移重写。native permission ack 未收到时仍为 unknown；thread/read 不足以证明权限或确认 lost ack。当前仅 fake adapter 与专用 PG 验证，未证明 Lead 实际使用、发布或部署。 |
 
 ## 当前设计提议
 
@@ -91,3 +92,5 @@ DEC-030 来自用户明确的人机入口分工：前端主要给人看发生了
 DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期尽可能简单：验收标准清楚写出，默认在原任务内验证，再根据真实使用增强。同步[产品定义](product/tasks-and-documents.md)、固定主正文合同及[路线 C5](roadmap.md#c5-taskdocument-模型简化)，保留旧数据、授权和结果未知恢复；它不授权直接迁移正在使用的本机服务或部署生产。
 
 DEC-032 依据 2026-10-23 用户对完整功能场景、新的 Session 责任分类、真实工作驱动职责拆分与任务回流的明确要求；补充 DEC-001—004、008、014—015、025、030。原始私有会话不随仓库发布。前三条旅程在新场景页细化，后三条暂作待继续确认的关联索引；具体 hook、守护部署和唤醒方式仍是候选机制，未将其记为已通过运行验证。
+
+DEC-033 依据 2026-10-27 用户对 Task9a v5 的明确新选择：每个新 Session 使用 full/never/正常网络，普通消息与业务工作共享原生会话和常规工具配置，取消消息专用 readonly/cold 权限状态机。它取代 Codex 接入文档中旧的消息只读资格、purpose 专用适配器和冷切恢复要求；保留历史实验及 0.154.0 记录作为当时证据，不改旧 Session/Run snapshot。消息 receiver/sender 授权与 `maxTurns` 预算仍约束身份和成本，GUI reader 的 Run 范围与 Document iframe sandbox 不变。当前代码证据限 fake adapter 与专用 PostgreSQL 检查，Lead 原生使用、发布与部署仍未验证。

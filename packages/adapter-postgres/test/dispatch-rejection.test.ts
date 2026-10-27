@@ -30,7 +30,7 @@ async function fixture():Promise<Fixture>{
     await c.query('BEGIN');
     await c.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
       state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,'/tmp/dispatch-rejection','project','read-only','on-request','ready',1,$4,$4,$5,'worker',$6,$6)`,
+      VALUES($1,$2,$3,'/tmp/dispatch-rejection','project','danger-full-access','never','ready',1,$4,$4,$5,'worker',$6,$6)`,
       [project,sessionId,role,`native-${sessionId}`,randomUUID(),now]);
     await c.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
       VALUES($1,$2,'Fixed Task',1,$3,'task','draft')`,[project,documentId,documentRevisionId]);

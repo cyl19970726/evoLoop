@@ -150,7 +150,7 @@ function fixture() {
     workflow: workflow as unknown as ManagedLoopDependencies["workflow"],
     runtime: { pump: async () => {} },
     controller: async () => ({ principal, authorizationScopeId: scopeId, cwd: "/tmp/evoloop-test",
-      sandbox: "workspace-write", approvalPolicy: "on-request" }),
+      sandbox: "danger-full-access", approvalPolicy: "never" }),
     credential: {
       issue: async scope => { credentialIssues++; lastScope = scope; const issued = { principal, wrapperPath: `/private/${scope.runId}/worker-cli.mjs` }; credentials.set(scope.runId, issued); return issued; },
       lookup: async runId => credentials.get(runId) ?? null,
@@ -775,10 +775,10 @@ test("paused dynamic dispatch reconciles only its historical exact Run without a
   const historicalCalls:boolean[]=[];
   const deps:ManagedLoopDependencies={...f.deps,controller:async(_project,role)=>
       role===cognition?{principal,authorizationScopeId:scopeId,cwd:"/tmp/evoloop-test",
-        sandbox:"workspace-write",approvalPolicy:"on-request"}:null,
+        sandbox:"danger-full-access",approvalPolicy:"never"}:null,
     dynamicController:async(_dispatch,historical)=>{historicalCalls.push(historical===true);
       return historical?{principal,authorizationScopeId:scopeId,cwd:"/tmp/evoloop-test",
-        sandbox:"workspace-write",approvalPolicy:"on-request"}:null;}};
+        sandbox:"danger-full-access",approvalPolicy:"never"}:null;}};
   await new ManagedLoopRunner(deps).pump();
   assert.equal(dispatch.state,"accepted");
   assert.deepEqual(historicalCalls,[true]);

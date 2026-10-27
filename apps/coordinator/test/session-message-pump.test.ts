@@ -10,7 +10,7 @@ import { SessionMessagePump } from '../src/session-messages/pump.ts';
 
 const projectId=randomUUID();
 const session=(id:string):RuntimeSessionRecord=>({projectId,id,roleId:'role',cwd:'/tmp/message-pump',authorizationScope:'project',
-  model:null,sandbox:'workspace-write',approvalPolicy:'on-request',state:'ready',version:1,
+  model:null,sandbox:'danger-full-access',approvalPolicy:'never',state:'ready',version:1,
   nativeThreadId:`thread-${id}`,nativeSessionId:`native-${id}`,operationId:randomUUID(),actorId:'receiver',
   createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
 const message=(id:string,sessionId:string,state:'unknown'|'processing'|'queued'):SessionMessageRecord=>({projectId,id,operationId:randomUUID(),
@@ -69,8 +69,8 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
     preflightDispatch:async()=>{},
     beginDispatch:async()=>({operationId:randomUUID()}),failBeforeStart:async()=>{failed++;},
     markUnknown:async()=>{unknown++;}} as unknown as SessionMessageService;
-  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyReadOnlyThread:async()=>({available:true,
-    reason:'safe',fingerprint:'a'.repeat(64)}),startReadOnlyTurn:async()=>{throw new RuntimeProtocolError('native rejected policy');},
+  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,
+    reason:'safe',fingerprint:'a'.repeat(64)}),startConversationTurn:async()=>{throw new RuntimeProtocolError('native rejected policy');},
     listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
   const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
@@ -86,8 +86,8 @@ test('admission denial stops scheduling and native qualification before any proc
       noteBlocked:async(_project:string,_id:string,text:string)=>{blocked=text;},
       beginDispatch:async()=>{dispatched++;throw new Error('must not dispatch');}} as unknown as SessionMessageService;
     const runtime={isReady:()=>true,registerBinding:async()=>{registered++;},
-      qualifyReadOnlyThread:async()=>{qualified++;return{available:true,reason:'safe',fingerprint:'a'.repeat(64)};},
-      startReadOnlyTurn:async()=>{throw new Error('must not start');},
+      qualifyConversationThread:async()=>{qualified++;return{available:true,reason:'safe',fingerprint:'a'.repeat(64)};},
+      startConversationTurn:async()=>{throw new Error('must not start');},
       listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
     const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
       canStart:async()=>{scheduled++;return true;},canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});

@@ -80,16 +80,19 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
       revision.operationId==='00000000-0000-0000-0000-000000000000')
       throw new DomainError('EXECUTION_PROFILE_CONFLICT','Execution profile basis changed');
     const before=current.revision;
-    if(revision.model===before.model||revision.sandbox!==before.sandbox||revision.approvalPolicy!==before.approvalPolicy||
+    if(revision.sandbox!=='danger-full-access'||revision.approvalPolicy!=='never'||
+      (revision.model===before.model&&revision.sandbox===before.sandbox&&revision.approvalPolicy===before.approvalPolicy)||
       revision.cwd!==before.cwd||revision.authorizationScope!==before.authorizationScope)
-      throw new DomainError('EXECUTION_PROFILE_CONFLICT','Only the configured model may change');
+      throw new DomainError('EXECUTION_PROFILE_CONFLICT','Only an explicit full-access execution profile may be adopted');
     const busy=await this.client.query(`SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2 AND state IN ('requested','dispatching','running','unknown')
       UNION ALL SELECT 1 FROM session_message_processing WHERE project_id=$1 AND session_id=$2 AND state IN ('dispatching','running','unknown')
       LIMIT 1`,[this.projectId,revision.sessionId]);
     if(busy.rows[0])throw new DomainError('SESSION_BUSY','Session is occupied');
-    const session=await this.client.query('SELECT version,state,model FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,revision.sessionId]);
+    const session=await this.client.query('SELECT version,state,model,sandbox,approval_policy FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,revision.sessionId]);
     if(session.rows[0]?.version!==expectedSessionVersion)throw conflict('Session version changed',session.rows[0]?.version);
-    if(session.rows[0].state!=='ready'||session.rows[0].model!==before.model)throw new DomainError('SESSION_NOT_READY','Session identity changed');
+    if(session.rows[0].state!=='ready'||session.rows[0].model!==before.model||
+      session.rows[0].sandbox!==before.sandbox||session.rows[0].approval_policy!==before.approvalPolicy)
+      throw new DomainError('SESSION_NOT_READY','Session execution profile changed');
     await this.client.query(`INSERT INTO session_execution_profile_revision(project_id,session_id,revision_id,version,previous_revision_id,model,sandbox,approval_policy,cwd,
       authorization_scope,provenance,operation_id,actor_id,reason,evidence_ref,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
@@ -100,8 +103,9 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
       attempted_at=NULL,activation_evidence=NULL WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
       [this.projectId,revision.sessionId,revision.revisionId,before.revisionId]);
     if(!head.rowCount)throw conflict('Execution profile changed');
-    const updated=await this.client.query(`UPDATE runtime_session SET model=$3,version=version+1,updated_at=$4
-      WHERE project_id=$1 AND session_id=$2 AND version=$5`,[this.projectId,revision.sessionId,revision.model,revision.createdAt,expectedSessionVersion]);
+    const updated=await this.client.query(`UPDATE runtime_session SET model=$3,sandbox=$4,approval_policy=$5,version=version+1,updated_at=$6
+      WHERE project_id=$1 AND session_id=$2 AND version=$7`,[this.projectId,revision.sessionId,revision.model,
+        revision.sandbox,revision.approvalPolicy,revision.createdAt,expectedSessionVersion]);
     if(!updated.rowCount)throw conflict('Session version changed');
     // The pending profile itself bars native startup. Preserve a failed claim's cause,
     // original message, and retry permit until the requested Run is persisted.
@@ -112,13 +116,22 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     if(!profile||profile.revision.revisionId!==revisionId||profile.revision.operationId!==operationId)
       throw new DomainError('EXECUTION_PROFILE_CONFLICT','Exact revision and operation required');
     if(profile.activationState!=='pending')return false;
-    if(!['open','retrying'].includes(gate.phase))
+    if(!['open','retrying','blocked'].includes(gate.phase))
       throw new DomainError('RECOVERY_BLOCKED','Revision activation has no native startup permit');
     const requested=await this.client.query(`SELECT run_id FROM runtime_run WHERE project_id=$1 AND session_id=$2
       AND state='requested' AND execution_profile_snapshot->>'revisionId'=$3
       AND ($4='open' OR run_id=$5::uuid) ORDER BY created_at DESC,run_id DESC LIMIT 1`,
       [this.projectId,sessionId,revisionId,gate.phase,gate.retryRunId]);
-    if(!requested.rows[0])throw new DomainError('RUN_NOT_REQUESTED','Exact requested Run with fixed profile is required');
+    if(!requested.rows[0]&&gate.phase==='retrying')
+      throw new DomainError('RUN_NOT_REQUESTED','Exact requested retry Run is required');
+    if(requested.rows[0]&&gate.phase==='blocked')
+      throw new DomainError('RECOVERY_BLOCKED','A blocked Session cannot start a new Run for profile activation');
+    const busy=await this.client.query(`SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
+      AND state IN ('requested','dispatching','running','unknown') AND ($3::uuid IS NULL OR run_id<>$3::uuid)
+      UNION ALL SELECT 1 FROM session_message_processing WHERE project_id=$1 AND session_id=$2
+      AND state IN ('dispatching','running','unknown') LIMIT 1`,
+      [this.projectId,sessionId,requested.rows[0]?.run_id??null]);
+    if(busy.rows[0])throw new DomainError('SESSION_BUSY','Profile activation requires the exact Run or a vacant Session');
     const r=await this.client.query(`UPDATE session_execution_profile SET activation_state='attempting',activation_operation_id=$3,
       attempted_at=now() WHERE project_id=$1 AND session_id=$2 AND revision_id=$4 AND activation_state='pending'`,
       [this.projectId,sessionId,operationId,revisionId]);
@@ -134,16 +147,17 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     await this.client.query(`UPDATE session_execution_profile SET activation_state=$3,
       active_revision_id=CASE WHEN $3='active' THEN revision_id ELSE active_revision_id END,activation_evidence=$4
       WHERE project_id=$1 AND session_id=$2`,[this.projectId,sessionId,state,evidence]);
-    if(state!=='active'){
+    if(state!=='active'&&gate.phase!=='blocked'){
       const requested=await this.client.query(`SELECT run_id FROM runtime_run WHERE project_id=$1 AND session_id=$2
         AND state='requested' AND native_turn_id IS NULL AND execution_profile_snapshot->>'revisionId'=$3
         AND ($4::uuid IS NULL OR run_id=$4::uuid) ORDER BY created_at DESC,run_id DESC LIMIT 1`,
         [this.projectId,sessionId,revisionId,gate.retryRunId]);
-      if(!requested.rows[0])throw new DomainError('RUN_NOT_REQUESTED','Activation outcome lost its exact requested Run');
+      if(!requested.rows[0]&&gate.phase!=='open')
+        throw new DomainError('RUN_NOT_REQUESTED','Activation outcome lost its exact requested retry Run');
       await this.client.query(`UPDATE session_recovery_gate SET phase='blocked',cause_kind='execution_profile',cause_id=$3,
         cause_state=$4,retry_run_id=$5,reason='Execution profile activation outcome requires explicit review',
         version=version+1,updated_at=now() WHERE project_id=$1 AND session_id=$2`,
-        [this.projectId,sessionId,revisionId,state,requested.rows[0].run_id]);
+        [this.projectId,sessionId,revisionId,state,requested.rows[0]?.run_id??null]);
     }
   }
   async saveRecoveryDecision(decision:SessionRecoveryDecision,next:SessionRecoveryGate,expectedVersion:number):Promise<void>{

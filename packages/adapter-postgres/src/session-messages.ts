@@ -95,7 +95,7 @@ export class PgSessionMessages implements SessionMessageTransaction {
   async insertSessionMessageProcessing(v:SessionMessageProcessing):Promise<void>{
     this.scope(v.projectId);
     if(!v.readOnlyPolicyFingerprint||!/^[a-f0-9]{64}$/.test(v.readOnlyPolicyFingerprint))
-      throw new DomainError('POLICY_PROOF_MISSING','native read-only policy proof is required');
+      throw new DomainError('POLICY_PROOF_MISSING','native Session execution admission policy proof is required');
     if(!v.receiverActorId?.trim())throw new DomainError('MESSAGE_RECIPIENT','actual receiving actor is required');
     await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,failure,read_only_policy_fingerprint,version,started_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt]);
