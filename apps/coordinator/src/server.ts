@@ -7,6 +7,7 @@ import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
+import { runInputPage } from "./runtime/input-read.js";
 import type { NativeInputBridge } from "./runtime/native-input.js";
 import type { NativeObservationBridge } from "./runtime/native-observation.js";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
@@ -20,6 +21,7 @@ import { registerSessionMessageRoutes } from "./session-messages/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import type { RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
+import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
 import { registerCollaborationRoutes } from "./collaboration/routes.js";
 import type { CollaborationRunner } from "./collaboration/runner.js";
 import type { DeliveryStore } from "@evoloop/contracts/delivery";
@@ -277,6 +279,13 @@ export async function buildServer(options: {
     }
     return options.service.getRuntimeRun(principal, p.projectId!, p.id!);
   });
+  app.get("/api/projects/:projectId/runtime/runs/:id/input", async request => {
+    const p = params(request.params), principal = who(request.principal);
+    const { cursor, limit } = z.strictObject({ cursor: z.coerce.number().int().safe().min(0).optional(),
+      limit: z.coerce.number().int().min(1).max(8192).optional() }).parse(request.query);
+    const run = await options.service.getRuntimeRun(principal, p.projectId!, p.id!);
+    return runInputPage(run, cursor, limit);
+  });
   app.get("/api/projects/:projectId/runtime/runs/:id/events", async request => {
     const p = params(request.params); return options.service.listRuntimeEvents(who(request.principal), p.projectId!, p.id!);
   });
@@ -374,7 +383,11 @@ export async function buildServer(options: {
   await registerWorkManagementRoutes(app, options.service);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });
-  if (options.documents) registerDocumentRoutes(app, { workflow: options.service, ...options.documents });
+  if (options.documents) {
+    registerDocumentRoutes(app, { workflow: options.service, ...options.documents });
+    registerTaskMaterialRoutes(app, { workflow: options.service, documents: options.documents.uow,
+      ...(options.references ? { references: options.references.uow } : {}) });
+  }
   if (options.webRoot) {
     await app.register(staticPlugin, { root: options.webRoot, index: "index.html", wildcard: true, cacheControl: false });
   }

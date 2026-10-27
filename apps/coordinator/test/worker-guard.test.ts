@@ -14,11 +14,13 @@ const facts: WorkerGuardFacts = {
   task: async id => id === taskId ? { projectId, loopId, ownerRoleId: "builder" } :
     id === otherTaskId ? { projectId, loopId, ownerRoleId: "other" } : null,
   taskRevision: async () => true,
+  materialTaskRevision: async (task, revision) => task === taskId && revision === revisionId,
   run: async id => id === runId ? { projectId, taskId, sessionId } : null,
   delivery: async id => id === deliveryId ? { projectId, taskId, runId } : null,
   inbox: async id => id === inboxId ? { projectId, loopId, state: "acknowledged" } : null,
   document: async id => id === documentId ? { projectId, taskId: null, loopId: null } : null,
   fixedDocument: async (task, doc, revision) => task === taskId && doc === documentId && revision === revisionId,
+  materialDocument: async (task, doc, revision) => task === taskId && doc === documentId && revision === revisionId,
   fixedReference: async (task, kind, ref, revision) => task === taskId &&
     (kind === "git" && ref === gitId || kind === "wiki" && ref === wikiId && (!revision || revision === revisionId)),
   operation: async () => null,
@@ -39,6 +41,15 @@ test("business worker can attribute its own terminal Run delivery and agent obse
 });
 
 test("worker route guard denies foreign reads and every unlisted write", async () => {
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/runtime/runs/${runId}/input?cursor=0&limit=31` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/runtime/runs/${u()}/input` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/runtime/runs/${runId}/input?cursor=0&revision=${u()}` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${taskId}/revisions/${revisionId}/materials` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${otherTaskId}/revisions/${revisionId}/materials` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/body?cursor=3&limit=5` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${u()}/body` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/assets/${u()}` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/body?cursor=1&revision=${u()}` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${taskId}` }, facts), true);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${otherTaskId}` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${u()}/tasks/${taskId}` }, facts), false);

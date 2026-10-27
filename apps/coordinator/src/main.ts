@@ -2,7 +2,7 @@ import { withObservedSources } from "./knowledge/observed-repository.js";
 import { readExternalMaterials } from "./references/materials.js";
 import { createReferenceDependencies } from "./references/routes.js";
 import { GitDocumentSource } from "@evoloop/adapter-git-documents";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,15 +27,17 @@ import { NativeInputBridge } from "./runtime/native-input.js";
 import { NativeInputService } from "@evoloop/core/native-input";
 import { NativeObservationService } from "@evoloop/core/native-observation";
 import { NativeObservationBridge } from "./runtime/native-observation.js";
+import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfigForSession } from "./configuration.js";
+import { hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
+import type { WorkerCredentialBroker } from "./workers/credentials.js";
 import { readWorkStatuses } from "./orchestration/work-status.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
@@ -319,7 +321,32 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   if (browserRead) adapter.onDisconnect(() => { void browserRead.close(); });
   return adapter;
 } : null;
+let managedCliBroker: WorkerCredentialBroker | null = null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+  cliEntryForRun: async (session, run) => {
+    if (!session || session.id !== run.sessionId || session.projectId !== run.projectId || session.state !== "ready") return null;
+    const brokered = await brokeredCliForRun(managedCliBroker, session, run);
+    if (brokered) return brokered;
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,
+      run.projectId, session.id, session.actorId, run.taskId) : null;
+    if (!entry) return null;
+    const channels = await pool.query(`SELECT collaboration_recipient_actor_id AS recipient FROM discussion
+      WHERE project_id=$1 AND kind='task_collaboration' AND task_id=$2
+        AND collaboration_run_id=$3 AND collaboration_session_id=$4`,
+      [run.projectId, run.taskId, run.id, run.sessionId]);
+    if (channels.rows.length > 1 || channels.rows.length === 1 && channels.rows[0].recipient !== entry.cliActorId ||
+        channels.rows.length === 0 && entry.cliActorId !== session.actorId ||
+        !await currentProjectWriter(run.projectId, entry.cliActorId)) return null;
+    const paths = entry.command.split(" ");
+    try {
+      const executable = await stat(paths[0]!);
+      if (!executable.isFile() || !(executable.mode & 0o111)) return null;
+      if (paths[1] && !(await stat(paths[1])).isFile()) return null;
+    }
+    catch { return null; }
+    return {command: entry.command, actorId: entry.cliActorId};
+  },
   workerTraceAuthority: (identity, targetRunId) =>
     workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),
@@ -374,10 +401,6 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
-if (runner) {
-  try { await runner.start(); }
-  catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
-}
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   enabled: () => integrations.scheduling?.enabled ?? false,
@@ -438,6 +461,11 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
   },
   projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
+managedCliBroker = managed?.broker ?? null;
+if (runner) {
+  try { await runner.start(); }
+  catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
+}
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   sessionWork: new SessionObservationService({ uow }),

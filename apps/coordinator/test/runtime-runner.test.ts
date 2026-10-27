@@ -486,7 +486,7 @@ test("requested Run waits without native start or state mutation, then uses its 
     workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayDispatchRun: async () => permitted });
-  (runner as unknown as { input: () => Promise<{ input: string }> }).input = async () => ({ input: "fixed task input" });
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try {
     await runner.start();
     assert.equal(runtime.starts, 0);
@@ -553,7 +553,7 @@ test("lost execution profile resume needs original Thread readback and a separat
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&ProfileRuntime,
     workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>true});
-  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:"same fixed Task input"});
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "same fixed Task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 21 });
   try{
     await runner.start();
     assert.equal(runtime.resumes,0,"a blocked gate cannot activate a pending profile");
@@ -634,7 +634,7 @@ test("late admission denial after preflight leaves the requested Run untouched",
     workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayDispatchRun: async () => ++checks % 2 === 1 });
-  (runner as unknown as { input: () => Promise<{ input: string }> }).input = async () => ({ input: "fixed input" });
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 11 });
   try {
     await runner.start();
     assert.equal(checks, 2);
@@ -758,7 +758,7 @@ test("restart dispatches a reserved Run with the original Session profile and ne
       scope.sandbox === persisted.sandbox && scope.model === persisted.model &&
       scope.approvalPolicy === persisted.approvalPolicy,
     mayDispatchRun: async () => granted });
-  (runner as unknown as { input: () => Promise<{ input: string }> }).input = async () => ({ input: "fixed task input" });
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try {
     await runner.start();
     assert.deepEqual(profiles, [{ actorId, sessionId: persisted.id, roleId: persisted.roleId,
@@ -798,7 +798,7 @@ test("registered full Session keeps the same execution profile across conversati
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & typeof runtime,
     workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
-  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try{
     await runner.start();
     assert.equal(runtime.starts,1);assert.equal(resumes,1);
@@ -844,7 +844,7 @@ test("two runners with a positive gate hint restore and start only after the sin
   const runners=[makeRuntime(),makeRuntime()].map(native=>{
     const value=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
       workflow,trusted,principals:[principal],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
-    (value as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+    (value as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
     return value;
   });
   const process=(value:RuntimeRunner)=>
@@ -881,7 +881,7 @@ test("lost business-profile restore acknowledgement makes the Run unknown withou
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
     workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
-  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try{
     await runner.start();
     assert.equal(permits,1);assert.equal(resumes,1);assert.equal(unknowns,1);assert.equal(native.starts,0);
@@ -930,7 +930,7 @@ for (const failure of ['resume_rejected','turn_start_unknown','binding_failed'] 
     const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&FakeRuntime,
       workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
       canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
-    (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:'fixed Task input'});
+    (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
     try{
       await runner.start();
       const fault=runner.status(projectId).faults[0]!;
@@ -976,7 +976,7 @@ test("rehydration of a bound dynamic Session ignores a colliding static grant un
     canWrite:()=>true,allowedCwd:async()=>true,
     hasGrant:(_scope,record)=>currentSessionGrant(persisted,record!,()=>true,async()=>current),
     mayDispatchRun:async()=>current});
-  (runner as unknown as {input:()=>Promise<{input:string}>}).input=async()=>({input:"fixed task input"});
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try {
     await runner.start();
     assert.equal(runtime.starts,0);assert.deepEqual(profiles,[],"the matching static writer must not rehydrate a revoked dynamic Session");

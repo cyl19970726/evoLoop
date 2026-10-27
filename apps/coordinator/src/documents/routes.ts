@@ -9,6 +9,7 @@ import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { importDocumentPayload } from "@evoloop/core/documents";
 import { readDocumentOriginal } from "./read-original.js";
+import { bodyPage, fixedPart, FixedBodyCache } from "./fixed-reads.js";
 
 const maxBundleBytes = 16 * 1024 * 1024;
 const hash = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
@@ -35,6 +36,13 @@ export interface DocumentRouteOptions {
 }
 
 export function registerDocumentRoutes(app: FastifyInstance, options: DocumentRouteOptions): void {
+  const verifiedBodies = new FixedBodyCache();
+  const fixedRevision = async (principal: Principal, projectId: string, id: string, revisionId: string) => {
+    const revision = await options.workflow.getDocumentPayloadRevision(principal, projectId, id, revisionId);
+    if (revision.projectId !== projectId || revision.documentId !== id || revision.id !== revisionId)
+      throw new DomainError("NOT_FOUND", "Document revision was not found");
+    return revision;
+  };
   app.post("/api/projects/:projectId/documents/import", { bodyLimit: 24 * 1024 * 1024 }, async (request, reply) => {
     const { projectId } = z.strictObject({ projectId: idSchema }).parse(request.params);
     const principal = scoped(request.principal, projectId, "write");
@@ -62,9 +70,28 @@ export function registerDocumentRoutes(app: FastifyInstance, options: DocumentRo
   app.get("/api/projects/:projectId/documents/:id/revisions/:revisionId/original", async (request) => {
     const { projectId, id, revisionId } = paramsSchema.parse(request.params);
     const principal = scoped(request.principal, projectId, "read");
-    const revision = await options.workflow.getDocumentPayloadRevision(principal, projectId, id, revisionId);
-    if (revision.projectId !== projectId || revision.documentId !== id || revision.id !== revisionId)
-      throw new DomainError("NOT_FOUND", "Document revision was not found");
+    const revision = await fixedRevision(principal, projectId, id, revisionId);
     return { ...await readDocumentOriginal(options, principal, revision), revision };
+  });
+  app.get("/api/projects/:projectId/documents/:id/revisions/:revisionId/body", async request => {
+    const { projectId, id, revisionId } = paramsSchema.parse(request.params);
+    const { cursor, limit } = z.strictObject({ cursor: z.coerce.number().int().safe().min(0).optional(),
+      limit: z.coerce.number().int().min(1).max(8192).optional() }).parse(request.query);
+    const principal = scoped(request.principal, projectId, "read");
+    const revision = await fixedRevision(principal, projectId, id, revisionId);
+    const bytes = await fixedPart(options, principal, revision, undefined, verifiedBodies);
+    return { projectId, documentId: id, revisionId, contentHash: revision.contentHash,
+      format: revision.format, mediaType: revision.mediaType, ...bodyPage(bytes, cursor ?? 0, limit ?? 4096) };
+  });
+  app.get("/api/projects/:projectId/documents/:id/revisions/:revisionId/assets/:blobId", async request => {
+    const { projectId, id, revisionId, blobId } = paramsSchema.extend({ blobId: idSchema }).parse(request.params);
+    const principal = scoped(request.principal, projectId, "read");
+    const revision = await fixedRevision(principal, projectId, id, revisionId);
+    const asset = revision.assetsManifest.find(item => item.blobId === blobId);
+    if (!asset) throw new DomainError("NOT_FOUND", "Asset is not in the fixed manifest");
+    const bytes = await fixedPart(options, principal, revision, blobId);
+    return { projectId, documentId: id, revisionId, documentContentHash: revision.contentHash,
+      blobId, path: asset.path, mediaType: asset.mediaType,
+      contentHash: asset.contentHash, size: asset.size, base64: bytes.toString("base64") };
   });
 }

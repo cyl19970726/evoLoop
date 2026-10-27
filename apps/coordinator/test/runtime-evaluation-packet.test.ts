@@ -112,7 +112,7 @@ function createFixture(options: { evaluation?: boolean; failMaterial?: "missing"
   ]);
   let currentRun: RuntimeRunRecord = {
     projectId, id: randomUUID(), taskId, taskRevisionId, basisSetId: basisId, sessionId, operationId,
-    input: definition.case.commonInput, inputHash: "frozen-input-hash", state: "requested", version: 1,
+    input: definition.case.commonInput, inputHash: sha(definition.case.commonInput), state: "requested", version: 1,
     nativeTurnId: null, interruptRequested: false, resultSummary: null, actorId,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     ...(options.evaluation ? { evaluationBinding: { evaluationId, revisionId: evaluationRevisionId, caseId, conditionId,
@@ -188,6 +188,7 @@ function createFixture(options: { evaluation?: boolean; failMaterial?: "missing"
   };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    cliEntryForRun: async () => ({command:"/usr/local/bin/python3 /private/fixed-cli.py",actorId:"recipient"}),
     readDocumentOriginal: async () => { throw new Error("inline fixture needs no Blob"); },
     readEvaluationMaterial, blobsForPrincipal: async () => blobStore });
   return { runner, runtime, get run() { return currentRun; }, blobs, get preparedCount() { return preparedCount; },
@@ -201,7 +202,7 @@ test("evaluation Run sends the exact verified external packet and packet readbac
     await fixture.runner.start();
     assert.equal(fixture.runtime.starts, 1, JSON.stringify({ status: fixture.runner.status(), rejected: fixture.rejected, run: fixture.run }));
     assert.equal(fixture.attached, 1);
-    assert.equal(fixture.run.inputHash, "frozen-input-hash");
+    assert.equal(fixture.run.inputHash, sha(definition.case.commonInput));
     const packet = fixture.run.evaluationPacket!;
     const payload = evaluationPacketBlobPayload(packet.payloadRef, projectId, packet.contentHash);
     const blob = fixture.blobs.get(payload.id)!;
@@ -250,12 +251,17 @@ test("unknown evaluation start does not rebuild or re-dispatch its attached pack
   } finally { await fixture.runner.stop(); }
 });
 
-test("ordinary Run keeps the established Task input string and does not create an evaluation packet", async () => {
+test("ordinary Run sends a bounded fixed-reference handoff and does not create an evaluation packet", async () => {
   const fixture = createFixture();
   try {
     await fixture.runner.start();
-    const expected = `[evoloop-run-operation:${operationId}]\nProject task: ${revision.title}\nContent: ${revision.content}\nAcceptance: ${revision.acceptance}\nTask revision: ${revision.id}\nBasis set: ${basis.id}\n\nProcess document ${primaryDocumentId}, immutable revision ${primaryRevisionId}, SHA256 ${primaryHash}\n${JSON.stringify({ format: "markdown", mediaType: "text/markdown", originalName: "task.md", entrypoint: null, body: primaryBody, resources: [] })}\n\nAuthorized task input:\n${definition.case.commonInput}\n\nReport actual files, checks and limits. Native turn completion is not task acceptance or consumer use.`;
-    assert.equal(fixture.runtime.captured[0], expected);
+    const input = fixture.runtime.captured[0]!;
+    assert.match(input, /evoloop-lightweight-v1/);
+    assert.match(input, new RegExp(taskRevisionId));
+    assert.match(input, new RegExp(primaryRevisionId));
+    assert.match(input, new RegExp(primaryHash));
+    assert.ok(Buffer.byteLength(input, "utf8") < 16_000);
+    assert.doesNotMatch(input, /Process document/);
     assert.equal(fixture.run.evaluationPacket, undefined);
     assert.equal(fixture.attached, 0);
     assert.equal(fixture.preparedCount, 0);
@@ -269,7 +275,7 @@ test("an adopted older source with a sealed no-impact retention reaches native s
     assert.equal(fixture.runtime.starts, 1);
     assert.equal(fixture.dispatches, 1);
     assert.equal(fixture.run.state, "running");
-    assert.match(fixture.runtime.captured[0]!, /Previously adopted source/);
+    assert.doesNotMatch(fixture.runtime.captured[0]!, /Previously adopted source/);
     assert.match(fixture.runtime.captured[0]!, new RegExp(olderRevisionId));
   } finally { await fixture.runner.stop(); }
 });
@@ -282,7 +288,8 @@ test("a newer adoption invalidates the sealed observation before native start", 
     assert.equal(fixture.dispatches, 0);
     assert.equal(fixture.rejected.length, 1);
     assert.equal(fixture.run.state, "failed");
-    assert.equal(fixture.rejected[0], "Run preflight failed; inspect fixed inputs and current authorization");
+    assert.match(fixture.rejected[0]!, /^evoloop-preflight-v1:/);
+    assert.equal(JSON.parse(fixture.rejected[0]!.slice("evoloop-preflight-v1:".length)).modelStarted, false);
     assert.deepEqual(fixture.runner.status(projectId).faults.map(fault =>
       ({ projectId: fault.projectId, runId: fault.runId, phase: fault.phase, category: fault.category })),
       [{ projectId, runId: fixture.run.id, phase: "run_preflight", category: "verification" }]);

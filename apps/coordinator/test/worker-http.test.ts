@@ -22,6 +22,7 @@ const DOC = id(10), DOC_REV = id(11), TASK_REV = id(12), GIT = id(13), WIKI = id
 const DISPATCH = id(16), EVENT = id(17), INBOX = id(18), GOAL = id(19), STAGE = id(20);
 const ownerToken = "o".repeat(40);
 const body = "# Fixed original\n";
+const runInput = "Fixed answered question: 继续执行原任务。";
 const fixed: DocumentPayloadRevision = { projectId: P, documentId: DOC, id: DOC_REV,
   previousRevisionId: null, format: "markdown", mediaType: "text/markdown", originalName: "report.md",
   body, payloadRef: null, contentHash: createHash("sha256").update(body).digest("hex"),
@@ -70,7 +71,8 @@ async function fixture() {
     getTask: async () => {reached.push("task");return {id:TASK};},
     getTaskRevision: async () => {reached.push("taskRevision");return {id:TASK_REV};},
     getDocumentPayloadRevision: async () => {reached.push("original");return fixed;},
-    getRuntimeRun: async () => {reached.push("run");return {id:B_RUN};},
+    getRuntimeRun: async () => {reached.push("run");return {projectId:P,id:B_RUN,taskRevisionId:TASK_REV,
+      sessionId:B_SESSION,operationId:id(30),input:runInput,inputHash:createHash("sha256").update(runInput).digest("hex")};},
     getOperation: async () => {reached.push("operation");return null;},
     execute: async (_principal: unknown, command: {type:string;operationId:string}) => {
       reached.push(`business:${command.type}`);
@@ -125,6 +127,28 @@ test("worker trace requires its fixed adopted Run and authenticated identity, no
     f.setAdoptedRun(false);
     assert.equal((await f.inject(f.businessAuth,"GET",url)).statusCode,403);
   } finally {await f.close();}
+});
+
+test("worker reads its own full fixed Run instruction through bounded HTTP pages", async () => {
+  const f = await fixture();
+  try {
+    const url = `/api/projects/${P}/runtime/runs/${B_RUN}/input`;
+    const first = await f.inject(f.businessAuth, "GET", `${url}?cursor=0&limit=8`);
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.json().startByte, 0);
+    assert.equal(first.json().inputHash, createHash("sha256").update(runInput).digest("hex"));
+    let full = first.json().body as string, next = first.json().nextCursor as string | null;
+    while (next) {
+      const page = await f.inject(f.businessAuth, "GET", `${url}?cursor=${next}&limit=8`);
+      assert.equal(page.statusCode, 200, page.body);
+      full += page.json().body;
+      next = page.json().nextCursor;
+    }
+    assert.equal(full, runInput);
+    assert.equal((await f.inject(f.businessAuth, "GET", `/api/projects/${P}/runtime/runs/${C_RUN}/input`)).statusCode, 403);
+    const split = Buffer.byteLength(runInput.slice(0, runInput.indexOf("继")), "utf8") + 1;
+    assert.equal((await f.inject(f.businessAuth, "GET", `${url}?cursor=${split}&limit=8`)).statusCode, 409);
+  } finally { await f.close(); }
 });
 
 test("real broker identity crosses HTTP hooks; unauthorized requests never reach services", async () => {

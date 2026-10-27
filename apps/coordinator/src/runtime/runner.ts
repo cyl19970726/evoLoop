@@ -8,7 +8,9 @@ import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
-import { fixedDocumentMaterial } from "./materials.js";
+import { fixedDocumentMaterial, fixedDocumentSummary } from "./materials.js";
+import { buildLightweightInput, type CliBootstrap } from "./lightweight-input.js";
+import { PreflightError, safePreflightReport } from "./preflight-report.js";
 import type { NativeInputBridge } from "./native-input.js";
 import type { NativeObservationBridge } from "./native-observation.js";
 import { lookupKnownTurn } from "./turn-lookup.js";
@@ -129,6 +131,8 @@ export class RuntimeRunner {
     /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
     mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
     mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
+    /** Trusted, exact Session/actor/Task CLI entry; never inferred from Task or Run prose. */
+    cliEntryForRun?(session: RuntimeSessionRecord | null, run: RuntimeRunRecord): Promise<CliBootstrap | null>;
     readDocumentOriginal?: ReadDocumentOriginal;
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
@@ -518,6 +522,36 @@ export class RuntimeRunner {
     return { input, sources: uniqueEvaluationSources(sources), revision: fixed.revision, basis: fixed.basis };
   }
 
+  private async lightweightInput(principal: Principal, run: RuntimeRunRecord, session: RuntimeSessionRecord | null = null) {
+    const fixed = await this.deps.workflow.getTaskRevision(principal, run.projectId, run.taskId, run.taskRevisionId);
+    const current = await this.deps.workflow.getTask(principal, run.projectId, run.taskId);
+    if (!fixed.basis || fixed.basis.id !== run.basisSetId || current.impacts.some(i => i.state === "pending"))
+      throw new PreflightError("FIXED_SOURCE_INVALID", { kind: "task", id: run.taskId, revisionId: run.taskRevisionId });
+    await this.deps.workflow.validateTaskRevisionBasis(principal, run.projectId, run.taskId,
+      run.taskRevisionId, run.basisSetId);
+    const refs = [{ documentId: fixed.revision.contentDocumentId, revisionId: fixed.revision.contentRevisionId },
+      ...fixed.basis.members.filter(member => member.documentId !== fixed.revision.contentDocumentId ||
+        member.revisionId !== fixed.revision.contentRevisionId)];
+    const documents = [];
+    for (const ref of refs) {
+      const source = { kind: "document" as const, id: ref.documentId, revisionId: ref.revisionId };
+      let revision;
+      try { revision = await this.deps.workflow.getDocumentPayloadRevision(principal, run.projectId, ref.documentId, ref.revisionId); }
+      catch (error) {
+        if (error instanceof DomainError && error.code === "FORBIDDEN") throw error;
+        throw new PreflightError("FIXED_SOURCE_UNAVAILABLE", source);
+      }
+      if (revision.projectId !== run.projectId || revision.documentId !== ref.documentId || revision.id !== ref.revisionId ||
+          (ref.documentId === fixed.revision.contentDocumentId && ref.revisionId === fixed.revision.contentRevisionId &&
+            (revision.format !== "markdown" || revision.body !== fixed.revision.content)))
+        throw new PreflightError("FIXED_SOURCE_INVALID", source);
+      try { documents.push(fixedDocumentSummary(revision)); }
+      catch { throw new PreflightError("FIXED_SOURCE_INVALID", source); }
+    }
+    const cliEntry = await this.deps.cliEntryForRun?.(session, run) ?? null;
+    return buildLightweightInput(run, fixed.revision, fixed.basis, documents, cliEntry);
+  }
+
   private async evaluationSources(principal: Principal, session: RuntimeSessionRecord, run: RuntimeRunRecord,
     taskInput: TaskInputMaterial): Promise<{ evaluation: Awaited<ReturnType<WorkflowService["getEvaluation"]>>; sources: EvaluationFixedRef[] }> {
     const binding = run.evaluationBinding;
@@ -660,17 +694,23 @@ export class RuntimeRunner {
     let run = original;
     if (run.state === "requested" && !run.nativeTurnId) {
       let input: string;
+      let inputReceipt: { protocol: string; contentHash: string; byteLength: number } | undefined;
       try {
         if (run.evaluationBinding) {
           const prepared = await this.prepareEvaluationInput(principal, session, run);
           run = prepared.run; input = prepared.input;
-        } else input = (await this.input(principal, run)).input;
+          inputReceipt = { protocol: run.evaluationPacket?.builderVersion ?? "evaluation-packet", contentHash: digest(input), byteLength: Buffer.byteLength(input, "utf8") };
+        } else {
+          const prepared = await this.lightweightInput(principal, run, session);
+          input = prepared.input;
+          inputReceipt = { protocol: prepared.protocol, contentHash: prepared.contentHash, byteLength: prepared.byteLength };
+        }
       }
-      catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, "Run preflight failed; inspect fixed inputs and current authorization");
+      catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, safePreflightReport(error).summary);
         this.recordFault(run.projectId,"run_preflight",error,run.sessionId,run.id);return false; }
       // Recheck after preflight, immediately before recording the external-start intent.
       if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return false;
-      await this.deps.trusted.beginDispatch(run.projectId, run.id);
+      await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
       let startBinding: RuntimeBinding;
       try {
         // Persist the original intent before resuming the same full-permission Thread
@@ -700,7 +740,7 @@ export class RuntimeRunner {
         return false;
       }
       try {
-        run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId });
+        run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId, inputReceipt });
       } catch (error) {
         await this.deps.trusted.markRunUnknown(run.projectId, run.id,
           "Task turn/start returned a Turn but its binding receipt was not saved; reconcile the original operation without starting another Turn");

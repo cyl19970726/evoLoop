@@ -87,6 +87,12 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
+    /** Explicit read-capable CLI bound to a Session requester and Task recipient; no secret is stored here. */
+    materialCli: z.array(z.strictObject({projectId:z.uuid(),sessionId:z.uuid(),sessionActorId:z.string().min(1).max(100),
+      cliActorId:z.string().min(1).max(100),
+      taskId:z.uuid().optional(),command:z.string().min(1).max(1024).regex(/^\/[A-Za-z0-9_./-]+(?: \/[A-Za-z0-9_./-]+)?$/)}))
+      .max(200).refine(values=>new Set(values.map(value=>`${value.projectId}:${value.sessionId}:${value.taskId??"*"}`)).size===values.length,
+        "Material CLI bindings must be unique per project, Session and optional Task").default([]),
     /** Fixed 0.164 experimental Default-mode input, scoped to this owned child only. */
     nativeUserInput: z.boolean().default(false),
     /** Exact locally reviewed App Server protocol; new configurations use the reviewed 0.164 interface. */
@@ -107,6 +113,13 @@ const integrationSchema = z.strictObject({
   }).optional(),
 });
 type EngineeringActionGrant=NonNullable<z.infer<typeof integrationSchema>["residentQueue"]>["actionGrants"][number];
+export type MaterialCliBinding = NonNullable<z.infer<typeof integrationSchema>["runtime"]>["materialCli"][number];
+export function selectMaterialCli(entries: MaterialCliBinding[], projectId: string, sessionId: string,
+  sessionActorId: string, taskId: string): MaterialCliBinding | null {
+  const matching = entries.filter(value => value.projectId === projectId && value.sessionId === sessionId &&
+    value.sessionActorId === sessionActorId && (value.taskId === taskId || value.taskId === undefined));
+  return matching.find(value => value.taskId === taskId) ?? matching.find(value => value.taskId === undefined) ?? null;
+}
 type EngineeringActionRequest=Extract<TaskCollaborationPayload,{type:"action_request"}>;
 export function hasExactEngineeringActionGrant(grants:EngineeringActionGrant[],principal:Principal,
   action:EngineeringActionRequest,actualProjectId:string,nowMs=Date.now()):boolean {

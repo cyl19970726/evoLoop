@@ -55,7 +55,7 @@ export async function readDocumentOriginal(
     { status: "available", body, assets };
 }
 
-function matches(blob: RegisteredDocumentBlob, revision: DocumentPayloadRevision,
+export function matches(blob: RegisteredDocumentBlob, revision: DocumentPayloadRevision,
   role: "main" | "asset", path: string | null): boolean {
   return blob.projectId === revision.projectId && blob.documentId === revision.documentId &&
     blob.revisionId === revision.id && blob.role === role && blob.relativePath === path &&
