@@ -121,6 +121,7 @@ export interface NativeInputView {
   response: import("./native-input.js").NativeInputResponse | null; createdAt: string; updatedAt: string;
 }
 export interface SessionSnapshot {
+  nativeObservation?: Omit<import("./native-observation.js").NativeObservationRecord, "connectionId"> | null;
   nativeInputRequests?: NativeInputView[];
   session: ObservedSession;
   observationCursor: string;

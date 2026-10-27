@@ -10,6 +10,7 @@ import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
 import { fixedDocumentMaterial } from "./materials.js";
 import type { NativeInputBridge } from "./native-input.js";
+import type { NativeObservationBridge } from "./native-observation.js";
 import type { ReadDocumentOriginal } from "./materials.js";
 import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId, evaluationPacketBlobPayload, evaluationPacketMediaType,
   uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
@@ -116,6 +117,7 @@ export class RuntimeRunner {
     readExternalMaterials?(principal:Principal,projectId:string,taskId:string,taskRevisionId:string):Promise<string>;
     runtimeFactory(): ManagedRuntime; workflow: WorkflowService; trusted: RuntimeWorkflowService;
     nativeInputs?: NativeInputBridge;
+    nativeObservation?: NativeObservationBridge;
     principals: Principal[]; canWrite(): boolean; allowedCwd(projectId: string, cwd: string): Promise<boolean>;
     hasGrant(scope: RuntimeGrant, session?: RuntimeSessionRecord): boolean | Promise<boolean>;
     /** Exact persisted dynamic Session/Run ownership for read-only reconciliation and one-shot settlement. */
@@ -180,6 +182,7 @@ export class RuntimeRunner {
     this.attachRuntime();
     await this.runtime.open();
     await this.deps.nativeInputs?.opened();
+    await this.deps.nativeObservation?.opened();
     for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
     this.available = true;
     await this.pump();
@@ -192,6 +195,7 @@ export class RuntimeRunner {
   }
   private attachRuntime(): void {
     this.deps.nativeInputs?.attach(this.runtime);
+    this.deps.nativeObservation?.attach(this.runtime);
     this.unsubscribeDisconnect = this.runtime.onDisconnect(_reason => {
       if (this.stopped) return;
       this.available = false;
@@ -231,11 +235,13 @@ export class RuntimeRunner {
       // A replacement must wait for proof that the previous owned child exited.
       await this.runtime.close();
       await this.deps.nativeInputs?.drain();
+      await this.deps.nativeObservation?.drain();
       this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.interruptAttempted.clear();
       this.attachRuntime();
       await this.runtime.open();
       await this.deps.nativeInputs?.opened();
+      await this.deps.nativeObservation?.opened();
       for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
       this.serviceError = null;
       this.available = true;
@@ -294,6 +300,7 @@ export class RuntimeRunner {
         }
         await this.flushApprovals();
         await this.deps.nativeInputs?.pump(projectId, sessions);
+        await this.deps.nativeObservation?.pump(projectId, sessions);
         this.clearFault(projectId);
       } catch (error) { this.recordFault(projectId,"project_scan",error); }
     }
@@ -894,5 +901,7 @@ export class RuntimeRunner {
     await this.runtime.close();
     await this.deps.nativeInputs?.drain();
     this.deps.nativeInputs?.detach();
+    await this.deps.nativeObservation?.drain();
+    this.deps.nativeObservation?.detach();
   }
 }

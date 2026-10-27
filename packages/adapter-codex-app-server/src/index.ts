@@ -397,7 +397,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       const threadId = params?.threadId;
       if (!nonempty(threadId) || !this.bindings.has(threadId)) return;
       const turn = object(params?.turn);
-      const event: RuntimeEvent = { method: message.method, threadId, params: message.params, ...(nonempty(params?.turnId) ? { turnId: params.turnId } : nonempty(turn?.id) ? { turnId: turn.id } : {}) };
+      const binding = this.bindings.get(threadId)!;
+      const event: RuntimeEvent = { method: message.method, projectId: binding.projectId, sessionId: binding.sessionId,
+        threadId, params: message.params, ...(nonempty(params?.turnId) ? { turnId: params.turnId } : nonempty(turn?.id) ? { turnId: turn.id } : {}) };
       for (const listener of this.events) { try { listener(event); } catch { /* observers cannot break transport */ } }
       return;
     }

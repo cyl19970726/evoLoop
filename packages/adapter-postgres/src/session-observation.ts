@@ -287,6 +287,7 @@ export class PgSessionObservation implements SessionObservationReader {
       : this.source("session", row.session_id ?? row.entity_id, row.entity_id);
     if (table === "runtime_session") return this.source("session", row.entity_id, row.source_revision);
     if (table === "session_native_input_request") return this.source("session", row.session_id, row.source_revision);
+    if (table === "session_native_observation") return this.source("session", row.session_id, row.source_revision);
     if (table === "role_revision") return this.source("role", row.entity_id, row.source_revision);
     if (table === "role_host_link_revision") return this.source("host-link", row.entity_id, row.source_revision);
     if (table === "discussion_event") return this.source("discussion", row.discussion_id ?? row.entity_id, row.entity_id);
@@ -339,7 +340,8 @@ export class PgSessionObservation implements SessionObservationReader {
     if (!/^\d+$/.test(position)) throw new DomainError("INVALID_CURSOR", "历史读取位置无效。");
     const n = scope.params.length;
     const r = await this.client.query(`SELECT h.*,d.kind AS discussion_kind FROM (
-      SELECT * FROM session_observation_change WHERE project_id=$1 AND ${scope.sql} AND source_table<>'discussion'
+      SELECT * FROM session_observation_change WHERE project_id=$1 AND ${scope.sql}
+        AND source_table NOT IN ('discussion','session_native_observation')
         AND sequence<=$${n + 1}::bigint AND ($${n + 2}::uuid IS NULL OR task_id=$${n + 2}) ORDER BY sequence DESC LIMIT $${n + 3}
       ) h LEFT JOIN discussion d ON d.project_id=h.project_id AND d.discussion_id=h.discussion_id ORDER BY h.sequence DESC`,
       [...scope.params, position, options.taskId ?? null, options.limit + 1]);

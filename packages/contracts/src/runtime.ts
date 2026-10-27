@@ -154,6 +154,9 @@ export interface RuntimeWorkTrace {
 
 export interface RuntimeEvent {
   method: string;
+  /** Added only by the adapter after matching its registered owned binding. */
+  projectId?: string;
+  sessionId?: string;
   threadId?: string;
   turnId?: string;
   params: unknown;

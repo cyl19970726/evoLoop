@@ -8,6 +8,7 @@ import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import type { NativeInputBridge } from "./runtime/native-input.js";
+import type { NativeObservationBridge } from "./runtime/native-observation.js";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
@@ -43,6 +44,7 @@ export async function buildServer(options: {
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
   nativeInputs?: NativeInputBridge;
+  nativeObservation?: NativeObservationBridge;
   /** Read-only, snapshot-only projection. Must not initialize native processes or perform dispatch. */
   messageExecution?: (principal: Principal, projectId: string, session: ObservedSession) => Promise<OrdinaryMessageExecutionCapability>;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
@@ -200,11 +202,23 @@ export async function buildServer(options: {
         : { state: "unknown", reasonCode: "EXECUTION_STATUS_UNAVAILABLE",
           reason: "此服务未提供普通消息执行状态；可保存不代表能够自动回复。", observedAt: new Date().toISOString() },
     },
-  }), async (principal, projectId, snapshot) => ({ ...snapshot,
+  }), async (principal, projectId, snapshot) => {
+    const nativeObservation = options.nativeObservation && snapshot.session.target.kind === "owned"
+      ? await options.nativeObservation.get(projectId, snapshot.session.target.sessionId) : null;
+    const usage = nativeObservation?.usage;
+    const metric = (name: "inputTokens" | "outputTokens") => ({ ...snapshot.resources[name],
+      value: usage!.total[name], source: "owned-native-event:thread/tokenUsage/updated", unit: "tokens", scope: "session" as const,
+      observedAt: usage!.observedAt, interval: null,
+      unavailableReason: usage!.total[name] === null ? "原生未提供该用量。" :
+        nativeObservation!.freshness === "stale" ? "原生观察已过期，保留最后累计读数。" : null });
+    return { ...snapshot,
+    ...(options.nativeObservation ? { nativeObservation } : {}),
+    ...(usage ? { resources: { ...snapshot.resources, inputTokens: metric("inputTokens"), outputTokens: metric("outputTokens") } } : {}),
     ...(options.nativeInputs && snapshot.session.target.kind === "owned" ? {
       nativeInputRequests: await options.nativeInputs.views(principal, projectId, snapshot.session.target.sessionId),
     } : {}),
-  }));
+    };
+  });
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });
@@ -214,6 +228,12 @@ export async function buildServer(options: {
     await options.service.getRuntimeSession(principal, p.projectId, p.id);
     if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问观察。");
     return { items: await options.nativeInputs.views(principal, p.projectId, p.id), limit: 20 };
+  });
+  app.get("/api/projects/:projectId/runtime/sessions/:id/observation", async request => {
+    const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
+    await options.service.getRuntimeSession(who(request.principal), p.projectId, p.id);
+    if (!options.nativeObservation) throw new DomainError("NATIVE_OBSERVATION_UNAVAILABLE", "此服务尚未启用原生进度观察。");
+    return options.nativeObservation.get(p.projectId, p.id);
   });
   app.get("/api/projects/:projectId/session-inputs/:id", async request => {
     const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
