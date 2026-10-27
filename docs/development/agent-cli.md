@@ -71,7 +71,7 @@ Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物
 
 通过当前 Task 协作通道提交 `discussion.action.request` 时，`inputHash` 逐字取该通道原 Run 的 `inputHash`；补丁、正文或产物的 hash 应固定在 `detail` 报告中，不能替代 Run 输入 hash。先回读 Run、通道、报告的固定修订和 `command schema discussion.action.request`；JSON 形状通过只说明结构有效，仍须核 Run 状态、参与者、版本和来源语义。原 Run 确认终态后，若仍需工程动作，先形成新的真实 Run 与自己的通道、Run 输入 hash 和同 Run 来源的报告，再在新答复指导下形成新意图；保留旧拒绝，不由 Lead 代造 worker 签名。具体命令和动作回执仍按本节的正式工程入口处理。
 
-工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态 Run 由有权 Lead 核终态和产物后登记 Delivery；broker worker 按下文签真实提交意图，封存者另留身份。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。当前通用常驻队列及 Desktop 自动唤醒未在此文档声明为可用；后项接续按实际已部署能力和授权核验。
+工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态 Run 由有权 Lead 核终态和产物后登记 Delivery；broker worker 按下文签真实提交意图，封存者另留身份。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。同一 owned Session 的受限常驻队列见[Lead 分派、返工与再次承接](#lead-分派返工与再次承接)；本节的 `runtime.run.reserve` 是显式手动路径。以所连服务、CLI schema、现行授权和队列读回核可用范围；任意 Desktop 自动唤醒仍未验证。
 
 ## 观察会话、具体接手与普通消息
 
@@ -93,7 +93,7 @@ npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 
 新写入沿用 `command schema TYPE` 和 `command run FILE` 的幂等回执入口。`session.profile.set` 维护项目展示名与用途；`task.assignment.set` 指定同 Role 的实际会话，建议先 start 固定 Task 再分派。指定 actor 用 `task.assignment.acknowledge` 接手；Lead 的实际人工沟通记录另用 `observeAcceptance`，不能冒用执行者。新队列／直接 Run 不得绕过已有的具体分派；旧输入变更后明确重确认。
 
-`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通对话无需新 Task；新的独立工作仍须 Task 化与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；read 指实际收件身份对原消息的记录，不是发送者看过回复。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
+`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通 Session 消息用 `work message MESSAGE_ID` 核原消息及处理；Task 问题、答复和结果用该 Run 的 Task discussion 与固定 Document，不拿 discussion 事件证明普通消息已处理。普通对话无需新 Task；新的独立工作仍须正式 Task 与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；实际收件人按 `command schema session.message.receipt` 对原消息签 read，发送者看到回复不能代签。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
 
 ## 未知结果与本地回执
 
@@ -125,7 +125,7 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 ## Lead 分派、返工与再次承接
 
-Task 写清问题、希望改变的结果和唯一当前责任后，Lead 按实际职责选择承接者：规范负责人处理项目 skill、任务写法及工程方法，功能开发负责人处理业务能力，产品文档负责人处理产品模型。职责名称不表示已经建立 Role 或承载；先查正式记录。普通领域修复无需先经过规范负责人审批，跨域工作只需明确文件所有权和最终回收者。Lead 在这里是本项工作的协调责任，不新增平台权限或中心审批岗位。
+下表是 Lead 显式预留 `runtime.run.reserve` 的手动 Run 路径；已采纳的 owned Session 队列按本节后文的 `queue.*` 路径自动派发，不能再手动预留同一后项。Task 写清问题、希望改变的结果和唯一当前责任后，Lead 按实际职责选择承接者：规范负责人处理项目 skill、任务写法及工程方法，功能开发负责人处理业务能力，产品文档负责人处理产品模型。职责名称不表示已经建立 Role 或承载；先查正式记录。普通领域修复无需先经过规范负责人审批，跨域工作只需明确文件所有权和最终回收者。Lead 在这里是本项工作的协调责任，不新增平台权限或中心审批岗位。
 
 | 交接时点 | 谁做什么 | 回读什么才能继续 |
 | --- | --- | --- |
@@ -136,11 +136,11 @@ Task 写清问题、希望改变的结果和唯一当前责任后，Lead 按实�
 | 返工 | Lead 把具体未满足的原判据、复现和下一责任留在原 Task 的反馈中。改正文或依据前先处理在途/未知，再按 reopen→update→start 建新修订。 | 保留原 Run/交付/失败观察，新 Run 只承接新固定输入；不因验收失败另造同工作的 Task。 |
 | 下一项工作 | Lead 明确分派第二项真实 Task，核 owner、固定输入、当前授权及空闲状态后，显式在原 Session 预留新 Run。 | 两项 Task、两次 Run 对应同一项目 Session 和同一原生 Thread；新聊天、同名 Role 或相同 cwd 均不能代替。常驻承载不因首 Task 结束自动关闭。 |
 
-普通显式路径可保留同 Session 连续承接，但仍须 Lead 驱动。受限自动 Loop 只在自己的来源、职责、范围、预算及活动状态内接续，当前逐 Dispatch 新建 Session；`role.bindSession` 不让 Loop 自动选择原常驻承载。通用常驻路由、任意 Desktop 聊天挂载与自动唤醒不可据此宣称已实现。产品语义见[任务与过程文档](../product/tasks-and-documents.md)、[工作台](../product/workbench.md)及[Codex 承载关系](../architecture/codex-integration.md#任务职责与定时触发)。
+普通显式路径可保留同 Session 连续承接，但下一项仍须 Lead 驱动。受限自动 Loop 只在自己的来源、职责、范围、预算及活动状态内接续，当前逐 Dispatch 新建 Session；`role.bindSession` 不让 Loop 自动选择原常驻承载。通用常驻路由、任意 Desktop 聊天挂载与自动唤醒不可据此宣称已实现。产品语义见[任务与过程文档](../product/tasks-and-documents.md)、[工作台](../product/workbench.md)及[Codex 承载关系](../architecture/codex-integration.md#任务职责与定时触发)。
 
 本机受限服务已提供同一 owned Session 的常驻队列路径；每次操作仍先核实际 CLI 构建的 `help`、`command types` 和各 `command schema`，再以所连接服务的真实读回与现行授权确认可用的 `domain.*`、`role.classify`、`host.*`、`queue.*` 和 Task `discussion.*`，不凭仓库源码或旧帮助推断当前服务能力。帮助与 schema 来自当前 CLI 构建，升级服务不会自动升级已安装的 CLI。Task `context` 中固定的领域 ID 与按观察时间读取的当前路由元数据应分开理解，路由信息不复制正文、也不授启动权。Lead 先核 Role/domain 映射、owned Session 与当前精确授权，为已封存的进行中 Task 明示排序理由、依赖、消费者、总 Run 预算，再采纳队列版本。未领取时改序用所见版本 CAS；Task 正文或依据变化须修订条目并重新采纳。队列控制者领取时重验当前 grant、绑定、Task 输入、同 Session 占用和未知 Run；每次续跑计入同一预算。外部 Desktop link 即使已核人工领取，也不能填作 owned Session 自动派发。Loop broker、常驻队列控制者与业务 CLI actor 各按真实身份行事，不互相代签。
 
-执行者用自己的业务身份读固定 context 与本 Run 的 Task 通道；问题、答复、进度和阻塞引用固定过程 Document 修订。发出、收到、已读、实际采用和解决各看独立事件/回执。在途 Turn 不接收静默改写；需要答复接续时，原 Run 已知终态后由当前有权控制者用 `queue.continue` 固定前一通道的真实问答，在原 Session 开新 Run，并核输入含精确答复；若答复改变 Task 范围，先按普通任务改版和队列重采纳处理。无问答的返工或动作结算先由 Lead 正常修订 Task、封存新的业务输入，再 `queue.amend` 并重新 `queue.adopt`；随后 `queue.continue` 可省略问答，仍固定理由和前次通道。只推进生命周期版本而未改变固定业务输入时拒绝续跑，也不消耗尝试预算。受限工程动作按[工程交接](#仓库工程任务与动作交接)保留请求、批准及实际执行回执，外部结果 unknown 沿原 ID 对账；`request` 不授执行权。默认等当前通过的交付、Task 验收关闭及声明消费者实际使用后才释放前项；条目预先允许有界释放时，无依赖后项的提前放行须 Lead 留有界决定及原 Task 下一责任，依赖项仍等验收。原 Session 的两项真实任务已按队列顺序完成问答接续、独立交付与消费者使用后放行；其他任务、失败分支及 external Desktop 自动启动未据此验收。结果 unknown 仍按原 Run/操作 ID 回读，答复发送不等于被采用，工程动作请求、批准和实际执行须各查自己的回执；操作者以实际 CLI 构建、所连服务的真实读回及现行授权为准，实跑范围统一见[当前基线](../roadmap.md#当前基线)。
+执行者用自己的业务身份读固定 context 与本 Run 的 Task 通道；问题、答复、进度和阻塞引用固定过程 Document 修订。发出、收到、已读、实际采用和解决各看独立事件/回执。在途 Turn 不接收静默改写；需要答复接续时，原 Run 已知终态后由当前有权控制者用 `queue.continue` 固定前一通道的真实问答，在原 Session 开新 Run，并核输入含精确答复；若答复改变 Task 范围，先按普通任务改版和队列重采纳处理。无问答的返工或动作结算先由 Lead 正常修订 Task、封存新的业务输入，再 `queue.amend` 并重新 `queue.adopt`；随后 `queue.continue` 可省略问答，仍固定理由和前次通道。只推进生命周期版本而未改变固定业务输入时拒绝续跑，也不消耗尝试预算。受限工程动作按[工程交接](#仓库工程任务与动作交接)保留请求、批准及实际执行回执，外部结果 unknown 沿原 ID 对账；`request` 不授执行权。默认由有权者核已知终态 Run 并登记当前固定 Delivery，声明消费者亲自对同一 Delivery 签 `used`（要求使用时），有权者再核判据并关闭 Task；服务据此自动登记队列 claim/entry 的 `releaseKind=accepted`，依赖的后项才可领取。`accepted` 不是 Delivery 状态，Run 完成或消息回复都不放行；条目预先允许有界释放时，无依赖后项的提前放行须 Lead 留有界决定及原 Task 下一责任，依赖项仍等验收。原 Session 的两项真实任务已按队列顺序完成问答接续、独立交付与消费者使用后放行；其他任务、失败分支及 external Desktop 自动启动未据此验收。结果 unknown 仍按原 Run/操作 ID 回读，答复发送不等于被采用，工程动作请求、批准和实际执行须各查自己的回执；操作者以实际 CLI 构建、所连服务的真实读回及现行授权为准，实跑范围统一见[当前基线](../roadmap.md#当前基线)。
 
 ### 受控 Session 故障恢复与配置变更
 
@@ -152,7 +152,7 @@ Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也�
 
 `queue.extendBudget` 由登记该队列的当前控制者提出，须同时给 `expectedVersion`、`expectedMaxRuns`、严格更大的 `maxRuns`、`evidenceRef` 与理由。它保留旧 attempts 与 decisions，不自动 unhold、adopt 或启动；读取新队列 version 后须重新采纳。`queue.retryFailed` 只接受原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 状态，不把 `interrupted` 改写为 `failed`，禁止 `unknown`／`completed`。每次都由控制者显式复核影响、固定输入与原 claim，并要求 Run version/inputHash、当前 Task 修订、`expectedExecutionProfileRevisionId` 指定的受审目标配置、gate version、队列 version、原 claim、pin 消息、原因及依据全部精确匹配。输入检查比较原 Task 的固定业务签名，确保工作内容未变；新 Run 使用新沟通通道和执行封套，因此同时留存 sourceRun/sourceInputHash 和新 Run 的实际 inputHash，不伪称两份完整 Run 输入 hash 一致。retry 消耗同队列预算且最多为来源 Run 创建一个 successor，不自动重试。
 
-若故障时已有原消息 M 排队，retry 成功前 M 不会启动；指定 A retry 确认 completed 后，仅该 pin M 获一次处理许可。M 成功后 gate 停在 awaiting acceptance；Lead 仍须按原规则核交付、Task close、声明消费者 used（如适用）并对原 claim 执行 accepted release，随后才开放 B。若条目已按预先授权的有界规则正式释放，gate 也不会自动开放；有权者须再执行 `runtime.session.recovery.resume`，并保留有界释放来源。依赖该条目的 B 仍须看到 `accepted` release，有界释放不满足依赖，也不能改变 A 的原 accepted 规则。无 claim 的普通消息失败等其他可恢复情形，也由 `runtime.session.recovery.resume` 在 exact cause/gate version 和已对账结果下登记显式决定；未处理的原排队消息保持 pin；已终态或取消的原消息只可经正式 resume 清 pin，不可换成新消息或重播，也不接管尚未结算的 unknown。任何 failure/unknown 都保留并重新阻断，不清除、不自动重试；额度已获授权仅使有界命令可用，不构成无限执行授权。本段记录的是本次实现合同，真实原生模型接受、A→原 M→B 和 Lead 的实际验收仍后置。
+若故障时已有原消息 M 排队，retry 成功前 M 不会启动；指定 A retry 确认 completed 后，仅该 pin M 获一次处理许可。M 成功后 gate 停在 awaiting acceptance；Lead 仍须按原规则核当前交付、由声明消费者签 used（如适用）、再关闭 Task；恢复 gate 与原 claim 的 accepted release 还须按本段故障路径的实际决定和回执核对，随后才可开放 B。若条目已按预先授权的有界规则正式释放，gate 也不会自动开放；有权者须再执行 `runtime.session.recovery.resume`，并保留有界释放来源。依赖该条目的 B 仍须看到 `accepted` release，有界释放不满足依赖，也不能改变 A 的原 accepted 规则。无 claim 的普通消息失败等其他可恢复情形，也由 `runtime.session.recovery.resume` 在 exact cause/gate version 和已对账结果下登记显式决定；未处理的原排队消息保持 pin；已终态或取消的原消息只可经正式 resume 清 pin，不可换成新消息或重播，也不接管尚未结算的 unknown。任何 failure/unknown 都保留并重新阻断，不清除、不自动重试；额度已获授权仅使有界命令可用，不构成无限执行授权。本段只说明故障后的 retry／恢复合同；这条故障恢复路径的真实原生模型接受、A→原 M→B 和 Lead 验收仍待验证，不否定上文已核的正常 owned 队列路径。
 
 排查时沿原 Run／消息 operation 与 Thread 回读具体阶段。启动、绑定或权限确认回执未知时保留 unknown，只对账原 ID；不得换消息、创建替代 Run 或将原失败事实改写为成功。普通消息不另有业务 profile restore 阶段。
 
