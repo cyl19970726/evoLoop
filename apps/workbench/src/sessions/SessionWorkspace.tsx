@@ -55,7 +55,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   historyScope.current = `${context.token}\0${scope}\0${active}\0${refresh}\0${readAgain}`;
   const cursor = useRef<string | null>(null);
   const requestVersion = useRef(0);
-  const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.busy === false ? 15000 : 5000;
+  const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.kind !== "owned" && snapshot.session.busy === false ? 15000 : 5000;
   useEffect(() => {
     const sync = () => { if (active) setTab(tabFromHash(sessionKey)); };
     sync(); window.addEventListener("hashchange", sync);
@@ -73,6 +73,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     let recoveryTarget: string | null = null;
     cursor.current = null;
     const saved = remember.get(scope) ?? null;
+    let pollOwnedSnapshot = saved?.session.kind === "owned" && saved.session.target.kind === "owned";
     setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false);
     setHistoryPartial(false); setHistoryLimitations([]); setHistoryError(""); setHistoryBusy(false); setError(""); setLoading(true);
     setRecoveryRead({ status: "loading" });
@@ -107,8 +108,11 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         rememberSnapshot(scope, result); setSnapshot(result);
         setActivity(old => bounded(old, result.activity)); setError("");
         latestSnapshotVersion = version;
-        recoveryTarget = result.session.kind === "owned" && result.session.target.kind === "owned" ? result.session.target.sessionId : null;
-        if (recoveryTarget) { setRecoveryRead({ status: "loading" }); void readRecovery(recoveryTarget, version); }
+        pollOwnedSnapshot = result.session.kind === "owned" && result.session.target.kind === "owned";
+        const nextRecoveryTarget = result.session.kind === "owned" && result.session.target.kind === "owned" ? result.session.target.sessionId : null;
+        if (nextRecoveryTarget !== recoveryTarget) setRecoveryRead({ status: "loading" });
+        recoveryTarget = nextRecoveryTarget;
+        if (recoveryTarget) void readRecovery(recoveryTarget, version);
       } catch (cause) { if (!controller.signal.aborted && epoch.current === current && version === requestVersion.current) {
         recoveryTarget = null;
         setError(errorText(cause)); setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
@@ -140,7 +144,13 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
       } catch (cause) { if (!controller.signal.aborted && epoch.current === current) setError(`变化读取失败：${errorText(cause)}`); }
       finally { checking = false; }
     }
-    const timer = window.setInterval(() => { void checkChanges(); if (recoveryTarget) void readRecovery(recoveryTarget); }, pollInterval);
+    // Native input is transient and may arrive without a session-work change entry.
+    // Poll the owned snapshot itself so a pending question appears without a manual refresh.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      if (pollOwnedSnapshot || !cursor.current) void read();
+      else void checkChanges();
+    }, pollInterval);
     const visible = () => { if (document.visibilityState === "visible") { void read(); } };
     document.addEventListener("visibilitychange", visible);
     return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
