@@ -195,7 +195,12 @@ export class RuntimeWorkflowService {
     });
   }
 
-  async beginDispatch(projectId: string, runId: string): Promise<RuntimeRunRecord> {
+  async beginDispatch(projectId: string, runId: string,
+    inputReceipt?: { protocol: string; contentHash: string; byteLength: number }): Promise<RuntimeRunRecord> {
+    if (inputReceipt && (!/^[a-z0-9-]{1,80}$/.test(inputReceipt.protocol) ||
+        !/^[a-f0-9]{64}$/.test(inputReceipt.contentHash) ||
+        !Number.isSafeInteger(inputReceipt.byteLength) || inputReceipt.byteLength < 1))
+      throw new DomainError("INVALID_INPUT_RECEIPT", "prepared native input receipt is invalid");
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "requested") throw new DomainError("RUN_NOT_REQUESTED", "turn start was already attempted");
@@ -221,7 +226,9 @@ export class RuntimeWorkflowService {
       await validateDispatchBasis(tx, task.id, basis);
       const next = { ...current, state: "dispatching" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
-      await this.emit(tx, runId, current.sessionId, "run.dispatching", "External turn/start may now begin", null, projectId);
+      await this.emit(tx, runId, current.sessionId, "run.dispatching",
+        inputReceipt ? `External turn/start may now begin; prepared input ${inputReceipt.protocol} SHA256 ${inputReceipt.contentHash} bytes ${inputReceipt.byteLength}` :
+          "External turn/start may now begin", null, projectId);
       return next;
     });
   }
@@ -284,7 +291,8 @@ export class RuntimeWorkflowService {
   }
 
   async bindTurn(projectId: string, runId: string, turn: RuntimeTurn,
-    proof: { kind: "startReply" | "historyMarker"; operationId: string }): Promise<RuntimeRunRecord> {
+    proof: { kind: "startReply" | "historyMarker"; operationId: string;
+      inputReceipt?: { protocol: string; contentHash: string; byteLength: number } }): Promise<RuntimeRunRecord> {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (proof.operationId !== current.operationId || !turn.id) throw new DomainError("TURN_PROOF_MISMATCH", "turn must match durable dispatch operation");
@@ -296,7 +304,10 @@ export class RuntimeWorkflowService {
       const next = { ...current, state: "running" as const, version: current.version + 1,
         nativeTurnId: turn.id, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
-      await this.emit(tx, runId, current.sessionId, "run.bound", `Turn bound from ${proof.kind}`, turn.id, projectId);
+      await this.emit(tx, runId, current.sessionId, "run.bound",
+        proof.inputReceipt && proof.kind === "startReply" ?
+          `Turn bound from startReply; sent input ${proof.inputReceipt.protocol} SHA256 ${proof.inputReceipt.contentHash} bytes ${proof.inputReceipt.byteLength}` :
+          `Turn bound from ${proof.kind}`, turn.id, projectId);
       return next;
     });
   }

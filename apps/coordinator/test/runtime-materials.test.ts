@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
-import { fixedDocumentMaterial } from "../src/runtime/materials.js";
+import { fixedDocumentMaterial, fixedDocumentSummary } from "../src/runtime/materials.js";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 
 const hash = (value: Uint8Array | string) => createHash("sha256").update(value).digest("hex");
@@ -32,16 +32,18 @@ test("fixed HTML material contains the complete inert original and verified reso
   await assert.rejects(fixedDocumentMaterial(principal, revision), /reader_not_configured/);
 });
 
-test("runtime input admits fixed HTML and rejects a complete context above 256 KiB", async () => {
+test("normal Run sends a bounded fixed manifest for an 11.8 KiB HTML and 1.4 MB image", async () => {
   const run = { projectId, taskId: randomUUID(), taskRevisionId: randomUUID(), basisSetId: randomUUID(),
-    operationId: randomUUID(), input: "work" } as RuntimeRunRecord;
+    id: randomUUID(), sessionId: randomUUID(), operationId: randomUUID(), input: "work", inputHash: hash("work") } as RuntimeRunRecord;
   const contentDocumentId = randomUUID(), contentRevisionId = randomUUID(), content = "# Goal";
   const primary: DocumentPayloadRevision = { projectId, documentId: contentDocumentId, id: contentRevisionId,
     previousRevisionId: null, format: "markdown", mediaType: "text/markdown", originalName: "task.md",
     body: content, payloadRef: null, contentHash: hash(content), entrypoint: null, assetsManifest: [],
     author: principal.actorId, reason: "fixture", createdAt: new Date().toISOString() };
-  const fixed = { revision: { id: run.taskRevisionId, title: "Task", content, contentDocumentId, contentRevisionId, acceptance: "Done" },
-    basis: { id: run.basisSetId, members: [{ documentId: contentDocumentId, revisionId: contentRevisionId }, { documentId, revisionId }] } };
+  const fixed = { revision: { projectId, taskId: run.taskId, id: run.taskRevisionId, title: "Task", content,
+      contentDocumentId, contentRevisionId, acceptance: "Done" },
+    basis: { id: run.basisSetId, taskRevisionId: run.taskRevisionId,
+      members: [{ documentId: contentDocumentId, revisionId: contentRevisionId }, { documentId, revisionId }] } };
   const current = { impacts: [], decisions: [] };
   const workflow = { getTaskRevision: async () => fixed, getTask: async () => current,
     validateTaskRevisionBasis: async (_principal: Principal, selectedProjectId: string,
@@ -52,24 +54,22 @@ test("runtime input admits fixed HTML and rejects a complete context above 256 K
     getDocument: async () => ({ document: { adoptedRevisionId: revisionId } }),
     getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
       requestedDocumentId === contentDocumentId ? primary : revision };
-  const runner = new RuntimeRunner({
-    runtimeFactory: () => ({}) as never, workflow: workflow as never, trusted: {} as never,
-    principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
-    readDocumentOriginal: async () => original,
-  });
-  const readInput = (runner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<{ input: string }> }).input.bind(runner);
-  const input = (await readInput(principal, run)).input;
-  assert.match(input, /"format":"html"/);
-  assert.match(input, /figure.svg/);
-  assert.match(input, /Authorized task input:\nwork/);
-  const huge = { ...original, body: html + "x".repeat(270_000) };
-  const hugeRevision = { ...revision, contentHash: hash(huge.body) };
-  const largeRunner = new RuntimeRunner({
-    runtimeFactory: () => ({}) as never,
+  const designHtml = `${html}${" ".repeat(11_762 - Buffer.byteLength(html, "utf8"))}`;
+  const png = Buffer.alloc(1_409_136, 7);
+  const fixedDesign = { ...revision, contentHash: hash(designHtml),
+    assetsManifest: [{ path: "approved.png", blobId: randomUUID(), mediaType: "image/png", size: png.length, contentHash: hash(png) }] };
+  const designRunner = new RuntimeRunner({ runtimeFactory: () => ({}) as never,
     workflow: { ...workflow, getDocumentPayloadRevision: async (_principal: Principal, _projectId: string, requestedDocumentId: string) =>
-      requestedDocumentId === contentDocumentId ? primary : hugeRevision } as never,
+      requestedDocumentId === contentDocumentId ? primary : fixedDesign } as never,
     trusted: {} as never, principals: [principal], canWrite: () => true,
-    allowedCwd: async () => true, hasGrant: () => true, readDocumentOriginal: async () => huge,
-  });
-  await assert.rejects((largeRunner as unknown as { input(p: Principal, r: RuntimeRunRecord): Promise<{ input: string }> }).input(principal, run), /input limit/);
+    allowedCwd: async () => true, hasGrant: () => true,
+    readDocumentOriginal: async () => { throw new Error("normal first input must not read original bytes"); } });
+  const packet = await (designRunner as unknown as { lightweightInput(p: Principal, r: RuntimeRunRecord): Promise<{ input: string; byteLength: number; contentHash: string }> }).lightweightInput(principal, run);
+  assert.ok(packet.byteLength < 16_000);
+  assert.equal(packet.contentHash, hash(packet.input));
+  assert.match(packet.input, /evoloop-lightweight-v1/);
+  assert.match(packet.input, /approved\.png|"assetCount":1/);
+  assert.doesNotMatch(packet.input, /base64|"body":"/i);
+  assert.ok(!packet.input.includes(designHtml));
+  assert.deepEqual(fixedDocumentSummary(fixedDesign).assetBytes, png.length);
 });

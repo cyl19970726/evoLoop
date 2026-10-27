@@ -17,6 +17,8 @@ npm run --silent cli -- command schema task.create
 
 `task UUID --history` 展示已保存的真实修订及当时状态；`document UUID --revision UUID`、`original DOCUMENT_UUID --revision UUID [--out NEW_DIRECTORY]` 指向固定原件。`context` 应带回 Task 的封存依据及可读来源，并明确 `complete` 或逐项 `partial`；总读取预算为 16 MiB，超限时列出未读固定 ID，可按其修订逐项调用 `original`。来源失败时不可把最近版本猜作任务依据。HTML 与资源包导出只进入调用者指定的私有**新目录**，其父目录须已存在；可放在仓库外，或明确被 Git 忽略的本机目录，不公开原件。对于知识页、候选、运行、负责人讨论、日程等，按 `list`/`read` 的实际帮助读取；固定来源、未采纳候选和已发布认识不得混同。普通 `get /api/...` 保留为同源只读兼容入口。
 
+普通 Run 的 `evoloop-lightweight-v1` 首包只含固定 ID、短预览、资料摘要与目录路径；不会复制 HTML 原文或图片。执行者用 `materials TASK_UUID --project PROJECT_UUID --revision TASK_REVISION_UUID` 读取固定目录，再用其中给出的 `body DOCUMENT_UUID --revision REVISION_UUID --hash SHA256 [--cursor BYTE --limit 1..8192]` 按 `nextCursor` 分页读取 UTF-8 正文；需要图片时用 `asset DOCUMENT_UUID --revision REVISION_UUID --hash DOCUMENT_SHA256 --id BLOB_UUID --asset-hash SHA256 [--out NEW_FILE]` 单件核验和导出。目录列出固定外部引用及原有读取命令；仍须按读取结果核对修订与 hash。短预览若标记截断，先读确切 Task 修订的完整验收和 Run 指令，再行动。`Run.inputHash` 仍是原 Run 指令的 hash；派发事件另记录实际原生首包的协议、SHA-256 和字节数。派发前检查失败会以 `evoloop-preflight-v1` 记录安全错误代码、来源、大小（适用时）、`modelStarted:false` 和下一步；按原 Run 与事件核对，未知派发不得自行重发。
+
 当前 todo Task 尚无 basis 时，`context` 另列 `observedPlanningCandidates`：关联过程文档当时已发布、已采纳的修订、hash、来源 Task 修订与固定原件路径。`planningObservedAtUtc` 记录观察时间；这些指针尚未封存，也不表示本次命令读过候选正文。按指针读取精确 `original`；采纳版改变后旧候选可能失效，应重新观察并说明变化。未发布、归档、超限或不可发现的关联材料会明确列为 partial。历史 `--revision` 与已封存 context 沿用自己的依据，不混入当前候选。此只读发现不启动 Task，也不要求启用自动执行；受管 worker 中仅认知职责可在已授权 Goal/Stage 范围查询。
 
 ## 提交与核对

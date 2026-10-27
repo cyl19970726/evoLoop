@@ -10,6 +10,39 @@ export type ReadDocumentOriginal = (principal: Principal, revision: DocumentPayl
 
 const maxOriginalBytes = 16 * 1024 * 1024;
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+const shaPattern = /^[a-f0-9]{64}$/;
+
+export interface FixedDocumentSummary {
+  documentId: string; revisionId: string; contentHash: string; format: "markdown" | "html";
+  mediaType: string; bodyBytes: number | null; assetCount: number; assetBytes: number;
+}
+
+/** Verify bounded fixed metadata without loading original bytes into the native Turn input. */
+export function fixedDocumentSummary(revision: DocumentPayloadRevision): FixedDocumentSummary {
+  if ((revision.format === "markdown" && revision.mediaType !== "text/markdown") ||
+      (revision.format === "html" && revision.mediaType !== "text/html"))
+    throw new Error("Fixed document format and media type disagree");
+  if ((revision.body === null) === (revision.payloadRef === null) ||
+      (revision.body !== null && revision.assetsManifest.length > 0) || !shaPattern.test(revision.contentHash))
+    throw new Error("Fixed document storage metadata is invalid");
+  const bodyBytes = revision.body === null ? null : Buffer.byteLength(revision.body, "utf8");
+  if (revision.body !== null && (bodyBytes! > maxOriginalBytes || sha256(Buffer.from(revision.body, "utf8")) !== revision.contentHash))
+    throw new Error("Fixed inline document fails size or SHA256 verification");
+  if (revision.assetsManifest.length > 50) throw new Error("Fixed document resource manifest exceeds 50 assets");
+  let assetBytes = 0;
+  const paths = new Set<string>();
+  for (const asset of revision.assetsManifest) {
+    if (!asset.path || asset.path.length > 240 || !asset.blobId || !shaPattern.test(asset.contentHash) ||
+        !Number.isSafeInteger(asset.size) || asset.size < 0 || asset.size > maxOriginalBytes ||
+        !asset.mediaType || paths.has(asset.path)) throw new Error("Fixed document resource manifest is invalid");
+    paths.add(asset.path);
+    assetBytes += asset.size;
+  }
+  if (assetBytes + (bodyBytes ?? 0) > maxOriginalBytes) throw new Error("Fixed document bundle exceeds 16 MiB");
+  return { documentId: revision.documentId, revisionId: revision.id, contentHash: revision.contentHash,
+    format: revision.format, mediaType: revision.mediaType, bodyBytes,
+    assetCount: revision.assetsManifest.length, assetBytes };
+}
 
 /** A fixed original is all-or-nothing. Its resources are encoded into the input, never executed. */
 export async function fixedDocumentMaterial(

@@ -8,12 +8,13 @@ import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryRe
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
 import { sessionWorkPath } from "./session-work.js";
 import { allocationRelationsPath } from "./allocation-relations.js";
+import { fixedHash, materialAsset, materialBody, materialCatalog } from "./lightweight-materials.js";
 
 type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind", "hash", "asset-hash"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -75,6 +76,9 @@ const help = {
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
+    "materials TASK_UUID --project UUID --revision UUID (bounded fixed Task and sealed basis catalog)",
+    "body DOCUMENT_UUID --project UUID --revision UUID --hash SHA256 [--cursor BYTE --limit 1..8192] (fixed UTF-8 page)",
+    "asset DOCUMENT_UUID --project UUID --revision UUID --hash DOCUMENT_SHA256 --id BLOB_UUID --asset-hash SHA256 [--out NEW_FILE] (one fixed resource)",
     "document UUID --project UUID [--revision UUID]", "original DOCUMENT_UUID --project UUID --revision UUID [--out NEW_DIRECTORY]",
     "evaluation UUID --project UUID [--revision UUID]", "evaluation-source TASK_UUID --project UUID",
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
@@ -222,6 +226,24 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     return client.get(`${prefix}/${action}s/${uuid(args.words[1], action)}${rev ? `/revisions/${rev}` : args.options.has("history") ? "/revisions" : ""}`);
   }
   if (action === "context") { check(args, 2, ["project", "revision"]); return readTaskContext(client, projectId, uuid(args.words[1], "Task"), revision()); }
+  if (action === "materials") {
+    check(args, 2, ["project", "revision"]);
+    return materialCatalog(client, projectId, uuid(args.words[1], "Task"), uuid(option(args, "revision"), "Fixed Task revision"));
+  }
+  if (action === "body") {
+    check(args, 2, ["project", "revision", "hash", "cursor", "limit"]);
+    const cursor = Number(option(args, "cursor") ?? "0"), limit = Number(option(args, "limit") ?? "4096");
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 8192)
+      throw new UsageError("Body --cursor must be a nonnegative byte offset and --limit must be 1..8192.");
+    return materialBody(client, projectId, uuid(args.words[1], "Document"),
+      uuid(option(args, "revision"), "Fixed document revision"), fixedHash(option(args, "hash"), "Document hash"), cursor, limit);
+  }
+  if (action === "asset") {
+    check(args, 2, ["project", "revision", "hash", "id", "asset-hash", "out"]);
+    return materialAsset(client, projectId, uuid(args.words[1], "Document"),
+      uuid(option(args, "revision"), "Fixed document revision"), uuid(option(args, "id"), "Asset blob"),
+      fixedHash(option(args, "hash"), "Document hash"), fixedHash(option(args, "asset-hash"), "Asset hash"), option(args, "out"));
+  }
   if (action === "original") {
     check(args, 2, ["project", "revision", "out"]);
     const original = await readOriginal(client, projectId, uuid(args.words[1], "Document"), uuid(option(args, "revision"), "Fixed document revision"));

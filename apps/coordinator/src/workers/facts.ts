@@ -249,6 +249,17 @@ export function workerGuardFacts(pool: Pool, identity: WorkerIdentity,
     sourceIssueLinkedDocument,
     taskRevision: async (taskId, revisionId) => !!await task(taskId) && !!await one(
       "SELECT 1 FROM task_revision WHERE project_id=$1 AND task_id=$2 AND revision_id=$3", [taskId, revisionId]),
+    materialTaskRevision: async (taskId, revisionId) => taskId === scope.taskId && !!await one(
+      `SELECT 1 FROM runtime_run WHERE project_id=$1 AND run_id=$2 AND task_id=$3 AND task_revision_id=$4`,
+      [scope.runId, taskId, revisionId]),
+    materialDocument: async (taskId, documentId, revisionId) => taskId === scope.taskId && !!await one(
+      `SELECT 1 FROM runtime_run run JOIN task_revision rev
+         ON rev.project_id=run.project_id AND rev.task_id=run.task_id AND rev.revision_id=run.task_revision_id
+       WHERE run.project_id=$1 AND run.run_id=$2 AND run.task_id=$3
+         AND ((rev.content_document_id=$4 AND rev.content_revision_id=$5) OR EXISTS
+           (SELECT 1 FROM basis_member basis WHERE basis.project_id=rev.project_id AND basis.task_id=rev.task_id
+             AND basis.task_revision_id=rev.revision_id AND basis.document_id=$4 AND basis.document_revision_id=$5))`,
+      [scope.runId, taskId, documentId, revisionId]),
     run: async id => {
       const row = await one("SELECT task_id,session_id,state FROM runtime_run WHERE project_id=$1 AND run_id=$2", [id]);
       return row ? {projectId: scope.projectId, taskId: row.task_id, sessionId: row.session_id,state:row.state} : null;

@@ -20,6 +20,7 @@ import { registerSessionMessageRoutes } from "./session-messages/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import type { RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
+import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
 import { registerCollaborationRoutes } from "./collaboration/routes.js";
 import type { CollaborationRunner } from "./collaboration/runner.js";
 import type { DeliveryStore } from "@evoloop/contracts/delivery";
@@ -374,7 +375,11 @@ export async function buildServer(options: {
   await registerWorkManagementRoutes(app, options.service);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });
-  if (options.documents) registerDocumentRoutes(app, { workflow: options.service, ...options.documents });
+  if (options.documents) {
+    registerDocumentRoutes(app, { workflow: options.service, ...options.documents });
+    registerTaskMaterialRoutes(app, { workflow: options.service, documents: options.documents.uow,
+      ...(options.references ? { references: options.references.uow } : {}) });
+  }
   if (options.webRoot) {
     await app.register(staticPlugin, { root: options.webRoot, index: "index.html", wildcard: true, cacheControl: false });
   }

@@ -6,6 +6,7 @@ export interface WorkerGuardFacts {
     cognitiveRoleId: string; allowedBusinessRoleIds: string[] }) | null>;
   task(taskId: string): Promise<(Fact & { ownerRoleId: string; loopId: string }) | null>;
   taskRevision(taskId: string, revisionId: string): Promise<boolean>;
+  materialTaskRevision?(taskId: string, revisionId: string): Promise<boolean>;
   recoveryGap?(): Promise<(Fact & {loopId: string; dispatchId: string; eventId: string; runId: string;
     taskId: string; taskRevisionId: string}) | null>;
   recoveryDocument?(documentId: string, revisionId: string): Promise<boolean>;
@@ -14,6 +15,7 @@ export interface WorkerGuardFacts {
   inbox(inboxId: string): Promise<(Fact & { loopId: string; state: "pending" | "acknowledged" | "disposed" }) | null>;
   document(documentId: string): Promise<(Fact & { taskId: string | null; loopId: string | null }) | null>;
   fixedDocument(taskId: string, documentId: string, revisionId: string): Promise<boolean>;
+  materialDocument?(taskId: string, documentId: string, revisionId: string): Promise<boolean>;
   ownedDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
   ownRunReportEvidence?(documentId: string, revisionId: string): Promise<boolean>;
   sourceIssueDocumentRevision?(documentId: string, revisionId: string): Promise<boolean>;
@@ -65,6 +67,13 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       const bound = await facts.task(parts[2]);
       return !!bound && same(bound, scope.projectId) && bound.loopId === scope.loopId &&
         (scope.kind === "cognition" || parts[2] === scope.taskId) && facts.taskRevision(parts[2], parts[4]);
+    }
+    if (parts[0] === "tasks" && id(parts[1]) && parts[2] === "revisions" && id(parts[3]) &&
+        parts[4] === "materials" && parts.length === 5 && !rawQuery) {
+      const bound = await facts.task(parts[1]);
+      return same(bound, scope.projectId) && bound?.loopId === scope.loopId &&
+        (scope.kind === "cognition" || parts[1] === scope.taskId && bound.ownerRoleId === scope.roleId) &&
+        await facts.materialTaskRevision?.(parts[1], parts[3]) === true;
     }
     if (scope.kind === "cognition" && parts[0] === "goals" && parts[1] === loop.goalId &&
         (parts.length === 2 || parts.length === 3 && parts[2] === "revisions")) return true;
@@ -125,6 +134,14 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
       if ([...params.keys()].some(key => key !== "cursor") || params.getAll("cursor").length > 1) return false;
       if (parts.length === 3 && rawQuery) return false;
       return !!facts.fixedRunTrace && await facts.fixedRunTrace(parts[2]);
+    }
+    if (parts[0] === "documents" && id(parts[1]) &&
+        parts[2] === "revisions" && id(parts[3]) &&
+        (parts.length === 5 && parts[4] === "body" || parts.length === 6 && parts[4] === "assets" && id(parts[5]))) {
+      const params = new URLSearchParams(rawQuery ?? "");
+      if (parts[4] === "body" ? [...params.keys()].some(key => !["cursor", "limit"].includes(key)) ||
+          params.getAll("cursor").length > 1 || params.getAll("limit").length > 1 : !!rawQuery) return false;
+      return await facts.materialDocument?.(scope.taskId, parts[1], parts[3]) === true;
     }
     if (parts[0] === "documents" && id(parts[1]) &&
         (parts.length === 2 || parts[2] === "revisions" && parts.length <= 5)) {

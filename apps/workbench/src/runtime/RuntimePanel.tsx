@@ -17,6 +17,7 @@ import { sessionHref } from "../sessions/SessionNavigation";
 import { recoveryActivationLabel } from "../sessions/recoveryPresentation";
 import { eligibleOwnedSessions } from "../sessions/assignmentEligibility";
 import { taskRunFromHash } from "../orchestration/navigation";
+import { preflightPresentation } from "./preflightPresentation";
 import "./session-focus.css";
 
 function readErrorText(cause: unknown): string {
@@ -268,13 +269,18 @@ function RuntimeEvidence({ load, label }: { load(): Promise<RuntimeRecordEvent[]
 function RunCard({ context, run, mayAbandon, anchorId }: { context: MutationContext; run: RuntimeRunRecord; mayAbandon: boolean; anchorId?: string }) {
   const [nativeResult, setNativeResult] = useState<NativeResult | null>(null);
   const [error,setError] = useState("");
+  const preflight = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
   return <details className="workflow-detail runtime-run-card" id={anchorId}><summary>运行 {run.id.slice(0,8)} · {run.state}</summary>
     <p>任务修订 <code>{run.taskRevisionId}</code></p><p>依据集合 <code>{run.basisSetId}</code></p>
     <p>登记的 Session <code>{run.sessionId}</code>{run.projectId === context.projectId && uuid.test(run.sessionId) && <> · <a href={sessionHref(context.projectId, `owned:${run.sessionId}`)}>查看此 Run 登记的 Session 工作区</a></>}</p>
     <p className="muted">此链接只定位来源会话；Run 的状态不代表任务验收或当前接手。</p>
     {run.state === "unknown" && <Notice error>派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
     {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="workflow-detail"><summary>复核只读派发并保留失败记录</summary><p>仅适用于没有绑定 Turn 的只读运行。放弃会关闭旧会话的后续派发；不证明外部未执行，也不自动重发。</p><ActionForm context={context} review title="复核并放弃未知只读派发" fields={[reasonField,{name:"evidence",label:"所属线程历史与失败原因核对证据",kind:"textarea"}]} build={v=>({type:"runtime.run.abandonReadOnly",runId:run.id,expectedVersion:run.version,...v})} /></details>}
-    {run.resultSummary && <p className="history-body">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}
+    {preflight && <Notice error><strong>派发前检查未通过 · {preflight.code}</strong><br />模型尚未开始。
+      {preflight.source && <> 来源：{preflight.source.kind} {preflight.source.id}{preflight.source.revisionId ? ` · 修订 ${preflight.source.revisionId}` : ""}。</>}
+      {preflight.actualBytes !== null && preflight.limitBytes !== null && <> 大小：{preflight.actualBytes} / {preflight.limitBytes} 字节。</>}
+      <br />下一步：{preflight.nextAction}</Notice>}
+    {run.resultSummary && !preflight && <p className="history-body">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}
     {run.nativeTurnId && <button onClick={async () => { try { setNativeResult(await runtimeClient(context.token,context.projectId).result(run.id)); setError(""); } catch(cause) { setError(readErrorText(cause)); } }}>读取原生答复</button>}
     {error && <Notice error>{error}</Notice>}{nativeResult && <><p>来源：自有原生线程历史 · 读回时间 {nativeResult.observedAt} · {nativeResult.finalPhaseConfirmed ? "已确认最终答复阶段" : "原生记录未标记最终答复阶段，以下内容需复核"}</p>{nativeResult.messages.length === 0 && <p className="empty">当前原生记录没有可显示的答复。</p>}{nativeResult.messages.map((text,index)=><pre className="runtime-result" key={index}>{text}</pre>)}</>}
     {run.nativeTurnId && ["completed","failed","interrupted"].includes(run.state) && context.principal.permissions.includes("review") && <ReconcileRun context={context} run={run} />}
