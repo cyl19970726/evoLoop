@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionActivity, SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
-import { ApiError, errorText } from "../api";
+import { commandSchema, type Command } from "@evoloop/contracts";
+import { ApiError, api, errorText, isUnconfirmed } from "../api";
 import { ActionForm, option, type MutationContext } from "../workflow/ActionForm";
 import { Alert, date, href } from "../ui/shared";
 import { sessionClient } from "./client";
@@ -13,6 +14,8 @@ import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionReco
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
 import { sessionLifecycleLabel, sessionStatusLabel } from "./sessionStatusPresentation";
 import { sessionMessageEntry } from "./sessionMessageEntry";
+import { NativeSessionPanel } from "./NativeSessionPanel";
+import { nativeInputPresentation } from "./nativeInputPresentation";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results" | "responsibilities" | "resources";
@@ -44,6 +47,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [historyLimitations, setHistoryLimitations] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>(() => tabFromHash(sessionKey));
   const [error, setError] = useState("");
+  const [confirmedRead, setConfirmedRead] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [loading, setLoading] = useState(true);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -55,6 +59,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   historyScope.current = `${context.token}\0${scope}\0${active}\0${refresh}\0${readAgain}`;
   const cursor = useRef<string | null>(null);
   const requestVersion = useRef(0);
+  const readKey = `${context.token}\0${context.projectId}\0${sessionKey}`;
   const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.kind !== "owned" && snapshot.session.busy === false ? 15000 : 5000;
   useEffect(() => {
     const sync = () => { if (active) setTab(tabFromHash(sessionKey)); };
@@ -75,7 +80,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     const saved = remember.get(scope) ?? null;
     let pollOwnedSnapshot = saved?.session.kind === "owned" && saved.session.target.kind === "owned";
     setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false);
-    setHistoryPartial(false); setHistoryLimitations([]); setHistoryError(""); setHistoryBusy(false); setError(""); setLoading(true);
+    setHistoryPartial(false); setHistoryLimitations([]); setHistoryError(""); setHistoryBusy(false); setError(""); setConfirmedRead(""); setLoading(true);
     setRecoveryRead({ status: "loading" });
     async function readRecovery(sessionId: string, snapshotVersion = latestSnapshotVersion) {
       if (document.visibilityState === "hidden" || recoveryChecking || !snapshotVersion) return;
@@ -105,7 +110,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         if (epoch.current !== current || version !== requestVersion.current) return;
         if (result.session.key !== sessionKey) throw new Error("会话响应与所选 Session 不符");
         cursor.current = result.observationCursor;
-        rememberSnapshot(scope, result); setSnapshot(result);
+        rememberSnapshot(scope, result); setSnapshot(result); setConfirmedRead(readKey);
         setActivity(old => bounded(old, result.activity)); setError("");
         latestSnapshotVersion = version;
         pollOwnedSnapshot = result.session.kind === "owned" && result.session.target.kind === "owned";
@@ -115,7 +120,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         if (recoveryTarget) void readRecovery(recoveryTarget, version);
       } catch (cause) { if (!controller.signal.aborted && epoch.current === current && version === requestVersion.current) {
         recoveryTarget = null;
-        setError(errorText(cause)); setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
+        setError(errorText(cause)); setConfirmedRead(""); setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
       } }
       finally { if (epoch.current === current && version === requestVersion.current) setLoading(false); }
     }
@@ -154,7 +159,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     const visible = () => { if (document.visibilityState === "visible") { void read(); } };
     document.addEventListener("visibilitychange", visible);
     return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
-  }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, active, refresh, readAgain, pollInterval]);
+  }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, readKey, active, refresh, readAgain, pollInterval]);
   async function moreActivity() {
     if (historyBusy || historyLoaded && !historyCursor) return;
     const requestScope = historyScope.current, requestEpoch = epoch.current;
@@ -176,17 +181,48 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   if (!current) return <div className="content"><h1>Session</h1>{loading ? <p>正在读取会话工作区…</p> : <Alert kind="error">会话暂不可读取：{error || "未找到当前项目的会话"}。<button onClick={() => setReadAgain(value => value + 1)}>重试</button></Alert>}</div>;
   const session = current.session;
   const work = current.currentWork;
+  const native = session.kind === "owned" && session.target.kind === "owned"
+    ? nativeInputPresentation(current.nativeInputRequests, session.target.sessionId)
+    : { questions: [], error: null };
+  const nativeAvailable = session.kind === "owned" && Object.hasOwn(current, "nativeInputRequests");
+  const discussionQuestionCount = current.questions.filter(question => !question.answered).length;
+  const nativeQuestionCount = native.questions.filter(question => question.state === "pending").length;
+  const nativeReadCurrent = confirmedRead === readKey && !loading && !error;
+  async function answerNative(requestId: string, expectedVersion: number, answers: Record<string, string[]>) {
+    const request = native.questions.find(item => item.id === requestId && item.version === expectedVersion);
+    if (!active || !nativeReadCurrent || native.error || context.blocked || !request?.canReply || request.state !== "pending")
+      throw new Error("当前原生请求不能回复；请先回读状态。");
+    let command: Command;
+    try { command = commandSchema.parse({ type: "session.input.reply", projectId: context.projectId,
+      operationId: crypto.randomUUID(), inputRequestId: requestId, expectedVersion, answers }); }
+    catch { throw new Error("回答格式无法确认，请重新读取原生请求后再填写。"); }
+    let recorded = false;
+    try { recorded = await context.onAttempt(command); }
+    catch { /* A receipt that cannot be saved must not send the answer. */ }
+    if (!recorded) throw new Error("浏览器无法保存恢复回执，本次尚未发送。");
+    let known = false;
+    try {
+      const result = await api(context.token).command(command);
+      context.onKnown(command.operationId); known = true;
+      if (result.status === "rejected") { setReadAgain(value => value + 1); throw new Error(result.message); }
+      setReadAgain(value => value + 1);
+      context.onChanged();
+    } catch (cause) {
+      if (!known && !isUnconfirmed(cause)) context.onKnown(command.operationId);
+      throw cause;
+    }
+  }
   const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations, ...historyLimitations])];
   return <div className="content session-workspace">
     <div className="session-workspace-head"><div><p className="eyebrow">{session.kind === "owned" ? "项目受管 Session" : "外部连接 Session"} · {session.membership === "current" ? "当前团队" : session.membership === "historical" ? "历史" : "待归类"}</p><h1>{session.title}</h1><p>{session.profile?.purpose || session.roles.map(role => role.responsibility).filter(Boolean).join("；") || "用途尚未登记"}</p></div><div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button><SessionOpenEntry session={session} token={context.token} projectId={context.projectId} currentRead={active && !loading && !error} active={active} /></div></div>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     <section className="session-current-work"><div><small>当前任务</small><strong>{work ? <a href={href(context.projectId, "task", work.id)}>{work.title}</a> : "尚无可确认的当前任务"}</strong><span>{work ? work.relation === "accepted" ? "具体 Session 已接手" : work.relation === "assigned" ? "已分派，待确认接手" : work.relation === "claimed" || work.relation === "run" ? "有正式运行关联" : "角色责任" : "角色责任不等于已接手"}</span></div>{work && <a className="session-task-link" href={href(context.projectId, "task", work.id)}>查看任务</a>}</section>
-    <div className="session-workspace-summary"><div><small>会话状态</small><strong>{sessionStatusLabel(session)}</strong><span>{sessionLifecycleLabel(session)}；实际运行仍以 Run 记录为准</span></div><div><small>待处理问题</small><strong>{current.questions.filter(question => !question.answered).length}</strong><span>来自任务讨论记录</span></div><div><small>最近进展</small><strong>{date(session.lastProgressAt ?? undefined)}</strong><span>来源记录时间，未知时不推断</span></div></div>
+    <div className="session-workspace-summary"><div><small>会话状态</small><strong>{sessionStatusLabel(session)}</strong><span>{sessionLifecycleLabel(session)}；实际运行仍以 Run 记录为准</span></div><div><small>已读待处理问题</small><strong>{native.error ? "待核对" : discussionQuestionCount + nativeQuestionCount}</strong><span>讨论 {discussionQuestionCount} · 原生执行 {native.error ? "待核对" : nativeAvailable ? nativeQuestionCount : "未提供"}</span></div><div><small>最近进展</small><strong>{date(session.lastProgressAt ?? undefined)}</strong><span>来源记录时间，未知时不推断</span></div></div>
     {session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={`${href(context.projectId, "runtime")}?view=execution`} />}
     <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}；来源最近观察 {date(current.metadata.sourceObservedAt ?? undefined)}。{current.metadata.partial || historyPartial ? "来源仅展示已读范围。" : ""}</p>
     {limitation.length > 0 && <details className="session-workspace-limitations"><summary>来源限制与未确认信息</summary><ul>{limitation.map(item => <li key={item}>{item}</li>)}</ul></details>}
     <nav className="session-workspace-tabs" aria-label="Session 工作区栏目">{(Object.keys(tabLabels) as Tab[]).map(key => <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.location.hash = `${href(context.projectId, "runtime")}?session=${encodeURIComponent(sessionKey)}&tab=${key}`; }}>{tabLabels[key]}{key === "activity" && ` · ${activity.length}`}</button>)}</nav>
-    {tab === "activity" && <><section className="session-workspace-section"><h2>活动</h2><p className="muted">这里也包含关联任务的背景记录；查看每条的来源与登记者，不能据此认定由本 Session 执行。</p>{activity.length ? <ol className="session-activity-list">{activity.map(item => {
+    {tab === "activity" && <>{session.kind === "owned" && session.target.kind === "owned" && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={null} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} />}<section className="session-workspace-section"><h2>活动</h2><p className="muted">这里也包含关联任务的背景记录；查看每条的来源与登记者，不能据此认定由本 Session 执行。</p>{activity.length ? <ol className="session-activity-list">{activity.map(item => {
       const presented = activityPresentation(item, context.projectId);
       return <li key={item.id}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div><strong>{item.summary}</strong><small>{presented.sourceLabel}</small><details className="session-activity-source"><summary>来源标识</summary><small>{item.source.kind} · <code>{item.source.id}</code>{item.source.revision && <> · 修订 <code>{item.source.revision}</code></>}</small></details></div><span className="session-activity-links">{presented.discussionHref && <a href={presented.discussionHref}>原讨论</a>}{item.taskId && <a href={href(context.projectId, "task", item.taskId)}>关联任务</a>}</span></li>;
     })}</ol> : <p className="empty">当前范围尚无活动记录。</p>}{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</section>{active && <SessionMessages key={current.session.key} context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} />}</>}
