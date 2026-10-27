@@ -61,6 +61,11 @@ export function latestSessionResult(results: SessionResult[]): SessionResult | n
       ? result : latest, null);
 }
 
+export function idleSessionResult(session: StatusSource, work: ObservedTask | null, results: SessionResult[]): SessionResult | null {
+  return !work && session.kind === "owned" && session.runtimeState === "ready" && session.busy === false
+    ? latestSessionResult(results) : null;
+}
+
 export function sessionResultUseLabel(result: SessionResult): string {
   if (!result.latestUse) return "尚无实际使用观察";
   return ({ used: "已记录使用", failed: "使用观察失败", notUsed: "已记录未使用" } as Record<string, string>)[result.latestUse.result]

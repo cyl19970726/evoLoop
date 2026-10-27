@@ -14,7 +14,7 @@ import { queuePosition, queueStateLabel } from "./queuePresentation";
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
-import { currentWorkRelationLabel, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
+import { currentWorkRelationLabel, idleSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { nativeInputPresentation } from "./nativeInputPresentation";
@@ -233,7 +233,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const discussionQuestionCount = current.questions.filter(question => !question.answered).length;
   const nativeQuestionCount = native.questions.filter(question => question.state === "pending").length;
   const idleSummary = sessionIdleSummary(session);
-  const latestResult = latestSessionResult(current.results);
+  const idleResult = idleSessionResult(session, work, current.results);
   const nativeReadCurrent = confirmedRead === readKey && !loading && !error;
   async function answerNative(requestId: string, expectedVersion: number, answers: Record<string, string[]>) {
     const request = native.questions.find(item => item.id === requestId && item.version === expectedVersion);
@@ -263,8 +263,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const messageRunning = nativeReadCurrent && observation.progress?.freshness === "live" && observation.progress.status === "active" && observation.progress.turn?.status === "inProgress" && observation.progress.turn.source?.kind === "message";
   const statusLabel = sessionHeaderStatusLabel(session, messageRunning);
   const activeBusy = session.runtimeState === "ready" && session.busy === true;
-  const showRecentResult = !work && session.kind === "owned" && session.runtimeState === "ready" && session.busy === false && !!latestResult;
-  const displayedTaskId = work?.id ?? (showRecentResult ? latestResult?.taskId : null);
+  const displayedTaskId = work?.id ?? idleResult?.taskId;
   const relationLabel = work ? currentWorkRelationLabel(work, session, recoveryRead.status === "ready" ? recoveryRead.view.gate?.phase : undefined) : null;
   const currentRunId = activeBusy && ["requested", "dispatching", "running", "unknown"].includes(session.latestBusinessRun?.state ?? "")
     ? session.latestBusinessRun?.id ?? null : null;
@@ -273,11 +272,11 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     <div className="session-meta"><span>配置模型 <strong>{current.resources.configuredModel.value ?? "未提供"}</strong></span><span>思考强度 <strong>未提供</strong></span><span>{session.kind === "owned" ? "项目受管" : "外部接入"}</span><span>{tenureLabel(session.profile)}</span><span>权限 <strong>未提供</strong></span><span>{sessionMembership(session.membership)}</span></div>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     <section className="session-current-work"><div>
-      <small>{activeBusy ? statusLabel : work ? "当前关联工作" : showRecentResult ? "最近已读关联交付 · 当前空闲" : "当前状态"}</small>
+      <small>{activeBusy ? statusLabel : work ? "当前关联工作" : idleResult ? "最近已读关联交付 · 当前空闲" : "当前状态"}</small>
       <strong>{work ? <a href={taskHref(work.id)}>{work.title}</a> : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
-        : showRecentResult && latestResult ? <a href={taskHref(latestResult.taskId)}>{latestResult.taskTitle || "任务标题未提供"}</a> : idleSummary}</strong>
+        : idleResult ? <a href={taskHref(idleResult.taskId)}>{idleResult.taskTitle || "任务标题未提供"}</a> : idleSummary}</strong>
       <span>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
-        : showRecentResult && latestResult ? `技术结果：${latestResult.technicalResult || "未提供"} · ${sessionResultUseLabel(latestResult)} · 交付 ${date(latestResult.submittedAt)}${latestResult.latestUse ? ` · 使用观察 ${date(latestResult.latestUse.createdAt)}` : ""}${current.metadata.partial ? " · 来源仅展示已读范围" : ""}`
+        : idleResult ? `技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)} · 交付 ${date(idleResult.submittedAt)}${idleResult.latestUse ? ` · 使用观察 ${date(idleResult.latestUse.createdAt)}` : ""}${current.metadata.partial ? " · 来源仅展示已读范围" : ""}`
           : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
     </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
     {session.latestBusinessRun && ["failed", "interrupted", "unknown"].includes(session.latestBusinessRun.state) && <p className="session-run-attention" role="status">最近运行{session.latestBusinessRun.state === "failed" ? "失败" : session.latestBusinessRun.state === "interrupted" ? "已中断" : "结果未知"}；请先<a href={`${href(context.projectId, "runtime")}?run=${encodeURIComponent(session.latestBusinessRun.id)}`}>核对原 Run</a>和当前任务，再决定下一步。</p>}

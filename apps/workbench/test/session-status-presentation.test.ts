@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { currentWorkRelationLabel, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
+import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
 import type { SessionResult } from "@evoloop/contracts/session-observation";
 
 test("owned lifecycle takes priority over activity and only ready can be idle", () => {
@@ -45,6 +45,14 @@ test("latest fixed Delivery, not an older observation for the same Task, drives 
   assert.equal(sessionResultUseLabel(result("not-used", "2026-10-27T07:00:00Z", "notUsed")), "已记录未使用");
   assert.equal(sessionResultUseLabel(older), "尚无实际使用观察");
   assert.equal(latestSessionResult([]), null);
+  const ready = { kind: "owned" as const, runtimeState: "ready", busy: false };
+  assert.equal(idleSessionResult(ready, null, [older, recent]), recent);
+  assert.equal(idleSessionResult(ready, null, []), null);
+  assert.equal(idleSessionResult(ready, { id: "task-1" } as Parameters<typeof idleSessionResult>[1], [recent]), null);
+  for (const runtimeState of ["closing", "closed", "unknown"])
+    assert.equal(idleSessionResult({ ...ready, runtimeState }, null, [recent]), null);
+  assert.equal(idleSessionResult({ ...ready, busy: true }, null, [recent]), null);
+  assert.equal(idleSessionResult({ kind: "external", runtimeState: null, busy: false }, null, [recent]), null);
 });
 
 test("late message progress cannot mask a closing or closed owned Session", () => {
