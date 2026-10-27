@@ -41,6 +41,9 @@ test("business worker can attribute its own terminal Run delivery and agent obse
 });
 
 test("worker route guard denies foreign reads and every unlisted write", async () => {
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/runtime/runs/${runId}/input?cursor=0&limit=31` }, facts), true);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/runtime/runs/${u()}/input` }, facts), false);
+  assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/runtime/runs/${runId}/input?cursor=0&revision=${u()}` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${taskId}/revisions/${revisionId}/materials` }, facts), true);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/tasks/${otherTaskId}/revisions/${revisionId}/materials` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/body?cursor=3&limit=5` }, facts), true);

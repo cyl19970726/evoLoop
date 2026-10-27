@@ -116,7 +116,14 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
         (parts.length !== 4 || await facts.taskRevision(parts[1], parts[3]!));
     }
     if (parts[0] === "runtime" && parts[1] === "runs" && parts[2] === scope.runId &&
-        (parts.length === 3 || parts.length === 4 && ["events", "result"].includes(parts[3] ?? ""))) {
+        (parts.length === 3 || parts.length === 4 && ["events", "result"].includes(parts[3] ?? "") ||
+          parts.length === 4 && parts[3] === "input")) {
+      if (parts.length === 4 && parts[3] === "input") {
+        const query = new URLSearchParams(rawQuery ?? "");
+        if ([...query.keys()].some(key => !["cursor", "limit"].includes(key)) ||
+            query.getAll("cursor").length > 1 || query.getAll("limit").length > 1 ||
+            [...query.values()].some(value => !/^\d+$/.test(value))) return false;
+      }
       const run = await facts.run(scope.runId);
       return same(run, scope.projectId) && run?.taskId === scope.taskId && run.sessionId === scope.sessionId;
     }

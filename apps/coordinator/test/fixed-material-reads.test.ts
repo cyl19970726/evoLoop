@@ -7,6 +7,7 @@ import type { DocumentPayloadRevision, DocumentPayloadUnitOfWork, RegisteredDocu
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { registerDocumentRoutes } from "../src/documents/routes.js";
 import { registerTaskMaterialRoutes } from "../src/documents/task-materials.js";
+import { FixedBodyCache } from "../src/documents/fixed-reads.js";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const [projectId, taskId, taskRevisionId, documentId, revisionId, payloadId, assetId, otherDocumentId, otherRevisionId] =
@@ -28,6 +29,7 @@ const basis: BasisSet = { projectId, taskId, taskRevisionId, id: id(10), sealed:
   members: [{ documentId, revisionId }, { documentId: otherDocumentId, revisionId: otherRevisionId }] };
 
 test("fixed catalog, UTF-8 pages and one asset stay pinned, bounded and verified", async () => {
+  let registrationReads = 0, bodyReads = 0;
   const registrations = new Map<string, RegisteredDocumentBlob>([
     [payloadId, { id: payloadId, projectId, documentId, revisionId, role: "main", relativePath: null,
       contentHash: fixed.contentHash, mediaType: fixed.mediaType, size: bytes.length }],
@@ -36,8 +38,9 @@ test("fixed catalog, UTF-8 pages and one asset stay pinned, bounded and verified
   ]);
   const content = new Map([[payloadId, bytes], [assetId, assetBytes]]);
   const uow = { read: async (_project: string, fn: (reader: { getRegisteredBlob(id: string): Promise<RegisteredDocumentBlob | null> }) => Promise<unknown>) =>
-    fn({ getRegisteredBlob: async blobId => registrations.get(blobId) ?? null }) } as DocumentPayloadUnitOfWork;
+    fn({ getRegisteredBlob: async blobId => { registrationReads++; return registrations.get(blobId) ?? null; } }) } as DocumentPayloadUnitOfWork;
   const blobs = { read: async (payload: { id: string }) => {
+    if (payload.id === payloadId) bodyReads++;
     const found = content.get(payload.id);
     return found ? { status: "available", bytes: found, payload } : { status: "unavailable", reason: "missing", payload };
   } } as BlobStore;
@@ -75,6 +78,8 @@ test("fixed catalog, UTF-8 pages and one asset stay pinned, bounded and verified
     assert.equal(first.nextCursor, "3"); assert.equal(first.truncated, true);
     const second = (await get(`${path}/body?cursor=3&limit=5`)).json();
     assert.equal(second.body, "一");
+    assert.equal(bodyReads, 1, "adjacent pages reuse the verified immutable body");
+    assert.ok(registrationReads >= 2, "each page checks its current registration");
     assert.equal((await get(`${path}/body?cursor=1`)).statusCode, 500);
     const resource = (await get(`${path}/assets/${assetId}`)).json();
     assert.equal(resource.base64, assetBytes.toString("base64"));
@@ -86,5 +91,20 @@ test("fixed catalog, UTF-8 pages and one asset stay pinned, bounded and verified
     assert.equal((await get(`${path}/assets/${assetId}`)).statusCode, 500);
     // A newer current revision is irrelevant; every URL above retains its chosen revision.
     assert.equal((await get(`${path}/body?cursor=0&limit=10`)).json().revisionId, revisionId);
+    assert.equal(bodyReads, 1);
+    registrations.delete(payloadId);
+    assert.equal((await get(`${path}/body?cursor=3`)).statusCode, 500,
+      "removing the registration denies even a cached body");
   } finally { await app.close(); }
+});
+
+test("verified body cache is bounded and evicts least recently used bytes", () => {
+  const cache = new FixedBodyCache(10, 60_000);
+  cache.set("a", Buffer.alloc(6));
+  cache.set("b", Buffer.alloc(6));
+  assert.equal(cache.get("a"), null);
+  assert.equal(cache.bytesUsed, 6);
+  cache.set("oversize", Buffer.alloc(11));
+  assert.equal(cache.get("oversize"), null);
+  assert.ok(cache.bytesUsed <= 10);
 });

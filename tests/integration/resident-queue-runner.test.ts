@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import pg from 'pg';
 import { RuntimeWorkflowService, WorkflowService } from '@evoloop/core';
@@ -9,6 +12,8 @@ import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, Runt
 import { canonicalTaskInputJson, taskInputSignature } from '../../packages/core/src/task-input.js';
 import { ResidentQueuePump } from '../../apps/coordinator/src/resident-queue/pump.js';
 import { RuntimeRunner } from '../../apps/coordinator/src/runtime/runner.js';
+import { runInputPage } from '../../apps/coordinator/src/runtime/input-read.js';
+import { materialRunInput } from '../../apps/cli/src/lightweight-materials.js';
 
 
 function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
@@ -148,8 +153,27 @@ for(const lostReply of [false,true]) test(lostReply ?
     assert.match(nativeStart.input,new RegExp(`^\\[evoloop-run-operation:${attempt.operationId}\\]`));
     assert.match(nativeStart.input,/# Fixed scope/);
     assert.match(nativeStart.input,/Produce one test artifact/);
-    assert.ok(nativeStart.input.includes(runBefore.input));
-    assert.match(nativeStart.input,new RegExp(`Task channel ${channel.id}`));
+    const handoff=JSON.parse(nativeStart.input.split('\n')[1]!) as {runInstructionRead:{inputHash:string;requiredBeforeAction:boolean;path:string}};
+    assert.equal(handoff.runInstructionRead.inputHash,runBefore.inputHash);
+    assert.equal(handoff.runInstructionRead.requiredBeforeAction,true);
+    assert.equal(handoff.runInstructionRead.path,`/api/projects/${projectId}/runtime/runs/${runBefore.id}/input`);
+    assert.match(nativeStart.input,/Before acting.*complete exact Run instruction/);
+    const pages={get:async(path:string)=>{
+      const url=new URL(path,'http://local');
+      assert.equal(url.pathname,handoff.runInstructionRead.path);
+      return runInputPage(await workflow.getRuntimeRun(controller,projectId,runBefore.id),
+        Number(url.searchParams.get('cursor')),Number(url.searchParams.get('limit')));
+    }};
+    const directory=await mkdtemp(join(tmpdir(),'evoloop-fixed-run-input-'));
+    try{
+      const exported=join(directory,'run-input.txt');
+      const receipt=await materialRunInput(pages as never,projectId,runBefore.id,runBefore.inputHash,0,31,exported);
+      assert.equal(receipt.status,'exported');
+      const exact=await readFile(exported,'utf8');
+      assert.equal(exact,runBefore.input);
+      assert.equal(hash(exact),runBefore.inputHash);
+      assert.match(exact,new RegExp(`Task channel ${channel.id}`));
+    }finally{await rm(directory,{recursive:true,force:true});}
     let settledRunner=runner;
     if(lostReply){
       const unknown=await workflow.getRuntimeRun(controller,projectId,attempt.runId);

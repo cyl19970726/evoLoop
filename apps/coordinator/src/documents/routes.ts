@@ -9,7 +9,7 @@ import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { importDocumentPayload } from "@evoloop/core/documents";
 import { readDocumentOriginal } from "./read-original.js";
-import { bodyPage, fixedPart } from "./fixed-reads.js";
+import { bodyPage, fixedPart, FixedBodyCache } from "./fixed-reads.js";
 
 const maxBundleBytes = 16 * 1024 * 1024;
 const hash = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
@@ -36,6 +36,7 @@ export interface DocumentRouteOptions {
 }
 
 export function registerDocumentRoutes(app: FastifyInstance, options: DocumentRouteOptions): void {
+  const verifiedBodies = new FixedBodyCache();
   const fixedRevision = async (principal: Principal, projectId: string, id: string, revisionId: string) => {
     const revision = await options.workflow.getDocumentPayloadRevision(principal, projectId, id, revisionId);
     if (revision.projectId !== projectId || revision.documentId !== id || revision.id !== revisionId)
@@ -78,7 +79,7 @@ export function registerDocumentRoutes(app: FastifyInstance, options: DocumentRo
       limit: z.coerce.number().int().min(1).max(8192).optional() }).parse(request.query);
     const principal = scoped(request.principal, projectId, "read");
     const revision = await fixedRevision(principal, projectId, id, revisionId);
-    const bytes = await fixedPart(options, principal, revision);
+    const bytes = await fixedPart(options, principal, revision, undefined, verifiedBodies);
     return { projectId, documentId: id, revisionId, contentHash: revision.contentHash,
       format: revision.format, mediaType: revision.mediaType, ...bodyPage(bytes, cursor ?? 0, limit ?? 4096) };
   });

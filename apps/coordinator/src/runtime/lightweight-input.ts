@@ -15,9 +15,11 @@ function preview(value: string, maxBytes: number) {
     text += character; bytes += size;
   }
   // A long encoded token is a material pointer, never useful as a partial first-message excerpt.
+  const rawPrefix = text;
   text = text.replace(/data:[^\s;,]{1,100};base64,[A-Za-z0-9+/=]+/gi, "[encoded resource omitted]")
     .replace(/[A-Za-z0-9+/=]{256,}/g, "[long token omitted]");
-  return { text, totalBytes: Buffer.byteLength(value, "utf8"), truncated: bytes < Buffer.byteLength(value, "utf8") };
+  const totalBytes = Buffer.byteLength(value, "utf8");
+  return { text, totalBytes, truncated: bytes < totalBytes || text !== rawPrefix };
 }
 
 /** This is the exact native Turn message; the Run inputHash still hashes run.input alone. */
@@ -38,11 +40,16 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     title: revision.title,
     taskPreview: preview(revision.content, 1200), acceptancePreview: preview(revision.acceptance, 1200),
     runInstructionPreview: { ...preview(run.input, 4096), inputHash: run.inputHash },
+    runInstructionRead: {
+      requiredBeforeAction: true, inputHash: run.inputHash, totalBytes: Buffer.byteLength(run.input, "utf8"),
+      command: `evoloop run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE`,
+      path: `/api/projects/${run.projectId}/runtime/runs/${run.id}/input`,
+    },
     fixedDocuments: documents.map(source),
     taskCatalogPath: `/api/projects/${run.projectId}/tasks/${run.taskId}/revisions/${run.taskRevisionId}/materials`,
   };
   const input = `[evoloop-run-operation:${run.operationId}]\n${JSON.stringify(fixed)}\n` +
-    "This is a bounded handoff, not the full Task or original materials. Use the scoped evoLoop CLI already supplied to this Session: read the fixed Task material catalog, then page through required text and fetch selected assets separately. Verify returned revision IDs and SHA-256. Read the complete Run instruction and Task acceptance before acting if an excerpt is marked truncated. Preserve the fixed basis; a newer current revision is not a substitute. Native Turn completion is not Delivery or consumer use.";
+    "This is a bounded handoff, not the full Task or original materials. Before acting, use the scoped evoLoop CLI to read and verify the complete exact Run instruction with run-input and its fixed inputHash; this includes any queue answer, continuation, retry and Task-channel directions even when the preview looks complete. Read the fixed Task material catalog, then page through required text and fetch selected assets separately. Verify returned revision IDs and SHA-256. Read complete Task acceptance when its excerpt is truncated. Preserve the fixed basis; a newer current revision is not a substitute. Native Turn completion is not Delivery or consumer use.";
   const byteLength = Buffer.byteLength(input, "utf8");
   if (byteLength > maxInputBytes) throw new PreflightError("INPUT_LIMIT", { kind: "task", id: run.taskId, revisionId: run.taskRevisionId }, byteLength, maxInputBytes);
   return { protocol: lightweightInputProtocol, input, contentHash: hash(input), byteLength };

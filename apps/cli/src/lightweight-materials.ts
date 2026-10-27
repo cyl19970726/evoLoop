@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { open, rm, writeFile } from "node:fs/promises";
 import type { ApiClient } from "./client.js";
 import { MaterialError } from "./materials.js";
 
@@ -65,6 +65,54 @@ export async function materialBody(client: ApiClient, projectId: string, documen
   if (cursor === 0 && result.truncated === false && hash(Buffer.from(body, "utf8")) !== expectedHash)
     throw new MaterialError("Complete fixed body hash mismatch");
   return result;
+}
+
+export async function materialRunInput(client: ApiClient, projectId: string, runId: string, expectedHash: string,
+  cursor = 0, limit = 4096, out?: string) {
+  const page = async (at: number) => {
+    const query = new URLSearchParams({ cursor: String(at), limit: String(limit) });
+    const result = object(await client.get(`${root(projectId)}/runtime/runs/${runId}/input?${query}`));
+    exact(result.projectId, projectId, "Project"); exact(result.runId, runId, "Run");
+    exact(result.inputHash, expectedHash, "Run input hash");
+    if (typeof result.body !== "string" || result.startByte !== at || !Number.isSafeInteger(result.endByte) ||
+        !Number.isSafeInteger(result.totalBytes) || Number(result.endByte) < at ||
+        Number(result.endByte) > Number(result.totalBytes) ||
+        Buffer.byteLength(result.body, "utf8") !== Number(result.endByte) - at ||
+        result.truncated !== (result.endByte !== result.totalBytes) ||
+        result.nextCursor !== (result.truncated ? String(result.endByte) : null))
+      throw new MaterialError("Fixed Run input page is inconsistent");
+    return result;
+  };
+  if (!out) {
+    const result = await page(cursor);
+    if (cursor === 0 && result.truncated === false && hash(Buffer.from(String(result.body), "utf8")) !== expectedHash)
+      throw new MaterialError("Complete fixed Run input hash mismatch");
+    return result;
+  }
+  if (cursor !== 0) throw new MaterialError("Run input export must start at byte zero");
+  const file = await open(out, "wx", 0o600);
+  let committed = false;
+  try {
+    const digest = createHash("sha256");
+    let at = 0, total: number | null = null;
+    for (;;) {
+      const result = await page(at);
+      if (total !== null && result.totalBytes !== total) throw new MaterialError("Run input length changed between pages");
+      total = Number(result.totalBytes);
+      const bytes = Buffer.from(String(result.body), "utf8");
+      if (bytes.length === 0 && result.truncated) throw new MaterialError("Run input page did not advance");
+      digest.update(bytes);
+      await file.writeFile(bytes);
+      at = Number(result.endByte);
+      if (!result.truncated) break;
+    }
+    if (digest.digest("hex") !== expectedHash) throw new MaterialError("Complete fixed Run input hash mismatch");
+    committed = true;
+    return { status: "exported", projectId, runId, inputHash: expectedHash, sizeBytes: total, path: out };
+  } finally {
+    await file.close();
+    if (!committed) await rm(out, { force: true });
+  }
 }
 
 export async function materialAsset(client: ApiClient, projectId: string, documentId: string, revisionId: string,
