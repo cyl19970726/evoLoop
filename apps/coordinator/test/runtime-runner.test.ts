@@ -1081,7 +1081,7 @@ test("read-only history and result page owned data without native resume or turn
     assert.equal(result.source, "owned-native-history");
     assert.equal(resumes, 0); assert.equal(runtime.starts, 0);
     assert.equal(registrations, 2); assert.equal(inspections, 2);
-    assert.equal(turnPages, 4); assert.equal(itemPages, 5);
+    assert.equal(turnPages, 2, "only the directory history view lists Turns"); assert.equal(itemPages, 5);
   } finally { await runner.stop(); }
 });
 
@@ -1280,5 +1280,31 @@ test("a versioned full profile activates on the original idle Thread without man
   try{await runner.start();await runner.pump();assert.equal(permits,1);assert.equal(activations,1);
     assert.equal(target.executionProfile?.activationState,"active");assert.equal(runtime.starts,0);assert.equal(runtime.creates,0);
     assert.equal(target.nativeThreadId,session.nativeThreadId);
+  }finally{await runner.stop();}
+});
+
+
+test("a known old Run result reads its own Item pages without scanning the Thread's 1000+ Turns",async()=>{
+  const historical={...run,state:"completed" as const,nativeTurnId:"older-known-turn",version:4};
+  const runtime=new FakeRuntime();let turnPages=0,itemPages=0,resumes=0;
+  runtime.listTurns=async()=>{turnPages++;return{data:Array.from({length:100},(_,index)=>({id:`recent-${turnPages}-${index}`,status:"completed"})),nextCursor:`older-${turnPages}`};};
+  runtime.listItems=async(binding:RuntimeBinding,turnId:string,cursor?:string)=>{
+    assert.equal(binding.nativeThreadId,session.nativeThreadId);assert.equal(turnId,historical.nativeTurnId);itemPages++;
+    return cursor?{data:[{type:"agentMessage",phase:"final_answer",text:"Original fixed result"}],nextCursor:null}:
+      {data:[{type:"agentMessage",phase:"commentary",text:"Earlier progress"}],nextCursor:"items-page-2"};
+  };
+  runtime.resume=async binding=>{resumes++;return binding;};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],listRuntimeRuns:async()=>[],
+    getRuntimeRun:async()=>historical,getRuntimeSession:async()=>session} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime,workflow,trusted,
+    principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();
+    const result=await runner.result({actorId,projectIds:[projectId],permissions:["read"]},projectId,historical.id);
+    assert.deepEqual(result.messages,["Original fixed result"]);assert.equal(result.finalPhaseConfirmed,true);
+    assert.equal(result.source,"owned-native-history");assert.equal(turnPages,0);assert.equal(itemPages,2);
+    assert.equal(runtime.starts,0);assert.equal(resumes,0);assert.equal(historical.nativeTurnId,"older-known-turn");
   }finally{await runner.stop();}
 });
