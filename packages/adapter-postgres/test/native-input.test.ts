@@ -102,3 +102,62 @@ test('business command journal replays exact reviewer reply without a second mut
   const changed=await workflow.execute(principal,{...command,answers:{q1:['A']}}).catch(e=>e);
   assert.equal(changed.code,'OPERATION_REUSED');
 });
+
+test('Run source links only the exact project Session and Turn, including after terminal settlement',async()=>{
+  const workflow=new WorkflowService({uow,clock,ids,hasher:{hash:(s:string)=>createHash('sha256').update(s).digest('hex')}});
+  const lead={actorId:'run-issuer',projectIds:[projectId],permissions:['write','review'] as ('write'|'review')[]};
+  const taskId=randomUUID(),runSessionId=randomUUID(),runId=randomUUID(),runOperationId=randomUUID(),turn='run-native-turn';
+  const created=await workflow.execute(lead,{type:'task.create',projectId,operationId:randomUUID(),taskId,
+    title:'Run source fixture',content:'Fixed work',acceptance:'Evidence',owner:'worker'});
+  assert.equal(created.status,'applied');
+  const started=await workflow.execute(lead,{type:'task.start',projectId,operationId:randomUUID(),taskId,
+    expectedVersion:1,reason:'Begin fixed work'});
+  assert.equal(started.status,'applied');
+  const task=await uow.read(projectId,r=>r.getTask(taskId));
+  const revision=await uow.read(projectId,r=>r.getTaskRevision(taskId,task!.currentRevisionId));
+  assert.ok(task&&revision?.basisSetId);
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,'worker','/tmp','project','danger-full-access','never','ready',1,'run-thread','run-session',$3,'run-issuer',$4,$4)`,
+    [projectId,runSessionId,randomUUID(),now]);
+  const exact={...capture(10,turn),sessionId:runSessionId,threadId:'run-thread'};
+  const otherTurn={...capture(11,'unrelated-turn'),sessionId:runSessionId,threadId:'run-thread'};
+  const otherSession=capture(12,turn);
+  assert.equal((await service.capture(exact)).source,null,'request may arrive before Run bind ACK');
+  assert.equal((await service.capture(otherTurn)).source,null);
+  assert.equal((await service.capture(otherSession)).source,null);
+  await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
+    operation_id,input,input_hash,state,version,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'Fixed input',$8,'requested',1,'run-issuer',$9,$9)`,
+    [projectId,runId,taskId,revision!.id,revision!.basisSetId,runSessionId,runOperationId,'a'.repeat(64),now]);
+  assert.equal((await service.get(projectId,exact.id))?.source,null);
+  assert.equal(await service.refreshSources(projectId,runSessionId),0,'unbound Run must not be inferred');
+  await pool.query(`UPDATE runtime_run SET state='dispatching',version=2,updated_at=$3 WHERE project_id=$1 AND run_id=$2`,
+    [projectId,runId,now]);
+  await pool.query(`UPDATE runtime_run SET state='running',native_turn_id=$3,version=3,updated_at=$4
+    WHERE project_id=$1 AND run_id=$2`,[projectId,runId,turn,now]);
+  assert.equal(await service.refreshSources(projectId,runSessionId),1);
+  assert.equal(await service.refreshSources(projectId,sessionId),0);
+  assert.deepEqual((await service.get(projectId,exact.id))?.source,{kind:'run',runId,
+    operationId:runOperationId,actorId:'run-issuer',taskId,taskRevisionId:revision!.id});
+  assert.equal((await service.get(projectId,otherTurn.id))?.source,null);
+  assert.equal((await service.get(projectId,otherSession.id))?.source,null);
+  await pool.query(`UPDATE runtime_run SET state='completed',version=4,result_summary='Done',updated_at=$3
+    WHERE project_id=$1 AND run_id=$2`,[projectId,runId,now]);
+  const after=capture(13,turn);after.sessionId=runSessionId;after.threadId='run-thread';
+  assert.equal((await service.capture(after)).source?.kind,'run','terminal Run remains a valid exact source');
+  const foreignProjectId=randomUUID();
+  assert.equal(await uow.read(foreignProjectId,r=>r.nativeInputs!.findSource(foreignProjectId,runSessionId,turn)),null);
+  const messageId=randomUUID(),processingId=randomUUID();
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
+    content,state,version,created_at,updated_at) VALUES($1,$2,$3,'owned',$4,'other-issuer','Other work','replied',1,$5,$5)`,
+    [projectId,messageId,randomUUID(),runSessionId,now]);
+  await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,
+    receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,'worker','completed',$6,$7,1,$8,$8)`,
+    [projectId,processingId,messageId,runSessionId,randomUUID(),turn,'a'.repeat(64),now]);
+  const ambiguous={...capture(14,turn),sessionId:runSessionId,threadId:'run-thread'};
+  await assert.rejects(()=>service.capture(ambiguous),/multiple business sources/);
+  assert.equal(await service.get(projectId,ambiguous.id),null,'ambiguous linkage cannot persist a guessed source');
+  assert.equal((await service.get(projectId,exact.id))?.source?.kind,'run','an existing fixed source is not rewritten');
+});
