@@ -68,6 +68,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     if (url.pathname === "/__fixture/release-trace") { releaseTrace?.(); res.end("ok"); return; }
     if (url.pathname === "/__fixture/failed") { scenario = "failed"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/unknown") { scenario = "unknown"; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/ready-message") { lifecycle = "ready"; lateMessage = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/closing") { lifecycle = "closing"; lateMessage = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/closed") { lifecycle = "closed"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/completed-claim") { lifecycle = "ready"; lateMessage = false; completedClaim = true; runCompleted = true; res.end("ok"); return; }
@@ -90,7 +91,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
         : { ...snapshot, session: { ...snapshot.session, runtimeState: lifecycle, busy: !completedClaim,
           latestBusinessRun: { ...snapshot.session.latestBusinessRun, state: completedClaim ? "completed" : "running" } },
           nativeObservation: lateMessage ? { ...snapshot.nativeObservation, currentTurn: { ...snapshot.nativeObservation.currentTurn,
-            source: { kind: "message", messageId, actorId: "reader", operationId: messageId } } } : snapshot.nativeObservation,
+            source: { kind: "message", messageId, processingId: messageId, actorId: "reader", operationId: messageId } } } : snapshot.nativeObservation,
           activity: [...snapshot.activity.map(item => item.id === "run-business" && runCompleted ? { ...item, summary: "业务运行 · completed" } : item.id === "activity-long-run" && runCompleted ? { ...item, source: { ...item.source, revision: "updated-source" } } : item), ...(includeMessage ? [messageActivity] : [])] };
         if (scenario === "failed") value = { ...(value as object), session: { ...snapshot.session, busy: false,
           latestBusinessRun: { ...snapshot.session.latestBusinessRun, state: "failed" } }, nativeInputRequests: [] };
@@ -146,6 +147,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
   await page.locator(".session-current-work").getByText("已认领，本次运行中", { exact: false }).waitFor();
+  await fetch(`${base}/__fixture/ready-message`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.locator(".session-status-badge").getByText("消息处理中").waitFor();
   await fetch(`${base}/__fixture/closing`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await page.locator(".session-status-badge").getByText("关闭中").waitFor();
