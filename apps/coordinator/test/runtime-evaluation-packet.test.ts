@@ -188,7 +188,7 @@ function createFixture(options: { evaluation?: boolean; failMaterial?: "missing"
   };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [principal], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
-    cliEntryForRun: async () => "python3 /private/fixed-cli.py",
+    cliEntryForRun: async () => "/usr/local/bin/python3 /private/fixed-cli.py",
     readDocumentOriginal: async () => { throw new Error("inline fixture needs no Blob"); },
     readEvaluationMaterial, blobsForPrincipal: async () => blobStore });
   return { runner, runtime, get run() { return currentRun; }, blobs, get preparedCount() { return preparedCount; },

@@ -21,13 +21,13 @@ test("material CLI entry is an exact Session actor and Task binding with a comma
   const dir = await mkdtemp(join(tmpdir(), "evoloop-material-cli-config-")), path = join(dir, "integrations.json");
   const entry = { projectId: "00000000-0000-4000-8000-000000000001",
     sessionId: "00000000-0000-4000-8000-000000000002", taskId: "00000000-0000-4000-8000-000000000003",
-    actorId: "actual-session-actor", command: "python3 /private/approved-cli.py" };
+    actorId: "actual-session-actor", command: "/usr/local/bin/python3 /private/approved-cli.py" };
   try {
     await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[entry]}}));
     assert.deepEqual((await loadIntegrations(path)).runtime?.materialCli[0], entry);
     await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[entry,entry]}}));
     await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
-    await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[{...entry,command:"python3 /private/x.py;cat /secret"}]}}));
+    await writeFile(path, JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[{...entry,command:"/usr/local/bin/python3 /private/x.py;cat /secret"}]}}));
     await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

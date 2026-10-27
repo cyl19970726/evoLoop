@@ -19,14 +19,14 @@ test("a long answered queue continuation stays on the fixed Run and can be read 
   const basis = { id: basisSetId, taskRevisionId, members: [{ documentId, revisionId }] } as BasisSet;
   const packet = buildLightweightInput(run, revision, basis, [{ documentId, revisionId, contentHash: hash(body),
     format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body), assetCount: 0, assetBytes: 0 }],
-    "python3 /private/fixed-cli.py");
+    "/usr/local/bin/python3 /private/fixed-cli.py");
   assert.ok(packet.byteLength < 16_000);
   assert.ok(!packet.input.includes(answer));
   assert.match(packet.input, /run-input/);
   assert.match(packet.input, /requiredBeforeAction":true/);
   assert.match(packet.input, new RegExp(run.inputHash));
   assert.match(packet.input, /configured-session-run/);
-  assert.match(packet.input, /python3 \/private\/fixed-cli\.py run-input/);
+  assert.match(packet.input, /\/usr\/local\/bin\/python3 \/private\/fixed-cli\.py run-input/);
   assert.throws(() => buildLightweightInput(run, revision, basis, [{ documentId, revisionId,
     contentHash: hash(body), format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body),
     assetCount: 0, assetBytes: 0 }]), /CLI_ENTRY_UNAVAILABLE/);

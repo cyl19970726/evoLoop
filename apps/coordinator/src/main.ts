@@ -327,8 +327,12 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       value.projectId === run.projectId && value.sessionId === session.id && value.actorId === session.actorId &&
       value.taskId === run.taskId) : null;
     if (!entry) return null;
-    const script = entry.command.split(" ").at(-1)!;
-    try { if (!(await stat(script)).isFile()) return null; }
+    const paths = entry.command.split(" ");
+    try {
+      const executable = await stat(paths[0]!);
+      if (!executable.isFile() || !(executable.mode & 0o111)) return null;
+      if (paths[1] && !(await stat(paths[1])).isFile()) return null;
+    }
     catch { return null; }
     return entry.command;
   },

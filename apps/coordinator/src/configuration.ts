@@ -89,7 +89,7 @@ const integrationSchema = z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
     /** Explicit read-capable CLI for one existing Session actor and fixed Task; no secret is stored here. */
     materialCli: z.array(z.strictObject({projectId:z.uuid(),sessionId:z.uuid(),actorId:z.string().min(1).max(100),
-      taskId:z.uuid(),command:z.string().min(1).max(1024).regex(/^(?:(?:python3|node) \/[A-Za-z0-9_./-]+|\/[A-Za-z0-9_./-]+)$/)}))
+      taskId:z.uuid(),command:z.string().min(1).max(1024).regex(/^\/[A-Za-z0-9_./-]+(?: \/[A-Za-z0-9_./-]+)?$/)}))
       .max(200).refine(values=>new Set(values.map(value=>`${value.projectId}:${value.sessionId}:${value.taskId}`)).size===values.length,
         "Material CLI bindings must be unique per project, Session and Task").default([]),
     /** Fixed 0.164 experimental Default-mode input, scoped to this owned child only. */
