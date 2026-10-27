@@ -693,6 +693,30 @@ test('pinned 0.164 requests Turn metadata without loading Items',async t=>{
   assert.equal((await adapter.listTurns(binding)).data[0]?.id,'turn-1');
 });
 
+for (const mode of ['turn-cursor-missing', 'turn-cursor-empty', 'turn-cursor-number']) {
+  test(`pinned 0.164 rejects ${mode} rather than reporting exhausted Turn history`, async t => {
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server'};
+    await adapter.registerBinding(binding);
+    await assert.rejects(()=>adapter.listTurns(binding),/invalid turns continuation cursor/);
+  });
+}
+
+test('pinned 0.154 retains its existing missing cursor compatibility', async t => {
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'turn-cursor-legacy-missing'],
+    verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+    owner:'evoloop-codex-app-server'};
+  await adapter.registerBinding(binding);
+  assert.equal((await adapter.listTurns(binding)).nextCursor,null);
+});
+
 
 test("read and resume reject a changed native session tree", async t => {
   const adapter = await open("changed-session"); t.after(() => adapter.close());

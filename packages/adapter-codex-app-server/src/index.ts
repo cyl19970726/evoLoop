@@ -711,6 +711,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       ...(cursor ? { cursor } : {}) }));
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
+    if (this.expectedVersion === "codex-cli 0.164.0-alpha.11.1" &&
+        result?.nextCursor !== null && !nonempty(result?.nextCursor))
+      throw new RuntimeProtocolError("invalid turns continuation cursor");
     return { data: turns as RuntimeTurn[], nextCursor: nonempty(result?.nextCursor) ? result.nextCursor : null };
   }
 
