@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
+import type { NativeInputCapture, NativeInputEvent, NativeInputQuestion } from "@evoloop/contracts/native-input";
 import { mapWorkItem } from "./work-trace.js";
 
 const OWNER = "evoloop-codex-app-server" as const;
@@ -123,6 +124,8 @@ export interface CodexAppServerOptions {
   initializationTimeoutMs?: number;
   dynamicToolTimeoutMs?: number;
   clientVersion?: string;
+  /** Enable pinned 0.164 native request_user_input on this child only; never writes user configuration. */
+  nativeUserInput?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
   /** Actual child exit evidence, independent of a transport EOF. */
@@ -151,6 +154,44 @@ export interface DynamicToolCall { threadId: string; turnId: string; callId: str
 export interface DynamicToolResult { contentItems: ({type:"inputText";text:string}|{type:"inputImage";imageUrl:string})[]; success: boolean }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+interface PendingNativeInput { capture: NativeInputCapture; requestId: string | number; attempted: boolean }
+
+const nativeRequestKey=(value:unknown):string|null=>
+  typeof value==='string'&&value.length>0&&value.trim().length>0&&value.length<=1024?`s:${value}`:
+    typeof value==='number'&&Number.isSafeInteger(value)?`n:${value}`:null;
+const boundedText=(value:unknown,max:number):value is string=>
+  typeof value==='string'&&value.length>0&&value.trim().length>0&&value.length<=max;
+
+/** Parse only the pinned text/options subset. Secret or oversized prompts never enter a capture. */
+function nativeInputQuestions(value:unknown):NativeInputQuestion[]|null{
+  if(!Array.isArray(value)||value.length<1||value.length>3)return null;
+  const questions:NativeInputQuestion[]=[];
+  const ids=new Set<string>();
+  for(const entry of value){
+    const question=object(entry);
+    if(!question||!boundedText(question.id,120)||ids.has(question.id)||
+      !boundedText(question.header,120)||!boundedText(question.question,4000)||
+      question.isSecret===true||question.isSecret!=null&&question.isSecret!==false||
+      question.isOther!=null&&typeof question.isOther!=='boolean')return null;
+    ids.add(question.id);
+    let options:NativeInputQuestion['options']=null;
+    if(question.options!=null){
+      if(!Array.isArray(question.options)||question.options.length>8)return null;
+      options=question.options.length?[]:null;
+      const labels=new Set<string>();
+      for(const value of question.options){
+        const option=object(value);
+        if(!option||!boundedText(option.label,240)||
+          typeof option.description!=='string'||option.description.length>1000||labels.has(option.label))return null;
+        labels.add(option.label);
+        options!.push({label:option.label,description:option.description});
+      }
+    }
+    questions.push({id:question.id,header:question.header,question:question.question,
+      isOther:question.isOther===true,options});
+  }
+  return questions;
+}
 
 export class CodexAppServerAdapter implements RuntimePort {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -170,6 +211,12 @@ export class CodexAppServerAdapter implements RuntimePort {
   private fullTurnAttempts = new Map<string,Set<string>>();
   private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
+  private nativeInputListeners = new Set<(event:NativeInputEvent)=>void|Promise<void>>();
+  private pendingNativeInputs = new Map<string,PendingNativeInput>();
+  private nativeRequestHandles = new Map<string,string>();
+  private seenNativeRequestIds = new Set<string>();
+  private connectionId: string | null = null;
+  private experimental = false;
   private closed = false;
   private ready = false;
   private readonly executable: string;
@@ -187,6 +234,10 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.environment = childEnvironment(options.environment ?? process.env);
     const expectedVersion = options.expectedVersion ?? "codex-cli 0.154.0";
     if (!(expectedVersion in PINNED_PROTOCOLS)) throw new RuntimeProtocolError("unsupported Codex CLI protocol version");
+    if(options.nativeUserInput!==undefined&&typeof options.nativeUserInput!=='boolean')
+      throw new RuntimeProtocolError('nativeUserInput must be boolean');
+    if(options.nativeUserInput&&expectedVersion!=='codex-cli 0.164.0-alpha.11.1')
+      throw new RuntimeProtocolError('nativeUserInput requires pinned Codex CLI 0.164');
     this.expectedVersion = expectedVersion as PinnedProtocolVersion;
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
@@ -194,42 +245,86 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
   isReady(): boolean { return this.ready && !!this.child; }
   hasProcessHandle():boolean{return this.ownedProcess!==null;}
+  nativeInputConnectionId():string|null{return this.isReady()?this.connectionId:null;}
+  onNativeInput(listener:(event:NativeInputEvent)=>void|Promise<void>):()=>void{
+    this.nativeInputListeners.add(listener);
+    return ()=>this.nativeInputListeners.delete(listener);
+  }
+  hasPendingInput(id:string,connectionId:string):boolean{
+    const pending=this.pendingNativeInputs.get(id);
+    return !!pending&&!pending.attempted&&pending.capture.connectionId===connectionId&&
+      this.connectionId===connectionId&&this.isReady();
+  }
+  async respondToInput(id:string,connectionId:string,answers:Record<string,string[]>):Promise<void>{
+    if(!this.hasPendingInput(id,connectionId))throw new RuntimeProtocolError('native input handle is no longer pending on this connection');
+    const pending=this.pendingNativeInputs.get(id)!;
+    const questions=pending.capture.questions;
+    if(!object(answers)||Object.keys(answers).length!==questions.length||
+      questions.some(question=>!Object.hasOwn(answers,question.id)))
+      throw new RuntimeProtocolError('native input answers do not match the captured questions');
+    const response:Record<string,{answers:string[]}>=Object.create(null) as Record<string,{answers:string[]}>;
+    for(const question of questions){
+      const values=answers[question.id];
+      if(!Array.isArray(values)||values.length<1||values.length>8||
+        values.some(value=>!boundedText(value,4000))||
+        (question.options?.length&&!question.isOther&&values.some(value=>
+          !question.options!.some(option=>option.label===value))))
+        throw new RuntimeProtocolError('native input answer is invalid');
+      response[question.id]={answers:[...values]};
+    }
+    // JSON-RPC responses have no acknowledgement. Mark before writing, including on a transport failure.
+    pending.attempted=true;
+    try{this.send({id:pending.requestId,result:{answers:response}});}
+    catch{throw new RuntimeUnknownError('item/tool/requestUserInput',null,'native input response write outcome unknown');}
+  }
   onDisconnect(listener: (reason: string) => void): () => void { this.disconnects.add(listener); return () => this.disconnects.delete(listener); }
+
+  private appServerArguments():string[]{
+    return this.options.nativeUserInput===true?
+      ['-c','features.default_mode_request_user_input=true','app-server','--stdio']:
+      ['app-server','--stdio'];
+  }
 
   /** Probe the installed CLI before it can receive any project request. */
   async open(): Promise<void> {
     if (this.closed) throw new RuntimeProtocolError("adapter closed");
     if (this.ready) return;
     if (this.child) throw new RuntimeProtocolError("adapter opening");
+    if(this.ownedProcess?.pid&&this.ownedProcess.exitCode===null&&this.ownedProcess.signalCode===null)
+      throw new RuntimeProtocolError('previous App Server process has not exited');
+    this.experimental=!!(this.options.dynamicTools&&this.options.callDynamicTool)||
+      (this.expectedVersion==='codex-cli 0.164.0-alpha.11.1'&&this.nativeInputListeners.size>0);
     if (!this.options.spawnArgs) {
       const version = await this.probeVersion();
       if (version !== this.expectedVersion) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${this.expectedVersion}, got ${version}`);
       await this.probeSchema();
     }
-    const child = spawn(this.executable, this.options.spawnArgs ?? ["app-server", "--stdio"], {
+    const child = spawn(this.executable, this.options.spawnArgs ?? this.appServerArguments(), {
       stdio: ["pipe", "pipe", "pipe"], env: this.environment,
     });
     this.child = child;
+    this.connectionId=randomUUID();
+    this.seenNativeRequestIds.clear();
     this.ownedProcess=child;
     this.processExit=new Promise<void>(resolveExit=>{
       child.once('exit',()=>resolveExit());
       child.once('error',()=>{if(!child.pid)resolveExit();});
     });
     child.stderr.resume(); // Do not persist stderr: it may contain private paths or content.
-    child.on("error", error => this.disconnect(error.message));
+    child.on("error", error => {if(this.child===child)this.disconnect(error.message);});
     child.on("exit", (code, signal) => {
       if(Number.isSafeInteger(child.pid)&&this.options.onExited){
         this.exitDelivery=Promise.resolve().then(()=>this.options.onExited!({pid:child.pid!,code,signal}));
         void this.exitDelivery.catch(()=>undefined);
       }
-      this.disconnect(`process exited (${code ?? signal ?? "unknown"})`);
+      if(this.child===child)this.disconnect(`process exited (${code ?? signal ?? "unknown"})`);
     });
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on("line", line => this.receive(line));
-    lines.on("close", () => this.disconnect("stdout closed"));
+    lines.on("close", () => {if(this.child===child)this.disconnect("stdout closed");});
     try {
       const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" },
-        ...((this.options.dynamicTools && this.options.callDynamicTool) ?
+        ...(this.experimental ?
           {capabilities:{experimentalApi:true}} : {}) }, this.initializationTimeout));
       if (!result || !nonempty(result.userAgent) || !nonempty(result.platformFamily)) throw new RuntimeProtocolError("invalid initialize response");
       this.send({ method: "initialized" });
@@ -255,7 +350,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private async probeSchema(): Promise<void> {
     const directory = await mkdtemp(resolve(tmpdir(), "evoloop-codex-schema-"));
     try {
-      const experimental=!!(this.options.dynamicTools && this.options.callDynamicTool);
+      const experimental=this.experimental;
       await execFileAsync(this.executable, ["app-server", "generate-json-schema", ...(experimental ? ["--experimental"] : []), "--out", directory], {
         timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
       });
@@ -294,6 +389,10 @@ export class CodexAppServerAdapter implements RuntimePort {
     if ("method" in message) {
       if (!nonempty(message.method)) { this.disconnect("invalid method"); return; }
       if ("id" in message) { void this.serverRequest(message).catch(() => this.disconnect("server request response failed")); return; }
+      if(message.method==='serverRequest/resolved'){
+        this.resolveNativeInput(message.params);
+        return;
+      }
       const params = object(message.params);
       const threadId = params?.threadId;
       if (!nonempty(threadId) || !this.bindings.has(threadId)) return;
@@ -316,12 +415,96 @@ export class CodexAppServerAdapter implements RuntimePort {
     else { pending.reject(new RuntimeProtocolError(`${pending.method}: response lacks result`)); this.disconnect("malformed response"); }
   }
 
+  private async emitNativeInput(event:NativeInputEvent):Promise<void>{
+    for(const listener of this.nativeInputListeners)await listener(event);
+  }
+
+  private closeNativeInput(handle:string,reason:'native_resolved'|'disconnected'|'unsupported'):void{
+    const pending=this.pendingNativeInputs.get(handle);
+    if(!pending)return;
+    this.pendingNativeInputs.delete(handle);
+    this.nativeRequestHandles.delete(nativeRequestKey(pending.requestId)!);
+    void this.emitNativeInput({type:'closed',projectId:pending.capture.projectId,id:handle,
+      connectionId:pending.capture.connectionId,reason,observedAt:new Date().toISOString()}).catch(()=>undefined);
+  }
+
+  private resolveNativeInput(value:unknown):void{
+    const params=object(value),key=nativeRequestKey(params?.requestId);
+    if(!key||!nonempty(params?.threadId))return;
+    const handle=this.nativeRequestHandles.get(key);
+    const pending=handle?this.pendingNativeInputs.get(handle):null;
+    if(pending?.capture.threadId===params.threadId)this.closeNativeInput(handle!,'native_resolved');
+  }
+
+  private async handleNativeInput(message:Record<string,unknown>,binding:RuntimeBinding|undefined):Promise<void>{
+    const id=message.id,key=nativeRequestKey(id),method=message.method;
+    if(!key){this.disconnect('unsafe native input request id');return;}
+    if(this.seenNativeRequestIds.has(key))return; // Never issue two responses for one typed JSON-RPC id.
+    this.seenNativeRequestIds.add(key);
+    const unsupported=(reason:string):void=>{
+      if(method==='mcpServer/elicitation/request')this.send({id,result:{action:'decline'}});
+      else this.send({id,error:{code:-32601,message:reason}});
+    };
+    if(!binding||!this.connectionId||!this.ready){unsupported('Unregistered thread');return;}
+    const params=object(message.params);
+    const isTool=method==='item/tool/requestUserInput';
+    const validIdentity=params?.threadId===binding.nativeThreadId;
+    if(!validIdentity){unsupported('Unregistered thread');return;}
+    if(!boundedText(binding.nativeThreadId,1024)||
+      (isTool&&!boundedText(params?.turnId,1024))||
+      (params?.turnId!=null&&!boundedText(params.turnId,1024))){
+      unsupported('Native input identity is unavailable');return;
+    }
+    const supportedProtocol=this.expectedVersion==='codex-cli 0.164.0-alpha.11.1'&&this.experimental;
+    const observer=this.nativeInputListeners.size>0;
+    const questions=isTool?nativeInputQuestions(params?.questions):null;
+    const secret=isTool&&Array.isArray(params?.questions)&&params.questions.some(value=>object(value)?.isSecret===true);
+    let supported=!!(isTool&&supportedProtocol&&observer&&
+      boundedText(params?.itemId,1024)&&typeof params?.isBlocking==='boolean'&&questions);
+    let reason=supported?null:!isTool?'MCP_ELICITATION_UNSUPPORTED':
+      secret?'SECRET_INPUT_UNSUPPORTED':!supportedProtocol?'NATIVE_INPUT_PROTOCOL_UNAVAILABLE':
+      !observer?'NATIVE_INPUT_OBSERVER_UNAVAILABLE':'NATIVE_INPUT_SHAPE_UNSUPPORTED';
+    const capture:NativeInputCapture={
+      projectId:binding.projectId,sessionId:binding.sessionId,id:randomUUID(),connectionId:this.connectionId,
+      nativeRequestId:id as string|number,threadId:binding.nativeThreadId,
+      turnId:boundedText(params?.turnId,1024)?params.turnId:null,
+      itemId:boundedText(params?.itemId,1024)?params.itemId:null,
+      method:method as NativeInputCapture['method'],questions:supported?questions!:[],
+      isBlocking:typeof params?.isBlocking==='boolean'?params.isBlocking:false,
+      supported,unavailableReason:reason,observedAt:new Date().toISOString(),
+    };
+    if(supported&&new TextEncoder().encode(JSON.stringify(capture)).byteLength>32768){
+      supported=false;reason='NATIVE_INPUT_TOO_LARGE';
+      capture.supported=false;capture.questions=[];capture.unavailableReason=reason;
+    }
+    if(!observer){unsupported(reason!);return;}
+    if(supported){
+      this.pendingNativeInputs.set(capture.id,{capture,requestId:id as string|number,attempted:false});
+      this.nativeRequestHandles.set(key,capture.id);
+    }
+    try{await this.emitNativeInput({type:'requested',request:capture});}
+    catch{
+      if(supported)this.closeNativeInput(capture.id,'unsupported');
+      unsupported('Native input capture unavailable');
+      return;
+    }
+    if(!supported){
+      unsupported(reason!);
+      void this.emitNativeInput({type:'closed',projectId:capture.projectId,id:capture.id,
+        connectionId:capture.connectionId,reason:'unsupported',observedAt:new Date().toISOString()}).catch(()=>undefined);
+    }
+  }
+
   private async serverRequest(message: Record<string, unknown>): Promise<void> {
     const id = message.id;
     if ((typeof id !== "number" && typeof id !== "string") || !nonempty(message.method)) { this.disconnect("invalid server request"); return; }
     const params = object(message.params);
     const threadId = params?.threadId ?? params?.conversationId;
     const binding = nonempty(threadId) ? this.bindings.get(threadId) : undefined;
+    if(message.method==='item/tool/requestUserInput'||message.method==='mcpServer/elicitation/request'){
+      await this.handleNativeInput(message,binding);
+      return;
+    }
     const creating = !binding && nonempty(threadId) && APPROVAL_METHODS.has(message.method) ? this.pendingCreate : null;
     const request: RuntimeApprovalRequest = { id, method: message.method, params: message.params,
       ...(binding ? { projectId: binding.projectId, sessionId: binding.sessionId } :
@@ -403,6 +586,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     const wasConnected = this.ready || !!this.child;
     this.ready = false;
     this.conversationQualifications.clear();
+    for(const handle of [...this.pendingNativeInputs.keys()])this.closeNativeInput(handle,'disconnected');
+    this.connectionId=null;
     const child = this.child; this.child = null;
     if (child && !child.killed) child.kill();
     for (const [id, pending] of this.pending) {

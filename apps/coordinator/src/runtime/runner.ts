@@ -9,6 +9,7 @@ import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
 import { fixedDocumentMaterial } from "./materials.js";
+import type { NativeInputBridge } from "./native-input.js";
 import { lookupKnownTurn } from "./turn-lookup.js";
 import type { ReadDocumentOriginal } from "./materials.js";
 import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId, evaluationPacketBlobPayload, evaluationPacketMediaType,
@@ -115,6 +116,7 @@ export class RuntimeRunner {
   constructor(private readonly deps: {
     readExternalMaterials?(principal:Principal,projectId:string,taskId:string,taskRevisionId:string):Promise<string>;
     runtimeFactory(): ManagedRuntime; workflow: WorkflowService; trusted: RuntimeWorkflowService;
+    nativeInputs?: NativeInputBridge;
     principals: Principal[]; canWrite(): boolean; allowedCwd(projectId: string, cwd: string): Promise<boolean>;
     hasGrant(scope: RuntimeGrant, session?: RuntimeSessionRecord): boolean | Promise<boolean>;
     /** Exact persisted dynamic Session/Run ownership for read-only reconciliation and one-shot settlement. */
@@ -178,6 +180,7 @@ export class RuntimeRunner {
     if (this.stopped) throw new Error("Runner has stopped");
     this.attachRuntime();
     await this.runtime.open();
+    await this.deps.nativeInputs?.opened();
     for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
     this.available = true;
     await this.pump();
@@ -189,6 +192,7 @@ export class RuntimeRunner {
     this.timer.unref();
   }
   private attachRuntime(): void {
+    this.deps.nativeInputs?.attach(this.runtime);
     this.unsubscribeDisconnect = this.runtime.onDisconnect(_reason => {
       if (this.stopped) return;
       this.available = false;
@@ -227,10 +231,12 @@ export class RuntimeRunner {
     try {
       // A replacement must wait for proof that the previous owned child exited.
       await this.runtime.close();
+      await this.deps.nativeInputs?.drain();
       this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.interruptAttempted.clear();
       this.attachRuntime();
       await this.runtime.open();
+      await this.deps.nativeInputs?.opened();
       for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
       this.serviceError = null;
       this.available = true;
@@ -288,6 +294,7 @@ export class RuntimeRunner {
           catch (error) { this.recordFault(projectId,"run_reconcile",error,run.sessionId,run.id); }
         }
         await this.flushApprovals();
+        await this.deps.nativeInputs?.pump(projectId, sessions);
         this.clearFault(projectId);
       } catch (error) { this.recordFault(projectId,"project_scan",error); }
     }
@@ -902,5 +909,7 @@ export class RuntimeRunner {
     if (this.busy) await this.busy;
     this.unsubscribeDisconnect?.(); this.unsubscribeApproval?.();
     await this.runtime.close();
+    await this.deps.nativeInputs?.drain();
+    this.deps.nativeInputs?.detach();
   }
 }

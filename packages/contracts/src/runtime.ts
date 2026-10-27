@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { EvaluationFixedRef } from "./evaluation.js";
 import type { ExecutionProfileSnapshot, SessionExecutionProfile } from "./session-recovery.js";
+import type { NativeInputEvent } from "./native-input.js";
 
 export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000), turnCursor: z.string().min(1).max(2048).optional() });
 
@@ -175,6 +176,11 @@ export interface RuntimeApprovalRequest {
 }
 
 export interface RuntimePort {
+  /** Handles belong to one owned stdio connection, never to a replacement process. */
+  nativeInputConnectionId?(): string | null;
+  onNativeInput?(listener: (event: NativeInputEvent) => void | Promise<void>): () => void;
+  hasPendingInput?(id: string, connectionId: string): boolean;
+  respondToInput?(id: string, connectionId: string, answers: Record<string, string[]>): Promise<void>;
   create(spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
   /** Resume the owned Thread with the current versioned execution profile. */
   resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
