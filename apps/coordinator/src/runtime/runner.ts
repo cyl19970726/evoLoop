@@ -779,8 +779,8 @@ export class RuntimeRunner {
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
     try {
       const binding = await this.readBinding(session);
-      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
-      if (!turns.some(turn => turn.id === run.nativeTurnId)) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "已绑定的原生 Turn 当前不可见；已保存的结果摘要不是原生全文，请稍后重试读取。");
+      // The persisted owned binding and exact Turn ID identify the result.
+      // Item pagination does not require scanning unrelated Thread history first.
       const items = await collect(cursor => this.runtime.listItems(binding, run.nativeTurnId!, cursor), 100);
       return { messages: finalMessages(items), source: "owned-native-history",
         finalPhaseConfirmed: items.some(item => object(item)?.type === "agentMessage" && object(item)?.phase === "final_answer"),
