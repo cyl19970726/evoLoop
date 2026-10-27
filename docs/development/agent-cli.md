@@ -111,6 +111,8 @@ npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 
 CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show ID`、`receipts reconcile ID` 用于找回原始目标、请求和已知结果。`EVOLOOP_STATE_DIR` 可指定仓库外或明确被 Git 忽略的私有本机目录；本机实现按 0700 目录、0600 文件创建且不覆盖已有回执，但不会强制目录位于仓库外。回执不能进入公开 Git。服务端确认的同一 actor、项目权限与 API origin 允许合法令牌轮换后继续核对；旧回执若没有 actor 记录，只能用原令牌。不同 actor 不可据此换身份接管。`EVOLOOP_TIMEOUT_MS` 仅控制等待，不使写入失败变成未提交证明。CLI 将 JSON 结果写 stdout、诊断写 stderr，失败或冲突退出非零；它不自动重试 POST。
 
+`read run RUN_UUID --trace` 的 `--cursor` 是 Item 分页游标，`--turn-cursor` 是独立的 Turn 元数据游标；返回的 `nextCursor` 与 `turnMetadata.nextTurnCursor` 分别续读。已绑定 Turn 的 Item 可在元数据仍为 `partial` 时读取，`turn: null` 不代表 Run 的原生终态。`request runtime.reconcile` 正文可加 `turnCursor`，未读到旧 Turn 且目录仍有后页时返回 `status: partial`、`changed: false`、`nextTurnCursor` 和原 Run／版本身份；这是确认无写入的回执，CLI 退出码为 4。以原版本和新游标准备下一次显式核对；原请求回包丢失时先核其本机回执，不推断它已写入，也不重启 Turn。
+
 若回包丢失或状态未知，保留原操作 ID、请求正文和读入基线。先按同一 ID 查询 `operation ID --project PROJECT`；若操作涉及外部知识发布、来源或 Runtime，按对应具名恢复/复核接口核对外部原件及本地记录，不能把普通操作查询当成外部发布证明。404 仅表示该次未查到，不能证明未执行；不能换 ID 盲重派。外部动作的状态仍不明时停止该动作并报告未知和需要的人工核对。
 
 纯事务核心命令有显式恢复入口：`receipts retry RECEIPT_UUID`。它只接收保留的 `/api/commands` 意图，并要求回执记录的原 actor 与当前服务端核实的 actor 一致；缺少 actor 的旧回执只允许核对。先按原 ID 读回；找到结果就返回，不再次提交。若核心明确返回 OPERATION_NOT_FOUND，可按原 actor、项目、操作 ID、正文和 expectedVersion 原样回放一次，依赖服务端项目锁、命令摘要和同事务日志去重；404 仍不证明前次未执行。它不能改变正文、换 ID、自动提高版本或重放上传/知识发布等外部操作，也不删除本机回执。已拒绝的原操作先重读拒绝原因和对象，不强套通过。恢复中的网络错误、权限变化或摘要不符继续保留 pending，不据此宣布原操作失败。

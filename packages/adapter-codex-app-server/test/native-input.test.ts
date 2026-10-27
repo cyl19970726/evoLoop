@@ -252,7 +252,8 @@ test('input observer chooses pinned experimental schema during fake version prob
   const executable=join(directory,'fake-codex');
   const argsFile=join(directory,'args');
   await writeFile(executable,`#!/bin/sh\nif [ "$1" = "--version" ]; then printf '%s\\n' 'codex-cli 0.164.0-alpha.11.1'; exit 0; fi\nprintf '%s\\n' "$@" > '${argsFile}'\nwhile [ "$#" -gt 0 ]; do if [ "$1" = "--out" ]; then shift; printf '{}' > "$1/codex_app_server_protocol.v2.schemas.json"; exit 0; fi; shift; done\nexit 1\n`,{mode:0o700});
-  const adapter=new CodexAppServerAdapter({executable,expectedVersion:'codex-cli 0.164.0-alpha.11.1',requestTimeoutMs:500});
+  // This asserts schema selection, not subprocess scheduling latency under the parallel suite.
+  const adapter=new CodexAppServerAdapter({executable,expectedVersion:'codex-cli 0.164.0-alpha.11.1',requestTimeoutMs:5000});
   adapter.onNativeInput(()=>undefined);
   await assert.rejects(()=>adapter.open(),/schema changed/);
   assert.match(await readFile(argsFile,'utf8'),/--experimental/);
