@@ -54,7 +54,7 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
   if (previous && (previous.projectId !== event.projectId || previous.sessionId !== event.sessionId || previous.threadId !== event.threadId)) return null;
   // A stale child connection cannot replace a new live projection.
   if (previous && previous.connectionId !== event.connectionId && previous.freshness === 'live') return null;
-  const next: NativeObservationRecord = previous ? { ...previous, items: [...previous.items] } : {
+  const next: NativeObservationRecord = previous ? { ...previous, currentTurn: previous.currentTurn ? { ...previous.currentTurn } : null, items: [...previous.items] } : {
     projectId: event.projectId, sessionId: event.sessionId, threadId: event.threadId, connectionId: event.connectionId,
     version: 0, observedAt: event.observedAt, lastEventAt: event.observedAt, freshness: 'live', staleReason: null,
     status: null, currentTurn: null, items: [], plan: null, diff: null, usage: null };
@@ -65,15 +65,19 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
   if (event.method !== 'thread/status/changed') {
     if (!turnId) return null;
     if (event.method === 'turn/started' && next.currentTurn?.id !== turnId) {
-      next.currentTurn = { id: turnId, status: turnStatus(object(params.turn)?.status), source: null };
+      const startedAt = metric(object(params.turn)?.startedAt);
+      // .164 carries native Unix seconds when known. Reject only strictly older starts; equal or null is inconclusive.
+      if (next.currentTurn?.startedAt != null && startedAt != null && startedAt < next.currentTurn.startedAt) return null;
+      next.currentTurn = { id: turnId, status: turnStatus(object(params.turn)?.status), source: null, startedAt };
       next.items = []; next.plan = null; next.diff = null; next.usage = null;
     } else if (!next.currentTurn) {
-      next.currentTurn = { id: turnId, status: 'unknown', source: null };
+      next.currentTurn = { id: turnId, status: 'unknown', source: null, startedAt: null };
     } else if (next.currentTurn.id !== turnId) return null;
   }
   switch (event.method) {
     case 'thread/status/changed': { const s = status(object(params.status)?.type); if (!s) return null; next.status = s; break; }
-    case 'turn/started': if (next.currentTurn?.status === 'unknown') next.currentTurn.status = turnStatus(object(params.turn)?.status); break;
+    case 'turn/started': if (next.currentTurn?.status === 'unknown') next.currentTurn.status = turnStatus(object(params.turn)?.status);
+      if (next.currentTurn && next.currentTurn.startedAt === null) next.currentTurn.startedAt = metric(object(params.turn)?.startedAt); break;
     case 'turn/completed': {
       const s = turnStatus(object(params.turn)?.status); if (s === 'unknown') return null;
       next.currentTurn!.status = s; break;

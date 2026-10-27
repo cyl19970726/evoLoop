@@ -47,3 +47,25 @@ test('UTF-8 limits and bounded item/plan/diff projection are honest',()=>{
   assert.equal(row.diff?.truncated,true);assert.ok(new TextEncoder().encode(row.diff!.text).byteLength<=8192);
   assert.ok(new TextEncoder().encode(JSON.stringify(row)).byteLength<=24576);
 });
+
+test('reducer preserves the previous snapshot when a Turn status changes',()=>{
+  const first=reduce(null,'turn/started',{threadId:'thread',turn:{id:'one',status:'inProgress',startedAt:100,items:[]}})!;
+  const firstCopy=structuredClone(first);
+  const completed=reduce(first,'turn/completed',{threadId:'thread',turn:{id:'one',status:'completed',startedAt:100,items:[]}})!;
+  assert.deepEqual(first,firstCopy);
+  assert.equal(completed.currentTurn?.status,'completed');
+  const beforeStart=reduce(null,'item/started',{threadId:'thread',turnId:'two',item:{id:'i',type:'fileChange',status:'inProgress'}})!;
+  const beforeCopy=structuredClone(beforeStart);
+  const startedAfterItem=reduce(beforeStart,'turn/started',{threadId:'thread',turn:{id:'two',status:'inProgress',startedAt:110,items:[]}})!;
+  assert.deepEqual(beforeStart,beforeCopy);
+  assert.equal(startedAfterItem.currentTurn?.startedAt,110);
+});
+
+test('native startedAt rejects an older late Turn start when both timestamps are known',()=>{
+  const current=reduce(null,'turn/started',{threadId:'thread',turn:{id:'new',status:'inProgress',startedAt:200,items:[]}})!;
+  assert.equal(reduce(current,'turn/started',{threadId:'thread',turn:{id:'old',status:'inProgress',startedAt:100,items:[]}}),null);
+  assert.equal(current.currentTurn?.id,'new');
+  const newer=reduce(current,'turn/started',{threadId:'thread',turn:{id:'newer',status:'inProgress',startedAt:201,items:[]}})!;
+  assert.equal(newer.currentTurn?.id,'newer');
+  assert.equal(newer.items.length,0);
+});
