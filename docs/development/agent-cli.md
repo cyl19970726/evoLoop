@@ -93,7 +93,7 @@ npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 
 新写入沿用 `command schema TYPE` 和 `command run FILE` 的幂等回执入口。`session.profile.set` 维护项目展示名与用途；`task.assignment.set` 指定同 Role 的实际会话，建议先 start 固定 Task 再分派。指定 actor 用 `task.assignment.acknowledge` 接手；Lead 的实际人工沟通记录另用 `observeAcceptance`，不能冒用执行者。新队列／直接 Run 不得绕过已有的具体分派；旧输入变更后明确重确认。
 
-`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通 Session 消息用 `work message MESSAGE_ID` 核原消息及处理；Task 问题、答复和结果用该 Run 的 Task discussion 与固定 Document，不拿 discussion 事件证明普通消息已处理。普通对话无需新 Task；新的独立工作仍须正式 Task 与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；实际收件人按 `command schema session.message.receipt` 对原消息签 read，发送者看到回复不能代签。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
+`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通 Session 消息用 `work message MESSAGE_ID` 核原消息及处理；Task 问题、答复和结果用该 Run 的 Task discussion 与固定 Document，不拿 discussion 事件证明普通消息已处理。普通对话无需新 Task；新的独立工作仍须正式 Task 与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；实际收件人按 `command schema session.message.receipt` 对原消息签 read，发送者看到回复不能代签。 原消息已在精确 Session 绑定真实 Turn 且正在处理时即可签 read，无需为补已读再启动一轮；排队、未绑定和 unknown 仍不可签。已读不改变消息处理状态、队列占用或交付验收，失败或超时仍先按原 operation ID 回读，不能把旧的 rejected 意图换内容重试。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
 
 ### 读取和回复原生提问
 

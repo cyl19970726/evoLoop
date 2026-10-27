@@ -51,9 +51,13 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
   const processing=await store.getSessionMessageProcessing(item.id);
   if(!processing?.receiverActorId||principal.actorId!==processing.receiverActorId)
     throw new DomainError('MESSAGE_RECIPIENT','only the granted receiving actor may record its read');
-  if(!processing.nativeTurnId||!['completed','failed'].includes(processing.state)||
-    !['replied','completed_without_reply','failed'].includes(item.state))
-    throw new DomainError('MESSAGE_NOT_RECEIVED','a real native Turn must settle before receipt');
+  const bound=processing.projectId===command.projectId&&processing.messageId===item.id&&
+    processing.sessionId===item.target.sessionId&&!!processing.nativeTurnId?.trim();
+  const running=item.state==='processing'&&processing.state==='running';
+  const settled=['replied','completed_without_reply','failed'].includes(item.state)&&
+    ['completed','failed'].includes(processing.state);
+  if(!bound||!(running||settled))
+    throw new DomainError('MESSAGE_NOT_RECEIVED','a bound running or settled native Turn is required for receipt');
   if(item.readReceipt)throw new DomainError('RECEIPT_EXISTS','read receipt already recorded');
   await store.insertSessionMessageReadReceipt(item.id,principal.actorId,command.evidence,now);
   return{result:applied(command.operationId,item.id,item.version),effects:[{kind:'session.message.read',entityId:item.id,version:item.version}]};

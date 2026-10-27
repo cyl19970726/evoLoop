@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash,randomUUID } from 'node:crypto';
 import { before,after,test } from 'node:test';
 import pg from 'pg';
 import { migrate,PostgresUnitOfWork } from '../src/index.ts';
+import { WorkflowService } from '@evoloop/core';
 import { SessionMessageService,applySessionMessage } from '@evoloop/core/session-messages';
 import { SessionMessagePump } from '../../../apps/coordinator/src/session-messages/pump.ts';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
@@ -50,6 +51,115 @@ before(async()=>{
 });
 after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();
   try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
+
+test('read refuses a bound Turn whose processing identity differs from the original message',async()=>{
+  const message={...item(),state:'processing' as const};
+  const command={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:message.id,
+    stage:'read' as const,evidence:'I read it'};
+  const base={projectId,messageId:message.id,sessionId,state:'running' as const,
+    receiverActorId:'receiver',nativeTurnId:'bound-turn'};
+  for(const mismatch of [{projectId:randomUUID()},{messageId:randomUUID()},{sessionId:randomUUID()}]){
+    let inserts=0;
+    const tx={sessionMessages:{getSessionMessage:async()=>message,
+      getSessionMessageProcessing:async()=>({...base,...mismatch}),
+      insertSessionMessageReadReceipt:async()=>{inserts++;}}} as unknown as Parameters<typeof applySessionMessage>[0];
+    await assert.rejects(()=>applySessionMessage(tx,{actorId:'receiver',projectIds:[projectId],permissions:['write']},command,now),
+      /bound running or settled native Turn/);
+    assert.equal(inserts,0);
+  }
+});
+
+test('receiving actor records an immutable read during the bound running Turn',async()=>{
+  const targetSessionId=randomUUID(),messageId=randomUUID();
+  await seedFullSession(targetSessionId);
+  const local=new SessionMessageService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:targetSessionId,maxTurns:10})});
+  const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
+  const receiver={actorId:'receiver',projectIds:[projectId],permissions:['read' as const,'write' as const]};
+  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['write' as const,'review' as const]};
+  const post=await workflow.execute(sender,{type:'session.message.post',projectId,operationId:randomUUID(),
+    messageId,target:{kind:'owned',sessionId:targetSessionId},content:'Read this original message'});
+  assert.equal(post.status,'applied');
+  const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId,
+    stage:'read' as const,evidence:'I read the original message in this Turn'};
+  const queuedReceipt={...receipt,operationId:randomUUID()};
+  const queuedResult=await workflow.execute(receiver,queuedReceipt);
+  assert.equal(queuedResult.status,'rejected',
+    'queued messages have not entered a native Turn');
+  await local.beginDispatch(projectId,messageId,randomUUID(),randomUUID(),qualified);
+  assert.equal((await workflow.execute(receiver,{...receipt,operationId:randomUUID()})).status,'rejected',
+    'dispatch without a native Turn is insufficient');
+  await local.bindTurn(projectId,messageId,{id:'running-read-turn',status:'inProgress'});
+  const original=await local.detail(projectId,messageId);
+  const turns=await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(targetSessionId,'sender'));
+  const gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  const occupancy=await local.isBusy(projectId,targetSessionId);
+  const yieldBusiness=await local.mustYieldBusiness(projectId,targetSessionId);
+  const before=await pool.query(`SELECT
+    (SELECT sequence FROM session_observation_head WHERE project_id=$1) AS observation_head,
+    (SELECT count(*)::int FROM delivery WHERE project_id=$1) AS deliveries,
+    (SELECT count(*)::int FROM task WHERE project_id=$1) AS tasks,
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND session_id=$2) AS runs,
+    (SELECT count(*)::int FROM session_message_read_receipt WHERE project_id=$1 AND message_id=$3) AS receipts`,
+    [projectId,targetSessionId,messageId]);
+  assert.equal((await workflow.execute(sender,{...receipt,operationId:randomUUID()})).status,'rejected');
+  assert.equal((await workflow.execute(reviewer,{...receipt,operationId:randomUUID()})).status,'rejected');
+  await assert.rejects(()=>workflow.execute({actorId:'receiver',projectIds:[randomUUID()],permissions:['write']},
+    {...receipt,operationId:randomUUID()}),/project/);
+  const result=await workflow.execute(receiver,receipt);
+  assert.equal(result.status,'applied');
+  const during=await local.detail(projectId,messageId);
+  assert.equal(during.message.readReceipt?.actorId,'receiver');
+  assert.equal(during.message.readReceipt?.evidence,receipt.evidence);
+  assert.equal(during.message.readReceipt?.at,now);
+  assert.deepEqual({...during.message,readReceipt:null},original.message);
+  assert.deepEqual(during.processing,original.processing);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(targetSessionId,'sender')),turns);
+  assert.deepEqual(await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId)),gate);
+  assert.equal(await local.isBusy(projectId,targetSessionId),occupancy);
+  assert.equal(await local.mustYieldBusiness(projectId,targetSessionId),yieldBusiness);
+  const afterRead=await pool.query(`SELECT
+    (SELECT sequence FROM session_observation_head WHERE project_id=$1) AS observation_head,
+    (SELECT count(*)::int FROM delivery WHERE project_id=$1) AS deliveries,
+    (SELECT count(*)::int FROM task WHERE project_id=$1) AS tasks,
+    (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND session_id=$2) AS runs,
+    (SELECT count(*)::int FROM session_message_read_receipt WHERE project_id=$1 AND message_id=$3) AS receipts`,
+    [projectId,targetSessionId,messageId]);
+  assert.equal(afterRead.rows[0].receipts,1);
+  assert.equal(BigInt(afterRead.rows[0].observation_head)>BigInt(before.rows[0].observation_head),true);
+  for(const key of ['deliveries','tasks','runs'])assert.equal(afterRead.rows[0][key],before.rows[0][key]);
+  const changes=(await pool.query(`SELECT actor_id,session_id,source_table FROM session_observation_change
+    WHERE project_id=$1 AND sequence>$2 AND message_id=$3`,[projectId,before.rows[0].observation_head,messageId])).rows;
+  assert.deepEqual(changes,[{actor_id:'receiver',session_id:targetSessionId,source_table:'session_message_read_receipt'}]);
+  assert.deepEqual(await workflow.execute(receiver,receipt),result,'the same operation replays the original result');
+  assert.equal((await workflow.execute(receiver,{...receipt,operationId:randomUUID()})).code,'RECEIPT_EXISTS');
+  await local.settle(projectId,messageId,{id:'running-read-turn',status:'completed',completedAtUtc:now},null);
+  assert.equal((await local.get(projectId,messageId)).readReceipt?.actorId,'receiver');
+  assert.deepEqual(await workflow.execute(receiver,receipt),result,'replay survives Turn settlement');
+  assert.deepEqual(await workflow.execute(receiver,queuedReceipt),queuedResult,
+    'a rejected operation remains rejected after the state changes');
+  await assert.rejects(()=>workflow.execute(reviewer,receipt),/different command/);
+  await assert.rejects(()=>workflow.execute(receiver,{...receipt,evidence:'changed'}),/different command/);
+});
+
+test('an uncertain processing state refuses read even after a native Turn was bound',async()=>{
+  const targetSessionId=randomUUID(),message={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+  await seedFullSession(targetSessionId);
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
+  const local=new SessionMessageService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:targetSessionId,maxTurns:10})});
+  await local.beginDispatch(projectId,message.id,randomUUID(),randomUUID(),qualified);
+  await local.bindTurn(projectId,message.id,{id:'uncertain-turn',status:'inProgress'});
+  await local.markUnknown(projectId,message.id,'native completion uncertain');
+  const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:message.id,
+    stage:'read' as const,evidence:'I read it'};
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
+    {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/bound running or settled native Turn/);
+  assert.equal((await local.get(projectId,message.id)).readReceipt,null);
+  await local.settle(projectId,message.id,{id:'uncertain-turn',status:'completed',completedAtUtc:now},null);
+});
 
 test('message persists separately, unknown retains exact operation, receipt requires receiving actor',async()=>{
   const message=item();
@@ -294,7 +404,7 @@ test('explicit pre-turn rejection releases occupancy and does not claim a native
   const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:first.id,
     stage:'read' as const,evidence:'I saw it'};
   await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
-    {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/real native Turn/);
+    {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/bound running or settled native Turn/);
   assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(isolatedSessionId)))?.resumeMessageId,second.id);
   await reviewBlockedMessage(first.id,isolatedSessionId);
   await roomy.beginDispatch(projectId,second.id,randomUUID(),randomUUID(),qualified);

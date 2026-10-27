@@ -347,9 +347,12 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
   }
   const status: Record<SessionMessageRecord["state"], string> = { queued: "待派发", processing: "原会话处理中", replied: "已回复", completed_without_reply: "已完成但无回复", failed: "失败", unknown: "结果未知", cancelled: "已取消", manual_pending: "待人工转交" };
   const canRecordRead = selected?.message.target.kind === "owned" && !selected.message.readReceipt
-    && selected.processing?.receiverActorId === context.principal.actorId && !!selected.processing.nativeTurnId
-    && (selected.processing.state === "completed" || selected.processing.state === "failed")
-    && (selected.message.state === "replied" || selected.message.state === "completed_without_reply" || selected.message.state === "failed");
+    && selected.processing?.receiverActorId === context.principal.actorId
+    && selected.processing.projectId === context.projectId && selected.processing.messageId === selected.message.id
+    && selected.processing.sessionId === selected.message.target.sessionId && !!selected.processing.nativeTurnId?.trim()
+    && (selected.processing.state === "running" && selected.message.state === "processing"
+      || (selected.processing.state === "completed" || selected.processing.state === "failed")
+        && (selected.message.state === "replied" || selected.message.state === "completed_without_reply" || selected.message.state === "failed"));
   return <section className="session-workspace-section"><h2>普通对话</h2><p>{entry.introduction}</p>
     {entry.canSave && entry.sendReason && <p className="muted">保存能力：{entry.sendReason}</p>}
     <p role="status">自动处理：{entry.executionLabel}。{entry.executionReason}{entry.executionObservedAt && <> 状态读于 {date(entry.executionObservedAt)}；配置变化后请点上方“重新读取”。</>}</p>
@@ -367,7 +370,7 @@ function SessionMessages({ context, snapshot, onApplied }: { context: MutationCo
       {canRecordRead && <ActionForm context={{ ...context, draftScope: `message-read:${selected.message.id}` }} title="记录本人已读原消息" fields={[{ name: "evidence", label: "阅读证据", kind: "textarea" }]} build={v => ({ type: "session.message.receipt", messageId: selected.message.id, stage: "read", evidence: v.evidence })} onApplied={() => { void detail(selected.message.id); setReload(value => value + 1); }} />}
       {(selected.message.state === "queued" || selected.message.state === "manual_pending") && selected.message.senderActorId === context.principal.actorId && <ActionForm context={{ ...context, draftScope: `message-cancel:${selected.message.id}`, draftBaseline: `${selected.message.version}` }} title="取消待处理消息" fields={[{ name: "reason", label: "取消原因", kind: "textarea" }]} build={v => ({ type: "session.message.cancel", messageId: selected.message.id, expectedVersion: selected.message.version, reason: v.reason })} onApplied={() => { void detail(selected.message.id); setReload(value => value + 1); }} />}
       {selected.message.state === "manual_pending" && <p className="muted">外部消息仍待人工转交，不能据此登记原生会话已读。</p>}
-      {selected.message.target.kind === "owned" && !selected.message.readReceipt && !canRecordRead && <p className="muted">仅配置的实际收件人能在原生 Turn 结束后记录本人已读；不能由发送者或会话创建者代签。</p>}
+      {selected.message.target.kind === "owned" && !selected.message.readReceipt && !canRecordRead && <p className="muted">本人已读仅由配置的实际收件人登记：原消息须在对应 Session 绑定原生 Turn，正在处理时即可。已读不等于回复或处理完成，发送者和会话创建者不能代签。</p>}
     </div>}
     <p className="muted">任务问答与正式交付请进入原任务的讨论和验收记录。</p>
   </section>;
