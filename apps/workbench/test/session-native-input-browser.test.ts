@@ -42,6 +42,9 @@ test("native question stays bound to its Session and one exact operation, then d
       answers: { choice: ["采用当前布局"] }, savedAt: stamp, attemptedAt: null,
       submittedAt: outcome === "submitted" ? stamp : null, outcome },
     createdAt: stamp, updatedAt: stamp });
+  const unsupportedInput = () => ({ ...nativeInput(), id: "93000008-0000-4000-8000-000000000008",
+    turnId: null, itemId: null, questions: [], isBlocking: false, state: "unavailable", source: null,
+    canReply: false, reason: "unsupported", response: null });
   const snapshot = () => ({ session: { key: sessionKey, target: { kind: "owned", sessionId }, aliases: [], title: "原生提问测试会话",
     profile: null, kind: "owned", roles: [], membership: "current", membershipReason: "fixture", runtimeState: "busy", busy: true,
     currentTask: null, latestBusinessRun: null, lastProgressAt: null,
@@ -49,7 +52,7 @@ test("native question stays bound to its Session and one exact operation, then d
       open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
     source: { kind: "session", id: sessionId, revision: null, evidence: "project-record", href: "" }, metadata },
     observationCursor: "0", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [], activity: [],
-    resources, metadata, nativeInputRequests: [nativeInput()] });
+    resources, metadata, nativeInputRequests: [nativeInput(), unsupportedInput()] });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/set") {
@@ -99,6 +102,8 @@ test("native question stays bound to its Session and one exact operation, then d
   await page.getByRole("heading", { name: "原生提问测试会话" }).waitFor();
   const question = page.locator(".native-session-panel > .native-question-card");
   await question.getByText("请选择处理方式").waitFor();
+  assert.equal(await page.locator(".native-question-history").count(), 1,
+    "an unsupported zero-question record remains visible without hiding the replyable question");
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= window.innerWidth), true, "mobile workspace has no horizontal overflow");
   await question.getByText("采用当前布局").click();
   await question.getByRole("button", { name: "确认回答" }).click();
@@ -115,6 +120,7 @@ test("native question stays bound to its Session and one exact operation, then d
 
   await fetch(`${base}/__fixture/set?state=resolved`);
   await page.getByRole("button", { name: "重新读取" }).click();
+  await question.waitFor({ state: "detached" });
   await page.getByText("已结束的原生提问").waitFor();
   assert.equal(await question.count(), 0, "closed question leaves the active area");
 

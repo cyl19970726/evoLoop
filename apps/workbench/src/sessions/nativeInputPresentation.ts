@@ -21,7 +21,8 @@ export function nativeInputPresentation(value: unknown, sessionId: string): { qu
       !nullableString(request.itemId) || typeof request.isBlocking !== "boolean" ||
       !states.has(String(request.state)) || typeof request.canReply !== "boolean" ||
       !nullableString(request.reason) || typeof request.createdAt !== "string" ||
-      !Array.isArray(request.questions) || request.questions.length < 1 || request.questions.length > 3)
+      !Array.isArray(request.questions) || request.questions.length > 3 ||
+      request.state === "pending" && request.questions.length < 1)
       return { questions: [], error: "原生提问身份或状态无法核实" };
     if (seen.has(request.id)) return { questions: [], error: "原生提问身份重复" };
     seen.add(request.id);

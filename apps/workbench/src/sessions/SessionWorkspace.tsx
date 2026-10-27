@@ -73,6 +73,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     const controller = new AbortController();
     const client = sessionClient(context.token, context.projectId);
     let checking = false;
+    let snapshotChecking = false;
     let recoveryChecking = false;
     let latestSnapshotVersion = 0;
     let recoveryTarget: string | null = null;
@@ -103,7 +104,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
           && document.visibilityState === "visible") void readRecovery(sessionId, latestSnapshotVersion);
       }
     }
-    async function read() {
+    async function read(force = false) {
+      if (snapshotChecking && !force) return;
+      snapshotChecking = true;
       const version = ++requestVersion.current;
       try {
         const result = await client.snapshot(sessionKey, controller.signal);
@@ -122,7 +125,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         recoveryTarget = null;
         setError(errorText(cause)); setConfirmedRead(""); setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
       } }
-      finally { if (epoch.current === current && version === requestVersion.current) setLoading(false); }
+      finally { if (epoch.current === current && version === requestVersion.current) { snapshotChecking = false; setLoading(false); } }
     }
     void read();
     async function checkChanges() {
@@ -145,7 +148,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         }
         if (epoch.current !== current || cursor.current !== startedFrom) return;
         if (next) cursor.current = next;
-        if (affected) await read();
+        if (affected) await read(true);
       } catch (cause) { if (!controller.signal.aborted && epoch.current === current) setError(`变化读取失败：${errorText(cause)}`); }
       finally { checking = false; }
     }
@@ -156,7 +159,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
       if (pollOwnedSnapshot || !cursor.current) void read();
       else void checkChanges();
     }, pollInterval);
-    const visible = () => { if (document.visibilityState === "visible") { void read(); } };
+    const visible = () => { if (document.visibilityState === "visible") { void read(true); } };
     document.addEventListener("visibilitychange", visible);
     return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, readKey, active, refresh, readAgain, pollInterval]);
