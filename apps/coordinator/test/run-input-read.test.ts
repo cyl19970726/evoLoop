@@ -26,6 +26,7 @@ test("a long answered queue continuation stays on the fixed Run and can be read 
   assert.match(packet.input, /requiredBeforeAction":true/);
   assert.match(packet.input, new RegExp(run.inputHash));
   assert.match(packet.input, /configured-session-run/);
+  assert.match(packet.input, /python3 \/private\/fixed-cli\.py run-input/);
   assert.throws(() => buildLightweightInput(run, revision, basis, [{ documentId, revisionId,
     contentHash: hash(body), format: "markdown", mediaType: "text/markdown", bodyBytes: Buffer.byteLength(body),
     assetCount: 0, assetBytes: 0 }]), /CLI_ENTRY_UNAVAILABLE/);
@@ -54,11 +55,12 @@ test("a short encoded token never makes a cleaned Run preview look complete", ()
   const packet = buildLightweightInput(run, revision, basis, [{ documentId, revisionId, contentHash: hash(body),
     format: "markdown", mediaType: "text/markdown", bodyBytes: body.length, assetCount: 0, assetBytes: 0 }]);
   const handoff = JSON.parse(packet.input.split("\n")[1]!) as { runInstructionPreview: { truncated: boolean; text: string };
-    runInstructionRead: { requiredBeforeAction: boolean }; runInstructionExactInline: string; cliBootstrap: unknown };
+    runInstructionRead: { requiredBeforeAction: boolean; command: string | null }; runInstructionExactInline: string; cliBootstrap: unknown };
   assert.equal(handoff.runInstructionPreview.truncated, true);
   assert.equal(handoff.runInstructionRead.requiredBeforeAction, true);
   assert.equal(handoff.runInstructionExactInline, input);
   assert.equal(handoff.cliBootstrap, null, "prose cannot choose an executable CLI binding");
+  assert.equal(handoff.runInstructionRead.command, null, "no unconfigured PATH command is advertised");
   assert.doesNotMatch(handoff.runInstructionPreview.text, /A{300}|B{300}/);
   assert.equal(runInputPage(run).body, input);
 });

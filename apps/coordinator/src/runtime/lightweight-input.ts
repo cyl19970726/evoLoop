@@ -52,14 +52,15 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     cliBootstrap: cliBootstrap ? { command: cliBootstrap, source: "configured-session-run" } : null,
     runInstructionRead: {
       requiredBeforeAction: true, inputHash: run.inputHash, totalBytes: Buffer.byteLength(run.input, "utf8"),
-      command: `evoloop run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE`,
+      command: cliBootstrap ? `${cliBootstrap} run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE` : null,
+      subcommand: `run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE`,
       path: `/api/projects/${run.projectId}/runtime/runs/${run.id}/input`,
     },
     fixedDocuments: documents.map(source),
     taskCatalogPath: `/api/projects/${run.projectId}/tasks/${run.taskId}/revisions/${run.taskRevisionId}/materials`,
   };
   const input = `[evoloop-run-operation:${run.operationId}]\n${JSON.stringify(fixed)}\n` +
-    "This is a bounded handoff, not the full Task or original materials. Before acting, use cliBootstrap.command when supplied to read and verify the complete exact Run instruction with run-input and its fixed inputHash; this includes queue answers, continuation, retry and Task-channel directions even when the preview looks complete. The exact Run instruction is also included inline when short enough; verify it against inputHash. Do not guess a CLI path or search for credentials. Read the fixed Task material catalog, then page through required text and fetch selected assets separately. Verify returned revision IDs and SHA-256. Read complete Task acceptance when its excerpt is truncated. Preserve the fixed basis; a newer current revision is not a substitute. Native Turn completion is not Delivery or consumer use.";
+    "This is a bounded handoff, not the full Task or original materials. Before acting, use runInstructionRead.command when supplied to read and verify the complete exact Run instruction with its fixed inputHash; this includes queue answers, continuation, retry and Task-channel directions even when the preview looks complete. The exact Run instruction is also included inline when short enough; verify it against inputHash. Do not guess a CLI path or search for credentials. For catalog commands, replace their illustrative 'evoloop' prefix with cliBootstrap.command. Read the fixed Task material catalog, then page through required text and fetch selected assets separately. Verify returned revision IDs and SHA-256. Read complete Task acceptance when its excerpt is truncated. Preserve the fixed basis; a newer current revision is not a substitute. Native Turn completion is not Delivery or consumer use.";
   const byteLength = Buffer.byteLength(input, "utf8");
   if (byteLength > maxInputBytes) throw new PreflightError("INPUT_LIMIT", { kind: "task", id: run.taskId, revisionId: run.taskRevisionId }, byteLength, maxInputBytes);
   return { protocol: lightweightInputProtocol, input, contentHash: hash(input), byteLength };
