@@ -189,8 +189,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     ? nativeInputPresentation(current.nativeInputRequests, session.target.sessionId)
     : { questions: [], error: null };
   const observation = session.kind === "owned" && session.target.kind === "owned"
-    ? nativeObservationPresentation((current as SessionSnapshot & { nativeObservation?: unknown }).nativeObservation,
-      context.projectId, session.target.sessionId)
+    ? nativeObservationPresentation(current.nativeObservation, context.projectId, session.target.sessionId)
     : { progress: null, error: null };
   const nativeAvailable = session.kind === "owned" && Object.hasOwn(current, "nativeInputRequests");
   const discussionQuestionCount = current.questions.filter(question => !question.answered).length;
