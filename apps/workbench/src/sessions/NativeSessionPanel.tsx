@@ -135,7 +135,7 @@ function NativeProgressCard({ progress, projectId, currentRead, waiting }: {
     <p className="native-panel-context">最近事件 {date(progress.lastEventAt)} · 记录于 {date(progress.observedAt)} · {partial ? "仅展示最近有界范围" : "仅展示已观察到的事件"}</p>
     {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{staleReason ? ` 原因：${staleReason}。` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
     {fresh && progress.status === "systemError" && <p className="native-panel-warning">原生状态报告异常；请结合固定 Run 和原生终态核对。</p>}
-    <div className="native-progress-facts"><div><small>{fresh && stateLabel === "运行中" ? "当前工具" : "最近工具活动"}</small><strong>{tool ? `${tool.name} · ${itemState(tool.status)}` : "暂无可确认的工具活动"}</strong></div>
+    <div className="native-progress-facts"><div><small>{fresh && stateLabel === "运行中" && tool?.status === "inProgress" ? "当前工具" : "最近工具活动"}</small><strong>{tool ? `${tool.name} · ${itemState(tool.status)}` : "暂无可确认的工具活动"}</strong></div>
       <div><small>计划进展</small><strong>{progress.plan ? `${fresh ? "" : "上次记录："}${planDone}/${progress.plan.steps.length} 步已完成${progress.plan.truncated ? " · 已截断" : ""}` : "暂无可确认的计划变化"}</strong></div>
       <div><small>{fresh ? "变更通知" : "上次变更通知"}</small><strong>{progress.diff ? progress.diff.hasContent ? "已观察到变更；内容需在受权原生历史核对" : "已观察到变更通知" : "暂无可确认的变更"}{progress.diff?.truncated ? " · 已截断" : ""}</strong></div></div>
     {progress.items.length > 0 && <details className="native-progress-detail"><summary>最近工具活动 · {progress.items.length} 项</summary><ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong> · {itemState(item.status)}{item.truncated && " · 名称已截断"}</li>)}</ol></details>}

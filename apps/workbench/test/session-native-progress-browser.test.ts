@@ -22,7 +22,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-  let mode: "live" | "waiting" | "stale" | "notLoaded" | "foreign" | "fail" = "live";
+  let mode: "live" | "waiting" | "recentTool" | "stale" | "notLoaded" | "foreign" | "fail" = "live";
   const observation = () => ({ projectId, sessionId: mode === "foreign" ? "other-session" : sessionId,
     threadId: "thread-1", version: 3, observedAt: stamp, lastEventAt: stamp,
     freshness: mode === "stale" ? "stale" : "live", staleReason: mode === "stale" ? "disconnected" : null,
@@ -31,7 +31,8 @@ test("native progress keeps source, freshness and cumulative usage separate from
       source: { kind: "run", runId: "94000004-0000-4000-8000-000000000004",
         operationId: "94000005-0000-4000-8000-000000000005", actorId: "operator", taskId,
         taskRevisionId: "94000006-0000-4000-8000-000000000006" } },
-    items: mode === "notLoaded" ? [] : [{ id: "item-1", kind: "mcpToolCall", name: "Tool call", status: "inProgress", summary: "", truncated: false }],
+    items: mode === "notLoaded" ? [] : [{ id: "item-1", kind: "mcpToolCall", name: "Tool call",
+      status: mode === "recentTool" ? "completed" : "inProgress", summary: "", truncated: false }],
     plan: mode === "notLoaded" ? null : { turnId: "turn-1", steps: [{ step: "读取资料", status: "completed" },
       { step: "整理结果", status: "inProgress" }], explanation: null, truncated: false, observedAt: stamp },
     diff: mode === "notLoaded" ? null : { turnId: "turn-1", text: "src/example.ts +1", truncated: true, observedAt: stamp },
@@ -54,7 +55,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/set") { const next = url.searchParams.get("mode");
-      if (next === "live" || next === "waiting" || next === "stale" || next === "notLoaded" || next === "foreign" || next === "fail") mode = next;
+      if (next === "live" || next === "waiting" || next === "recentTool" || next === "stale" || next === "notLoaded" || next === "foreign" || next === "fail") mode = next;
       res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
@@ -104,6 +105,12 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await page.getByRole("button", { name: "重新读取" }).click();
   await card.getByText("等待回答").waitFor();
   assert.equal(await page.locator(".native-question-card").count(), 1, "question remains above progress");
+
+  await fetch(`${base}/__fixture/set?mode=recentTool`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await card.locator(".native-progress-facts small").filter({ hasText: "最近工具活动" }).waitFor();
+  assert.equal(await card.locator(".native-progress-facts small").filter({ hasText: "当前工具" }).count(), 0,
+    "a completed item is not presented as the current tool while the Turn continues");
 
   await fetch(`${base}/__fixture/set?mode=stale`);
   await page.getByRole("button", { name: "重新读取" }).click();
