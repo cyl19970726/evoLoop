@@ -1,4 +1,4 @@
-import type { ObservedSession, ObservedTask } from "@evoloop/contracts/session-observation";
+import type { ObservedSession, ObservedTask, SessionResult } from "@evoloop/contracts/session-observation";
 
 type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
   latestBusinessRun?: { state: string } | null;
@@ -55,8 +55,20 @@ export function currentWorkRelationLabel(work: ObservedTask, session: StatusSour
   return "最近一次执行结果未知，待核对";
 }
 
-export function sessionIdleSummary(session: StatusSource, hasResults: boolean): string {
+export function latestSessionResult(results: SessionResult[]): SessionResult | null {
+  return results.reduce<SessionResult | null>((latest, result) =>
+    !latest || result.submittedAt > latest.submittedAt || result.submittedAt === latest.submittedAt && result.deliveryId > latest.deliveryId
+      ? result : latest, null);
+}
+
+export function sessionResultUseLabel(result: SessionResult): string {
+  if (!result.latestUse) return "尚无实际使用观察";
+  return ({ used: "已记录使用", failed: "使用观察失败", notUsed: "已记录未使用" } as Record<string, string>)[result.latestUse.result]
+    ?? "使用状态需核对";
+}
+
+export function sessionIdleSummary(session: StatusSource): string {
   if (session.kind === "external") return session.busy === false ? "外部观察为空闲" : "外部会话状态需核对";
   if (session.runtimeState !== "ready" || session.busy !== false) return sessionStatusLabel(session);
-  return hasResults ? "当前空闲 · 已有交付待核对" : "当前空闲";
+  return "当前空闲";
 }
