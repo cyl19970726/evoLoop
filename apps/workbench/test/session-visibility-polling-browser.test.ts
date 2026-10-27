@@ -66,9 +66,10 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
       else if (url.pathname.startsWith(`${root}/session-work/`)) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length));
         if (key === externalKey) counts.externalSnapshot++; else counts.ownedSnapshot++;
-        // The new activity is available only after the change endpoint has delivered its notification.
-        // A lingering snapshot from visibility restoration cannot satisfy the UI assertion.
-        value = snapshot(key, updated && changeDelivered);
+        // Native input may be observed only in a snapshot. Keep every updated owned read slower
+        // than the five-second tick: an overlapping poll must not discard each response forever.
+        if (key === ownedKey && updated) await new Promise(resolve => setTimeout(resolve, 6200));
+        value = snapshot(key, updated);
       }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
@@ -95,7 +96,7 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
   const visibleStart = await readCounts();
   await page.waitForTimeout(visiblePollWindowMs);
   const visibleEnd = await readCounts();
-  assert.equal(visibleEnd.changes > visibleStart.changes, true, "visible workspace polls changes");
+  assert.equal(visibleEnd.ownedSnapshot > visibleStart.ownedSnapshot, true, "visible owned Session polls its snapshot for transient input");
   assert.equal(visibleEnd.recovery > visibleStart.recovery, true, "visible owned Session polls recovery");
 
   // Headless and headed Chrome in this host both reported two switched tabs as visible.
@@ -117,11 +118,10 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
   const beforeUpdate = await readCounts();
   const injectedAt = Date.now();
   await fetch(`${base}/__fixture/update`);
-  await page.getByText("新活动已显示").waitFor({ timeout: 8000 });
+  await page.getByText("新活动已显示").waitFor({ timeout: 16000 });
   const visibleDelayMs = Date.now() - injectedAt;
   const afterUpdate = await readCounts();
-  assert.equal(afterUpdate.changes > beforeUpdate.changes, true, "busy poll reads the change cursor");
-  assert.equal(afterUpdate.ownedSnapshot > beforeUpdate.ownedSnapshot, true, "affected change rereads the owned snapshot");
+  assert.equal(afterUpdate.ownedSnapshot > beforeUpdate.ownedSnapshot, true, "owned Session sees a new snapshot without a change entry");
 
   const beforeExternal = await readCounts();
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, externalKey]);

@@ -15,6 +15,7 @@
     "./orchestration": "./dist/orchestration/index.js",
     "./session-assignments": "./dist/session-assignments/index.js",
     "./session-messages": "./dist/session-messages/index.js",
+    "./native-input": "./dist/native-input/index.js",
     "./session-observation": "./dist/session-observation/index.js",
     "./allocation-relations": "./dist/allocation-relations/index.js"
   },

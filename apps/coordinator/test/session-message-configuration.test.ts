@@ -5,6 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadIntegrations } from "../src/configuration.ts";
 
+test("native input is a default-off capability of the fixed 0.164 child", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "evoloop-input-config-")), path = join(dir, "integrations.json");
+  try {
+    await writeFile(path, JSON.stringify({ runtime: { enabled: true, grants: [] } }));
+    assert.equal((await loadIntegrations(path)).runtime?.nativeUserInput, false);
+    await writeFile(path, JSON.stringify({ runtime: { enabled: true, nativeUserInput: true, grants: [] } }));
+    assert.equal((await loadIntegrations(path)).runtime?.nativeUserInput, true);
+    await writeFile(path, JSON.stringify({ runtime: { enabled: true, nativeUserInput: true, protocolVersion: "0.154.0", grants: [] } }));
+    await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("ordinary message grants have independent bounds, actual receiver identity without an obsolete readonly switch", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-message-config-"));
   const path = join(dir, "integrations.json");

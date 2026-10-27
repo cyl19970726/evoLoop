@@ -23,6 +23,8 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
+import { NativeInputBridge } from "./runtime/native-input.js";
+import { NativeInputService } from "@evoloop/core/native-input";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
@@ -263,10 +265,30 @@ const browserRead = runtimeConfig?.enabled && runtimeConfig.browserRead ? new Br
     } catch { return null; }
   },
 }) : null;
+const currentSessionExecutionAuthority = async (session:RuntimeSessionRecord) => {
+  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  if(!current.runtime?.enabled||session.sandbox!=="danger-full-access"||session.approvalPolicy!=="never"||
+    !hasCurrentStudyReviewer(await currentIdentity(),session.projectId,session.actorId)||
+    !await current.allowedRuntimeCwd(session.projectId,session.cwd))return false;
+  return currentSessionGrant(pool,session,()=>current.hasRuntimeGrant({projectId:session.projectId,
+    actorId:session.actorId,roleId:session.roleId,authorizationScope:session.authorizationScope,
+    cwd:session.cwd,sandbox:session.sandbox,model:session.model,approvalPolicy:session.approvalPolicy}),
+    dynamicAdmission?()=>dynamicAdmission.canStartConversation(session):undefined);
+};
+const nativeInputService = new NativeInputService({ uow, clock, ids });
+const nativeInputs = new NativeInputBridge({ service: nativeInputService, canWrite: lease.canWrite,
+  now: clock.now,
+  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
+  principal: async (projectId, actorId) => (await currentIdentity()).find(p => p.actorId === actorId && p.projectIds.includes(projectId)) ?? null,
+  session: (projectId, sessionId) => uow.read(projectId, reader => reader.getRuntimeSession(sessionId)),
+  executionAuthorized: async (session, actorId) => await currentProjectWriter(session.projectId, actorId) &&
+    await currentSessionExecutionAuthority(session),
+});
 const runtimeFactory = runtimeConfig?.enabled ? () => {
   const adapter = new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   expectedVersion: `codex-cli ${runtimeConfig.protocolVersion}`,
+  nativeUserInput: runtimeConfig.nativeUserInput,
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
@@ -290,7 +312,7 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   if (browserRead) adapter.onDisconnect(() => { void browserRead.close(); });
   return adapter;
 } : null;
-const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime,
+const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs,
   workerTraceAuthority: (identity, targetRunId) =>
     workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
   readExternalMaterials: (principal, projectId, taskId, revisionId) => readExternalMaterials(principal, projectId, taskId, revisionId, {uow,gitForPrincipal,knowledgeForPrincipal: repositoryForPrincipal,runSessionAvailable}),
@@ -355,16 +377,6 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canW
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });
 try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
-const currentSessionExecutionAuthority = async (session:RuntimeSessionRecord) => {
-  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-  if(!current.runtime?.enabled||session.sandbox!=="danger-full-access"||session.approvalPolicy!=="never"||
-    !hasCurrentStudyReviewer(await currentIdentity(),session.projectId,session.actorId)||
-    !await current.allowedRuntimeCwd(session.projectId,session.cwd))return false;
-  return currentSessionGrant(pool,session,()=>current.hasRuntimeGrant({projectId:session.projectId,
-    actorId:session.actorId,roleId:session.roleId,authorizationScope:session.authorizationScope,
-    cwd:session.cwd,sandbox:session.sandbox,model:session.model,approvalPolicy:session.approvalPolicy}),
-    dynamicAdmission?()=>dynamicAdmission.canStartConversation(session):undefined);
-};
 const messageService = new SessionMessageService({ uow, clock, ids, grantFor: async (message, session) => {
   const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
   if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)||
@@ -423,7 +435,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   sessionWork: new SessionObservationService({ uow }),
   allocationRelations: new AllocationRelationsService({ uow }),
-  sessionMessages: messageService,
+  sessionMessages: messageService, nativeInputs,
   messageExecution: createMessageExecutionReader({
     loadConfiguration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
     runtimeAvailable: () => runner?.status().available === true,

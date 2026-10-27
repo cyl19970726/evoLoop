@@ -95,6 +95,12 @@ npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 
 `session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通对话无需新 Task；新的独立工作仍须 Task 化与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；read 指实际收件身份对原消息的记录，不是发送者看过回复。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
 
+### 读取和回复原生提问
+
+`read session SESSION_ID --inputs --project PROJECT_ID` 读取最多 20 条原生提问，待答优先；`read native-input INPUT_ID --project PROJECT_ID` 读取单条。Session snapshot 的 `nativeInputRequests` 使用相同观察，原生 RPC ID 和连接代号不对调用者开放。它不同于 Task 沟通通道，也不创建新的 Task。
+
+回复前核对 `canReply`、精确来源、问题与版本，再用 `command schema session.input.reply` 和普通 `command run FILE` 提交 `inputRequestId`、`expectedVersion` 与 `answers`（问题 ID 对应字符串数组）。每题必须作答，未开放其他答案的选项须使用原标签；身份来自认证，不能替别人署名。仅原发起者或本项目复核者在当前授权与原连接仍有效时可答。命令 `applied` 只证明回复保存；继续回读 `response.outcome` 区分 pending、attempted、submitted 和 unknown。submitted 不证明原生采用，resolved 也可能是中断或清理。发送未知不重发旧请求，不以新 ID 换连接作答。首期没有原生提问取消命令；不支持的表单／认证／secret 问题显示原因。原生工具是否在当前运行模式可用须另核，不能用 fixture 接线成功代替真实可达性。
+
 ## 未知结果与本地回执
 
 CLI 写入前保存私有本机意图回执；`receipts list`、`receipts show ID`、`receipts reconcile ID` 用于找回原始目标、请求和已知结果。`EVOLOOP_STATE_DIR` 可指定仓库外或明确被 Git 忽略的私有本机目录；本机实现按 0700 目录、0600 文件创建且不覆盖已有回执，但不会强制目录位于仓库外。回执不能进入公开 Git。服务端确认的同一 actor、项目权限与 API origin 允许合法令牌轮换后继续核对；旧回执若没有 actor 记录，只能用原令牌。不同 actor 不可据此换身份接管。`EVOLOOP_TIMEOUT_MS` 仅控制等待，不使写入失败变成未提交证明。CLI 将 JSON 结果写 stdout、诊断写 stderr，失败或冲突退出非零；它不自动重试 POST。

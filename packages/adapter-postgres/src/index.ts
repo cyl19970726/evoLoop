@@ -6,6 +6,7 @@ import pg, { type PoolClient, type QueryResultRow } from "pg";
 import { PgRuntimeStore } from "./runtime.js";
 import { PgSessionRecovery } from "./session-recovery.js";
 import { PgSessionMessages } from "./session-messages.js";
+import { PgNativeInputs } from "./native-input.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgSessionObservation } from "./session-observation.js";
 import { PgAllocationRelations } from "./allocation-relations.js";
@@ -100,6 +101,7 @@ class PgReader implements Reader {
   allocationRelations(scope: string) { return new PgAllocationRelations(this.client, this.projectId, scope); }
   readonly queue: PgResidentQueue;
   readonly sessionMessages: PgSessionMessages;
+  readonly nativeInputs: PgNativeInputs;
   readonly recovery: PgSessionRecovery;
   readonly sessionAssignments: PgSessionAssignments;
   protected readonly runtime: PgRuntimeStore;
@@ -116,6 +118,7 @@ class PgReader implements Reader {
     this.runtime = new PgRuntimeStore(client, projectId);
     this.recovery = new PgSessionRecovery(client, projectId);
     this.sessionMessages = new PgSessionMessages(client, projectId);
+    this.nativeInputs = new PgNativeInputs(client, projectId);
     this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
     this.residents = new PgResidentHosts(client, projectId);

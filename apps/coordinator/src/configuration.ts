@@ -87,6 +87,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
+    /** Fixed 0.164 experimental Default-mode input, scoped to this owned child only. */
+    nativeUserInput: z.boolean().default(false),
     /** Exact locally reviewed App Server protocol; new configurations use the reviewed 0.164 interface. */
     protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1"]).default("0.164.0-alpha.11.1"),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
@@ -96,7 +98,8 @@ const integrationSchema = z.strictObject({
     grants: z.array(grant).max(200).refine(values => new Set(values.map(value => JSON.stringify([
       value.projectId, value.actorId, value.roleId, value.authorizationScope, value.cwd, value.sandbox,
     ]))).size === values.length, "Runtime authorization profiles must be unique"),
-  }).optional(),
+  }).refine(value => !value.nativeUserInput || value.protocolVersion === "0.164.0-alpha.11.1",
+    "Native user input requires the reviewed 0.164 protocol").optional(),
   orchestration: z.strictObject({
     enabled: z.boolean(), controllerActorId: z.string().min(1).max(100), workerRoot: absolute,
     credentialTtlMs: z.number().int().min(60000).max(86400000).default(3600000),

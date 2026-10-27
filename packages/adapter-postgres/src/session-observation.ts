@@ -286,6 +286,7 @@ export class PgSessionObservation implements SessionObservationReader {
       ? this.source("run", row.run_id, row.entity_id)
       : this.source("session", row.session_id ?? row.entity_id, row.entity_id);
     if (table === "runtime_session") return this.source("session", row.entity_id, row.source_revision);
+    if (table === "session_native_input_request") return this.source("session", row.session_id, row.source_revision);
     if (table === "role_revision") return this.source("role", row.entity_id, row.source_revision);
     if (table === "role_host_link_revision") return this.source("host-link", row.entity_id, row.source_revision);
     if (table === "discussion_event") return this.source("discussion", row.discussion_id ?? row.entity_id, row.entity_id);
@@ -307,7 +308,8 @@ export class PgSessionObservation implements SessionObservationReader {
     const label: Record<string, string> = { runtime_session: "会话", runtime_run: "业务运行", runtime_record_event: "运行记录", role_revision: "职责修订",
       role_host_link_revision: "接入变化", task_revision: "任务修订", resident_queue_entry: "队列安排", resident_queue_claim: "任务承接",
       discussion_event: discussionLabels[row.discussion_kind] ?? "讨论记录", delivery: "提交成果", consumer_observation: "使用观察", session_message: "会话消息", session_message_processing: "消息处理",
-      session_profile: "会话名称与用途", task_session_assignment: "具体分派", session_message_read_receipt: "接收者记录已读" };
+      session_profile: "会话名称与用途", task_session_assignment: "具体分派", session_message_read_receipt: "接收者记录已读",
+      session_native_input_request: "原生提问" };
     return { id: `${this.projectId}:${row.sequence}`, sequence: String(row.sequence), sessionKey: key,
       kind: detail.kind ?? row.source_table, summary: clip([label[row.source_table] ?? row.source_table, discussionTarget, detail.title, detail.result ?? detail.state,
         detail.summary].filter(Boolean).join(" · ")), occurredAt: iso(row.occurred_at), recordedAt: iso(row.recorded_at)!,

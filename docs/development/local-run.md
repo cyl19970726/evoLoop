@@ -70,7 +70,7 @@ npm start
 
 ## 受管自动循环候选
 
-在独立数据库迁移至当前代码要求的最新版本（含 **036**）后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 read/write/review 权限的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含精确 actor、项目、Role、scope、目录和模型字段；新 Session 均按 full/never/联网创建，不再按职责选择 sandbox 或消息专用 profile。同一项目/actor/职责/scope/目录的重复 profile 被拒绝。
+在独立数据库迁移至当前代码要求的最新版本（含 **037**）后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 read/write/review 权限的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含精确 actor、项目、Role、scope、目录和模型字段；新 Session 均按 full/never/联网创建，不再按职责选择 sandbox 或消息专用 profile。同一项目/actor/职责/scope/目录的重复 profile 被拒绝。
 
 worker 的 `cwd` 是启动上下文，不是文件读取白名单；当前 Session 有完整 OS 执行权限和正常网络。仓库、Task、Document 等业务对象仍由各自精确身份和 API 授权约束。`workerRoot` 保存 0700/0600 的短期凭据和 wrapper，不能位于开发 checkout。CLI 回执放在获准的私有工作目录 `.local/worker-receipts/RUN_ID`。不要把真实配置、令牌、回执、原始 session 或外部正文提交 Git。配置在启动时读取，变更需要重启；撤销 broker 凭据与暂停 Loop 是不同操作。
 
@@ -215,3 +215,9 @@ git diff --check
 ```
 
 持久化检查用独立 PostgreSQL 18 测试库；例如 `TEST_DATABASE_URL='postgres://USER:PASSWORD@127.0.0.1:5432/evoloop_local_test' npm run test:integration`。入口从该连接串取得主机和端口，为固定库名测试创建缺失的专用 `evoloop_*_test` 库，逐文件串行运行；测试库不会自动删除，因此执行账号需要 `CREATEDB` 或预先建库。测试有故障注入，绝不能指向正在用的开发库。备份还应在新空库和外部目录做隔离恢复演练。测试入口以 `package.json` 与 CI 工作流为准；最近验收的提交、数量和范围见[当前基线](../roadmap.md#当前基线)。旧轮次的固定结果见相应 PR/实测报告，不作为当前最低通过数量。构建、合成测试和隔离备份不等于生产 OpenViking、飞书双向协作或真人亲用已经验收；当前边界见[阶段路线](../roadmap.md)，S1a 历史证据见[首片实测](../research/design-review-20261020.md)。
+
+## 原生文字与选项提问
+
+固定 0.164 的 `runtime.nativeUserInput` 默认 `false`。仅在独立运行环境验证后，配置为 `true` 可让本 coordinator 拥有的 App Server 子进程以 `-c features.default_mode_request_user_input=true` 启动；该开关不写用户全局配置、不将任务切到 Plan，也不改变 full/never 或业务授权。0.154 不支持且启动前拒绝该组合。依赖的原生特性仍在开发中，升级须重新核 schema 和可达性。
+
+Default 下请求为非阻塞且仅 root Agent 可调用；子 Agent 与通用 MCP／认证／secret 表单不在本片支持范围。回复使用真实认证者的 `session.input.reply`，原连接失效不重播。原生工具实际发起、回复进入同一 Turn、CLI 接线与工作台亲用应分别留证；仅假进程测试通过不能证明当前业务环境可用。持久记录需要迁移 `037_native_user_input`，迁移不从历史 Session 推断问题或答复。
