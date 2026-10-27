@@ -27,7 +27,9 @@ test("native question stays bound to its Session and one exact operation, then d
   let version = 1;
   let wrongSession = false;
   let failSnapshot = false;
+  let unknownPost = false;
   let postCount = 0;
+  const commandIds: string[] = [];
   let command: Record<string, unknown> | null = null;
   const nativeInput = () => ({ id: requestId, sessionId: wrongSession ? "other-session" : sessionId, version,
     turnId: "turn-1", itemId: "item-1", questions: [{ id: "choice", header: "方式", question: "请选择处理方式",
@@ -55,6 +57,7 @@ test("native question stays bound to its Session and one exact operation, then d
       if (next === "pending" || next === "response_saved" || next === "resolved") state = next;
       if (url.searchParams.get("outcome") === "submitted") outcome = "submitted";
       wrongSession = url.searchParams.has("wrongSession"); failSnapshot = url.searchParams.has("failSnapshot");
+      unknownPost = url.searchParams.has("unknownPost");
       res.end("ok"); return;
     }
     if (url.pathname.startsWith("/api/")) {
@@ -66,6 +69,8 @@ test("native question stays bound to its Session and one exact operation, then d
         postCount++;
         let body = ""; for await (const chunk of req) body += chunk;
         command = JSON.parse(body) as Record<string, unknown>;
+        commandIds.push(String(command.operationId));
+        if (unknownPost) { req.socket.destroy(); return; }
         if (command.type === "session.input.reply" && command.inputRequestId === requestId && command.expectedVersion === version) {
           state = "response_saved"; version++;
           value = { status: "applied", operationId: command.operationId, entityId: requestId, version };
@@ -123,4 +128,15 @@ test("native question stays bound to its Session and one exact operation, then d
   await page.locator(".native-session-panel .native-panel-warning").filter({ hasText: "暂时不可读取" }).first().waitFor();
   assert.equal(await page.getByRole("button", { name: "确认回答" }).count(), 0, "failed reread cannot enable answer");
   assert.equal(postCount, 1);
+
+  await fetch(`${base}/__fixture/set?state=pending&unknownPost=1`);
+  await page.getByRole("button", { name: "重新读取" }).click();
+  await question.getByText("请选择处理方式").waitFor();
+  await question.getByText("采用当前布局").click();
+  await question.getByRole("button", { name: "确认回答" }).click();
+  await question.getByText("连接中断或超时", { exact: false }).waitFor();
+  assert.equal(await question.getByRole("button", { name: "确认回答" }).isDisabled(), true,
+    "unknown result leaves the original operation for recovery and blocks resubmission");
+  // Chrome may retry a POST when the socket closes before headers; every transport attempt must keep one operation ID.
+  assert.equal(new Set(commandIds).size, 2, "unknown transport outcome never creates a new operation ID");
 });
