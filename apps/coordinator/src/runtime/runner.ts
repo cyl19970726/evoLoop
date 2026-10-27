@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
@@ -9,6 +9,7 @@ import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
 import { fixedDocumentMaterial } from "./materials.js";
+import { lookupKnownTurn } from "./turn-lookup.js";
 import type { ReadDocumentOriginal } from "./materials.js";
 import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId, evaluationPacketBlobPayload, evaluationPacketMediaType,
   uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
@@ -450,13 +451,23 @@ export class RuntimeRunner {
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, sessionId);
     try {
       const binding = await this.readBinding(session);
-      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
+      const turns: RuntimeTurn[] = [];
+      let turnCursor: string | undefined, nextTurnCursor: string | null = null;
+      const seen = new Set<string>();
+      for (let pageNumber = 0; pageNumber < 2; pageNumber++) {
+        const page = await this.runtime.listTurns(binding, turnCursor);
+        turns.push(...page.data);
+        nextTurnCursor = page.nextCursor;
+        if (turns.length >= 20 || !nextTurnCursor) break;
+        if (seen.has(nextTurnCursor)) throw new Error("Runtime turn cursor repeated");
+        seen.add(nextTurnCursor); turnCursor = nextTurnCursor;
+      }
       const result = [];
       for (const turn of turns.slice(0,20)) {
         const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
         result.push({ id: turn.id, status: turn.status, messages: items.filter(item => ["userMessage", "agentMessage"].includes(String(object(item)?.type))).map(item => ({type:String(object(item)?.type),text:textOf(item)})) });
       }
-      return { turns: result, truncated: turns.length > 20, observedAt: new Date().toISOString() };
+      return { turns: result, truncated: !!nextTurnCursor || turns.length > 20, observedAt: new Date().toISOString() };
     } catch (error) {
       throw this.readFailure(error);
     }
@@ -683,7 +694,7 @@ export class RuntimeRunner {
         return false;
       }
     }
-    const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
+    const turns = run.nativeTurnId ? [] : (await this.runtime.listTurns(binding)).data.slice(0, 20);
     if (!run.nativeTurnId) {
       const matches: RuntimeTurn[] = [];
       // A native request ID is not an idempotency promise. Correlate the durable marker in owned user input.
@@ -697,9 +708,12 @@ export class RuntimeRunner {
       }
       run = await this.deps.trusted.bindTurn(run.projectId, run.id, matches[0]!, { kind: "historyMarker", operationId: run.operationId });
     }
-    const turn = turns.find(t => t.id === run.nativeTurnId);
-    if (!turn) { await this.deps.trusted.markRunUnknown(run.projectId, run.id, "Known Turn is not currently readable");
-      this.recordFault(run.projectId,"run_reconcile",null,run.sessionId,run.id,"verification");return false; }
+    const lookup = await lookupKnownTurn(this.runtime.listTurns.bind(this.runtime), binding, run.nativeTurnId!);
+    if (lookup.status !== "found") {
+      if (lookup.status === "not_found") this.recordFault(run.projectId,"run_reconcile",null,run.sessionId,run.id,"verification");
+      return false;
+    }
+    const turn = lookup.turn;
     if (run.interruptRequested && !this.interruptAttempted.has(run.id)) {
       const events = await this.deps.workflow.listRuntimeEvents(principal, run.projectId, run.id);
       if (!events.some(e => e.kind === "run.interruptResult")) {
@@ -813,7 +827,7 @@ export class RuntimeRunner {
       inputHash:run.inputHash,state:run.state,nativeTurnId:run.nativeTurnId};
   }
   async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string,
-    workerIdentity?: WorkerIdentity): Promise<RuntimeWorkTrace> {
+    workerIdentity?: WorkerIdentity, turnCursor?: string): Promise<RuntimeWorkTrace> {
     const reviewer = !!principal.actorId && principal.projectIds.includes(projectId) && principal.permissions.includes("read") &&
       principal.permissions.includes("review") && this.deps.principals.some(p => p.actorId === principal.actorId &&
         p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review"));
@@ -829,14 +843,13 @@ export class RuntimeRunner {
       throw new DomainError("FORBIDDEN", "此运行所属会话的授权已失效。");
     try {
       const binding = await this.readBinding(session);
-      const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
-      const turn = turns.find(candidate => candidate.id === run.nativeTurnId);
-      if (!turn) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "已绑定的原生 Turn 当前不可见，不能确认工作轨迹。");
+      const lookup = await lookupKnownTurn(this.runtime.listTurns.bind(this.runtime), binding, run.nativeTurnId, turnCursor);
+      const turn = lookup.status === "found" ? lookup.turn : null;
       const items: RuntimeWorkTrace["items"] = [];
       let unsupportedCount = 0, truncated = false, cursor: string | undefined = initialCursor;
       const seen = new Set<string>();
       for (let pageNumber = 0; pageNumber < 2; pageNumber++) {
-        const page = await this.runtime.readWorkPage!(binding, turn.id, cursor);
+        const page = await this.runtime.readWorkPage!(binding, run.nativeTurnId, cursor);
         if (page.data.length + page.unsupportedCount > 50) throw new Error("Runtime work page exceeds item budget");
         items.push(...page.data); unsupportedCount += page.unsupportedCount; truncated ||= page.truncated;
         if (!page.nextCursor) { cursor = undefined; break; }
@@ -844,14 +857,16 @@ export class RuntimeRunner {
         seen.add(page.nextCursor); cursor = page.nextCursor;
       }
       truncated ||= !!cursor;
-      return { runId: run.id, source: "owned-native-history", observedAt: new Date().toISOString(), turn,
+      return { runId: run.id, nativeTurnId: run.nativeTurnId, source: "owned-native-history", observedAt: new Date().toISOString(), turn,
+        turnMetadata: { status: lookup.status, nextTurnCursor: lookup.status === "partial" ? lookup.nextTurnCursor : null },
         items, unsupportedCount, truncated, nextCursor: cursor ?? null,
-        completeness: truncated || unsupportedCount || initialCursor || items.length === 0 || !turn.completedAtUtc ? "partial" : "complete",
+        completeness: truncated || unsupportedCount || initialCursor || items.length === 0 || !turn?.completedAtUtc ? "partial" : "complete",
         limits: { maxPages: 2, maxItems: 100, maxFieldChars: 2000 } };
     } catch (error) { throw this.readFailure(error); }
   }
   /** Explicit reviewer readback of a previously recorded terminal observation; never starts a turn. */
-  async reconcile(principal: Principal, projectId: string, runId: string, expectedVersion: number, reason: string): Promise<RuntimeRunRecord> {
+  async reconcile(principal: Principal, projectId: string, runId: string, expectedVersion: number, reason: string,
+    turnCursor?: string): Promise<RuntimeRunRecord | RuntimeReconcilePartial> {
     if (!this.available || !this.runtime.isReady() || !this.deps.canWrite()) throw new Error("Runtime readback is unavailable");
     if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
       !principal.permissions.includes("review") || !this.deps.principals.some(p => p.actorId === principal.actorId &&
@@ -866,8 +881,10 @@ export class RuntimeRunner {
       await this.owned(session, run)))
       throw new Error("Session authority is no longer available");
     const binding = await this.readBinding(session);
-    const turns = await collect(cursor => this.runtime.listTurns(binding, cursor), 10);
-    const turn = turns.find(candidate => candidate.id === run.nativeTurnId);
+    const lookup = await lookupKnownTurn(this.runtime.listTurns.bind(this.runtime), binding, run.nativeTurnId, turnCursor);
+    if (lookup.status === "partial") return { status: "partial", changed: false, projectId, runId,
+      nativeTurnId: run.nativeTurnId, expectedVersion, nextTurnCursor: lookup.nextTurnCursor, reason };
+    const turn = lookup.status === "found" ? lookup.turn : null;
     if (!turn || !["completed", "failed", "interrupted"].includes(turn.status) || !turn.completedAtUtc)
       throw new Error("Native turn has no settled terminal observation");
     const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
