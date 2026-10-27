@@ -63,6 +63,54 @@ test('capture waits for exact Turn source; reply uses actor and CAS; attempted i
   await service.finishResponse(projectId,c.id,connectionId,'submitted',now);
   assert.equal((await service.get(projectId,c.id))?.state,'resolved');
   assert.equal((await service.get(projectId,c.id))?.response?.outcome,'submitted');
+
+  let localNow='2026-10-27T00:00:02.000Z';
+  const racingService=new NativeInputService({uow,clock:{now:()=>localNow},ids});
+  const racingCapture=capture(7,'native-turn-1');
+  const captured=await racingService.capture(racingCapture);
+  assert.equal(captured.source?.kind,'message');
+  const replyOperationId=randomUUID();
+  await uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},
+    {type:'session.input.reply',projectId,operationId:replyOperationId,inputRequestId:racingCapture.id,
+      expectedVersion:captured.version,answers:{q1:['B']}},'2026-10-27T00:00:01.000Z'));
+  localNow='2026-10-27T00:00:02.000Z';
+  assert.equal((await racingService.claimResponse(projectId,racingCapture.id,connectionId))?.response?.outcome,'attempted');
+  localNow='2026-10-27T00:00:04.000Z';
+  await racingService.closed(projectId,racingCapture.id,connectionId,'native_resolved','2026-10-27T00:00:04.000Z');
+  localNow='2026-10-27T00:00:05.000Z';
+  const finished=await racingService.finishResponse(projectId,racingCapture.id,connectionId,'submitted','2026-10-27T00:00:03.000Z');
+  assert.equal(finished?.state,'resolved');
+  assert.deepEqual(finished?.response,{operationId:replyOperationId,actorId:'sender',answers:{q1:['B']},
+    savedAt:'2026-10-27T00:00:01.000Z',attemptedAt:'2026-10-27T00:00:02.000Z',submittedAt:'2026-10-27T00:00:03.000Z',outcome:'submitted'});
+  assert.equal(finished?.observedAt,racingCapture.observedAt);
+  assert.equal(finished?.updatedAt,'2026-10-27T00:00:05.000Z');
+  assert.equal(finished?.version,5);
+  assert.equal(await racingService.claimResponse(projectId,racingCapture.id,connectionId),null);
+  assert.equal((await racingService.pendingResponses(projectId)).some(v=>v.id===racingCapture.id),false);
+
+  const metadataSessionId=randomUUID(),metadataThreadId='metadata-native-thread';
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,'worker','/tmp','project','danger-full-access','never','ready',1,$3,'metadata-native-session',$4,'agent',$5,$5)`,
+    [projectId,metadataSessionId,metadataThreadId,randomUUID(),now]);
+  const metadataRace={...capture(8,'metadata-turn'),sessionId:metadataSessionId,threadId:metadataThreadId};
+  await racingService.capture(metadataRace);
+  assert.equal((await racingService.get(projectId,metadataRace.id))?.source,null);
+  const metadataMessageId=randomUUID(),metadataProcessingId=randomUUID();
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
+    content,state,version,created_at,updated_at) VALUES($1,$2,$3,'owned',$4,'sender','Metadata','processing',1,$5,$5)`,
+    [projectId,metadataMessageId,randomUUID(),metadataSessionId,now]);
+  await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,
+    receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,'receiver','running','metadata-turn',$6,1,$7,$7)`,
+    [projectId,metadataProcessingId,metadataMessageId,metadataSessionId,randomUUID(),'a'.repeat(64),now]);
+  localNow='2026-10-27T00:00:06.000Z';
+  assert.equal(await racingService.refreshSources(projectId,metadataSessionId),1);
+  const metadataUpdated=await racingService.get(projectId,metadataRace.id);
+  assert.equal(metadataUpdated?.updatedAt,localNow);
+  const closedAfterMetadata=await racingService.closed(projectId,metadataRace.id,connectionId,'native_resolved','2026-10-27T00:00:03.000Z');
+  assert.equal(closedAfterMetadata?.updatedAt,localNow);
+  assert.equal(closedAfterMetadata?.observedAt,metadataRace.observedAt);
 });
 
 test('native input activity links to its real Session rather than a nonexistent Task',async()=>{
