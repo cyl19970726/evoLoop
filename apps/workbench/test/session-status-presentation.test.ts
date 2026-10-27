@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sessionLifecycleLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
+import { sessionIdleSummary, sessionLifecycleLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
 
 test("owned lifecycle takes priority over activity and only ready can be idle", () => {
   for (const [runtimeState, expected] of [["reserved", "已预留"], ["creating", "创建中"], ["closing", "关闭中"], ["unknown", "生命周期待核对"], ["closed", "已关闭"]] as const) {
@@ -18,4 +18,13 @@ test("owned lifecycle takes priority over activity and only ready can be idle", 
 test("external sessions keep unverified activity separate from owned lifecycle", () => {
   assert.equal(sessionStatusLabel({ kind: "external", runtimeState: null, busy: null }), "状态未知");
   assert.match(sessionLifecycleLabel({ kind: "external", runtimeState: null, busy: null }), /需核对/);
+});
+
+test("only a ready owned Session with confirmed no activity is called idle", () => {
+  for (const state of ["reserved", "creating", "closing", "unknown", "closed", null] as const) {
+    assert.notEqual(sessionIdleSummary({ kind: "owned", runtimeState: state, busy: false }, false), "当前空闲");
+  }
+  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }, false), "当前空闲");
+  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }, true), "当前空闲 · 已有交付待核对");
+  assert.equal(sessionIdleSummary({ kind: "external", runtimeState: null, busy: null }, false), "外部会话状态需核对");
 });

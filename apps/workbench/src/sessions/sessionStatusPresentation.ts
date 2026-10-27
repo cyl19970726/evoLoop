@@ -27,3 +27,9 @@ export function sessionStatusLabel(session: StatusSource): string {
   }
   return session.busy === true ? "有活动" : session.busy === false ? "空闲" : "状态未知";
 }
+
+export function sessionIdleSummary(session: StatusSource, hasResults: boolean): string {
+  if (session.kind === "external") return session.busy === false ? "外部观察为空闲" : "外部会话状态需核对";
+  if (session.runtimeState !== "ready" || session.busy !== false) return sessionStatusLabel(session);
+  return hasResults ? "当前空闲 · 已有交付待核对" : "当前空闲";
+}

@@ -64,3 +64,9 @@
 .session-composer-hint{display:block;margin-top:4px;color:#7b8799;font-size:11px;line-height:1.35}
 
 .session-run-attention{margin:0 0 10px;padding:9px 12px;border:1px solid #ead8af;border-radius:6px;background:#fff9e9;color:#77531d;font-size:12px}.session-run-attention a{margin:0 3px}
+
+.session-trace-list{display:grid;gap:5px}.session-trace-item{border-top:1px solid #e7edf5;padding:0;min-width:0}.session-trace-item>summary{cursor:pointer;display:grid;gap:3px;padding:9px 4px;overflow-wrap:anywhere}.session-trace-item>summary strong{font-size:12px}.session-trace-item>summary small,.session-trace-preview{font-size:11px;color:#748198;overflow-wrap:anywhere}.session-trace-body{padding:2px 8px 12px;min-width:0}.session-trace-body pre{max-height:42vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.session-trace-input{margin:12px 0;border-top:1px solid #e7edf5;padding:10px 4px}.session-trace-input>summary{cursor:pointer;color:#52627c;font-weight:600}
+
+@media(max-width:650px){.session-workspace-head{margin-bottom:10px}.session-workspace-head h1{font-size:22px;line-height:1.28}.session-workspace-actions{margin-top:8px}.session-meta{margin-bottom:8px}.session-current-work{padding:12px 14px;margin:10px 0 5px;gap:8px}.session-workspace-freshness{margin:6px 0}.session-information{margin:8px 0;padding:7px 10px}.session-workspace-tabs button{padding:8px 10px}.session-workspace-section{margin-top:10px;padding:14px}.session-composer-host{padding:6px 8px}}
+
+.session-trace-stale{padding:8px 10px;border-radius:5px;background:#fff7e8;color:#835615;font-size:12px}
