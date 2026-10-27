@@ -1,4 +1,4 @@
-import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import type { RuntimeRecordEvent, RuntimeReconcilePartial, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { request } from "../api";
 export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null;
@@ -16,7 +16,9 @@ export function runtimeClient(token: string, projectId: string) {
     history: (sessionId: string) => get<{turns:{id:string;status:string;messages:{type:string;text:string}[]}[];truncated:boolean;observedAt:string}>(`/sessions/${encodeURIComponent(sessionId)}/history`),
     sessionEvents: (sessionId: string) => get<RuntimeRecordEvent[]>(`/sessions/${encodeURIComponent(sessionId)}/events`),
     result: (runId: string) => get<NativeResult>(`/runs/${encodeURIComponent(runId)}/result`),
-    reconcile: (runId: string, expectedVersion: number, reason: string) => request<RuntimeRunRecord>(token, `${base}/runs/${encodeURIComponent(runId)}/reconcile`, 120000, { method: "POST", body: JSON.stringify({ expectedVersion, reason }) }),
+    reconcile: (runId: string, expectedVersion: number, reason: string, turnCursor?: string) =>
+      request<RuntimeRunRecord | RuntimeReconcilePartial>(token, `${base}/runs/${encodeURIComponent(runId)}/reconcile`, 120000,
+        { method: "POST", body: JSON.stringify({ expectedVersion, reason, ...(turnCursor ? { turnCursor } : {}) }) }),
     recover: () => request<{ available: boolean }>(token, `${base}/recover`, 30000, { method: "POST" }),
   };
 }

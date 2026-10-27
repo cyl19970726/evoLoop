@@ -317,6 +317,26 @@ test("an unrecognized successful acknowledgement does not confirm a mutation", a
   assert.equal((await store.get(intent.id)).state, "pending");
 });
 
+test("runtime reconcile partial receipt acknowledges an exact no-op, never another Run or version", async t => {
+  const store = await temporaryStore(t), runId = randomUUID();
+  const intent: Intent = { id: randomUUID(), projectId, targetId: runId, operationId: null, kind: "runtime.reconcile",
+    path: `/api/projects/${projectId}/runtime/runs/${runId}/reconcile`,
+    body: { expectedVersion: 4, reason: "review" }, recovery: { kind: "manual", path: `/api/projects/${projectId}/runtime/runs/${runId}/events` },
+    confirmation: "runtime-reconcile" };
+  const partial = { status: "partial", changed: false, projectId, runId, nativeTurnId: "turn-old",
+    expectedVersion: 4, nextTurnCursor: "older", reason: "review" };
+  const accepted = await dispatchMutation(client(async () => response(partial)), store, apiUrl, token, intent, () => {});
+  assert.deepEqual(accepted, partial);
+  assert.equal((await store.get(intent.id)).state, "confirmed");
+  assert.equal((await store.get(intent.id)).result && (await store.get(intent.id)).result?.status, "partial");
+  const wrong = { ...intent, id: randomUUID() };
+  await assert.rejects(() => dispatchMutation(client(async () => response({ ...partial, runId: randomUUID() })),
+    store, apiUrl, token, wrong, () => {}), pendingError);
+  const wrongVersion = { ...intent, id: randomUUID() };
+  await assert.rejects(() => dispatchMutation(client(async () => response({ ...partial, expectedVersion: 5 })),
+    store, apiUrl, token, wrongVersion, () => {}), pendingError);
+});
+
 test("rotating a token for the same verified actor and project recovers a pending write without replay", async t => {
   const store = await temporaryStore(t), intent = coreIntent();
   const actor = verifiedActor(randomUUID());

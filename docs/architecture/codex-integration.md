@@ -178,7 +178,7 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 正常结束已有 owned Session 时，项目审阅者可署名请求 `runtime.session.close`，无需取得该职责的启动执行 grant；这不授予 Session/Run reserve 权限。实际归档仍由 runner 核验原 `Session.actorId` 的精确项目、职责、scope、cwd、sandbox grant 和原生绑定，原授权缺失时保持 `closing`，不归档或假报 `closed`。关闭请求只接受已绑定且空闲的 `ready` Session；同项目事务把它改为 `closing`，立即阻止新 Run。受管执行器先保存关闭操作 ID 和归档尝试时间，再对显式选定、已通过对应版本与 schema 指纹核验的 `thread/archive` 发一次请求；空回包不是结束证据。只有受限分页的 `thread/list` 在 `archived:true`、原目录下核到相同 thread/session 身份才记为 `closed`。原生 `source` 是宿主分类，不是 owned 创建权威；本系统保存的 `thread/start` 回执与不可变绑定才是归属依据。丢回包、重启、查询不完整或身份不符时保留 `closing` 和原 ID，只读对账，不自动重发归档。原 Session、Run、事件及 Task/Knowledge 历史不删改；旧未知只读 Run 放弃仍是独立特例。适配器的 `close()` 仅关闭共享 App Server 子进程，不代表逐 Session 关闭。关闭后原生 trace 的历史读取尚未开放，须在关闭前固定需要的实际证据。隔离的单 Turn owned 样本已核到归档和同一身份回读；空 Thread 样本在重启后无法回读，保持 `closing`，不视为已关闭。
 
-已绑定 Run 的答复读取以原 Session/Thread 绑定和保存的 `nativeTurnId` 为范围，直接调用原生 `thread/items/list` 分页，不先扫描整个 Thread 的 Turn 目录。`finalPhaseConfirmed` 只说明读到 `final_answer` Item，不代替 Turn 终态或 Task 验收；轨迹的终态元数据与人工复核仍须各自核对。
+已绑定 Run 的答复和轨迹 Item 读取以原 Session/Thread 绑定和保存的 `nativeTurnId` 为范围，直接调用原生 `thread/items/list` 分页，不先扫描整个 Thread 的 Turn 目录。Turn 终态元数据另经 `thread/turns/list` 最多两页回读：命中即停，未读完返回独立的 `nextTurnCursor`；只有到达原生目录末尾才说明本次未找到。轨迹即使尚未找到 Turn 元数据，仍可返回已绑定 Turn 的 Item 和 `partial` 标记；不得用数据库 Run 状态伪造原生 Turn。显式终态对账在分页未完时返回无写入的 `partial`，续页命中后仍须核原生终态时间、现行授权和 Run 版本。Session 历史只展示最近 20 个 Turn，读满即停，未读完如实标记截断。`finalPhaseConfirmed` 只说明读到 `final_answer` Item，不代替 Turn 终态或 Task 验收；轨迹的终态元数据与人工复核仍须各自核对。
 
 ## 普通消息与业务执行共用原会话
 

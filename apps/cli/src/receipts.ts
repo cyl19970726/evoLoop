@@ -123,6 +123,11 @@ function confirmed(receipt: Receipt, result: unknown): boolean {
       ["candidateRevision", "contentHash", "expectedRevision", "decision", "reason"].every(key => decision[key] === body?.[key]);
   }
   if (receipt.confirmation === "runtime-recover") return value.available === true && (value.error === null || value.error === undefined);
+  if (receipt.confirmation === "runtime-reconcile" && value.status === "partial") return value.changed === false &&
+    value.runId === receipt.targetId && value.projectId === receipt.projectId &&
+    value.expectedVersion === body?.expectedVersion && value.reason === body?.reason &&
+    typeof value.nativeTurnId === "string" && value.nativeTurnId.length > 0 &&
+    typeof value.nextTurnCursor === "string" && value.nextTurnCursor.length > 0;
   if (receipt.confirmation === "runtime-reconcile") return value.id === receipt.targetId && value.projectId === receipt.projectId &&
     typeof value.version === "number" && typeof body?.expectedVersion === "number" && value.version >= body.expectedVersion &&
     ["reserved", "dispatching", "running", "completed", "failed", "interrupted", "unknown", "abandoned"].includes(String(value.state));

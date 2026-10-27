@@ -142,12 +142,23 @@ for await (const line of lines) {
   }
   if (method === "thread/turns/list") {
     turnListReads++;
+    if (mode.startsWith("turn-cursor-") && mode !== "turn-cursor-legacy-missing") {
+      const nextCursor = mode === "turn-cursor-missing" ? {} :
+        { nextCursor: mode === "turn-cursor-empty" ? "" : mode === "turn-cursor-number" ? 7 : null };
+      send({id,result:{data:[{id:"turn-1",status:"completed",completedAt:1792498484}],...nextCursor}});
+      continue;
+    }
+    if (mode === "turn-cursor-legacy-missing") {
+      send({id,result:{data:[{id:"turn-1",status:"completed",completedAt:1792498484}]}});
+      continue;
+    }
     if (mode === "full-sequence") {
       send({id,result:{data:sequenceInputs.map((_,index)=>({id:`turn-${index+1}`,status:"completed",completedAt:1792498484+index})).reverse(),nextCursor:null}});
       continue;
     }
-    if (mode === "history-newest") {
-      if (params.sortDirection !== "desc" || params.limit !== 100) {
+    if (mode === "history-newest" || mode === "history-newest-0164") {
+      if (params.sortDirection !== "desc" || params.limit !== 100 ||
+          (mode === "history-newest-0164" ? params.itemsView !== "notLoaded" : "itemsView" in params)) {
         send({id,error:{code:-32602,message:"ordinary history did not request newest first"}});continue;
       }
       const data=params.cursor ? [{id:"older-100",status:"completed",completedAt:1792498484}] :

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Task, TaskDetail } from "@evoloop/contracts";
-import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import type { RuntimeRecordEvent, RuntimeReconcilePartial, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import { ApiError, errorText } from "../api";
 import { href } from "../ui/shared";
@@ -291,18 +291,36 @@ function RunCard({ context, run, mayAbandon, anchorId }: { context: MutationCont
 function ReconcileRun({ context, run }: { context: MutationContext; run: RuntimeRunRecord }) {
   const [reason,setReason] = useState("");
   const [attempted,setAttempted] = useState(false);
+  const [partial,setPartial] = useState<RuntimeReconcilePartial | null>(null);
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
   return <details className="workflow-detail"><summary>核对已绑定运行的终态观察</summary>
     <p>仅回读同一原生 Turn；保留旧观察并登记修正，不再启动工作，也不自动关闭任务。</p>
     <form className="workflow-form" onSubmit={async event => {
       event.preventDefault(); if (!reason.trim() || busy || attempted || context.blocked) return;
-      setAttempted(true); setBusy(true);
-      try { await runtimeClient(context.token,context.projectId).reconcile(run.id,run.version,reason.trim()); setMessage("终态观察已核对，请阅读运行回执中的新记录。"); context.onChanged(); }
-      catch (cause) { setMessage(`${errorText(cause)}。请先回读当前状态与运行回执，确认结果后再操作。`); }
+      setBusy(true);
+      try {
+        const requestedReason = partial?.reason ?? reason.trim();
+        const result = await runtimeClient(context.token,context.projectId).reconcile(run.id,run.version,requestedReason,partial?.nextTurnCursor);
+        if ("status" in result && result.status === "partial") {
+          if (result.changed !== false || result.projectId !== context.projectId || result.runId !== run.id
+            || result.nativeTurnId !== run.nativeTurnId || result.expectedVersion !== run.version
+            || result.reason !== requestedReason || !result.nextTurnCursor
+            || result.nextTurnCursor === partial?.nextTurnCursor)
+            throw new Error("续页响应与当前运行或上次游标不符");
+          setPartial(result);
+          setMessage("尚未定位该运行，运行记录没有修改。可沿同一版本、理由和游标继续核对。");
+        } else {
+          if ("status" in result || result.projectId !== context.projectId || result.id !== run.id
+            || result.sessionId !== run.sessionId || result.nativeTurnId !== run.nativeTurnId || result.version <= run.version)
+            throw new Error("核对响应与当前运行不符");
+          setAttempted(true); setMessage("终态观察已核对，请阅读运行回执中的新记录。"); context.onChanged();
+        }
+      }
+      catch (cause) { setAttempted(true); setMessage(`${errorText(cause)}。请先回读当前状态与运行回执，确认结果后再操作。`); }
       finally { setBusy(false); }
-    }}><label>复核理由<textarea required value={reason} onChange={event=>setReason(event.target.value)} /></label>
-      <button disabled={busy || attempted || context.blocked || !reason.trim()}>{busy?"核对中…":"回读原生终态并登记观察"}</button>
+    }}><label>复核理由<textarea required readOnly={!!partial || attempted} value={reason} onChange={event=>setReason(event.target.value)} /></label>
+      <button disabled={busy || attempted || context.blocked || !reason.trim()}>{busy?"核对中…":partial?"继续核对":"回读原生终态并登记观察"}</button>
       {message && <Notice>{message}</Notice>}
     </form>
   </details>;
