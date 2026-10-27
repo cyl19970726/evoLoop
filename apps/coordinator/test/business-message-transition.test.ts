@@ -40,7 +40,8 @@ for(const scenario of cases){
       nativeTurnId:null,interruptRequested:false,resultSummary:null,actorId,createdAt:at,updatedAt:at,
       executionProfile:snapshot};
     const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,scenario.mode],
-      expectedVersion:`codex-cli ${scenario.version}`,requestTimeoutMs:500,enableRestrictedMessagePermissions:true,
+      expectedVersion:`codex-cli ${scenario.version}`,requestTimeoutMs:500,initializationTimeoutMs:5_000,
+      enableRestrictedMessagePermissions:true,
       verifyBinding:async()=>true,threadConfig:async()=>scenario.sandbox==='workspace-write'?
         {'sandbox_workspace_write.network_access':false}:undefined});
     const steps:string[]=[];let permits=0,unknowns=0,bindings=0;

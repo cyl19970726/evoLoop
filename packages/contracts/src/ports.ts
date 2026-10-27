@@ -16,6 +16,7 @@ import type { SessionObservationReader } from "./session-observation.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
+  nativeExecution?: import('./native-execution.js').NativeExecutionReader;
   recovery?: import('./session-recovery.js').SessionRecoveryReader;
   /** Queue capability is optional for legacy in-memory adapters; commands reject its absence. */
   queue?: QueueReader;
@@ -90,6 +91,9 @@ export interface ChildHandoffFact {
   division?: { bindingId: string; waitingDecisionId: string; acknowledgedRunId: string };
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, ResidentTransaction, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
+  nativeExecution?: import('./native-execution.js').NativeExecutionTransaction;
+  /** Row lock before Session gate/global native-start admission; never requires an empty Run queue. */
+  lockRuntimeSession?(id: string): Promise<RuntimeSessionRecord | null>;
   recovery?: import('./session-recovery.js').SessionRecoveryTransaction;
   queue?: QueueTransaction;
   sessionMessages?: SessionMessageTransaction;

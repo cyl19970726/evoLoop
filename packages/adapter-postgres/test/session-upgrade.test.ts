@@ -44,7 +44,7 @@ const legacyTables = ["project", "process_document", "document_revision", "docum
 async function legacySnapshot(): Promise<Record<string, unknown[]>> {
   const result: Record<string, unknown[]> = {};
   for (const table of legacyTables) {
-    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'":"to_jsonb(t)"} AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
+    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'":"to_jsonb(t)"}-'native_environment_epoch' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
     result[table] = rows.rows.map(row => row.row).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   }
   return result;
@@ -244,7 +244,12 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
     journalBefore034,'034 configured snapshot backfill must not invent a new native event');
   assert.equal((await client.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence,headBefore034);
   const names034=(await client.query('SELECT name FROM pgmigrations ORDER BY run_on,name')).rows.map(row=>row.name);
-  assert.equal(names034.length,33);assert.equal(names034.at(-1),'034_session_recovery');
+  assert.equal(names034.length,34);assert.equal(names034.at(-1),'035_native_execution_environment');
+  assert.equal((await client.query('SELECT count(*)::int AS count FROM native_execution_environment')).rows[0].count,0,
+    '035 must preserve legacy operation without inventing verified native ownership from ready Sessions');
+  for(const table of ['runtime_session','runtime_run','session_message_processing'])
+    assert.equal((await client.query(`SELECT count(*)::int AS count FROM ${table} WHERE native_environment_epoch IS NOT NULL`)).rows[0].count,0,
+      '035 must leave historical native environment evidence absent');
   const legacyProfile=(await client.query('SELECT execution_profile_snapshot FROM runtime_run WHERE project_id=$1 AND run_id=$2',[projectId,runId])).rows[0].execution_profile_snapshot;
   assert.deepEqual({...legacyProfile,revisionId:undefined},{revisionId:undefined,version:1,model:'legacy-model',
     sandbox:'read-only',approvalPolicy:'on-request',cwd:'/legacy',authorizationScope:'old fixed scope',

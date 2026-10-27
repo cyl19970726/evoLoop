@@ -5,6 +5,7 @@ import { runner } from "node-pg-migrate";
 import pg, { type PoolClient, type QueryResultRow } from "pg";
 import { PgRuntimeStore } from "./runtime.js";
 import { PgSessionRecovery } from "./session-recovery.js";
+import { PgNativeExecution } from "./native-execution.js";
 import { PgSessionMessages } from "./session-messages.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgSessionObservation } from "./session-observation.js";
@@ -101,6 +102,7 @@ class PgReader implements Reader {
   readonly queue: PgResidentQueue;
   readonly sessionMessages: PgSessionMessages;
   readonly recovery: PgSessionRecovery;
+  readonly nativeExecution: PgNativeExecution;
   readonly sessionAssignments: PgSessionAssignments;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
@@ -115,6 +117,7 @@ class PgReader implements Reader {
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
     this.recovery = new PgSessionRecovery(client, projectId);
+    this.nativeExecution = new PgNativeExecution(client);
     this.sessionMessages = new PgSessionMessages(client, projectId);
     this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
@@ -491,6 +494,10 @@ class PgReader implements Reader {
 }
 
 class PgTransaction extends PgReader implements Transaction {
+  async lockRuntimeSession(id: string) {
+    await this.client.query('SELECT session_id FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,id]);
+    return this.getRuntimeSession(id);
+  }
   createBusinessDomain(value: BusinessDomain, revision: BusinessDomainRevision) { return this.residents.createBusinessDomain(value, revision); }
   advanceBusinessDomain(value: BusinessDomain, expectedVersion: number, revision: BusinessDomainRevision) { return this.residents.advanceBusinessDomain(value, expectedVersion, revision); }
   createHostLink(value: HostLink, revision: HostLinkRevision) { return this.residents.createHostLink(value, revision); }
@@ -698,3 +705,5 @@ export async function migrate(connectionString: string, schema = "public"): Prom
     log: () => {},
   });
 }
+
+export { PgNativeExecution } from "./native-execution.js";

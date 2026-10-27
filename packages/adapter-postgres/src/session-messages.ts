@@ -4,6 +4,12 @@ import type { SessionMessageProcessing, SessionMessageRecord, SessionMessageTran
 import { DomainError } from "@evoloop/contracts/ports";
 
 const iso = (v: Date | string): string => v instanceof Date ? v.toISOString() : v;
+const nativeEpoch = (value: unknown): number | null => {
+  if (value == null) return null;
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 1) throw new DomainError('NATIVE_EPOCH_INVALID','Native environment epoch is invalid');
+  return result;
+};
 const message = (r: QueryResultRow): SessionMessageRecord => ({
   projectId:r.project_id,id:r.message_id,operationId:r.operation_id,
   target:r.target_kind==='owned'?{kind:'owned',sessionId:r.session_id}:{kind:'external',linkId:r.link_id},
@@ -18,6 +24,7 @@ const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   projectId:r.project_id,id:r.processing_id,messageId:r.message_id,sessionId:r.session_id,
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
   failure:r.failure,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
+  nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
   version:r.version,startedAt:iso(r.started_at),updatedAt:iso(r.updated_at),
 });
 const SELECT_MESSAGE = `SELECT m.*, rr.actor_id AS receipt_actor_id,rr.evidence AS receipt_evidence,

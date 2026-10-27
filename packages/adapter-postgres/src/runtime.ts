@@ -3,6 +3,12 @@ import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from 
 import { DomainError } from "@evoloop/contracts/ports";
 
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
+const nativeEpoch = (value: unknown): number | null => {
+  if (value == null) return null;
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 1) throw new DomainError("NATIVE_EPOCH_INVALID", "Native environment epoch is invalid");
+  return result;
+};
 const limit = 10_000;
 const bounded = <T>(items: T[], label: string): T[] => {
   if (items.length > limit) throw new DomainError("RESULT_TOO_LARGE", `${label} exceeds ${limit}`);
@@ -14,6 +20,7 @@ const session = (r: QueryResultRow): RuntimeSessionRecord => ({
   approvalPolicy: r.approval_policy, state: r.state, version: r.version,
   nativeThreadId: r.native_thread_id, nativeSessionId: r.native_session_id,
   operationId: r.operation_id, actorId: r.actor_id,
+  nativeEnvironmentEpoch: nativeEpoch(r.native_environment_epoch),
   closeOperationId: r.close_operation_id ?? null,
   closeAttemptedAt: r.close_attempted_at ? iso(r.close_attempted_at) : null,
   closeVerifiedAt: r.close_verified_at ? iso(r.close_verified_at) : null,
@@ -38,6 +45,7 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   sessionId: r.session_id, operationId: r.operation_id,
   input: r.input, inputHash: r.input_hash, state: r.state, version: r.version,
   nativeTurnId: r.native_turn_id, interruptRequested: r.interrupt_requested,
+  nativeEnvironmentEpoch: nativeEpoch(r.native_environment_epoch),
   resultSummary: r.result_summary, actorId: r.actor_id,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
   evaluationBinding: r.evaluation_id ? {

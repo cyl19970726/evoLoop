@@ -3,6 +3,7 @@ import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessage
 import type { RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
+import { permitNativeStartup } from '../runtime/native-admission.js';
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -107,16 +108,19 @@ export class SessionMessageService {
   async isBusy(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>await r.sessionMessages?.hasActiveSessionMessage(sessionId)??false);}
   async noteBlocked(projectId:string,messageId:string,reason:string|null){await this.deps.uow.transaction(projectId,async tx=>{
     await tx.sessionMessages?.setSessionMessageBlockedReason(messageId,reason);});}
-  async beginDispatch(projectId:string,messageId:string,processingId:string,operationId:string,readOnlyPolicyFingerprint:string):Promise<SessionMessageProcessing>{
+  async beginDispatch(projectId:string,messageId:string,processingId:string,operationId:string,readOnlyPolicyFingerprint:string,nativeEnvironmentEpoch?:number):Promise<SessionMessageProcessing>{
     return this.deps.uow.transaction(projectId,async tx=>{
       if(!/^[a-f0-9]{64}$/.test(readOnlyPolicyFingerprint))throw new DomainError('POLICY_PROOF_MISSING','native read-only policy proof is required');
       const {item,session,grant}=await this.admission(projectId,messageId,tx);
       const store=tx.sessionMessages!;
       await store.assertSessionVacant(session.id);
+      await tx.recovery?.assertStartupAllowed(session.id,'message',messageId);
+      await permitNativeStartup(tx,{kind:'message',projectId,sessionId:session.id,operationId,messageId},nativeEnvironmentEpoch);
       const now=this.deps.clock.now();
       const processing:SessionMessageProcessing={projectId,id:processingId,messageId,sessionId:session.id,operationId,
         receiverActorId:grant.receiverActorId,
         state:'dispatching',nativeTurnId:null,response:null,failure:null,readOnlyPolicyFingerprint,
+        ...(nativeEnvironmentEpoch!==undefined?{nativeEnvironmentEpoch}:{}),
         version:1,startedAt:now,updatedAt:now};
       await store.insertSessionMessageProcessing(processing);
       await store.updateSessionMessage({...item,state:'processing',blockedReason:null,version:item.version+1,updatedAt:now},item.version);
