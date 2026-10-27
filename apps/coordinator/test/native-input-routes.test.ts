@@ -10,7 +10,7 @@ import { buildServer } from "../src/server.js";
 
 test("native questions use authenticated project reads and live reply checks before journaling", async () => {
   const projectId = randomUUID(), sessionId = randomUUID(), inputRequestId = randomUUID(), token = "n".repeat(40);
-  let allowed = true, writes = 0, viewReads = 0;
+  let allowed = true, writes = 0, viewReads = 0, journalled = false, liveChecks = 0;
   const identity = (p: Principal, project: string) => {
     assert.equal(p.actorId, "human");
     if (!p.projectIds.includes(project)) throw new DomainError("FORBIDDEN", "Wrong project");
@@ -22,12 +22,14 @@ test("native questions use authenticated project reads and live reply checks bef
       listRoleHandoffs: async () => [], listRoleSessionBindings: async () => [],
       getProject: async (p: Principal, project: string) => { identity(p, project); return { id: project }; },
       getRuntimeSession: async (p: Principal, project: string) => { identity(p, project); return session; },
+      getOperation: async () => journalled ? { actorId: "human", result: { status: "applied" } } : null,
       execute: async (p: Principal) => { identity(p, projectId); writes++; return { status: "applied" }; },
     } as unknown as WorkflowService,
     sessionWork: { snapshot: async (p: Principal, project: string) => { identity(p, project); return { session }; },
       directory: async () => ({ items: [session] }) } as unknown as SessionObservationService,
     nativeInputs: {
       requireReply: async (p: Principal, project: string, id: string) => {
+        liveChecks++;
         identity(p, project); assert.equal(id, inputRequestId);
         if (!allowed) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "Old connection");
       },
@@ -48,6 +50,10 @@ test("native questions use authenticated project reads and live reply checks bef
     allowed = false;
     assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload: { ...payload, operationId: randomUUID() } })).statusCode, 409);
     assert.equal(writes, 1, "a stale RPC must not get a new saved response");
+    journalled = true;
+    const checkedBeforeReplay = liveChecks;
+    assert.equal((await app.inject({ method: "POST", url: "/api/commands", headers, payload })).statusCode, 200);
+    assert.equal(liveChecks, checkedBeforeReplay, "saved operation recovery must reach the actor/hash journal without requiring a live RPC");
     const path = `/api/projects/${projectId}`;
     assert.equal((await app.inject({ headers, url: `${path}/session-work` })).statusCode, 200);
     assert.equal(viewReads, 0, "directory does not probe per-session native input");

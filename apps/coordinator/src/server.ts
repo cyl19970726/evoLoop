@@ -118,8 +118,12 @@ export async function buildServer(options: {
   app.post("/api/commands", async (request, reply) => {
     const command = commandSchema.parse(request.body);
     if (command.type === "session.input.reply") {
-      if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问回复。");
-      await options.nativeInputs.requireReply(who(request.principal), command.projectId, command.inputRequestId);
+      const principal = who(request.principal);
+      // Exact same-ID recovery still goes through execute's actor/hash journal check, even after RPC cleanup.
+      if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问回复。");
+        await options.nativeInputs.requireReply(principal, command.projectId, command.inputRequestId);
+      }
     }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
