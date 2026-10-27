@@ -74,6 +74,9 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
           value={items:todos.map((task,index)=>({...task,id:`300001${String(pageIndex).padStart(2,"0")}-0000-4000-8000-${String(index).padStart(12,"0")}`})),nextCursor:`page-${pageIndex+1}`};
         }
       }
+      else if (url.pathname === `${base}/orchestration/work-status`) value={items:(url.searchParams.get("taskIds") ?? "").split(",").filter(Boolean).map(taskId=>({taskId,cognition:false,dispatchId:null,dispatchState:null,outcome:null,runId:null,runState:null,unsettledRunState:null,
+        loopState:null,goalOutcome:null,stageDeliverable:null,sourceKind:null,sourceTaskId:null,sourceTaskTitle:null,decisionKind:null,decisionReason:null,
+        useRequired:null,deliveryId:null,technicalResult:null,observationResult:null,observerKind:null,hasClosure:false,readyForAcceptance:false}))};
       else if (url.pathname.startsWith(`${base}/tasks/`)) {
         const id = url.pathname.split("/").at(-1)!;
         const task={projectId,id,version:1,currentRevisionId:id,title: projectId === b ? "乙项目任务" : id===current ? "当前任务" : id===next ? "下一任务" : "待验任务",
@@ -130,11 +133,11 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await fetch(`${base}/__fixture/mode?value=crowded`);
   await page.getByRole("button",{name:"重新读取"}).click();
   const nextSection=page.getByRole("heading",{name:"下一项"}).locator("..");
-  const heldSection=page.getByRole("heading",{name:"哪里需要判断"}).locator("..");
+  const heldSection=page.getByRole("heading",{name:"待处理"}).locator("..");
   await nextSection.getByText(/另有 1 项下一顺位未展开/).waitFor();
-  await heldSection.getByText(/另有 1 项暂停事项未展开/).waitFor();
+  await heldSection.getByText(/另有 1 项未展开/).waitFor();
   assert.equal(await nextSection.getByText("已采纳队列中没有读到下一顺位。").count(),0);
-  assert.equal(await heldSection.getByText("已读队列范围内没有暂停项。").count(),0);
+  assert.equal(await heldSection.getByText("已读队列中没有暂停项。").count(),0);
   assert.equal(await nextSection.getByRole("link",{name:"完整队列"}).count(),1);
   await fetch(`${base}/__fixture/mode?value=normal`);
   await page.getByRole("button",{name:"重新读取"}).click();
@@ -142,16 +145,16 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await fetch(`${base}/__fixture/mode?value=released`);
   await fetch(`${base}/__fixture/task-mode?value=active`);
   await page.getByRole("button",{name:"重新读取"}).click();
-  const activeSection=page.getByRole("heading",{name:"进行中的任务"}).locator("..");
+  const activeSection=page.getByRole("heading",{name:"当前业务任务"}).locator("..");
   await activeSection.getByRole("link",{name:"P1a 持续改进"}).waitFor();
   assert.equal(await activeSection.getByRole("link",{name:"P1a 持续改进"}).getAttribute("href"),`#/p/${a}/tasks/${outside}`);
   assert.match(await activeSection.innerText(),/负责人 开发职责/);
-  assert.match(await activeSection.innerText(),/是否在原 Session 执行/);
+  assert.equal(await activeSection.getByRole("link",{name:/Session/}).count(),0);
   assert.equal(await page.getByRole("heading",{name:"现在由谁承接"}).locator("..").getByText("已读队列范围内没有确认的领取占用。").count(),1);
   await fetch(`${base}/__fixture/task-mode?value=later`);
   await page.getByRole("button",{name:"重新读取"}).click();
   await activeSection.getByRole("link",{name:"后页进行中"}).waitFor();
-  assert.match(await activeSection.innerText(),/已读 2 页任务/);
+  assert.match(await activeSection.innerText(),/已读 2 页/);
   await fetch(`${base}/__fixture/mode?value=empty`);
   await fetch(`${base}/__fixture/task-mode?value=logical`);
   const rolesBefore=Number(await (await fetch(`${base}/__fixture/role-reads`)).text());
@@ -161,8 +164,8 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   assert.equal(Number(await (await fetch(`${base}/__fixture/role-reads`)).text()),rolesBefore);
   await fetch(`${base}/__fixture/task-mode?value=truncated`);
   await page.getByRole("button",{name:"重新读取"}).click();
-  await activeSection.getByText(/已达 10 页或 500 项上限/).waitFor();
-  assert.equal(await activeSection.getByText("已读完整任务列表中没有进行中的任务。").count(),0);
+  await activeSection.getByText(/后续任务尚未读完/).waitFor();
+  assert.equal(await activeSection.getByText("已读任务中没有可确认的进行中业务任务").count(),0);
   await fetch(`${base}/__fixture/task-mode?value=later`);
   await page.getByRole("button",{name:"重新读取"}).click();
   await activeSection.getByRole("link",{name:"后页进行中"}).waitFor();
