@@ -55,7 +55,7 @@ export function SessionRecoveryResources({ read, queueHref }: { read: RecoveryRe
     : profile ? recoveryActivationLabel(profile.activationState) : "";
   return <div className="session-recovery-resources">
     <h3>恢复配置与队列预算</h3>
-    {profile ? <p>登记模型：<strong>{profile.revision.model ?? "未显式指定"}</strong> · {activationLabel}。{active ? "该登记修订已激活。" : profile.activeRevisionId ? "本次目标修订尚未确认激活。" : "没有已核实的原生配置修订。"}<small>配置修订于 {date(profile.revision.createdAt)}；这是登记的启动配置，不是逐次实际运行模型记录。</small></p> : <p>没有可读取的执行配置记录；模型与激活状态未知。</p>}
+    {profile ? <p>目标配置 v{profile.revision.version}：模型 <strong>{profile.revision.model ?? "未显式指定"}</strong> · {profile.revision.sandbox} · {profile.revision.approvalPolicy} · {activationLabel}。{active ? "该登记修订已激活。" : profile.activeRevisionId ? "本次目标修订尚未确认激活；之前的激活修订仍单独保留。" : "没有已核实的原生配置修订。"}<small>配置修订于 {date(profile.revision.createdAt)}；这是登记的启动配置，不是逐次实际运行模型或联网结果的记录。</small></p> : <p>没有可读取的执行配置记录；模型与激活状态未知。</p>}
     {view.queues.length ? <ul className="session-recovery-budgets">{view.queues.slice(0, 20).map(queue => { const budget = recoveryBudget(queue); return <li key={queue.queueId}><span>原队列 <ShortId value={queue.queueId} /></span><strong>累计尝试 {budget.used} / 上限 {budget.max} · 剩余 {budget.remaining}</strong></li>; })}</ul> : <p>当前读取范围没有队列预算记录，不能推定为零消耗。</p>}
     <p className="session-recovery-note">累计尝试包含失败和结果未知的尝试，不会退还；这是原业务队列预算，不含普通消息的独立额度，也不等于实际模型调用次数。</p>
     {view.partial && <p className="session-recovery-partial">本次恢复观察不完整：列表可能被截取，也可能有原始来源不可用；不能据此确认全部历史或来源状态。<a href={queueHref}>查看现有受管队列与尝试</a>；恢复决定请按完整来源或操作 ID 核对。</p>}

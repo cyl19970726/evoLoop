@@ -1,6 +1,8 @@
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { request } from "../api";
-export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string; sandbox: "read-only" | "workspace-write" }
+export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string;
+  sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null;
+  approvalPolicy?: "on-request" | "untrusted" | "never"; networkAccess?: boolean }
 export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[] }
 export interface NativeResult { messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }
 export function runtimeClient(token: string, projectId: string) {

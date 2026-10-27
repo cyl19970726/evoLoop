@@ -7,12 +7,14 @@ import { href } from "../ui/shared";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import { isRoleOwnerId, readOwnerRole } from "../workflow/ownerRole";
 import { runtimeClient, type NativeResult, type RuntimeStatus } from "./client";
+import { activeFullExecution } from "./fullExecution";
 import { OrchestrationPanel } from "../orchestration/OrchestrationPanel";
 import { ResidentQueuePanel } from "../queues/ResidentQueuePanel";
 import { TaskCollaborationThread } from "../discussions/TaskCollaborationThread";
 import { RoleTemplateSummary } from "../roles/RoleTemplateSummary";
 import { sessionClient } from "../sessions/client";
 import { sessionHref } from "../sessions/SessionNavigation";
+import { recoveryActivationLabel } from "../sessions/recoveryPresentation";
 import { eligibleOwnedSessions } from "../sessions/assignmentEligibility";
 import { taskRunFromHash } from "../orchestration/navigation";
 import "./session-focus.css";
@@ -29,7 +31,7 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
 };
 type RoleName = { title?: string; error?: string };
-const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox]);
+const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string; model?: string | null }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox, g.model ?? null]);
 export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
@@ -96,7 +98,8 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     catch (cause) { setError(errorText(cause)); }
     finally { setRecovering(false); }
   }
-  const grants = (status?.grants ?? []).filter(grant => !task || grant.roleId === task.owner);
+  const grants = (status?.grants ?? []).filter(grant => grant.sandbox === "danger-full-access"
+    && grant.approvalPolicy === "never" && grant.networkAccess === true && (!task || grant.roleId === task.owner));
   const visibleSessions = loadedScope === sessionScope ? task ? sessions.filter(session => runs.some(run => run.sessionId === session.id)) : sessions : [];
   const hasTarget = !task && !!targetSessionId;
   const validTarget = !!targetSessionId && uuid.test(targetSessionId);
@@ -131,7 +134,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const assigned = taskAssignment?.value?.state !== "released" ? taskAssignment?.value : null;
   const assignmentStale = !!assigned && assigned.taskRevisionId !== task?.currentRevisionId;
   const eligibleSessions = task && taskAssignment && !taskAssignment.error
-    ? eligibleOwnedSessions(task, sessions, taskAssignment.value) : [];
+    ? eligibleOwnedSessions(task, sessions.filter(activeFullExecution), taskAssignment.value) : [];
   const taskActionContext = task ? { ...context, draftScope: `runtime-task:${task.id}`,
     draftBaseline: `${task.currentRevisionId}:${assigned?.version ?? 0}:${assigned?.state ?? "none"}:${assigned ? JSON.stringify(assigned.target) : ""}` } : context;
   useEffect(() => {
@@ -177,19 +180,21 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     {task && <TaskCollaborationThread token={context.token} projectId={context.projectId} taskId={task.id} refresh={refresh + epoch} />}
     {loadedScope === sessionScope && visibleSessions.length === 0 && !hasTarget && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
     {visibleSessions.filter(session => !focusedSession || session.id !== focusedSession.id).map(session => <SessionCard key={session.id} context={context} session={session} focused={false} anchor={!task} role={resolvedRoles[session.roleId]} />)}
-    {status?.available && grants.length > 0 && <details className="workflow-detail"><summary>创建授权范围内的新会话</summary><ActionForm context={context} review title="登记并创建会话" fields={[
-      { name: "grant", label: "已配置的授权", kind: "select", options: grants.map(g => option(grantKey(g), `${g.roleId} · ${g.authorizationScope} · ${g.sandbox} · ${g.cwd}`)) },
-      { name: "model", label: "模型（可留空沿用 Codex 配置）", optional: true },
+    {status?.available && status.grants.length > 0 && grants.length === 0 && <Notice>当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新会话。</Notice>}
+    {status?.available && grants.length > 0 && <details className="workflow-detail"><summary>创建授权范围内的新会话</summary>
+      <p className="muted">新会话统一登记完整本机权限（danger-full-access）及无需逐次审批（never）。创建请求不等于原生配置已激活；请回读会话状态与执行配置。</p>
+      <ActionForm context={context} review title="登记并创建会话" fields={[
+      { name: "grant", label: "已配置的完整权限授权", kind: "select", options: grants.map(g => option(grantKey(g), `${g.roleId} · ${g.authorizationScope} · ${g.cwd} · ${g.model ?? "默认模型"}`)) },
     ]} build={v => {
       const grant = grants.find(g => grantKey(g) === v.grant);
       if (!grant) throw new Error("需要有效授权");
       return { type: "runtime.session.reserve", sessionId: crypto.randomUUID(), roleId: grant.roleId, authorizationScope: grant.authorizationScope,
-        cwd: grant.cwd, sandbox: grant.sandbox, approvalPolicy: "on-request", ...(v.model ? { model: v.model } : {}) };
+        cwd: grant.cwd, sandbox: "danger-full-access", approvalPolicy: "never", ...(grant.model ? { model: grant.model } : {}) };
     }} /></details>}
     {task && task.state === "in_progress" && taskAssignment?.error && <Notice error>具体分派暂不可核对：{taskAssignment.error}。请先回读任务分派记录，暂不创建队列或预留新运行。</Notice>}
     {task && task.state === "in_progress" && assignmentStale && <Notice error>任务修订已变化，原具体分派固定在旧修订。请先核对并重新指定或释放分派。</Notice>}
     {task && task.state === "in_progress" && assigned?.target.kind === "external" && <Notice>本任务已分派给外部人工会话，不能改由其他受管 Session 创建队列或预留运行；请先正式释放或重新分派。</Notice>}
-    {task && task.state === "in_progress" && assigned?.target.kind === "owned" && !assignmentStale && !eligibleSessions.length && !taskAssignment?.error && <Notice>指定的受管 Session 当前未就绪或职责不匹配；请核对原分派与会话状态。</Notice>}
+    {task && task.state === "in_progress" && assigned?.target.kind === "owned" && !assignmentStale && !eligibleSessions.length && !taskAssignment?.error && <Notice>指定的受管 Session 当前未就绪、完整执行配置尚未激活或职责不匹配；请核对原分派与会话状态。</Notice>}
     {task && taskDetail && task.state === "in_progress" && eligibleSessions.length > 0 && <details className="workflow-detail"><summary>把任务安排给具体受管 Session</summary>
       <p>先核对当前固定任务输入，再选择一位同职责的就绪会话。队列创建后仍须由有权者采纳；登记不表示会话已开始执行。外部人工承接走任务具体分派与接手记录。</p>
       <ActionForm context={taskActionContext} review title="创建单任务队列" fields={[
@@ -218,9 +223,30 @@ function SessionRoleLabel({projectId,roleId,role}:{projectId:string;roleId:strin
 function SessionCard({context,session,focused,anchor,role}:{context:MutationContext;session:RuntimeSessionRecord;focused:boolean;anchor:boolean;role?:RoleName}) {
   const ref = useRef<HTMLDetailsElement>(null);
   useEffect(() => { if (focused && ref.current) ref.current.open = true; }, [focused,session.id]);
+  const profile = session.executionProfile;
+  const activeProfile = profile?.activationState === "active" && profile.activeRevisionId === profile.revision.revisionId;
+  const activationLabel = profile?.activationState === "active" && !activeProfile
+    ? profile.activeRevisionId ? "当前激活的是其他修订" : "激活记录待核对"
+    : profile ? recoveryActivationLabel(profile.activationState) : "";
+  const legacyProfile = profile && (profile.revision.sandbox !== "danger-full-access" || profile.revision.approvalPolicy !== "never");
   return <details ref={ref} className="workflow-detail runtime-session-card" id={anchor ? `runtime-session-${session.id}` : undefined}>
     <summary><SessionRoleLabel projectId={context.projectId} roleId={session.roleId} role={role} /> · {sessionState[session.state]} · Session {session.id.slice(0, 8)}</summary>
-    <dl><div><dt>职责 ID</dt><dd>{session.roleId}</dd></div><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>权限</dt><dd>{session.sandbox}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
+    <dl><div><dt>职责 ID</dt><dd>{session.roleId}</dd></div><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>当前登记权限</dt><dd>{session.sandbox} · {session.approvalPolicy}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
+    {profile ? <p>目标执行配置 v{profile.revision.version}：<code>{profile.revision.sandbox}</code> · <code>{profile.revision.approvalPolicy}</code> · 模型 <code>{profile.revision.model ?? "未显式指定"}</code> · {activationLabel}。{activeProfile ? "此修订已登记激活。" : profile.activeRevisionId ? "目标修订尚未确认激活；原已激活修订继续单独保留。" : "尚无已确认的原生配置修订。"}</p>
+      : <p className="muted">未读到执行配置修订；不能从创建时权限推断当前原生配置。</p>}
+    {legacyProfile && session.state === "ready" && !["attempting", "unknown"].includes(profile.activationState) && context.principal.permissions.includes("write") && context.principal.permissions.includes("review") && <details className="workflow-detail"><summary>将原会话登记为完整权限</summary>
+      <Notice>填写为原 Session 创建者配置的精确授权模型；服务端将按原创建者、职责、工作目录及范围核验。此处会在原 Session 与原生 Thread 上登记新配置修订；提交后仍须核对激活，历史运行不会改写。</Notice>
+      <ActionForm key={profile.revision.revisionId} context={context} review title="升级原会话执行配置" fields={[
+        { name: "targetModel", label: "原创建者精确授权的目标模型" },
+        { name: "evidenceRef", label: "本次授权依据" }, reasonField,
+      ]} build={v => {
+        const model = v.targetModel.trim();
+        if (!model) throw new Error("需要原创建者精确授权的目标模型");
+        return { type: "runtime.session.executionProfile.revise", sessionId: session.id, expectedVersion: session.version,
+          expectedExecutionProfileRevisionId: profile.revision.revisionId, model,
+          sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: v.evidenceRef, reason: v.reason };
+      }} />
+    </details>}
     {session.projectId === context.projectId && uuid.test(session.id) && <p><a href={sessionHref(context.projectId, `owned:${session.id}`)}>查看此 Session 工作区</a></p>}
     {role?.error && <Notice error>{role.error}；当前仅显示登记 ID。</Notice>}
     {session.state === "unknown" && <Notice error>创建结果未知，不能用新 ID 重复创建来代替核对。</Notice>}

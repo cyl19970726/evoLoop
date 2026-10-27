@@ -4,7 +4,7 @@ import type { SessionCapabilities } from "@evoloop/contracts/session-work";
 import { sessionMessageEntry } from "../src/sessions/sessionMessageEntry.ts";
 
 const capability = { available: false, reason: null };
-const base: SessionCapabilities = { observe: capability, send: { available: true, reason: "只保存消息", mode: "owned-read-only" },
+const base: SessionCapabilities = { observe: capability, send: { available: true, reason: "保存原会话消息", mode: "owned-conversation" },
   open: { ...capability, ref: null }, interrupt: capability, close: capability };
 const observedAt = "2026-10-27T00:00:00Z";
 
@@ -16,7 +16,7 @@ test("disabled owned execution stays saveable but says it will not auto-reply", 
   assert.match(entry.introduction, /待派发.*不表示已送达/);
   assert.equal(entry.executionLabel, "未启用");
   assert.match(entry.executionReason, /不会启动此会话/);
-  assert.equal(entry.sendReason, "只保存消息");
+  assert.equal(entry.sendReason, "保存原会话消息");
 });
 
 test("older snapshots and unverified execution never imply automatic readiness", () => {
@@ -24,9 +24,9 @@ test("older snapshots and unverified execution never imply automatic readiness",
   assert.equal(older.executionLabel, "暂不可核实");
   assert.match(older.executionReason, /不能预期自动回复/);
   const pending = sessionMessageEntry("owned", { ...base, ordinaryExecution: { state: "unverified",
-    reasonCode: "NATIVE_CHECK_PENDING", reason: "执行前仍须核验原生只读能力。", observedAt } });
+    reasonCode: "NATIVE_CHECK_PENDING", reason: "执行前仍须核验原生环境。", observedAt } });
   assert.equal(pending.executionLabel, "执行前待核验");
-  assert.match(pending.executionReason, /核验原生只读能力/);
+  assert.match(pending.executionReason, /核验原生环境/);
   const blocked = sessionMessageEntry("owned", { ...base, ordinaryExecution: { state: "blocked",
     reasonCode: "EXACT_GRANT_MISSING", reason: "当前没有精确消息授权。", observedAt } });
   assert.equal(blocked.executionLabel, "受限");

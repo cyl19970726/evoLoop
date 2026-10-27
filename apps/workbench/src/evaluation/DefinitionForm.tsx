@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { EvaluationRevision, EvaluationSourceSignature, TaskDetail } from "@evoloop/contracts";
 import { api, errorText } from "../api";
-import { ActionForm, Notice, option, type MutationContext } from "../workflow/ActionForm";
+import { ActionForm, Notice, type MutationContext } from "../workflow/ActionForm";
 import { formatFixedRefs } from "./presentation";
 import { definitionFromForm } from "./formData";
 
@@ -37,13 +37,12 @@ export function DefinitionForm({ context, current, ownerTaskId, onApplied }: { c
     { name: "model", label: "两个条件相同的明确模型", value: definition?.conditions[0].model ?? "" },
     { name: "cwd", label: "执行工作目录", value: definition?.conditions[0].environment.cwd ?? "", hint: "绝对路径；两条件相同" },
     { name: "authorizationScope", label: "授权工作范围", kind: "textarea" as const, value: definition?.conditions[0].environment.authorizationScope ?? "" },
-    { name: "sandbox", label: "沙箱", kind: "select" as const, value: definition?.conditions[0].environment.sandbox ?? "read-only", options: [option("read-only", "只读"), option("workspace-write", "工作区可写")] },
-    { name: "approvalPolicy", label: "审批策略", kind: "select" as const, value: definition?.conditions[0].environment.approvalPolicy ?? "on-request", options: [option("on-request", "需要时请求"), option("untrusted", "不可信输入") ] },
     { name: "limits", label: "可比较性及工具隔离限制", kind: "textarea" as const, value: definition?.limits ?? "同一用户环境下工具访问隔离未验证；单例不能推断因果知识收益。" },
     ...(current ? [{ name: "reason", label: "修订定义的理由", kind: "textarea" as const, value: "" }] : []),
   ];
   return <section className="panel evaluation-definition-form"><h2>{current ? "另存一版评价定义" : "建立冻结评价"}</h2>
     <p className="muted">先读取当前进行中的共同任务。来源签名由服务端固定；下面只选择共同材料、知识条件和相同执行环境。创建定义不会自动运行或关闭任务。</p>
+    <p className="muted">本次新定义统一采用完整本机权限（danger-full-access）、无需逐次审批（never）；两个条件使用相同配置。{current && "若旧定义采用其他权限，新修订会明确改为此配置；旧修订及其尝试保持原样。"}</p>
     <div className="evaluation-source-picker"><label>共同任务 ID<input value={taskId} onChange={event => { setTaskId(event.target.value); setSource(null); }} placeholder="进行中的任务 UUID" /></label><button type="button" onClick={() => void readSource()} disabled={loading || !taskId.trim()}>{loading ? "读取中…" : "读取固定来源"}</button></div>
     {error && <Notice error>{error}</Notice>}
     {source && <><p className="evaluation-source-confirm"><strong>{source.task.task.title}</strong> · 当前进行中修订 <code>{source.sourceTaskRevisionId}</code> · 固定依据 {source.sourceSignature.basis.length} 项</p>
