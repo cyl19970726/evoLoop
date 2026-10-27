@@ -25,7 +25,7 @@ function snapshot(key: string, disabledReason: string) {
   const target = external ? { kind: "external", linkId: id } : { kind: "owned", sessionId: id };
   const send = key === keys.legacy ? { available: false, reason: "当前身份只有读取权限。", mode: "unavailable" }
     : key === keys.revoked ? { available: false, reason: "外部连接已撤销。", mode: "unavailable" }
-    : { available: true, reason: external ? "外部消息仅保存" : "当前可保存待处理消息", mode: external ? "manual-handoff" : "owned-read-only" };
+    : { available: true, reason: external ? "外部消息仅保存" : "当前可保存待处理消息", mode: external ? "manual-handoff" : "owned-conversation" };
   const ordinaryExecution = key === keys.disabled ? { state: "disabled", reasonCode: "SESSION_MESSAGES_DISABLED",
     reason: disabledReason, observedAt: stamp }
     : key === keys.manual ? { state: "manual", reasonCode: "EXTERNAL_HANDOFF", reason: "需人工转交原会话。", observedAt: stamp }

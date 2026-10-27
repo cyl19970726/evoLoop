@@ -51,8 +51,7 @@ test("definition form freezes the server signature and source revision with dire
   const sourceSignature = { title: "共同任务", basis: [{ documentId: id, revisionId: other, contentHash: hash }], external: [] } as never;
   const values = { ownerTaskId: id, question: "知识是否有帮助", commonInput: "同一指令", criteria: "同一标准", limits: "工具隔离未验证",
     protocol: `document | ${id} | ${other} | ${hash}`, materials: `git | repo | commit | ${hash}`,
-    wiki: `wiki | ${other} | fixed | ${hash}`, model: "gpt-6-sol", cwd: "/tmp/case", authorizationScope: "case",
-    sandbox: "read-only", approvalPolicy: "on-request" };
+    wiki: `wiki | ${other} | fixed | ${hash}`, model: "gpt-6-sol", cwd: "/tmp/case", authorizationScope: "case" };
   const ids = [id, other, "33333333-3333-4333-8333-333333333333"];
   const result = definitionFromForm(values, { taskId: other, sourceTaskRevisionId: id, sourceSignature }, undefined, () => ids.shift()!);
   assert.equal(result.case.sourceTaskRevisionId, id);
@@ -60,6 +59,9 @@ test("definition form freezes the server signature and source revision with dire
   assert.equal(result.conditions[0].wikiRefs, null);
   assert.equal(result.conditions[1].wikiRefs?.[0]?.kind, "wiki");
   assert.deepEqual(result.conditions[0].environment, result.conditions[1].environment);
+  assert.deepEqual(result.conditions[0].environment, { cwd: "/tmp/case", authorizationScope: "case",
+    sandbox: "danger-full-access", approvalPolicy: "never" });
+  assert.throws(() => definitionFromForm({ ...values, sandbox: "read-only" }, { taskId: other, sourceTaskRevisionId: id, sourceSignature }), /完整执行权限/);
   assert.throws(() => definitionFromForm({ ...values, materials: `wiki | x | y | ${hash}` }, { taskId: other, sourceTaskRevisionId: id, sourceSignature }));
 });
 

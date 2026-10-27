@@ -4,6 +4,7 @@ import { api, errorText, safeArtifactHref } from "../api";
 import { date } from "../ui/shared";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "../workflow/ActionForm";
 import { runtimeClient, type NativeResult } from "../runtime/client";
+import { activeFullExecution } from "../runtime/fullExecution";
 import { DefinitionForm } from "./DefinitionForm";
 import { assessmentLabels, attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, fixedRefHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, verifiedFixedDocumentTitle, type NextActionRef } from "./presentation";
 import "./evaluation.css";
@@ -118,7 +119,7 @@ function EvaluationDetail({ context, read, selectedRevision, onChanged }: { cont
     {sideError && <Notice error>任务或运行旁证读取失败：{sideError}。既有评价事实仍可读；运行状态不能据此猜测。</Notice>}
     <section className="evaluation-conditions">{definition.conditions.map(condition => <section className="panel evaluation-condition" id={`evaluation-condition-${condition.id}`} key={condition.id}>
       <div className="panel-head"><h2>{condition.kind === "direct" ? "直接材料" : "加入固定 Wiki"}</h2><span>{attemptsForCondition(revision, attempts, condition.id).length} 次尝试</span></div>
-      <p>模型 {condition.model} · {condition.environment.sandbox} · {condition.environment.approvalPolicy}</p><p className="evaluation-env">{condition.environment.cwd} · {condition.environment.authorizationScope}</p>
+      <p>冻结执行配置：模型 {condition.model} · {condition.environment.sandbox} · {condition.environment.approvalPolicy}</p><p className="evaluation-env">{condition.environment.cwd} · {condition.environment.authorizationScope}</p>
       {condition.kind === "direct" ? <p>Wiki：明确不适用；不从共同任务中删除必需来源。</p> : <div className="evaluation-fixed"><strong>本条件新增的 Wiki 固定来源</strong><small>同窗口阅读；知识页可返回本次固定评价定义。</small>{condition.wikiRefs?.map((ref, index) => <FixedRef key={`${ref.id}:${index}`} value={ref} projectId={context.projectId} />)}</div>}
       {attemptsForCondition(revision, attempts, condition.id).map(attempt => <AttemptCard key={attempt.id} context={context} revision={revision} attempt={attempt} run={runs.find(item => item.id === attempt.runId)} task={task} assessments={assessments.filter(item => item.attemptId === attempt.id)} onChanged={onChanged} />)}
       {!attemptsForCondition(revision, attempts, condition.id).length && <p className="empty">尚无真实尝试；条件定义本身不是运行结果。</p>}
@@ -137,15 +138,17 @@ function EvaluationDetail({ context, read, selectedRevision, onChanged }: { cont
 
 function RunForm({ context, revision, conditionId, task, sessions, runs, attempts }: { context: MutationContext; revision: EvaluationRevision; conditionId: string; task: TaskDetail; sessions: RuntimeSessionRecord[]; runs: RuntimeRunRecord[]; attempts: EvaluationAttempt[] }) {
   const condition = revision.definition.conditions.find(item => item.id === conditionId)!;
-  const fresh = sessions.filter(session => session.state === "ready" && session.roleId === task.task.owner && session.model === condition.model
+  const fullExecution = condition.environment.sandbox === "danger-full-access" && condition.environment.approvalPolicy === "never";
+  const fresh = fullExecution ? sessions.filter(session => activeFullExecution(session) && session.roleId === task.task.owner && session.model === condition.model
     && session.cwd === condition.environment.cwd && session.authorizationScope === condition.environment.authorizationScope
     && session.sandbox === condition.environment.sandbox && session.approvalPolicy === condition.environment.approvalPolicy
-    && !runs.some(run => run.sessionId === session.id));
+    && !runs.some(run => run.sessionId === session.id)) : [];
   const active = runs.some(run => run.taskId === task.task.id && ["requested", "dispatching", "running", "unknown"].includes(run.state));
   const nextOrdinal = attemptsForCondition(revision, attempts, conditionId).length + 1;
   return <div className="evaluation-run-form"><h3>第 {nextOrdinal} 次尝试 / 重试</h3>
     {active && <Notice>共同任务已有运行中或未知的尝试。先核对同一 Run，不能重发。</Notice>}
-    {!fresh.length && <p className="muted">没有符合冻结模型、授权与环境的新自有会话。先在<a href={`#/p/${context.projectId}/runtime`}>分工与会话</a>创建；旧会话不可复用。</p>}
+    {!fullExecution && <Notice>此历史定义保留旧执行权限，只供回读；新尝试请先另存完整权限的定义修订。</Notice>}
+    {fullExecution && !fresh.length && <p className="muted">没有符合冻结模型、授权与已激活执行配置的新自有会话。先在<a href={`#/p/${context.projectId}/runtime?view=execution`}>分工与会话</a>创建并核对激活；旧会话不可复用。</p>}
     {!active && fresh.length > 0 && <ActionForm key={`${revision.id}:${conditionId}:${task.task.version}`} context={{ ...context, draftScope: `evaluation-run:${revision.id}:${conditionId}`, draftBaseline: `${revision.id}:${task.task.currentRevisionId}` }} review title={`派发第 ${nextOrdinal} 次真实运行`} fields={[
       { name: "sessionId", label: "全新自有会话", kind: "select", options: fresh.map(session => option(session.id, `${session.roleId} · ${short(session.id)} · ${session.model}`)) },
     ]} build={values => ({ type: "runtime.run.reserve", runId: crypto.randomUUID(), taskId: task.task.id,
