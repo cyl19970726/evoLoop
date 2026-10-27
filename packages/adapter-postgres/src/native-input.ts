@@ -31,7 +31,9 @@ export class PgNativeInputs implements NativeInputTransaction {
   }
   async unlinked(projectId:string,sessionId:string,limit:number):Promise<NativeInputRecord[]>{
     this.assert(projectId);const r=await this.client.query(`SELECT * FROM session_native_input_request WHERE project_id=$1 AND session_id=$2
-      AND source IS NULL ORDER BY created_at,input_request_id LIMIT $3`,[projectId,sessionId,limit]);return r.rows.map(record);
+      AND source IS NULL AND turn_id IS NOT NULL
+      ORDER BY CASE WHEN state IN ('pending','response_saved') THEN 0 ELSE 1 END,created_at DESC,input_request_id DESC LIMIT $3`,
+      [projectId,sessionId,limit]);return r.rows.map(record);
   }
   async findSource(projectId:string,sessionId:string,turnId:string):Promise<NativeInputSource|null>{
     this.assert(projectId);
