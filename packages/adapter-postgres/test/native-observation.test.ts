@@ -6,8 +6,8 @@ import { migrate, PostgresUnitOfWork } from '../src/index.ts';
 import { NativeObservationService, reduceNativeObservation } from '@evoloop/core/native-observation';
 
 const url=process.env.TEST_DATABASE_URL;
-if(!url||decodeURIComponent(new URL(url).pathname.slice(1))!=='evoloop_native_observation_test')
-  throw new Error('native observation test requires evoloop_native_observation_test');
+if(!url||!/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
+  throw new Error('native observation test requires a dedicated evoloop_*_test database');
 const schema=`el_native_ob_${randomUUID().replaceAll('-','').slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const uow=new PostgresUnitOfWork(pool);
@@ -26,9 +26,17 @@ after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});a
   try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
 
 test('one row, exact source binds after ACK, metadata cursor invalidates without native payload',async()=>{
+  const key=`owned:${sessionId}`, scope=JSON.stringify({actorId:'reader',permissions:['read']});
+  const baseline=await uow.read(projectId,r=>r.sessionObservation!(scope).snapshot(key));
+  assert.ok(baseline);
+  const historyBefore=await uow.read(projectId,r=>r.sessionObservation!(scope).history(key,{limit:50}));
   let row=reduceNativeObservation(null,event('turn/started',{threadId:'native-thread',turn:{id:'turn-1',status:'inProgress',items:[]}}))!;
   row=reduceNativeObservation(row,event('thread/tokenUsage/updated',{threadId:'native-thread',turnId:'turn-1',tokenUsage:{total:{inputTokens:100,cachedInputTokens:80,outputTokens:30,reasoningOutputTokens:10,totalTokens:130},last:{inputTokens:5,cachedInputTokens:0,outputTokens:2,reasoningOutputTokens:1,totalTokens:7},modelContextWindow:200000}}))!;
   const first=await service.apply(row);assert.equal(first.currentTurn?.source,null);assert.equal(first.version,1);
+  const changes=await uow.read(projectId,r=>r.sessionObservation!(scope).changes({cursor:baseline!.observationCursor,key,limit:10}));
+  assert.ok(changes.items.some(change=>change.source.kind==='session' && change.source.id===sessionId && change.sessionKeys.includes(key)));
+  const historyAfter=await uow.read(projectId,r=>r.sessionObservation!(scope).history(key,{limit:50}));
+  assert.deepEqual(historyAfter?.items.map(item=>item.id),historyBefore?.items.map(item=>item.id));
   const journalOne=(await pool.query('SELECT max(sequence)::text AS head FROM session_observation_change WHERE project_id=$1',[projectId])).rows[0].head;
   const messageId=randomUUID(),processingId=randomUUID();
   await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
