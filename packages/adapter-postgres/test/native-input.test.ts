@@ -76,7 +76,7 @@ test('typed native IDs and reconnect invalidation remain isolated',async()=>{
 });
 
 test('unsupported null Turn, other Turn, and overbudget requests never infer a source',async()=>{
-  const unsupported:NativeInputCapture={...capture(3,'unused'),turnId:null,questions:[],
+  const unsupported:NativeInputCapture={...capture(3,'unused'),turnId:null,itemId:null,questions:[],
     method:'mcpServer/elicitation/request',supported:false,unavailableReason:'unsupported'};
   const saved=await service.capture(unsupported);
   assert.equal(saved.state,'unavailable');assert.equal(saved.source,null);

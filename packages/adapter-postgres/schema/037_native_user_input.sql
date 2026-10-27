@@ -6,7 +6,7 @@ CREATE TABLE session_native_input_request (
   native_request_id jsonb NOT NULL CHECK(jsonb_typeof(native_request_id) IN ('string','number')),
   thread_id text NOT NULL CHECK(length(thread_id) BETWEEN 1 AND 1024),
   turn_id text CHECK(turn_id IS NULL OR length(turn_id) BETWEEN 1 AND 1024),
-  item_id text NOT NULL CHECK(length(item_id) BETWEEN 1 AND 1024),
+  item_id text CHECK(item_id IS NULL OR length(item_id) BETWEEN 1 AND 1024),
   method text NOT NULL CHECK(method IN ('item/tool/requestUserInput','mcpServer/elicitation/request')),
   questions jsonb NOT NULL CHECK(jsonb_typeof(questions)='array' AND jsonb_array_length(questions) BETWEEN 0 AND 3 AND pg_column_size(questions)<=32768),
   is_blocking boolean NOT NULL,
@@ -25,8 +25,7 @@ CREATE TABLE session_native_input_request (
   FOREIGN KEY(project_id,session_id) REFERENCES runtime_session(project_id,session_id),
   CHECK((state='response_saved')=(response IS NOT NULL) OR state IN ('resolved','unavailable')),
   CHECK(state<>'pending' OR supported),
-  CHECK(NOT supported OR (turn_id IS NOT NULL AND jsonb_array_length(questions)>=1)),
-  CHECK(method<>'item/tool/requestUserInput' OR turn_id IS NOT NULL)
+  CHECK(NOT supported OR (turn_id IS NOT NULL AND item_id IS NOT NULL AND jsonb_array_length(questions)>=1))
 );
 CREATE INDEX session_native_input_session ON session_native_input_request(project_id,session_id,created_at DESC,input_request_id DESC);
 CREATE INDEX session_native_input_pending ON session_native_input_request(project_id,created_at,input_request_id)

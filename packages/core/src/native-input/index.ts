@@ -11,8 +11,9 @@ const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canon
 
 function validateCapture(c:NativeInputCapture):void {
   if(!c.id||!c.sessionId||!c.connectionId||!validText(c.threadId,1024)||
-    (c.turnId!==null&&!validText(c.turnId,1024))||(c.supported||c.method==='item/tool/requestUserInput')&&c.turnId===null||
-    !validText(c.itemId,1024)||!(typeof c.nativeRequestId==='number' ? Number.isSafeInteger(c.nativeRequestId) : validText(c.nativeRequestId,1024))||
+    (c.turnId!==null&&!validText(c.turnId,1024))||(c.itemId!==null&&!validText(c.itemId,1024))||
+    (c.supported&&(c.turnId===null||c.itemId===null))||
+    !(typeof c.nativeRequestId==='number' ? Number.isSafeInteger(c.nativeRequestId) : validText(c.nativeRequestId,1024))||
     (c.supported&&c.questions.length<1)||c.questions.length>3||c.unavailableReason?.length && c.unavailableReason.length>4000)
     throw new DomainError('INPUT_INVALID','Native input identity or size is invalid');
   const seen=new Set<string>();

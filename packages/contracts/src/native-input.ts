@@ -16,7 +16,7 @@ export interface NativeInputCapture {
   nativeRequestId: string | number;
   threadId: string;
   turnId: string | null;
-  itemId: string;
+  itemId: string | null;
   method: "item/tool/requestUserInput" | "mcpServer/elicitation/request";
   questions: NativeInputQuestion[];
   isBlocking: boolean;
