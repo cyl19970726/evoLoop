@@ -16,6 +16,7 @@ import { sessionLifecycleLabel, sessionStatusLabel } from "./sessionStatusPresen
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { nativeInputPresentation } from "./nativeInputPresentation";
+import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results" | "responsibilities" | "resources";
@@ -187,6 +188,10 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const native = session.kind === "owned" && session.target.kind === "owned"
     ? nativeInputPresentation(current.nativeInputRequests, session.target.sessionId)
     : { questions: [], error: null };
+  const observation = session.kind === "owned" && session.target.kind === "owned"
+    ? nativeObservationPresentation((current as SessionSnapshot & { nativeObservation?: unknown }).nativeObservation,
+      context.projectId, session.target.sessionId)
+    : { progress: null, error: null };
   const nativeAvailable = session.kind === "owned" && Object.hasOwn(current, "nativeInputRequests");
   const discussionQuestionCount = current.questions.filter(question => !question.answered).length;
   const nativeQuestionCount = native.questions.filter(question => question.state === "pending").length;
@@ -225,7 +230,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}；来源最近观察 {date(current.metadata.sourceObservedAt ?? undefined)}。{current.metadata.partial || historyPartial ? "来源仅展示已读范围。" : ""}</p>
     {limitation.length > 0 && <details className="session-workspace-limitations"><summary>来源限制与未确认信息</summary><ul>{limitation.map(item => <li key={item}>{item}</li>)}</ul></details>}
     <nav className="session-workspace-tabs" aria-label="Session 工作区栏目">{(Object.keys(tabLabels) as Tab[]).map(key => <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.location.hash = `${href(context.projectId, "runtime")}?session=${encodeURIComponent(sessionKey)}&tab=${key}`; }}>{tabLabels[key]}{key === "activity" && ` · ${activity.length}`}</button>)}</nav>
-    {tab === "activity" && <>{session.kind === "owned" && session.target.kind === "owned" && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={null} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} />}<section className="session-workspace-section"><h2>活动</h2><p className="muted">这里也包含关联任务的背景记录；查看每条的来源与登记者，不能据此认定由本 Session 执行。</p>{activity.length ? <ol className="session-activity-list">{activity.map(item => {
+    {tab === "activity" && <>{session.kind === "owned" && session.target.kind === "owned" && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} />}<section className="session-workspace-section"><h2>活动</h2><p className="muted">这里也包含关联任务的背景记录；查看每条的来源与登记者，不能据此认定由本 Session 执行。</p>{activity.length ? <ol className="session-activity-list">{activity.map(item => {
       const presented = activityPresentation(item, context.projectId);
       return <li key={item.id}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div><strong>{item.summary}</strong><small>{presented.sourceLabel}</small><details className="session-activity-source"><summary>来源标识</summary><small>{item.source.kind} · <code>{item.source.id}</code>{item.source.revision && <> · 修订 <code>{item.source.revision}</code></>}</small></details></div><span className="session-activity-links">{presented.discussionHref && <a href={presented.discussionHref}>原讨论</a>}{item.taskId && <a href={href(context.projectId, "task", item.taskId)}>关联任务</a>}</span></li>;
     })}</ol> : <p className="empty">当前范围尚无活动记录。</p>}{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</section>{active && <SessionMessages key={current.session.key} context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} />}</>}
