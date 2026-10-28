@@ -119,7 +119,7 @@ export interface LeaderWorkTask {
   dependencies: LeaderWorkDependency[];
   review: {
     reviewId: string; decision: "acknowledged" | "deferred";
-    actorId: string; reason: string; operationId: string; at: string;
+    actorId: string; reason: string; operationId: string; reviewedChangeSequence: number; at: string;
   } | null;
   dates: {
     createdAt: string;

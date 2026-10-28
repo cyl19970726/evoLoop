@@ -5,12 +5,31 @@ export interface LeaderDocumentLoad {
   complete: boolean;
 }
 
+export function appendLeaderWorkPage<T extends { taskId: string }>(
+  current: LeaderWorkPage<T>,
+  next: LeaderWorkPage<T>,
+): LeaderWorkPage<T> {
+  if (next.changeSequence !== current.changeSequence)
+    throw new Error("Leader 对账快照已变化，请从第一页重新读取");
+  const seen = new Set(current.items.map(item => item.taskId));
+  return { ...next, items: [...current.items, ...next.items.filter(item => !seen.has(item.taskId))] };
+}
+
+export function visibleLeaderDocuments<T extends {
+  id: string; title: string; kind: string | null; status: "draft" | "published" | "archived";
+}>(items: readonly T[], status: string, kind: string, query: string): T[] {
+  const needle = query.toLowerCase();
+  return items.filter(item => (status === "all" || (status === "active" ? item.status !== "archived" : item.status === status)) &&
+    (kind === "all" || item.kind === kind) && `${item.title} ${item.id}`.toLowerCase().includes(needle));
+}
+
 /** Continue the lifecycle index until every currently rendered Document is covered. */
 export async function loadLeaderDocumentsForIds(
   read: (cursor?: string) => Promise<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>,
   wantedIds: readonly string[],
 ): Promise<LeaderDocumentLoad> {
   const wanted = new Set(wantedIds), found = new Map<string, LeaderWorkDocument>(), seen = new Set<string>();
+  if (!wanted.size) return { items: found, complete: true };
   let cursor: string | undefined;
   while (true) {
     const result = await read(cursor);

@@ -190,11 +190,78 @@ test("planning writes are authorized, CAS guarded, cyclic-safe and idempotent", 
   assert.deepEqual(await writer.setTaskReview(who, fixture.project.id, review), reviewResult);
   const reviewed = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
   assert.equal(reviewed.items.find(item => item.taskId === fixture.dependent.head.id)?.review?.decision, "deferred");
+  assert.ok(reviewed.items.find(item => item.taskId === fixture.dependent.head.id)!.review!.reviewedChangeSequence > 0);
   assert.equal(reviewed.counts.review_deferred, 1);
   await assert.rejects(pool.query("UPDATE leader_work_review SET reason='changed' WHERE project_id=$1 AND task_id=$2",
     [fixture.project.id, fixture.dependent.head.id]), /immutable/);
+  const replanned = await writer.setTaskPlan(who, fixture.project.id, {
+    ...plan, operationId: randomUUID(), expectedPlanVersion: 2, priority: 4,
+    reason: "A later plan fact requires a fresh review",
+  });
+  assert.equal(replanned.status, "applied");
+  const staleReview = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  assert.equal(staleReview.items.find(item => item.taskId === fixture.dependent.head.id)?.review, null,
+    "a later plan change cannot be swallowed by an earlier review");
+  assert.equal(staleReview.counts.review_deferred, 0);
+  assert.equal(staleReview.counts.review_acknowledged, 0);
+  const refreshedReview = await writer.setTaskReview(who, fixture.project.id, {
+    ...review, operationId: randomUUID(), decision: "acknowledged",
+    reason: "Reviewed the current plan and dependency facts",
+  });
+  assert.equal(refreshedReview.status, "applied");
+  const currentReview = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  assert.equal(currentReview.items.find(item => item.taskId === fixture.dependent.head.id)?.review?.decision, "acknowledged");
+  assert.equal(currentReview.counts.review_acknowledged, 1);
   const reviewChanges = await readLeaderWorkChanges(pool, fixture.project.id, 100);
   assert.ok(reviewChanges.items.some(item => item.entityKind === "review" && item.taskId === fixture.dependent.head.id));
+});
+
+test("Task.start and Leader plan/review use one project-before-row lock order", async () => {
+  const fixture = await seedProject();
+  const lockOrderPool = new pg.Pool({ connectionString,
+    options: `-c search_path=${schema} -c lock_timeout=3000 -c statement_timeout=10000` });
+  const lockOrderUow = new PostgresUnitOfWork(lockOrderPool);
+  const workflow = new WorkflowService({ uow: lockOrderUow, clock: { now: () => now }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const writer = new PgLeaderWorkWriter(lockOrderPool);
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  try {
+    const plan = {
+      projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
+      expectedTaskVersion: 1, expectedPlanVersion: 1, plannedStartAt: null, dueAt: null,
+      priority: 1, reason: "Race a real Task start through the same project lock",
+    };
+    const start = { type: "task.start" as const, projectId: fixture.project.id, operationId: randomUUID(),
+      taskId: fixture.dependent.head.id, expectedVersion: 1, basis: [], reason: "Start concurrently with planning" };
+    const settled = await Promise.allSettled([
+      writer.setTaskPlan(who, fixture.project.id, plan),
+      workflow.execute(who, start),
+    ]);
+    assert.equal(settled.every(item => item.status === "fulfilled" ||
+      !(item.reason && typeof item.reason === "object" && "code" in item.reason) ||
+      item.reason.code !== "55P03"), true, "no project/Task lock timeout");
+    assert.ok(settled.some(item => item.status === "fulfilled" &&
+      item.value.status === "applied"), JSON.stringify(settled));
+
+    const review = { projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
+      expectedTaskVersion: 1, expectedTaskRevisionId: fixture.prerequisite.revision.id,
+      decision: "deferred" as const, reason: "Review concurrently with planning" };
+    const parallelPlan = {
+      projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
+      expectedTaskVersion: 1, expectedPlanVersion: 0, plannedStartAt: null, dueAt: null,
+      priority: 4, reason: "Race a real review through the same project lock",
+    };
+    const parallel = await Promise.allSettled([
+      writer.setTaskReview(who, fixture.project.id, review),
+      writer.setTaskPlan(who, fixture.project.id, parallelPlan),
+    ]);
+    assert.deepEqual(parallel.map(item => item.status), ["fulfilled", "fulfilled"], JSON.stringify(parallel));
+    assert.ok(parallel.every(item => item.status === "fulfilled" && item.value.status === "applied"),
+      JSON.stringify(parallel));
+  } finally {
+    await lockOrderPool.end();
+  }
 });
 
 test("a newer completed Run waits for its own Delivery instead of reviving an older failed one", () => {

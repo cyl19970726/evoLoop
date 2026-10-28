@@ -103,6 +103,7 @@ function taskFactsSql(includeClosed: boolean): string {
       review_latest.review_id,review_latest.decision AS review_decision,review_latest.actor_id AS review_actor_id,
       review_latest.reason AS review_reason,review_latest.operation_id AS review_operation_id,
       review_latest.created_at AS review_created_at,
+      review_latest.reviewed_change_sequence AS review_change_sequence,
       closure.closure_id IS NOT NULL AS has_closure,
       CASE
         WHEN t.state='cancelled' THEN 'cancelled'
@@ -164,9 +165,13 @@ function taskFactsSql(includeClosed: boolean): string {
       WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.hold_code IS NOT NULL
       ORDER BY e.position,e.entry_id LIMIT 1) queue_gate ON true
     LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
-    LEFT JOIN LATERAL (SELECT r.review_id,r.decision,r.actor_id,r.reason,r.operation_id,r.created_at
+    LEFT JOIN LATERAL (SELECT r.review_id,r.decision,r.actor_id,r.reason,r.operation_id,r.created_at,
+        r.reviewed_change_sequence
       FROM leader_work_review r WHERE r.project_id=t.project_id AND r.task_id=t.task_id
         AND r.task_version=t.version AND r.task_revision_id=t.current_revision_id
+        AND NOT EXISTS(SELECT 1 FROM leader_work_change c
+          WHERE c.project_id=r.project_id AND c.task_id=r.task_id
+            AND c.sequence>r.reviewed_change_sequence AND c.entity_kind<>'review')
       ORDER BY r.review_sequence DESC LIMIT 1) review_latest ON true
     LEFT JOIN LATERAL (
       SELECT EXISTS (
@@ -272,6 +277,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     review: row.review_id ? {
       reviewId: row.review_id, decision: row.review_decision, actorId: row.review_actor_id,
       reason: row.review_reason, operationId: row.review_operation_id, at: iso(row.review_created_at),
+      reviewedChangeSequence: int(row.review_change_sequence),
     } : null,
     dates: {
       createdAt: iso(row.created_at), businessChangedAt: iso(row.business_changed_at),
@@ -494,12 +500,12 @@ export class PgLeaderWorkWriter {
   async setTaskPlan(principal: Principal, projectId: string, input: LeaderWorkPlanCommand): Promise<CommandResult> {
     const command = leaderWorkPlanCommandSchema.parse({ ...input, projectId });
     return this.perform(projectId, principal, command, "work.plan.set", async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const task = await client.query("SELECT version FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       if (!task.rows[0]) throw new DomainError("TASK_UNAVAILABLE", "Task does not exist in this project");
       if (int(task.rows[0].version) !== command.expectedTaskVersion)
         throw new DomainError("VERSION_CONFLICT", "Task changed before the plan update", int(task.rows[0].version));
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const existing = await client.query("SELECT version FROM task_work_plan WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       const observed = existing.rows[0] ? int(existing.rows[0].version) : 0;
@@ -520,12 +526,12 @@ export class PgLeaderWorkWriter {
   async setTaskDependencies(principal: Principal, projectId: string, input: LeaderWorkDependenciesCommand): Promise<CommandResult> {
     const command = leaderWorkDependenciesCommandSchema.parse({ ...input, projectId });
     return this.perform(projectId, principal, command, "work.dependencies.set", async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const task = await client.query("SELECT version FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       if (!task.rows[0]) throw new DomainError("TASK_UNAVAILABLE", "Task does not exist in this project");
       if (int(task.rows[0].version) !== command.expectedTaskVersion)
         throw new DomainError("VERSION_CONFLICT", "Task changed before the dependency update", int(task.rows[0].version));
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const existing = await client.query("SELECT version FROM task_dependency_head WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       const observed = existing.rows[0] ? int(existing.rows[0].version) : 0;
@@ -563,6 +569,7 @@ export class PgLeaderWorkWriter {
   async setTaskReview(principal: Principal, projectId: string, input: LeaderWorkReviewCommand): Promise<CommandResult> {
     const command = leaderWorkReviewCommandSchema.parse({ ...input, projectId });
     return this.perform(projectId, principal, command, "work.review.set", async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const task = await client.query("SELECT version,current_revision_id FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       if (!task.rows[0]) throw new DomainError("TASK_UNAVAILABLE", "Task does not exist in this project");
@@ -570,11 +577,14 @@ export class PgLeaderWorkWriter {
         throw new DomainError("VERSION_CONFLICT", "Task changed before the review decision", int(task.rows[0].version));
       if (task.rows[0].current_revision_id !== command.expectedTaskRevisionId)
         throw new DomainError("VERSION_CONFLICT", "Task revision changed before the review decision");
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
+      const sequence = await client.query(`SELECT COALESCE(MAX(sequence),0)::bigint AS sequence
+        FROM leader_work_change WHERE project_id=$1 AND task_id=$2`, [projectId, command.taskId]);
       await client.query(`INSERT INTO leader_work_review(project_id,review_id,task_id,task_version,task_revision_id,
-        decision,reason,actor_id,operation_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        reviewed_change_sequence,decision,reason,actor_id,operation_id,created_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [projectId, randomUUID(), command.taskId, command.expectedTaskVersion, command.expectedTaskRevisionId,
-          command.decision, command.reason, principal.actorId, command.operationId, new Date().toISOString()]);
+          int(sequence.rows[0]?.sequence ?? 0), command.decision, command.reason, principal.actorId,
+          command.operationId, new Date().toISOString()]);
       return { status: "applied", operationId: command.operationId, entityId: command.taskId,
         version: command.expectedTaskVersion };
     });

@@ -63,6 +63,7 @@ CREATE TABLE leader_work_review (
   task_id uuid NOT NULL,
   task_version integer NOT NULL CHECK(task_version>0),
   task_revision_id uuid NOT NULL,
+  reviewed_change_sequence bigint NOT NULL CHECK(reviewed_change_sequence>=0),
   decision text NOT NULL CHECK(decision IN ('acknowledged','deferred')),
   reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 1 AND 4000),
   actor_id text NOT NULL,
