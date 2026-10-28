@@ -121,7 +121,7 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 `--documents` 返回 Process Document 的当前、已发布和归档状态及各自时间，并列出来源 Task 正文、关联或固定依据关系。`draft`、`published`、`archived` 描述生命周期；已发布修订仍须由 Task basis/retention 判断当前适用性。缺少创建或发布时间的旧数据保持未知。
 
-计划、依赖与 Leader 处理决定分别使用 `request work.plan.set`、`request work.dependencies.set` 和 `request work.review.set`，要求项目写与 review 权限、当前 Task version；前两项还固定各自元数据 version，处理决定固定当前 TaskRevision 与当时该 Task 的相关变化序号。依赖写入拒绝不存在的 Task、自依赖和跨 Task cycle。写入保留 operation 与变化序号，同一 operation ID、actor 和正文原样重读返回原结果，改变正文则冲突。处理决定记 `acknowledged` 或 `deferred`、理由、actor 和固定位置；之后出现计划、依赖、assignment、Run、Delivery、观察、impact、queue 或 Task 修订变化时，旧决定不再算当前，但不改 Task 四态。优先级只供负责人排序参考，不产生外部 outbox 投影或直接触发 execution。共享 Task 创建/详情入口尚未开放该元数据编辑时，UI 只显示已存在计划、依赖和当前 Leader 决定，不伪造表单或默认值。
+计划、依赖与 Leader 处理决定分别使用 `request work.plan.set`、`request work.dependencies.set` 和 `request work.review.set`，要求项目写与 review 权限、当前 Task version；前两项还固定各自元数据 version，处理决定固定当前 TaskRevision，并必须携带刚读到的该 Task `workChangeSequence` 作为 `expectedWorkChangeSequence`。服务在同一项目锁内重新读取同 Task 位置，不一致返回 `WORK_INDEX_CHANGED`，不能把读取后新出现的计划或分派默默纳入确认。依赖写入拒绝不存在的 Task、自依赖和跨 Task cycle。写入保留 operation 与变化序号，同一 operation ID、actor 和正文原样重读返回原结果，改变正文则冲突。处理决定记 `acknowledged` 或 `deferred`、理由、actor 和固定位置；之后出现计划、依赖、assignment、Run、Delivery、观察、impact、queue 或 Task 修订变化时，旧决定不再算当前，但不改 Task 四态。优先级只供负责人排序参考，不产生外部 outbox 投影或直接触发 execution。共享 Task 创建/详情入口尚未开放该元数据编辑时，UI 只显示已存在计划、依赖和当前 Leader 决定，不伪造表单或默认值。
 
 先从 snapshot 区分 `session.capabilities.send` 与 `ordinaryExecution`：前者表示身份可保存对话；后者是运行观察，不是消息专用工具或只读资格门。新 Session 固定 full/never/联网。只有原生 `thread/start` 或 `thread/resume` 明确确认 full/never 权限才标 active；`thread/read` 没有权限字段时仍是 `unverified`／`unknown`，不能把历史可读当作 active，也不能判成权限回执丢失。snapshot 查询本身不启动原生进程、不派发 Task 或消息，实际处理仍以消息详情的 native Turn 和结果为准。
 

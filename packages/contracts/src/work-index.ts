@@ -35,6 +35,7 @@ export const leaderWorkReviewCommandSchema = z.strictObject({
   taskId: id,
   expectedTaskVersion: z.number().int().positive(),
   expectedTaskRevisionId: id,
+  expectedWorkChangeSequence: z.number().int().nonnegative(),
   decision: z.enum(["acknowledged", "deferred"]),
   reason: note,
 });
@@ -95,6 +96,7 @@ export interface LeaderWorkTask {
   taskId: string;
   version: number;
   currentRevisionId: string;
+  workChangeSequence: number;
   title: string;
   taskKind: TaskKind | null;
   taskState: TaskState;

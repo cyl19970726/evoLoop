@@ -98,6 +98,7 @@ function taskFactsSql(includeClosed: boolean): string {
       observation.result AS observation_result,observation.observer AS observation_actor_id,
       observation.observer_kind AS observation_kind,observation.created_at AS observation_created_at,
       pending_impact.pending_impact_count,queue_gate.hold_code AS queue_hold,
+      work_change_latest.work_change_sequence,
       plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,plan.actor_id AS plan_actor_id,
       plan.updated_at AS plan_updated_at,
       review_latest.review_id,review_latest.decision AS review_decision,review_latest.actor_id AS review_actor_id,
@@ -164,6 +165,8 @@ function taskFactsSql(includeClosed: boolean): string {
     LEFT JOIN LATERAL (SELECT e.hold_code FROM resident_queue_entry e
       WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.hold_code IS NOT NULL
       ORDER BY e.position,e.entry_id LIMIT 1) queue_gate ON true
+    LEFT JOIN LATERAL (SELECT COALESCE(MAX(c.sequence),0)::bigint AS work_change_sequence
+      FROM leader_work_change c WHERE c.project_id=t.project_id AND c.task_id=t.task_id) work_change_latest ON true
     LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
     LEFT JOIN LATERAL (SELECT r.review_id,r.decision,r.actor_id,r.reason,r.operation_id,r.created_at,
         r.reviewed_change_sequence
@@ -255,7 +258,8 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
   } : null;
   return {
     kind: "task", taskId: row.task_id, version: int(row.version),
-    currentRevisionId: row.current_revision_id, title: row.title, taskKind: row.kind, taskState: row.state,
+    currentRevisionId: row.current_revision_id, workChangeSequence: int(row.work_change_sequence ?? 0),
+    title: row.title, taskKind: row.kind, taskState: row.state,
     phase, nextAction: taskAction(phase), responsible: taskResponsibility(row, phase), assignment,
     latestRun: row.latest_run_id ? { runId: row.latest_run_id, state: row.latest_run_state } : null,
     delivery: row.delivery_id ? {
@@ -283,7 +287,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
       createdAt: iso(row.created_at), businessChangedAt: iso(row.business_changed_at),
       startedAt: optionalIso(row.started_at), completedAt: optionalIso(row.completed_at), observedAt,
     },
-    actionKey: `task:${row.task_id}:v${int(row.version)}:${phase}`,
+    actionKey: `task:${row.task_id}:v${int(row.version)}:${phase}:${int(row.work_change_sequence ?? 0)}`,
   };
 }
 
@@ -579,11 +583,14 @@ export class PgLeaderWorkWriter {
         throw new DomainError("VERSION_CONFLICT", "Task revision changed before the review decision");
       const sequence = await client.query(`SELECT COALESCE(MAX(sequence),0)::bigint AS sequence
         FROM leader_work_change WHERE project_id=$1 AND task_id=$2`, [projectId, command.taskId]);
+      if (int(sequence.rows[0]?.sequence ?? 0) !== command.expectedWorkChangeSequence)
+        throw new DomainError("WORK_INDEX_CHANGED",
+          "Task-related work changed after the Leader read; reload before recording a review");
       await client.query(`INSERT INTO leader_work_review(project_id,review_id,task_id,task_version,task_revision_id,
         reviewed_change_sequence,decision,reason,actor_id,operation_id,created_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [projectId, randomUUID(), command.taskId, command.expectedTaskVersion, command.expectedTaskRevisionId,
-          int(sequence.rows[0]?.sequence ?? 0), command.decision, command.reason, principal.actorId,
+          command.expectedWorkChangeSequence, command.decision, command.reason, principal.actorId,
           command.operationId, new Date().toISOString()]);
       return { status: "applied", operationId: command.operationId, entityId: command.taskId,
         version: command.expectedTaskVersion };

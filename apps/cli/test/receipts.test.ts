@@ -147,7 +147,7 @@ test("Leader review decisions reconcile through the same exact-route receipt pat
   const store = await temporaryStore(t), operationId = randomUUID(), actor = verifiedActor("original-agent");
   const intent: Intent = { id: randomUUID(), projectId, operationId, kind: "work.review.set", targetId: entityId,
     path: `/api/projects/${projectId}/work-management/tasks/${entityId}/review`,
-    body: { operationId, expectedTaskVersion: 2, expectedTaskRevisionId: randomUUID(),
+    body: { operationId, expectedTaskVersion: 2, expectedTaskRevisionId: randomUUID(), expectedWorkChangeSequence: 12,
       decision: "deferred", reason: "Revisit after the dependency settles" },
     recovery: { kind: "core", path: `/api/projects/${projectId}/operations/${operationId}` }, confirmation: "command" };
   await store.prepare(apiUrl, token, intent, actor);

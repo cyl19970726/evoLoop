@@ -39,15 +39,16 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
       else if (url.pathname === `${p}/impacts`) value=[];
       else if (url.pathname === `${p}/orchestration/work-status`) value={items:[]};
       else if (url.pathname === `${p}/work-management/index`) value={items:[{kind:"task",taskId,version:1,
-        currentRevisionId:taskId,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",
+        currentRevisionId:taskId,workChangeSequence:4,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",
         nextAction:"核对当前版本后按既有 assignment/queue 规则安排执行",
         responsible:{kind:"role",id:roleA,label:`负责 Role ${roleA}`},assignment:null,latestRun:null,delivery:null,
         pendingImpactCount:0,queueHold:null,goal:null,stage:null,
         plan:{plannedStartAt:null,dueAt:null,priority:null,version:1,actorId:roleA,updatedAt:stamp},dependencies:[],
         review:{reviewId:"30000030-0000-4000-8000-000000000030",decision:"deferred",actorId:"acceptance-owner",
-          reason:"Wait for the prerequisite",operationId:"30000031-0000-4000-8000-000000000031",at:stamp},
+          reason:"Wait for the prerequisite",operationId:"30000031-0000-4000-8000-000000000031",
+          reviewedChangeSequence:3,at:stamp},
         dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},
-        actionKey:`task:${taskId}:v1:ready`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
+        actionKey:`task:${taskId}:v1:ready:4`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
       else if (url.pathname.startsWith(`${p}/roles/`)) {
         const id=url.pathname.slice(`${p}/roles/`.length);reads.push(id);
         if (id===roleA && holdA) {holdA=false;held++;await new Promise<void>(resolve=>{releaseA=resolve;});}

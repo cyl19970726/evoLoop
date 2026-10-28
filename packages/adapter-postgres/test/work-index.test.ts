@@ -182,8 +182,11 @@ test("planning writes are authorized, CAS guarded, cyclic-safe and idempotent", 
     expectedTaskVersion: 1, expectedDependencyVersion: 0, dependsOnTaskIds: [fixture.dependent.head.id],
   }), (error: { code?: string }) => error.code === "DEPENDENCY_CYCLE");
 
+  const beforeReview = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const reviewPosition = beforeReview.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence;
   const review = { projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
     expectedTaskVersion: 1, expectedTaskRevisionId: fixture.dependent.revision.id,
+    expectedWorkChangeSequence: reviewPosition,
     decision: "deferred" as const, reason: "Wait for the prerequisite to be accepted" };
   const reviewResult = await writer.setTaskReview(who, fixture.project.id, review);
   assert.equal(reviewResult.status, "applied");
@@ -205,7 +208,9 @@ test("planning writes are authorized, CAS guarded, cyclic-safe and idempotent", 
   assert.equal(staleReview.counts.review_deferred, 0);
   assert.equal(staleReview.counts.review_acknowledged, 0);
   const refreshedReview = await writer.setTaskReview(who, fixture.project.id, {
-    ...review, operationId: randomUUID(), decision: "acknowledged",
+    ...review, operationId: randomUUID(), expectedWorkChangeSequence:
+      staleReview.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence,
+    decision: "acknowledged",
     reason: "Reviewed the current plan and dependency facts",
   });
   assert.equal(refreshedReview.status, "applied");
@@ -244,8 +249,10 @@ test("Task.start and Leader plan/review use one project-before-row lock order", 
     assert.ok(settled.some(item => item.status === "fulfilled" &&
       item.value.status === "applied"), JSON.stringify(settled));
 
+    const observed = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
     const review = { projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
       expectedTaskVersion: 1, expectedTaskRevisionId: fixture.prerequisite.revision.id,
+      expectedWorkChangeSequence: observed.items.find(item => item.taskId === fixture.prerequisite.head.id)!.workChangeSequence,
       decision: "deferred" as const, reason: "Review concurrently with planning" };
     const parallelPlan = {
       projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
@@ -256,12 +263,102 @@ test("Task.start and Leader plan/review use one project-before-row lock order", 
       writer.setTaskReview(who, fixture.project.id, review),
       writer.setTaskPlan(who, fixture.project.id, parallelPlan),
     ]);
-    assert.deepEqual(parallel.map(item => item.status), ["fulfilled", "fulfilled"], JSON.stringify(parallel));
-    assert.ok(parallel.every(item => item.status === "fulfilled" && item.value.status === "applied"),
-      JSON.stringify(parallel));
+    assert.equal(parallel.every(item => item.status === "fulfilled" ||
+      !(item.reason && typeof item.reason === "object" && "code" in item.reason) ||
+      !["40P01", "55P03"].includes(item.reason.code)), true, JSON.stringify(parallel));
+    assert.equal(parallel[1]!.status, "fulfilled", JSON.stringify(parallel));
+    assert.equal(parallel[1]!.status === "fulfilled" && parallel[1]!.value.status, "applied");
+    assert.ok(parallel[0]!.status === "fulfilled" && parallel[0]!.value.status === "applied" ||
+      parallel[0]!.status === "rejected" && parallel[0]!.reason?.code === "WORK_INDEX_CHANGED", JSON.stringify(parallel));
   } finally {
     await lockOrderPool.end();
   }
+});
+
+test("Leader review compares the exact per-Task change position read before the decision", async () => {
+  const fixture = await seedProject();
+  const writer = new PgLeaderWorkWriter(pool);
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const initial = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const dependentPosition = initial.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence;
+
+  await writer.setTaskPlan(who, fixture.project.id, {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
+    expectedTaskVersion: 1, expectedPlanVersion: 0, plannedStartAt: null, dueAt: null,
+    priority: 2, reason: "Another Task changed after the Leader read",
+  });
+  const isolated = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  assert.equal(isolated.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence,
+    dependentPosition, "an unrelated Task change does not invalidate this Task review");
+  const firstReview = await writer.setTaskReview(who, fixture.project.id, {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
+    expectedTaskVersion: 1, expectedTaskRevisionId: fixture.dependent.revision.id,
+    expectedWorkChangeSequence: dependentPosition, decision: "deferred",
+    reason: "Reviewed this Task position",
+  });
+  assert.equal(firstReview.status, "applied");
+
+  const observed = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const reviewedPosition = observed.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence;
+  await writer.setTaskPlan(who, fixture.project.id, {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
+    expectedTaskVersion: 1, expectedPlanVersion: 1, plannedStartAt: null, dueAt: null,
+    priority: 4, reason: "Plan changed after the Leader read",
+  });
+  const stalePlanReview = {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
+    expectedTaskVersion: 1, expectedTaskRevisionId: fixture.dependent.revision.id,
+    expectedWorkChangeSequence: reviewedPosition, decision: "acknowledged" as const,
+    reason: "This position predates the plan change",
+  };
+  await assert.rejects(writer.setTaskReview(who, fixture.project.id, stalePlanReview),
+    (error: { code?: string }) => error.code === "WORK_INDEX_CHANGED");
+  const refreshed = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const refreshedPlanPosition = refreshed.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence;
+  assert.ok(refreshedPlanPosition > reviewedPosition);
+  assert.equal((await writer.setTaskReview(who, fixture.project.id, {
+    ...stalePlanReview, operationId: randomUUID(), expectedWorkChangeSequence: refreshedPlanPosition,
+  })).status, "applied");
+
+  const preAssignment = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const assignmentPosition = preAssignment.items.find(item =>
+    item.taskId === fixture.prerequisite.head.id)!.workChangeSequence;
+  const sessionId = randomUUID();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,
+      sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,'/tmp/leader-work','project',NULL,'danger-full-access','never','ready',1,$4,$5,$6,$3,$7,$7)`,
+      [fixture.project.id, sessionId, actor, `thread-${sessionId}`, `native-${sessionId}`, randomUUID(), now]);
+    await client.query(`INSERT INTO task_session_assignment(project_id,task_id,version,task_revision_id,
+      target_kind,target_id,recipient_actor_id,state,actor_id,reason,updated_at)
+      VALUES($1,$2,1,$3,'owned',$4,NULL,'assigned',$5,'Assignment changed after the Leader read',$6)`,
+      [fixture.project.id, fixture.prerequisite.head.id, fixture.prerequisite.revision.id, sessionId, actor, now]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  const staleAssignmentReview = {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
+    expectedTaskVersion: 1, expectedTaskRevisionId: fixture.prerequisite.revision.id,
+    expectedWorkChangeSequence: assignmentPosition, decision: "deferred" as const,
+    reason: "This position predates the assignment change",
+  };
+  await assert.rejects(writer.setTaskReview(who, fixture.project.id, staleAssignmentReview),
+    (error: { code?: string }) => error.code === "WORK_INDEX_CHANGED");
+  const afterAssignment = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const assignmentRefreshedPosition = afterAssignment.items.find(item =>
+    item.taskId === fixture.prerequisite.head.id)!.workChangeSequence;
+  assert.ok(assignmentRefreshedPosition > assignmentPosition);
+  assert.equal((await writer.setTaskReview(who, fixture.project.id, {
+    ...staleAssignmentReview, operationId: randomUUID(), expectedWorkChangeSequence: assignmentRefreshedPosition,
+    decision: "acknowledged",
+  })).status, "applied");
 });
 
 test("a newer completed Run waits for its own Delivery instead of reviving an older failed one", () => {

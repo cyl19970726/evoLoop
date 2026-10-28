@@ -51,6 +51,7 @@ test("work-management routes bind route identity and expose stable read/write co
   const review = await app.inject({ method: "PUT",
     url: `/api/projects/${projectId}/work-management/tasks/${taskId}/review`,
     payload: { operationId: randomUUID(), expectedTaskVersion: 1, expectedTaskRevisionId: randomUUID(),
+      expectedWorkChangeSequence: 8,
       decision: "deferred", reason: "Wait for the prerequisite" } });
   assert.equal(review.statusCode, 200);
   assert.equal((reviews[0] as { command: { decision: string } }).command.decision, "deferred");

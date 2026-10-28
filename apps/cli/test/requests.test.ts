@@ -48,6 +48,7 @@ test("request schema exposes exact enums and nested required fields from shared 
   assert.ok(dependencies.required.includes("dependsOnTaskIds"));
   const workReview = requestSchema("work.review.set") as any;
   assert.ok(workReview.required.includes("expectedTaskRevisionId"));
+  assert.ok(workReview.required.includes("expectedWorkChangeSequence"));
   assert.deepEqual(workReview.properties.decision.enum, ["acknowledged", "deferred"]);
 });
 
@@ -86,7 +87,8 @@ test("journal-backed requests carry the exact server operation and core recovery
   assert.equal(plan.path, `/api/projects/${project}/work-management/tasks/${target}/plan`);
   assert.deepEqual(plan.recovery, { kind: "core", path: `/api/projects/${project}/operations/${operation}` });
   const preparedReview = prepareRequest("work.review.set", project, { operationId: operation, expectedTaskVersion: 2,
-    expectedTaskRevisionId: revision, decision: "deferred", reason: "Revisit after the dependency settles" }, target);
+    expectedTaskRevisionId: revision, expectedWorkChangeSequence: 12,
+    decision: "deferred", reason: "Revisit after the dependency settles" }, target);
   assert.equal(preparedReview.path, `/api/projects/${project}/work-management/tasks/${target}/review`);
   assert.throws(() => prepareRequest("knowledge.publish", project, { operationId: operation }, target, receipt), /not --receipt/);
 });
