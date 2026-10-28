@@ -11,6 +11,10 @@ Use the supplied private wrapper when the assignment provides one; otherwise use
 
 Choose the execution path from the fixed assignment and verified identity:
 
+For a prepared owned Session, the first native handoff may include `roleContext` or a Markdown section with fixed Role revision and skill commit/hash commands. Read those exact versions on first assignment, when either reference changes, or when earlier context is unavailable. Keep the Task's fixed scope separate from the Role's ongoing responsibility. `session prepare --file` is a reviewer operation to reserve or reuse an authorized Session, name it and bind a Role; it does not assign or start a Task. Use the CLI's actual help and [preparation guide](../../../docs/development/agent-cli.md#准备或复用受管-session) for input and recovery. A saved Task discussion question is traceable, but native Lead notification requires independent confirmation in the host.
+
+The fixed skill response lists its linked reference files and repo docs with read commands pinned to the same source commit and hash. Each selected source returns its own linked children. Follow these bounded commands when a linked method is needed, even if the Session workspace has an older file.
+
 - **Ordinary static Run:** read the assigned Task revision and `context`, produce the authorized artifacts and checks, and hand them to the Lead. If explicitly allowed, create a report and read back its fixed revision/hash. The Lead verifies the terminal Run and records Delivery under its own authority. Do not call `worker.submit` or `worker.decision` without a brokered worker identity.
 - **Loop/Dispatch worker:** when the input supplies the exact Loop, Dispatch and brokered worker identity, read [the managed worker guide](references/managed-workers.md). Submit a signed intent or bounded decision before the Turn ends.
 - **Existing conversation using the CLI:** act within the conversation's authorization and verified principal; CLI participation alone does not register or bind that Desktop conversation.

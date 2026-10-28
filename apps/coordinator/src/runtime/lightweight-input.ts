@@ -6,6 +6,8 @@ import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 
 export const lightweightInputProtocol = "evoloop-lightweight-v1";
 export interface CliBootstrap { command: string; actorId: string }
+export interface RoleContextReference { roleId:string; revisionId:string;
+  skills:Array<{path:string;commit:string;contentHash:string}> }
 const maxInputBytes = 256 * 1024;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -26,7 +28,8 @@ function preview(value: string, maxBytes: number) {
 
 /** This is the exact native Turn message; the Run inputHash still hashes run.input alone. */
 export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevision, basis: BasisSet,
-  documents: FixedDocumentSummary[], cliBootstrap: CliBootstrap | null = null) {
+  documents: FixedDocumentSummary[], cliBootstrap: CliBootstrap | null = null,
+  roleContext: RoleContextReference | null = null) {
   if (revision.id !== run.taskRevisionId || revision.taskId !== run.taskId ||
       basis.id !== run.basisSetId || basis.taskRevisionId !== run.taskRevisionId ||
       hash(run.input) !== run.inputHash ||
@@ -51,11 +54,14 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
       (queue.previousRun ? `来源 Run ${queue.previousRun.id}，输入 SHA-256 ${queue.previousRun.inputHash}。` : "")+
       (queue.answers.length ? `本轮有 ${queue.answers.length} 份仍有效的已答问题固定修订，请在接手结果中读取。` : "")+
       (queue.legacySource ? "本轮还须按接手结果校验读取旧协议来源指令。" : "")+"\n";
+    const roleRead=roleContext&&cliBootstrap ? `\n## 职责与适用 skill\n职责固定修订：${cliBootstrap.command} get /api/projects/${run.projectId}/roles/${roleContext.roleId}/revisions/${roleContext.revisionId}\n`+
+      roleContext.skills.map(skill=>`${cliBootstrap.command} get '/api/projects/${run.projectId}/roles/${roleContext.roleId}/skills/${skill.path.split("/")[2]}?commit=${skill.commit}&hash=${skill.contentHash}'`).join("\n")+
+      "\n首次承接、职责或 skill 变化、上下文不可用时读取这些固定版本；正常接续只需核版本引用。\n" : "";
     const input = `[evoloop-run-operation:${run.operationId}]\n# 任务：${revision.title}\n${shortPurpose}`+
       `\n## 开始\n读取本次固定目标、完整验收、变化与资料目录：\n\n`+
       `\`\`\`sh\n${cliBootstrap.command} handoff ${run.id} --project ${run.projectId} --hash ${run.inputHash}\n\`\`\`\n`+
       `先用同一入口的 session 命令核身份；正文与附件按目录中的固定修订和哈希分段读取。`+
-      change+`\n## 反馈与交付\n交给 ${queue.channel.issuerActorId}。当前 Task 通道 ${queue.channel.discussionId}；用已核身份在这里提问和交结果。`+
+      change+roleRead+`\n## 反馈与交付\n交给 ${queue.channel.issuerActorId}。当前 Task 通道 ${queue.channel.discussionId}；用已核身份在这里提问和交结果。`+
       `原生 Turn 完成不等于 Delivery、实际使用或 Task 关闭。\n`;
     const byteLength = Buffer.byteLength(input, "utf8");
     if (byteLength > maxInputBytes) throw new PreflightError("INPUT_LIMIT",
@@ -80,6 +86,9 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     runInstructionPreview: { ...preview(run.input, 4096), inputHash: run.inputHash },
     runInstructionExactInline: inlineInput,
     cliBootstrap: cliBootstrap ? { ...cliBootstrap, source: "verified-run-binding" } : null,
+    roleContext:roleContext&&cliBootstrap?{...roleContext,
+      readRole:`${cliBootstrap.command} get /api/projects/${run.projectId}/roles/${roleContext.roleId}/revisions/${roleContext.revisionId}`,
+      readSkills:roleContext.skills.map(skill=>`${cliBootstrap.command} get '/api/projects/${run.projectId}/roles/${roleContext.roleId}/skills/${skill.path.split("/")[2]}?commit=${skill.commit}&hash=${skill.contentHash}'`)}:null,
     runInstructionRead: {
       requiredBeforeAction: true, inputHash: run.inputHash, totalBytes: Buffer.byteLength(run.input, "utf8"),
       command: cliBootstrap ? `${cliBootstrap.command} run-input ${run.id} --project ${run.projectId} --hash ${run.inputHash} --out NEW_PRIVATE_FILE` : null,
@@ -90,7 +99,7 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     taskCatalogPath: `/api/projects/${run.projectId}/tasks/${run.taskId}/revisions/${run.taskRevisionId}/materials`,
   };
   const input = `[evoloop-run-operation:${run.operationId}]\n${JSON.stringify(fixed)}\n` +
-    "This is a bounded handoff, not the full Task or original materials. Before acting, use runInstructionRead.command when supplied to read and verify the complete exact Run instruction with its fixed inputHash; this includes queue answers, continuation, retry and Task-channel directions even when the preview looks complete. The exact Run instruction is also included inline when short enough; verify it against inputHash. Do not guess a CLI path or search for credentials. For catalog commands, replace their illustrative 'evoloop' prefix with cliBootstrap.command. Read the fixed Task material catalog, then page through required text and fetch selected assets separately. Verify returned revision IDs and SHA-256. Read complete Task acceptance when its excerpt is truncated. Preserve the fixed basis; a newer current revision is not a substitute. Native Turn completion is not Delivery or consumer use.";
+    "This is a bounded handoff, not the full Task or original materials. Before acting, use runInstructionRead.command when supplied to read and verify the complete exact Run instruction with its fixed inputHash; this includes queue answers, continuation, retry and Task-channel directions even when the preview looks complete. The exact Run instruction is also included inline when short enough; verify it against inputHash. If roleContext exists, read its fixed Role and skill versions on first assignment, after a revision change, or when context is unavailable. Do not guess a CLI path or search for credentials. For catalog commands, replace their illustrative 'evoloop' prefix with cliBootstrap.command. Read the fixed Task material catalog, then page through required text and fetch selected assets separately. Verify returned revision IDs and SHA-256. Read complete Task acceptance when its excerpt is truncated. Preserve the fixed basis; a newer current revision is not a substitute. Native Turn completion is not Delivery or consumer use.";
   const byteLength = Buffer.byteLength(input, "utf8");
   if (byteLength > maxInputBytes) throw new PreflightError("INPUT_LIMIT", { kind: "task", id: run.taskId, revisionId: run.taskRevisionId }, byteLength, maxInputBytes);
   return { protocol: lightweightInputProtocol, input, contentHash: hash(input), byteLength };

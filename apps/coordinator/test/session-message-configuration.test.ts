@@ -39,6 +39,24 @@ test("material CLI entry follows exact Session and recipient across Tasks, with 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("role-scoped CLI serves another authorized Session while exact bindings retain precedence", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "evoloop-role-cli-config-")), path = join(dir, "integrations.json");
+  const projectId="00000000-0000-4000-8000-000000000001", roleId="00000000-0000-4000-8000-000000000002";
+  const sessionId="00000000-0000-4000-8000-000000000003", taskId="00000000-0000-4000-8000-000000000004";
+  const role={projectId,roleId,sessionActorId:"lead",cliActorId:"recipient",command:"/private/role-cli"};
+  const exact={projectId,sessionId,sessionActorId:"lead",cliActorId:"recipient",command:"/private/session-cli"};
+  try {
+    await writeFile(path,JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[role,exact]}}));
+    const entries=(await loadIntegrations(path)).runtime!.materialCli;
+    assert.deepEqual(selectMaterialCli(entries,projectId,sessionId,"lead",taskId,roleId),exact);
+    assert.deepEqual(selectMaterialCli(entries,projectId,"00000000-0000-4000-8000-000000000005","lead",taskId,roleId),role);
+    assert.equal(selectMaterialCli(entries,projectId,sessionId,"other",taskId,roleId),null);
+    assert.deepEqual(selectMaterialCli(entries,projectId,sessionId,"lead",taskId,"00000000-0000-4000-8000-000000000006"),exact);
+    await writeFile(path,JSON.stringify({runtime:{enabled:true,grants:[],materialCli:[{...role,sessionId}]}}));
+    await assert.rejects(loadIntegrations(path),/Invalid integration configuration/);
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
 test("ordinary message grants have independent bounds, actual receiver identity without an obsolete readonly switch", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-message-config-"));
   const path = join(dir, "integrations.json");
