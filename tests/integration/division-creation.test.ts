@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import type { Principal } from "@evoloop/contracts";
 import type { DelegationTemplate } from "@evoloop/contracts/division";
 import type { OrchestrationStore } from "@evoloop/contracts/orchestration";
@@ -26,7 +27,7 @@ const url=process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop.*test/.test(new URL(url).pathname)) throw new Error("dedicated PostgreSQL test database required");
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
-const cognitionRole="cognition-role",cognition="researcher",controller="controller";
+const cognitionRole=fixtureRoleId("cognition-role"),cognition="researcher",controller="controller";
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
 const principal=(actorId:string,review=false):Principal=>({actorId,projectIds:[projectId],permissions:review?["read","write","review"]:["read","write"]});
 
@@ -56,12 +57,13 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   const issue=(service:OrchestrationService,actor:string,command:Record<string,unknown>)=>
     service.execute(principal(actor,actor===controller),{projectId,operationId:randomUUID(),...command} as never);
   await wf(controller,{type:"project.create",title:"Isolated trial creation"});
+  for (const roleId of [cognitionRole,fixtureRoleId("prior-owner")]) await seedFixtureRole(pool,projectId,roleId);
   await wf(controller,{type:"goal.create",goalId,outcome:"One trial",constraints:"Finite",consumer:"controller",authority:"reviewer",scope:"fixture",owner:controller});
   await wf(controller,{type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"Useful?",reason:"Fixture"});
   await wf(controller,{type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   await wf(controller,{type:"task.create",taskId:parentTaskId,stageId,title:"Research",content:"# Decide",acceptance:"Decision",owner:cognitionRole,consumer:controller,evidence:"Fixture",stopCondition:"One choice"});
   await wf(controller,{type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Freeze"});
-  await wf(controller,{type:"task.create",taskId:firstTaskId,stageId,title:"First work",content:"# Work",acceptance:"Result",owner:"prior-owner",consumer:controller,evidence:"Gap",stopCondition:"One trial"});
+  await wf(controller,{type:"task.create",taskId:firstTaskId,stageId,title:"First work",content:"# Work",acceptance:"Result",owner:fixtureRoleId("prior-owner"),consumer:controller,evidence:"Gap",stopCondition:"One trial"});
   const body="# Fixed diagnosis",document=await wf(controller,{type:"document.create",documentId,kind:"report",title:"Diagnosis",body});
   const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
   const template:DelegationTemplate={id:randomUUID(),revision:1,projectId,goalId,loopId,existingRoleIds:[],
@@ -116,7 +118,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
     expectedLoopVersion:(await service.getLoop(principal(controller,true),projectId,loopId))!.version,
     sourceEventId:loop.bootstrapEventId,parentDispatchId:parent.entityId,documentId,
     documentRevisionId:document.revisionId,documentContentHash:sha(body),firstTaskId,
-    expectedFirstTaskVersion:1,expectedFirstTaskOwner:"prior-owner",choice:"new-role",roleId:randomUUID(),
+    expectedFirstTaskVersion:1,expectedFirstTaskOwner:fixtureRoleId("prior-owner"),choice:"new-role",roleId:randomUUID(),
     proposedRole:proposal,templateId:template.id,templateRevision:template.revision,templateHash,reason:"Trial"};
   const lockClient=await pool.connect();
   try {
@@ -142,21 +144,21 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   await pool.query("UPDATE project_stage SET state='reviewed' WHERE project_id=$1 AND stage_id=$2",[projectId,stageId]);
   await denied(decision,"STAGE_NOT_ACTIVE");
   for (const [table,condition,params] of [
-    ["role_definition","project_id=$1",[projectId]],
+    ["role_definition","project_id=$1 AND role_id NOT IN ($2,$3)",[projectId,cognitionRole,fixtureRoleId("prior-owner")]],
     ["runtime_role_binding","project_id=$1",[projectId]],
     ["operation_journal","project_id=$1 AND command_type IN ('role.propose','role.decide')",[projectId]],
     ["orchestration_operation","project_id=$1 AND operation_id=$2",[projectId,decision.operationId]],
   ] as const) assert.equal((await pool.query(`SELECT count(*)::int n FROM ${table} WHERE ${condition}`,params)).rows[0].n,0,
     `${table} must remain empty after a non-active Stage rejection`);
   await pool.query("UPDATE project_stage SET state='active' WHERE project_id=$1 AND stage_id=$2",[projectId,stageId]);
-  assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1",[projectId])).rows[0].n,0);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1 AND role_id NOT IN ($2,$3)",[projectId,cognitionRole,fixtureRoleId("prior-owner")])).rows[0].n,0);
   for (const failingMethod of ["insertWorkflowRoleOperation","insertBinding","insertPolicy","insertOperation"] as const) {
     const brokenStore:OrchestrationStore={read:(p,action)=>store.read(p,action),transaction:(p,action)=>store.transaction(p,
       tx=>action(new Proxy(tx,{get(target,key,receiver){if(key===failingMethod)return async()=>{throw new Error(`injected ${failingMethod} failure`)};
         return Reflect.get(target,key,receiver);}})))};
     await assert.rejects(new OrchestrationService({...deps,store:brokenStore}).execute(principal(cognition),decision as never),
       new RegExp(`injected ${failingMethod} failure`));
-    assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1",[projectId])).rows[0].n,0);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1 AND role_id NOT IN ($2,$3)",[projectId,cognitionRole,fixtureRoleId("prior-owner")])).rows[0].n,0);
     assert.equal((await pool.query("SELECT count(*)::int n FROM runtime_role_binding WHERE project_id=$1",[projectId])).rows[0].n,0);
     assert.equal((await pool.query("SELECT count(*)::int n FROM orchestration_operation WHERE project_id=$1 AND operation_id=$2",[projectId,decision.operationId])).rows[0].n,0);
   }
@@ -182,7 +184,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
     {actor_id:controller,command_type:"role.decide",role_id:winner.roleId,kind:"role",version:2}]);
   const binding=await service.getBinding(principal(controller,true),projectId,first.entityId);
   assert.equal(binding?.roleId,winner.roleId);
-  assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1",[projectId])).rows[0].n,1);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM role_definition WHERE project_id=$1 AND role_id NOT IN ($2,$3)",[projectId,cognitionRole,fixtureRoleId("prior-owner")])).rows[0].n,1);
   assert.equal((await pool.query("SELECT count(*)::int n FROM runtime_role_binding WHERE project_id=$1 AND choice='new-role'",[projectId])).rows[0].n,1);
   await pool.query("UPDATE project_stage SET state='reviewed' WHERE project_id=$1 AND stage_id=$2",[projectId,stageId]);
   assert.equal((await service.execute(principal(cognition),winner as never)).replayed,true,

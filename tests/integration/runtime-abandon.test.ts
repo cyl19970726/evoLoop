@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { runner } from "node-pg-migrate";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
@@ -21,7 +22,7 @@ function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: Postgr
   return runtime;
 }
 const url = process.env.TEST_DATABASE_URL;
-if (!url || !/evoloop_runtime_abandon_test/.test(new URL(url).pathname)) {
+if (!url || !/\/evoloop_[a-z0-9_]*test$/.test(new URL(url).pathname)) {
   throw new Error("dedicated evoloop_runtime_abandon_test database required");
 }
 const schema = `el_runtime_abandon_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
@@ -54,6 +55,7 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   const migrations=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
   await runner({databaseUrl:url,dir:migrations,migrationsTable:"pgmigrations",schema,
     createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:34,log:()=>{}});
+  await pool.query("ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
   t.after(async () => {
     await pool.end();
     const cleanup = new pg.Client({ connectionString: url });
@@ -66,13 +68,15 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   const create = async (principal: Principal, data: Record<string, unknown>) => applied(await issue(principal, data));
   const own = (data: Record<string, unknown>) => create(owner, data);
   await own({ type: "project.create", title: "Runtime abandon integration" });
+  const ownerRoleId=fixtureRoleId("runtime-owner");
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const documentId = randomUUID();
   const document = await own({ type: "document.create", documentId, title: "Runtime requirement", body: "Accepted basis" });
   await own({ type: "document.adopt", documentId, expectedVersion: 1, revisionId: document.revisionId, reason: "Initial basis" });
 
   const readyTask = async (title: string) => {
     const taskId = randomUUID();
-    await own({ type: "task.create", taskId, title, content: "# Produce one result", acceptance: "Inspect the result", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted requirement" });
+    await own({ type: "task.create", taskId, title, content: "# Produce one result", acceptance: "Inspect the result", owner: ownerRoleId, documentIds: [documentId], evidence: "Accepted requirement" });
     const ready = await own({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" });
     return { taskId, version: ready.version! };
   };
@@ -81,11 +85,11 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
     const sessionId = randomUUID();
     const cwd = `/tmp/evoloop-runtime-abandon/${label}`;
     const authorizationScope = `project-workspace:${label}`;
-    await own({ type: "runtime.session.reserve", sessionId, roleId: "runtime-owner", cwd, authorizationScope,
+    await own({ type: "runtime.session.reserve", sessionId, roleId: ownerRoleId, cwd, authorizationScope,
       sandbox: "danger-full-access", approvalPolicy: "never" });
     await runtime.beginSessionCreate(projectId, sessionId);
     if (bind) {
-      const binding: RuntimeBinding = { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: "runtime-owner", cwd, authorizationScope,
+      const binding: RuntimeBinding = { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: ownerRoleId, cwd, authorizationScope,
         nativeThreadId: `thread-${label}`, nativeSessionId: `session-${label}` };
       await runtime.bindSession(projectId, sessionId, binding);
     }
@@ -119,6 +123,7 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   const eligible=await historicalUncertainRun("read-only","eligible");
   const writable=await historicalUncertainRun("workspace-write","workspace-write");
   const knownTurn=await historicalUncertainRun("read-only","known-turn",true);
+  await pool.query("ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
   await migrate(url,schema);
   assert.equal((await workflow.getRuntimeRun(owner,projectId,eligible.runId)).executionProfile?.sandbox,"read-only");
   const beforeRunEvents = await workflow.listRuntimeEvents(owner, projectId, eligible.runId);

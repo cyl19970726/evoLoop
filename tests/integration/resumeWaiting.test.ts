@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
@@ -27,7 +28,7 @@ if(!url || !/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicat
 const schema=`el_resume_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),reviewer="resume-reviewer",cognition="resume-cognition",reporter="independent-reporter";
-const cognitiveRole="resume-cognitive-role",businessRole="resume-business-role",scope="resume-cognitive-scope";
+const cognitiveRole=fixtureRoleId("resume-cognitive-role"),businessRole=fixtureRoleId("resume-business-role"),scope="resume-cognitive-scope";
 const principal=(actorId:string,permissions:Array<"read"|"write"|"review">=["read","write","review"])=>({actorId,projectIds:[projectId],permissions});
 const hash=(s:string)=>createHash("sha256").update(s).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
@@ -53,6 +54,7 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   t.after(async()=>{await pool.end();const client=new pg.Client({connectionString:url});await client.connect();try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await client.end();}});
   const goalId=randomUUID(),stageId=randomUUID(),businessTask=randomUUID(),cognitiveTask=randomUUID(),loopId=randomUUID();
   await official(reviewer,{type:"project.create",title:"Waiting resume fixture"});
+  for (const roleId of [cognitiveRole,businessRole]) await seedFixtureRole(pool,projectId,roleId);
   await official(reviewer,{type:"goal.create",goalId,outcome:"One bounded review",constraints:"Fixed Issue",consumer:"owner",authority:"reviewer",scope:"local",owner:reviewer});
   await official(reviewer,{type:"stage.propose",stageId,goalId,deliverable:"Fixed decision",learningQuestion:"What next?",reason:"Fixture"});
   await official(reviewer,{type:"stage.accept",stageId,expectedVersion:1,reason:"Activate"});

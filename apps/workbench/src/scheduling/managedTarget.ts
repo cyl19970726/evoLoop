@@ -5,6 +5,10 @@ import type { ScheduleDefinition, ScheduledTaskTemplate } from "@evoloop/contrac
 export function scheduleTemplate(values: Record<string, string>, definition?: ScheduleDefinition): ScheduledTaskTemplate {
   return {
     title: values.title, content: values.content, acceptance: values.acceptance, owner: values.owner,
+    ...(!definition?.revision.template.managedTarget ? {
+      acceptanceMode: (values.acceptanceMode || "independent_agent") as "independent_agent" | "human_required",
+      ...(values.consumer?.trim() ? { consumer: values.consumer.trim() } : {}),
+    } : {}),
     ...(definition?.revision.template.managedTarget ? { managedTarget: definition.revision.template.managedTarget } : {}),
   };
 }

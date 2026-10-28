@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { BasisSet, RuntimeRunRecord, TaskRevision } from "@evoloop/contracts";
+import type { TaskProposal } from "@evoloop/contracts/workflow";
 import type { FixedDocumentSummary } from "./materials.js";
 import { PreflightError } from "./preflight-report.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -29,7 +30,7 @@ function preview(value: string, maxBytes: number) {
 /** This is the exact native Turn message; the Run inputHash still hashes run.input alone. */
 export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevision, basis: BasisSet,
   documents: FixedDocumentSummary[], cliBootstrap: CliBootstrap | null = null,
-  roleContext: RoleContextReference | null = null) {
+  roleContext: RoleContextReference | null = null, acceptancePolicy: TaskProposal | null = null) {
   if (revision.id !== run.taskRevisionId || revision.taskId !== run.taskId ||
       basis.id !== run.basisSetId || basis.taskRevisionId !== run.taskRevisionId ||
       hash(run.input) !== run.inputHash ||
@@ -54,6 +55,8 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
       (queue.previousRun ? `来源 Run ${queue.previousRun.id}，输入 SHA-256 ${queue.previousRun.inputHash}。` : "")+
       (queue.answers.length ? `本轮有 ${queue.answers.length} 份仍有效的已答问题固定修订，请在接手结果中读取。` : "")+
       (queue.legacySource ? "本轮还须按接手结果校验读取旧协议来源指令。" : "")+"\n";
+    const acceptanceLine = acceptancePolicy?.taskId === run.taskId && acceptancePolicy.projectId === run.projectId && acceptancePolicy.acceptanceMode
+      ? `\n验收方式：${acceptancePolicy.acceptanceMode === "human_required" ? "指定真人本人使用" : "不同 Agent 实际使用"}；指定消费者：${acceptancePolicy.consumer || "未指定"}。交付和实际使用分别留证。\n` : "";
     const roleRead=roleContext&&cliBootstrap ? `\n## 职责与适用 skill\n职责固定修订：${cliBootstrap.command} get /api/projects/${run.projectId}/roles/${roleContext.roleId}/revisions/${roleContext.revisionId}\n`+
       roleContext.skills.map(skill=>`${cliBootstrap.command} get '/api/projects/${run.projectId}/roles/${roleContext.roleId}/skills/${skill.path.split("/")[2]}?commit=${skill.commit}&hash=${skill.contentHash}'`).join("\n")+
       "\n首次承接、职责或 skill 变化、上下文不可用时读取这些固定版本；正常接续只需核版本引用。\n" : "";
@@ -61,7 +64,7 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
       `\n## 开始\n读取本次固定目标、完整验收、变化与资料目录：\n\n`+
       `\`\`\`sh\n${cliBootstrap.command} handoff ${run.id} --project ${run.projectId} --hash ${run.inputHash}\n\`\`\`\n`+
       `先用同一入口的 session 命令核身份；正文与附件按目录中的固定修订和哈希分段读取。`+
-      change+roleRead+`\n## 反馈与交付\n交给 ${queue.channel.issuerActorId}。当前 Task 通道 ${queue.channel.discussionId}；用已核身份在这里提问和交结果。`+
+      change+acceptanceLine+roleRead+`\n## 反馈与交付\n交给 ${queue.channel.issuerActorId}。当前 Task 通道 ${queue.channel.discussionId}；用已核身份在这里提问和交结果。`+
       `原生 Turn 完成不等于 Delivery、实际使用或 Task 关闭。\n`;
     const byteLength = Buffer.byteLength(input, "utf8");
     if (byteLength > maxInputBytes) throw new PreflightError("INPUT_LIMIT",
@@ -83,6 +86,10 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     runId: run.id, sessionId: run.sessionId, operationId: run.operationId,
     title: revision.title,
     taskPreview, acceptancePreview,
+    acceptancePolicy: acceptancePolicy?.taskId === run.taskId && acceptancePolicy.projectId === run.projectId ? {
+      mode: acceptancePolicy.acceptanceMode ?? null, consumer: acceptancePolicy.consumer || null,
+      useRequired: acceptancePolicy.useRequired,
+    } : null,
     runInstructionPreview: { ...preview(run.input, 4096), inputHash: run.inputHash },
     runInstructionExactInline: inlineInput,
     cliBootstrap: cliBootstrap ? { ...cliBootstrap, source: "verified-run-binding" } : null,

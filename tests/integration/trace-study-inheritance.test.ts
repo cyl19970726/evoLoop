@@ -5,6 +5,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import {migrate,PostgresUnitOfWork} from "@evoloop/adapter-postgres";
 import {PgOrchestrationStore} from "@evoloop/adapter-postgres/orchestration";
 import {WorkflowService,RuntimeWorkflowService} from "@evoloop/core";
@@ -23,7 +24,7 @@ if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("Dedicated
 const schema=`el_study_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
-const projectId=randomUUID(),controllerId="study-controller",reviewerId="study-reviewer",role="cognition",sourceRole="business";
+const projectId=randomUUID(),controllerId="study-controller",reviewerId="study-reviewer",role=fixtureRoleId("cognition"),sourceRole=fixtureRoleId("business");
 const controllerCredential={token:"c".repeat(40),actorId:controllerId,projectIds:[projectId],
   permissions:["read","write","review"] as Array<"read"|"write"|"review">};
 const reviewerCredentials:AuthConfig=[{token:"r".repeat(40),actorId:reviewerId,
@@ -56,10 +57,12 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const goalId=randomUUID(),stageId=randomUUID(),businessTaskId=randomUUID(),sourceTaskId=randomUUID(),loopId=randomUUID();
   applied(await business({type:"project.create",title:"Study"}));
+  await seedFixtureRole(pool,projectId,role,{templateKey:"cognition"});
+  await seedFixtureRole(pool,projectId,sourceRole);
   applied(await business({type:"goal.create",goalId,outcome:"Trace-informed choice",constraints:"Bounded",consumer:"owner",authority:"reviewer",scope:"trial",owner:controllerId}));
   applied(await business({type:"stage.propose",stageId,goalId,deliverable:"One study",learningQuestion:"How is work divided?",reason:"Trial"}));
   applied(await business({type:"stage.accept",stageId,expectedVersion:1,reason:"Study"}));
-  applied(await business({type:"task.create",taskId:businessTaskId,stageId,title:"Actual work",content:"Actual work",acceptance:"Done",owner:sourceRole,consumer:"owner",evidence:"Trace",stopCondition:"One run"}));
+  applied(await business({type:"task.create",taskId:businessTaskId,stageId,title:"Actual work",content:"Actual work",acceptance:"Done",owner:sourceRole,consumer:"study-consumer",evidence:"Trace",stopCondition:"One run"}));
   applied(await business({type:"task.start",taskId:businessTaskId,expectedVersion:1,reason:"Start"}));
   const source=(await workflow.getTask(controller,projectId,businessTaskId));
   const sourceSessionId=randomUUID(),sourceRunId=randomUUID(),inputHash=hash("source input");
@@ -72,14 +75,18 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     VALUES($1,$2,$3,$4,$5,$6,$7,'source input',$8,'completed',1,$9,$10,now(),now())`,
     [projectId,sourceRunId,businessTaskId,source.task.currentRevisionId,source.basis!.id,sourceSessionId,randomUUID(),inputHash,randomUUID(),controllerId]);
   const businessDelivery=applied(await business({type:"delivery.record",taskId:businessTaskId,
-    runId:sourceRunId,expectedVersion:source.task.version,artifactRef:"artifact:actual-work",
+    expectedVersion:source.task.version,artifactRef:"artifact:actual-work",
     artifactRevision:"v1",contentHash:hash("actual result"),technicalResult:"passed",
     technicalEvidence:"Result checked",reason:"Business delivered"}));
+  const consumer=principal("study-consumer");
+  applied(await workflow.execute(consumer,{type:"observation.record",projectId,operationId:randomUUID(),
+    taskId:businessTaskId,deliveryId:businessDelivery.revisionId,observer:consumer.actorId,observerKind:"agent",
+    result:"used",evidence:"Independent use of actual work",reason:"Consumer checked result"} as never));
   applied(await business({type:"task.close",taskId:businessTaskId,expectedVersion:businessDelivery.version,
     deliveryId:businessDelivery.revisionId,acceptanceResult:"met",acceptanceEvidence:"Result inspected",
     reason:"Business accepted"}));
   assert.equal((await workflow.getTask(controller,projectId,businessTaskId)).task.state,"done");
-  applied(await business({type:"task.create",taskId:sourceTaskId,stageId,title:"Source carrier",content:"Finite source",acceptance:"Choose",owner:role,kind:"research",consumer:role,evidence:"Run",stopCondition:"One comparison"}));
+  applied(await business({type:"task.create",taskId:sourceTaskId,stageId,title:"Source carrier",content:"Finite source",acceptance:"Choose",owner:role,kind:"research",consumer:"study-consumer",evidence:"Run",stopCondition:"One comparison"}));
   const sourceCarrier=await workflow.getTask(controller,projectId,sourceTaskId),sourceDecisionId=randomUUID(),sourceSlotId=randomUUID();
   const sourceRef=await decideTaskExternalReference(referenceDeps as never,reviewer,{projectId,operationId:randomUUID(),actorId:reviewerId,
     decisionId:sourceDecisionId,taskId:sourceTaskId,taskRevisionId:sourceCarrier.task.currentRevisionId,
@@ -93,6 +100,9 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     expectedVersion:sourceStarted.version,artifactRef:"artifact:source-study",artifactRevision:"v1",
     contentHash:hash("accepted source"),technicalResult:"passed",technicalEvidence:"Source checked",
     reason:"Carrier delivered"}));
+  applied(await workflow.execute(consumer,{type:"observation.record",projectId,operationId:randomUUID(),
+    taskId:sourceTaskId,deliveryId:sourceDelivered.revisionId,observer:consumer.actorId,observerKind:"agent",
+    result:"used",evidence:"Independent use of source study",reason:"Consumer checked study"} as never));
   applied(await business({type:"task.close",taskId:sourceTaskId,expectedVersion:sourceDelivered.version,
     deliveryId:sourceDelivered.revisionId,acceptanceResult:"met",acceptanceEvidence:"Source inspected",
     reason:"Carrier accepted"}));
@@ -373,6 +383,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   }
 
   const pausedLoopId=randomUUID(),pausedDeclarationId=randomUUID();
+  const pausedSourceCursor=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
   const managedRunner=new ManagedLoopRunner({projects:[projectId],reader:()=>controller,
     orchestration,workflow,
     applyStudyReference:(who,reference,proof)=>applyDeclaredStudyReference(
@@ -386,7 +397,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     canWrite:()=>true} as never);
   await command(reviewer,{type:"loop.enroll",loopId:pausedLoopId,goalId,stageId,
     cognitiveRoleId:role,allowedBusinessRoleIds:[sourceRole],initialState:"paused",
-    sourceAfter:{createdAtUtc:"2020-01-01T00:00:00.000Z",eventId:null},
+    sourceAfter:{createdAtUtc:pausedSourceCursor.created_at.toISOString(),eventId:pausedSourceCursor.event_id},
     maxRuns:1,maxConcurrent:1,reason:"Stage declared study before first cognition"});
   const paused=(await orchestration.getLoop(controller,projectId,pausedLoopId))!;
   assert.equal(paused.state,"paused");
@@ -409,6 +420,8 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     .find(item=>item.sourceEventId===paused.bootstrapEventId);
   assert.ok(seeded,"background pump accepts bootstrap only after activation");
   const seededTaskId=loopIntentId(pausedLoopId,seeded.id,"cognition-task");
+  assert.equal(managedRunner.status().faults.filter(fault=>fault.loopId===pausedLoopId).length,0,
+    JSON.stringify({pausedLoopId,faults:managedRunner.status().faults}));
   const sealed=await workflow.getTask(controller,projectId,seededTaskId);
   assert.equal(sealed.task.version,2);
   const sealedRefs=await uow.read(projectId,reader=>reader.listTaskExternalSnapshot(

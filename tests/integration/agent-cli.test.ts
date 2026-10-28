@@ -6,13 +6,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { WorkflowService } from "@evoloop/core";
 import { buildServer } from "../../apps/coordinator/src/server.ts";
 
 const database = process.env.TEST_DATABASE_URL;
-if (!database || !/\/evoloop_integration_test(?:\?|$)/.test(database)) throw new Error("Use dedicated evoloop_integration_test database");
+if (!database || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(database)) throw new Error("Use dedicated evoloop_[a-z0-9_]*test database");
 const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 
 test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay after lost response, and Task lifecycle", async t => {
@@ -24,13 +25,14 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   const directory = await mkdtemp(join(tmpdir(), "evoloop-cli-"));
   const projectId = randomUUID(), documentId = randomUUID(), taskId = randomUUID(), lostOperationId = randomUUID();
   const retryOperationId = randomUUID(), retryTaskId = randomUUID();
-  const token = randomUUID() + randomUUID(), rotatedToken = randomUUID() + randomUUID(), readerToken = randomUUID() + randomUUID();
+  const token = randomUUID() + randomUUID(), rotatedToken = randomUUID() + randomUUID(), readerToken = randomUUID() + randomUUID(), consumerToken = randomUUID() + randomUUID();
   const blobs = new LocalBlobStore(join(directory, "blobs"), async () => true,
     async ref => !!await uow.read(ref.projectId, reader => reader.getRegisteredBlob(ref.id)));
   const app = await buildServer({ service, credentials: [
     { token, actorId: "cli-test-agent", projectIds: [projectId], permissions: ["read", "write", "review"] },
     { token: rotatedToken, actorId: "cli-test-agent", projectIds: [projectId], permissions: ["read", "write", "review"] },
     { token: readerToken, actorId: "test-observer", projectIds: [projectId], permissions: ["read"] },
+    { token: consumerToken, actorId: "cli-test-consumer", projectIds: [projectId], permissions: ["read", "write"] },
   ], documents: { uow, blobsForPrincipal: () => blobs },
   references: { uow, gitForPrincipal: () => ({ read: async () => ({ status: "unavailable", reason: "No Git source in this fixture" }) }) as never,
     knowledgeForPrincipal: () => ({}) as never } });
@@ -76,8 +78,10 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   }
   const task = () => cli(["task", taskId]);
   await command("project.create", { title: "Isolated CLI integration" });
+  const ownerRoleId=fixtureRoleId("cli-test-agent");
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   await command("task.create", { taskId: retryTaskId, title: "Recover one saved intent", content: "# Recovery\nApply once.",
-    acceptance: "One Task, one journal record and the original receipt", owner: "cli-test-agent" }, 3, retryOperationId);
+    acceptance: "One Task, one journal record and the original receipt", owner: ownerRoleId }, 3, retryOperationId);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, retryOperationId])).rows[0]?.n, 0);
   assert.equal((await cli(["receipts", "show", retryOperationId])).state, "pending");
   // Two explicit retries can race after the same 404. The real PG project lock and
@@ -96,7 +100,7 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   const r1 = document.current.id;
   await command("document.adopt", { documentId, revisionId: r1, expectedVersion: document.document.version, reason: "Use fixture r1" });
   await command("task.create", { taskId, title: "Read fixed input", content: "# Verify exact r1\nRead the fixed source.", acceptance: "Original r1 remains readable after source change",
-    owner: "cli-test-agent", documentIds: [documentId] });
+    owner: ownerRoleId, documentIds: [documentId] });
   await command("task.start", { taskId, expectedVersion: (await task()).task.version, basis: [{ documentId, revisionId: r1 }], reason: "Bounded fixed-input fixture" });
   const sealedRevision = (await task()).revision.id;
   let context = await cli(["context", taskId]);
@@ -131,8 +135,8 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   await command("delivery.record", { taskId, expectedVersion: (await task()).task.version, artifactRef: `document:${documentId}@${r1}`,
     artifactRevision: r1, contentHash: sha(source), technicalResult: "passed", technicalEvidence: "Deterministic test verified exact fixed bytes", reason: "Synthetic delivery fixture" });
   const delivery = (await task()).deliveries[0]; assert.ok(delivery);
-  await command("observation.record", { taskId, deliveryId: delivery.id, observer: "cli-test-agent", observerKind: "agent", result: "used",
-    evidence: "Synthetic integration, not human or independent Agent use", reason: "Exercise record boundary" });
+  await command("observation.record", { taskId, deliveryId: delivery.id, observer: "cli-test-consumer", observerKind: "agent", result: "used",
+    evidence: "Independent fixture consumer used the fixed source", reason: "Exercise record boundary" },0,randomUUID(),consumerToken);
   await command("task.close", { taskId, expectedVersion: (await task()).task.version, deliveryId: delivery.id, acceptanceResult: "met",
     acceptanceEvidence: "Synthetic fixed-original test passed", reason: "Fixture complete" });
   const view = await fetch(`${apiUrl}/api/projects/${projectId}/tasks/${taskId}`, { headers: { Authorization: `Bearer ${readerToken}` } }).then(r => r.json());

@@ -11,6 +11,7 @@ import { SessionMessagePump } from '../../../apps/coordinator/src/session-messag
 import { sessionMessageCanStart } from '../../../apps/coordinator/src/session-messages/scheduling.ts';
 import { ResidentQueuePump } from '../../../apps/coordinator/src/resident-queue/pump.ts';
 import { canonicalTaskInputJson, taskInputSignature } from '../../core/src/task-input.ts';
+import { seedSealingWorkerSubmission } from './signed-worker-fixture.js';
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -24,6 +25,7 @@ const taskA=randomUUID(),taskB=randomUUID(),queueId=randomUUID(),entryA=randomUU
 const cwd='/tmp/evoloop-conversation-queue-fixture';
 const lead={actorId:'lead',projectIds:[project],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
 const sender={actorId:'sender',projectIds:[project],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+const executor={actorId:'worker',projectIds:[project],permissions:['read','write'] as Array<'read'|'write'>};
 const uow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
   input:async(reader,taskId)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(taskId))!))});
 const workflow=new WorkflowService({uow,clock,ids,hasher:{hash},
@@ -91,8 +93,8 @@ after(async()=>{await pool.end();const client=new pg.Client({connectionString:ur
   try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await client.end();}});
 
 test('one full Session executes A, queues M while busy, records its reply, and auto releases accepted A before B',async t=>{
-  const apply=async(command:Parameters<typeof workflow.execute>[1])=>{
-    const result=await workflow.execute(lead,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
+  const apply=async(command:Parameters<typeof workflow.execute>[1],principal=lead)=>{
+    const result=await workflow.execute(principal,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
   await apply({type:'project.create',projectId:project,operationId:randomUUID(),title:'Full conversation queue fixture'});
   const roleClient=await pool.connect();try{await roleClient.query('BEGIN');
     await roleClient.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
@@ -124,7 +126,7 @@ test('one full Session executes A, queues M while busy, records its reply, and a
     {id:entryA,taskId:taskA,taskRevisionId:currentA.currentRevisionId,sessionId:session,roleId:role,
       dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'},
     {id:entryB,taskId:taskB,taskRevisionId:currentB.currentRevisionId,sessionId:session,roleId:role,
-      dependsOn:[entryA],consumerId:'lead',useRequired:false,releaseRule:'accepted'}]});
+      dependsOn:[entryA],consumerId:'lead',useRequired:true,releaseRule:'accepted'}]});
   await apply({type:'queue.adopt',projectId:project,operationId:randomUUID(),queueId,expectedVersion:1});
   const queuePump=new ResidentQueuePump({workflow,credentials:async()=>[lead],enabled:async()=>true,
     canWrite:()=>true,pollIntervalMs:2000,messageBusy:(p,s)=>messages.isBusy(p,s),onError:error=>{throw error;}});
@@ -164,9 +166,13 @@ test('one full Session executes A, queues M while busy, records its reply, and a
   await queuePump.tick();
   assert.equal((await workflow.getResidentQueue(lead,project,queueId)).entries[1]?.state,'queued');
   const afterRun=(await workflow.getTask(lead,project,taskA)).task;
-  const delivery=await apply({type:'delivery.record',projectId:project,operationId:randomUUID(),taskId:taskA,
-    runId:firstAttempt.runId,expectedVersion:afterRun.version,artifactRef:'fixture:task-a',artifactRevision:'v1',
-    contentHash:hash('A fixed result'),technicalResult:'passed',technicalEvidence:'Fixture native Run settled',reason:'Deliver A'});
+  assert.equal((await workflow.getRuntimeRun(lead,project,firstAttempt.runId)).state,'completed');
+  const deliveryOperationId=randomUUID(),deliveryIntent={artifactRef:'fixture:task-a',artifactRevision:'v1',
+    contentHash:hash('A fixed result'),technicalResult:'passed' as const,technicalEvidence:'Fixture native Run settled',reason:'Deliver A'};
+  await seedSealingWorkerSubmission(pool,project,taskA,firstAttempt.runId,executor.actorId,deliveryOperationId,
+    afterRun.version,deliveryIntent);
+  const delivery=await apply({type:'delivery.record',projectId:project,operationId:deliveryOperationId,taskId:taskA,
+    runId:firstAttempt.runId,expectedVersion:afterRun.version,...deliveryIntent},executor);
   await queuePump.tick();assert.equal((await workflow.getResidentQueue(lead,project,queueId)).entries[0]?.state,'claimed');
   await apply({type:'observation.record',projectId:project,operationId:randomUUID(),taskId:taskA,
     deliveryId:delivery.revisionId!,observer:'lead',observerKind:'agent',result:'used',

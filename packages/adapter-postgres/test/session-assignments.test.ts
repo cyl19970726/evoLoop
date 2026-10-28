@@ -88,7 +88,7 @@ test("official queue and direct Run commands cannot bypass a concrete external a
     taskId: tid, sessionId: sid, expectedVersion: task.version, input: "Same Role is insufficient" });
   assert.equal(direct.status === "rejected" && direct.code, "TASK_ASSIGNED_ELSEWHERE");
   const entry = { id: eid, taskId: tid, taskRevisionId: task.currentRevisionId, sessionId: sid, roleId,
-    dependsOn: [], consumerId: "lead", useRequired: false, releaseRule: "accepted" as const };
+    dependsOn: [], consumerId: "lead", useRequired: true, releaseRule: "accepted" as const };
   const invalidQueue = await apply({ type: "queue.create", projectId, operationId: randomUUID(), queueId: randomUUID(), maxRuns: 1,
     reason: "Must not take another recipient's assignment", entries: [entry] });
   assert.equal(invalidQueue.status === "rejected" && invalidQueue.code, "TASK_ASSIGNED_ELSEWHERE");
@@ -129,8 +129,21 @@ test("authenticated API returns null before first assignment and preserves missi
     acceptance: "An empty assignment is available for its first recipient", owner: roleId });
   await apply(projectId, { type: "task.start", taskId: firstTaskId, expectedVersion: 1, reason: "Freeze the new Task" });
   await apply(otherProjectId, { type: "project.create", title: "Other assignment project" });
+  const otherRoleId = randomUUID(), otherRoleRevisionId = randomUUID();
+  const roleClient = await pool.connect();
+  try {
+    await roleClient.query("BEGIN");
+    await roleClient.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc)
+      VALUES($1,$2,1,$3,'active','lead',$4,$4)`, [otherProjectId, otherRoleId, otherRoleRevisionId, now]);
+    await roleClient.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'active','{}'::jsonb,'lead','fixture',$4,$4)`, [otherProjectId, otherRoleId, otherRoleRevisionId, now]);
+    await roleClient.query("COMMIT");
+  } catch (error) {
+    await roleClient.query("ROLLBACK");
+    throw error;
+  } finally { roleClient.release(); }
   await apply(otherProjectId, { type: "task.create", taskId: foreignTaskId, title: "Foreign task", content: "Other project",
-    acceptance: "Not visible in another project", owner: "other-role" });
+    acceptance: "Not visible in another project", owner: otherRoleId });
   const token = randomUUID() + randomUUID(), foreignToken = randomUUID() + randomUUID(), writeToken = randomUUID() + randomUUID();
   const app = await buildServer({ service: workflow, sessionWork: new SessionObservationService({ uow }), credentials: [
     { token, ...principal }, { token: foreignToken, actorId: "foreign-reader", projectIds: [otherProjectId], permissions: ["read"] },

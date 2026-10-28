@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { RuntimeBinding, RuntimeSessionRecord, RuntimeSessionSpec } from '@evoloop/contracts/runtime';
 import type { ExecutionProfileRevision, SessionRecoveryGate } from '@evoloop/contracts/session-recovery';
 import type { UnitOfWork } from '@evoloop/contracts/ports';
+import type { RuntimeRunRecord, Task, TaskProposal, Delivery } from '@evoloop/contracts';
 import { RuntimeWorkflowService } from '../src/runtime/service.ts';
 
 const projectId=randomUUID(),sessionId=randomUUID(),oldRevisionId=randomUUID(),revisionId=randomUUID(),
@@ -69,4 +70,21 @@ test('binding registration cannot inherit a different business sandbox after pro
   await assert.rejects(()=>service.verifyBinding(projectId,binding),/registered native profile differs/);
   await assert.rejects(()=>service.verifyBinding(projectId,{...approved,
     resumeProfile:{...approved.resumeProfile!,sandbox:'read-only'}}),/registered native profile differs/);
+});
+
+test('a closed accepted Task must reopen before its source Run terminal result changes',async()=>{
+  const runId=randomUUID(),taskId=randomUUID();
+  const run={projectId,id:runId,taskId,nativeTurnId:'owned-turn',version:4,state:'completed'} as RuntimeRunRecord;
+  const task={projectId,id:taskId,state:'done'} as Task;
+  const policy={projectId,taskId,acceptanceMode:'independent_agent'} as TaskProposal;
+  const delivery={projectId,taskId,runId,technicalResult:'passed',sourceRunVersion:4} as Delivery;
+  const tx={getRuntimeRun:async()=>run,listRuntimeEvents:async()=>[],getTask:async()=>task,getTaskProposal:async()=>policy,
+    listDeliveries:async()=>[delivery]};
+  const service=new RuntimeWorkflowService({uow:{transaction:async(_project:string,action:(value:unknown)=>Promise<unknown>)=>
+    action(tx)} as UnitOfWork,clock:{now:()=>now},ids:{next:randomUUID}});
+  await assert.rejects(()=>service.reconcileTerminalObservation(projectId,runId,'owned-turn','failed',null,
+    {itemsDigest:'a'.repeat(64),completedAtUtc:now},4,
+    {actorId,projectIds:[projectId],permissions:['read','write','review']},'Native failure confirmed'),
+  error=>error instanceof Error && 'code' in error && error.code==='TASK_REOPEN_REQUIRED');
+  assert.equal(run.state,'completed');
 });

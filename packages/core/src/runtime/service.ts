@@ -373,6 +373,28 @@ export class RuntimeWorkflowService {
       if (!["completed", "failed", "interrupted"].includes(current.state)) {
         throw new DomainError("RUN_NOT_TERMINAL", "only a terminal bound run can be reconciled");
       }
+      // The durable terminal event carries the native digest and completion time.
+      const terminal = status === current.state ? (await tx.listRuntimeEvents(runId)).findLast(item =>
+        item.kind === "run.reconciled" ||
+        item.kind === "run.status" && /^(completed|failed|interrupted)(;|$)/.test(item.detail)) : undefined;
+      const statusDetail = `${status}; completedAtUtc=${checkpoint.completedAtUtc}`;
+      const sameEvidence = status === current.state && terminal?.nativeTurnId === turnId &&
+        terminal.itemsDigest === checkpoint.itemsDigest &&
+        (terminal.kind === "run.status" ?
+          terminal.detail === statusDetail || terminal.detail.startsWith(`${statusDetail}: `) :
+          terminal.detail.includes(` -> ${status}; completedAtUtc=${checkpoint.completedAtUtc}; reason=`)) &&
+        (!summary || safeDetail(summary) === current.resultSummary);
+      if (sameEvidence) {
+        await tx.appendRuntimeEvent(event(projectId, this.deps.ids.next(), runId, current.sessionId, "run.reviewed",
+          safeDetail(`Reviewer confirmed unchanged native terminal ${status}; completedAtUtc=${checkpoint.completedAtUtc}; reason=${reason}`),
+          turnId, principal.actorId, this.deps.clock.now(), null, checkpoint.itemsDigest));
+        return current;
+      }
+      const task = await tx.getTask(current.taskId);
+      const policy = task && await tx.getTaskProposal(task.id);
+      if (task?.state === "done" && policy?.acceptanceMode &&
+          (await tx.listDeliveries(task.id)).some(delivery => delivery.runId === runId))
+        throw new DomainError("TASK_REOPEN_REQUIRED", "reopen the accepted Task before changing its source Run terminal observation");
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
       if (!session.nativeThreadId || !session.nativeSessionId || session.state !== "ready") {
         throw new DomainError("FOREIGN_BINDING", "run has no ready owned native session");

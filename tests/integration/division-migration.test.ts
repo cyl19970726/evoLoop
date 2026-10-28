@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { runner } from "node-pg-migrate";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
@@ -19,17 +20,18 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
   // Seed with the current writer's nullable domain fields, then remove them so
   // the real migration still starts from the complete historical 019 schema.
-  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid");
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),taskId=randomUUID(),loopId=randomUUID();
-  const inboxId=randomUUID(),dispatchId=randomUUID(),role="legacy-business",cognition="legacy-cognition";
+  const inboxId=randomUUID(),dispatchId=randomUUID(),role=fixtureRoleId("legacy-business"),cognition="legacy-cognition";
   const principal={actorId:"migration-reviewer",projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
   const issue=async(command:Record<string,unknown>)=>{const r=await workflow.execute(principal,
     {projectId,operationId:randomUUID(),...command} as never);assert.equal(r.status,"applied",JSON.stringify(r));};
   await issue({type:"project.create",title:"Legacy Loop"});
+  for (const roleId of [role]) await seedFixtureRole(pool,projectId,roleId);
   await issue({type:"goal.create",goalId,outcome:"One result",constraints:"Bounded",consumer:"owner",authority:"reviewer",scope:"pilot",owner:"reviewer"});
   await issue({type:"stage.propose",stageId,goalId,deliverable:"Result",learningQuestion:"What changed?",reason:"Pilot"});
   await issue({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
@@ -56,7 +58,7 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
     await client.query("COMMIT");
   } catch(error) {await client.query("ROLLBACK");throw error;} finally {client.release();}
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[projectId])).rows[0].n>0,true);
-  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
   assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0);
   await migrate(database!,schema);

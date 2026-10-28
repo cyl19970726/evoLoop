@@ -4,6 +4,7 @@ import { readdirSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { runner } from "node-pg-migrate";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService } from "@evoloop/core/orchestration";
@@ -17,7 +18,7 @@ if(!url || !/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicat
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const canonical=(value:unknown)=>JSON.stringify(value,(_key,item:unknown)=>item&&typeof item==="object"&&!Array.isArray(item)?
   Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item);
-const pid=randomUUID(),controller="controller",researcher="researcher",cognitiveRole="cognition-role";
+const pid=randomUUID(),controller="controller",researcher="researcher",cognitiveRole=fixtureRoleId("cognition-role");
 const receiver=`worker-${randomUUID()}`,roleId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
 const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
@@ -33,7 +34,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
   // Current Task writes include domain_id. Add nullable seed-only columns, then remove
   // them before the historical migration so 023..026 still upgrade the real old schema.
-  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid");
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   let frozenNow:string|null=null;
@@ -76,14 +77,16 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   const issue=async(actor:string,command:Record<string,unknown>)=>orchestration.execute(principal(actor),
     {projectId:pid,operationId:randomUUID(),...command} as never);
   await applied(controller,{type:"project.create",title:"Division closure"});
+  await seedFixtureRole(pool,pid,cognitiveRole,{templateKey:"cognition"});
+  await seedFixtureRole(pool,pid,fixtureRoleId("prior-role"));
   await applied(controller,{type:"goal.create",goalId,outcome:"Bounded",constraints:"One trial",consumer:controller,authority:"reviewer",scope:"fixture",owner:controller});
   await applied(controller,{type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"Useful?",reason:"Fixture"});
   await applied(controller,{type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   await applied(controller,{type:"task.create",taskId:parentTaskId,stageId,title:"Decide",content:"# Decide",acceptance:"One signed choice",
-    owner:cognitiveRole,consumer:controller,evidence:"Fixture",stopCondition:"One choice"});
+    owner:cognitiveRole,kind:"research",consumer:cognitiveRole,useRequired:false,evidence:"Fixture",stopCondition:"One choice"});
   await applied(controller,{type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Freeze"});
   await applied(controller,{type:"task.create",taskId:firstTaskId,stageId,title:"First work",content:"# First",acceptance:"Result",
-    owner:"prior-role",consumer:controller,evidence:"Gap",stopCondition:"One trial"});
+    owner:fixtureRoleId("prior-role"),consumer:controller,evidence:"Gap",stopCondition:"One trial"});
   const doc=await applied(controller,{type:"document.create",documentId,kind:"report",title:"Diagnosis",body:"# Fixed diagnosis"});
   const proposal={title:"Trial specialist",goal:"One result",independentResponsibility:"Own one task",ownerScope:"This project",
     inputs:["Fixed diagnosis"],writableAssets:[],deliverables:["One result"],triggers:["Gap"],workflow:"Read and act",
@@ -117,7 +120,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="MIGRATION_REQUIRED"),
     "the new Division closure reader requires 023 before it can evaluate a handoff");
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[pid])).rows[0].n>0,true);
-  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
   assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0,
     "the pre-migration schema must have no domain columns");

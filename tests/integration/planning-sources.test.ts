@@ -12,6 +12,7 @@ import { buildServer } from "../../apps/coordinator/src/server.js";
 import { readPlanningSources } from "../../apps/coordinator/src/orchestration/planning-sources.js";
 import { workerGuardFacts } from "../../apps/coordinator/src/workers/facts.js";
 import type { WorkerIdentity } from "../../apps/coordinator/src/workers/types.js";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(connectionString).pathname.slice(1)))
@@ -23,10 +24,11 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), otherGoalId = randomUUID(),
   otherStageId = randomUUID(), loopId = randomUUID(), taskId = randomUUID(), cognitiveTaskId = randomUUID(), otherTaskId = randomUUID(),
   documentId = randomUUID(), draftId = randomUUID();
+const plannerRole = fixtureRoleId("planner"), builderRole = fixtureRoleId("builder");
 const owner: Principal = {actorId: "planning-owner", projectIds: [projectId], permissions: ["read", "write", "review"]};
 const worker: WorkerIdentity = {principal: {actorId: `worker-${randomUUID()}`, projectIds: [projectId], permissions: ["read", "write"]},
   scope: {projectId, loopId, taskId: cognitiveTaskId, runId: randomUUID(), sessionId: randomUUID(),
-    roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", "builder"]}};
+    roleId: plannerRole, kind: "cognition", allowedRoleIds: [plannerRole, builderRole]}};
 const workflow = new WorkflowService({uow, clock: {now: () => "2026-10-24T00:00:00.000Z"},
   ids: {next: randomUUID}, hasher: {hash}});
 const orchestration = new OrchestrationService({store: new PgOrchestrationStore(pool, {
@@ -42,6 +44,8 @@ const execute = async (command: Record<string, unknown>) => {
 before(async () => {
   await migrate(connectionString!, schema);
   await execute({type: "project.create", title: "Planning test"});
+  await seedFixtureRole(pool, projectId, plannerRole);
+  await seedFixtureRole(pool, projectId, builderRole);
   for (const id of [goalId, otherGoalId]) await execute({type: "goal.create", goalId: id,
     outcome: "Check handoff", constraints: "Use fixed sources", consumer: "Reviewer", authority: "Owner", scope: "Local", owner: "owner"});
   for (const [id, goal] of [[stageId, goalId], [otherStageId, otherGoalId]]) {
@@ -53,13 +57,13 @@ before(async () => {
   const document = await workflow.getDocument(owner, projectId, documentId);
   await execute({type: "document.adopt", documentId, expectedVersion: 1, revisionId: document.current.id, reason: "Test"});
   await execute({type: "task.create", taskId, stageId, title: "Todo seed", content: "Read linked material", acceptance: "Decide",
-    owner: "builder", kind: "research", documentIds: [documentId, draftId], consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
+    owner: builderRole, kind: "research", documentIds: [documentId, draftId], consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
   await execute({type: "task.create", taskId: cognitiveTaskId, stageId, title: "Cognition", content: "Plan",
-    acceptance: "Decide", owner: "planner", kind: "research", consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
+    acceptance: "Decide", owner: plannerRole, kind: "research", consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
   await execute({type: "task.create", taskId: otherTaskId, stageId: otherStageId, title: "Other Stage", content: "Other",
-    acceptance: "Decide", owner: "builder", kind: "research", documentIds: [documentId], consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
+    acceptance: "Decide", owner: builderRole, kind: "research", documentIds: [documentId], consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
   const enrolled = await orchestration.execute(owner, {type: "loop.enroll", projectId, operationId: randomUUID(), loopId,
-    goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
+    goalId, stageId, cognitiveRoleId: plannerRole, allowedBusinessRoleIds: [builderRole],
     sourceAfter: {createdAtUtc: "2026-10-24T00:00:00.000Z", eventId: null},
     maxRuns: 1, maxConcurrent: 1, reason: "Planning source scope fixture"});
   assert.equal(enrolled.entityId, loopId);
@@ -126,10 +130,10 @@ test("scoped HTTP and CLI context discover adopted todo candidate without sealin
 test("business, other Stage, stale Task revision and unversioned documents stay unavailable", async () => {
   const detail = await workflow.getTask(owner, projectId, taskId);
   const path = `/api/projects/${projectId}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${detail.revision.id}`;
-  const business = {...worker, scope: {...worker.scope, kind: "business" as const, roleId: "builder"}};
+  const business = {...worker, scope: {...worker.scope, kind: "business" as const, roleId: builderRole}};
   worker.scope = business.scope;
   try {assert.equal((await app.inject({method: "GET", url: path, headers: {authorization: "Bearer worker-test"}})).statusCode, 403);}
-  finally {worker.scope = {...business.scope, kind: "cognition", roleId: "planner"};}
+  finally {worker.scope = {...business.scope, kind: "cognition", roleId: plannerRole};}
   const otherRevision = (await workflow.getTask(owner, projectId, otherTaskId)).revision.id;
   assert.equal((await app.inject({method: "GET", url: path.replace(taskId, otherTaskId).replace(detail.revision.id, otherRevision),
     headers: {authorization: "Bearer worker-test"}})).statusCode, 403);
@@ -174,7 +178,7 @@ test("archiving a source preserves an already sealed Task basis original", async
   await execute({type: "document.adopt", documentId: sealedDocumentId, expectedVersion: 1,
     revisionId: source.current.id, reason: "Test"});
   await execute({type: "task.create", taskId: sealedTaskId, stageId, title: "Started Task", content: "Use fixed evidence",
-    acceptance: "Check", owner: "builder", kind: "research", documentIds: [sealedDocumentId],
+    acceptance: "Check", owner: builderRole, kind: "research", documentIds: [sealedDocumentId],
     consumer: "Reviewer", evidence: "Test", stopCondition: "Check"});
   await execute({type: "task.start", taskId: sealedTaskId, expectedVersion: 1,
     basis: [{documentId: sealedDocumentId, revisionId: source.current.id}], reason: "Test"});
@@ -188,7 +192,7 @@ test("archiving a source preserves an already sealed Task basis original", async
 test("a changed todo Task revision invalidates its earlier planning query", async () => {
   const before = await workflow.getTask(owner, projectId, taskId);
   await execute({type: "task.update", taskId, expectedVersion: before.task.version, title: "Revised seed",
-    content: "Changed plan", acceptance: "Decide", owner: "builder", kind: "research", reason: "Test"});
+    content: "Changed plan", acceptance: "Decide", owner: builderRole, kind: "research", reason: "Test"});
   const oldPath = `/api/projects/${projectId}/orchestration/tasks/${taskId}/planning-sources?taskRevisionId=${before.revision.id}`;
   const old = await app.inject({method: "GET", url: oldPath, headers: {authorization: "Bearer worker-test"}});
   assert.equal(old.statusCode, 409);
@@ -205,7 +209,7 @@ test("more than 19 linked sources fails at the bounded query", async () => {
     await execute({type: "document.create", documentId: sourceId, title: "Bounded source", body: "Unpublished", kind: "spec"});
   const crowdedTaskId = randomUUID();
   await execute({type: "task.create", taskId: crowdedTaskId, stageId, title: "Crowded", content: "Plan",
-    acceptance: "Decide", owner: "builder", kind: "research", documentIds,
+    acceptance: "Decide", owner: builderRole, kind: "research", documentIds,
     consumer: "Reviewer", evidence: "Test", stopCondition: "Decide"});
   const revisionId = (await workflow.getTask(owner, projectId, crowdedTaskId)).revision.id;
   await assert.rejects(readPlanningSources(pool, owner, projectId, crowdedTaskId, revisionId, loopId),
@@ -215,7 +219,7 @@ test("more than 19 linked sources fails at the bounded query", async () => {
 test("Goal-only Loop keeps the same Goal boundary across Stage tasks", async () => {
   const goalOnlyLoopId = randomUUID();
   const enrolled = await orchestration.execute(owner, {type: "loop.enroll", projectId, operationId: randomUUID(), loopId: goalOnlyLoopId,
-    goalId, stageId: null, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
+    goalId, stageId: null, cognitiveRoleId: plannerRole, allowedBusinessRoleIds: [builderRole],
     sourceAfter: {createdAtUtc: "2026-10-24T00:00:00.000Z", eventId: null},
     maxRuns: 1, maxConcurrent: 1, reason: "Goal-only planning scope fixture"});
   assert.equal(enrolled.entityId, goalOnlyLoopId);
