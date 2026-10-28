@@ -14,7 +14,8 @@ test("registry exposes every bounded named route and target/body requirements", 
   const names = (requestTypes() as Array<{ name: string; requiredBodyKeys: string[]; targetId: string | null }>);
   assert.deepEqual(names.map(item => item.name), [
     "document.import", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
-    "reference.git-register", "reference.formal-decide", "reference.task-decide", "runtime.reconcile", "runtime.recover",
+    "reference.git-register", "reference.formal-decide", "reference.task-decide",
+    "work.plan.set", "work.dependencies.set", "runtime.reconcile", "runtime.recover",
   ]);
   assert.ok(names.find(item => item.name === "document.import")?.requiredBodyKeys.includes("command.operationId"));
   assert.equal(names.find(item => item.name === "knowledge.reconcile")?.targetId, "original publish operationId");
@@ -40,6 +41,11 @@ test("request schema exposes exact enums and nested required fields from shared 
   assert.ok(!reference.required.includes("taskId"));
   const runtime = requestSchema("runtime.reconcile") as any;
   assert.deepEqual(runtime.required, ["expectedVersion", "reason"]);
+  const plan = requestSchema("work.plan.set") as any;
+  assert.ok(plan.required.includes("expectedPlanVersion"));
+  assert.ok(!plan.required.includes("taskId"));
+  const dependencies = requestSchema("work.dependencies.set") as any;
+  assert.ok(dependencies.required.includes("dependsOnTaskIds"));
 });
 
 test("local request validation emits specific INVALID_INPUT instead of generic errors", () => {
@@ -72,6 +78,10 @@ test("journal-backed requests carry the exact server operation and core recovery
     repositoryId: "source-repo", path: "docs/accepted.md", commit: "a".repeat(40), contentHash: sha });
   assert.equal(git.path, `/api/projects/${project}/references/git`);
   assert.equal(git.operationId, operation);
+  const plan = prepareRequest("work.plan.set", project, { operationId: operation, expectedTaskVersion: 2,
+    expectedPlanVersion: 0, plannedStartAt: null, dueAt: null, priority: 1, reason: "Order this work" }, target);
+  assert.equal(plan.path, `/api/projects/${project}/work-management/tasks/${target}/plan`);
+  assert.deepEqual(plan.recovery, { kind: "core", path: `/api/projects/${project}/operations/${operation}` });
   assert.throws(() => prepareRequest("knowledge.publish", project, { operationId: operation }, target, receipt), /not --receipt/);
 });
 

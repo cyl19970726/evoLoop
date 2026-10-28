@@ -280,6 +280,9 @@ test("listed Task reads follow all page IDs in original status order, including 
   const page3=Array.from({length:20},(_,index)=>index+101);
   const status=(ids:number[])=>`/api/projects/${projectId}/orchestration/work-status?taskIds=${ids.map(taskIdAt).join(",")}`;
   assert.equal(grants.register(first,200,jsonHeaders,taskPage(page1,"cursor/+one")),true);
+  const taskSummary=`/api/projects/${projectId}/work-management/index?view=tasks&limit=50`;
+  assert.equal(grants.allowedPaths.has(taskSummary),true);
+  assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+taskSummary,"GET","fetch",grants.allowedPaths),true);
   const second=`${first}&cursor=cursor%2F%2Bone`;
   assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"GET","fetch",grants.allowedPaths),true);
   assert.equal(grants.register(second,200,jsonHeaders,taskPage(page2,"cursor=two")),true);
@@ -298,6 +301,7 @@ test("listed Task reads follow all page IDs in original status order, including 
     `/api/projects/${projectId}/tasks/${taskIdAt(1)}/revisions`,
     `/api/projects/${projectId}/tasks/${taskIdAt(1)}?tab=history`,
     `/api/projects/${projectId}/tasks?limit=500`,
+    `/api/projects/${projectId}/work-management/index?view=documents&limit=50`,
   ])assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+forbidden,"GET","fetch",grants.allowedPaths),false,forbidden);
   assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"POST","fetch",grants.allowedPaths),false);
   assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"GET","document",grants.allowedPaths),false);
@@ -376,7 +380,10 @@ test("Document-list opt-in follows only exact list pages, never Document bodies 
   assert.equal(grants.allowedPaths.has(second),true);
   assert.equal(grants.register(second,200,jsonHeaders,docs(Array.from({length:18},(_,index)=>index+51),null)),true);
   assert.equal(grants.register(first,200,jsonHeaders,docs(firstIds,"doc/+cursor")),true);
-  assert.equal(grants.allowedPaths.size,1);
+  const documentSummary=`/api/projects/${projectId}/work-management/index?view=documents&limit=50`;
+  assert.equal(grants.allowedPaths.has(documentSummary),true);
+  assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+documentSummary,"GET","fetch",grants.allowedPaths),true);
+  assert.equal(grants.allowedPaths.size,2);
   assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+second,"GET","fetch",grants.allowedPaths),true);
   for(const denied of [
     `${second}&extra=1`,`${first}&cursor=doc%2F%2Bcursor&cursor=again`,
@@ -386,6 +393,7 @@ test("Document-list opt-in follows only exact list pages, never Document bodies 
     `/api/projects/${projectId}/documents/${taskIdAt(1001)}/revisions/${taskIdAt(2001)}/original`,
     `/api/projects/${projectId}/tasks/${taskIdAt(1)}`,
     `/api/projects/${projectId}/orchestration/work-status?taskIds=${taskIdAt(1)}`,
+    `/api/projects/${projectId}/work-management/index?view=tasks&limit=50`,
   ])assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+denied,"GET","fetch",grants.allowedPaths),false,denied);
   assert.equal(grants.register(first,200,jsonHeaders,docs([1],null,runId)),false);
   assert.equal(grants.register(second,200,jsonHeaders,docs([51],"doc/+cursor")),false,"cursor cycle");

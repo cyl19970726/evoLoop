@@ -5,6 +5,7 @@ import type {
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
 } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workflow/workStatusPresentation";
+import type { LeaderWorkChangesPage, LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 
 export interface Session {
   principal: Principal;
@@ -95,6 +96,10 @@ export function api(token: string, timeoutMs = 15000) {
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`),
+    leaderWork: (p: string, view: "tasks" | "documents", cursor?: string) => call<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>(
+      `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    leaderWorkChanges: (p: string, cursor?: string) => call<LeaderWorkChangesPage>(
+      `${projectPath(p)}/work-management/changes?limit=100${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),

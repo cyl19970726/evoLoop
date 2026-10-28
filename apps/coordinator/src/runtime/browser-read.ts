@@ -178,6 +178,7 @@ class ListedProjectPageGrants {
       for(const id of ids)this.derivedPaths.add(`/api/projects/${this.scope.projectId}/tasks/${id}`);
       if(ids.length)this.derivedPaths.add(`/api/projects/${this.scope.projectId}/orchestration/work-status?taskIds=${ids.map(encodeURIComponent).join(",")}`);
     }
+    this.derivedPaths.add(`/api/projects/${this.scope.projectId}/work-management/index?view=${this.kind}&limit=50`);
     if(nextPath){this.cursorOwners.set(parsed.data.nextCursor!,path);this.pagePaths.add(nextPath);this.derivedPaths.add(nextPath);}
     return true;
   }

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { commandSchema, idSchema } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
+import { leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema } from "@evoloop/contracts/work-index";
 import { ApiClient, CliApiError } from "./client.js";
 
 type Json = Record<string, unknown>;
@@ -28,6 +29,21 @@ export interface Receipt extends Intent {
   apiUrl: string; credentialHash: string; requestHash: string; createdAt: string; updatedAt: string;
   actorId?: string;
   state: "pending" | "confirmed" | "rejected"; result?: unknown; lastError?: unknown;
+}
+function leaderCommandFor(receipt: Receipt) {
+  const body = record(receipt.body);
+  if (!body || !receipt.targetId) return null;
+  if (receipt.kind === "work.plan.set" && receipt.path ===
+    `/api/projects/${receipt.projectId}/work-management/tasks/${receipt.targetId}/plan`) {
+    const checked = leaderWorkPlanCommandSchema.safeParse({ ...body, projectId: receipt.projectId, taskId: receipt.targetId });
+    return checked.success ? { data: checked.data, type: receipt.kind } : null;
+  }
+  if (receipt.kind === "work.dependencies.set" && receipt.path ===
+    `/api/projects/${receipt.projectId}/work-management/tasks/${receipt.targetId}/dependencies`) {
+    const checked = leaderWorkDependenciesCommandSchema.safeParse({ ...body, projectId: receipt.projectId, taskId: receipt.targetId });
+    return checked.success ? { data: checked.data, type: receipt.kind } : null;
+  }
+  return null;
 }
 export class ReceiptError extends Error {
   constructor(public code: string, message: string, public data: unknown = null) { super(message); }
@@ -207,7 +223,12 @@ export async function retryReceipt(client: ApiClient, store: ReceiptStore, apiUr
     orchestration.data.projectId === receipt.projectId && orchestration.data.operationId === receipt.operationId &&
     orchestration.data.type === receipt.kind && replayableOrchestration.has(orchestration.data.type) &&
     orchestrationCanonical(orchestration.data) === orchestrationCanonical(receipt.body);
-  if (receipt.confirmation !== "command" || !receipt.operationId || !ordinary && !managed)
+  const leader = leaderCommandFor(receipt);
+  const leaderCommand = !!leader && receipt.recovery.kind === "core" &&
+    receipt.recovery.path === `/api/projects/${receipt.projectId}/operations/${receipt.operationId}` &&
+    leader.data.operationId === receipt.operationId && leader.data.projectId === receipt.projectId &&
+    leader.data.taskId === receipt.targetId;
+  if (receipt.confirmation !== "command" || !receipt.operationId || !ordinary && !managed && !leaderCommand)
     throw new ReceiptError("RETRY_UNSUPPORTED", "Only an immutable transactional command can be explicitly replayed. Seal and external dispatch actions require reconciliation.");
   if (receipt.state !== "pending") return receipt;
   try { return await reconcileReceipt(client, store, apiUrl, token, id, actor); }
@@ -251,10 +272,16 @@ export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, a
   if ((receipt.recovery.kind === "core" || receipt.recovery.kind === "orchestration") &&
     (operation?.id !== receipt.operationId || operation.projectId !== receipt.projectId)) throw pending(receipt, observed);
   const command = receipt.path === "/api/commands" ? commandSchema.safeParse(receipt.body) : null;
+  const leader = leaderCommandFor(receipt);
   const expectedActor = receipt.actorId ?? actor?.actorId;
   if (receipt.recovery.kind === "core" && command?.success && expectedActor) {
     const expectedHash = sha(canonical({ actorId: expectedActor, command: command.data }));
     if (operation?.actorId !== expectedActor || operation.commandType !== command.data.type || operation.commandHash !== expectedHash)
+      throw pending(receipt, { code: "OPERATION_INTENT_MISMATCH" });
+  }
+  if (receipt.recovery.kind === "core" && leader && expectedActor) {
+    const expectedHash = sha(canonical({ ...leader.data, actorId: expectedActor }));
+    if (operation?.actorId !== expectedActor || operation.commandType !== leader.type || operation.commandHash !== expectedHash)
       throw pending(receipt, { code: "OPERATION_INTENT_MISMATCH" });
   }
   if (receipt.recovery.kind === "orchestration") {

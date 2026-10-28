@@ -43,6 +43,7 @@ import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
 import type { WorkerCredentialBroker } from "./workers/credentials.js";
 import { readWorkStatuses } from "./orchestration/work-status.js";
+import { createLeaderWorkIndexReader } from "./work-management/work-index.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
 import { workerGuardFacts } from "./workers/facts.js";
@@ -491,6 +492,7 @@ if (runner) {
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
+  workIndex: createLeaderWorkIndexReader(pool),
   sessionWork: new SessionObservationService({ uow }),
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
