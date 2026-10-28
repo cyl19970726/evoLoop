@@ -18,3 +18,15 @@ test("restart scan reaches later work after one page of persistent blockers", as
   assert.equal(seen.length, 101);
   assert.equal(seen.at(-1), "100");
 });
+
+test("standby coordinator does not seal durable submissions", async () => {
+  let reads = 0;
+  const pump = new OrdinaryRunSealPump({
+    canWrite: () => false,
+    listProjects: async () => { reads++; return []; },
+    listUnsettled: async () => [],
+    seal: async () => { throw new Error("standby must not seal"); },
+  });
+  await pump.cycle();
+  assert.equal(reads, 0);
+});
