@@ -2,9 +2,19 @@ import { createHash } from "node:crypto";
 import { open, rm, writeFile } from "node:fs/promises";
 import type { ApiClient } from "./client.js";
 import { MaterialError } from "./materials.js";
+import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 
 const sha = /^[0-9a-f]{64}$/i;
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+const bytePrefix = (value: string, limit: number) => {
+  let result = "", size = 0;
+  for (const character of value) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (size + bytes > limit) break;
+    result += character; size += bytes;
+  }
+  return { text: result, bytes: size, truncated: size < Buffer.byteLength(value, "utf8") };
+};
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new MaterialError("Fixed material response is invalid");
   return value as Record<string, unknown>;
@@ -113,6 +123,69 @@ export async function materialRunInput(client: ApiClient, projectId: string, run
     await file.close();
     if (!committed) await rm(out, { force: true });
   }
+}
+
+/** One verified first read for v2 Runs; large Task bodies stay in the fixed body pager. */
+export async function materialHandoff(client: ApiClient, projectId: string, runId: string, expectedHash: string) {
+  let cursor = 0, input = "";
+  for (;;) {
+    const page = await materialRunInput(client, projectId, runId, expectedHash, cursor, 8192);
+    input += page.body as string;
+    if (!page.truncated) break;
+    cursor = page.endByte as number;
+    if (Buffer.byteLength(input, "utf8") > 256 * 1024) throw new MaterialError("Fixed handoff is too large");
+  }
+  exact(hash(Buffer.from(input, "utf8")), expectedHash, "Complete Run input hash");
+  const handoff = parseQueueHandoff(input);
+  if (!handoff) throw new MaterialError("Legacy Run: use run-input with its original hash and fixed Task materials");
+  const identity = object(await client.get("/api/session"));
+  const actor = object(identity.principal).actorId;
+  if (actor !== handoff.channel.recipientActorId) throw new MaterialError("This CLI identity is not the fixed Task recipient");
+  const task = object(await client.get(`${root(projectId)}/tasks/${handoff.taskId}/revisions/${handoff.taskRevisionId}`));
+  const revision = object(task.revision);
+  exact(revision.id, handoff.taskRevisionId, "Task revision");
+  exact(revision.taskId, handoff.taskId, "Task");
+  exact(revision.projectId, projectId, "Project");
+  exact(revision.basisSetId, handoff.basisSetId, "Basis set");
+  const catalog = await materialCatalog(client, projectId, handoff.taskId, handoff.taskRevisionId);
+  exact(catalog.basisSetId, handoff.basisSetId, "Catalog basis set");
+  const content = revision.content;
+  if (typeof content !== "string" || typeof revision.acceptance !== "string" || typeof revision.title !== "string")
+    throw new MaterialError("Fixed Task content is invalid");
+  const fullIntroduction = content.split(/^## /m)[0]!.trim();
+  const introduction = bytePrefix(fullIntroduction, 2048);
+  const fullBoundarySections = content.split(/(?=^## )/m).filter(section =>
+    /^## [^\n]*(?:范围|边界|限制)/.test(section)).map(section => section.trim());
+  let boundaryBudget = 6144;
+  const boundarySections: string[] = [];
+  for (const section of fullBoundarySections) {
+    if (boundaryBudget === 0) break;
+    const excerpt = bytePrefix(section, boundaryBudget);
+    boundarySections.push(excerpt.text);
+    boundaryBudget -= excerpt.bytes;
+    if (excerpt.truncated) break;
+  }
+  const boundarySectionsTruncated = boundarySections.length < fullBoundarySections.length ||
+    boundarySections.some((section, index) => section !== fullBoundarySections[index]);
+  const primary = (catalog.documents as Array<Record<string, unknown>>)[0]!;
+  exact(primary.documentId, String(revision.contentDocumentId), "Primary Document");
+  exact(primary.revisionId, String(revision.contentRevisionId), "Primary Document revision");
+  exact(primary.contentHash, hash(Buffer.from(content, "utf8")), "Primary Document content hash");
+  return { protocol: handoff.protocol, projectId, runId, inputHash: expectedHash,
+    taskId: handoff.taskId, taskRevisionId: handoff.taskRevisionId, basisSetId: handoff.basisSetId,
+    title: revision.title, introduction: introduction.text, introductionTruncated: introduction.truncated,
+    acceptance: revision.acceptance, boundarySections, boundarySectionsTotal: fullBoundarySections.length,
+    boundarySectionsTruncated, contentBytes: Buffer.byteLength(content, "utf8"),
+    contentComplete: fullIntroduction === content.trim(),
+    fullContentCommand: primary.bodyCommand, change: {kind:handoff.kind,reason:handoff.reason,
+      previousRun:handoff.previousRun ? {...handoff.previousRun,
+        readCommand:`evoloop run-input ${handoff.previousRun.id} --project ${projectId} --hash ${handoff.previousRun.inputHash}`} : null,
+      answeredQuestions:handoff.answers.map(answer => ({...answer,
+        bodyCommand:`evoloop body ${answer.documentId} --project ${projectId} --revision ${answer.revisionId} --hash ${answer.contentHash}`}))},
+    taskChannel: {discussionId:handoff.channel.discussionId,recipientActorId:handoff.channel.recipientActorId,
+      issuerActorId:handoff.channel.issuerActorId,
+      readCommand:`evoloop read discussion ${handoff.channel.discussionId} --project ${projectId}`},
+    materials:catalog };
 }
 
 export async function materialAsset(client: ApiClient, projectId: string, documentId: string, revisionId: string,

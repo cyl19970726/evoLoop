@@ -86,7 +86,12 @@ test('formal commands preserve failure, fixed business input and original M thro
   const retry={type:'queue.retryFailed',projectId,operationId:retryOp,queueId,entryId:entryA,claimId,runId:retryId,runOperationId:retryOp,expectedVersion:2,expectedGateVersion:view.gate!.version,sourceRunId:runA,expectedSourceRunVersion:failed.version,expectedTaskRevisionId:(await workflow.getTask(lead,projectId,taskA)).task.currentRevisionId,expectedExecutionProfileRevisionId:revised.executionProfile!.revision.revisionId,expectedInputHash:failed.inputHash,resumeMessageId:originalM,evidenceRef:'fixture://review-known-failure',reason:'Retry the same fixed business input once'};
   const [one,two]=await Promise.all([workflow.execute(lead,retry as any),workflow.execute(lead,retry as any)]);assert.equal(one.status,'applied',JSON.stringify(one));assert.deepEqual(one,two);
   assert.equal((await workflow.listResidentQueueAttempts(lead,projectId,claimId)).length,2);
-  const reserved=await workflow.getRuntimeRun(lead,projectId,retryId);assert.match(reserved.input,new RegExp(failed.inputHash));assert.ok(reserved.input.includes(failed.input));
+  const reserved=await workflow.getRuntimeRun(lead,projectId,retryId);
+  const retryHandoff=JSON.parse(reserved.input);
+  assert.equal(retryHandoff.protocol,'evoloop-run-v2');
+  assert.equal(retryHandoff.previousRun.id,failed.id);
+  assert.equal(retryHandoff.previousRun.inputHash,failed.inputHash);
+  assert.ok(!reserved.input.includes(failed.input));
   assert.equal((await uow.read(projectId,tx=>tx.sessionAssignments!.getTaskSessionAssignment(taskA)))!.taskRevisionId,fixedA.currentRevisionId);
   assert.equal((await messages.detail(projectId,originalM)).message.context!.taskRevisionId,fixedA.currentRevisionId);
   assert.equal(reserved.executionProfile!.model,'reviewed-model');assert.equal((await workflow.getRuntimeRun(lead,projectId,runA)).state,'failed');

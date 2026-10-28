@@ -259,27 +259,27 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
   }
   const fake=new FakeManagedRuntime(lostReply);
   const makeRunner=()=>new RuntimeRunner({runtimeFactory:()=>fake as unknown as RuntimePort & FakeManagedRuntime,
-    workflow,trusted,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+    workflow,trusted,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,
+    cliEntryForRun:async()=>({command:'/private/fixture-cli',actorId:businessActor})});
   const runner=makeRunner();
   try{
     await runner.start();
-    assert.equal(fake.starts.length,1);
+    assert.equal(fake.starts.length,1,JSON.stringify(runner.status(projectId)));
     const nativeStart=fake.starts[0]!;
     assert.equal(nativeStart.binding.sessionId,sessionId);
     assert.equal(nativeStart.binding.nativeThreadId,nativeThreadId);
     assert.equal(nativeStart.binding.resumeProfile?.actorId,controller.actorId);
     assert.equal(nativeStart.operationId,attempt.operationId);
     assert.match(nativeStart.input,new RegExp(`^\\[evoloop-run-operation:${attempt.operationId}\\]`));
-    assert.match(nativeStart.input,/# Fixed scope/);
-    assert.match(nativeStart.input,/Produce one test artifact/);
-    const handoff=JSON.parse(nativeStart.input.split('\n')[1]!) as {runInstructionRead:{inputHash:string;requiredBeforeAction:boolean;path:string}};
-    assert.equal(handoff.runInstructionRead.inputHash,runBefore.inputHash);
-    assert.equal(handoff.runInstructionRead.requiredBeforeAction,true);
-    assert.equal(handoff.runInstructionRead.path,`/api/projects/${projectId}/runtime/runs/${runBefore.id}/input`);
-    assert.match(nativeStart.input,/Before acting.*complete exact Run instruction/);
+    assert.match(nativeStart.input,/# 任务：Build fixed artifact/);
+    assert.match(nativeStart.input,new RegExp(`/private/fixture-cli handoff ${runBefore.id}`));
+    const handoff=JSON.parse(runBefore.input);
+    assert.equal(handoff.protocol,'evoloop-run-v2');
+    assert.equal(handoff.channel.discussionId,channel.id);
+    const inputPath=`/api/projects/${projectId}/runtime/runs/${runBefore.id}/input`;
     const pages={get:async(path:string)=>{
       const url=new URL(path,'http://local');
-      assert.equal(url.pathname,handoff.runInstructionRead.path);
+      assert.equal(url.pathname,inputPath);
       return runInputPage(await workflow.getRuntimeRun(controller,projectId,runBefore.id),
         Number(url.searchParams.get('cursor')),Number(url.searchParams.get('limit')));
     }};
@@ -291,7 +291,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
       const exact=await readFile(exported,'utf8');
       assert.equal(exact,runBefore.input);
       assert.equal(hash(exact),runBefore.inputHash);
-      assert.match(exact,new RegExp(`Task channel ${channel.id}`));
+      assert.equal(JSON.parse(exact).channel.discussionId,channel.id);
     }finally{await rm(directory,{recursive:true,force:true});}
     let settledRunner=runner;
     if(lostReply){

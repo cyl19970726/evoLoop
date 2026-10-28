@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { BasisSet, RuntimeRunRecord, TaskRevision } from "@evoloop/contracts";
 import type { FixedDocumentSummary } from "./materials.js";
 import { PreflightError } from "./preflight-report.js";
+import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 
 export const lightweightInputProtocol = "evoloop-lightweight-v1";
 export interface CliBootstrap { command: string; actorId: string }
@@ -33,6 +34,33 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
       !documents.some(document => document.documentId === revision.contentDocumentId &&
         document.revisionId === revision.contentRevisionId))
     throw new PreflightError("FIXED_SOURCE_INVALID", { kind: "task", id: run.taskId, revisionId: run.taskRevisionId });
+  const queue = parseQueueHandoff(run.input);
+  if (queue) {
+    if (queue.taskId !== run.taskId || queue.taskRevisionId !== run.taskRevisionId ||
+        queue.basisSetId !== run.basisSetId || !cliBootstrap ||
+        cliBootstrap.actorId !== queue.channel.recipientActorId)
+      throw new PreflightError(!cliBootstrap ? "CLI_ENTRY_UNAVAILABLE" : "FIXED_SOURCE_INVALID",
+        { kind: "task", id: run.taskId, revisionId: run.taskRevisionId });
+    const introduction = revision.content.replace(/^# .+\n+/, "").split(/\n\s*\n/)[0]?.trim() ?? "";
+    const purposePreview = preview(introduction, 900);
+    const shortPurpose = purposePreview.text ? `\n${purposePreview.text}${purposePreview.truncated ? "…（完整目标见固定接手结果）" : ""}\n` : "";
+    const reasonPreview = queue.reason ? preview(queue.reason, 600) : null;
+    const reason = reasonPreview?.truncated ? "详情见固定接手结果" : queue.reason ?? "查看固定接手结果";
+    const change = queue.kind === "queue.claim" ? "" :
+      `\n## 本轮变化\n${queue.kind === "queue.retryFailed" ? "重试" : "接续"}：${reason}。`+
+      (queue.previousRun ? `来源 Run ${queue.previousRun.id}，输入 SHA-256 ${queue.previousRun.inputHash}。` : "")+
+      (queue.answers.length ? `本轮有 ${queue.answers.length} 份已答问题的固定修订，请在接手结果中按需读取。` : "")+"\n";
+    const input = `[evoloop-run-operation:${run.operationId}]\n# 任务：${revision.title}\n${shortPurpose}`+
+      `\n## 开始\n读取本次固定目标、完整验收、变化与资料目录：\n\n`+
+      `\`\`\`sh\n${cliBootstrap.command} handoff ${run.id} --project ${run.projectId} --hash ${run.inputHash}\n\`\`\`\n`+
+      `先用同一入口的 session 命令核身份；正文与附件按目录中的固定修订和哈希分段读取。`+
+      change+`\n## 反馈与交付\n交给 ${queue.channel.issuerActorId}。当前 Task 通道 ${queue.channel.discussionId}；用已核身份在这里提问和交结果。`+
+      `原生 Turn 完成不等于 Delivery、实际使用或 Task 关闭。\n`;
+    const byteLength = Buffer.byteLength(input, "utf8");
+    if (byteLength > maxInputBytes) throw new PreflightError("INPUT_LIMIT",
+      { kind: "task", id: run.taskId, revisionId: run.taskRevisionId }, byteLength, maxInputBytes);
+    return { protocol: "evoloop-markdown-v2", input, contentHash: hash(input), byteLength };
+  }
   const source = (document: FixedDocumentSummary) => ({ role: document.documentId === revision.contentDocumentId &&
     document.revisionId === revision.contentRevisionId ? "primary" : "basis", ...document });
   const inlineInput = Buffer.byteLength(run.input, "utf8") <= 16 * 1024 ? run.input : null;

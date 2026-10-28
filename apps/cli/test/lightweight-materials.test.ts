@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiClient } from "../src/client.js";
-import { materialAsset, materialBody, materialCatalog } from "../src/lightweight-materials.js";
+import { materialAsset, materialBody, materialCatalog, materialHandoff } from "../src/lightweight-materials.js";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const [projectId, taskId, taskRevisionId, documentId, revisionId, blobId] = [1, 2, 3, 4, 5, 6].map(id);
@@ -38,4 +38,45 @@ test("CLI checks fixed catalog scope, body byte page and both asset hashes", asy
     await assert.rejects(materialAsset(client(reply), projectId, documentId, revisionId, blobId,
       digest("changed"), digest(asset)), /Document hash/);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("v2 first read verifies identity and fixed input, then shows complete acceptance and material pointers", async () => {
+  const runId=id(8), basisSetId=id(7), channelId=id(9), answerId=id(10), answerRevisionId=id(11);
+  const actorId="recipient";
+  const input=JSON.stringify({protocol:"evoloop-run-v2",taskId,taskRevisionId,basisSetId,
+    kind:"queue.continue",reason:"补上后部条件",previousRun:{id:id(12),taskRevisionId:id(13),inputHash:digest("old")},
+    answers:[{discussionId:id(14),questionEventId:id(16),messageEventId:id(15),documentId:answerId,revisionId:answerRevisionId,contentHash:digest("answer")}],
+    channel:{discussionId:channelId,recipientActorId:actorId,issuerActorId:"lead"}});
+  const content="# 任务\n\n说明本轮目标。\n\n## 范围与边界\n保留后部条件："+"中文".repeat(5000)+
+    "\n\n## 限制\n仍需读取这里的限制。";
+  const catalog={projectId,taskId,taskRevisionId,basisSetId,documents:[{documentId,revisionId,contentHash:digest(content),
+    sizeBytes:Buffer.byteLength(content),bodyCommand:"evoloop body fixed",assets:[]}],externalReferences:[]};
+  const api=(identity=actorId,actualInput=input):ApiClient=>({get:async(path:string)=>{
+    if(path==="/api/session")return {principal:{actorId:identity}};
+    if(path.includes(`/runtime/runs/${runId}/input?`))return {projectId,runId,taskRevisionId,inputHash:digest(input),
+      body:actualInput,startByte:0,endByte:Buffer.byteLength(actualInput),totalBytes:Buffer.byteLength(actualInput),
+      nextCursor:null,truncated:false};
+    if(path.endsWith(`/tasks/${taskId}/revisions/${taskRevisionId}`))return {revision:{id:taskRevisionId,
+      taskId,projectId,basisSetId,contentDocumentId:documentId,contentRevisionId:revisionId,
+      title:"任务",content,acceptance:"验收：完整检查后部条件与原图。"}};
+    if(path.endsWith("/materials"))return catalog;
+    throw new Error(`unexpected ${path}`);
+  }}) as ApiClient;
+  const result=await materialHandoff(api(),projectId,runId,digest(input));
+  assert.equal(result.introduction,"# 任务\n\n说明本轮目标。");
+  assert.equal(result.acceptance,"验收：完整检查后部条件与原图。");
+  assert.match(result.boundarySections[0]!,/保留后部条件/);
+  assert.equal(result.introductionTruncated,false);
+  assert.equal(result.boundarySectionsTotal,2);
+  assert.equal(result.boundarySectionsTruncated,true);
+  assert.ok(Buffer.byteLength(result.boundarySections.join(""),"utf8")<=6144);
+  assert.ok(!JSON.stringify(result.boundarySections).includes("仍需读取这里的限制"));
+  assert.equal(result.fullContentCommand,"evoloop body fixed");
+  assert.equal(result.contentComplete,false);
+  assert.equal(result.contentBytes,Buffer.byteLength(content));
+  assert.equal(result.materials.documents.length,1);
+  assert.equal(result.change.answeredQuestions[0]?.contentHash,digest("answer"));
+  assert.ok(!JSON.stringify(result).includes("old fixed source body"));
+  await assert.rejects(materialHandoff(api("other"),projectId,runId,digest(input)),/identity/);
+  await assert.rejects(materialHandoff(api(actorId,input+"corrupt"),projectId,runId,digest(input)),/inconsistent|hash/);
 });

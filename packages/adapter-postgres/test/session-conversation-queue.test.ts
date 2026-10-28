@@ -110,7 +110,8 @@ test('one full Session executes A, queues M while busy, records its reply, and a
     roleId:role,cwd,authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
   const native=new FakeFullNative();
   const runner=new RuntimeRunner({runtimeFactory:()=>native,workflow,trusted,principals:[lead],canWrite:()=>true,
-    allowedCwd:async()=>true,hasGrant:async()=>true});
+    allowedCwd:async()=>true,hasGrant:async()=>true,
+    cliEntryForRun:async()=>({command:'/private/fixture-cli',actorId:'worker'})});
   t.after(()=>runner.stop());
   await runner.start();
   const ready=await workflow.getRuntimeSession(lead,project,session);
@@ -133,7 +134,7 @@ test('one full Session executes A, queues M while busy, records its reply, and a
   const claim=queue.entries[0]!.claimId!;
   const firstAttempt=(await workflow.listResidentQueueAttempts(lead,project,claim))[0]!;
   await runner.pump();
-  assert.equal((await workflow.getRuntimeRun(lead,project,firstAttempt.runId)).state,'running');
+  assert.equal((await workflow.getRuntimeRun(lead,project,firstAttempt.runId)).state,'running',JSON.stringify(runner.status(project)));
   assert.equal(native.starts.length,1);assert.equal(native.starts[0]?.kind,'run');
   const messagePost=await workflow.execute(sender,{type:'session.message.post',projectId:project,
     operationId:randomUUID(),messageId,target:{kind:'owned',sessionId:session},content:'Please clarify A now'});

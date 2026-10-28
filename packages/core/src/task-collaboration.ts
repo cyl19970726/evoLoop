@@ -2,6 +2,7 @@ import type { TaskCollaborationCommand, DiscussionEvent, DiscussionRecord, TaskC
 import type { AppliedResult, DocumentRevision, Principal } from "@evoloop/contracts";
 import { DomainError, type ContentHasher, type Transaction } from "@evoloop/contracts/ports";
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
+import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 
 interface Context { tx: Transaction; command: TaskCollaborationCommand; principal: Principal; now: string;
   nextId(): string; hasher: ContentHasher; isAuthorizedRoleActor(projectId: string, actorId: string, roleId: string): Promise<boolean>;
@@ -158,7 +159,11 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
       const answer = await ref(ctx, messagePayload.body);
       const block = taskAnswerInputBlock(old.id, message.id, { documentId: answer.documentId,
         revisionId: answer.id, contentHash: answer.contentHash, text: answer.body! });
-      if (ctx.hasher.hash(continued.input) !== continued.inputHash || !continued.input.includes(block))
+      const handoff = parseQueueHandoff(continued.input);
+      const fixedAnswer = handoff?.answers.some(item => item.discussionId === old.id &&
+        item.questionEventId === messagePayload.replyToEventId && item.messageEventId === message.id &&
+        item.documentId === answer.documentId && item.revisionId === answer.id && item.contentHash === answer.contentHash);
+      if (ctx.hasher.hash(continued.input) !== continued.inputHash || !(fixedAnswer || !handoff && continued.input.includes(block)))
         fail("ANSWER_NOT_IN_RUN", "Continuation Run input does not include the fixed answer block");
     }
     await ref(ctx, command.evidence);

@@ -601,12 +601,15 @@ export class WorkflowService {
               if(command.runOperationId!==command.operationId) throw new DomainError("RUN_OPERATION_MISMATCH", "queue and Run reservation must use the same operation ID");
               const entry=(await tx.queue.getResidentQueue(command.queueId))!.entries.find(x=>x.id===command.entryId)!;
               const task=required(await tx.getTask(entry.taskId),"Task");
+              const taskRevision=required(await tx.getTaskRevision(task.id,task.currentRevisionId),"Task revision");
+              if(!taskRevision.basisSetId)throw new DomainError("BASIS_UNAVAILABLE","Queue handoff requires a fixed Task basis");
               const session=required(await tx.getRuntimeSession(entry.sessionId),"Session");
               const recipient=await this.deps.collaborationAuthority?.actorForRole(command.projectId,entry.roleId);
               if(!recipient)throw new DomainError("RECIPIENT_HELD","No current business actor is bound to this Role");
               const discussionId=fixedUuid(this.deps.hasher.hash(`queue-channel:${command.projectId}:${command.runId}`));
               const documentId=fixedUuid(this.deps.hasher.hash(`queue-channel-document:${command.projectId}:${command.runId}`));
-              let answeredContext="";
+              const answers: Array<{discussionId:string; questionEventId:string; messageEventId:string; documentId:string; revisionId:string; contentHash:string}> = [];
+              let previousRun: {id:string; taskRevisionId:string; inputHash:string} | null = null;
               if(command.type==="queue.continue"){
                 const attempts=await tx.queue.listResidentQueueAttempts(command.claimId);
                 const prior=attempts.at(-2);
@@ -617,7 +620,7 @@ export class WorkflowService {
                   channel.collaboration.sessionId!==entry.sessionId||channel.task?.id!==task.id)
                   throw new DomainError("CONTINUATION_SOURCE_MISMATCH","question and answer must belong to the previous Task Run");
                 const messages=command.answeredQuestions.length?await tx.listDiscussionEvents(sourceChannelId):[];
-                const lines:string[]=[];
+                previousRun={id:prior.runId,taskRevisionId:prior.taskRevisionId,inputHash:required(await tx.getRuntimeRun(prior.runId),"Previous Run").inputHash};
                 for(const pair of command.answeredQuestions){
                   const question=messages.find(x=>x.id===pair.questionEventId);
                   const answer=messages.find(x=>x.id===pair.answerEventId);
@@ -632,19 +635,18 @@ export class WorkflowService {
                     answerRevision.documentId!==answerDocument.id||answerRevision.body===null||
                     answerRevision.format!=="markdown"||this.deps.hasher.hash(answerRevision.body)!==answerRevision.contentHash)
                     throw new DomainError("CONTINUATION_ANSWER_INVALID","fixed answer Document revision is invalid");
-                  lines.push(`Question ${question.id} document ${question.collaborationPayload.body.documentId}@${question.collaborationPayload.body.revisionId}`,
-                    taskAnswerInputBlock(sourceChannelId,answer.id,{documentId:answerRevision.documentId,revisionId:answerRevision.id,
-                      contentHash:answerRevision.contentHash,text:answerRevision.body}));
+                  answers.push({discussionId:sourceChannelId,questionEventId:question.id,messageEventId:answer.id,documentId:answerRevision.documentId,
+                    revisionId:answerRevision.id,contentHash:answerRevision.contentHash});
                 }
-                answeredContext=`\nContinuation reason: ${command.reason}\nPrevious Run ${prior.runId}; previous Task channel ${sourceChannelId}.`+
-                  (lines.length?`\nFixed answered messages:\n${lines.join("\n")}`:"\nContinue from the newly amended fixed Task input; no answered question is claimed.");
               }
-              const channelInput=`Current Task channel ${discussionId} (Run ${command.runId}). Read with evoLoop CLI: read discussion ${discussionId} --project ${command.projectId}; post question/progress/results with your own CLI identity using discussion.message.post and a fixed Document revision. Keep this Run bound to its fixed scope.`;
-              let input=`Task ${entry.taskId} fixed source ${entry.taskRevisionId}\n${task.title}\n${task.content}\nAcceptance: ${task.acceptance}${answeredContext}\n${channelInput}`;
+              let input="";
               if(command.type==='queue.retryFailed'){
                 const source=required(await tx.getRuntimeRun(command.sourceRunId),'Retry source Run');
-                input=`Retry the same fixed business input from Run ${source.id}, Task revision ${source.taskRevisionId}, input SHA256 ${source.inputHash}.\n<fixed_source_run_input>\n${source.input}\n</fixed_source_run_input>\nExecution envelope for this attempt: prior channel/Run references above are historical. Use this current channel for new communication.\n${channelInput}`;
+                previousRun={id:source.id,taskRevisionId:source.taskRevisionId,inputHash:source.inputHash};
               }
+              input=JSON.stringify({protocol:"evoloop-run-v2",taskId:entry.taskId,taskRevisionId:taskRevision.id,
+                basisSetId:taskRevision.basisSetId,kind:command.type,reason:command.type==="queue.claim"?null:command.reason,
+                previousRun,answers,channel:{discussionId,recipientActorId:recipient,issuerActorId:principal.actorId}});
               const reserved=await reserveRuntime({tx,principal:{...principal,actorId:session.actorId},now,nextId:()=>this.deps.ids.next(),hash:value=>this.deps.hasher.hash(value),
                 command:{type:"runtime.run.reserve",projectId:command.projectId,operationId:command.operationId,
                   runId:command.runId,taskId:entry.taskId,sessionId:entry.sessionId,expectedVersion:task.version,input},

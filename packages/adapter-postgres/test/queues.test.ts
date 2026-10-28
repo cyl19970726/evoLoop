@@ -261,7 +261,11 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   const queue=await central.getResidentQueue(lead,p,queueId);assert.equal(queue.entries[0]?.claimId,claimId);
   assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,1);
   const run=await central.getRuntimeRun(lead,p,runId);assert.equal(run.state,'requested');
-  assert.match(run.input,/Task channel [0-9a-f-]{36}/);
+  const handoff=JSON.parse(run.input);
+  assert.equal(handoff.protocol,'evoloop-run-v2');
+  assert.equal(handoff.channel.recipientActorId,'worker');
+  assert.match(handoff.channel.discussionId,/^[0-9a-f-]{36}$/);
+  assert.ok(!run.input.includes((await central.getTask(lead,p,taskId)).task.content));
   const journal=await pool.query('SELECT command_type FROM operation_journal WHERE project_id=$1 AND operation_id=$2',[p,operationId]);
   assert.equal(journal.rows[0]?.command_type,'queue.claim');
   const outbox=await pool.query('SELECT kind FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,operationId]);
@@ -339,7 +343,10 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   assert.equal(continued.status,'applied',JSON.stringify(continued));
   const continuation=await central.getRuntimeRun(lead,p,continuationRunId);
   assert.equal(continuation.sessionId,sessionId);
-  assert.match(continuation.input,new RegExp(`\\[evoloop-task-answer ${channel.id} ${answerEvent.id} ${answerBody.documentId} ${answerBody.revisionId} ${hash('Include the current passing test receipt and consumer use observation.')}\\]`));
+  const answerHandoff=JSON.parse(continuation.input);
+  assert.deepEqual(answerHandoff.answers,[{discussionId:channel.id,questionEventId:questionEvent.id,
+    messageEventId:answerEvent.id,documentId:answerBody.documentId,revisionId:answerBody.revisionId,
+    contentHash:hash('Include the current passing test receipt and consumer use observation.')}]);
   await native.beginDispatch(p,continuationRunId);
   await native.bindTurn(p,continuationRunId,{id:`turn-${continuationRunId}`},{kind:'startReply',operationId:continuationOperationId});
   await native.recordTurn(p,continuationRunId,`turn-${continuationRunId}`,'completed','Used fixed answer');
@@ -647,10 +654,13 @@ test('failed consumer use can continue the same claim from amended input without
   assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,2);
   const resumed=await central.getRuntimeRun(lead,p,secondRunId);
   assert.equal(resumed.sessionId,sessionId);
-  assert.match(resumed.input,new RegExp(`Continuation reason: ${reason}`));
-  assert.match(resumed.input,new RegExp(`Previous Run ${firstRunId}; previous Task channel ${sourceChannel.id}`));
-  assert.match(resumed.input,/Remediation: cover the missing consumer use case/);
-  assert.match(resumed.input,/no answered question is claimed/);
+  const continued=JSON.parse(resumed.input);
+  assert.equal(continued.protocol,'evoloop-run-v2');
+  assert.equal(continued.reason,reason);
+  assert.equal(continued.previousRun.id,firstRunId);
+  assert.equal(continued.previousRun.inputHash,(await central.getRuntimeRun(lead,p,firstRunId)).inputHash);
+  assert.equal(continued.answers.length,0);
+  assert.ok(!resumed.input.includes('Remediation: cover the missing consumer use case'));
 });
 
 test('two concurrent creators cannot both take the 200th project queue slot',async()=>{
