@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
-import { WorkflowService } from "@evoloop/core";
+import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import type { BasisSet, Document, DocumentRevision, Operation, Project, Task, TaskRevision } from "@evoloop/contracts";
 
@@ -95,7 +95,7 @@ test("acceptance policy readback follows the selected Task revision", async () =
 
 test("ordinary submission attribution requires the frozen terminal Run version", async () => {
   const p=project(),source=document(p.id),item=readyTask(p.id,source.head.id,source.revision.id);
-  const sessionId=randomUUID(),runId=randomUUID(),operationId=randomUUID(),deliveryOperationId=randomUUID();
+  const sessionId=randomUUID(),runId=randomUUID(),runOperationId=randomUUID(),operationId=randomUUID(),deliveryOperationId=randomUUID();
   const intent={artifactRef:"repo:result",artifactRevision:"abc123",contentHash:sha("result"),
     technicalResult:"passed" as const,technicalEvidence:"checked",reason:"done"};
   await uow.transaction(p.id,async tx=>{
@@ -105,6 +105,8 @@ test("ordinary submission attribution requires the frozen terminal Run version",
     await tx.insertTask(item.head);await tx.insertTaskRevision(item.revision);await tx.insertSealedBasisSet(item.basis);
     await tx.insertTaskProposal({projectId:p.id,taskId:item.head.id,taskRevisionId:item.revision.id,
       stageId:null,consumer:"",useRequired:true,acceptanceMode:"independent_agent",evidence:"",stopCondition:"",createdAt:now});
+    await tx.insertOperation({projectId:p.id,id:runOperationId,actorId:actor,commandHash:sha("run reserve"),
+      commandType:"runtime.run.reserve",result:{status:"applied",operationId:runOperationId,entityId:runId,version:1},createdAt:now});
     await tx.insertRuntimeSession({projectId:p.id,id:sessionId,roleId:"operator",cwd:"/tmp/ordinary",authorizationScope:"project",
       model:null,sandbox:"danger-full-access",approvalPolicy:"never",state:"ready",version:1,
       nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`,operationId:randomUUID(),actorId:actor,
@@ -113,7 +115,11 @@ test("ordinary submission attribution requires the frozen terminal Run version",
   await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
     operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,'fixed',$8,'completed',3,$9,$10,now(),now())`,
-    [p.id,runId,item.head.id,item.revision.id,item.basis.id,sessionId,randomUUID(),sha("fixed"),`turn-${runId}`,actor]);
+    [p.id,runId,item.head.id,item.revision.id,item.basis.id,sessionId,runOperationId,sha("fixed"),`turn-${runId}`,actor]);
+  const terminalDigest=sha("native items");
+  await uow.transaction(p.id,tx=>tx.appendRuntimeEvent({projectId:p.id,id:randomUUID(),runId,sessionId,
+    kind:"run.status",detail:`completed; completedAtUtc=${now}`,nativeTurnId:`turn-${runId}`,
+    cursor:null,itemsDigest:terminalDigest,actorId:actor,createdAt:now}));
   // 041 is owned by the ordinary submission PR. The 040-only test database supplies
   // its queried columns; once 041 lands this exercises its real table and guards.
   const exists=await pool.query("SELECT to_regclass('ordinary_run_submission') AS relation");
@@ -134,6 +140,15 @@ test("ordinary submission attribution requires the frozen terminal Run version",
         deliveryOperationId,JSON.stringify(intent),actor]);
     await pool.query(`UPDATE ordinary_run_submission SET state='sealing',version=2,expected_task_version=1,
       terminal_run_version=3,sealed_by='coordinator',updated_at_utc=now() WHERE project_id=$1 AND run_id=$2`,[p.id,runId]);
+    const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID}});
+    const reviewer={actorId:"runtime-reviewer",projectIds:[p.id],permissions:["read","review"] as ("read"|"review")[]};
+    const terminalEvents=await uow.read(p.id,r=>r.listRuntimeEvents(runId));
+    assert.equal(terminalEvents.at(-1)?.detail,`completed; completedAtUtc=${now}`);
+    assert.equal(terminalEvents.at(-1)?.itemsDigest,terminalDigest);
+    assert.equal(terminalEvents.at(-1)?.nativeTurnId,`turn-${runId}`);
+    const observeAgain=()=>runtime.reconcileTerminalObservation(p.id,runId,`turn-${runId}`,"completed",null,
+      {itemsDigest:terminalDigest,completedAtUtc:now},3,reviewer,"Confirm the same native terminal evidence");
+    assert.equal((await observeAgain()).version,3,"same evidence before Delivery preserves the frozen signer version");
     const signer=()=>uow.read(p.id,r=>r.getSignedRunSubmitter!(runId,item.head.id,item.revision.id,actor,
       deliveryOperationId,1,intent));
     assert.equal(await signer(),actor);
@@ -144,9 +159,15 @@ test("ordinary submission attribution requires the frozen terminal Run version",
     assert.equal(saved.status,"applied");
     const deliveryId=saved.status==="applied"?saved.revisionId!:"";
     assert.equal((await uow.read(p.id,r=>r.getDelivery(deliveryId)))?.sourceRunVersion,3);
-    await pool.query(`UPDATE runtime_run SET version=4,updated_at=now() WHERE project_id=$1 AND run_id=$2`,[p.id,runId]);
-    assert.equal(await signer(),null,"stale sealing version cannot attribute a later Run state");
+    assert.equal((await observeAgain()).version,3,"same evidence after Delivery preserves its acceptance path");
     const independent={actorId:"independent",projectIds:[p.id],permissions:["read","write"] as ("read"|"write")[]};
+    const acceptedUse=await workflow.execute(independent,{type:"observation.record",projectId:p.id,operationId:randomUUID(),
+      taskId:item.head.id,deliveryId,observer:"independent",observerKind:"agent",result:"used",evidence:"Read artifact",reason:"Use"});
+    assert.equal(acceptedUse.status,"applied",JSON.stringify(acceptedUse));
+    const changed=await runtime.reconcileTerminalObservation(p.id,runId,`turn-${runId}`,"completed",null,
+      {itemsDigest:sha("different native items"),completedAtUtc:now},3,reviewer,"Native items changed");
+    assert.equal(changed.version,4,"changed evidence remains a versioned, auditable reconciliation");
+    assert.equal(await signer(),null,"stale sealing version cannot attribute a later Run state");
     const use=await workflow.execute(independent,{type:"observation.record",projectId:p.id,operationId:randomUUID(),
       taskId:item.head.id,deliveryId,observer:"independent",observerKind:"agent",result:"used",evidence:"Read artifact",reason:"Use"});
     assert.equal(use.status==="rejected"?use.code:null,"DELIVERY_RUN_CHANGED");

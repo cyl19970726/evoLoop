@@ -373,6 +373,23 @@ export class RuntimeWorkflowService {
       if (!["completed", "failed", "interrupted"].includes(current.state)) {
         throw new DomainError("RUN_NOT_TERMINAL", "only a terminal bound run can be reconciled");
       }
+      // The durable terminal event carries the native digest and completion time.
+      const terminal = status === current.state ? (await tx.listRuntimeEvents(runId)).findLast(item =>
+        item.kind === "run.reconciled" ||
+        item.kind === "run.status" && /^(completed|failed|interrupted)(;|$)/.test(item.detail)) : undefined;
+      const statusDetail = `${status}; completedAtUtc=${checkpoint.completedAtUtc}`;
+      const sameEvidence = status === current.state && terminal?.nativeTurnId === turnId &&
+        terminal.itemsDigest === checkpoint.itemsDigest &&
+        (terminal.kind === "run.status" ?
+          terminal.detail === statusDetail || terminal.detail.startsWith(`${statusDetail}: `) :
+          terminal.detail.includes(` -> ${status}; completedAtUtc=${checkpoint.completedAtUtc}; reason=`)) &&
+        (!summary || safeDetail(summary) === current.resultSummary);
+      if (sameEvidence) {
+        await tx.appendRuntimeEvent(event(projectId, this.deps.ids.next(), runId, current.sessionId, "run.reviewed",
+          safeDetail(`Reviewer confirmed unchanged native terminal ${status}; completedAtUtc=${checkpoint.completedAtUtc}; reason=${reason}`),
+          turnId, principal.actorId, this.deps.clock.now(), null, checkpoint.itemsDigest));
+        return current;
+      }
       const task = await tx.getTask(current.taskId);
       const policy = task && await tx.getTaskProposal(task.id);
       if (task?.state === "done" && policy?.acceptanceMode &&

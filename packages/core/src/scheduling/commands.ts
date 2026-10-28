@@ -37,7 +37,7 @@ export async function applySchedule(tx: SchedulingTransaction, principal: Princi
   const current = await tx.getSchedule(command.scheduleId);
   if (command.type === "schedule.create" && current) throw new DomainError("ALREADY_EXISTS", "Schedule already exists");
   if (command.type === "schedule.revise" && (!current || current.version !== command.expectedVersion)) throw new DomainError("VERSION_CONFLICT", "Schedule version changed", current?.version);
-  if (command.type === "schedule.revise" && current?.state === "active" &&
+  if (command.type === "schedule.revise" && current &&
     current.revision.template.acceptanceMode === "human_required" &&
     (command.template.acceptanceMode !== current.revision.template.acceptanceMode ||
       command.template.consumer !== current.revision.template.consumer) &&

@@ -154,6 +154,12 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.match(reconciledEvents.at(-1)?.detail ?? "", /completedAtUtc=2026-10-20T12:00:00.000Z/);
   const outbox = await pool.query("SELECT kind, version FROM outbox_event WHERE project_id=$1 AND entity_id=$2 AND kind='runtime.run.reconciled'", [projectId, runId]);
   assert.deepEqual(outbox.rows, [{ kind: "runtime.run.reconciled", version: completed.version }]);
+  const confirmedAgain = await runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Native turn completed",
+    checkpoint, completed.version, reviewer, "Confirm the same fixed native observation");
+  assert.equal(confirmedAgain.version, completed.version);
+  assert.equal((await workflow.listRuntimeEvents(principal, projectId, runId)).at(-1)?.kind, "run.reviewed");
+  assert.deepEqual((await pool.query("SELECT kind, version FROM outbox_event WHERE project_id=$1 AND entity_id=$2 AND kind='runtime.run.reconciled'", [projectId, runId])).rows,
+    outbox.rows,"unchanged native evidence does not emit another Run version");
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Duplicate", checkpoint,
     firstTerminal.version, reviewer, "stale retry"), /run changed/);
   await assert.rejects(runtime.recordHandoffReceipt(projectId, runId, "adopted", "Too early"), /previous handoff/);

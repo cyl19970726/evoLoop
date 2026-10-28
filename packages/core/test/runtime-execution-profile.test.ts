@@ -78,7 +78,7 @@ test('a closed accepted Task must reopen before its source Run terminal result c
   const task={projectId,id:taskId,state:'done'} as Task;
   const policy={projectId,taskId,acceptanceMode:'independent_agent'} as TaskProposal;
   const delivery={projectId,taskId,runId,technicalResult:'passed',sourceRunVersion:4} as Delivery;
-  const tx={getRuntimeRun:async()=>run,getTask:async()=>task,getTaskProposal:async()=>policy,
+  const tx={getRuntimeRun:async()=>run,listRuntimeEvents:async()=>[],getTask:async()=>task,getTaskProposal:async()=>policy,
     listDeliveries:async()=>[delivery]};
   const service=new RuntimeWorkflowService({uow:{transaction:async(_project:string,action:(value:unknown)=>Promise<unknown>)=>
     action(tx)} as UnitOfWork,clock:{now:()=>now},ids:{next:randomUUID}});
