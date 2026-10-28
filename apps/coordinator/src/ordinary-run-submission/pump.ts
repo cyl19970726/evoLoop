@@ -2,7 +2,7 @@ import type { OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-ru
 import type { OrdinarySealResult } from "./seal.js";
 
 export interface OrdinaryRunSealPumpDependencies {
-  canWrite?(): boolean;
+  canWrite(): boolean;
   listProjects(): Promise<string[]>;
   listUnsettled(projectId: string, limit: number, after?: {createdAtUtc:string;runId:string}): Promise<OrdinaryRunSubmissionRecord[]>;
   seal(projectId: string, runId: string): Promise<OrdinarySealResult>;
@@ -28,7 +28,7 @@ export class OrdinaryRunSealPump {
 
   async cycle(): Promise<void> {
     if (this.cycling) return;
-    if (this.deps.canWrite?.() === false) return;
+    if (!this.deps.canWrite()) return;
     this.cycling = true;
     try {
       for (const projectId of await this.deps.listProjects()) {
@@ -36,6 +36,7 @@ export class OrdinaryRunSealPump {
         while (true) {
           const batch = await this.deps.listUnsettled(projectId, 100, after);
           for (const item of batch) {
+            if (!this.deps.canWrite()) return;
             try { await this.deps.seal(projectId, item.runId); }
             catch (error) { this.lastError = error instanceof Error ? error.message : String(error); }
           }
