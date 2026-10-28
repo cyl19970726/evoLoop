@@ -58,6 +58,14 @@ test('formal commands preserve failure, fixed business input and original M thro
   const fixedA=(await workflow.getTask(lead,projectId,taskA)).task;
   assert.equal(fixedA.version,2);
   const op=randomUUID();const firstClaim=await apply({type:'queue.claim',queueId,entryId:entryA,claimId,runId:runA,operationId:op,runOperationId:op,expectedVersion:1});assert.equal(firstClaim.queue.runId,runA,JSON.stringify(firstClaim));
+  // Materialize a row created by the old release. Only this isolated fixture bypasses the new immutable-origin trigger.
+  const legacyInput=`Task ${taskA} fixed source ${fixedA.currentRevisionId}\nFixed work and original authorization; read the sealed basis.`;
+  const historical=await pool.connect();try{
+    await historical.query('BEGIN');await historical.query('SET LOCAL session_replication_role = replica');
+    await historical.query('UPDATE runtime_run SET input=$3,input_hash=$4 WHERE project_id=$1 AND run_id=$2',
+      [projectId,runA,legacyInput,hash(legacyInput)]);
+    await historical.query('COMMIT');
+  }catch(error){await historical.query('ROLLBACK');throw error;}finally{historical.release();}
   await native.beginDispatch(projectId,runA);await native.bindTurn(projectId,runA,{id:'failed-original-turn'},{kind:'startReply',operationId:op});
   await apply({type:'session.message.post',messageId:originalM,target:{kind:'owned',sessionId},context:{taskId:taskA,taskRevisionId:fixedA.currentRevisionId},content:'The original message posted while A is running'});
   await native.recordTurn(projectId,runA,'failed-original-turn','failed','Controlled provider rejection');
@@ -77,7 +85,7 @@ test('formal commands preserve failure, fixed business input and original M thro
   await apply({type:'runtime.session.executionProfile.revise',sessionId,expectedVersion:session.version,expectedExecutionProfileRevisionId:session.executionProfile!.revision.revisionId,model:'reviewed-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'fixture://exact-grant-and-provider',reason:'Explicit controlled revision'});
   const revised=await workflow.getRuntimeSession(lead,projectId,sessionId);
   assert.equal(revised.executionProfile!.activationState,'pending');assert.deepEqual((await workflow.getRuntimeRun(lead,projectId,runA)).executionProfile,oldProfile);
-  const budget={type:'queue.extendBudget',projectId,queueId,expectedVersion:1,expectedMaxRuns:2,maxRuns:4,evidenceRef:'fixture://cost-decision',reason:'One reviewed failed retry and one reviewed rework',operationId:randomUUID()};
+  const budget={type:'queue.extendBudget',projectId,queueId,expectedVersion:1,expectedMaxRuns:2,maxRuns:5,evidenceRef:'fixture://cost-decision',reason:'Two reviewed failed retries and one reviewed rework',operationId:randomUUID()};
   const extended=await apply(budget);assert.deepEqual(await workflow.execute(lead,budget as any),extended);
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.phase,'blocked');
   await apply({type:'queue.adopt',queueId,expectedVersion:2});
@@ -89,8 +97,8 @@ test('formal commands preserve failure, fixed business input and original M thro
   const reserved=await workflow.getRuntimeRun(lead,projectId,retryId);
   const retryHandoff=JSON.parse(reserved.input);
   assert.equal(retryHandoff.protocol,'evoloop-run-v2');
-  assert.equal(retryHandoff.previousRun.id,failed.id);
-  assert.equal(retryHandoff.previousRun.inputHash,failed.inputHash);
+  assert.deepEqual(retryHandoff.previousRun,{id:failed.id,taskRevisionId:failed.taskRevisionId,inputHash:failed.inputHash});
+  assert.deepEqual(retryHandoff.legacySource,retryHandoff.previousRun);
   assert.ok(!reserved.input.includes(failed.input));
   assert.equal((await uow.read(projectId,tx=>tx.sessionAssignments!.getTaskSessionAssignment(taskA)))!.taskRevisionId,fixedA.currentRevisionId);
   assert.equal((await messages.detail(projectId,originalM)).message.context!.taskRevisionId,fixedA.currentRevisionId);
@@ -100,7 +108,22 @@ test('formal commands preserve failure, fixed business input and original M thro
   assert.equal(await uow.transaction(projectId,tx=>tx.recovery!.beginExecutionProfileActivation(sessionId,profile.revisionId,profile.operationId)),true);
   await uow.transaction(projectId,tx=>tx.recovery!.settleExecutionProfileActivation(sessionId,profile.revisionId,'active','Controlled same-Thread native response fixture'));
   await native.beginDispatch(projectId,retryId);await native.bindTurn(projectId,retryId,{id:'retry-turn'},{kind:'startReply',operationId:retryOp});
-  await native.recordTurn(projectId,retryId,'retry-turn','completed','Fixed result from the original business input');
+  await native.recordTurn(projectId,retryId,'retry-turn','failed','First retry also failed');
+  const failedRetry=await workflow.getRuntimeRun(lead,projectId,retryId);
+  view=await workflow.getSessionRecovery(lead,projectId,sessionId);
+  const secondRetryId=randomUUID(),secondRetryOp=randomUUID();
+  await apply({type:'queue.retryFailed',queueId,entryId:entryA,claimId,runId:secondRetryId,runOperationId:secondRetryOp,
+    operationId:secondRetryOp,expectedVersion:2,expectedGateVersion:view.gate!.version,
+    sourceRunId:retryId,expectedSourceRunVersion:failedRetry.version,
+    expectedTaskRevisionId:(await workflow.getTask(lead,projectId,taskA)).task.currentRevisionId,
+    expectedExecutionProfileRevisionId:profile.revisionId,expectedInputHash:failedRetry.inputHash,
+    resumeMessageId:originalM,evidenceRef:'fixture://second-reviewed-retry',reason:'Retry the same fixed original once more'});
+  const secondRetry=await workflow.getRuntimeRun(lead,projectId,secondRetryId);
+  const secondHandoff=JSON.parse(secondRetry.input);
+  assert.deepEqual(secondHandoff.previousRun,{id:failedRetry.id,taskRevisionId:failedRetry.taskRevisionId,inputHash:failedRetry.inputHash});
+  assert.deepEqual(secondHandoff.legacySource,{id:failed.id,taskRevisionId:failed.taskRevisionId,inputHash:failed.inputHash});
+  await native.beginDispatch(projectId,secondRetryId);await native.bindTurn(projectId,secondRetryId,{id:'second-retry-turn'},{kind:'startReply',operationId:secondRetryOp});
+  await native.recordTurn(projectId,secondRetryId,'second-retry-turn','completed','Fixed result from the original business input');
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.phase,'message_pending');
   const lateM=randomUUID();await apply({type:'session.message.post',messageId:lateM,target:{kind:'owned',sessionId},content:'A later message must not replace original M'});
   await assert.rejects(uow.transaction(projectId,tx=>tx.recovery!.assertStartupAllowed(sessionId,'message',lateM)),
@@ -130,12 +153,12 @@ test('formal commands preserve failure, fixed business input and original M thro
   await apply({type:'queue.amend',queueId,entryId:entryA,expectedVersion:2,
     taskRevisionId:fixedRework.task.currentRevisionId,reason:'Review exact amended Task input'});
   await apply({type:'queue.adopt',queueId,expectedVersion:3});
-  const completedRetry=await workflow.getRuntimeRun(lead,projectId,retryId);
+  const completedRetry=await workflow.getRuntimeRun(lead,projectId,secondRetryId);
   const awaiting=(await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!;
   const reworkId=randomUUID(),reworkOp=randomUUID();
   const rework={type:'queue.continue',projectId,operationId:reworkOp,queueId,entryId:entryA,claimId,
     runId:reworkId,runOperationId:reworkOp,reason:'Lead approves exact same-claim correction',answeredQuestions:[],
-    rework:{expectedGateVersion:awaiting.version,sourceRunId:retryId,
+    rework:{expectedGateVersion:awaiting.version,sourceRunId:secondRetryId,
       expectedSourceRunVersion:completedRetry.version,expectedSourceInputHash:completedRetry.inputHash,
       expectedExecutionProfileRevisionId:completedRetry.executionProfile!.revisionId,
       evidenceRef:'fixture://independent-review-correction'}};
@@ -164,7 +187,7 @@ test('formal commands preserve failure, fixed business input and original M thro
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sessionId)).gate!.phase,'open');
   const finalOp=randomUUID();await apply({...bCommand,expectedVersion:3,operationId:finalOp,runOperationId:finalOp});
   assert.equal((await workflow.getRuntimeRun(lead,projectId,bRun)).executionProfile!.model,'reviewed-model');
-  view=await workflow.getSessionRecovery(lead,projectId,sessionId);assert.equal(view.queues[0]!.attemptsUsed,4);assert.equal(view.queues[0]!.attemptsRemaining,0);
+  view=await workflow.getSessionRecovery(lead,projectId,sessionId);assert.equal(view.queues[0]!.attemptsUsed,5);assert.equal(view.queues[0]!.attemptsRemaining,0);
   assert.equal(await uow.read(projectId,tx=>tx.sessionMessages!.countSessionMessageTurns(sessionId,'lead')),1);
 });
 

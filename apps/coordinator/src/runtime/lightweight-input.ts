@@ -49,7 +49,8 @@ export function buildLightweightInput(run: RuntimeRunRecord, revision: TaskRevis
     const change = queue.kind === "queue.claim" ? "" :
       `\n## 本轮变化\n${queue.kind === "queue.retryFailed" ? "重试" : "接续"}：${reason}。`+
       (queue.previousRun ? `来源 Run ${queue.previousRun.id}，输入 SHA-256 ${queue.previousRun.inputHash}。` : "")+
-      (queue.answers.length ? `本轮有 ${queue.answers.length} 份已答问题的固定修订，请在接手结果中按需读取。` : "")+"\n";
+      (queue.answers.length ? `本轮有 ${queue.answers.length} 份仍有效的已答问题固定修订，请在接手结果中读取。` : "")+
+      (queue.legacySource ? "本轮还须按接手结果校验读取旧协议来源指令。" : "")+"\n";
     const input = `[evoloop-run-operation:${run.operationId}]\n# 任务：${revision.title}\n${shortPurpose}`+
       `\n## 开始\n读取本次固定目标、完整验收、变化与资料目录：\n\n`+
       `\`\`\`sh\n${cliBootstrap.command} handoff ${run.id} --project ${run.projectId} --hash ${run.inputHash}\n\`\`\`\n`+

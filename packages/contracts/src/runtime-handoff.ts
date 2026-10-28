@@ -7,6 +7,8 @@ export const queueHandoffSchema = z.strictObject({
   kind: z.enum(["queue.claim", "queue.continue", "queue.retryFailed"]),
   reason: z.string().nullable(),
   previousRun: z.strictObject({ id: z.uuid(), taskRevisionId: z.uuid(), inputHash: z.hash("sha256") }).nullable(),
+  /** Old input must be read by its own hash when a retry chain began on v1. */
+  legacySource: z.strictObject({ id: z.uuid(), taskRevisionId: z.uuid(), inputHash: z.hash("sha256") }).nullable().optional(),
   answers: z.array(z.strictObject({ discussionId: z.uuid(), questionEventId: z.uuid(), messageEventId: z.uuid(),
     documentId: z.uuid(), revisionId: z.uuid(), contentHash: z.hash("sha256") })).max(100),
   channel: z.strictObject({ discussionId: z.uuid(), recipientActorId: z.string().min(1),

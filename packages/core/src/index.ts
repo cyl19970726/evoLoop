@@ -2,8 +2,9 @@ import { commandSchema } from "@evoloop/contracts";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
   DocumentDetail, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
-  Task, TaskDetail, TaskDocumentLink, TaskRevision,
+  Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
+import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { DomainError } from "@evoloop/contracts/ports";
 import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
@@ -608,8 +609,22 @@ export class WorkflowService {
               if(!recipient)throw new DomainError("RECIPIENT_HELD","No current business actor is bound to this Role");
               const discussionId=fixedUuid(this.deps.hasher.hash(`queue-channel:${command.projectId}:${command.runId}`));
               const documentId=fixedUuid(this.deps.hasher.hash(`queue-channel-document:${command.projectId}:${command.runId}`));
-              const answers: Array<{discussionId:string; questionEventId:string; messageEventId:string; documentId:string; revisionId:string; contentHash:string}> = [];
+              const answers: QueueHandoff["answers"] = [];
               let previousRun: {id:string; taskRevisionId:string; inputHash:string} | null = null;
+              let legacySource: QueueHandoff["legacySource"] = null;
+              const inheritSource = (source: RuntimeRunRecord) => {
+                if(source.projectId!==command.projectId||source.taskId!==task.id||source.sessionId!==entry.sessionId||
+                  this.deps.hasher.hash(source.input)!==source.inputHash)
+                  throw new DomainError("CONTINUATION_SOURCE_MISMATCH","previous Run does not match the fixed Task or input hash");
+                previousRun={id:source.id,taskRevisionId:source.taskRevisionId,inputHash:source.inputHash};
+                const prior=parseQueueHandoff(source.input);
+                if(prior){
+                  if(prior.taskId!==source.taskId||prior.taskRevisionId!==source.taskRevisionId||prior.basisSetId!==source.basisSetId)
+                    throw new DomainError("CONTINUATION_SOURCE_MISMATCH","previous handoff does not match its Run");
+                  answers.push(...prior.answers);
+                  legacySource=prior.legacySource??null;
+                }else legacySource=previousRun;
+              };
               if(command.type==="queue.continue"){
                 const attempts=await tx.queue.listResidentQueueAttempts(command.claimId);
                 const prior=attempts.at(-2);
@@ -620,7 +635,7 @@ export class WorkflowService {
                   channel.collaboration.sessionId!==entry.sessionId||channel.task?.id!==task.id)
                   throw new DomainError("CONTINUATION_SOURCE_MISMATCH","question and answer must belong to the previous Task Run");
                 const messages=command.answeredQuestions.length?await tx.listDiscussionEvents(sourceChannelId):[];
-                previousRun={id:prior.runId,taskRevisionId:prior.taskRevisionId,inputHash:required(await tx.getRuntimeRun(prior.runId),"Previous Run").inputHash};
+                inheritSource(required(await tx.getRuntimeRun(prior.runId),"Previous Run"));
                 for(const pair of command.answeredQuestions){
                   const question=messages.find(x=>x.id===pair.questionEventId);
                   const answer=messages.find(x=>x.id===pair.answerEventId);
@@ -642,11 +657,12 @@ export class WorkflowService {
               let input="";
               if(command.type==='queue.retryFailed'){
                 const source=required(await tx.getRuntimeRun(command.sourceRunId),'Retry source Run');
-                previousRun={id:source.id,taskRevisionId:source.taskRevisionId,inputHash:source.inputHash};
+                inheritSource(source);
               }
+              if(answers.length>100)throw new DomainError("CONTINUATION_ANSWER_LIMIT","too many fixed answers in this Run chain");
               input=JSON.stringify({protocol:"evoloop-run-v2",taskId:entry.taskId,taskRevisionId:taskRevision.id,
                 basisSetId:taskRevision.basisSetId,kind:command.type,reason:command.type==="queue.claim"?null:command.reason,
-                previousRun,answers,channel:{discussionId,recipientActorId:recipient,issuerActorId:principal.actorId}});
+                previousRun,legacySource,answers,channel:{discussionId,recipientActorId:recipient,issuerActorId:principal.actorId}});
               const reserved=await reserveRuntime({tx,principal:{...principal,actorId:session.actorId},now,nextId:()=>this.deps.ids.next(),hash:value=>this.deps.hasher.hash(value),
                 command:{type:"runtime.run.reserve",projectId:command.projectId,operationId:command.operationId,
                   runId:command.runId,taskId:entry.taskId,sessionId:entry.sessionId,expectedVersion:task.version,input},

@@ -44,7 +44,8 @@ test("v2 first read verifies identity and fixed input, then shows complete accep
   const runId=id(8), basisSetId=id(7), channelId=id(9), answerId=id(10), answerRevisionId=id(11);
   const actorId="recipient";
   const input=JSON.stringify({protocol:"evoloop-run-v2",taskId,taskRevisionId,basisSetId,
-    kind:"queue.continue",reason:"补上后部条件",previousRun:{id:id(12),taskRevisionId:id(13),inputHash:digest("old")},
+    kind:"queue.retryFailed",reason:"补上后部条件",previousRun:{id:id(12),taskRevisionId:id(13),inputHash:digest("old")},
+    legacySource:{id:id(17),taskRevisionId:id(18),inputHash:digest("legacy authorization")},
     answers:[{discussionId:id(14),questionEventId:id(16),messageEventId:id(15),documentId:answerId,revisionId:answerRevisionId,contentHash:digest("answer")}],
     channel:{discussionId:channelId,recipientActorId:actorId,issuerActorId:"lead"}});
   const content="# 任务\n\n说明本轮目标。\n\n## 范围与边界\n保留后部条件："+"中文".repeat(5000)+
@@ -76,6 +77,10 @@ test("v2 first read verifies identity and fixed input, then shows complete accep
   assert.equal(result.contentBytes,Buffer.byteLength(content));
   assert.equal(result.materials.documents.length,1);
   assert.equal(result.change.answeredQuestions[0]?.contentHash,digest("answer"));
+  assert.match(result.change.answeredQuestions[0]!.bodyCommand,new RegExp(answerRevisionId));
+  assert.deepEqual(result.change.requiredLegacyInput?.taskRevisionId,id(18));
+  assert.match(result.change.requiredLegacyInput!.readCommand,/--out NEW_PRIVATE_FILE$/);
+  assert.match(result.change.requiredLegacyInput!.readCommand,new RegExp(digest("legacy authorization")));
   assert.ok(!JSON.stringify(result).includes("old fixed source body"));
   await assert.rejects(materialHandoff(api("other"),projectId,runId,digest(input)),/identity/);
   await assert.rejects(materialHandoff(api(actorId,input+"corrupt"),projectId,runId,digest(input)),/inconsistent|hash/);
