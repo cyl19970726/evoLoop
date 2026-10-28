@@ -2,7 +2,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 
 const prefix = "evoloop-preflight-v1:";
 export type PreflightCode = "INPUT_LIMIT" | "FIXED_SOURCE_INVALID" | "FIXED_SOURCE_UNAVAILABLE" |
-  "AUTHORIZATION" | "TASK_CHANGED" | "CLI_ENTRY_UNAVAILABLE" | "PREFLIGHT_UNAVAILABLE";
+  "AUTHORIZATION" | "TASK_CHANGED" | "CLI_ENTRY_UNAVAILABLE" | "CLI_HANDOFF_UNAVAILABLE" | "PREFLIGHT_UNAVAILABLE";
 export interface PreflightReport {
   version: 1; code: PreflightCode; category: "size" | "integrity" | "unavailable" | "authorization" | "changed";
   actualBytes: number | null; limitBytes: number | null;
@@ -23,6 +23,7 @@ const nextAction: Record<PreflightCode, string> = {
   AUTHORIZATION: "核对当前执行身份和固定资料读取授权；不要借其他身份代读。",
   TASK_CHANGED: "核对当前 Task 修订与本 Run 的固定修订；由负责人按正常返工流程处理。",
   CLI_ENTRY_UNAVAILABLE: "核对本 Session 的项目、实际执行者和 Task；配置可用的业务 CLI 入口后按正式恢复流程处理，不要搜索令牌。",
+  CLI_HANDOFF_UNAVAILABLE: "配置的业务 CLI 未通过 handoff 命令和当前身份预检；先升级该入口并核 help/session，再按原 Run 的正式恢复流程处理。不要启动替代 Turn。",
   PREFLIGHT_UNAVAILABLE: "读取原 Run 与运行事件，核对服务连接和固定资料；不要重发未知操作。",
 };
 

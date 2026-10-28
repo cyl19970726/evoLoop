@@ -7,6 +7,45 @@ import { runInputPage } from "../src/runtime/input-read.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
+test("v2 queue handoff is readable Markdown with one fixed first read and no repeated Task body", () => {
+  const projectId=randomUUID(),taskId=randomUUID(),taskRevisionId=randomUUID(),basisSetId=randomUUID();
+  const documentId=randomUUID(),revisionId=randomUUID(),runId=randomUUID(),channelId=randomUUID();
+  const content="# Fix the actual handoff\n\nShow the goal clearly.\n\n## Long evidence\n"+"Do not lose the final boundary. ".repeat(600);
+  const input=JSON.stringify({protocol:"evoloop-run-v2",taskId,taskRevisionId,basisSetId,kind:"queue.continue",
+    reason:"Cover the missing case",previousRun:{id:randomUUID(),taskRevisionId:randomUUID(),inputHash:hash("old")},
+    answers:[],channel:{discussionId:channelId,recipientActorId:"recipient",issuerActorId:"lead"}});
+  const run={projectId,id:runId,taskId,taskRevisionId,basisSetId,sessionId:randomUUID(),operationId:randomUUID(),
+    input,inputHash:hash(input)} as RuntimeRunRecord;
+  const revision={projectId,taskId,id:taskRevisionId,title:"Fix the handoff",content,contentDocumentId:documentId,
+    contentRevisionId:revisionId,acceptance:"Full acceptance"} as TaskRevision;
+  const basis={id:basisSetId,taskRevisionId,members:[{documentId,revisionId}]} as BasisSet;
+  const documents=[{documentId,revisionId,contentHash:hash(content),format:"markdown",mediaType:"text/markdown",
+    bodyBytes:Buffer.byteLength(content),assetCount:0,assetBytes:0}];
+  const packet=buildLightweightInput(run,revision,basis,documents,
+    {command:"/private/bound-cli",actorId:"recipient"});
+  assert.equal(packet.protocol,"evoloop-markdown-v2");
+  assert.match(packet.input,/^\[evoloop-run-operation:/);
+  assert.match(packet.input,/# 任务：Fix the handoff/);
+  assert.match(packet.input,/Show the goal clearly/);
+  assert.match(packet.input,new RegExp(`/private/bound-cli handoff ${runId} --project ${projectId} --hash ${run.inputHash}`));
+  assert.match(packet.input,/Cover the missing case/);
+  assert.match(packet.input,new RegExp(channelId));
+  assert.doesNotMatch(packet.input,/Do not lose the final boundary|"taskPreview"|"runInstructionExactInline"/);
+  assert.ok(packet.byteLength<2500);
+  assert.throws(()=>buildLightweightInput(run,revision,basis,documents),/CLI_ENTRY_UNAVAILABLE/);
+  assert.throws(()=>buildLightweightInput(run,revision,basis,documents,
+    {command:"/private/wrong-cli",actorId:"other"}),/FIXED_SOURCE_INVALID/);
+  assert.throws(()=>buildLightweightInput({...run,taskId:randomUUID()},revision,basis,documents,
+    {command:"/private/bound-cli",actorId:"recipient"}),/FIXED_SOURCE_INVALID/);
+  const longPurpose={...revision,content:"# Goal\n\n"+"Purpose remains readable. ".repeat(100)+"\n\n## Boundary\nRead the fixed body."};
+  const longPacket=buildLightweightInput(run,longPurpose,basis,documents,
+    {command:"/private/bound-cli",actorId:"recipient"});
+  assert.match(longPacket.input,/Purpose remains readable/);
+  assert.match(longPacket.input,/完整目标见固定接手结果/);
+  assert.doesNotMatch(longPacket.input,/Read the fixed body/);
+  assert.ok(longPacket.byteLength<2500);
+});
+
 test("a long answered queue continuation stays on the fixed Run and can be read in complete UTF-8 pages", () => {
   const projectId = randomUUID(), taskId = randomUUID(), taskRevisionId = randomUUID(), basisSetId = randomUUID();
   const documentId = randomUUID(), revisionId = randomUUID(), body = "# 固定任务";

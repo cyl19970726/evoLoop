@@ -4,6 +4,7 @@ import type { Transaction } from "@evoloop/contracts/ports";
 import { validateDispatchBasis } from "./basis.js";
 import { requireAssignedSession } from "../session-assignments/dispatch.js";
 import { canonicalEvaluationJson, nextAttemptOrdinal, taskSignature } from "../evaluation/index.js";
+import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 
 type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
@@ -169,10 +170,16 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   }
   await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId, state: "in_progress" }, task.version);
   const attemptId = command.evaluation ? nextId() : null;
+  const queueHandoff=queueClaim ? parseQueueHandoff(command.input) : null;
+  if(queueHandoff && (queueHandoff.taskId!==task.id || queueHandoff.taskRevisionId!==previous.id ||
+    queueHandoff.basisSetId!==originalBasis.id)) {
+    throw new DomainError("RUN_INPUT_MISMATCH","Queue handoff does not cite the fixed source Task and basis");
+  }
+  const input=queueHandoff ? JSON.stringify({...queueHandoff,taskRevisionId:revisionId,basisSetId}) : command.input;
   const run: RuntimeRunRecord = {
     projectId: command.projectId, id: command.runId, taskId: task.id,
     taskRevisionId: revisionId, basisSetId, sessionId: session.id,
-    operationId: command.operationId, input: command.input, inputHash: hash(command.input),
+    operationId: command.operationId, input, inputHash: hash(input),
     state: "requested", version: 1, nativeTurnId: null, interruptRequested: false,
     resultSummary: null, actorId: principal.actorId, createdAt: now, updatedAt: now,
     ...(session.executionProfile ? {executionProfile:{

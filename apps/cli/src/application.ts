@@ -8,7 +8,7 @@ import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryRe
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
 import { sessionWorkPath } from "./session-work.js";
 import { allocationRelationsPath } from "./allocation-relations.js";
-import { fixedHash, materialAsset, materialBody, materialCatalog, materialRunInput } from "./lightweight-materials.js";
+import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 
 type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
@@ -77,6 +77,7 @@ const help = {
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "materials TASK_UUID --project UUID --revision UUID (bounded fixed Task and sealed basis catalog)",
+    "handoff RUN_UUID --project UUID --hash SHA256 (verified v2 goal, full acceptance, changes and fixed material catalog)",
     "run-input RUN_UUID --project UUID --hash SHA256 [--cursor BYTE --limit 1..8192 | --out NEW_FILE] (exact reserved Run instruction, including queue answers)",
     "body DOCUMENT_UUID --project UUID --revision UUID --hash SHA256 [--cursor BYTE --limit 1..8192] (fixed UTF-8 page)",
     "asset DOCUMENT_UUID --project UUID --revision UUID --hash DOCUMENT_SHA256 --id BLOB_UUID --asset-hash SHA256 [--out NEW_FILE] (one fixed resource)",
@@ -230,6 +231,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   if (action === "materials") {
     check(args, 2, ["project", "revision"]);
     return materialCatalog(client, projectId, uuid(args.words[1], "Task"), uuid(option(args, "revision"), "Fixed Task revision"));
+  }
+  if (action === "handoff") {
+    check(args, 2, ["project", "hash"]);
+    return materialHandoff(client, projectId, uuid(args.words[1], "Run"), fixedHash(option(args, "hash"), "Run input hash"));
   }
   if (action === "run-input") {
     check(args, 2, ["project", "hash", "cursor", "limit", "out"]);

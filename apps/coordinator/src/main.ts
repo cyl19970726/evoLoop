@@ -23,6 +23,9 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
+import { supportsFixedHandoff } from "./runtime/material-cli-capability.js";
+import { PreflightError } from "./runtime/preflight-report.js";
+import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { NativeInputBridge } from "./runtime/native-input.js";
 import { NativeInputService } from "@evoloop/core/native-input";
 import { NativeObservationService } from "@evoloop/core/native-observation";
@@ -349,6 +352,9 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       if (paths[1] && !(await stat(paths[1])).isFile()) return null;
     }
     catch { return null; }
+    if (parseQueueHandoff(run.input) &&
+      !await supportsFixedHandoff(entry.command, entry.cliActorId, run.projectId))
+      throw new PreflightError("CLI_HANDOFF_UNAVAILABLE", {kind:"task",id:run.taskId,revisionId:run.taskRevisionId});
     return {command: entry.command, actorId: entry.cliActorId};
   },
   workerTraceAuthority: (identity, targetRunId) =>

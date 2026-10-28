@@ -11,6 +11,8 @@ import { canonicalTaskInputJson, taskInputSignature } from '../../core/src/task-
 import { reserveRuntime } from '../../core/src/runtime/reserve.ts';
 import { ResidentQueuePump, queueIntentId } from '../../../apps/coordinator/src/resident-queue/pump.ts';
 import { loopIntentId } from '../../../apps/coordinator/src/orchestration/runner.ts';
+import { materialHandoff } from '../../../apps/cli/src/lightweight-materials.ts';
+import type { ApiClient } from '../../../apps/cli/src/client.ts';
 import type { Reader, Transaction, UnitOfWork } from '@evoloop/contracts/ports';
 import { createHash } from 'node:crypto';
 const url=process.env.TEST_DATABASE_URL;
@@ -261,7 +263,11 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   const queue=await central.getResidentQueue(lead,p,queueId);assert.equal(queue.entries[0]?.claimId,claimId);
   assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,1);
   const run=await central.getRuntimeRun(lead,p,runId);assert.equal(run.state,'requested');
-  assert.match(run.input,/Task channel [0-9a-f-]{36}/);
+  const handoff=JSON.parse(run.input);
+  assert.equal(handoff.protocol,'evoloop-run-v2');
+  assert.equal(handoff.channel.recipientActorId,'worker');
+  assert.match(handoff.channel.discussionId,/^[0-9a-f-]{36}$/);
+  assert.ok(!run.input.includes((await central.getTask(lead,p,taskId)).task.content));
   const journal=await pool.query('SELECT command_type FROM operation_journal WHERE project_id=$1 AND operation_id=$2',[p,operationId]);
   assert.equal(journal.rows[0]?.command_type,'queue.claim');
   const outbox=await pool.query('SELECT kind FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,operationId]);
@@ -339,20 +345,64 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   assert.equal(continued.status,'applied',JSON.stringify(continued));
   const continuation=await central.getRuntimeRun(lead,p,continuationRunId);
   assert.equal(continuation.sessionId,sessionId);
-  assert.match(continuation.input,new RegExp(`\\[evoloop-task-answer ${channel.id} ${answerEvent.id} ${answerBody.documentId} ${answerBody.revisionId} ${hash('Include the current passing test receipt and consumer use observation.')}\\]`));
+  const answerHandoff=JSON.parse(continuation.input);
+  assert.deepEqual(answerHandoff.answers,[{discussionId:channel.id,questionEventId:questionEvent.id,
+    messageEventId:answerEvent.id,documentId:answerBody.documentId,revisionId:answerBody.revisionId,
+    contentHash:hash('Include the current passing test receipt and consumer use observation.')}]);
+  assert.deepEqual(answerHandoff.previousRun,{id:run.id,taskRevisionId:run.taskRevisionId,inputHash:run.inputHash});
   await native.beginDispatch(p,continuationRunId);
   await native.bindTurn(p,continuationRunId,{id:`turn-${continuationRunId}`},{kind:'startReply',operationId:continuationOperationId});
-  await native.recordTurn(p,continuationRunId,`turn-${continuationRunId}`,'completed','Used fixed answer');
+  await native.recordTurn(p,continuationRunId,`turn-${continuationRunId}`,'failed','Controlled failure after reading fixed answer');
+  const failedContinuation=await central.getRuntimeRun(lead,p,continuationRunId);
+  await apply({type:'queue.extendBudget',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1,
+    expectedMaxRuns:3,maxRuns:4,evidenceRef:'fixture://reviewed-extra-retry',reason:'Allow one reviewed retry and dependent B'});
+  await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:2});
+  const recovery=await central.getSessionRecovery(lead,p,sessionId);
+  const profile=(await central.getRuntimeSession(lead,p,sessionId)).executionProfile!.revision;
+  const retryRunId=randomUUID(),retryOperationId=randomUUID();
+  await apply({type:'queue.retryFailed',projectId:p,operationId:retryOperationId,queueId,entryId,claimId,
+    runId:retryRunId,runOperationId:retryOperationId,expectedVersion:2,expectedGateVersion:recovery.gate!.version,
+    sourceRunId:continuationRunId,expectedSourceRunVersion:failedContinuation.version,
+    expectedTaskRevisionId:(await central.getTask(lead,p,taskId)).task.currentRevisionId,
+    expectedExecutionProfileRevisionId:profile.revisionId,expectedInputHash:failedContinuation.inputHash,
+    resumeMessageId:null,evidenceRef:'fixture://reviewed-answer-retry',reason:'Retry with the same fixed answer'});
+  const retry=await central.getRuntimeRun(lead,p,retryRunId);
+  const retryHandoff=JSON.parse(retry.input);
+  assert.deepEqual(retryHandoff.previousRun,{id:failedContinuation.id,taskRevisionId:failedContinuation.taskRevisionId,
+    inputHash:failedContinuation.inputHash});
+  assert.deepEqual(retryHandoff.answers,answerHandoff.answers,'failed continuation retains its fixed answer');
+  assert.equal(retryHandoff.legacySource,null);
+  const fixedRetry=(await central.getTaskRevision(lead,p,taskId,retry.taskRevisionId)).revision;
+  const primary={documentId:fixedRetry.contentDocumentId,revisionId:fixedRetry.contentRevisionId,
+    contentHash:hash(fixedRetry.content),sizeBytes:Buffer.byteLength(fixedRetry.content),
+    bodyCommand:`evoloop body ${fixedRetry.contentDocumentId} --project ${p} --revision ${fixedRetry.contentRevisionId} --hash ${hash(fixedRetry.content)}`,assets:[]};
+  const cli=({get:async(path:string)=>{
+    if(path==='/api/session')return {principal:{actorId:'worker'}};
+    if(path.includes(`/runtime/runs/${retryRunId}/input?`))return {projectId:p,runId:retryRunId,
+      inputHash:retry.inputHash,body:retry.input,startByte:0,endByte:Buffer.byteLength(retry.input),
+      totalBytes:Buffer.byteLength(retry.input),truncated:false,nextCursor:null};
+    if(path.endsWith(`/tasks/${taskId}/revisions/${retry.taskRevisionId}`))return {revision:fixedRetry};
+    if(path.endsWith('/materials'))return {projectId:p,taskId,taskRevisionId:retry.taskRevisionId,
+      basisSetId:retry.basisSetId,documents:[primary],externalReferences:[]};
+    throw new Error(`unexpected CLI read ${path}`);
+  }}) as ApiClient;
+  const firstRead=await materialHandoff(cli,p,retryRunId,retry.inputHash);
+  assert.deepEqual(firstRead.change.answeredQuestions.map(answer=>answer.contentHash),
+    [hash('Include the current passing test receipt and consumer use observation.')]);
+  assert.match(firstRead.change.answeredQuestions[0]!.bodyCommand,new RegExp(answerBody.revisionId));
+  await native.beginDispatch(p,retryRunId);
+  await native.bindTurn(p,retryRunId,{id:`turn-${retryRunId}`},{kind:'startReply',operationId:retryOperationId});
+  await native.recordTurn(p,retryRunId,`turn-${retryRunId}`,'completed','Used inherited fixed answer');
   await new ResidentQueuePump(pumpOptions).tick();
   assert.equal((await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryBId)?.state,'queued');
   for(const [stage,expectedVersion] of [['received',3],['read',4],['adopted',5]] as const){
     const receipt=await central.execute(worker,{type:'discussion.receipt.record',projectId:p,operationId:randomUUID(),
       discussionId:channel.id,expectedVersion,messageEventId:answerEvent.id,stage,evidence:answerBody,
-      ...(stage==='adopted'?{continuation:{runId:continuationRunId,taskRevisionId:continuation.taskRevisionId}}:{})});
+      ...(stage==='adopted'?{continuation:{runId:retryRunId,taskRevisionId:retry.taskRevisionId}}:{})});
     assert.equal(receipt.status,'applied',JSON.stringify(receipt));
   }
   const beforeDelivery=(await central.getTask(lead,p,taskId)).task;
-  const deliveryCommand={type:'delivery.record' as const,projectId:p,operationId:randomUUID(),taskId,runId:continuationRunId,
+  const deliveryCommand={type:'delivery.record' as const,projectId:p,operationId:randomUUID(),taskId,runId:retryRunId,
     expectedVersion:beforeDelivery.version,artifactRef:'repo:task-a',artifactRevision:'abc123',contentHash:hash('A result'),
     technicalResult:'passed' as const,technicalEvidence:'Tests passed',reason:'Deliver A'};
   await withWriteFault('delivery','INSERT',async()=>{
@@ -368,7 +418,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   const beforeClose=(await central.getTask(lead,p,taskId)).task;
   await apply({type:'task.close',projectId:p,operationId:randomUUID(),taskId,expectedVersion:beforeClose.version,
     deliveryId:delivery.revisionId!,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'A accepted'});
-  const releaseOperationId=queueIntentId('release',p,queueId,entryId,continuationRunId,
+  const releaseOperationId=queueIntentId('release',p,queueId,entryId,retryRunId,
     (await central.getTask(lead,p,taskId)).closures.at(-1)!.id);
   for(const table of ['resident_queue_claim','resident_queue_entry'] as const){
     await withWriteFault(table,'UPDATE',async()=>{
@@ -553,7 +603,7 @@ test('first queue claim and old Loop reserve serialize on an idle shared Session
   }
 });
 
-test('failed consumer use can continue the same claim from amended input without inventing a question',async()=>{
+test('amended input drops superseded fixed answers while continuing the same claim',async()=>{
   const p=randomUUID(),role=randomUUID(),roleRev=randomUUID(),taskId=randomUUID(),sessionId=randomUUID();
   const queueId=randomUUID(),entryId=randomUUID(),claimId=randomUUID(),firstRunId=randomUUID(),firstOperationId=randomUUID();
   const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
@@ -584,8 +634,8 @@ test('failed consumer use can continue the same claim from amended input without
   await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
     VALUES($1,$2,$3,$4,$5,'lead','owned',now())`,[p,randomUUID(),role,sessionId,roleRev]);
   const initial=(await central.getTask(lead,p,taskId)).task;
-  await apply({type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:2,
-    reason:'One remediation attempt after failed use',entries:[{id:entryId,taskId,
+  await apply({type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:3,
+    reason:'One answered continuation and one remediation attempt after failed use',entries:[{id:entryId,taskId,
       taskRevisionId:initial.currentRevisionId,sessionId,roleId:role,dependsOn:[],consumerId:'lead',
       useRequired:true,releaseRule:'accepted'}]});
   await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1});
@@ -593,14 +643,46 @@ test('failed consumer use can continue the same claim from amended input without
     claimId,runId:firstRunId,runOperationId:firstOperationId});
   const sourceChannel=(await central.listDiscussions(lead,p)).items.find(x=>x.collaboration?.runId===firstRunId)!;
   assert.ok(sourceChannel);
-  assert.equal((await central.listDiscussionEvents(lead,p,sourceChannel.id)).filter(x=>
-    x.collaborationPayload?.type==='message'&&x.collaborationPayload.kind==='question').length,0,
-  'the first Run asked no question');
+  const fixedMessage=async(body:string)=>{
+    const documentId=randomUUID(),revisionId=randomUUID();
+    const client=await pool.connect();try{
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
+        VALUES($1,$2,'Fixed message',1,$3,'discussion','draft')`,[p,documentId,revisionId]);
+      await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,
+        created_at,reason,media_type,original_name,assets_manifest)
+        VALUES($1,$2,$3,$4,'markdown',$5,'lead',now(),'fixed','text/markdown','message.md','[]'::jsonb)`,
+        [p,documentId,revisionId,body,hash(body)]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    return {documentId,revisionId};
+  };
+  const worker={actorId:'worker',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+  const questionBody=await fixedMessage('Should this Task target X?');
+  const question=await central.execute(worker,{type:'discussion.message.post',projectId:p,operationId:randomUUID(),
+    discussionId:sourceChannel.id,expectedVersion:1,kind:'question',recipientActorId:'lead',body:questionBody});
+  assert.equal(question.status,'applied',JSON.stringify(question));
+  const questionEvent=(await central.listDiscussionEvents(lead,p,sourceChannel.id)).find(x=>
+    x.collaborationPayload?.type==='message'&&x.collaborationPayload.kind==='question')!;
+  const answerBody=await fixedMessage('Target X is required for the original Task.');
+  await apply({type:'discussion.message.post',projectId:p,operationId:randomUUID(),discussionId:sourceChannel.id,
+    expectedVersion:2,kind:'answer',recipientActorId:'worker',replyToEventId:questionEvent.id,body:answerBody});
+  const answerEvent=(await central.listDiscussionEvents(lead,p,sourceChannel.id)).find(x=>
+    x.collaborationPayload?.type==='message'&&x.collaborationPayload.kind==='answer')!;
   await native.beginDispatch(p,firstRunId);
   await native.bindTurn(p,firstRunId,{id:`turn-${firstRunId}`},{kind:'startReply',operationId:firstOperationId});
-  await native.recordTurn(p,firstRunId,`turn-${firstRunId}`,'completed','Delivered an output that consumer could not use');
+  await native.recordTurn(p,firstRunId,`turn-${firstRunId}`,'completed','Asked which target to use');
+  const answeredRunId=randomUUID(),answeredOperationId=randomUUID();
+  await apply({type:'queue.continue',projectId:p,operationId:answeredOperationId,queueId,entryId,claimId,
+    runId:answeredRunId,runOperationId:answeredOperationId,reason:'Use the fixed answer for target X',
+    answeredQuestions:[{questionEventId:questionEvent.id,answerEventId:answerEvent.id}]});
+  const answeredRun=await central.getRuntimeRun(lead,p,answeredRunId);
+  assert.equal(JSON.parse(answeredRun.input).answers[0].contentHash,hash('Target X is required for the original Task.'));
+  await native.beginDispatch(p,answeredRunId);
+  await native.bindTurn(p,answeredRunId,{id:`turn-${answeredRunId}`},{kind:'startReply',operationId:answeredOperationId});
+  await native.recordTurn(p,answeredRunId,`turn-${answeredRunId}`,'completed','Delivered target X, which consumer could not use');
   const afterRun=(await central.getTask(lead,p,taskId)).task;
-  const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId,runId:firstRunId,
+  const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId,runId:answeredRunId,
     expectedVersion:afterRun.version,artifactRef:'repo:task-a',artifactRevision:'first',contentHash:hash('first result'),
     technicalResult:'passed',technicalEvidence:'Build passed',reason:'Present first result'});
   await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId,deliveryId:delivery.revisionId!,
@@ -621,7 +703,7 @@ test('failed consumer use can continue the same claim from amended input without
     reason:'Attempt to repeat unchanged work',answeredQuestions:[]});
   assert.equal(noNewInput.status,'rejected');
   if(noNewInput.status==='rejected')assert.equal(noNewInput.code,'CONTINUATION_INPUT_UNCHANGED');
-  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,1);
+  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,2);
   assert.equal((await pool.query('SELECT 1 FROM runtime_run WHERE project_id=$1 AND run_id=$2',[p,rejectedRunId])).rowCount,0);
   assert.equal((await pool.query('SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2',[p,rejectedOperationId])).rowCount,0);
   assert.equal((await central.getResidentQueue(lead,p,queueId)).entries[0]?.holdCode,null);
@@ -630,7 +712,7 @@ test('failed consumer use can continue the same claim from amended input without
     reason:'Revise failed use case'});
   const beforeUpdate=(await central.getTask(lead,p,taskId)).task;
   await apply({type:'task.update',projectId:p,operationId:randomUUID(),taskId,expectedVersion:beforeUpdate.version,
-    title:beforeUpdate.title,content:'Initial fixed work\n\nRemediation: cover the missing consumer use case.',
+    title:beforeUpdate.title,content:'Initial fixed work\n\nRemediation: target Y replaces target X.',
     acceptance:beforeUpdate.acceptance,owner:beforeUpdate.owner,reason:'Fix failed consumer use'});
   const updated=(await central.getTask(lead,p,taskId)).task;
   await apply({type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:updated.version,
@@ -644,13 +726,16 @@ test('failed consumer use can continue the same claim from amended input without
     claimId,runId:secondRunId,runOperationId:secondOperationId,reason};
   assert.deepEqual(queueCommandSchema.parse(withoutAnswers).answeredQuestions,[]);
   await apply(withoutAnswers);
-  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,2);
+  assert.equal((await central.listResidentQueueAttempts(lead,p,claimId)).length,3);
   const resumed=await central.getRuntimeRun(lead,p,secondRunId);
   assert.equal(resumed.sessionId,sessionId);
-  assert.match(resumed.input,new RegExp(`Continuation reason: ${reason}`));
-  assert.match(resumed.input,new RegExp(`Previous Run ${firstRunId}; previous Task channel ${sourceChannel.id}`));
-  assert.match(resumed.input,/Remediation: cover the missing consumer use case/);
-  assert.match(resumed.input,/no answered question is claimed/);
+  const continued=JSON.parse(resumed.input);
+  assert.equal(continued.protocol,'evoloop-run-v2');
+  assert.equal(continued.reason,reason);
+  assert.equal(continued.previousRun.id,answeredRunId);
+  assert.equal(continued.previousRun.inputHash,answeredRun.inputHash);
+  assert.deepEqual(continued.answers,[],'target X answer is historical after Task input changes to Y');
+  assert.ok(!resumed.input.includes('Remediation: target Y replaces target X.'));
 });
 
 test('two concurrent creators cannot both take the 200th project queue slot',async()=>{
