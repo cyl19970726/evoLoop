@@ -15,6 +15,7 @@ import { materialHandoff } from '../../../apps/cli/src/lightweight-materials.ts'
 import type { ApiClient } from '../../../apps/cli/src/client.ts';
 import type { Reader, Transaction, UnitOfWork } from '@evoloop/contracts/ports';
 import { createHash } from 'node:crypto';
+import { seedSealingWorkerSubmission } from './signed-worker-fixture.js';
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(url).pathname)) throw new Error('dedicated evoloop_*_test database required');
 const schema=`el_queue_${randomUUID().replaceAll('-','').slice(0,16)}`;
@@ -120,7 +121,8 @@ test('one intent survives duplicate dispatch and holds the Session after termina
 test('official Task and Run lifecycle releases A only after current consumer acceptance, then B can claim',async()=>{
   const p=randomUUID(),q=randomUUID(),role=randomUUID(),roleRev=randomUUID(),session=randomUUID(),taskA=randomUUID(),taskB=randomUUID(),entryA=randomUUID(),entryB=randomUUID(),runId=randomUUID();
   const principal={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
-  const apply=async(command:Parameters<typeof workflow.execute>[1])=>{const result=await workflow.execute(principal,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
+  const executor={actorId:'worker',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+  const apply=async(command:Parameters<typeof workflow.execute>[1],actingPrincipal=principal)=>{const result=await workflow.execute(actingPrincipal,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
   await apply({type:'project.create',projectId:p,operationId:randomUUID(),title:'Queue lifecycle'});
   const client=await pool.connect();try{await client.query('BEGIN');
     await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc) VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`,[p,role,roleRev]);
@@ -158,13 +160,33 @@ test('official Task and Run lifecycle releases A only after current consumer acc
     await runtime.beginDispatch(p,runId);const stored=(await uow.read(p,r=>r.getRuntimeRun(runId)))!;
     await runtime.bindTurn(p,runId,{id:'turn-'+runId},{kind:'startReply',operationId:stored.operationId});
     await runtime.recordTurn(p,runId,'turn-'+runId,'completed','Fixed result observed');
+    assert.equal((await workflow.getRuntimeRun(principal,p,runId)).state,'completed');
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),false);await work.query('COMMIT');
     const afterRun=(await uow.read(p,r=>r.getTask(taskA)))!;
-    const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId:taskA,runId,expectedVersion:afterRun.version,artifactRef:'repo:task-a',artifactRevision:'abc123',contentHash:hash('A result'),technicalResult:'passed',technicalEvidence:'Tests passed',reason:'Deliver A'});
+    const deliveryOperationId=randomUUID();
+    const deliveryIntent={artifactRef:'repo:task-a',artifactRevision:'abc123',contentHash:hash('A result'),technicalResult:'passed' as const,
+      technicalEvidence:'Tests passed',reason:'Deliver A'};
+    await seedSealingWorkerSubmission(pool,p,taskA,runId,executor.actorId,deliveryOperationId,afterRun.version,deliveryIntent);
+    const delivery=await apply({type:'delivery.record',projectId:p,operationId:deliveryOperationId,taskId:taskA,runId,
+      expectedVersion:afterRun.version,...deliveryIntent},executor);
+    assert.equal((await uow.read(p,r=>r.getDelivery(delivery.revisionId!)))?.submittedByActorId,executor.actorId);
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),false);await work.query('COMMIT');
+    const other={actorId:'other-reviewer',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+    await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId:taskA,deliveryId:delivery.revisionId!,
+      observer:other.actorId,observerKind:'agent',result:'used',evidence:'Other reviewer used A',reason:'Independent use'},other);
+    const beforeWrongClose=(await uow.read(p,r=>r.getTask(taskA)))!;
+    const wrongClose=await workflow.execute(principal,{type:'task.close',projectId:p,operationId:randomUUID(),taskId:taskA,
+      expectedVersion:beforeWrongClose.version,deliveryId:delivery.revisionId!,acceptanceResult:'met',
+      acceptanceEvidence:'Other reviewer used A',reason:'Close'});
+    assert.equal(wrongClose.status==='rejected'?wrongClose.code:null,'USE_NOT_OBSERVED',
+      'a different eligible Agent cannot silently replace the claimed Queue consumer');
     await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId:taskA,deliveryId:delivery.revisionId!,observer:'lead',observerKind:'agent',result:'used',evidence:'Read and applied output',reason:'Consumer used A'});
     const beforeClose=(await uow.read(p,r=>r.getTask(taskA)))!;
     await apply({type:'task.close',projectId:p,operationId:randomUUID(),taskId:taskA,expectedVersion:beforeClose.version,deliveryId:delivery.revisionId!,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'A accepted'});
+    await work.query('BEGIN');
+    await work.query("UPDATE runtime_run SET state='failed',version=version+1,updated_at=now() WHERE project_id=$1 AND run_id=$2",[p,runId]);
+    assert.equal(await queue.releaseResidentQueueAccepted(claimId),false,'a later failed source Run cannot release the accepted queue');
+    await work.query('ROLLBACK');
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),true);
     assert.equal((await queue.list(q))!.entries[0]!.claimId,claimId,'released entry retains claim provenance for dependency checks');
     assert.equal((await queue.getResidentQueueClaim(claimId))?.releaseKind,'accepted');
@@ -214,7 +236,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   await apply({type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:3,reason:'A then B with one answer continuation',entries:[{
     id:entryId,taskId,taskRevisionId:before.currentRevisionId,sessionId,roleId:role,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'},
     {id:entryBId,taskId:taskBId,taskRevisionId:beforeB.currentRevisionId,sessionId,roleId:role,dependsOn:[entryId],
-      consumerId:'lead',useRequired:false,releaseRule:'accepted'}]});
+      consumerId:'lead',useRequired:true,releaseRule:'accepted'}]});
   await apply({type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1});
   const badOperationId=randomUUID(),badClaimId=randomUUID();
   const rolledBack=await central.execute(lead,{type:'queue.claim',projectId:p,operationId:badOperationId,queueId,entryId,
@@ -393,6 +415,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   await native.beginDispatch(p,retryRunId);
   await native.bindTurn(p,retryRunId,{id:`turn-${retryRunId}`},{kind:'startReply',operationId:retryOperationId});
   await native.recordTurn(p,retryRunId,`turn-${retryRunId}`,'completed','Used inherited fixed answer');
+  assert.equal((await central.getRuntimeRun(lead,p,retryRunId)).state,'completed');
   await new ResidentQueuePump(pumpOptions).tick();
   assert.equal((await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryBId)?.state,'queued');
   for(const [stage,expectedVersion] of [['received',3],['read',4],['adopted',5]] as const){
@@ -405,14 +428,18 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   const deliveryCommand={type:'delivery.record' as const,projectId:p,operationId:randomUUID(),taskId,runId:retryRunId,
     expectedVersion:beforeDelivery.version,artifactRef:'repo:task-a',artifactRevision:'abc123',contentHash:hash('A result'),
     technicalResult:'passed' as const,technicalEvidence:'Tests passed',reason:'Deliver A'};
+  await seedSealingWorkerSubmission(pool,p,taskId,retryRunId,worker.actorId,deliveryCommand.operationId,beforeDelivery.version,
+    {artifactRef:deliveryCommand.artifactRef,artifactRevision:deliveryCommand.artifactRevision,contentHash:deliveryCommand.contentHash,
+      technicalResult:deliveryCommand.technicalResult,technicalEvidence:deliveryCommand.technicalEvidence,reason:deliveryCommand.reason});
   await withWriteFault('delivery','INSERT',async()=>{
-    await assert.rejects(central.execute(lead,deliveryCommand),/injected queue write fault/);
+    await assert.rejects(central.execute(worker,deliveryCommand),/injected queue write fault/);
   });
   assert.equal((await pool.query('SELECT 1 FROM delivery WHERE project_id=$1 AND task_id=$2',[p,taskId])).rowCount,0);
   assert.equal((await pool.query('SELECT 1 FROM operation_journal WHERE project_id=$1 AND operation_id=$2',
     [p,deliveryCommand.operationId])).rowCount,0);
   assert.equal((await central.getResidentQueue(lead,p,queueId)).entries.find(x=>x.id===entryId)?.state,'claimed');
-  const delivery=await apply(deliveryCommand);
+  const delivery=await central.execute(worker,deliveryCommand);
+  assert.equal(delivery.status,'applied',JSON.stringify(delivery));
   await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId,deliveryId:delivery.revisionId!,
     observer:'lead',observerKind:'agent',result:'used',evidence:'Read and used A',reason:'Consumer used A'});
   const beforeClose=(await central.getTask(lead,p,taskId)).task;
@@ -461,7 +488,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   const over=await central.execute(lead,{type:'queue.create',projectId:p,operationId:overOperationId,queueId:overId,
     maxRuns:1,reason:'Must report full project capacity',entries:[{id:randomUUID(),taskId:taskBId,
       taskRevisionId:currentB.currentRevisionId,sessionId,roleId:role,dependsOn:[],consumerId:'lead',
-      useRequired:false,releaseRule:'accepted'}]});
+      useRequired:true,releaseRule:'accepted'}]});
   assert.equal(over.status,'rejected');if(over.status==='rejected')assert.equal(over.code,'QUEUE_LIMIT_REACHED');
   assert.equal((await central.listResidentQueues(lead,p)).length,200);
   const afterLimit=await pool.query(`SELECT
@@ -682,9 +709,13 @@ test('amended input drops superseded fixed answers while continuing the same cla
   await native.bindTurn(p,answeredRunId,{id:`turn-${answeredRunId}`},{kind:'startReply',operationId:answeredOperationId});
   await native.recordTurn(p,answeredRunId,`turn-${answeredRunId}`,'completed','Delivered target X, which consumer could not use');
   const afterRun=(await central.getTask(lead,p,taskId)).task;
-  const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId,runId:answeredRunId,
-    expectedVersion:afterRun.version,artifactRef:'repo:task-a',artifactRevision:'first',contentHash:hash('first result'),
-    technicalResult:'passed',technicalEvidence:'Build passed',reason:'Present first result'});
+  const firstDeliveryOperationId=randomUUID();
+  const firstDeliveryIntent={artifactRef:'repo:task-a',artifactRevision:'first',contentHash:hash('first result'),
+    technicalResult:'passed' as const,technicalEvidence:'Build passed',reason:'Present first result'};
+  await seedSealingWorkerSubmission(pool,p,taskId,answeredRunId,lead.actorId,firstDeliveryOperationId,
+    afterRun.version,firstDeliveryIntent);
+  const delivery=await apply({type:'delivery.record',projectId:p,operationId:firstDeliveryOperationId,taskId,runId:answeredRunId,
+    expectedVersion:afterRun.version,...firstDeliveryIntent});
   await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId,deliveryId:delivery.revisionId!,
     observer:'lead',observerKind:'agent',result:'failed',evidence:'Consumer found a missing use case',reason:'Failed use'});
   const lifecycle=(await central.getTask(lead,p,taskId)).task;

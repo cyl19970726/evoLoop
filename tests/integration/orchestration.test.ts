@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { runner } from "node-pg-migrate";
 import { fileURLToPath } from "node:url";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
@@ -33,7 +34,7 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated test database required");
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
-const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole="cognition",businessRole="business-role",scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
+const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole=fixtureRoleId("cognition"),businessRole=fixtureRoleId("business-role"),scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
 const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
@@ -57,11 +58,12 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     {type:"stage.propose",stageId,goalId,deliverable:"One delivery",learningQuestion:"What changed?",reason:"Bounded trial"},
     {type:"stage.accept",stageId,expectedVersion:1,reason:"Start bounded trial"},
     {type:"task.create",taskId,stageId,title:"Worker task",content:"# Do one bounded task",acceptance:"Deliver",owner:businessRole,
-      consumer:"owner",evidence:"Pending",stopCondition:"One result"},
+      consumer:"consumer-observer",evidence:"Pending",stopCondition:"One result"},
     {type:"task.start",taskId,expectedVersion:1,reason:"Seal worker Task"},
     {type:"task.create",taskId:cognitiveTaskId,stageId,title:"Cognitive review",content:"# Review one event",acceptance:"Propose next action",owner:cognitiveRole,
       consumer:"owner",evidence:"Pending",stopCondition:"One review"},
     {type:"task.start",taskId:cognitiveTaskId,expectedVersion:1,reason:"Seal cognitive Task"}]) {
+    if (command.type==="goal.create") for (const roleId of [cognitiveRole,businessRole]) await seedFixtureRole(pool,projectId,roleId);
     const r=await workflow.execute(principal(actor),{projectId,operationId:randomUUID(),...command} as never);assert.equal(r.status,"applied",JSON.stringify(r));
   }
   const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
@@ -234,17 +236,19 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===external.sourceId),true);
   const acceptedObservation=await issue(actor,{type:"inbox.accept",loopId,sourceEventId:external.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
   assert.ok(acceptedObservation.entityId);
-  const selfObservation=await observationSource(worker,"used");
-  assert.equal((await orchestrator.listSourceFacts(principal(actor),projectId,loopId)).items.some(x=>x.id===selfObservation.sourceId),false);
-  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:selfObservation.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
-  const cognitiveObservation=await observationSource(actor,"used");
-  await fails(issue(actor,{type:"inbox.accept",loopId,sourceEventId:cognitiveObservation.sourceId,recipientRoleId:cognitiveRole,purpose:"cognitive_review"}),"SOURCE_UNAVAILABLE");
+  for(const who of [worker,actor]) {
+    const rejected=await workflow.execute(principal(who),{type:"observation.record",projectId,operationId:randomUUID(),taskId,
+      deliveryId:delivery.revisionId,observer:who,observerKind:"agent",result:"used",
+      evidence:"Self observation attempt",reason:"Test independent consumer boundary"});
+    assert.equal(rejected.status,"rejected");
+    if(rejected.status==="rejected") assert.equal(rejected.code,"CONSUMER_MISMATCH");
+  }
   const foreignGoalId=randomUUID(),foreignStageId=randomUUID(),foreignTaskId=randomUUID(),foreignDeliveryOp=randomUUID(),foreignObservationOp=randomUUID();
   for(const command of [
     {type:"goal.create",goalId:foreignGoalId,outcome:"Other goal",constraints:"Separate",consumer:"owner",authority:"reviewer",scope:"foreign",owner:actor},
     {type:"stage.propose",stageId:foreignStageId,goalId:foreignGoalId,deliverable:"Other delivery",learningQuestion:"Separate?",reason:"Other scope"},
     {type:"stage.accept",stageId:foreignStageId,expectedVersion:1,reason:"Activate other stage"},
-    {type:"task.create",taskId:foreignTaskId,stageId:foreignStageId,title:"Foreign work",content:"# Other work",acceptance:"One artifact",owner:businessRole,consumer:"owner",evidence:"Pending",stopCondition:"One result"},
+    {type:"task.create",taskId:foreignTaskId,stageId:foreignStageId,title:"Foreign work",content:"# Other work",acceptance:"One artifact",owner:businessRole,consumer:"consumer-observer",evidence:"Pending",stopCondition:"One result"},
     {type:"task.start",taskId:foreignTaskId,expectedVersion:1,reason:"Freeze other task"},
   ]) assert.equal((await workflow.execute(principal(actor),{projectId,operationId:randomUUID(),...command} as never)).status,"applied");
   const foreignDelivery=await workflow.execute(principal(worker),{type:"delivery.record",projectId,operationId:foreignDeliveryOp,
@@ -278,7 +282,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
     cognitiveRoleId:cognitiveRole,allowedBusinessRoleIds:[businessRole],
     sourceAfter:{createdAtUtc:beforeHistoricalObservation.created_at.toISOString(),eventId:beforeHistoricalObservation.event_id},
     maxRuns:1,maxConcurrent:1,reason:"Check historical source stays with original Goal"});
-  const afterMoveObservation=await observationSource("consumer-after-move","notUsed");
+  const afterMoveObservation=await observationSource("consumer-observer","notUsed");
   const fixedAfterMove=await store.transaction(projectId,tx=>tx.getObservationFact(afterMoveObservation.observationId));
   assert.equal(fixedAfterMove?.taskRevisionId,(await store.transaction(projectId,tx=>tx.getDeliveryFact(delivery.revisionId!)))?.taskRevisionId);
   assert.equal(fixedAfterMove?.stageId,stageId,"observation follows the Delivery's historical Stage");

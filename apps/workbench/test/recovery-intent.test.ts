@@ -116,12 +116,14 @@ test("a persisted business rejection after replay is resolved by exact same-ID r
   clearRecoveryIntents();
 });
 
-test("only legacy special endpoints retain scoped operation confirmation without replay", async () => {
+test("special endpoints retain scoped operation confirmation without replay", async () => {
   clearRecoveryIntents();
-  for (const type of ["document.payload", "reference.git", "reference.formal", "reference.task"] as const) {
+  for (const type of ["document.payload", "reference.git", "reference.formal", "reference.task",
+    "work.plan.set", "work.dependencies.set", "work.review.set"] as const) {
     const specialReceipt = { ...receipt, commandType: type };
     const operation = { id: operationId, projectId, actorId: "owner", commandType: type,
-      commandHash: "a".repeat(64), result: { ...applied, entityId: type === "document.payload" ? taskId : "reference-id" } } as Operation;
+      commandHash: "a".repeat(64),
+      result: { ...applied, entityId: type === "document.payload" || type.startsWith("work.") ? taskId : "reference-id" } } as Operation;
     assert.equal(await verifyRecoveryOperation(specialReceipt, operation), "scoped-match", type);
     assert.equal(await verifyRecoveryOperation(specialReceipt, { ...operation, actorId: "other" }), "mismatch");
     assert.equal(await verifyRecoveryOperation(specialReceipt, { ...operation, projectId: "other" }), "mismatch");

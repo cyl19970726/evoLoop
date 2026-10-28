@@ -26,7 +26,7 @@ async function fixture(){
   const recovery:any={isDynamicSession:async()=>false,getRecoveryGate:async()=>gate,lockRecoveryGate:async()=>structuredClone(gate),
     saveRecoveryDecision:async(d:any,g:any,expected:number)=>{assert.equal(gate.version,expected);decisions.push(d);gate=g;},
     adoptExecutionProfile:async()=>{throw Error('unexpected profile mutation');}};
-  const reader:any={recovery,getTask:async()=>task,getRuntimeSession:async()=>session,
+  const reader:any={recovery,getTask:async()=>task,getTaskProposal:async()=>null,getRuntimeSession:async()=>session,
     getRuntimeRun:async(id:string)=>id===sourceRunId?source:null,listRuntimeRuns:async()=>[source],
     getTaskRevision:async()=>revision,getBasisSet:async()=>({projectId,taskId,taskRevisionId:revisionId,id:basisId,members:[]}),listTaskExternalSnapshot:async()=>[],
     sessionAssignments:{getTaskSessionAssignment:async()=>null},

@@ -8,6 +8,7 @@ import { applyTaskCollaboration, taskAnswerInputBlock } from "../../core/src/tas
 import { decideTaskExternalReference } from "../../core/src/references/index.ts";
 import type { DiscussionEvent, DiscussionRecord, TaskCollaborationCommand } from "@evoloop/contracts/discussions";
 import type { Command, Document, DocumentRevision, Principal } from "@evoloop/contracts";
+import { seedSealingWorkerSubmission } from "./signed-worker-fixture.js";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -17,6 +18,16 @@ const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch
 const uow = new PostgresUnitOfWork(pool);
 const now = "2026-10-25T00:00:00.000Z";
 const hash = (body: string) => createHash("sha256").update(body).digest("hex");
+
+async function seedTrialRole(projectId:string,roleId:string,revisionId:string,actorId:string,createdAt:string):Promise<void>{
+  const client=await pool.connect();try{await client.query("BEGIN");
+    await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial',$4,$5,$5,$5)`,[projectId,roleId,revisionId,actorId,createdAt]);
+    await client.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,$4,'fixture',$5,$5)`,[projectId,roleId,revisionId,actorId,createdAt]);
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+}
 
 before(async () => { await migrate(url, schema); });
 after(async () => {
@@ -96,6 +107,7 @@ test("Task Discussion and fixed-reference events survive PostgreSQL readback, CA
 
 async function continuationScenario(withExternalChange: boolean, adoptionTiming: "running" | "completed" = "running") {
   const projectId = randomUUID();
+  const workerRoleId = randomUUID(), workerRoleRevisionId = randomUUID();
   const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
   let currentTime = "2026-10-25T01:00:00.000Z";
@@ -107,6 +119,7 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
     return result as Extract<typeof result, { status: "applied" }>;
   };
   await execute(issuer, { type: "project.create", title: "Continuation regression" });
+  await seedTrialRole(projectId, workerRoleId, workerRoleRevisionId, issuer.actorId, currentTime);
   const sourceId = randomUUID();
   const source = await execute(issuer, { type: "document.create", documentId: sourceId,
     title: "Basis", body: "Original accepted basis" });
@@ -114,16 +127,16 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
     revisionId: source.revisionId, reason: "Fixed source" });
   const taskId = randomUUID();
   await execute(issuer, { type: "task.create", taskId, title: "Answer question", content: "Do the work",
-    acceptance: "Use answer", owner: worker.actorId, documentIds: [sourceId] });
+    acceptance: "Use answer", owner: workerRoleId, documentIds: [sourceId] });
   const ready = await execute(issuer, { type: "task.start", taskId, expectedVersion: 1,
     basis: [{ documentId: sourceId, revisionId: source.revisionId }], reason: "Begin" });
   const sessionId = randomUUID(), cwd = "/tmp/p1c-continuation", authorizationScope = "project:p1c";
-  await execute(issuer, { type: "runtime.session.reserve", sessionId, roleId: worker.actorId, cwd,
+  await execute(issuer, { type: "runtime.session.reserve", sessionId, roleId: workerRoleId, cwd,
     authorizationScope, sandbox: "danger-full-access", approvalPolicy: "never" });
   await runtime.beginSessionCreate(projectId, sessionId);
   const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
   await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId,
-    roleId: worker.actorId, cwd, authorizationScope, nativeThreadId: `thread-${projectId}`,
+    roleId: workerRoleId, cwd, authorizationScope, nativeThreadId: `thread-${projectId}`,
     nativeSessionId: `native-${projectId}`,
     resumeProfile:{actorId:reservedSession.actorId,model:reservedSession.model,sandbox:reservedSession.sandbox,
       approvalPolicy:reservedSession.approvalPolicy,executionProfileRevisionId:reservedSession.executionProfile!.revision.revisionId} });
@@ -225,11 +238,18 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
   assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run1Id)))?.input, "Original Run1 input");
   assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run2Id)))?.state, "completed");
   const taskBeforeDelivery = await uow.read(projectId, tx => tx.getTask(taskId));
-  const delivery = await execute(worker, { type: "delivery.record", taskId, runId: run2Id,
+  const deliveryOperationId=randomUUID();
+  const deliveryIntent={artifactRef:"artifact:continuation-result",artifactRevision:"v1",
+    contentHash:hash("Result after answer adoption"),technicalResult:"passed" as const,
+    technicalEvidence:"Fixed answer consumed in terminal Turn",reason:"Deliver continuation result"};
+  await seedSealingWorkerSubmission(pool,projectId,taskId,run2Id,worker.actorId,deliveryOperationId,
+    taskBeforeDelivery!.version,deliveryIntent);
+  const delivery = await workflow.execute(worker, { type: "delivery.record", projectId, operationId:deliveryOperationId, taskId, runId: run2Id,
     expectedVersion: taskBeforeDelivery!.version, artifactRef: "artifact:continuation-result",
     artifactRevision: "v1", contentHash: hash("Result after answer adoption"),
     technicalResult: "passed", technicalEvidence: "Fixed answer consumed in terminal Turn",
     reason: "Deliver continuation result" });
+  assert.equal(delivery.status,"applied",JSON.stringify(delivery));
   assert.ok(delivery.revisionId, "Delivery remains possible after the Turn settles");
 }
 

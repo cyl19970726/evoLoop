@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
@@ -23,7 +24,7 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated evoloop test DB required");
 const schema=`el_legacy_gap_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
-const projectId=randomUUID(),actor="legacy-gap-reviewer",role="legacy-cognition",scope="legacy-scope";
+const projectId=randomUUID(),actor="legacy-gap-reviewer",role=fixtureRoleId("legacy-cognition"),scope="legacy-scope";
 const principal={actorId:actor,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
@@ -48,6 +49,7 @@ test("old dispatch.gap event without run or task version recovers from immutable
   t.after(async()=>{await pool.end();const client=new pg.Client({connectionString:url});await client.connect();try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await client.end();}});
   const goalId=randomUUID(),stageId=randomUUID(),otherGoalId=randomUUID(),otherStageId=randomUUID(),taskId=randomUUID(),loopId=randomUUID();
   await official({type:"project.create",title:"Legacy terminal gap fixture"});
+  for (const roleId of [role]) await seedFixtureRole(pool,projectId,roleId);
   for(const id of [goalId,otherGoalId]) await official({type:"goal.create",goalId:id,outcome:"One bounded result",constraints:"Preserve historical scope",consumer:"owner",authority:"reviewer",scope:"local",owner:actor});
   for(const [id,goal] of [[stageId,goalId],[otherStageId,otherGoalId]]){
     await official({type:"stage.propose",stageId:id,goalId:goal,deliverable:"One checked result",learningQuestion:"What happened?",reason:"Bounded stage"});

@@ -6,9 +6,10 @@ import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
 import type { CommandResult, Principal } from "@evoloop/contracts";
 import { buildServer } from "../../apps/coordinator/src/server.js";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const database = process.env.TEST_DATABASE_URL;
-if (!database || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(database)) throw new Error("Use a dedicated evoloop_*test database");
+if (!database || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(database)) throw new Error("Use a dedicated evoloop_*test database");
 
 test("reviewed-stage Task can be explicitly detached and rebound without changing its fixed history", async t => {
   const schema = `task_stage_${randomUUID().replaceAll("-", "")}`;
@@ -55,6 +56,8 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   const acceptStage = async (stageId: string, scopedProjectId = projectId) => applied(await send({
     type: "stage.accept", stageId, expectedVersion: 1, reason: "Authorize stage" }, token, scopedProjectId));
   applied(await send({ type: "project.create", title: "Stage rebinding" }));
+  const ownerRoleId=fixtureRoleId("owner");
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   applied(await send({ type: "project.create", title: "Other project" }, token, otherProjectId));
   await makeGoal(goalId);
   await makeGoal(foreignGoalId, otherProjectId);
@@ -67,7 +70,7 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   await acceptStage(foreignStageId, otherProjectId);
 
   const original = applied(await send({ type: "task.create", taskId, title: "Original Task", content: "Keep same task identity",
-    acceptance: "A checked result", owner: "owner", stageId: oldStageId, consumer: "owner",
+    acceptance: "A checked result", owner: ownerRoleId, stageId: oldStageId, consumer: "owner",
     evidence: "Observed original need", stopCondition: "Owner reviews delivery" }));
   const first = await service.getTask(principal, projectId, taskId);
   assert.equal(first.proposal?.stageId, oldStageId);
@@ -77,7 +80,7 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   assert.equal((await service.getStage(principal, projectId, oldStageId)).state, "reviewed");
 
   const omitted = applied(await send({ type: "task.update", taskId, expectedVersion: original.version,
-    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: "owner",
+    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: ownerRoleId,
     reason: "Reframe without touching stage" }));
   assert.equal((await service.getTask(principal, projectId, taskId)).proposal?.stageId, oldStageId,
     "omitting stageId preserves the fixed association");
@@ -86,7 +89,7 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   rejected(refusedStart, "INVALID_STAGE");
 
   const detachCommand = { type: "task.update", taskId, expectedVersion: omitted.version,
-    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: "owner",
+    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: ownerRoleId,
     stageId: null, reason: "Explicitly detach after reviewed stage" };
   const writer = await send(detachCommand, writerToken);
   assert.equal(writer.reply.statusCode, 403);
@@ -110,18 +113,18 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
     reason: "Authorize reframed original Task" }));
   assert.equal((await service.getTask(principal, projectId, taskId)).task.state, "in_progress");
   rejected(await send({ type: "task.update", taskId, expectedVersion: started.version,
-    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: "owner",
+    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: ownerRoleId,
     stageId: nextStageId, reason: "Cannot rebind while running" }), "REOPEN_REQUIRED");
   const reopened = applied(await send({ type: "task.reopen", taskId, expectedVersion: started.version,
     reason: "Plan next phase" }));
   rejected(await send({ type: "task.update", taskId, expectedVersion: reopened.version,
-    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: "owner",
+    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: ownerRoleId,
     stageId: proposedStageId, reason: "Inactive stage" }), "INVALID_STAGE");
   rejected(await send({ type: "task.update", taskId, expectedVersion: reopened.version,
-    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: "owner",
+    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: ownerRoleId,
     stageId: foreignStageId, reason: "Cross-project stage" }), "NOT_FOUND");
   const rebound = applied(await send({ type: "task.update", taskId, expectedVersion: reopened.version,
-    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: "owner",
+    title: "Reframed original Task", content: "Updated work", acceptance: "A checked result", owner: ownerRoleId,
     stageId: nextStageId, reason: "Bind active next stage" }));
   assert.equal((await service.getTask(principal, projectId, taskId)).proposal?.stageId, nextStageId);
   applied(await send({ type: "task.start", taskId, expectedVersion: rebound.version, reason: "Start under active stage" }));

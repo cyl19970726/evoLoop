@@ -12,6 +12,9 @@ test("work-management routes bind route identity and expose stable read/write co
   const reads: unknown[] = [], plans: unknown[] = [], dependencies: unknown[] = [], reviews: unknown[] = [];
   const reader: LeaderWorkIndexReader = {
     index: async (_principal, project, query) => { reads.push({ project, query }); return { items: [], nextCursor: null }; },
+    task: async (_principal, project, projectedTaskId) => {
+      reads.push({ project, taskId: projectedTaskId }); return { taskId: projectedTaskId };
+    },
     changes: async (_principal, project, limit, cursor) => { reads.push({ project, limit, cursor }); return { items: [], nextCursor: null }; },
     setPlan: async (who, project, command) => { plans.push({ who, project, command }); return { status: "applied" }; },
     setDependencies: async (who, project, command) => { dependencies.push({ who, project, command }); return { status: "applied" }; },
@@ -32,6 +35,10 @@ test("work-management routes bind route identity and expose stable read/write co
   assert.equal(read.statusCode, 200);
   assert.deepEqual(reads[0], { project: projectId,
     query: { view: "documents", limit: 20, includeClosed: false } });
+  const exact = await app.inject({ method: "GET",
+    url: `/api/projects/${projectId}/work-management/tasks/${taskId}` });
+  assert.equal(exact.statusCode, 200);
+  assert.deepEqual(reads[1], { project: projectId, taskId });
 
   const plan = await app.inject({ method: "PUT",
     url: `/api/projects/${projectId}/work-management/tasks/${taskId}/plan`,

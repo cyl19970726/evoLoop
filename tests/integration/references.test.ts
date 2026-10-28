@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { migrate } from "@evoloop/adapter-postgres";
 import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { GitDocumentSource } from "@evoloop/adapter-git-documents";
@@ -17,7 +18,7 @@ import { buildServer } from "../../apps/coordinator/src/server.js";
 import { prepareRequest } from "../../apps/cli/src/requests.js";
 
 const url = process.env.TEST_DATABASE_URL;
-if (url && !/\/evoloop_references(?:_009|_run)?_test(?:\?|$)/.test(url)) throw new Error("Use a dedicated evoloop_references test database");
+if (url && !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(url)) throw new Error("Use a dedicated evoloop_references test database");
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const git = (root: string, ...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
@@ -212,6 +213,8 @@ test("registered Git source becomes an explicit Task revision with replay and ac
     observeExternal: async () => ({ status: "reachable" as const, revision: commit, contentHash: hash(body),
       currentRevision: commit, currentHash: hash(body), currentValidity: "valid" as const }) };
   await workflow.execute(principal as never, { type:"project.create",projectId,operationId:randomUUID(),title:"Refs" });
+  const ownerRoleId=fixtureRoleId("reviewer");
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const createdDocument = await workflow.execute(principal as never, { type:"document.create",projectId,
     operationId:randomUUID(),documentId,title:"Process source",body:"# initial\n" });
   assert.equal(createdDocument.status,"applied");
@@ -219,7 +222,7 @@ test("registered Git source becomes an explicit Task revision with replay and ac
   await workflow.execute(principal as never, { type:"document.adopt",projectId,operationId:randomUUID(),
     documentId,expectedVersion:1,revisionId:originalRevisionId,reason:"accepted source" });
   await workflow.execute(principal as never, { type:"task.create",projectId,operationId:randomUUID(),taskId,
-    title:"Task",content:"# Use formal constraint",acceptance:"Done",owner:"reviewer",documentIds:[documentId] });
+    title:"Task",content:"# Use formal constraint",acceptance:"Done",owner:ownerRoleId,documentIds:[documentId] });
   await workflow.execute(principal as never, { type:"task.start",projectId,operationId:randomUUID(),taskId,
     expectedVersion:1,basis:[{documentId,revisionId:originalRevisionId}],reason:"Begin work" });
   const registered = await registerFixedGitReference(deps as never,principal as never,{ projectId,operationId:randomUUID(),actorId:"reviewer",
@@ -264,7 +267,7 @@ test("registered Git source becomes an explicit Task revision with replay and ac
   assert.equal((await workflow.getTask(principal as never,projectId,taskId)).task.version,closedTask.task.version);
   const doneTaskId = randomUUID();
   await workflow.execute(principal as never, { type:"task.create",projectId,operationId:randomUUID(),taskId:doneTaskId,
-    title:"Completed task",content:"# Use accepted source",acceptance:"Done",owner:"reviewer",documentIds:[documentId] });
+    title:"Completed task",content:"# Use accepted source",acceptance:"Done",owner:ownerRoleId,documentIds:[documentId] });
   await workflow.execute(principal as never, { type:"task.start",projectId,operationId:randomUUID(),taskId:doneTaskId,
     expectedVersion:1,basis:[{documentId,revisionId:revisedId}],reason:"started" });
   const delivered = await workflow.execute(principal as never, { type:"delivery.record",projectId,
@@ -273,6 +276,11 @@ test("registered Git source becomes an explicit Task revision with replay and ac
     technicalEvidence:"fixture checks passed",reason:"delivered" });
   assert.equal(delivered.status,"applied");
   const deliveryId = delivered.status === "applied" ? delivered.revisionId! : "";
+  const consumer={actorId:"reference-consumer",projectIds:[projectId],permissions:["read","write"] as const};
+  const observed=await workflow.execute(consumer as never,{type:"observation.record",projectId,
+    operationId:randomUUID(),taskId:doneTaskId,deliveryId,observer:consumer.actorId,observerKind:"agent",
+    result:"used",evidence:"Independent reference check",reason:"Consumer used artifact"});
+  assert.equal(observed.status,"applied");
   const completion = await workflow.execute(principal as never, { type:"task.close",projectId,
     operationId:randomUUID(),taskId:doneTaskId,expectedVersion:3,deliveryId,
     acceptanceResult:"met",acceptanceEvidence:"fixture acceptance",reason:"closed" });

@@ -144,6 +144,10 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
   assert.equal(runBefore.operationId,attempt.operationId);
   assert.equal(runBefore.sessionId,sessionId);
   assert.equal(runBefore.actorId,controller.actorId);
+  assert.deepEqual(await uow.read(projectId,reader=>reader.getClaimedQueueAcceptanceForTask!(taskId)),
+    {consumerId:controller.actorId,runId:attempt.runId});
+  assert.equal(await uow.read(projectId,reader=>reader.getClaimedQueueAcceptanceForTask!(randomUUID())),null);
+  assert.equal(await uow.read(randomUUID(),reader=>reader.getClaimedQueueAcceptanceForTask!(taskId)),null);
   const journal=await pool.query('SELECT command_type FROM operation_journal WHERE project_id=$1 AND operation_id=$2',
     [projectId,attempt.operationId]);
   assert.equal(journal.rows[0]?.command_type,'queue.claim');

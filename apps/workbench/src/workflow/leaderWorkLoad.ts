@@ -1,4 +1,12 @@
-import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type {
+  LeaderWorkDocument, LeaderWorkPage, LeaderWorkPhase, LeaderWorkTask,
+} from "@evoloop/contracts/work-index";
+
+export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
+  unknown: "结果未知", rework: "待返工", blocked: "受阻", awaiting_delivery: "待结果交付",
+  awaiting_acceptance: "待验收", awaiting_assignment: "待接手", ready: "可开始",
+  running: "运行中", unassigned: "未分派", closed: "已关闭", cancelled: "已取消",
+};
 
 export interface LeaderDocumentLoad {
   items: Map<string, LeaderWorkDocument>;

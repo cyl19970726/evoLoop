@@ -283,6 +283,7 @@ test("listed Task reads follow all page IDs in original status order, including 
   const taskSummary=`/api/projects/${projectId}/work-management/index?view=tasks&limit=50`;
   assert.equal(grants.allowedPaths.has(taskSummary),true);
   assert.equal(grants.allowedPaths.has(`${taskSummary}&includeClosed=true`),true);
+  assert.equal(grants.allowedPaths.has(`/api/projects/${projectId}/work-management/tasks/${taskIdAt(page1[0]!)}`),true);
   assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+taskSummary,"GET","fetch",grants.allowedPaths),true);
   assert.equal(allowBrowserRequest(current,`${BROWSER_ORIGIN+taskSummary}&cursor=opaque`,"GET","fetch",grants.allowedPaths),true);
   assert.equal(allowBrowserRequest(current,`${BROWSER_ORIGIN+taskSummary}&cursor=opaque&cursor=again`,"GET","fetch",grants.allowedPaths),false);

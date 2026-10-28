@@ -6,7 +6,7 @@ import { WorkflowService } from "@evoloop/core";
 import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision } from "@evoloop/contracts";
 import { PostgresUnitOfWork, migrate } from "../src/index.ts";
 import { PgLeaderWorkWriter, leaderWorkTaskFromRow, readLeaderWorkChanges, readLeaderWorkDocuments,
-  readLeaderWorkTasks } from "../src/work-index.ts";
+  readLeaderWorkTask, readLeaderWorkTasks } from "../src/work-index.ts";
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error("TEST_DATABASE_URL is required for leader work index tests");
@@ -92,6 +92,10 @@ test("leader work index exposes plan, dependency, current version and a stable b
   assert.equal(second.items[0]!.taskId, fixture.prerequisite.head.id);
   assert.equal(first.changeSequence, second.changeSequence);
   assert.equal(new Set([...first.items, ...second.items].map(item => item.taskId)).size, 2);
+  const exact = await readLeaderWorkTask(pool, fixture.project.id, fixture.prerequisite.head.id);
+  assert.equal(exact?.taskId, fixture.prerequisite.head.id);
+  assert.equal(exact?.phase, "ready");
+  assert.equal(exact?.dependencyVersion, 0);
   const beyond=Buffer.from(JSON.stringify({version:1,view:"tasks",projectId:fixture.project.id,
     includeClosed:false,sequence:first.changeSequence,offset:999}),
     "utf8").toString("base64url");

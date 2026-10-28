@@ -11,7 +11,9 @@ import { businessNextStep, cognitionSummary, visibleWorkGroups, type WorkTaskSta
 import { isRoleOwnerId, readOwnerRole } from "./ownerRole";
 import "./work-status.css";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { appendLeaderWorkPage, loadLeaderDocumentsForIds, visibleLeaderDocuments } from "./leaderWorkLoad";
+import {
+  appendLeaderWorkPage, leaderPhaseLabel, loadLeaderDocumentsForIds, visibleLeaderDocuments,
+} from "./leaderWorkLoad";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
@@ -19,11 +21,6 @@ const documentKinds = { issue: "问题", spec: "规范", discussion: "讨论", r
 const documentStatuses = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
 const searchPageLimit = 10;
 const searchItemLimit = 500;
-const leaderPhaseLabel = {
-  unknown: "结果未知", rework: "待返工", blocked: "受阻", awaiting_delivery: "待结果交付",
-  awaiting_acceptance: "待验收", awaiting_assignment: "待接手", ready: "可开始", running: "运行中", unassigned: "未分派",
-  closed: "已关闭", cancelled: "已取消",
-} as const;
 const leaderPhaseOrder = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_assignment", "ready", "running", "unassigned"] as const;
 type OwnerName = { title?: string; error?: string };
 type WorkStatusProblem = { kind: "unavailable" | "partial"; diagnostic: string };

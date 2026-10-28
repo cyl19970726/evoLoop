@@ -119,6 +119,7 @@ export interface LeaderWorkTask {
     version?: number; actorId?: string | null; updatedAt?: string | null;
   } | null;
   dependencies: LeaderWorkDependency[];
+  dependencyVersion: number;
   review: {
     reviewId: string; decision: "acknowledged" | "deferred";
     actorId: string; reason: string; operationId: string; reviewedChangeSequence: number; at: string;

@@ -15,6 +15,15 @@ const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}
 const uow=new PostgresUnitOfWork(pool);
 const projectId=randomUUID(),sessionId=randomUUID(),now='2026-10-27T00:00:00.000Z',connectionId=randomUUID();
 const clock={now:()=>now};const ids={next:randomUUID};const service=new NativeInputService({uow,clock,ids});
+async function seedTrialRole(roleId:string,revisionId:string):Promise<void>{
+  const c=await pool.connect();try{await c.query('BEGIN');
+    await c.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial','run-issuer',$4,$4,$4)`,[projectId,roleId,revisionId,now]);
+    await c.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'run-issuer','fixture',$4,$4)`,[projectId,roleId,revisionId,now]);
+    await c.query('COMMIT');
+  }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
+}
 const capture=(nativeRequestId:string|number=1,turnId='native-turn-1'):NativeInputCapture=>({
   projectId,sessionId,id:randomUUID(),connectionId,nativeRequestId,threadId:'native-thread',turnId,itemId:'native-item',
   method:'item/tool/requestUserInput',questions:[{id:'q1',header:'Choice',question:'Choose a value',isOther:false,
@@ -161,9 +170,11 @@ test('business command journal replays exact reviewer reply without a second mut
 test('Run source links only the exact project Session and Turn, including after terminal settlement',async()=>{
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash:(s:string)=>createHash('sha256').update(s).digest('hex')}});
   const lead={actorId:'run-issuer',projectIds:[projectId],permissions:['write','review'] as ('write'|'review')[]};
-  const taskId=randomUUID(),runSessionId=randomUUID(),runId=randomUUID(),runOperationId=randomUUID(),turn='run-native-turn';
+  const taskId=randomUUID(),taskOwnerRoleId=randomUUID(),taskOwnerRoleRevisionId=randomUUID();
+  const runSessionId=randomUUID(),runId=randomUUID(),runOperationId=randomUUID(),turn='run-native-turn';
+  await seedTrialRole(taskOwnerRoleId,taskOwnerRoleRevisionId);
   const created=await workflow.execute(lead,{type:'task.create',projectId,operationId:randomUUID(),taskId,
-    title:'Run source fixture',content:'Fixed work',acceptance:'Evidence',owner:'worker'});
+    title:'Run source fixture',content:'Fixed work',acceptance:'Evidence',owner:taskOwnerRoleId});
   assert.equal(created.status,'applied');
   const started=await workflow.execute(lead,{type:'task.start',projectId,operationId:randomUUID(),taskId,
     expectedVersion:1,reason:'Begin fixed work'});
@@ -173,8 +184,8 @@ test('Run source links only the exact project Session and Turn, including after 
   assert.ok(task&&revision?.basisSetId);
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,'worker','/tmp','project','danger-full-access','never','ready',1,'run-thread','run-session',$3,'run-issuer',$4,$4)`,
-    [projectId,runSessionId,randomUUID(),now]);
+    VALUES($1,$2,$5,'/tmp','project','danger-full-access','never','ready',1,'run-thread','run-session',$3,'run-issuer',$4,$4)`,
+    [projectId,runSessionId,randomUUID(),now,taskOwnerRoleId]);
   const exact={...capture(10,turn),sessionId:runSessionId,threadId:'run-thread'};
   const otherTurn={...capture(11,'unrelated-turn'),sessionId:runSessionId,threadId:'run-thread'};
   const otherSession=capture(12,turn);

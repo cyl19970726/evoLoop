@@ -81,6 +81,11 @@ async function requireAssignableOwner(tx: Transaction, owner: string): Promise<v
   const role = await tx.getRole(owner);
   if (role?.state === "retired") throw new DomainError("ROLE_RETIRED", "retired role cannot receive new work");
 }
+async function requireRealTaskOwner(tx: Transaction, owner: string): Promise<void> {
+  const role = uuid.test(owner) ? await tx.getRole(owner) : null;
+  if (!role || !["trial", "active"].includes(role.state))
+    throw new DomainError("TASK_OWNER_ROLE_REQUIRED", "new Task responsibility must name an active or trial Role");
+}
 
 function requireVersion(actual: number, expected: number): void {
   if (actual !== expected) throw new DomainError("VERSION_CONFLICT", "The observed version is no longer current", actual);
@@ -187,10 +192,20 @@ export class WorkflowService {
     }
     const base = { status: "applied" as const, operationId: command.operationId };
     const actorId = principal.actorId;
-    if (command.type === "task.create" || command.type === "task.update") await requireAssignableOwner(tx, command.owner);
+    if (command.type === "task.create") await requireRealTaskOwner(tx, command.owner);
+    if (command.type === "task.update") {
+      const priorTask = await tx.getTask(command.taskId);
+      if (priorTask && priorTask.owner !== command.owner) await requireRealTaskOwner(tx, command.owner);
+      else await requireAssignableOwner(tx, command.owner);
+    }
     if (command.type === "task.start") await requireAssignableOwner(tx, required(await tx.getTask(command.taskId), "Task").owner);
     if (command.type === "runtime.session.reserve") await requireAssignableOwner(tx, command.roleId);
-    if (command.type === "schedule.create" || command.type === "schedule.revise") await requireAssignableOwner(tx, command.template.owner);
+    if (command.type === "schedule.create") await requireRealTaskOwner(tx, command.template.owner);
+    if (command.type === "schedule.revise") {
+      const schedule = await tx.getSchedule(command.scheduleId);
+      if (schedule?.revision.template.owner === command.template.owner) await requireAssignableOwner(tx, command.template.owner);
+      else await requireRealTaskOwner(tx, command.template.owner);
+    }
     switch (command.type) {
       case "project.create": {
         if (await tx.getProject()) throw new DomainError("ALREADY_EXISTS", "Project already exists");
@@ -343,11 +358,18 @@ export class WorkflowService {
         await tx.insertDocumentRevision(contentRevision);
         await tx.insertTask(task);
         await tx.insertTaskRevision(revision);
-        if (command.stageId || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
-          await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
-            stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: command.useRequired ?? false,
-            evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
-        }
+        const ownerRole = await tx.getRole(command.owner);
+        const decisionOnly = command.useRequired === false && command.acceptanceMode === undefined &&
+          command.kind === "research" && !!command.stageId && command.consumer === command.owner &&
+          ownerRole?.proposal?.templateKey === "cognition" && principal.permissions.includes("review");
+        if (command.useRequired === false && !decisionOnly)
+          throw new DomainError("ACCEPTANCE_POLICY", "new business Tasks require current delivery use under their acceptance mode");
+        if (command.acceptanceMode === "human_required" && !command.consumer)
+          throw new DomainError("ACCEPTANCE_POLICY", "human-required Tasks need the exact human consumer actor");
+        await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
+          stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,
+          acceptanceMode: decisionOnly ? null : command.acceptanceMode ?? "independent_agent",
+          evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
         return { result: { ...base, entityId: task.id, version: 1, revisionId }, effects: [
@@ -378,6 +400,23 @@ export class WorkflowService {
           if (domain.state !== "active") throw new DomainError("DOMAIN_RETIRED", "Task requires an active domain");
         }
         const priorProposal = await tx.getTaskProposal(task.id);
+        const acceptanceMode = command.acceptanceMode ?? priorProposal?.acceptanceMode ?? null;
+        if (priorProposal?.acceptanceMode === "human_required" &&
+          (acceptanceMode !== "human_required" || command.consumer !== undefined && command.consumer !== priorProposal.consumer) &&
+          (principal.identityKind !== "human" || principal.actorId !== priorProposal.consumer))
+          throw new DomainError("TRUSTED_HUMAN_REQUIRED", "changing human acceptance requires the current human consumer");
+        if (command.acceptanceMode && command.acceptanceMode !== priorProposal?.acceptanceMode) {
+          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance mode changes require review permission");
+          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing acceptance mode");
+        }
+        if (priorProposal?.acceptanceMode && command.consumer !== undefined && command.consumer !== priorProposal.consumer) {
+          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "changing the acceptance consumer requires review permission");
+          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing acceptance consumer");
+        }
+        if (acceptanceMode && command.useRequired === false)
+          throw new DomainError("ACCEPTANCE_POLICY", "acceptance mode requires current delivery use");
+        if (acceptanceMode === "human_required" && !(command.consumer === null ? "" : command.consumer ?? priorProposal?.consumer))
+          throw new DomainError("ACCEPTANCE_POLICY", "human-required Tasks need the exact human consumer actor");
         const priorStageId = priorProposal?.stageId ?? null;
         const stageId = command.stageId === undefined ? priorStageId : command.stageId;
         const stageChanged = stageId !== priorStageId;
@@ -387,7 +426,7 @@ export class WorkflowService {
           const stage = required(await tx.getStage(stageId), "Stage");
           if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "Only an active stage can receive a Task");
         }
-        const consumer = command.consumer ?? priorProposal?.consumer ?? "";
+        const consumer = command.consumer === null ? "" : command.consumer ?? priorProposal?.consumer ?? "";
         const evidence = command.evidence ?? priorProposal?.evidence ?? "";
         const stopCondition = command.stopCondition ?? priorProposal?.stopCondition ?? "";
         if (command.stageId !== undefined && stageId !== null &&
@@ -399,6 +438,7 @@ export class WorkflowService {
           task.owner !== command.owner || task.kind !== kind || linked.length !== documentIds.length ||
           command.consumer !== undefined && command.consumer !== priorProposal?.consumer ||
           command.useRequired !== undefined && command.useRequired !== priorProposal?.useRequired ||
+          command.acceptanceMode !== undefined && command.acceptanceMode !== priorProposal?.acceptanceMode ||
           command.evidence !== undefined && command.evidence !== priorProposal?.evidence ||
           command.stopCondition !== undefined && command.stopCondition !== priorProposal?.stopCondition))
           throw new DomainError("REOPEN_REQUIRED", "Return the Task to todo before changing its execution scope");
@@ -449,10 +489,11 @@ export class WorkflowService {
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
           title: revision.title, content: revision.content, contentRevisionId, kind, domainId, acceptance: revision.acceptance,
           owner: revision.owner }, task.version);
-        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined) {
+        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined) {
           await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
             stageId, consumer,
-            useRequired: command.useRequired ?? priorProposal?.useRequired ?? false,
+            useRequired: acceptanceMode ? true : command.useRequired ?? priorProposal?.useRequired ?? false,
+            acceptanceMode,
             evidence, stopCondition, createdAt: now });
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,

@@ -5,6 +5,7 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated evoloop test DB required");
@@ -14,6 +15,8 @@ const service=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:(
 const projectId=randomUUID();
 const principal:Principal={actorId:"integration-owner",projectIds:[projectId],permissions:["read","write","review"]};
 const issue=async (data:Omit<Command,"projectId"|"operationId">|Record<string,unknown>,operationId=randomUUID()):Promise<CommandResult>=>service.execute(principal,{...data,projectId,operationId} as Command);
+const consumer:Principal={actorId:"integration-consumer",projectIds:[projectId],permissions:["read","write"]};
+const consumerIssue=async (data:Record<string,unknown>):Promise<CommandResult>=>service.execute(consumer,{...data,projectId,operationId:randomUUID()} as Command);
 const yes=(r:CommandResult)=>{assert.equal(r.status,"applied",JSON.stringify(r));return r as Extract<CommandResult,{status:"applied"}>;};
 const no=(r:CommandResult,code:string)=>{assert.equal(r.status,"rejected",JSON.stringify(r));if(r.status==="rejected")assert.equal(r.code,code);};
 
@@ -21,6 +24,8 @@ test("goal to consumer use and stage review retains versions, decisions, and ope
   await migrate(url,schema);
   t.after(async()=>{await pool.end();const cleanup=new pg.Client({connectionString:url});await cleanup.connect();try{await cleanup.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await cleanup.end();}});
   yes(await issue({type:"project.create",title:"Synthetic M2 flow"}));
+  const ownerRoleId=fixtureRoleId("integration-owner");
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const goalId=randomUUID(),stageId=randomUUID(),taskId=randomUUID(),documentId=randomUUID();
   yes(await issue({type:"goal.create",goalId,outcome:"Consumer can finish monthly report",constraints:"Keep CSV format",consumer:"integration-consumer",authority:"Project owner",scope:"One report",owner:"integration-owner"}));
   no(await issue({type:"goal.revise",goalId,expectedVersion:2,outcome:"Updated",constraints:"Keep CSV",consumer:"integration-consumer",authority:"owner",scope:"one",owner:"integration-owner",reason:"stale"}),"VERSION_CONFLICT");
@@ -29,9 +34,9 @@ test("goal to consumer use and stage review retains versions, decisions, and ope
   yes(await issue({type:"stage.accept",stageId,expectedVersion:stage.version,reason:"Bounded stage"}));
   const doc=yes(await issue({type:"document.create",documentId,title:"Requirement",body:"# Requirement\nReport must be verifiable."}));
   yes(await issue({type:"document.adopt",documentId,expectedVersion:1,revisionId:doc.revisionId,reason:"Use this basis"}));
-  const created=yes(await issue({type:"task.create",taskId,title:"Fix export",content:"# Enable report\nKeep CSV format.",acceptance:"Consumer completes report",owner:"integration-owner",documentIds:[documentId],stageId,consumer:"integration-consumer",useRequired:true,evidence:"Current export fails",stopCondition:"Stop if data inaccessible"}));
+  const created=yes(await issue({type:"task.create",taskId,title:"Fix export",content:"# Enable report\nKeep CSV format.",acceptance:"Consumer completes report",owner:ownerRoleId,documentIds:[documentId],stageId,consumer:"integration-consumer",useRequired:true,evidence:"Current export fails",stopCondition:"Stop if data inaccessible"}));
   no(await issue({type:"task.start",taskId,expectedVersion:99,basis:[{documentId,revisionId:doc.revisionId}],reason:"Stale start"}),"VERSION_CONFLICT");
-  const updated=yes(await issue({type:"task.update",taskId,expectedVersion:created.version,title:"Fix export",content:"# Enable report\nKeep CSV format and fix the missing column.",acceptance:"Consumer completes report",owner:"integration-owner",documentIds:[documentId],consumer:"integration-consumer",useRequired:true,evidence:"Sample report fails on missing column",stopCondition:"Stop if data inaccessible",reason:"Add missing evidence"}));
+  const updated=yes(await issue({type:"task.update",taskId,expectedVersion:created.version,title:"Fix export",content:"# Enable report\nKeep CSV format and fix the missing column.",acceptance:"Consumer completes report",owner:ownerRoleId,documentIds:[documentId],consumer:"integration-consumer",useRequired:true,evidence:"Sample report fails on missing column",stopCondition:"Stop if data inaccessible",reason:"Add missing evidence"}));
   const firstRevision=await service.getTaskRevision(principal,projectId,taskId,created.revisionId!);
   assert.equal(firstRevision.revision.content,"# Enable report\nKeep CSV format.");
   assert.notEqual(firstRevision.revision.contentRevisionId,(await service.getTask(principal,projectId,taskId)).task.contentRevisionId);
@@ -48,14 +53,14 @@ test("goal to consumer use and stage review retains versions, decisions, and ope
   no(await issue({type:"task.close",taskId,expectedVersion:first.version,deliveryId:first.revisionId,reason:"Too early",...acceptance}),"TECHNICAL_CHECK_FAILED");
   const second=yes(await issue({type:"delivery.record",taskId,expectedVersion:first.version,artifactRef:"repo://export",artifactRevision:"commit-b",contentHash:"b".repeat(64),technicalResult:"passed",technicalEvidence:"Build and sample pass",reason:"Fixed candidate"}));
   no(await issue({type:"task.close",taskId,expectedVersion:second.version,deliveryId:second.revisionId,reason:"No use",...acceptance}),"USE_NOT_OBSERVED");
-  no(await issue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"agent",result:"used",evidence:"Claimed by owner",reason:"Invalid impersonation"}),"OBSERVER_MISMATCH");
-  yes(await issue({type:"observation.record",taskId,deliveryId:first.revisionId,observer:"integration-consumer",observerKind:"human",result:"used",evidence:"Old version tested",reason:"Historical observation"}));
+  no(await issue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"agent",result:"used",evidence:"Claimed by owner",reason:"Invalid impersonation"}),"INDEPENDENT_OBSERVER_REQUIRED");
+  yes(await consumerIssue({type:"observation.record",taskId,deliveryId:first.revisionId,observer:"integration-consumer",observerKind:"agent",result:"used",evidence:"Old version tested",reason:"Historical observation"}));
   no(await issue({type:"task.close",taskId,expectedVersion:second.version,deliveryId:second.revisionId,reason:"Old use",...acceptance}),"USE_NOT_OBSERVED");
-  const observed=yes(await issue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"human",result:"used",evidence:"Consumer attested report completion",reason:"Monthly report produced"}));
+  const observed=yes(await consumerIssue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"agent",result:"used",evidence:"Consumer attested report completion",reason:"Monthly report produced"}));
   assert.ok(observed.revisionId);
-  yes(await issue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"human",result:"notUsed",evidence:"Consumer later withdrew the claim",reason:"Report was not yet complete"}));
+  yes(await consumerIssue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"agent",result:"notUsed",evidence:"Consumer later withdrew the claim",reason:"Report was not yet complete"}));
   no(await issue({type:"task.close",taskId,expectedVersion:second.version,deliveryId:second.revisionId,reason:"Stale use",...acceptance}),"USE_NOT_OBSERVED");
-  yes(await issue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"human",result:"used",evidence:"Consumer completed corrected report",reason:"Rechecked after withdrawal"}));
+  yes(await consumerIssue({type:"observation.record",taskId,deliveryId:second.revisionId,observer:"integration-consumer",observerKind:"agent",result:"used",evidence:"Consumer completed corrected report",reason:"Rechecked after withdrawal"}));
   no(await issue({type:"task.close",taskId,expectedVersion:second.version,deliveryId:second.revisionId,acceptanceResult:"unmet",acceptanceEvidence:"Report mismatch",reason:"Do not close"}),"ACCEPTANCE_UNMET");
   const closeOp=randomUUID();const closed=yes(await issue({type:"task.close",taskId,expectedVersion:second.version,deliveryId:second.revisionId,reason:"Consumer completed report",...acceptance},closeOp));
   assert.deepEqual(await issue({type:"task.close",taskId,expectedVersion:second.version,deliveryId:second.revisionId,reason:"Consumer completed report",...acceptance},closeOp),closed);
@@ -71,7 +76,7 @@ test("goal to consumer use and stage review retains versions, decisions, and ope
   assert.equal((await service.listStages(principal,projectId,goalId))[0]?.id,stageId);
   assert.deepEqual((await service.listStageRevisions(principal,projectId,stageId)).map(x=>x.state),["proposed","active","reviewed"]);
   const withdrawnId=randomUUID();
-  yes(await issue({type:"task.create",taskId:withdrawnId,title:"Withdrawn idea",content:"# Explore\nFind one answer.",acceptance:"One finding",owner:"integration-owner",documentIds:[]}));
+  yes(await issue({type:"task.create",taskId:withdrawnId,title:"Withdrawn idea",content:"# Explore\nFind one answer.",acceptance:"One finding",owner:ownerRoleId,documentIds:[]}));
   yes(await issue({type:"task.cancel",taskId:withdrawnId,expectedVersion:1,reason:"No longer useful"}));
   assert.equal((await service.getTask(principal,projectId,withdrawnId)).task.state,"cancelled");
   await assert.rejects(pool.query("UPDATE delivery SET technical_result='passed' WHERE project_id=$1 AND delivery_id=$2",[projectId,first.revisionId]),/append-only/);

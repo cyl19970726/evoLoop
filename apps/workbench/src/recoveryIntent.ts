@@ -55,7 +55,8 @@ export async function recoveryIntent(receipt: OperationReceipt): Promise<Command
 }
 
 export function isSpecialOperation(type: OperationReceipt["commandType"]): boolean {
-  return type === "document.payload" || type === "reference.git" || type === "reference.formal" || type === "reference.task";
+  return type === "document.payload" || type === "reference.git" || type === "reference.formal" ||
+    type === "reference.task" || type.startsWith("work.");
 }
 
 export async function verifyRecoveryOperation(receipt: OperationReceipt, operation: Operation): Promise<"match" | "scoped-match" | "unavailable" | "mismatch"> {

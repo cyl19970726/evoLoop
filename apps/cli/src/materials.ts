@@ -26,6 +26,8 @@ export interface ExternalOriginal { reference: TaskExternalReferenceRecord; body
 export interface TaskContext {
   status: "complete" | "partial"; projectId: string; taskId: string; taskRevisionId: string;
   task: TaskDetail["task"] | null; revision: TaskRevision | null; basis: BasisSet | null;
+  /** Current Task policy; historical revision reads do not claim it was fixed then. */
+  acceptancePolicy: Pick<NonNullable<TaskDetail["proposal"]>, "acceptanceMode" | "consumer" | "useRequired"> | null;
   history: Array<{ revision: TaskRevision; basis: BasisSet | null }> | null;
   documents: VerifiedOriginal[]; externalReferences: ExternalOriginal[]; failures: MaterialFailure[];
   /** Observed planning pointers are neither sealed basis nor originals read by this command. */
@@ -185,7 +187,7 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
   let detail: TaskDetail;
   try { detail = obj(await client.get(root), "Task detail") as unknown as TaskDetail; }
   catch (error) { return { status: "partial", projectId, taskId, taskRevisionId: revisionId ?? "", task: null, revision: null,
-    basis: null, history: null, documents: [], externalReferences: [], observedPlanningCandidates: [],
+    basis: null, acceptancePolicy: null, history: null, documents: [], externalReferences: [], observedPlanningCandidates: [],
     planningUnavailableLinks: [], planningObservedAtUtc: null,
     routing: { fixedDomainId: null, current: null, observedAtUtc: null },
     failures: [{ kind: "task", id: taskId, revisionId: revisionId ?? null, reason: reason(error) }] }; }
@@ -355,7 +357,13 @@ export async function readTaskContext(client: ReadClient, projectId: string, tas
     } catch (error) { failures.push({ kind: "task", id: taskId, revisionId: selectedId, reason: `External snapshot: ${reason(error)}` }); }
   }
   return { status: failures.length ? "partial" : "complete", projectId, taskId, taskRevisionId: selectedId,
-    task: detail.task, revision, basis, history, documents, externalReferences,
+    task: detail.task, revision, basis,
+    acceptancePolicy: selectedId === detail.task.currentRevisionId && detail.proposal ? {
+      acceptanceMode: detail.proposal.acceptanceMode ?? null,
+      consumer: detail.proposal.consumer,
+      useRequired: detail.proposal.useRequired,
+    } : null,
+    history, documents, externalReferences,
     observedPlanningCandidates, planningUnavailableLinks, planningObservedAtUtc, routing, failures };
 }
 async function readRun(client: ReadClient, projectId: string, fixed: TaskExternalReferenceRecord): Promise<string> {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
 import type { CommandResult, Principal } from "@evoloop/contracts";
@@ -29,6 +30,8 @@ test("a reviewed todo update seals a replacement basis and preserves old receipt
   const rejected = (value: CommandResult, code: string) => { assert.equal(value.status, "rejected", JSON.stringify(value));
     if (value.status === "rejected") assert.equal(value.code, code); };
   applied(await send(owner, { type: "project.create", title: "Basis reselection" }));
+  const ownerRoleId=fixtureRoleId(owner.actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const document = async (documentId: string, published = true) => {
     const created = applied(await send(owner, { type: "document.create", documentId, kind: "report",
       title: "Fixed report", body: `Original ${documentId}` }));
@@ -39,7 +42,7 @@ test("a reviewed todo update seals a replacement basis and preserves old receipt
   const oldRevision = await document(oldDocId), newRevision = await document(newDocId);
   const outsiderRevision = await document(outsiderDocId), draftRevision = await document(draftDocId, false);
   applied(await send(owner, { type: "task.create", taskId, title: "Reuse report", content: "# Exact existing work",
-    acceptance: "Reviewed output", owner: owner.actorId, documentIds: [oldDocId, newDocId, draftDocId] }));
+    acceptance: "Reviewed output", owner: ownerRoleId, documentIds: [oldDocId, newDocId, draftDocId] }));
   const started = applied(await send(owner, { type: "task.start", taskId, expectedVersion: 1,
     basis: [{ documentId: oldDocId, revisionId: oldRevision }], reason: "Initial input" }));
   const old = await service.getTask(owner, projectId, taskId);

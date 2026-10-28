@@ -44,6 +44,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
         responsible:{kind:"role",id:roleA,label:`负责 Role ${roleA}`},assignment:null,latestRun:null,delivery:null,
         pendingImpactCount:0,queueHold:null,goal:null,stage:null,
         plan:{plannedStartAt:null,dueAt:null,priority:null,version:1,actorId:roleA,updatedAt:stamp},dependencies:[],
+        dependencyVersion:0,
         review:{reviewId:"30000030-0000-4000-8000-000000000030",decision:"deferred",actorId:"acceptance-owner",
           reason:"Wait for the prerequisite",operationId:"30000031-0000-4000-8000-000000000031",
           reviewedChangeSequence:3,at:stamp},

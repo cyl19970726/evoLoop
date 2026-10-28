@@ -43,6 +43,14 @@ export function registerLeaderWorkRoutes(app: FastifyInstance, service: LeaderPr
     return workIndex.changes(who, p.projectId, q.limit, q.cursor);
   });
 
+  app.get("/api/projects/:projectId/work-management/tasks/:taskId", async request => {
+    const p = task(request.params), who = principal(request);
+    await service.getProject(who, p.projectId);
+    const item = await workIndex.task(who, p.projectId, p.taskId);
+    if (!item) throw new DomainError("NOT_FOUND", "Task work projection is not available");
+    return item;
+  });
+
   app.put("/api/projects/:projectId/work-management/tasks/:taskId/plan", async request => {
     const p = task(request.params), who = principal(request);
     if (!who.permissions.includes("write") || !who.permissions.includes("review"))

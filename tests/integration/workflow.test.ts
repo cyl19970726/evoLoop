@@ -8,9 +8,10 @@ import type { Command, CommandResult, Principal, AppliedResult } from "@evoloop/
 import type { Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 import { acquireCoordinatorLease } from "../../apps/coordinator/src/lease.js";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const url = process.env.TEST_DATABASE_URL;
-if (!url || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(url)) throw new Error("TEST_DATABASE_URL must identify a dedicated evoloop_*test database.");
+if (!url || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(url)) throw new Error("TEST_DATABASE_URL must identify a dedicated evoloop_*test database.");
 const pool = new pg.Pool({ connectionString: url, max: 6 });
 const uow = new PostgresUnitOfWork(pool);
 const makeService = (store: UnitOfWork = uow) => new WorkflowService({
@@ -32,13 +33,15 @@ test("real PostgreSQL/API: adopted requirement → two independent basis reviews
   await migrate(url);
   t.after(async () => { await app.close(); await pool.end(); });
   applied((await send({ type: "project.create", title: "Explicit synthetic integration fixture" })).body);
+  const ownerRoleId = fixtureRoleId(principal.actorId);
+  await seedFixtureRole(pool, projectId, ownerRoleId);
   const documentId = randomUUID();
   const r1 = applied((await send({ type: "document.create", documentId, title: "报告阅读需求", body: "# r1\n必须保留完整原件。" })).body);
   applied((await send({ type: "document.adopt", documentId, expectedVersion: 1, revisionId: r1.revisionId, reason: "采纳第一版需求" })).body);
   const taskIds = [randomUUID(), randomUUID()];
   const accepted = [];
   for (const [index, taskId] of taskIds.entries()) {
-    applied((await send({ type: "task.create", taskId, title: `任务 ${index + 1}`, content: "# 读取完整需求\n验证固定原文。", acceptance: "能找到全部原文", owner: "integration-owner", documentIds: [documentId] })).body);
+    applied((await send({ type: "task.create", taskId, title: `任务 ${index + 1}`, content: "# 读取完整需求\n验证固定原文。", acceptance: "能找到全部原文", owner: ownerRoleId, documentIds: [documentId] })).body);
     accepted.push(applied((await send({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: r1.revisionId }], reason: "授权范围内开始" })).body));
   }
   const r2 = applied((await send({ type: "document.revise", documentId, expectedVersion: 2, body: "# r2\n必须保留完整原件，并显示旧版依据。", reason: "增加历史依据阅读" })).body);

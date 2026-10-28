@@ -65,6 +65,7 @@ function fixture() {
       projectId, taskId, taskRevisionId: revisionId, id: basisSetId, sealed: true,
       members: [{ documentId: id(80), revisionId: id(81) }] }),
     listTaskExternalSnapshot: async (_taskId: string, revisionId: string) => externalByRevision.get(revisionId) ?? [],
+    getTaskProposal: async () => null,
     getRuntimeSession: async (value: string) => value === sessionId ? { projectId, id: sessionId, roleId: id(50) } : null,
     listSessionBindings: async () => [{ sessionId }],
     listDiscussionEvents: async () => events,

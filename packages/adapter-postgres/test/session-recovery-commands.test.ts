@@ -6,6 +6,7 @@ import {migrate,PostgresUnitOfWork} from '../src/index.ts';
 import {WorkflowService,RuntimeWorkflowService} from '@evoloop/core';
 import {SessionMessageService} from '@evoloop/core/session-messages';
 import {canonicalTaskInputJson,taskInputSignature} from '../../core/src/task-input.ts';
+import {seedSealingWorkerSubmission} from './signed-worker-fixture.js';
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(url).pathname))throw Error('Dedicated evoLoop test database required');
 const schema='el_recovery_commands_'+randomUUID().replaceAll('-','').slice(0,12);
@@ -174,13 +175,20 @@ test('formal commands preserve failure, fixed business input and original M thro
   await native.beginDispatch(projectId,reworkId);await native.bindTurn(projectId,reworkId,{id:'rework-turn'},
     {kind:'startReply',operationId:reworkOp});
   await native.recordTurn(projectId,reworkId,'rework-turn','completed','Corrected fixed result');
+  assert.equal((await workflow.getRuntimeRun(lead,projectId,reworkId)).state,'completed');
   const afterRework=(await workflow.getSessionRecovery(lead,projectId,sessionId));
   assert.equal(afterRework.gate!.phase,'awaiting_acceptance');
   assert.equal(afterRework.gate!.resumeMessageId,originalM);
   assert.equal(afterRework.decisions.filter(d=>d.kind==='retry_failed').length,priorRetryDecisions);
   assert.deepEqual(await messages.detail(projectId,originalM),originalMessage);
   assert.equal(await uow.read(projectId,tx=>tx.sessionMessages!.countSessionMessageTurns(sessionId,'lead')),1);
-  const delivery=await apply({type:'delivery.record',taskId:taskA,runId:reworkId,expectedVersion:(await workflow.getTask(lead,projectId,taskA)).task.version,artifactRef:'fixture:corrected-result',artifactRevision:'fixture-v2',contentHash:hash('Corrected result'),technicalResult:'passed',technicalEvidence:'Controlled fixture consumed',reason:'Corrected delivery'});
+  const expectedTaskVersion=(await workflow.getTask(lead,projectId,taskA)).task.version;
+  const deliveryOperationId=randomUUID(),deliveryIntent={artifactRef:'fixture:corrected-result',artifactRevision:'fixture-v2',
+    contentHash:hash('Corrected result'),technicalResult:'passed' as const,technicalEvidence:'Controlled fixture consumed',reason:'Corrected delivery'};
+  await seedSealingWorkerSubmission(pool,projectId,taskA,reworkId,business.actorId,deliveryOperationId,
+    expectedTaskVersion,deliveryIntent);
+  const delivery=await apply({type:'delivery.record',operationId:deliveryOperationId,taskId:taskA,runId:reworkId,
+    expectedVersion:expectedTaskVersion,...deliveryIntent},business);
   await apply({type:'observation.record',taskId:taskA,deliveryId:delivery.revisionId,observer:'lead',observerKind:'agent',result:'used',evidence:'Read exact fixture result',reason:'Independent fixture consumption'});
   await apply({type:'task.close',taskId:taskA,expectedVersion:(await workflow.getTask(lead,projectId,taskA)).task.version,deliveryId:delivery.revisionId,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'Accept fixture A'});
   await apply({type:'queue.release',queueId,entryId:entryA,claimId});
@@ -201,7 +209,7 @@ for(const messageOutcome of ['completed','failed'] as const)test(`bounded releas
     resumeProfile:{actorId:creating.actorId,model:creating.model,sandbox:creating.sandbox,approvalPolicy:creating.approvalPolicy,executionProfileRevisionId:creating.executionProfile!.revision.revisionId}});
   await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
     VALUES($1,$2,$3,$4,$5,'lead','bounded fixture',now())`,[projectId,randomUUID(),roleId,sid,roleRevision]);
-  await apply({type:'queue.create',queueId:qid,maxRuns:2,reason:'Predeclared bounded release, no dependent entry',entries:[{id:eid,taskId,taskRevisionId:(await workflow.getTask(lead,projectId,taskId)).task.currentRevisionId,sessionId:sid,roleId,dependsOn:[],consumerId:'lead',useRequired:false,releaseRule:'bounded_decision'}]});
+  await apply({type:'queue.create',queueId:qid,maxRuns:2,reason:'Predeclared bounded release, no dependent entry',entries:[{id:eid,taskId,taskRevisionId:(await workflow.getTask(lead,projectId,taskId)).task.currentRevisionId,sessionId:sid,roleId,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'bounded_decision'}]});
   await apply({type:'queue.adopt',queueId:qid,expectedVersion:1});
   const op=randomUUID();await apply({type:'queue.claim',queueId:qid,entryId:eid,claimId:claim,runId:failedId,operationId:op,runOperationId:op,expectedVersion:1});
   await native.beginDispatch(projectId,failedId);await native.bindTurn(projectId,failedId,{id:`bounded-failure-turn-${sid}`},{kind:'startReply',operationId:op});

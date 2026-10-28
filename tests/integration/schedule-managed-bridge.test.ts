@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
@@ -22,11 +23,11 @@ import { buildLightweightInput } from "../../apps/coordinator/src/runtime/lightw
 import { fixedDocumentSummary } from "../../apps/coordinator/src/runtime/materials.js";
 
 const url = process.env.TEST_DATABASE_URL;
-if (!url || new URL(url).pathname !== "/evoloop_schedule_bridge_test")
+if (!url || !/^\/evoloop_[a-z0-9_]*test$/.test(new URL(url).pathname))
   throw new Error("schedule bridge tests require evoloop_schedule_bridge_test");
 const schema = `schedule_bridge_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
-const projectId = randomUUID(), owner = "schedule-owner", cognition = "cognition-role", business = "business-role";
+const projectId = randomUUID(), owner = "schedule-owner", cognition = fixtureRoleId("cognition-role"), business = fixtureRoleId("business-role");
 const goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), otherLoopId = randomUUID();
 const principal = (actorId = owner) => ({ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> });
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -87,6 +88,8 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
     try { await client.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await client.end(); }
   });
   await write({ type: "project.create", title: "Schedule bridge fixture" });
+  await seedFixtureRole(pool,projectId,cognition,{templateKey:"cognition"});
+  await seedFixtureRole(pool,projectId,business);
   await write({ type: "goal.create", goalId, outcome: "Recurring check", constraints: "Local fixture",
     consumer: owner, authority: owner, scope: "Bounded", owner });
   await write({ type: "stage.propose", stageId, goalId, deliverable: "Check", learningQuestion: "What changed?", reason: "Trial" });

@@ -17,6 +17,7 @@ export interface LeaderWorkQuery {
   limit: number;
   cursor?: string;
   includeClosed?: boolean;
+  taskId?: string;
 }
 
 const phaseOrder: Record<LeaderWorkPhase, number> = {
@@ -25,7 +26,8 @@ const phaseOrder: Record<LeaderWorkPhase, number> = {
 };
 
 interface SnapshotCursor {
-  version: 1; view: LeaderWorkView; projectId: string; includeClosed: boolean; sequence: number; offset: number;
+  version: 1; view: LeaderWorkView; projectId: string; includeClosed: boolean; taskId?: string;
+  sequence: number; offset: number;
 }
 interface ChangesCursor { version: 1; view: "changes"; projectId: string; sequence: number }
 
@@ -38,6 +40,7 @@ function decodeCursor(value: string | undefined, expected: LeaderWorkView | "cha
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
     if (parsed.version !== 1 || parsed.view !== expected || typeof parsed.projectId !== "string" ||
       !Number.isSafeInteger(parsed.sequence) || Number(parsed.sequence) < 0 ||
+      parsed.taskId !== undefined && typeof parsed.taskId !== "string" ||
       expected !== "changes" && (!Number.isSafeInteger(parsed.offset) || Number(parsed.offset) < 0))
       throw new Error("invalid");
     return parsed as unknown as SnapshotCursor | ChangesCursor;
@@ -82,7 +85,7 @@ function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   return "ready";
 }
 
-function taskFactsSql(includeClosed: boolean): string {
+function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
   return `WITH facts AS (
     SELECT t.project_id,t.task_id,t.version,t.current_revision_id,t.title,t.kind,t.owner,t.state,
       tr.created_at AS business_changed_at,
@@ -99,6 +102,7 @@ function taskFactsSql(includeClosed: boolean): string {
       observation.observer_kind AS observation_kind,observation.created_at AS observation_created_at,
       pending_impact.pending_impact_count,queue_gate.hold_code AS queue_hold,
       work_change_latest.work_change_sequence,
+      dependency_head.version AS dependency_version,
       plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,plan.actor_id AS plan_actor_id,
       plan.updated_at AS plan_updated_at,
       review_latest.review_id,review_latest.decision AS review_decision,review_latest.actor_id AS review_actor_id,
@@ -167,6 +171,8 @@ function taskFactsSql(includeClosed: boolean): string {
       ORDER BY e.position,e.entry_id LIMIT 1) queue_gate ON true
     LEFT JOIN LATERAL (SELECT COALESCE(MAX(c.sequence),0)::bigint AS work_change_sequence
       FROM leader_work_change c WHERE c.project_id=t.project_id AND c.task_id=t.task_id) work_change_latest ON true
+    LEFT JOIN task_dependency_head dependency_head
+      ON dependency_head.project_id=t.project_id AND dependency_head.task_id=t.task_id
     LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
     LEFT JOIN LATERAL (SELECT r.review_id,r.decision,r.actor_id,r.reason,r.operation_id,r.created_at,
         r.reviewed_change_sequence
@@ -191,6 +197,7 @@ function taskFactsSql(includeClosed: boolean): string {
       ) AS blocked
     ) dependency_gate ON true
     WHERE t.project_id=$1 ${includeClosed ? "" : "AND t.state NOT IN ('done','cancelled')"}
+      ${taskParam ? `AND t.task_id=$${taskParam}::uuid` : ""}
   )`;
 }
 
@@ -278,6 +285,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
       version: int(row.plan_version), actorId: row.plan_actor_id ?? null, updatedAt: optionalIso(row.plan_updated_at),
     },
     dependencies: row.dependency_facts ?? [],
+    dependencyVersion: int(row.dependency_version ?? 0),
     review: row.review_id ? {
       reviewId: row.review_id, decision: row.review_decision, actorId: row.review_actor_id,
       reason: row.review_reason, operationId: row.review_operation_id, at: iso(row.review_created_at),
@@ -314,9 +322,9 @@ async function withReadSnapshot<T>(db: Database, action: (snapshot: Database) =>
 }
 
 function assertSnapshot(cursor: SnapshotCursor | null, view: LeaderWorkView, projectId: string,
-  includeClosed: boolean, sequence: number): void {
+  includeClosed: boolean, sequence: number, taskId?: string): void {
   if (cursor && (cursor.projectId !== projectId || cursor.view !== view || cursor.includeClosed !== includeClosed ||
-    cursor.sequence !== sequence))
+    cursor.sequence !== sequence || cursor.taskId !== taskId))
     throw new DomainError("WORK_INDEX_CHANGED", "待处理工作已变化；请从第一页重新核对，不能把旧页当成完整快照");
 }
 
@@ -324,18 +332,18 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
   return withReadSnapshot(db, async snapshot => {
     const sequence = await currentChangeSequence(snapshot, projectId);
     const cursor = decodeCursor(query.cursor, "tasks") as SnapshotCursor | null;
-    assertSnapshot(cursor, "tasks", projectId, query.includeClosed === true, sequence);
+    assertSnapshot(cursor, "tasks", projectId, query.includeClosed === true, sequence, query.taskId);
     const offset = cursor?.offset ?? 0;
-    const summary = await snapshot.query(`${taskFactsSql(query.includeClosed === true)}
+    const summary = await snapshot.query(`${taskFactsSql(query.includeClosed === true, query.taskId ? 2 : undefined)}
       SELECT count(*)::int AS total,
         ${Object.keys(phaseOrder).map(phase =>
           `count(*) FILTER (WHERE phase='${phase}')::int AS ${phase}`).join(",")},
         count(*) FILTER (WHERE review_decision='acknowledged')::int AS review_acknowledged,
         count(*) FILTER (WHERE review_decision='deferred')::int AS review_deferred
-      FROM facts`, [projectId]);
+      FROM facts`, query.taskId ? [projectId, query.taskId] : [projectId]);
     const total = int(summary.rows[0]?.total ?? 0);
     if (offset > total) throw new DomainError("INVALID_CURSOR", "待处理工作分页位置超出当前快照");
-    const pageResult = await snapshot.query(`${taskFactsSql(query.includeClosed === true)}
+    const pageResult = await snapshot.query(`${taskFactsSql(query.includeClosed === true, query.taskId ? 4 : undefined)}
       SELECT facts.*,proposal.consumer,proposal.use_required,
         stage.stage_id,stage.deliverable AS stage_deliverable,
         goal.goal_id,goal.outcome AS goal_outcome,
@@ -362,7 +370,7 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         FROM task_dependency d JOIN task dt ON dt.project_id=d.project_id AND dt.task_id=d.depends_on_task_id
         WHERE d.project_id=facts.project_id AND d.task_id=facts.task_id) dependencies ON true
       ORDER BY ${taskOrderSql}
-      LIMIT $2 OFFSET $3`, [projectId, query.limit, offset]);
+      LIMIT $2 OFFSET $3`, query.taskId ? [projectId, query.limit, offset, query.taskId] : [projectId, query.limit, offset]);
     const observedAt = new Date().toISOString();
     const items = pageResult.rows.map(row => leaderWorkTaskFromRow(row, observedAt));
     const nextOffset = offset + items.length;
@@ -373,9 +381,21 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
     return {
       items, total, counts, changeSequence: sequence, observedAt, partial: false,
       nextCursor: nextOffset < total ? encodeCursor({ version: 1, view: "tasks", projectId,
-        includeClosed: query.includeClosed === true, sequence, offset: nextOffset }) : null,
+        includeClosed: query.includeClosed === true, ...(query.taskId ? { taskId: query.taskId } : {}),
+        sequence, offset: nextOffset }) : null,
     };
   });
+}
+
+export async function readLeaderWorkTask(
+  db: Database,
+  projectId: string,
+  taskId: string,
+): Promise<LeaderWorkTask | null> {
+  const page = await readLeaderWorkTasks(db, projectId, {
+    view: "tasks", limit: 1, includeClosed: true, taskId,
+  });
+  return page.items[0] ?? null;
 }
 
 interface DocumentRow extends QueryResultRow {
