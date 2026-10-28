@@ -215,6 +215,8 @@ export interface Delivery {
   taskRevisionId: string;
   /** Explicitly declared source Run; null for deliveries registered without one. */
   runId: string | null;
+  /** Terminal source Run version at recording; null for historical or Run-free Delivery. */
+  sourceRunVersion?: number | null;
   /** Trusted submission signer. Null for historical or manually registered Run deliveries. */
   submittedByActorId?: string | null;
   artifactRef: string;

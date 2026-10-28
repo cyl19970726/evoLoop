@@ -197,15 +197,16 @@ export class PgResidentQueue {
     const cr=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2 FOR UPDATE',[this.projectId,claimId]);if(!cr.rows[0]||cr.rows[0].released_at)return false;const c=cr.rows[0];
     const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,c.queue_id,c.entry_id]);const e=entryOf(er.rows[0]);if(e.holdCode)return false;
     const last=(await this.listResidentQueueAttempts(claimId)).at(-1);if(!last)return false;
-    const run=await this.client.query('SELECT state FROM runtime_run WHERE project_id=$1 AND run_id=$2',[this.projectId,last.runId]);if(!run.rows[0]||!['completed','failed','interrupted'].includes(run.rows[0].state))return false;
-    const r=await this.client.query(`SELECT t.current_revision_id,t.state AS task_state,d.delivery_id,o.observation_id,o.result,cl.closure_id,
+    const run=await this.client.query('SELECT state,version FROM runtime_run WHERE project_id=$1 AND run_id=$2',[this.projectId,last.runId]);if(!run.rows[0]||!['completed','failed','interrupted'].includes(run.rows[0].state))return false;
+    const r=await this.client.query(`SELECT t.current_revision_id,t.state AS task_state,d.delivery_id,d.source_run_version,o.observation_id,o.result,cl.closure_id,
       p.consumer AS task_consumer,p.acceptance_mode
       FROM task t JOIN task_closure cl ON cl.project_id=t.project_id AND cl.task_id=t.task_id AND cl.task_revision_id=t.current_revision_id AND cl.acceptance_result='met'
       JOIN delivery d ON d.project_id=t.project_id AND d.delivery_id=cl.delivery_id AND d.task_id=t.task_id AND d.run_id=$4 AND d.technical_result='passed'
       LEFT JOIN LATERAL (SELECT p.consumer,p.acceptance_mode FROM task_proposal p JOIN task_revision pr ON pr.project_id=p.project_id AND pr.task_id=p.task_id AND pr.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY pr.version DESC LIMIT 1) p ON true
       LEFT JOIN LATERAL (SELECT observation_id,result FROM consumer_observation o WHERE o.project_id=d.project_id AND o.delivery_id=d.delivery_id AND o.observer=$3 ORDER BY o.sequence DESC LIMIT 1) o ON true
       WHERE t.project_id=$1 AND t.task_id=$2 AND t.state='done' AND d.delivery_id=(SELECT delivery_id FROM delivery x WHERE x.project_id=t.project_id AND x.task_id=t.task_id ORDER BY x.created_at DESC,x.delivery_id DESC LIMIT 1)`,[this.projectId,e.taskId,e.consumerId,last.runId]);
-    const x=r.rows[0];if(!x||(x.acceptance_mode&&(!e.useRequired||x.task_consumer&&x.task_consumer!==e.consumerId))||
+    const x=r.rows[0];if(!x||(x.acceptance_mode&&(!e.useRequired||x.task_consumer&&x.task_consumer!==e.consumerId||
+      run.rows[0].state!=='completed'||x.source_run_version!==run.rows[0].version))||
       (e.useRequired&&(!x.observation_id||x.result!=='used')))return false;
     if(await this.input(this.client,this.projectId,e.taskId)!==e.sourceInputJson)return false;
     await this.client.query("UPDATE resident_queue_claim SET release_kind='accepted',released_at=now(),delivery_id=$3,observation_id=$4,closure_id=$5 WHERE project_id=$1 AND claim_id=$2",[this.projectId,claimId,x.delivery_id,x.observation_id??null,x.closure_id]);

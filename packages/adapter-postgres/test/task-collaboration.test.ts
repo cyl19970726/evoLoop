@@ -8,6 +8,7 @@ import { applyTaskCollaboration, taskAnswerInputBlock } from "../../core/src/tas
 import { decideTaskExternalReference } from "../../core/src/references/index.ts";
 import type { DiscussionEvent, DiscussionRecord, TaskCollaborationCommand } from "@evoloop/contracts/discussions";
 import type { Command, Document, DocumentRevision, Principal } from "@evoloop/contracts";
+import { seedSealingWorkerSubmission } from "./signed-worker-fixture.js";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -237,11 +238,18 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
   assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run1Id)))?.input, "Original Run1 input");
   assert.equal((await uow.read(projectId, tx => tx.getRuntimeRun(run2Id)))?.state, "completed");
   const taskBeforeDelivery = await uow.read(projectId, tx => tx.getTask(taskId));
-  const delivery = await execute(worker, { type: "delivery.record", taskId, runId: run2Id,
+  const deliveryOperationId=randomUUID();
+  const deliveryIntent={artifactRef:"artifact:continuation-result",artifactRevision:"v1",
+    contentHash:hash("Result after answer adoption"),technicalResult:"passed" as const,
+    technicalEvidence:"Fixed answer consumed in terminal Turn",reason:"Deliver continuation result"};
+  await seedSealingWorkerSubmission(pool,projectId,taskId,run2Id,worker.actorId,deliveryOperationId,
+    taskBeforeDelivery!.version,deliveryIntent);
+  const delivery = await workflow.execute(worker, { type: "delivery.record", projectId, operationId:deliveryOperationId, taskId, runId: run2Id,
     expectedVersion: taskBeforeDelivery!.version, artifactRef: "artifact:continuation-result",
     artifactRevision: "v1", contentHash: hash("Result after answer adoption"),
     technicalResult: "passed", technicalEvidence: "Fixed answer consumed in terminal Turn",
     reason: "Deliver continuation result" });
+  assert.equal(delivery.status,"applied",JSON.stringify(delivery));
   assert.ok(delivery.revisionId, "Delivery remains possible after the Turn settles");
 }
 

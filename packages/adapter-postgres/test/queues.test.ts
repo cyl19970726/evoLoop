@@ -171,9 +171,22 @@ test('official Task and Run lifecycle releases A only after current consumer acc
       expectedVersion:afterRun.version,...deliveryIntent},executor);
     assert.equal((await uow.read(p,r=>r.getDelivery(delivery.revisionId!)))?.submittedByActorId,executor.actorId);
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),false);await work.query('COMMIT');
+    const other={actorId:'other-reviewer',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+    await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId:taskA,deliveryId:delivery.revisionId!,
+      observer:other.actorId,observerKind:'agent',result:'used',evidence:'Other reviewer used A',reason:'Independent use'},other);
+    const beforeWrongClose=(await uow.read(p,r=>r.getTask(taskA)))!;
+    const wrongClose=await workflow.execute(principal,{type:'task.close',projectId:p,operationId:randomUUID(),taskId:taskA,
+      expectedVersion:beforeWrongClose.version,deliveryId:delivery.revisionId!,acceptanceResult:'met',
+      acceptanceEvidence:'Other reviewer used A',reason:'Close'});
+    assert.equal(wrongClose.status==='rejected'?wrongClose.code:null,'USE_NOT_OBSERVED',
+      'a different eligible Agent cannot silently replace the claimed Queue consumer');
     await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId:taskA,deliveryId:delivery.revisionId!,observer:'lead',observerKind:'agent',result:'used',evidence:'Read and applied output',reason:'Consumer used A'});
     const beforeClose=(await uow.read(p,r=>r.getTask(taskA)))!;
     await apply({type:'task.close',projectId:p,operationId:randomUUID(),taskId:taskA,expectedVersion:beforeClose.version,deliveryId:delivery.revisionId!,acceptanceResult:'met',acceptanceEvidence:'Current delivery used',reason:'A accepted'});
+    await work.query('BEGIN');
+    await work.query("UPDATE runtime_run SET state='failed',version=version+1,updated_at=now() WHERE project_id=$1 AND run_id=$2",[p,runId]);
+    assert.equal(await queue.releaseResidentQueueAccepted(claimId),false,'a later failed source Run cannot release the accepted queue');
+    await work.query('ROLLBACK');
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),true);
     assert.equal((await queue.list(q))!.entries[0]!.claimId,claimId,'released entry retains claim provenance for dependency checks');
     assert.equal((await queue.getResidentQueueClaim(claimId))?.releaseKind,'accepted');
@@ -696,9 +709,13 @@ test('amended input drops superseded fixed answers while continuing the same cla
   await native.bindTurn(p,answeredRunId,{id:`turn-${answeredRunId}`},{kind:'startReply',operationId:answeredOperationId});
   await native.recordTurn(p,answeredRunId,`turn-${answeredRunId}`,'completed','Delivered target X, which consumer could not use');
   const afterRun=(await central.getTask(lead,p,taskId)).task;
-  const delivery=await apply({type:'delivery.record',projectId:p,operationId:randomUUID(),taskId,runId:answeredRunId,
-    expectedVersion:afterRun.version,artifactRef:'repo:task-a',artifactRevision:'first',contentHash:hash('first result'),
-    technicalResult:'passed',technicalEvidence:'Build passed',reason:'Present first result'});
+  const firstDeliveryOperationId=randomUUID();
+  const firstDeliveryIntent={artifactRef:'repo:task-a',artifactRevision:'first',contentHash:hash('first result'),
+    technicalResult:'passed' as const,technicalEvidence:'Build passed',reason:'Present first result'};
+  await seedSealingWorkerSubmission(pool,p,taskId,answeredRunId,lead.actorId,firstDeliveryOperationId,
+    afterRun.version,firstDeliveryIntent);
+  const delivery=await apply({type:'delivery.record',projectId:p,operationId:firstDeliveryOperationId,taskId,runId:answeredRunId,
+    expectedVersion:afterRun.version,...firstDeliveryIntent});
   await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId,deliveryId:delivery.revisionId!,
     observer:'lead',observerKind:'agent',result:'failed',evidence:'Consumer found a missing use case',reason:'Failed use'});
   const lifecycle=(await central.getTask(lead,p,taskId)).task;

@@ -21,7 +21,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
   // Current Task writes need nullable domain fields during seeding; remove both
   // before upgrading the populated historical 018 schema to exercise 019 and 026.
-  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text; ALTER TABLE delivery ADD COLUMN source_run_version integer");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),taskId=randomUUID(),actorId="legacy-reviewer";
@@ -47,7 +47,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
     [projectId,closureId,taskId,current.currentRevisionId,delivery.revisionId,actorId]);
   const original=(await pool.query("SELECT project_id,closure_id,task_id,task_revision_id,delivery_id,acceptance_result,acceptance_evidence,reason,actor_id,created_at FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[projectId])).rows[0].n>0,true);
-  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id; ALTER TABLE delivery DROP COLUMN source_run_version");
   assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0);
   await runner({databaseUrl:database!,dir:migrations,direction:"up",migrationsTable:"pgmigrations",schema,count:8,

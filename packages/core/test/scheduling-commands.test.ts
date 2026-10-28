@@ -82,3 +82,40 @@ test("scheduled human acceptance must name its consumer before the definition is
   await applySchedule(tx,principal,command,now);
   assert.equal(saved?.revision.template.consumer,"actual-user");
 });
+
+test("only the named human can change an active human-required Schedule acceptance contract", async () => {
+  const namedHuman: Principal = { actorId: "actual-user", projectIds: [projectId],
+    permissions: ["read", "write", "review"], identityKind: "human" };
+  const initial = create();
+  initial.authorization.expiresAtUtc = null;
+  initial.template.consumer = namedHuman.actorId;
+  initial.template.acceptanceMode = "human_required";
+  let current: ScheduleDefinition = { projectId, id: initial.scheduleId, version: 1,
+    currentRevisionId: initial.revisionId, state: "active", watermarkUtc: now,
+    revision: { ...initial, id: initial.revisionId, version: 1, actorId: principal.actorId, createdAtUtc: now } };
+  const revisions: ScheduleDefinition[] = [current];
+  const tx = { getSchedule: async () => current,
+    updateSchedule: async (definition: ScheduleDefinition) => { current = definition; revisions.push(definition); } } as unknown as SchedulingTransaction;
+  const revise = (template: ScheduleCommand["template"]): Extract<ScheduleCommand, { type: "schedule.revise" }> => ({
+    ...initial, type: "schedule.revise", state: "active", expectedVersion: current.version,
+    revisionId: randomUUID(), operationId: randomUUID(), template, reason: "revise acceptance",
+  });
+
+  await assert.rejects(() => applySchedule(tx, principal, revise({ ...initial.template, acceptanceMode: "independent_agent" }), now),
+    error => (error as { code?: string }).code === "TRUSTED_HUMAN_REQUIRED");
+  await assert.rejects(() => applySchedule(tx, principal, revise({ ...initial.template, consumer: "another-user" }), now),
+    error => (error as { code?: string }).code === "TRUSTED_HUMAN_REQUIRED");
+  assert.equal(current.version, 1);
+  assert.equal(revisions.length, 1);
+
+  const authorized = revise({ ...initial.template, acceptanceMode: "independent_agent" });
+  authorized.authorization = { ...authorized.authorization, authorizedBy: namedHuman.actorId };
+  const applied = await applySchedule(tx, namedHuman, authorized, now);
+  assert.equal(applied.result.status, "applied");
+  assert.equal(current.version, 2);
+  assert.equal(current.revision.template.acceptanceMode, "independent_agent");
+  assert.equal(current.revision.template.consumer, namedHuman.actorId);
+  assert.equal(revisions.length, 2);
+  assert.equal(revisions[0]?.revision.template.acceptanceMode, "human_required");
+  assert.equal(revisions[0]?.revision.template.consumer, namedHuman.actorId);
+});

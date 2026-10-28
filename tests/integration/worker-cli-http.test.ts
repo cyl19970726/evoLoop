@@ -227,7 +227,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const submitted=await workerCommand(wrapper,{type:"worker.submit",submissionId,dispatchId:dispatch.entityId,runId,
     taskRevisionId:run.revisionId,runInputHash:hash(input),deliveryOperationId,
     deliveryIntent:{artifactRef:"fixture:review-report",artifactRevision:"v1",contentHash:hash("review-report"),
-      technicalResult:"passed",technicalEvidence:"Fixture evidence; no native execution",reason:"Signed preterminal intention"},
+      technicalResult:"failed",technicalEvidence:"Fixture evidence; no native execution",reason:"Signed preterminal intention"},
     agentObservation:"Source inspected in CLI fixture",evidenceRefs:[]});
   assert.equal(submitted.entityId,submissionId);
   const terminal=await runtime.rejectDispatch(projectId,runId,"Fixture terminal state; no native Turn was started");
@@ -292,7 +292,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     dispatchId:childDispatch.entityId,runId:businessRunId,taskRevisionId:businessRun.revisionId,
     runInputHash:hash(businessInput),deliveryOperationId:randomUUID(),
     deliveryIntent:{artifactRef:`#/p/${projectId}/documents/${businessReportId}?revision=${businessReportRevisionId}`,
-      artifactRevision:businessReportRevisionId,contentHash:hash(businessReportBody),technicalResult:"passed",
+      artifactRevision:businessReportRevisionId,contentHash:hash(businessReportBody),technicalResult:"failed",
       technicalEvidence:"Fixture report was written through worker CLI",reason:"Fixed report delivered"},
     agentObservation:"Fixture report recorded; no native execution",evidenceRefs:[]})).entityId,businessSubmissionId);
   const businessTerminal=await runtime.rejectDispatch(projectId,businessRunId,"Fixture terminal; no native Turn");

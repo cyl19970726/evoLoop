@@ -103,16 +103,16 @@ test("two terminal Runs may each register a Delivery against unchanged business 
   const runB = { projectId, id: id(71), taskId, taskRevisionId: sourceRevisionId, state: "failed" };
   state.runs.push(runA, runB);
   let sequence = 80;
-  const deliver = (runId: string, expectedVersion: number) => applyWorkflow({ tx, principal,
+  const deliver = (runId: string, expectedVersion: number, technicalResult: "passed" | "failed" = "passed") => applyWorkflow({ tx, principal,
     command: { type: "delivery.record", projectId, operationId: id(sequence++), taskId, runId,
       expectedVersion, artifactRef: "repo://result", artifactRevision: "commit-1", contentHash: hash,
-      technicalResult: "passed", technicalEvidence: "Checked fixed artifact", reason: "Register observed result" },
+      technicalResult, technicalEvidence: "Checked fixed artifact", reason: "Register observed result" },
     now: "2026-10-21T00:10:00Z", nextId: () => id(sequence++) });
   await deliver(runA.id, 2);
   assert.equal(state.deliveries[0]?.runId, runA.id);
   assert.notEqual(state.deliveries[0]?.taskRevisionId, sourceRevisionId,
     "Delivery revision records registration, not execution");
-  await deliver(runB.id, 3);
+  await deliver(runB.id, 3, "failed");
   assert.equal(state.deliveries[1]?.runId, runB.id);
   assert.equal(state.task.version, 4);
   const latest = state.revisions.find(item => item.id === state.task.currentRevisionId)!;

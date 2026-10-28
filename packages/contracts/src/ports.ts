@@ -54,6 +54,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getSignedRunSubmitter?(runId: string, taskId: string, taskRevisionId: string,
     actorId: string, deliveryOperationId: string, expectedTaskVersion: number,
     intent: DeliveryIntent): Promise<string | null>;
+  /** Fixed consumer and latest Run of an active Queue claim for this Task. */
+  getClaimedQueueAcceptanceForTask?(taskId: string): Promise<{ consumerId: string; runId: string } | null>;
   listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
   getDelivery(id: string): Promise<Delivery | null>;
   listDeliveries(taskId: string): Promise<Delivery[]>;

@@ -9,6 +9,7 @@ import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision 
 import type { EvaluationAssessment, EvaluationConclusion, EvaluationDefinition } from "@evoloop/contracts/evaluation";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
+import { seedSealingWorkerSubmission } from "./signed-worker-fixture.js";
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error("TEST_DATABASE_URL is required for evaluation PG tests");
@@ -450,9 +451,18 @@ test("official commands attribute two terminal evaluation Runs to later deliveri
     artifactRef:`artifact:${artifact}`,artifactRevision:"v1",contentHash:hash(artifact),technicalResult,
     technicalEvidence:technicalResult==="failed"?"Failure output retained":"Fixed check passed",reason:"Register fixed Run output"});
   const firstCommand=makeDelivery(direct.runId,4,"passed","direct-output");
+  await seedSealingWorkerSubmission(pool,projectId,taskId,direct.runId,actor,firstCommand.operationId,
+    firstCommand.expectedVersion,{artifactRef:firstCommand.artifactRef,artifactRevision:firstCommand.artifactRevision,
+      contentHash:firstCommand.contentHash,technicalResult:firstCommand.technicalResult,
+      technicalEvidence:firstCommand.technicalEvidence,reason:firstCommand.reason});
   const first=await apply(firstCommand);
   assert.deepEqual(await workflow.execute(principal(projectId),firstCommand),first,"operation replay is idempotent");
-  const second=await apply(makeDelivery(wiki.runId,5,"failed","failed-wiki-output"));
+  const secondCommand=makeDelivery(wiki.runId,5,"failed","failed-wiki-output");
+  await seedSealingWorkerSubmission(pool,projectId,taskId,wiki.runId,actor,secondCommand.operationId,
+    secondCommand.expectedVersion,{artifactRef:secondCommand.artifactRef,artifactRevision:secondCommand.artifactRevision,
+      contentHash:secondCommand.contentHash,technicalResult:secondCommand.technicalResult,
+      technicalEvidence:secondCommand.technicalEvidence,reason:secondCommand.reason});
+  const second=await apply(secondCommand);
   const deliveries=await uow.read(projectId,reader=>reader.listDeliveries(taskId));
   assert.equal(deliveries.length,2);
   const directDelivery=deliveries.find(x=>x.id===first.revisionId)!;

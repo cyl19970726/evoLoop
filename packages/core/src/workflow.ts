@@ -63,6 +63,13 @@ const version = (actual: number, expected: number): void => {
       actual,
     );
 };
+async function requireCurrentPassedRun(tx: Transaction, delivery: Delivery): Promise<void> {
+  if (!delivery.runId) return;
+  const run = await tx.getRuntimeRun(delivery.runId);
+  if (!run || run.projectId !== delivery.projectId || run.taskId !== delivery.taskId ||
+      run.state !== "completed" || !delivery.sourceRunVersion || run.version !== delivery.sourceRunVersion)
+    throw new DomainError("DELIVERY_RUN_CHANGED", "current source Run no longer supports this passed Delivery");
+}
 const result = (
   operationId: string,
   entityId: string,
@@ -344,13 +351,17 @@ export async function applyWorkflow({
       if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "task must be in progress to deliver");
       if ((await tx.listRuntimeRuns(task.id)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state)))
         throw new DomainError("TASK_BUSY", "resolve the current or uncertain run before recording delivery");
+      const proposal = await tx.getTaskProposal(task.id);
       let submittedByActorId: string | null = actorId;
+      let sourceRunVersion: number | null = null;
       if (c.runId) {
         const run = found(await tx.getRuntimeRun(c.runId), "source Run");
         if (run.projectId !== c.projectId || run.taskId !== task.id)
           throw new DomainError("DELIVERY_RUN_MISMATCH", "Source Run does not belong to this project's Task");
         if (!["completed", "failed", "interrupted"].includes(run.state))
           throw new DomainError("DELIVERY_RUN_UNSETTLED", "Source Run must have a confirmed terminal state");
+        if (c.technicalResult === "passed" && run.state !== "completed")
+          throw new DomainError("DELIVERY_RUN_FAILED", "a failed or interrupted source Run cannot support a passed Delivery");
         const executedInput = await taskInputSignature(tx, task, run.taskRevisionId);
         const currentInput = await taskInputSignature(tx, task);
         if (canonicalTaskInputJson(executedInput) !== canonicalTaskInputJson(currentInput))
@@ -359,10 +370,13 @@ export async function applyWorkflow({
           actorId, c.operationId, c.expectedVersion, {artifactRef:c.artifactRef,artifactRevision:c.artifactRevision,
             contentHash:c.contentHash,technicalResult:c.technicalResult,
             technicalEvidence:c.technicalEvidence,reason:c.reason}) ?? null;
+        if (proposal?.acceptanceMode && !submittedByActorId)
+          throw new DomainError("DELIVERY_ORIGIN_UNVERIFIED", "new acceptance requires the signed Run submitter");
+        sourceRunVersion = run.version;
       }
       const revision = await newTaskRevision(tx, task, actorId, now, nextId, "in_progress", c.reason);
       const delivery: Delivery = { projectId: c.projectId, id: nextId(), taskId: task.id,
-        taskRevisionId: revision.id, runId: c.runId ?? null,
+        taskRevisionId: revision.id, runId: c.runId ?? null, sourceRunVersion,
         submittedByActorId,
         artifactRef: c.artifactRef, artifactRevision: c.artifactRevision,
         contentHash: c.contentHash, technicalResult: c.technicalResult,
@@ -376,6 +390,8 @@ export async function applyWorkflow({
       const task = found(await tx.getTask(c.taskId), "task");
       if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "consumer observation requires in-progress task");
       const proposal = await tx.getTaskProposal(task.id);
+      if (proposal?.acceptanceMode && c.result === "used" && delivery.technicalResult === "passed")
+        await requireCurrentPassedRun(tx, delivery);
       if (proposal?.acceptanceMode && proposal.consumer && c.observer !== proposal.consumer)
         throw new DomainError("CONSUMER_MISMATCH", "observation must come from the declared consumer actor");
       if (proposal?.acceptanceMode === "independent_agent") {
@@ -414,9 +430,14 @@ export async function applyWorkflow({
         if (!latest || latest.id !== c.deliveryId || latest.taskRevisionId !== task.currentRevisionId)
           throw new DomainError("STALE_DELIVERY", "close requires latest delivery for the current Task revision");
         if (latest.technicalResult !== "passed") throw new DomainError("TECHNICAL_CHECK_FAILED", "latest delivery has not passed technical checks");
+        if (proposal?.acceptanceMode) await requireCurrentPassedRun(tx, latest);
+        const queueAcceptance = await tx.getClaimedQueueAcceptanceForTask?.(task.id) ?? null;
+        if (queueAcceptance && latest.runId !== queueAcceptance.runId)
+          throw new DomainError("QUEUE_RUN_MISMATCH", "close requires the current claimed Queue attempt's Delivery");
         if (proposal?.useRequired || proposal?.acceptanceMode) {
           const observations = (await tx.listObservations(task.id)).filter(x => x.deliveryId === latest.id &&
-            (!proposal.consumer || x.observer === proposal.consumer));
+            (!proposal.consumer || x.observer === proposal.consumer) &&
+            (!queueAcceptance || x.observer === queueAcceptance.consumerId));
           const observed = observations.at(-1);
           if (observed?.result !== "used") throw new DomainError("USE_NOT_OBSERVED", "current delivery lacks declared-consumer use evidence");
           if (proposal?.acceptanceMode === "independent_agent" &&

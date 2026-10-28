@@ -373,6 +373,11 @@ export class RuntimeWorkflowService {
       if (!["completed", "failed", "interrupted"].includes(current.state)) {
         throw new DomainError("RUN_NOT_TERMINAL", "only a terminal bound run can be reconciled");
       }
+      const task = await tx.getTask(current.taskId);
+      const policy = task && await tx.getTaskProposal(task.id);
+      if (task?.state === "done" && policy?.acceptanceMode &&
+          (await tx.listDeliveries(task.id)).some(delivery => delivery.runId === runId))
+        throw new DomainError("TASK_REOPEN_REQUIRED", "reopen the accepted Task before changing its source Run terminal observation");
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
       if (!session.nativeThreadId || !session.nativeSessionId || session.state !== "ready") {
         throw new DomainError("FOREIGN_BINDING", "run has no ready owned native session");

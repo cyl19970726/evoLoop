@@ -103,6 +103,8 @@ test("ordinary submission attribution requires the frozen terminal Run version",
     await tx.insertDocument(source.head);await tx.insertDocumentRevision(source.revision);
     await tx.insertDocument(item.primary.head);await tx.insertDocumentRevision(item.primary.revision);
     await tx.insertTask(item.head);await tx.insertTaskRevision(item.revision);await tx.insertSealedBasisSet(item.basis);
+    await tx.insertTaskProposal({projectId:p.id,taskId:item.head.id,taskRevisionId:item.revision.id,
+      stageId:null,consumer:"",useRequired:true,acceptanceMode:"independent_agent",evidence:"",stopCondition:"",createdAt:now});
     await tx.insertRuntimeSession({projectId:p.id,id:sessionId,roleId:"operator",cwd:"/tmp/ordinary",authorizationScope:"project",
       model:null,sandbox:"danger-full-access",approvalPolicy:"never",state:"ready",version:1,
       nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`,operationId:randomUUID(),actorId:actor,
@@ -135,8 +137,23 @@ test("ordinary submission attribution requires the frozen terminal Run version",
     const signer=()=>uow.read(p.id,r=>r.getSignedRunSubmitter!(runId,item.head.id,item.revision.id,actor,
       deliveryOperationId,1,intent));
     assert.equal(await signer(),actor);
+    const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},hasher:{hash:sha}});
+    const signerPrincipal={actorId:actor,projectIds:[p.id],permissions:["read","write","review"] as ("read"|"write"|"review")[]};
+    const saved=await workflow.execute(signerPrincipal,{type:"delivery.record",projectId:p.id,operationId:deliveryOperationId,
+      taskId:item.head.id,runId,expectedVersion:1,...intent});
+    assert.equal(saved.status,"applied");
+    const deliveryId=saved.status==="applied"?saved.revisionId!:"";
+    assert.equal((await uow.read(p.id,r=>r.getDelivery(deliveryId)))?.sourceRunVersion,3);
     await pool.query(`UPDATE runtime_run SET version=4,updated_at=now() WHERE project_id=$1 AND run_id=$2`,[p.id,runId]);
     assert.equal(await signer(),null,"stale sealing version cannot attribute a later Run state");
+    const independent={actorId:"independent",projectIds:[p.id],permissions:["read","write"] as ("read"|"write")[]};
+    const use=await workflow.execute(independent,{type:"observation.record",projectId:p.id,operationId:randomUUID(),
+      taskId:item.head.id,deliveryId,observer:"independent",observerKind:"agent",result:"used",evidence:"Read artifact",reason:"Use"});
+    assert.equal(use.status==="rejected"?use.code:null,"DELIVERY_RUN_CHANGED");
+    const close=await workflow.execute(signerPrincipal,{type:"task.close",projectId:p.id,operationId:randomUUID(),
+      taskId:item.head.id,expectedVersion:2,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Old Run",reason:"Close"});
+    assert.equal(close.status==="rejected"?close.code:null,"DELIVERY_RUN_CHANGED");
+    assert.equal((await uow.read(p.id,r=>r.getDelivery(deliveryId)))?.technicalResult,"passed","old Delivery remains historical evidence");
   }finally{
     if(temporaryTable)await pool.query("DROP TABLE ordinary_run_submission");
   }
