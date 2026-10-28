@@ -14,11 +14,25 @@ test("registry exposes every bounded named route and target/body requirements", 
   const names = (requestTypes() as Array<{ name: string; requiredBodyKeys: string[]; targetId: string | null }>);
   assert.deepEqual(names.map(item => item.name), [
     "document.import", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
-    "reference.git-register", "reference.formal-decide", "reference.task-decide", "runtime.reconcile", "runtime.recover",
+    "reference.git-register", "reference.formal-decide", "reference.task-decide", "runtime.reconcile", "runtime.recover", "ordinary.submit",
   ]);
   assert.ok(names.find(item => item.name === "document.import")?.requiredBodyKeys.includes("command.operationId"));
   assert.equal(names.find(item => item.name === "knowledge.reconcile")?.targetId, "original publish operationId");
   assert.ok(names.find(item => item.name === "reference.task-decide")?.requiredBodyKeys.includes("expectedHeadVersion"));
+});
+
+test("ordinary result intent keeps its original operation and has a direct readback", () => {
+  const body = { projectId: project, operationId: operation, submissionId: receipt,
+    runId: target, taskId: revision, sessionId: target, taskRevisionId: revision,
+    runInputHash: sha, deliveryOperationId: revision,
+    deliveryIntent: { artifactRef: "doc/revision", artifactRevision: "r1", contentHash: sha,
+      technicalResult: "passed", technicalEvidence: "build passed", reason: "ready" } };
+  const request = prepareRequest("ordinary.submit", project, body);
+  assert.equal(request.path, `/api/projects/${project}/ordinary-runs/submissions`);
+  assert.equal(request.operationId, operation);
+  assert.deepEqual(request.recovery, { kind: "ordinary", path: `/api/projects/${project}/ordinary-runs/operations/${operation}` });
+  assert.throws(() => prepareRequest("ordinary.submit", project, { ...body, projectId: other }), /differs/);
+  assert.throws(() => prepareRequest("ordinary.submit", project, { ...body, runInputHash: "bad" }), /runInputHash/);
 });
 
 test("request schema exposes exact enums and nested required fields from shared contracts", () => {
