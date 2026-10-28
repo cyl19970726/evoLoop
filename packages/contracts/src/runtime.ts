@@ -188,6 +188,10 @@ export interface RuntimePort {
   /** Resume the owned Thread with the current versioned execution profile. */
   resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
   inspect(binding: RuntimeBinding): Promise<unknown>;
+  /** Read the exact owned Thread's native title; null means no title is set. */
+  readThreadName?(binding: RuntimeBinding): Promise<string | null>;
+  /** Name metadata only; this must never start a model Turn. */
+  setThreadName?(binding: RuntimeBinding, name: string): Promise<void>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
   /** Optional classified trace capability. Absence means unsupported, never an empty complete trace. */

@@ -860,6 +860,23 @@ export class CodexAppServerAdapter implements RuntimePort {
     return result;
   }
 
+  async readThreadName(binding: RuntimeBinding): Promise<string | null> {
+    const result = object(await this.inspect(binding));
+    const thread = object(result?.thread);
+    if (thread?.name !== null && thread?.name !== undefined && typeof thread?.name !== "string")
+      throw new RuntimeProtocolError("native Thread name is invalid");
+    return typeof thread?.name === "string" ? thread.name : null;
+  }
+
+  async setThreadName(binding: RuntimeBinding, name: string): Promise<void> {
+    this.owned(binding);
+    if (this.expectedVersion !== "codex-cli 0.164.0-alpha.11.1")
+      throw new RuntimeProtocolError("native Thread naming requires pinned 0.164 protocol");
+    if (!name.trim() || name.length > 240) throw new RuntimeProtocolError("invalid native Thread name");
+    // The response is empty by protocol. The coordinator verifies with thread/read.
+    await this.request("thread/name/set", { threadId: binding.nativeThreadId, name });
+  }
+
   async archiveThread(binding: RuntimeBinding): Promise<void> {
     this.owned(binding);
     // 0.154.0 returns an empty acknowledgement. The coordinator must verify archive separately.

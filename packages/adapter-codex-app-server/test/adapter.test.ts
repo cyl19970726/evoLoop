@@ -20,6 +20,27 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
   await adapter.open(); return adapter;
 };
 
+test("native naming changes only the exact owned Thread and verifies its readback", async t => {
+  for (const mode of ["name-sync", "name-sync-lost", "name-sync-reject"]) await t.test(mode, async () => {
+    const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, mode],
+      expectedVersion: "codex-cli 0.164.0-alpha.11.1", requestTimeoutMs: 100,
+      verifyBinding: async () => true });
+    t.after(() => adapter.close());
+    await adapter.open();
+    const binding = await adapter.create(fullSpec);
+    assert.equal(await adapter.readThreadName(binding), null);
+    if (mode === "name-sync-reject") await assert.rejects(() => adapter.setThreadName(binding, "方案设计"), RuntimeServerError);
+    else if (mode === "name-sync-lost") await assert.rejects(() => adapter.setThreadName(binding, "方案设计"), RuntimeUnknownError);
+    else await adapter.setThreadName(binding, "方案设计");
+    assert.equal(await adapter.readThreadName(binding), mode === "name-sync-reject" ? null : "方案设计");
+    await assert.rejects(() => adapter.readThreadName({ ...binding, nativeThreadId: "foreign-thread" }), RuntimeProtocolError);
+    if (mode === "name-sync") {
+      await adapter.setThreadName(binding, "新名称");
+      assert.equal(await adapter.readThreadName(binding), "新名称");
+    }
+  });
+});
+
 test("only the two reviewed CLI protocol versions can be selected", () => {
   assert.throws(() => testAdapter({ expectedVersion: "codex-cli 0.165.0" }), /unsupported Codex CLI protocol version/);
   assert.throws(() => testAdapter({ expectedVersion: "0.164.0-alpha.11.1" }), /unsupported Codex CLI protocol version/);
