@@ -604,6 +604,7 @@ export class PgLeaderWorkWriter {
     const hash = commandHash({ ...command, actorId: principal.actorId, projectId });
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [projectId]);
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work-operation:${command.operationId}`]);
       const existing = await client.query(`SELECT actor_id,command_hash,command_type,result FROM operation_journal
         WHERE project_id=$1 AND operation_id=$2 FOR UPDATE`, [projectId, command.operationId]);

@@ -245,7 +245,7 @@ test("Task.start and Leader plan/review use one project-before-row lock order", 
     ]);
     assert.equal(settled.every(item => item.status === "fulfilled" ||
       !(item.reason && typeof item.reason === "object" && "code" in item.reason) ||
-      item.reason.code !== "55P03"), true, "no project/Task lock timeout");
+      !["40P01", "55P03"].includes(item.reason.code)), true, "no project/Task deadlock or lock timeout");
     assert.ok(settled.some(item => item.status === "fulfilled" &&
       item.value.status === "applied"), JSON.stringify(settled));
 
@@ -270,6 +270,28 @@ test("Task.start and Leader plan/review use one project-before-row lock order", 
     assert.equal(parallel[1]!.status === "fulfilled" && parallel[1]!.value.status, "applied");
     assert.ok(parallel[0]!.status === "fulfilled" && parallel[0]!.value.status === "applied" ||
       parallel[0]!.status === "rejected" && parallel[0]!.reason?.code === "WORK_INDEX_CHANGED", JSON.stringify(parallel));
+
+    const beforeRevision = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+    const workflowReview = {
+      projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
+      expectedTaskVersion: 1, expectedTaskRevisionId: fixture.prerequisite.revision.id,
+      expectedWorkChangeSequence: beforeRevision.items.find(item =>
+        item.taskId === fixture.prerequisite.head.id)!.workChangeSequence,
+      decision: "acknowledged" as const, reason: "Review concurrently with a real Task revision",
+    };
+    const revisionRace = await Promise.allSettled([
+      writer.setTaskReview(who, fixture.project.id, workflowReview),
+      workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id, operationId: randomUUID(),
+        taskId: fixture.prerequisite.head.id, expectedVersion: 1, reason: "Create a new Task revision concurrently" }),
+    ]);
+    assert.equal(revisionRace.every(item => item.status === "fulfilled" ||
+      !(item.reason && typeof item.reason === "object" && "code" in item.reason) ||
+      !["40P01", "55P03"].includes(item.reason.code)), true, JSON.stringify(revisionRace));
+    assert.equal(revisionRace[1]!.status, "fulfilled", JSON.stringify(revisionRace));
+    assert.equal(revisionRace[1]!.status === "fulfilled" && revisionRace[1]!.value.status, "applied");
+    assert.ok(revisionRace[0]!.status === "fulfilled" && revisionRace[0]!.value.status === "applied" ||
+      revisionRace[0]!.status === "rejected" &&
+        ["VERSION_CONFLICT", "WORK_INDEX_CHANGED"].includes(revisionRace[0]!.reason?.code), JSON.stringify(revisionRace));
   } finally {
     await lockOrderPool.end();
   }
