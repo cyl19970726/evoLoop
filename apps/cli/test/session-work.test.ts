@@ -32,7 +32,7 @@ test("Agent help and schemas expose common message/assignment operations without
   const run = async (args: string[]) => { let out = ""; const code = await runCli(args, {}, { stdout: s => { out += s; }, stderr: () => {} }); return { code, body: JSON.parse(out) }; };
   assert.equal((await run(["help"])).body.commands.some((x: string) => x.startsWith("work list ")), true);
   assert.equal((await run(["help"])).body.commands.some((x: string) => x.startsWith("work leader ")), true);
-  for (const name of ["work.plan.set", "work.dependencies.set"]) {
+  for (const name of ["work.plan.set", "work.dependencies.set", "work.review.set"]) {
     const schema = await run(["request", "schema", name]); assert.equal(schema.code, 0);
     assert.ok(schema.body.properties.operationId);
   }

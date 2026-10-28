@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
+import { WorkflowService } from "@evoloop/core";
 import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision } from "@evoloop/contracts";
 import { PostgresUnitOfWork, migrate } from "../src/index.ts";
 import { PgLeaderWorkWriter, leaderWorkTaskFromRow, readLeaderWorkChanges, readLeaderWorkDocuments,
@@ -180,6 +181,20 @@ test("planning writes are authorized, CAS guarded, cyclic-safe and idempotent", 
     ...dependencies, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
     expectedTaskVersion: 1, expectedDependencyVersion: 0, dependsOnTaskIds: [fixture.dependent.head.id],
   }), (error: { code?: string }) => error.code === "DEPENDENCY_CYCLE");
+
+  const review = { projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
+    expectedTaskVersion: 1, expectedTaskRevisionId: fixture.dependent.revision.id,
+    decision: "deferred" as const, reason: "Wait for the prerequisite to be accepted" };
+  const reviewResult = await writer.setTaskReview(who, fixture.project.id, review);
+  assert.equal(reviewResult.status, "applied");
+  assert.deepEqual(await writer.setTaskReview(who, fixture.project.id, review), reviewResult);
+  const reviewed = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  assert.equal(reviewed.items.find(item => item.taskId === fixture.dependent.head.id)?.review?.decision, "deferred");
+  assert.equal(reviewed.counts.review_deferred, 1);
+  await assert.rejects(pool.query("UPDATE leader_work_review SET reason='changed' WHERE project_id=$1 AND task_id=$2",
+    [fixture.project.id, fixture.dependent.head.id]), /immutable/);
+  const reviewChanges = await readLeaderWorkChanges(pool, fixture.project.id, 100);
+  assert.ok(reviewChanges.items.some(item => item.entityKind === "review" && item.taskId === fixture.dependent.head.id));
 });
 
 test("a newer completed Run waits for its own Delivery instead of reviving an older failed one", () => {
@@ -202,4 +217,200 @@ test("a newer completed Run waits for its own Delivery instead of reviving an ol
     delivery_id: "new-delivery", delivery_result: "passed", delivery_created_at: "2026-10-28T02:05:00.000Z",
     observation_result: "failed" } as never, now);
   assert.equal(observedFailure.phase, "rework");
+});
+
+test("a failed Run from an earlier Task revision does not mark the new revision as current work", async () => {
+  const fixture = await seedProject();
+  const sessionId = randomUUID(), runId = randomUUID();
+  await uow.transaction(fixture.project.id, async tx => {
+    await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+    await tx.insertRuntimeRun({ projectId: fixture.project.id, id: runId, taskId: fixture.prerequisite.head.id,
+      taskRevisionId: fixture.prerequisite.revision.id, basisSetId: fixture.prerequisite.basis.id, sessionId,
+      operationId: randomUUID(), input: "older fixed work", inputHash: hash("older fixed work"), state: "failed",
+      version: 1, nativeTurnId: null, interruptRequested: false, resultSummary: "Old revision failed",
+      actorId: actor, createdAt: now, updatedAt: now });
+  });
+  const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const reopened = await workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
+    reason: "Open a corrected revision" });
+  assert.equal(reopened.status, "applied", JSON.stringify(reopened));
+  const page = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const task = page.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  assert.notEqual(task.currentRevisionId, fixture.prerequisite.revision.id);
+  assert.equal(task.latestRun, null);
+  assert.equal(task.phase, "unassigned");
+});
+
+test("closure may advance the Task revision without hiding the Delivery it accepted", async () => {
+  const fixture = await seedProject();
+  const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const sessionId = randomUUID(), runId = randomUUID();
+  await uow.transaction(fixture.project.id, async tx => {
+    await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+    await tx.insertRuntimeRun({ projectId: fixture.project.id, id: runId, taskId: fixture.prerequisite.head.id,
+      taskRevisionId: fixture.prerequisite.revision.id, basisSetId: fixture.prerequisite.basis.id, sessionId,
+      operationId: randomUUID(), input: "accepted work", inputHash: hash("accepted work"), state: "completed",
+      version: 1, nativeTurnId: `turn-${runId}`, interruptRequested: false,
+      resultSummary: "The fixed work completed", actorId: actor, createdAt: now, updatedAt: now });
+  });
+  const delivered = await workflow.execute(who, { type: "delivery.record", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
+    runId,
+    artifactRef: "https://example.test/accepted", artifactRevision: "accepted-v1",
+    contentHash: hash("accepted"), technicalResult: "passed", technicalEvidence: "All checks passed",
+    reason: "Reviewed delivery" });
+  assert.equal(delivered.status, "applied", JSON.stringify(delivered));
+  const deliveryId = delivered.status === "applied" ? delivered.revisionId ?? "" : "";
+  const deliveryVersion = delivered.status === "applied" ? delivered.version ?? 2 : 2;
+  const deliveredTaskRevisionId = (await uow.read(fixture.project.id,
+    reader => reader.getTask(fixture.prerequisite.head.id)))!.currentRevisionId;
+  const storedDelivery = (await uow.read(fixture.project.id,
+    reader => reader.listDeliveries(fixture.prerequisite.head.id))).at(-1)!;
+  assert.equal(storedDelivery.taskRevisionId, deliveredTaskRevisionId);
+  assert.equal(storedDelivery.runId, runId);
+  const awaiting = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const deliveredTask = awaiting.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  assert.equal(deliveredTask.phase, "awaiting_acceptance");
+  assert.equal(deliveredTask.latestRun?.runId, runId,
+    "Delivery advancement keeps its accepted source Run associated");
+  const closedResult = await workflow.execute(who, { type: "task.close", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: deliveryVersion,
+    deliveryId, acceptanceResult: "met", acceptanceEvidence: "Independent acceptance passed",
+    reason: "Close with the accepted delivery" });
+  assert.equal(closedResult.status, "applied", JSON.stringify(closedResult));
+  const page = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10, includeClosed: true });
+  const closed = page.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  assert.equal(closed.phase, "closed");
+  assert.equal(closed.delivery?.deliveryId, deliveryId);
+  assert.equal(closed.delivery?.taskRevisionId, deliveredTaskRevisionId);
+  assert.equal(closed.latestRun?.runId, runId);
+  assert.notEqual(closed.currentRevisionId, deliveredTaskRevisionId);
+
+  const reopened = await workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: closedResult.version!,
+    reason: "Start a distinct reporting cycle" });
+  assert.equal(reopened.status, "applied", JSON.stringify(reopened));
+  const afterReopen = await readLeaderWorkTasks(pool, fixture.project.id,
+    { view: "tasks", limit: 10, includeClosed: true });
+  const nextCycle = afterReopen.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  assert.equal(nextCycle.phase, "unassigned");
+  assert.equal(nextCycle.delivery, null, "the previous closure cannot attach its Delivery to the new cycle");
+  assert.equal(nextCycle.latestRun, null, "the accepted Run belongs to the completed cycle");
+  assert.equal(nextCycle.dates.completedAt, null);
+
+  const updated = await workflow.execute(who, { type: "task.update", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: reopened.version!,
+    title: fixture.prerequisite.head.title, content: "# Corrected cycle\n\nUse the new accepted checks.",
+    acceptance: fixture.prerequisite.head.acceptance, owner: fixture.prerequisite.head.owner,
+    reason: "Clarify the next cycle" });
+  assert.equal(updated.status, "applied", JSON.stringify(updated));
+  const started = await workflow.execute(who, { type: "task.start", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: updated.version!,
+    basis: [], reason: "Begin the next cycle" });
+  assert.equal(started.status, "applied", JSON.stringify(started));
+  const afterStart = await readLeaderWorkTasks(pool, fixture.project.id,
+    { view: "tasks", limit: 10, includeClosed: true });
+  const activeCycle = afterStart.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  assert.equal(activeCycle.phase, "ready");
+  assert.equal(activeCycle.delivery, null);
+  assert.equal(activeCycle.latestRun, null);
+  assert.notEqual(activeCycle.currentRevisionId, nextCycle.currentRevisionId);
+});
+
+test("the Leader index can page beyond the former 5000-row ceiling", async () => {
+  const projectId = randomUUID(), count = 5_001;
+  await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Large Leader index',$2)",
+    [projectId, now]);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,
+      adopted_revision_id,kind,status)
+      SELECT $1,md5('bulk-document-'||g)::uuid,'Bulk Task '||g,1,md5('bulk-document-revision-'||g)::uuid,
+        NULL,'task','draft'
+      FROM generate_series(1,$2) g`, [projectId, count]);
+    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,
+      content_hash,author,created_at,previous_revision_id,reason)
+      SELECT $1,md5('bulk-document-'||g)::uuid,md5('bulk-document-revision-'||g)::uuid,
+        '# Bulk Task '||g,'markdown',repeat('a',64),$3,$4,NULL,'bulk fixture'
+      FROM generate_series(1,$2) g`, [projectId, count, actor, now]);
+    await client.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,
+      owner,state,kind,content_document_id,content_revision_id)
+      SELECT $1,md5('bulk-task-'||g)::uuid,1,md5('bulk-task-revision-'||g)::uuid,
+        'Bulk Task '||g,'Visible acceptance',$3,'todo','implementation',
+        md5('bulk-document-'||g)::uuid,md5('bulk-document-revision-'||g)::uuid
+      FROM generate_series(1,$2) g`, [projectId, count, actor]);
+    await client.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,
+      owner,state,kind,content_document_id,content_revision_id,basis_set_id,actor_id,reason,created_at)
+      SELECT $1,md5('bulk-task-'||g)::uuid,md5('bulk-task-revision-'||g)::uuid,1,
+        'Bulk Task '||g,'Visible acceptance',$3,'todo','implementation',
+        md5('bulk-document-'||g)::uuid,md5('bulk-document-revision-'||g)::uuid,NULL,$3,'bulk fixture',$4
+      FROM generate_series(1,$2) g`, [projectId, count, actor, now]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  let cursor: string | undefined, pages = 0;
+  const ids = new Set<string>();
+  do {
+    const page = await readLeaderWorkTasks(pool, projectId,
+      { view: "tasks", limit: 100, ...(cursor ? { cursor } : {}) });
+    assert.equal(page.partial, false);
+    assert.equal(page.total, count);
+    assert.equal(page.counts.unassigned, count);
+    assert.ok(page.items.length <= 100);
+    for (const item of page.items) ids.add(item.taskId);
+    cursor = page.nextCursor ?? undefined;
+    pages++;
+  } while (cursor);
+  assert.equal(ids.size, count);
+  assert.equal(pages, 51);
+});
+
+test("change sequence allocation waits for the earlier uncommitted project writer", async () => {
+  const fixture = await seedProject();
+  const before = await readLeaderWorkChanges(pool, fixture.project.id, 100);
+  assert.ok(before.nextCursor);
+  const first = await pool.connect(), second = await pool.connect();
+  let secondSettled = false;
+  try {
+    await first.query("BEGIN");
+    await first.query("UPDATE task_work_plan SET priority=4 WHERE project_id=$1 AND task_id=$2",
+      [fixture.project.id, fixture.dependent.head.id]);
+    await second.query("BEGIN");
+    const secondWrite = second.query(`INSERT INTO task_work_plan(project_id,task_id,version,priority,actor_id,reason,updated_at)
+      VALUES($1,$2,1,1,$3,'Second committed change',$4)`,
+      [fixture.project.id, fixture.prerequisite.head.id, actor, now]).then(() => { secondSettled = true; });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(secondSettled, false, "a later sequence cannot bypass an uncommitted earlier writer");
+    await first.query("COMMIT");
+    await secondWrite;
+    await second.query("COMMIT");
+    const changes = await readLeaderWorkChanges(pool, fixture.project.id, 100, before.nextCursor);
+    assert.equal(changes.items.filter(item => item.entityKind === "plan").length, 2);
+    assert.deepEqual(changes.items.map(item => item.sequence), [...changes.items.map(item => item.sequence)].sort((a, b) => a - b));
+  } catch (error) {
+    await first.query("ROLLBACK").catch(() => {});
+    await second.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    first.release();
+    second.release();
+  }
 });

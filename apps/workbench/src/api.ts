@@ -96,8 +96,9 @@ export function api(token: string, timeoutMs = 15000) {
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`),
-    leaderWork: (p: string, view: "tasks" | "documents", cursor?: string) => call<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>(
-      `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    leaderWork: (p: string, view: "tasks" | "documents", cursor?: string, includeClosed = false) =>
+      call<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>(
+        `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`),
     leaderWorkChanges: (p: string, cursor?: string) => call<LeaderWorkChangesPage>(
       `${projectPath(p)}/work-management/changes?limit=100${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),

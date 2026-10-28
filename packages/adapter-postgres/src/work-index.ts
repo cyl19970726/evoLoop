@@ -1,11 +1,13 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 import type { CommandResult, Principal } from "@evoloop/contracts";
 import type {
   LeaderWorkChange, LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
-  LeaderWorkPhase, LeaderWorkPlanCommand, LeaderWorkTask,
+  LeaderWorkPhase, LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
-import { leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema } from "@evoloop/contracts/work-index";
+import {
+  leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
+} from "@evoloop/contracts/work-index";
 import { DomainError } from "@evoloop/contracts/ports";
 
 type Database = Pick<Pool | PoolClient, "query">;
@@ -17,7 +19,6 @@ export interface LeaderWorkQuery {
   includeClosed?: boolean;
 }
 
-const maxSnapshotRows = 5000;
 const phaseOrder: Record<LeaderWorkPhase, number> = {
   unknown: 0, rework: 1, blocked: 2, awaiting_acceptance: 3, awaiting_delivery: 4,
   awaiting_assignment: 5, ready: 6, running: 7, unassigned: 8, closed: 9, cancelled: 10,
@@ -57,6 +58,7 @@ function int(value: unknown): number {
 }
 
 function taskPhase(row: QueryResultRow): LeaderWorkPhase {
+  if (row.phase) return row.phase as LeaderWorkPhase;
   if (row.state === "cancelled") return "cancelled";
   if (row.state === "done" || row.has_closure === true) return "closed";
   if (row.latest_run_state === "unknown") return "unknown";
@@ -78,6 +80,139 @@ function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if (row.assignment_state === "assigned") return "awaiting_assignment";
   if (row.state === "todo" && (!row.assignment_state || row.assignment_state === "released")) return "unassigned";
   return "ready";
+}
+
+function taskFactsSql(includeClosed: boolean): string {
+  return `WITH facts AS (
+    SELECT t.project_id,t.task_id,t.version,t.current_revision_id,t.title,t.kind,t.owner,t.state,
+      tr.created_at AS business_changed_at,
+      first_revision.first_at AS created_at,
+      first_run.started_at,
+      closure.closed_at AS completed_at,
+      assignment.state AS assignment_state,assignment.target_kind AS assignment_target_kind,
+      assignment.target_id AS assignment_target_id,assignment.recipient_actor_id AS assignment_recipient_actor_id,
+      effective_run.run_id AS latest_run_id,effective_run.state AS latest_run_state,
+      effective_run.updated_at AS run_updated_at,
+      effective_delivery.delivery_id,effective_delivery.task_revision_id AS delivery_task_revision_id,
+      effective_delivery.technical_result AS delivery_result,effective_delivery.created_at AS delivery_created_at,
+      observation.result AS observation_result,observation.observer AS observation_actor_id,
+      observation.observer_kind AS observation_kind,observation.created_at AS observation_created_at,
+      pending_impact.pending_impact_count,queue_gate.hold_code AS queue_hold,
+      plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,plan.actor_id AS plan_actor_id,
+      plan.updated_at AS plan_updated_at,
+      review_latest.review_id,review_latest.decision AS review_decision,review_latest.actor_id AS review_actor_id,
+      review_latest.reason AS review_reason,review_latest.operation_id AS review_operation_id,
+      review_latest.created_at AS review_created_at,
+      closure.closure_id IS NOT NULL AS has_closure,
+      CASE
+        WHEN t.state='cancelled' THEN 'cancelled'
+        WHEN t.state='done' OR closure.closure_id IS NOT NULL THEN 'closed'
+        WHEN effective_run.state='unknown' THEN 'unknown'
+        WHEN effective_run.state IN ('requested','dispatching','running') THEN 'running'
+        WHEN pending_impact.pending_impact_count>0 THEN 'blocked'
+        WHEN effective_run.state IN ('failed','interrupted') THEN 'rework'
+        WHEN dependency_gate.blocked THEN 'blocked'
+        WHEN queue_gate.hold_code IS NOT NULL AND queue_gate.hold_code<>'awaiting_acceptance' THEN 'blocked'
+        WHEN t.state='in_progress' AND effective_run.state='completed' AND
+          (effective_delivery.delivery_id IS NULL OR effective_run.updated_at IS NULL OR
+           effective_delivery.created_at IS NULL OR effective_delivery.created_at<effective_run.updated_at) THEN 'awaiting_delivery'
+        WHEN observation.result='failed' AND
+          (effective_run.updated_at IS NULL OR observation.created_at IS NULL OR
+           observation.created_at>=effective_run.updated_at) THEN 'rework'
+        WHEN effective_delivery.delivery_id IS NOT NULL AND effective_delivery.technical_result='failed' AND
+          (effective_run.updated_at IS NULL OR effective_delivery.created_at IS NULL OR
+           effective_delivery.created_at>=effective_run.updated_at) THEN 'rework'
+        WHEN t.state='in_progress' AND effective_delivery.delivery_id IS NOT NULL THEN 'awaiting_acceptance'
+        WHEN assignment.state='assigned' THEN 'awaiting_assignment'
+        WHEN t.state='todo' AND (assignment.state IS NULL OR assignment.state='released') THEN 'unassigned'
+        ELSE 'ready'
+      END AS phase
+    FROM task t
+    JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id
+      AND tr.revision_id=t.current_revision_id
+    LEFT JOIN LATERAL (SELECT min(r.created_at) AS first_at FROM task_revision r
+      WHERE r.project_id=t.project_id AND r.task_id=t.task_id) first_revision ON true
+    LEFT JOIN LATERAL (SELECT min(e.created_at) AS started_at FROM runtime_record_event e
+      JOIN runtime_run r ON r.project_id=e.project_id AND r.run_id=e.run_id
+      WHERE e.project_id=t.project_id AND r.task_id=t.task_id AND e.kind='run.bound') first_run ON true
+    LEFT JOIN LATERAL (SELECT c.closure_id,c.delivery_id,c.created_at AS closed_at FROM task_closure c
+      WHERE c.project_id=t.project_id AND c.task_id=t.task_id
+        AND c.task_revision_id=t.current_revision_id
+      ORDER BY c.created_at DESC,c.closure_id DESC LIMIT 1) closure ON true
+    LEFT JOIN LATERAL (SELECT a.state,a.target_kind,a.target_id,a.recipient_actor_id
+      FROM task_session_assignment a
+      WHERE a.project_id=t.project_id AND a.task_id=t.task_id
+      ORDER BY a.version DESC LIMIT 1) assignment ON true
+    LEFT JOIN LATERAL (SELECT d.delivery_id,d.task_revision_id,d.technical_result,d.created_at,d.run_id
+      FROM delivery d
+      WHERE d.project_id=t.project_id AND d.task_id=t.task_id AND
+        ((closure.delivery_id IS NOT NULL AND d.delivery_id=closure.delivery_id) OR
+         (closure.delivery_id IS NULL AND d.task_revision_id=t.current_revision_id))
+      ORDER BY d.created_at DESC,d.delivery_id DESC LIMIT 1) effective_delivery ON true
+    LEFT JOIN LATERAL (SELECT r.run_id,r.state,r.updated_at FROM runtime_run r
+      WHERE r.project_id=t.project_id AND r.task_id=t.task_id AND
+        ((effective_delivery.run_id IS NOT NULL AND r.run_id=effective_delivery.run_id) OR
+         (effective_delivery.delivery_id IS NULL AND r.task_revision_id=t.current_revision_id))
+        AND r.state IN ('requested','dispatching','running','unknown','completed','failed','interrupted')
+      ORDER BY r.updated_at DESC,r.run_id DESC LIMIT 1) effective_run ON true
+    LEFT JOIN LATERAL (SELECT o.result,o.observer,o.observer_kind,o.created_at FROM consumer_observation o
+      WHERE o.project_id=t.project_id AND o.delivery_id=effective_delivery.delivery_id
+      ORDER BY o.sequence DESC LIMIT 1) observation ON true
+    LEFT JOIN LATERAL (SELECT count(*)::int AS pending_impact_count FROM impact_review i
+      WHERE i.project_id=t.project_id AND i.task_id=t.task_id AND i.state='pending') pending_impact ON true
+    LEFT JOIN LATERAL (SELECT e.hold_code FROM resident_queue_entry e
+      WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.hold_code IS NOT NULL
+      ORDER BY e.position,e.entry_id LIMIT 1) queue_gate ON true
+    LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
+    LEFT JOIN LATERAL (SELECT r.review_id,r.decision,r.actor_id,r.reason,r.operation_id,r.created_at
+      FROM leader_work_review r WHERE r.project_id=t.project_id AND r.task_id=t.task_id
+        AND r.task_version=t.version AND r.task_revision_id=t.current_revision_id
+      ORDER BY r.review_sequence DESC LIMIT 1) review_latest ON true
+    LEFT JOIN LATERAL (
+      SELECT EXISTS (
+        SELECT 1 FROM task_dependency d JOIN task dt
+          ON dt.project_id=d.project_id AND dt.task_id=d.depends_on_task_id
+        WHERE d.project_id=t.project_id AND d.task_id=t.task_id AND NOT (
+          EXISTS(SELECT 1 FROM task_closure c
+            WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
+              AND c.task_revision_id=dt.current_revision_id)
+          OR EXISTS(SELECT 1 FROM resident_queue_claim q
+            JOIN resident_queue_attempt a ON a.project_id=q.project_id AND a.claim_id=q.claim_id
+            WHERE q.project_id=d.project_id AND q.task_id=d.depends_on_task_id
+              AND q.release_kind='accepted' AND a.task_revision_id=dt.current_revision_id))
+      ) AS blocked
+    ) dependency_gate ON true
+    WHERE t.project_id=$1 ${includeClosed ? "" : "AND t.state NOT IN ('done','cancelled')"}
+  )`;
+}
+
+const taskOrderSql = `CASE facts.phase
+    WHEN 'unknown' THEN 0 WHEN 'rework' THEN 1 WHEN 'blocked' THEN 2
+    WHEN 'awaiting_acceptance' THEN 3 WHEN 'awaiting_delivery' THEN 4
+    WHEN 'awaiting_assignment' THEN 5 WHEN 'ready' THEN 6 WHEN 'running' THEN 7
+    WHEN 'unassigned' THEN 8 WHEN 'closed' THEN 9 WHEN 'cancelled' THEN 10
+  END,
+  COALESCE(facts.due_at, 'infinity'::timestamptz),COALESCE(facts.priority,99),
+  facts.title,facts.task_id`;
+
+function documentFactsSql(includeClosed: boolean): string {
+  return `WITH facts AS (
+    SELECT d.project_id,d.document_id,d.version,d.title,d.kind,d.status,d.current_revision_id,d.adopted_revision_id,
+      current.created_at AS current_at,first_revision.created_at,
+      adopted.created_at AS adopted_at,changed.changed_at
+    FROM process_document d
+    JOIN document_revision current ON current.project_id=d.project_id AND current.document_id=d.document_id
+      AND current.revision_id=d.current_revision_id
+    JOIN LATERAL (SELECT min(r.created_at) AS created_at FROM document_revision r
+      WHERE r.project_id=d.project_id AND r.document_id=d.document_id) first_revision ON true
+    LEFT JOIN LATERAL (SELECT dd.created_at FROM document_decision dd
+      WHERE dd.project_id=d.project_id AND dd.document_id=d.document_id
+        AND dd.revision_id=d.adopted_revision_id
+      ORDER BY dd.created_at DESC,dd.decision_id DESC LIMIT 1) adopted ON true
+    LEFT JOIN LATERAL (SELECT max(c.changed_at) AS changed_at FROM leader_work_change c
+      WHERE c.project_id=d.project_id AND c.document_id=d.document_id) changed ON true
+    WHERE d.project_id=$1 ${includeClosed ? "" : "AND d.status<>'archived'"}
+  )`;
 }
 
 function taskAction(phase: LeaderWorkPhase): string {
@@ -134,6 +269,10 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
       version: int(row.plan_version), actorId: row.plan_actor_id ?? null, updatedAt: optionalIso(row.plan_updated_at),
     },
     dependencies: row.dependency_facts ?? [],
+    review: row.review_id ? {
+      reviewId: row.review_id, decision: row.review_decision, actorId: row.review_actor_id,
+      reason: row.review_reason, operationId: row.review_operation_id, at: iso(row.review_created_at),
+    } : null,
     dates: {
       createdAt: iso(row.created_at), businessChangedAt: iso(row.business_changed_at),
       startedAt: optionalIso(row.started_at), completedAt: optionalIso(row.completed_at), observedAt,
@@ -171,103 +310,59 @@ function assertSnapshot(cursor: SnapshotCursor | null, view: LeaderWorkView, pro
     throw new DomainError("WORK_INDEX_CHANGED", "待处理工作已变化；请从第一页重新核对，不能把旧页当成完整快照");
 }
 
-async function taskRows(db: Database, projectId: string, includeClosed: boolean): Promise<QueryResultRow[]> {
-  const result = await db.query(`SELECT t.task_id,t.version,t.current_revision_id,t.title,t.kind,t.owner,t.state,
-      tr.created_at AS business_changed_at,
-      first_revision.first_at AS created_at,
-      first_run.started_at,
-      closure.closed_at AS completed_at,
-      assignment.state AS assignment_state,assignment.target_kind AS assignment_target_kind,
-      assignment.target_id AS assignment_target_id,assignment.recipient_actor_id AS assignment_recipient_actor_id,
-      run.run_id AS latest_run_id,run.state AS latest_run_state,run.updated_at AS run_updated_at,
-      delivery.delivery_id,delivery.task_revision_id AS delivery_task_revision_id,
-      delivery.technical_result AS delivery_result,delivery.created_at AS delivery_created_at,
-      observation.result AS observation_result,observation.observer AS observation_actor_id,
-      observation.observer_kind AS observation_kind,observation.created_at AS observation_created_at,
-      proposal.consumer,proposal.use_required,
-      impact.pending_impact_count,queue_entry.hold_code AS queue_hold,
-      stage.stage_id,stage.deliverable AS stage_deliverable,
-      goal.goal_id,goal.outcome AS goal_outcome,
-      plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,plan.actor_id AS plan_actor_id,
-      plan.updated_at AS plan_updated_at,
-      COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts,
-      closure.closure_id IS NOT NULL AS has_closure
-    FROM task t
-    JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id AND tr.revision_id=t.current_revision_id
-    LEFT JOIN LATERAL (SELECT min(r.created_at) AS first_at FROM task_revision r
-      WHERE r.project_id=t.project_id AND r.task_id=t.task_id) first_revision ON true
-    LEFT JOIN LATERAL (SELECT min(e.created_at) AS started_at FROM runtime_record_event e
-      JOIN runtime_run r ON r.project_id=e.project_id AND r.run_id=e.run_id
-      WHERE e.project_id=t.project_id AND r.task_id=t.task_id AND e.kind='run.bound') first_run ON true
-    LEFT JOIN LATERAL (SELECT c.closure_id,c.created_at AS closed_at FROM task_closure c
-      WHERE c.project_id=t.project_id AND c.task_id=t.task_id ORDER BY c.created_at DESC,c.closure_id DESC LIMIT 1) closure ON true
-    LEFT JOIN LATERAL (SELECT a.state,a.target_kind,a.target_id,a.recipient_actor_id FROM task_session_assignment a
-      WHERE a.project_id=t.project_id AND a.task_id=t.task_id ORDER BY a.version DESC LIMIT 1) assignment ON true
-    LEFT JOIN LATERAL (SELECT r.run_id,r.state,r.updated_at FROM runtime_run r
-      WHERE r.project_id=t.project_id AND r.task_id=t.task_id
-        AND r.state IN ('requested','dispatching','running','unknown','completed','failed','interrupted')
-      ORDER BY r.updated_at DESC,r.run_id DESC LIMIT 1) run ON true
-    LEFT JOIN LATERAL (SELECT d.delivery_id,d.task_revision_id,d.technical_result,d.created_at FROM delivery d
-      WHERE d.project_id=t.project_id AND d.task_id=t.task_id AND d.task_revision_id=t.current_revision_id
-      ORDER BY d.created_at DESC,d.delivery_id DESC LIMIT 1) delivery ON true
-    LEFT JOIN LATERAL (SELECT o.result,o.observer,o.observer_kind,o.created_at FROM consumer_observation o
-      WHERE o.project_id=t.project_id AND o.delivery_id=delivery.delivery_id
-      ORDER BY o.sequence DESC LIMIT 1) observation ON true
-    LEFT JOIN LATERAL (SELECT p.consumer,p.use_required FROM task_proposal p
-      JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id
-      WHERE p.project_id=t.project_id AND p.task_id=t.task_id
-      ORDER BY r.version DESC LIMIT 1) proposal ON true
-    LEFT JOIN LATERAL (SELECT count(*)::int AS pending_impact_count FROM impact_review i
-      WHERE i.project_id=t.project_id AND i.task_id=t.task_id AND i.state='pending') impact ON true
-    LEFT JOIN LATERAL (SELECT e.hold_code FROM resident_queue_entry e
-      WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.hold_code IS NOT NULL
-      ORDER BY e.position,e.entry_id LIMIT 1) queue_entry ON true
-    LEFT JOIN LATERAL (SELECT p.stage_id FROM task_proposal p
-      JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id AND r.revision_id=p.task_revision_id
-      WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1) proposal_stage ON true
-    LEFT JOIN project_stage stage ON stage.project_id=t.project_id AND stage.stage_id=proposal_stage.stage_id
-    LEFT JOIN project_goal goal ON goal.project_id=stage.project_id AND goal.goal_id=stage.goal_id
-    LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
-    LEFT JOIN LATERAL (
-      SELECT jsonb_agg(jsonb_build_object('taskId',d.depends_on_task_id,'title',dt.title,'state',dt.state,
-        'currentRevisionId',dt.current_revision_id,'actorId',d.actor_id,'reason',d.reason,'createdAt',d.created_at,
-        'acceptanceSatisfied',EXISTS(SELECT 1 FROM task_closure c
-          WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
-            AND c.task_revision_id=dt.current_revision_id)
-          OR EXISTS(SELECT 1 FROM resident_queue_claim q
-            JOIN resident_queue_attempt a ON a.project_id=q.project_id AND a.claim_id=q.claim_id
-            WHERE q.project_id=d.project_id AND q.task_id=d.depends_on_task_id AND q.release_kind='accepted'
-              AND a.task_revision_id=dt.current_revision_id))
-        ORDER BY dt.title,d.depends_on_task_id) AS items
-      FROM task_dependency d JOIN task dt ON dt.project_id=d.project_id AND dt.task_id=d.depends_on_task_id
-      WHERE d.project_id=t.project_id AND d.task_id=t.task_id) dependencies ON true
-    WHERE t.project_id=$1 ${includeClosed ? "" : "AND t.state NOT IN ('done','cancelled')"}
-    ORDER BY t.task_id LIMIT $2`, [projectId, maxSnapshotRows + 1]);
-  return result.rows;
-}
-
 export async function readLeaderWorkTasks(db: Database, projectId: string, query: LeaderWorkQuery): Promise<LeaderWorkPage<LeaderWorkTask>> {
   return withReadSnapshot(db, async snapshot => {
     const sequence = await currentChangeSequence(snapshot, projectId);
     const cursor = decodeCursor(query.cursor, "tasks") as SnapshotCursor | null;
     assertSnapshot(cursor, "tasks", projectId, query.includeClosed === true, sequence);
-    const rows = await taskRows(snapshot, projectId, query.includeClosed === true);
-    const observedAt = new Date().toISOString();
-    const items = rows.slice(0, maxSnapshotRows).map(row => leaderWorkTaskFromRow(row, observedAt))
-      .sort((a, b) => phaseOrder[a.phase] - phaseOrder[b.phase] ||
-        (a.plan?.dueAt ? Date.parse(a.plan.dueAt) : Number.MAX_SAFE_INTEGER) -
-        (b.plan?.dueAt ? Date.parse(b.plan.dueAt) : Number.MAX_SAFE_INTEGER) ||
-        (a.plan?.priority ?? 99) - (b.plan?.priority ?? 99) ||
-        a.title.localeCompare(b.title, "zh-CN") || a.taskId.localeCompare(b.taskId));
     const offset = cursor?.offset ?? 0;
-    if (offset > items.length) throw new DomainError("INVALID_CURSOR", "待处理工作分页位置超出当前快照");
-    const page = items.slice(offset, offset + query.limit);
-    const nextOffset = offset + page.length;
+    const summary = await snapshot.query(`${taskFactsSql(query.includeClosed === true)}
+      SELECT count(*)::int AS total,
+        ${Object.keys(phaseOrder).map(phase =>
+          `count(*) FILTER (WHERE phase='${phase}')::int AS ${phase}`).join(",")},
+        count(*) FILTER (WHERE review_decision='acknowledged')::int AS review_acknowledged,
+        count(*) FILTER (WHERE review_decision='deferred')::int AS review_deferred
+      FROM facts`, [projectId]);
+    const total = int(summary.rows[0]?.total ?? 0);
+    if (offset > total) throw new DomainError("INVALID_CURSOR", "待处理工作分页位置超出当前快照");
+    const pageResult = await snapshot.query(`${taskFactsSql(query.includeClosed === true)}
+      SELECT facts.*,proposal.consumer,proposal.use_required,
+        stage.stage_id,stage.deliverable AS stage_deliverable,
+        goal.goal_id,goal.outcome AS goal_outcome,
+        COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts
+      FROM facts
+      LEFT JOIN LATERAL (SELECT p.consumer,p.use_required,p.stage_id FROM task_proposal p
+        JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
+          AND r.revision_id=p.task_revision_id
+        WHERE p.project_id=facts.project_id AND p.task_id=facts.task_id
+        ORDER BY r.version DESC LIMIT 1) proposal ON true
+      LEFT JOIN project_stage stage ON stage.project_id=facts.project_id AND stage.stage_id=proposal.stage_id
+      LEFT JOIN project_goal goal ON goal.project_id=stage.project_id AND goal.goal_id=stage.goal_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object('taskId',d.depends_on_task_id,'title',dt.title,'state',dt.state,
+          'currentRevisionId',dt.current_revision_id,'actorId',d.actor_id,'reason',d.reason,'createdAt',d.created_at,
+          'acceptanceSatisfied',EXISTS(SELECT 1 FROM task_closure c
+            WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
+              AND c.task_revision_id=dt.current_revision_id)
+            OR EXISTS(SELECT 1 FROM resident_queue_claim q
+              JOIN resident_queue_attempt a ON a.project_id=q.project_id AND a.claim_id=q.claim_id
+              WHERE q.project_id=d.project_id AND q.task_id=d.depends_on_task_id AND q.release_kind='accepted'
+                AND a.task_revision_id=dt.current_revision_id))
+          ORDER BY dt.title,d.depends_on_task_id) AS items
+        FROM task_dependency d JOIN task dt ON dt.project_id=d.project_id AND dt.task_id=d.depends_on_task_id
+        WHERE d.project_id=facts.project_id AND d.task_id=facts.task_id) dependencies ON true
+      ORDER BY ${taskOrderSql}
+      LIMIT $2 OFFSET $3`, [projectId, query.limit, offset]);
+    const observedAt = new Date().toISOString();
+    const items = pageResult.rows.map(row => leaderWorkTaskFromRow(row, observedAt));
+    const nextOffset = offset + items.length;
     const counts = Object.fromEntries(Object.keys(phaseOrder).map(phase =>
-      [phase, items.filter(item => item.phase === phase).length]));
+      [phase, int(summary.rows[0]?.[phase] ?? 0)]));
+    counts.review_acknowledged = int(summary.rows[0]?.review_acknowledged ?? 0);
+    counts.review_deferred = int(summary.rows[0]?.review_deferred ?? 0);
     return {
-      items: page, total: items.length, counts, changeSequence: sequence, observedAt, partial: rows.length > maxSnapshotRows,
-      nextCursor: nextOffset < items.length ? encodeCursor({ version: 1, view: "tasks", projectId,
+      items, total, counts, changeSequence: sequence, observedAt, partial: false,
+      nextCursor: nextOffset < total ? encodeCursor({ version: 1, view: "tasks", projectId,
         includeClosed: query.includeClosed === true, sequence, offset: nextOffset }) : null,
     };
   });
@@ -294,22 +389,11 @@ export function leaderWorkDocumentFromRow(row: DocumentRow, observedAt: string):
   };
 }
 
-async function documentRows(db: Database, projectId: string, includeClosed: boolean): Promise<DocumentRow[]> {
-  const result = await db.query(`SELECT d.document_id,d.version,d.title,d.kind,d.status,d.current_revision_id,d.adopted_revision_id,
-      current.created_at AS current_at,first_revision.created_at,
-      adopted.created_at AS adopted_at,
-      changed.changed_at,
-      COALESCE(refs.items,'[]'::jsonb) AS refs
-    FROM process_document d
-    JOIN document_revision current ON current.project_id=d.project_id AND current.document_id=d.document_id
-      AND current.revision_id=d.current_revision_id
-    JOIN LATERAL (SELECT min(r.created_at) AS created_at FROM document_revision r
-      WHERE r.project_id=d.project_id AND r.document_id=d.document_id) first_revision ON true
-    LEFT JOIN LATERAL (SELECT dd.created_at FROM document_decision dd
-      WHERE dd.project_id=d.project_id AND dd.document_id=d.document_id
-        AND dd.revision_id=d.adopted_revision_id ORDER BY dd.created_at DESC,dd.decision_id DESC LIMIT 1) adopted ON true
-    LEFT JOIN LATERAL (SELECT max(c.changed_at) AS changed_at FROM leader_work_change c
-      WHERE c.project_id=d.project_id AND c.document_id=d.document_id) changed ON true
+async function documentRows(db: Database, projectId: string, limit: number, offset: number,
+  includeClosed: boolean): Promise<DocumentRow[]> {
+  const result = await db.query(`${documentFactsSql(includeClosed)}
+    SELECT facts.*,COALESCE(refs.items,'[]'::jsonb) AS refs
+    FROM facts
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(jsonb_build_object('taskId',x.task_id,'title',x.title,'state',x.state,
         'relations',x.relations) ORDER BY x.title,x.task_id) AS items
@@ -317,24 +401,25 @@ async function documentRows(db: Database, projectId: string, includeClosed: bool
         SELECT t.task_id,t.title,t.state,array_agg(DISTINCT relation ORDER BY relation) AS relations
         FROM (
           SELECT t.task_id,'content'::text AS relation FROM task t
-            WHERE t.project_id=d.project_id AND t.content_document_id=d.document_id
+            WHERE t.project_id=facts.project_id AND t.content_document_id=facts.document_id
           UNION ALL
           SELECT t.task_id,'link'::text AS relation FROM task_document_link l
             JOIN task t ON t.project_id=l.project_id AND t.task_id=l.task_id
-            WHERE l.project_id=d.project_id AND l.document_id=d.document_id
+            WHERE l.project_id=facts.project_id AND l.document_id=facts.document_id
           UNION ALL
           SELECT t.task_id,'basis'::text AS relation FROM task t
             JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id AND tr.revision_id=t.current_revision_id
             JOIN basis_member bm ON bm.project_id=tr.project_id AND bm.task_id=tr.task_id
               AND bm.task_revision_id=tr.revision_id AND bm.basis_set_id=tr.basis_set_id
-            WHERE t.project_id=d.project_id AND bm.document_id=d.document_id
+            WHERE t.project_id=facts.project_id AND bm.document_id=facts.document_id
         ) relations
-        JOIN task t ON t.project_id=d.project_id AND t.task_id=relations.task_id
+        JOIN task t ON t.project_id=facts.project_id AND t.task_id=relations.task_id
         GROUP BY t.task_id,t.title,t.state
       ) x
     ) refs ON true
-    WHERE d.project_id=$1 ${includeClosed ? "" : "AND d.status<>'archived'"}
-    ORDER BY d.document_id LIMIT $2`, [projectId, maxSnapshotRows + 1]);
+    ORDER BY CASE facts.status WHEN 'archived' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+      facts.title,facts.document_id
+    LIMIT $2 OFFSET $3`, [projectId, limit, offset]);
   return result.rows.map(row => ({ ...row, references: row.refs })) as DocumentRow[];
 }
 
@@ -343,20 +428,24 @@ export async function readLeaderWorkDocuments(db: Database, projectId: string, q
     const sequence = await currentChangeSequence(snapshot, projectId);
     const cursor = decodeCursor(query.cursor, "documents") as SnapshotCursor | null;
     assertSnapshot(cursor, "documents", projectId, query.includeClosed === true, sequence);
-    const rows = await documentRows(snapshot, projectId, query.includeClosed === true);
-    const observedAt = new Date().toISOString();
-    const items = rows.slice(0, maxSnapshotRows).map(row => leaderWorkDocumentFromRow(row, observedAt))
-      .sort((a, b) => a.status.localeCompare(b.status) || a.title.localeCompare(b.title, "zh-CN") ||
-        a.documentId.localeCompare(b.documentId));
     const offset = cursor?.offset ?? 0;
-    if (offset > items.length) throw new DomainError("INVALID_CURSOR", "文档分页位置超出当前快照");
-    const page = items.slice(offset, offset + query.limit);
-    const nextOffset = offset + page.length;
+    const summary = await snapshot.query(`${documentFactsSql(query.includeClosed === true)}
+      SELECT count(*)::int AS total,
+        count(*) FILTER (WHERE status='draft')::int AS draft,
+        count(*) FILTER (WHERE status='published')::int AS published,
+        count(*) FILTER (WHERE status='archived')::int AS archived
+      FROM facts`, [projectId]);
+    const total = int(summary.rows[0]?.total ?? 0);
+    if (offset > total) throw new DomainError("INVALID_CURSOR", "文档分页位置超出当前快照");
+    const rows = await documentRows(snapshot, projectId, query.limit, offset, query.includeClosed === true);
+    const observedAt = new Date().toISOString();
+    const items = rows.map(row => leaderWorkDocumentFromRow(row, observedAt));
+    const nextOffset = offset + items.length;
     const counts = Object.fromEntries(["draft", "published", "archived"].map(status =>
-      [status, items.filter(item => item.status === status).length]));
+      [status, int(summary.rows[0]?.[status] ?? 0)]));
     return {
-      items: page, total: items.length, counts, changeSequence: sequence, observedAt, partial: rows.length > maxSnapshotRows,
-      nextCursor: nextOffset < items.length ? encodeCursor({ version: 1, view: "documents", projectId,
+      items, total, counts, changeSequence: sequence, observedAt, partial: false,
+      nextCursor: nextOffset < total ? encodeCursor({ version: 1, view: "documents", projectId,
         includeClosed: query.includeClosed === true, sequence, offset: nextOffset }) : null,
     };
   });
@@ -410,6 +499,7 @@ export class PgLeaderWorkWriter {
       if (!task.rows[0]) throw new DomainError("TASK_UNAVAILABLE", "Task does not exist in this project");
       if (int(task.rows[0].version) !== command.expectedTaskVersion)
         throw new DomainError("VERSION_CONFLICT", "Task changed before the plan update", int(task.rows[0].version));
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const existing = await client.query("SELECT version FROM task_work_plan WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       const observed = existing.rows[0] ? int(existing.rows[0].version) : 0;
@@ -435,6 +525,7 @@ export class PgLeaderWorkWriter {
       if (!task.rows[0]) throw new DomainError("TASK_UNAVAILABLE", "Task does not exist in this project");
       if (int(task.rows[0].version) !== command.expectedTaskVersion)
         throw new DomainError("VERSION_CONFLICT", "Task changed before the dependency update", int(task.rows[0].version));
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
       const existing = await client.query("SELECT version FROM task_dependency_head WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
         [projectId, command.taskId]);
       const observed = existing.rows[0] ? int(existing.rows[0].version) : 0;
@@ -469,14 +560,34 @@ export class PgLeaderWorkWriter {
     });
   }
 
+  async setTaskReview(principal: Principal, projectId: string, input: LeaderWorkReviewCommand): Promise<CommandResult> {
+    const command = leaderWorkReviewCommandSchema.parse({ ...input, projectId });
+    return this.perform(projectId, principal, command, "work.review.set", async client => {
+      const task = await client.query("SELECT version,current_revision_id FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
+        [projectId, command.taskId]);
+      if (!task.rows[0]) throw new DomainError("TASK_UNAVAILABLE", "Task does not exist in this project");
+      if (int(task.rows[0].version) !== command.expectedTaskVersion)
+        throw new DomainError("VERSION_CONFLICT", "Task changed before the review decision", int(task.rows[0].version));
+      if (task.rows[0].current_revision_id !== command.expectedTaskRevisionId)
+        throw new DomainError("VERSION_CONFLICT", "Task revision changed before the review decision");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
+      await client.query(`INSERT INTO leader_work_review(project_id,review_id,task_id,task_version,task_revision_id,
+        decision,reason,actor_id,operation_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [projectId, randomUUID(), command.taskId, command.expectedTaskVersion, command.expectedTaskRevisionId,
+          command.decision, command.reason, principal.actorId, command.operationId, new Date().toISOString()]);
+      return { status: "applied", operationId: command.operationId, entityId: command.taskId,
+        version: command.expectedTaskVersion };
+    });
+  }
+
   private async perform(projectId: string, principal: Principal,
-    command: LeaderWorkPlanCommand | LeaderWorkDependenciesCommand, commandType: string,
+    command: LeaderWorkPlanCommand | LeaderWorkDependenciesCommand | LeaderWorkReviewCommand, commandType: string,
     action: (client: PoolClient) => Promise<Extract<CommandResult, { status: "applied" }>>): Promise<CommandResult> {
     const client = await this.pool.connect();
     const hash = commandHash({ ...command, actorId: principal.actorId, projectId });
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work:${projectId}`]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-work-operation:${command.operationId}`]);
       const existing = await client.query(`SELECT actor_id,command_hash,command_type,result FROM operation_journal
         WHERE project_id=$1 AND operation_id=$2 FOR UPDATE`, [projectId, command.operationId]);
       if (existing.rows[0]) {

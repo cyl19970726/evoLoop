@@ -4,7 +4,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { commandSchema, idSchema } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
-import { leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema } from "@evoloop/contracts/work-index";
+import {
+  leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
+} from "@evoloop/contracts/work-index";
 import { ApiClient, CliApiError } from "./client.js";
 
 type Json = Record<string, unknown>;
@@ -41,6 +43,11 @@ function leaderCommandFor(receipt: Receipt) {
   if (receipt.kind === "work.dependencies.set" && receipt.path ===
     `/api/projects/${receipt.projectId}/work-management/tasks/${receipt.targetId}/dependencies`) {
     const checked = leaderWorkDependenciesCommandSchema.safeParse({ ...body, projectId: receipt.projectId, taskId: receipt.targetId });
+    return checked.success ? { data: checked.data, type: receipt.kind } : null;
+  }
+  if (receipt.kind === "work.review.set" && receipt.path ===
+    `/api/projects/${receipt.projectId}/work-management/tasks/${receipt.targetId}/review`) {
+    const checked = leaderWorkReviewCommandSchema.safeParse({ ...body, projectId: receipt.projectId, taskId: receipt.targetId });
     return checked.success ? { data: checked.data, type: receipt.kind } : null;
   }
   return null;

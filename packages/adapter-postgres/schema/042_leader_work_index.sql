@@ -45,7 +45,7 @@ CREATE TABLE leader_work_change (
   sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   project_id uuid NOT NULL REFERENCES project(project_id),
   entity_kind text NOT NULL CHECK(entity_kind IN ('task','document','assignment','delivery',
-    'observation','closure','run','impact','queue','plan','dependency')),
+    'observation','closure','run','impact','queue','plan','dependency','review')),
   entity_id uuid NOT NULL,
   task_id uuid,
   document_id uuid,
@@ -57,6 +57,28 @@ CREATE INDEX leader_work_change_project_idx ON leader_work_change(project_id,seq
 CREATE INDEX leader_work_change_task_idx ON leader_work_change(project_id,task_id,sequence);
 CREATE INDEX leader_work_change_document_idx ON leader_work_change(project_id,document_id,sequence);
 
+CREATE TABLE leader_work_review (
+  project_id uuid NOT NULL,
+  review_id uuid NOT NULL,
+  task_id uuid NOT NULL,
+  task_version integer NOT NULL CHECK(task_version>0),
+  task_revision_id uuid NOT NULL,
+  decision text NOT NULL CHECK(decision IN ('acknowledged','deferred')),
+  reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 1 AND 4000),
+  actor_id text NOT NULL,
+  operation_id uuid NOT NULL,
+  created_at timestamptz NOT NULL,
+  review_sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+  PRIMARY KEY(project_id,review_id),
+  UNIQUE(project_id,operation_id),
+  FOREIGN KEY(project_id,task_id,task_revision_id)
+    REFERENCES task_revision(project_id,task_id,revision_id)
+);
+CREATE INDEX leader_work_review_current_idx
+  ON leader_work_review(project_id,task_id,task_revision_id,review_sequence DESC);
+CREATE TRIGGER immutable_leader_work_review BEFORE UPDATE OR DELETE ON leader_work_review
+  FOR EACH ROW EXECUTE FUNCTION deny_immutable_change();
+
 CREATE FUNCTION record_leader_work_change() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   row_data jsonb:=to_jsonb(NEW);
@@ -66,6 +88,9 @@ DECLARE
   changed_document uuid;
 BEGIN
   row_data:=CASE WHEN TG_OP='DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  -- Sequence allocation and transaction commit use the same project lock order:
+  -- a later sequence cannot commit while an earlier one is still uncommitted.
+  PERFORM pg_advisory_xact_lock(hashtextextended('leader-work:'||(row_data->>'project_id'),0));
   changed_kind:=CASE
     WHEN TG_TABLE_NAME IN ('task','task_revision') THEN 'task'
     WHEN TG_TABLE_NAME IN ('process_document','document_revision','task_document_link') THEN 'document'
@@ -78,6 +103,7 @@ BEGIN
     WHEN TG_TABLE_NAME='resident_queue_entry' THEN 'queue'
     WHEN TG_TABLE_NAME='task_work_plan' THEN 'plan'
     WHEN TG_TABLE_NAME IN ('task_dependency','task_dependency_head') THEN 'dependency'
+    WHEN TG_TABLE_NAME='leader_work_review' THEN 'review'
   END;
   changed_task:=NULLIF(row_data->>'task_id','')::uuid;
   changed_document:=CASE
@@ -92,11 +118,13 @@ BEGIN
     WHEN TG_TABLE_NAME IN ('delivery','consumer_observation','task_closure','impact_review','resident_queue_entry',
       'task_work_plan') THEN (row_data->>'task_id')::uuid
     WHEN TG_TABLE_NAME IN ('task_dependency','task_dependency_head') THEN (row_data->>'task_id')::uuid
+    WHEN TG_TABLE_NAME='leader_work_review' THEN (row_data->>'review_id')::uuid
     ELSE COALESCE((row_data->>'run_id')::uuid,(row_data->>'task_id')::uuid)
   END;
   INSERT INTO leader_work_change(project_id,entity_kind,entity_id,task_id,document_id,version,changed_at)
     VALUES((row_data->>'project_id')::uuid,changed_kind,changed_entity,changed_task,changed_document,
-      NULLIF(row_data->>'version','')::integer,now());
+      CASE WHEN TG_TABLE_NAME='leader_work_review' THEN (row_data->>'task_version')::integer
+        ELSE NULLIF(row_data->>'version','')::integer END,now());
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END $$;
@@ -130,4 +158,6 @@ CREATE TRIGGER leader_work_plan_change AFTER INSERT OR UPDATE ON task_work_plan
 CREATE TRIGGER leader_work_dependency_change AFTER INSERT OR UPDATE OR DELETE ON task_dependency
   FOR EACH ROW EXECUTE FUNCTION record_leader_work_change();
 CREATE TRIGGER leader_work_dependency_head_change AFTER INSERT OR UPDATE ON task_dependency_head
+  FOR EACH ROW EXECUTE FUNCTION record_leader_work_change();
+CREATE TRIGGER leader_work_review_change AFTER INSERT ON leader_work_review
   FOR EACH ROW EXECUTE FUNCTION record_leader_work_change();

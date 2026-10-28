@@ -29,8 +29,18 @@ export const leaderWorkDependenciesCommandSchema = z.strictObject({
   dependsOnTaskIds: z.array(id).max(100).refine(ids => new Set(ids).size === ids.length, "duplicate Task IDs"),
   reason: note,
 });
+export const leaderWorkReviewCommandSchema = z.strictObject({
+  projectId: id,
+  operationId: id,
+  taskId: id,
+  expectedTaskVersion: z.number().int().positive(),
+  expectedTaskRevisionId: id,
+  decision: z.enum(["acknowledged", "deferred"]),
+  reason: note,
+});
 export type LeaderWorkPlanCommand = z.infer<typeof leaderWorkPlanCommandSchema>;
 export type LeaderWorkDependenciesCommand = z.infer<typeof leaderWorkDependenciesCommandSchema>;
+export type LeaderWorkReviewCommand = z.infer<typeof leaderWorkReviewCommandSchema>;
 
 export type LeaderWorkPhase =
   | "unknown"
@@ -107,6 +117,10 @@ export interface LeaderWorkTask {
     version?: number; actorId?: string | null; updatedAt?: string | null;
   } | null;
   dependencies: LeaderWorkDependency[];
+  review: {
+    reviewId: string; decision: "acknowledged" | "deferred";
+    actorId: string; reason: string; operationId: string; at: string;
+  } | null;
   dates: {
     createdAt: string;
     businessChangedAt: string;
@@ -150,7 +164,7 @@ export interface LeaderWorkDocument {
 export interface LeaderWorkChange {
   sequence: number;
   entityKind: "task" | "document" | "assignment" | "delivery" | "observation" |
-    "closure" | "run" | "impact" | "queue" | "plan" | "dependency";
+    "closure" | "run" | "impact" | "queue" | "plan" | "dependency" | "review";
   entityId: string;
   taskId: string | null;
   documentId: string | null;

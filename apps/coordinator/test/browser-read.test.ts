@@ -282,7 +282,11 @@ test("listed Task reads follow all page IDs in original status order, including 
   assert.equal(grants.register(first,200,jsonHeaders,taskPage(page1,"cursor/+one")),true);
   const taskSummary=`/api/projects/${projectId}/work-management/index?view=tasks&limit=50`;
   assert.equal(grants.allowedPaths.has(taskSummary),true);
+  assert.equal(grants.allowedPaths.has(`${taskSummary}&includeClosed=true`),true);
   assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+taskSummary,"GET","fetch",grants.allowedPaths),true);
+  assert.equal(allowBrowserRequest(current,`${BROWSER_ORIGIN+taskSummary}&cursor=opaque`,"GET","fetch",grants.allowedPaths),true);
+  assert.equal(allowBrowserRequest(current,`${BROWSER_ORIGIN+taskSummary}&cursor=opaque&cursor=again`,"GET","fetch",grants.allowedPaths),false);
+  assert.equal(allowBrowserRequest(current,`${BROWSER_ORIGIN+taskSummary}&cursor=%20opaque`,"GET","fetch",grants.allowedPaths),false);
   const second=`${first}&cursor=cursor%2F%2Bone`;
   assert.equal(allowBrowserRequest(current,BROWSER_ORIGIN+second,"GET","fetch",grants.allowedPaths),true);
   assert.equal(grants.register(second,200,jsonHeaders,taskPage(page2,"cursor=two")),true);
@@ -382,8 +386,10 @@ test("Document-list opt-in follows only exact list pages, never Document bodies 
   assert.equal(grants.register(first,200,jsonHeaders,docs(firstIds,"doc/+cursor")),true);
   const documentSummary=`/api/projects/${projectId}/work-management/index?view=documents&limit=50`;
   assert.equal(grants.allowedPaths.has(documentSummary),true);
+  assert.equal(grants.allowedPaths.has(`${documentSummary}&includeClosed=true`),true);
   assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+documentSummary,"GET","fetch",grants.allowedPaths),true);
-  assert.equal(grants.allowedPaths.size,2);
+  assert.equal(allowBrowserRequest(listScope,`${BROWSER_ORIGIN+documentSummary}&cursor=opaque`,"GET","fetch",grants.allowedPaths),true);
+  assert.equal(grants.allowedPaths.size,3);
   assert.equal(allowBrowserRequest(listScope,BROWSER_ORIGIN+second,"GET","fetch",grants.allowedPaths),true);
   for(const denied of [
     `${second}&extra=1`,`${first}&cursor=doc%2F%2Bcursor&cursor=again`,

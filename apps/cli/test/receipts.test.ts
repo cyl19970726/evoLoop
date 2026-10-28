@@ -143,6 +143,21 @@ test("Leader planning requests reconcile and replay through their exact route", 
   assert.equal((await retryReceipt(committed, store, apiUrl, token, replay.id, () => {}, actor2)).state, "confirmed");
 });
 
+test("Leader review decisions reconcile through the same exact-route receipt path", async t => {
+  const store = await temporaryStore(t), operationId = randomUUID(), actor = verifiedActor("original-agent");
+  const intent: Intent = { id: randomUUID(), projectId, operationId, kind: "work.review.set", targetId: entityId,
+    path: `/api/projects/${projectId}/work-management/tasks/${entityId}/review`,
+    body: { operationId, expectedTaskVersion: 2, expectedTaskRevisionId: randomUUID(),
+      decision: "deferred", reason: "Revisit after the dependency settles" },
+    recovery: { kind: "core", path: `/api/projects/${projectId}/operations/${operationId}` }, confirmation: "command" };
+  await store.prepare(apiUrl, token, intent, actor);
+  const command = { ...intent.body as object, projectId, taskId: entityId };
+  const transport = client(async () => response({ id: operationId, projectId, actorId: "original-agent",
+    commandType: intent.kind, commandHash: createHash("sha256").update(canonicalJson({ ...command, actorId: "original-agent" })).digest("hex"),
+    result: { status: "applied", operationId, entityId, version: 2 } }));
+  assert.equal((await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor)).state, "confirmed");
+});
+
 test("retry does not POST after unavailable, denied, malformed or unrelated not-found readback", async t => {
   for (const [body, status] of [[{ code: "UNAVAILABLE" }, 503], [{ code: "FORBIDDEN" }, 403],
     [{ code: "NOT_FOUND" }, 404], [{ id: randomUUID(), projectId, result: { status: "applied" } }, 200]] as const) {

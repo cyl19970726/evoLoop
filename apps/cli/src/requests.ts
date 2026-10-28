@@ -9,7 +9,7 @@ export type RequestName =
   | "document.import"
   | "knowledge.propose" | "knowledge.review" | "knowledge.publish" | "knowledge.reconcile" | "knowledge.retract-source"
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
-  | "work.plan.set" | "work.dependencies.set"
+  | "work.plan.set" | "work.dependencies.set" | "work.review.set"
   | "runtime.reconcile" | "runtime.recover";
 
 export class RequestInputError extends Error {
@@ -36,6 +36,7 @@ const help: readonly RequestHelp[] = [
   { name: "reference.task-decide", requiredBodyKeys: ["operationId", "decisionId", "taskRevisionId", "expectedTaskVersion", "slotId", "expectedHeadVersion", "decision", "kind", "referenceId", "revision", "contentHash", "reason", "actionImpact"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.plan.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedPlanVersion", "plannedStartAt", "dueAt", "priority", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.dependencies.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedDependencyVersion", "dependsOnTaskIds", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
+  { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
 ];
@@ -63,6 +64,10 @@ const workDependenciesBody = z.strictObject({
   dependsOnTaskIds: z.array(idSchema).max(100).refine(ids => new Set(ids).size === ids.length, "duplicate Task IDs"),
   reason: z.string().trim().min(1).max(4000),
 });
+const workReviewBody = z.strictObject({
+  operationId: idSchema, expectedTaskVersion: z.number().int().positive(), expectedTaskRevisionId: idSchema,
+  decision: z.enum(["acknowledged", "deferred"]), reason: z.string().trim().min(1).max(4000),
+});
 function bodySchema(name: string) {
   switch (name as RequestName) {
     case "document.import": return documentImportSchema;
@@ -77,6 +82,7 @@ function bodySchema(name: string) {
     case "reference.task-decide": return referenceTaskBody;
     case "work.plan.set": return workPlanBody;
     case "work.dependencies.set": return workDependenciesBody;
+    case "work.review.set": return workReviewBody;
     case "runtime.reconcile": return runtimeReconcileSchema;
     default: throw new RequestInputError(`Unsupported request ${name}; inspect request types`);
   }
@@ -218,6 +224,12 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
     }
     case "work.dependencies.set": {
       path = `${base}/work-management/tasks/${id}/dependencies`;
+      recovery = { kind: "core", path: `${base}/operations/${receiptId}` };
+      confirmation = "command";
+      break;
+    }
+    case "work.review.set": {
+      path = `${base}/work-management/tasks/${id}/review`;
       recovery = { kind: "core", path: `${base}/operations/${receiptId}` };
       confirmation = "command";
       break;
