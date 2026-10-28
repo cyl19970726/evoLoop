@@ -18,7 +18,8 @@ const intent = { artifactRef: "repo:result", artifactRevision: "abc", contentHas
   technicalResult: "passed" as const, technicalEvidence: "tests", reason: "done" };
 function submission(): OrdinaryRunSubmissionRecord { return { projectId, id: randomUUID(), runId, taskId, sessionId,
   taskRevisionId: run.taskRevisionId, runInputHash: run.inputHash, operationId: randomUUID(), commandHash: "c".repeat(64),
-  deliveryOperationId: randomUUID(), deliveryIntent: intent, submittedBy: actor.actorId, state: "submitted", version: 1,
+  deliveryOperationId: randomUUID(), deliveryCommandHash: null, deliveryIntent: intent,
+  submittedBy: actor.actorId, state: "submitted", version: 1,
   expectedTaskVersion: null, terminalRunVersion: null, sealedBy: null, deliveryId: null, reason: null,
   createdAtUtc: run.createdAt, updatedAtUtc: run.createdAt }; }
 

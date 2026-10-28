@@ -66,7 +66,8 @@ test('first signed intent is unique, fixed, versioned and scoped to explicit rec
       [projectId,taskId,revisionId,sessionId,now]);
     assert.equal(await store.getFixedRecipient(runId),'worker');
     const first:OrdinaryRunSubmissionRecord={projectId,id:randomUUID(),runId,taskId,sessionId,taskRevisionId:revisionId,
-      runInputHash:hash,operationId:randomUUID(),commandHash:hash,deliveryOperationId:randomUUID(),deliveryIntent:intent,
+      runInputHash:hash,operationId:randomUUID(),commandHash:hash,deliveryOperationId:randomUUID(),
+      deliveryCommandHash:null,deliveryIntent:intent,
       submittedBy:'worker',state:'submitted',version:1,expectedTaskVersion:null,terminalRunVersion:null,
       sealedBy:null,deliveryId:null,reason:null,createdAtUtc:now,updatedAtUtc:now};
     await assert.rejects(store.insert({...first,state:'blocked',reason:'forged initial settlement'}),
@@ -80,7 +81,7 @@ test('first signed intent is unique, fixed, versioned and scoped to explicit rec
     await assert.rejects(store.insert({...first,runId:randomUUID()}),/fixed binding|foreign key/);
     await assert.rejects(store.update({...first,submittedBy:'reserver',state:'sealing',version:2},1),/original intent/);
     await assert.rejects(store.update({...first,state:'sealing',version:2},2),/version changed/);
-    const sealFields={expectedTaskVersion:1,terminalRunVersion:1,sealedBy:'coordinator'};
+    const sealFields={expectedTaskVersion:1,terminalRunVersion:1,sealedBy:'coordinator',deliveryCommandHash:hash};
     await store.update({...first,...sealFields,state:'sealing',version:2,updatedAtUtc:'2026-10-29T00:01:00.000Z'},1);
     assert.equal((await store.get(runId))?.version,2);
     const blockedReason='Delivery receipt is unresolved; reconcile before retry';
@@ -128,15 +129,37 @@ test('a later workflow command cannot consume the signed Delivery operation ID',
 test('the signer can read a definite rejection of the reserved Delivery operation',async()=>{
   const client=await pool.connect();
   try{
-    const saved=await new PgOrdinaryRunSubmissionStore(client,projectId).get(runId);
-    assert.ok(saved);
+    const dedicatedRunId=randomUUID(),dedicatedOperationId=randomUUID();
+    const store=new PgOrdinaryRunSubmissionStore(client,projectId);
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,
+      session_id,operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,'fixed',$8,'completed',1,$10,'reserver',$9,$9)`,
+      [projectId,dedicatedRunId,taskId,revisionId,basisId,sessionId,randomUUID(),hash,now,`turn-${dedicatedRunId}`]);
+    const saved:OrdinaryRunSubmissionRecord={projectId,id:randomUUID(),runId:dedicatedRunId,taskId,sessionId,
+      taskRevisionId:revisionId,runInputHash:hash,operationId:randomUUID(),commandHash:hash,
+      deliveryOperationId:dedicatedOperationId,deliveryCommandHash:null,deliveryIntent:intent,
+      submittedBy:'worker',state:'submitted',version:1,expectedTaskVersion:null,terminalRunVersion:null,
+      sealedBy:null,deliveryId:null,reason:null,createdAtUtc:now,updatedAtUtc:now};
+    await store.insert(saved);
+    await store.update({ ...saved,state:'sealing',version:2,
+      expectedTaskVersion:1,terminalRunVersion:1,sealedBy:'coordinator',deliveryCommandHash:hash,
+      updatedAtUtc:'2026-10-29T00:04:00.000Z' },1);
+    await client.query('COMMIT');
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,$3,$4,'delivery.record',$5::jsonb,$6)`,
+      [projectId,saved.deliveryOperationId,saved.submittedBy,'b'.repeat(64),
+        JSON.stringify({status:'rejected',operationId:saved.deliveryOperationId,code:'VERSION_CONFLICT',message:'Task changed'}),now]);
+    await assert.rejects(client.query('COMMIT'),/reserved for a signed Run submission/);
+    await client.query('ROLLBACK');
     await client.query('BEGIN');
     await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
       VALUES($1,$2,$3,$4,'delivery.record',$5::jsonb,$6)`,
       [projectId,saved.deliveryOperationId,saved.submittedBy,hash,
         JSON.stringify({status:'rejected',operationId:saved.deliveryOperationId,code:'VERSION_CONFLICT',message:'Task changed'}),now]);
     await client.query('COMMIT');
-    assert.equal(await new PgOrdinaryRunSubmissionStore(client,projectId).hasWorkflowOperation(saved.deliveryOperationId),true);
+    assert.equal(await store.hasWorkflowOperation(saved.deliveryOperationId),true);
   }catch(error){await client.query('ROLLBACK');throw error;}
   finally{client.release();}
 });

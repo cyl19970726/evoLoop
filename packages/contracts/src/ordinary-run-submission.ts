@@ -38,6 +38,7 @@ export interface OrdinaryRunSubmissionRecord {
   operationId: string;
   commandHash: string;
   deliveryOperationId: string;
+  deliveryCommandHash: string | null;
   deliveryIntent: OrdinaryRunDeliveryIntent;
   submittedBy: string;
   state: OrdinaryRunSubmissionState;

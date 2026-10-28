@@ -12,7 +12,8 @@ const iso = (value: Date | string): string => value instanceof Date ? value.toIS
 const recordOf = (r: QueryResultRow): OrdinaryRunSubmissionRecord => ({
   projectId:r.project_id,id:r.submission_id,runId:r.run_id,taskId:r.task_id,sessionId:r.session_id,
   taskRevisionId:r.task_revision_id,runInputHash:r.run_input_hash,operationId:r.operation_id,
-  commandHash:r.command_hash,deliveryOperationId:r.delivery_operation_id,deliveryIntent:r.delivery_intent,
+  commandHash:r.command_hash,deliveryOperationId:r.delivery_operation_id,
+  deliveryCommandHash:r.delivery_command_hash,deliveryIntent:r.delivery_intent,
   submittedBy:r.submitted_by,state:r.state,version:r.version,expectedTaskVersion:r.expected_task_version,
   terminalRunVersion:r.terminal_run_version,sealedBy:r.sealed_by,deliveryId:r.delivery_id,reason:r.reason,
   createdAtUtc:iso(r.created_at_utc),updatedAtUtc:iso(r.updated_at_utc),
@@ -90,11 +91,11 @@ export class PgOrdinaryRunSubmissionStore {
   async insert(item: OrdinaryRunSubmissionRecord): Promise<void> {
     this.scope(item.projectId);
     await this.client.query(`INSERT INTO ordinary_run_submission(project_id,submission_id,run_id,task_id,session_id,
-      task_revision_id,run_input_hash,operation_id,command_hash,delivery_operation_id,delivery_intent,
+      task_revision_id,run_input_hash,operation_id,command_hash,delivery_operation_id,delivery_command_hash,delivery_intent,
       submitted_by,state,version,expected_task_version,terminal_run_version,sealed_by,delivery_id,reason,
-      created_at_utc,updated_at_utc) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      created_at_utc,updated_at_utc) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
       [item.projectId,item.id,item.runId,item.taskId,item.sessionId,item.taskRevisionId,item.runInputHash,
-        item.operationId,item.commandHash,item.deliveryOperationId,JSON.stringify(item.deliveryIntent),item.submittedBy,
+        item.operationId,item.commandHash,item.deliveryOperationId,item.deliveryCommandHash,JSON.stringify(item.deliveryIntent),item.submittedBy,
         item.state,item.version,item.expectedTaskVersion,item.terminalRunVersion,item.sealedBy,item.deliveryId,
         item.reason,item.createdAtUtc,item.updatedAtUtc]);
   }
@@ -109,10 +110,10 @@ export class PgOrdinaryRunSubmissionStore {
         current.commandHash,current.deliveryOperationId,current.deliveryIntent,current.submittedBy,current.createdAtUtc]))
       throw new DomainError("SUBMISSION_CONFLICT","Run submission original intent cannot change");
     const r=await this.client.query(`UPDATE ordinary_run_submission SET state=$3,version=$4,
-      expected_task_version=$5,terminal_run_version=$6,sealed_by=$7,delivery_id=$8,reason=$9,updated_at_utc=$10
-      WHERE project_id=$1 AND run_id=$2 AND version=$11`,
+      expected_task_version=$5,terminal_run_version=$6,sealed_by=$7,delivery_id=$8,reason=$9,updated_at_utc=$10,
+      delivery_command_hash=$11 WHERE project_id=$1 AND run_id=$2 AND version=$12`,
       [item.projectId,item.runId,item.state,item.version,item.expectedTaskVersion,item.terminalRunVersion,
-        item.sealedBy,item.deliveryId,item.reason,item.updatedAtUtc,expectedVersion]);
+        item.sealedBy,item.deliveryId,item.reason,item.updatedAtUtc,item.deliveryCommandHash,expectedVersion]);
     if(!r.rowCount)throw new DomainError("VERSION_CONFLICT","Run submission version changed",(await this.get(item.runId))?.version);
   }
 

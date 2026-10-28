@@ -80,12 +80,17 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
         return blocked(s, "TASK_INPUT_OR_DELIVERY_CHANGED");
       const fixed = { expectedTaskVersion: detail.task.version, terminalRunVersion: run.version,
         state: "sealing" as const, sealedBy: deps.sealer.actorId };
-      if (!await save(s, fixed)) return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
-      s = { ...s, ...fixed, version: s.version + 1 };
+      const command = deliveryCommand({ ...s, ...fixed });
+      if (!command) return { status: "unknown", reason: "DELIVERY_COMMAND_UNAVAILABLE" };
+      const signed = { ...fixed, deliveryCommandHash: hash(s.submittedBy, command) };
+      if (!await save(s, signed)) return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
+      s = { ...s, ...signed, version: s.version + 1 };
     }
     if (s.sealedBy !== deps.sealer.actorId || !deliveryCommand(s))
       return { status: "unknown", reason: "SEAL_OWNER_OR_TASK_VERSION_MISSING" };
     const command = deliveryCommand(s)!;
+    if (s.deliveryCommandHash !== hash(s.submittedBy, command))
+      return blocked(s, "DELIVERY_COMMAND_MISMATCH");
     let operation: Operation | null;
     try { operation = await deps.workflow.getOperation(actor, s.projectId, s.deliveryOperationId); }
     catch { return { status: "unknown", reason: "DELIVERY_OPERATION_UNCONFIRMED" }; }
@@ -115,7 +120,7 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
     }
     if (operation.projectId !== s.projectId || operation.id !== s.deliveryOperationId ||
       operation.actorId !== s.submittedBy || operation.commandType !== "delivery.record" ||
-      operation.commandHash !== hash(s.submittedBy, command) ||
+      operation.commandHash !== s.deliveryCommandHash ||
       operation.result.operationId !== s.deliveryOperationId ||
       (operation.result.status === "applied" && operation.result.entityId !== s.taskId))
       return blocked(s, "DELIVERY_OPERATION_MISMATCH");

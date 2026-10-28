@@ -5,6 +5,7 @@ CREATE TABLE ordinary_run_submission (
   run_input_hash text NOT NULL CHECK (run_input_hash ~ '^[a-fA-F0-9]{64}$'),
   operation_id uuid NOT NULL, command_hash text NOT NULL CHECK (command_hash ~ '^[a-fA-F0-9]{64}$'),
   delivery_operation_id uuid NOT NULL,
+  delivery_command_hash text CHECK (delivery_command_hash ~ '^[a-fA-F0-9]{64}$'),
   delivery_intent jsonb NOT NULL,
   submitted_by text NOT NULL CHECK (length(btrim(submitted_by)) > 0),
   state text NOT NULL CHECK (state IN ('submitted','blocked','sealing','unknown','sealed','rejected')),
@@ -32,12 +33,12 @@ CREATE TABLE ordinary_run_submission (
     jsonb_typeof(delivery_intent->'technicalEvidence')='string' AND
     jsonb_typeof(delivery_intent->'reason')='string'),
   CHECK (updated_at_utc >= created_at_utc),
-  CHECK (state <> 'submitted' OR (version=1 AND expected_task_version IS NULL AND
+  CHECK (state <> 'submitted' OR (version=1 AND expected_task_version IS NULL AND delivery_command_hash IS NULL AND
     terminal_run_version IS NULL AND sealed_by IS NULL AND delivery_id IS NULL AND reason IS NULL)),
   CHECK (state <> 'sealed' OR (expected_task_version IS NOT NULL AND terminal_run_version IS NOT NULL
     AND sealed_by IS NOT NULL AND delivery_id IS NOT NULL)),
   CHECK (state NOT IN ('sealing','unknown') OR (expected_task_version IS NOT NULL
-    AND terminal_run_version IS NOT NULL AND sealed_by IS NOT NULL)),
+    AND terminal_run_version IS NOT NULL AND sealed_by IS NOT NULL AND delivery_command_hash IS NOT NULL)),
   CHECK (state <> 'rejected' OR (reason IS NOT NULL AND length(btrim(reason)) > 0)),
   CHECK (state <> 'blocked' OR (reason IS NOT NULL AND length(btrim(reason)) > 0 AND delivery_id IS NULL)),
   CHECK (state NOT IN ('submitted','blocked','sealing','unknown') OR delivery_id IS NULL)
@@ -55,6 +56,7 @@ BEGIN
       OLD.run_input_hash,OLD.operation_id,OLD.command_hash,OLD.delivery_operation_id,
       OLD.delivery_intent,OLD.submitted_by,OLD.created_at_utc)
     OR NEW.version<>OLD.version+1 OR NEW.updated_at_utc<OLD.updated_at_utc
+    OR (OLD.delivery_command_hash IS NOT NULL AND NEW.delivery_command_hash IS DISTINCT FROM OLD.delivery_command_hash)
     OR OLD.state IN ('sealed','rejected')
     OR (OLD.state='submitted' AND NEW.state NOT IN ('blocked','sealing','rejected'))
     OR (OLD.state='blocked' AND NEW.state NOT IN ('blocked','sealing','rejected'))
@@ -93,10 +95,12 @@ BEGIN
   -- Preserve a definite rejection of the signer's original Delivery command so
   -- the sealer can read and classify that operation instead of looping on unknown.
   IF NEW.command_type='delivery.record' AND NEW.actor_id=s.submitted_by
+    AND NEW.command_hash=s.delivery_command_hash
     AND NEW.result->>'status'='rejected' AND s.state IN ('sealing','unknown') THEN
     RETURN NULL;
   END IF;
   IF NEW.command_type<>'delivery.record' OR NEW.actor_id<>s.submitted_by
+    OR NEW.command_hash IS DISTINCT FROM s.delivery_command_hash
     OR NEW.result->>'status'<>'applied' OR NEW.result->>'entityId'<>s.task_id::text
     OR s.state NOT IN ('sealing','unknown') OR NOT EXISTS (
       SELECT 1 FROM delivery d WHERE d.project_id=s.project_id

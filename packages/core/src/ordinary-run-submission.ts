@@ -60,7 +60,7 @@ export async function submitOrdinaryRun(
     projectId: command.projectId, id: command.submissionId, runId: run.id,
     taskId: run.taskId, sessionId: run.sessionId, taskRevisionId: run.taskRevisionId,
     runInputHash: run.inputHash, operationId: command.operationId, commandHash,
-    deliveryOperationId: command.deliveryOperationId, deliveryIntent: command.deliveryIntent,
+    deliveryOperationId: command.deliveryOperationId, deliveryCommandHash: null, deliveryIntent: command.deliveryIntent,
     submittedBy: principal.actorId, state: "submitted", version: 1,
     expectedTaskVersion: null, terminalRunVersion: null, sealedBy: null,
     deliveryId: null, reason: null, createdAtUtc: nowUtc, updatedAtUtc: nowUtc,
