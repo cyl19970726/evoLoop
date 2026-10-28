@@ -87,7 +87,13 @@ Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物
 
 通过当前 Task 协作通道提交 `discussion.action.request` 时，`inputHash` 逐字取该通道原 Run 的 `inputHash`；补丁、正文或产物的 hash 应固定在 `detail` 报告中，不能替代 Run 输入 hash。先回读 Run、通道、报告的固定修订和 `command schema discussion.action.request`；JSON 形状通过只说明结构有效，仍须核 Run 状态、参与者、版本和来源语义。原 Run 确认终态后，若仍需工程动作，先形成新的真实 Run 与自己的通道、Run 输入 hash 和同 Run 来源的报告，再在新答复指导下形成新意图；保留旧拒绝，不由 Lead 代造 worker 签名。具体命令和动作回执仍按本节的正式工程入口处理。
 
-工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态 Run 由有权 Lead 核终态和产物后登记 Delivery；broker worker 按下文签真实提交意图，封存者另留身份。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。同一 owned Session 的受限常驻队列见[Lead 分派、返工与再次承接](#lead-分派返工与再次承接)；本节的 `runtime.run.reserve` 是显式手动路径。以所连服务、CLI schema、现行授权和队列读回核可用范围；任意 Desktop 自动唤醒仍未验证。
+工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态及队列 Run 的执行者按下文在运行中签 `ordinary.submit`，系统核终态后封存匹配 Delivery；broker worker 仍走下文的独立提交路径。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。同一 owned Session 的受限常驻队列见[Lead 分派、返工与再次承接](#lead-分派返工与再次承接)；本节的 `runtime.run.reserve` 是显式手动路径。以所连服务、CLI schema、现行授权和队列读回核可用范围；任意 Desktop 自动唤醒仍未验证。
+
+### 普通 Run 本人提交与终态封存
+
+先用本 Run 配置的 CLI `session` 核身份，读取固定输入和产物原件。`request schema ordinary.submit` 给出精确正文：`projectId`、原 `operationId`、独立 `submissionId`、`runId`、`taskId`、`sessionId`、`taskRevisionId`、`runInputHash`、预留的 `deliveryOperationId`，以及 `deliveryIntent` 中产物引用、修订、内容 hash、`technicalResult`、检查证据和原因。在 Run 仍有效时用 `request ordinary.submit --project UUID --file PRIVATE_JSON` 署名提交；服务从该 Run 的固定接收者校验作者，不能用请求字段指定作者，队列预留者或 Session 创建者也不能代签。`failed`／`interrupted` 的部分成果若提交，技术结果须为 `failed`。
+
+请求结果未知时保留私有 receipt 和原 JSON，用 `receipts show`／`receipts reconcile` 核原 operation；只有原意图满足 CLI 重试条件时才用 `receipts retry`，不换 ID、作者或正文。提交确认只证明意图保存。Run 终态后，用 `get /api/projects/PROJECT_UUID/ordinary-runs/RUN_UUID/submission` 读取其状态，再核 `deliveryOperationId` 与 Task Delivery；`sealed` 须匹配同一 Run、作者、产物和结果。`blocked`、`unknown`、`rejected` 或无提交时记录原因并交给责任者恢复，不让 Lead 代写或据聊天末句补造结果。封存者与提交作者分别留痕；Delivery 不代消费者签使用，也不自动关闭 Task。
 
 ## 观察会话、具体接手与普通消息
 
