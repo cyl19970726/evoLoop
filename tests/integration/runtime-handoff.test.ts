@@ -5,6 +5,7 @@ import pg from "pg";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 
 function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
@@ -19,7 +20,7 @@ function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: Postgr
   return runtime;
 }
 const url = process.env.TEST_DATABASE_URL;
-if (!url || !/evoloop_runtime_handoff_test/.test(new URL(url).pathname)) {
+if (!url || !/\/evoloop_[a-z0-9_]*test$/.test(new URL(url).pathname)) {
   throw new Error("dedicated evoloop_runtime_handoff_test database required");
 }
 const schema = `el_runtime_handoff_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
@@ -63,24 +64,26 @@ test("runtime handoff receipts are ordered, actor-attributed observations", asyn
   });
 
   applied(await issue(owner, { type: "project.create", title: "Runtime handoff integration" }));
+  const ownerRoleId=fixtureRoleId(owner.actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const documentId = randomUUID();
   const document = applied(await issue(owner, { type: "document.create", documentId, title: "Handoff requirement", body: "Accepted basis" }));
   applied(await issue(owner, { type: "document.adopt", documentId, expectedVersion: 1,
     revisionId: document.revisionId, reason: "Initial basis" }));
   const taskId = randomUUID();
   applied(await issue(owner, { type: "task.create", taskId, title: "Produce output", content: "# One result",
-    acceptance: "Inspect the result", owner: owner.actorId, documentIds: [documentId], evidence: "Accepted requirement" }));
+    acceptance: "Inspect the result", owner: ownerRoleId, documentIds: [documentId], evidence: "Accepted requirement" }));
   const taskReady = applied(await issue(owner, { type: "task.start", taskId, expectedVersion: 1,
     basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" }));
 
   const sessionId = randomUUID();
   const cwd = "/tmp/evoloop-runtime-handoff";
   const authorizationScope = "project-workspace:handoff-test";
-  applied(await issue(owner, { type: "runtime.session.reserve", sessionId, roleId: owner.actorId, cwd,
+  applied(await issue(owner, { type: "runtime.session.reserve", sessionId, roleId: ownerRoleId, cwd,
     authorizationScope, sandbox: "danger-full-access", approvalPolicy: "never" }));
   await runtime.beginSessionCreate(projectId, sessionId);
   await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId,
-    roleId: owner.actorId, cwd, authorizationScope, nativeThreadId: "handoff-thread", nativeSessionId: "handoff-session" });
+    roleId: ownerRoleId, cwd, authorizationScope, nativeThreadId: "handoff-thread", nativeSessionId: "handoff-session" });
 
   const runId = randomUUID();
   const runReceipt = applied(await issue(owner, { type: "runtime.run.reserve", runId, taskId, sessionId,

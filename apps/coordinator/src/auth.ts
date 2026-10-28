@@ -7,7 +7,17 @@ export const authConfigSchema = z.array(z.strictObject({
   actorId: z.string().min(1).max(100),
   projectIds: z.array(z.uuid()).min(1),
   permissions: z.array(z.enum(["read", "write", "review"])).min(1),
-})).min(1).refine(items => new Set(items.map(x => x.token)).size === items.length, "Tokens must be unique");
+  identityKind: z.enum(["agent", "human"]).optional(),
+})).min(1).refine(items => new Set(items.map(x => x.token)).size === items.length, "Tokens must be unique")
+  .refine(items => {
+    const kinds = new Map<string, string>();
+    for (const item of items) for (const projectId of item.projectIds) {
+      const key = `${projectId}:${item.actorId}`, kind = item.identityKind ?? "agent";
+      if (kinds.has(key) && kinds.get(key) !== kind) return false;
+      kinds.set(key, kind);
+    }
+    return true;
+  }, "One actor cannot mix human and agent credentials in a project");
 export type AuthConfig = z.infer<typeof authConfigSchema>;
 /** A study declaration keeps authority only while its actual reviewer credential remains configured. */
 export function hasCurrentStudyReviewer(credentials: AuthConfig, projectId: string, actorId: string): boolean {
@@ -22,7 +32,7 @@ export function authenticate(header: string | undefined, credentials: AuthConfig
   for (const entry of credentials) {
     const expected = Buffer.from(entry.token);
     if (token.length === expected.length && timingSafeEqual(token, expected)) {
-      return { actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions] };
+      return { actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions], identityKind: entry.identityKind ?? "agent" };
     }
   }
   return null;

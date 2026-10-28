@@ -248,7 +248,8 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
   const names034=(await client.query('SELECT name FROM pgmigrations ORDER BY run_on,name')).rows.map(row=>row.name);
   assert.deepEqual([...names034].sort(), readdirSync(migrations).filter(name=>name.endsWith('.mjs'))
     .map(name=>name.slice(0,-4)).sort(), 'upgrade must apply every current migration exactly once');
-  assert.ok(names034.includes('038_native_observation') && names034.includes('039_reviewed_claim_rework'));
+  assert.ok(names034.includes('038_native_observation') && names034.includes('039_reviewed_claim_rework')
+    && names034.includes('040_task_acceptance_mode') && names034.includes('041_ordinary_run_submission'));
   assert.equal((await client.query('SELECT count(*)::int AS count FROM session_native_input_request')).rows[0].count,0,
     '037 must not invent native questions or reply intents from historical Sessions');
   assert.equal((await client.query('SELECT count(*)::int AS count FROM session_native_observation')).rows[0].count,0,

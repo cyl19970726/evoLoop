@@ -593,7 +593,8 @@ export class RuntimeRunner {
     }
     const cliEntry = await this.deps.cliEntryForRun?.(session, run) ?? null;
     const roleContext = session && cliEntry ? await this.deps.roleContextForRun?.(session,run) ?? null : null;
-    return buildLightweightInput(run, fixed.revision, fixed.basis, documents, cliEntry, roleContext);
+    return buildLightweightInput(run, fixed.revision, fixed.basis, documents, cliEntry, roleContext,
+      current.revision?.id === run.taskRevisionId ? current.proposal ?? null : null);
   }
 
   private async evaluationSources(principal: Principal, session: RuntimeSessionRecord, run: RuntimeRunRecord,

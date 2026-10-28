@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
@@ -37,6 +38,8 @@ test("task history exposes persisted states and reviewed-stage correction append
     finally { await cleanup.end(); }
   });
   applied(await issue(reviewer, { type: "project.create", title: "History regression" }));
+  const ownerRoleId=fixtureRoleId(reviewer.actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const goalId = randomUUID(), firstStageId = randomUUID(), secondStageId = randomUUID();
   applied(await issue(reviewer, { type: "goal.create", goalId, outcome: "One verified outcome", constraints: "Small scope",
     consumer: "reader", authority: "project owner", scope: "single stage", owner: reviewer.actorId }));
@@ -61,10 +64,10 @@ test("task history exposes persisted states and reviewed-stage correction append
   applied(await issue(reviewer, { type: "document.adopt", documentId, expectedVersion: 1,
     revisionId: document.revisionId, reason: "Accepted source" }));
   applied(await issue(reviewer, { type: "task.create", taskId, title: "Historical task", content: "# Read it\nUse the fixed source.",
-    acceptance: "One answer", owner: reviewer.actorId, documentIds: [documentId] }));
+    acceptance: "One answer", owner: ownerRoleId, documentIds: [documentId] }));
   const updated = applied(await issue(reviewer, { type: "task.update", taskId, expectedVersion: 1,
     title: "Historical task", content: "# Read it\nUse the fixed source and record the answer.",
-    acceptance: "One answer", owner: reviewer.actorId, documentIds: [documentId], reason: "Clarify the instruction" }));
+    acceptance: "One answer", owner: ownerRoleId, documentIds: [documentId], reason: "Clarify the instruction" }));
   applied(await issue(reviewer, { type: "task.start", taskId, expectedVersion: updated.version,
     basis: [{ documentId, revisionId: document.revisionId }], reason: "Bound to original source" }));
   const taskBefore = await service.getTask(reviewer, projectId, taskId);

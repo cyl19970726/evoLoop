@@ -14,12 +14,17 @@ function sameMisfire(a: ScheduleRevision["misfire"], b: ScheduleRevision["misfir
 }
 const sameTemplate = (a: ScheduleRevision["template"], b: ScheduleRevision["template"]): boolean =>
   a.title === b.title && a.content === b.content && a.acceptance === b.acceptance && a.owner === b.owner &&
+  a.consumer === b.consumer && a.acceptanceMode === b.acceptanceMode &&
   a.managedTarget?.loopId === b.managedTarget?.loopId && a.managedTarget?.stageId === b.managedTarget?.stageId;
 
 /** Called by the shared command journal inside the project transaction. */
 export async function applySchedule(tx: SchedulingTransaction, principal: Principal, command: ScheduleCommand, now: string) {
   if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "Schedule authorization requires project review permission");
   if (command.authorization.authorizedBy !== principal.actorId) throw new DomainError("FORBIDDEN", "Schedule authorization must identify the authenticated reviewer");
+  if (!command.template.managedTarget && command.template.acceptanceMode === "human_required" && !command.template.consumer)
+    throw new DomainError("ACCEPTANCE_POLICY", "human-required scheduled Tasks need the exact human consumer actor");
+  if (command.template.managedTarget && (command.template.acceptanceMode || command.template.consumer))
+    throw new DomainError("ACCEPTANCE_POLICY", "managed cognition schedules use their signed Decision contract");
   if (command.state === "active" && command.template.managedTarget) {
     const target = command.template.managedTarget;
     const stage = await tx.getStage(target.stageId);
@@ -32,6 +37,12 @@ export async function applySchedule(tx: SchedulingTransaction, principal: Princi
   const current = await tx.getSchedule(command.scheduleId);
   if (command.type === "schedule.create" && current) throw new DomainError("ALREADY_EXISTS", "Schedule already exists");
   if (command.type === "schedule.revise" && (!current || current.version !== command.expectedVersion)) throw new DomainError("VERSION_CONFLICT", "Schedule version changed", current?.version);
+  if (command.type === "schedule.revise" && current &&
+    current.revision.template.acceptanceMode === "human_required" &&
+    (command.template.acceptanceMode !== current.revision.template.acceptanceMode ||
+      command.template.consumer !== current.revision.template.consumer) &&
+    (principal.identityKind !== "human" || principal.actorId !== current.revision.template.consumer))
+    throw new DomainError("TRUSTED_HUMAN_REQUIRED", "changing human acceptance requires the current human consumer");
   if (current?.state === "stopped" && command.state !== "stopped") throw new DomainError("SCHEDULE_STOPPED", "A stopped schedule cannot silently resume; create a separately authorized definition");
   if (current && command.state !== "active") {
     const previous = current.revision;

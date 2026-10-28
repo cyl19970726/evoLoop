@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
@@ -37,7 +38,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   const otherGoalId=randomUUID(),otherStageId=randomUUID(),foreignStageId=randomUUID();
   const firstTask=randomUUID(),businessTask=randomUUID(),waitingTask=randomUUID(),newTask=randomUUID();
   const otherStageTask=randomUUID(),foreignTask=randomUUID(),basisDocumentId=randomUUID();
-  const owner="business-resume-owner",cognition="business-resume-cognition",business="business-resume-worker";
+  const owner="business-resume-owner",cognition=fixtureRoleId("business-resume-cognition"),business=fixtureRoleId("business-resume-worker");
   const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}});
@@ -61,6 +62,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   const denied=(promise:Promise<unknown>,code:string)=>assert.rejects(promise,
     error=>error instanceof OrchestrationError&&error.code===code);
   await wf({type:"project.create",title:"Business waiting recovery"});
+  for (const roleId of [cognition,business]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"One corrected report",constraints:"Fixed source",consumer:owner,authority:owner,scope:"test",owner});
   await wf({type:"goal.create",goalId:otherGoalId,outcome:"Other work",constraints:"Separate scope",consumer:owner,authority:owner,scope:"test",owner});
   for(const [id,goal] of [[stageId,goalId],[otherStageId,goalId],[foreignStageId,otherGoalId]]){

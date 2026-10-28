@@ -8,9 +8,10 @@ import { PgSchedulingStore, ScheduleStoreConflict } from "../../packages/adapter
 import { migrate, PostgresUnitOfWork } from "../../packages/adapter-postgres/src/index.js";
 import type { Principal } from "../../packages/contracts/src/index.js";
 import type { ScheduleDefinition } from "../../packages/contracts/src/scheduling.js";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const url = process.env.TEST_DATABASE_URL;
-if (!url || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(url)) throw new Error("TEST_DATABASE_URL must name a dedicated evoloop_*test database");
+if (!url || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(url)) throw new Error("TEST_DATABASE_URL must name a dedicated evoloop_*test database");
 
 test("real PG schedule reservation creates one todo Task and survives replay", async t => {
   await migrate(url);
@@ -18,13 +19,15 @@ test("real PG schedule reservation creates one todo Task and survives replay", a
   t.after(() => pool.end());
   const projectId = randomUUID();
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'scheduling fixture',now())", [projectId]);
+  const ownerRoleId = fixtureRoleId("schedule-owner");
+  await seedFixtureRole(pool, projectId, ownerRoleId);
   const scheduleId = randomUUID(), revisionId = randomUUID();
   const principal: Principal = { actorId: "schedule-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const definition: ScheduleDefinition = {
     projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: "2026-10-20T09:00:00.000Z",
     revision: { projectId, scheduleId, id: revisionId, version: 1, timezone: "Asia/Taipei",
       rule: { kind: "interval", anchorUtc: "2026-10-20T09:00:00.000Z", everyMinutes: 60 }, misfire: { kind: "bounded", maxCatchUp: 3 }, overlap: "queue",
-      template: { title: "Inspect a result", content: "# Check new evidence", acceptance: "Record evidence", owner: "schedule-owner" },
+      template: { title: "Inspect a result", content: "# Check new evidence", acceptance: "Record evidence", owner: ownerRoleId },
       authorization: { scopeId: "scope:test", roleId: "role:test", authorizedBy: principal.actorId, expiresAtUtc: null },
       reason: "fixture schedule", actorId: principal.actorId, createdAtUtc: "2026-10-20T09:00:00.000Z" },
   };
@@ -63,10 +66,12 @@ test("concurrent ticks reserve the same UTC occurrence once", async t => {
   const pool = new pg.Pool({ connectionString: url, max: 4 }); t.after(() => pool.end());
   const projectId = randomUUID(), scheduleId = randomUUID(), revisionId = randomUUID();
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'concurrent fixture',now())", [projectId]);
+  const ownerRoleId = fixtureRoleId("owner");
+  await seedFixtureRole(pool, projectId, ownerRoleId);
   const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["write", "review"] };
   const definition: ScheduleDefinition = { projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: "2026-10-20T09:00:00.000Z", revision: {
     projectId, scheduleId, id: revisionId, version: 1, timezone: "UTC", rule: { kind: "once", atUtc: "2026-10-20T10:00:00.000Z" }, misfire: { kind: "latest" }, overlap: "skip",
-    template: { title: "One task", content: "# Do one check", acceptance: "Evidence exists", owner: "owner" }, authorization: { scopeId: "scope", roleId: "role", authorizedBy: "owner", expiresAtUtc: null },
+    template: { title: "One task", content: "# Do one check", acceptance: "Evidence exists", owner: ownerRoleId }, authorization: { scopeId: "scope", roleId: "role", authorizedBy: "owner", expiresAtUtc: null },
     reason: "concurrency", actorId: "owner", createdAtUtc: "2026-10-20T09:00:00.000Z" } };
   const service = new SchedulingService(new PgSchedulingStore(pool));
   await service.create(principal, definition);

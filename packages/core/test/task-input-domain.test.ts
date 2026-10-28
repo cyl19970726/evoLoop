@@ -27,6 +27,7 @@ function readerFor(domainId: string | null | undefined): Reader {
     getDocumentRevision: async () => ({ projectId, documentId: contentDocumentId, id: contentRevisionId,
       contentHash: hash }),
     listTaskExternalSnapshot: async () => [],
+    getTaskProposal: async () => null,
   } as unknown as Reader;
 }
 

@@ -24,13 +24,16 @@ test("v2 queue handoff is readable Markdown with one fixed first read and no rep
   const packet=buildLightweightInput(run,revision,basis,documents,
     {command:"/private/bound-cli",actorId:"recipient"},
     {roleId:randomUUID(),revisionId:randomUUID(),skills:[{path:".agents/skills/evoloop-workflow/SKILL.md",
-      commit:"a".repeat(40),contentHash:"b".repeat(64)}]});
+      commit:"a".repeat(40),contentHash:"b".repeat(64)}]},
+    {projectId,taskId,taskRevisionId,stageId:null,acceptanceMode:"independent_agent",consumer:"",
+      useRequired:true,evidence:"",stopCondition:"",createdAt:"2026-10-29T00:00:00.000Z"});
   assert.equal(packet.protocol,"evoloop-markdown-v2");
   assert.match(packet.input,/^\[evoloop-run-operation:/);
   assert.match(packet.input,/# 任务：Fix the handoff/);
   assert.match(packet.input,/Show the goal clearly/);
   assert.match(packet.input,new RegExp(`/private/bound-cli handoff ${runId} --project ${projectId} --hash ${run.inputHash}`));
   assert.match(packet.input,/Cover the missing case/);
+  assert.match(packet.input,/验收方式：不同 Agent 实际使用；指定消费者：未指定/);
   assert.match(packet.input,new RegExp(channelId));
   assert.match(packet.input,/roles\/[0-9a-f-]+\/revisions\/[0-9a-f-]+/);
   assert.match(packet.input,/skills\/evoloop-workflow\?commit=/);

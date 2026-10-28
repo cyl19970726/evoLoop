@@ -9,6 +9,7 @@ import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision 
 import type { EvaluationAssessment, EvaluationConclusion, EvaluationDefinition } from "@evoloop/contracts/evaluation";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
+import { seedSealingWorkerSubmission } from "./signed-worker-fixture.js";
 
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error("TEST_DATABASE_URL is required for evaluation PG tests");
@@ -22,6 +23,21 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const principal = (projectId: string) => ({ actorId: actor, projectIds: [projectId], permissions: ["read","write","review"] as Array<"read"|"write"|"review"> });
 const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash } });
 const runtime = new RuntimeWorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID } });
+
+async function seedTrialRole(projectId: string, roleId: string, revisionId: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial',$4,$5,$5,$5)`, [projectId, roleId, revisionId, actor, now]);
+    await client.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,$4,'fixture',$5,$5)`, [projectId, roleId, revisionId, actor, now]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
+}
 
 before(async () => { await migrate(connectionString, schema); });
 after(async () => {
@@ -346,6 +362,7 @@ test("014 and 015 upgrade an ordinary Run and old delivery without changing iden
 
 async function officialCase() {
   const projectId=randomUUID(), taskId=randomUUID(), sourceId=randomUUID(), evaluationId=randomUUID(), evaluationRevisionId=randomUUID();
+  const taskOwnerRoleId=randomUUID(), taskOwnerRoleRevisionId=randomUUID();
   const p=principal(projectId);
   const apply=async (command: Parameters<typeof workflow.execute>[1]) => {
     const result=await workflow.execute(p,command);
@@ -353,13 +370,14 @@ async function officialCase() {
     return result;
   };
   await apply({type:"project.create",projectId,operationId:randomUUID(),title:"Official evaluation journey"});
+  await seedTrialRole(projectId, taskOwnerRoleId, taskOwnerRoleRevisionId);
   const sourceBody="# Fixed evaluation protocol";
   const source=await apply({type:"document.create",projectId,operationId:randomUUID(),documentId:sourceId,
     title:"Protocol",body:sourceBody,kind:"spec"});
   await apply({type:"document.publish",projectId,operationId:randomUUID(),documentId:sourceId,
     expectedVersion:1,revisionId:source.revisionId!,reason:"Freeze common source"});
   await apply({type:"task.create",projectId,operationId:randomUUID(),taskId,title:"Compare fixed sources",
-    content:"# Produce a fixed answer",acceptance:"Check answer against protocol",owner:actor,documentIds:[sourceId]});
+    content:"# Produce a fixed answer",acceptance:"Check answer against protocol",owner:taskOwnerRoleId,documentIds:[sourceId]});
   await apply({type:"task.start",projectId,operationId:randomUUID(),taskId,expectedVersion:1,
     basis:[{documentId:sourceId,revisionId:source.revisionId!}],reason:"Seal comparison inputs"});
   const frozen=await workflow.getEvaluationSourceTask(p,projectId,taskId);
@@ -375,20 +393,20 @@ async function officialCase() {
         model:"test-model",environment}],limits:"Technical isolation and downstream effects are unverified"};
   await apply({type:"evaluation.create",projectId,operationId:randomUUID(),evaluationId,
     revisionId:evaluationRevisionId,definition});
-  return {projectId,taskId,evaluationId,evaluationRevisionId,definition,apply};
+  return {projectId,taskId,evaluationId,evaluationRevisionId,definition,taskOwnerRoleId,apply};
 }
 
 async function officialRun(fixture:Awaited<ReturnType<typeof officialCase>>, conditionIndex:0|1,
   terminal:"completed"|"failed", markUnknown=false) {
-  const {projectId,taskId,evaluationId,evaluationRevisionId,definition,apply}=fixture;
+  const {projectId,taskId,evaluationId,evaluationRevisionId,definition,taskOwnerRoleId,apply}=fixture;
   const sessionId=randomUUID(),runId=randomUUID(),turnId=`turn-${randomUUID()}`;
   const condition=definition.conditions[conditionIndex];
-  await apply({type:"runtime.session.reserve",projectId,operationId:randomUUID(),sessionId,roleId:actor,
+  await apply({type:"runtime.session.reserve",projectId,operationId:randomUUID(),sessionId,roleId:taskOwnerRoleId,
     cwd:condition.environment.cwd,authorizationScope:condition.environment.authorizationScope,
     model:condition.model,sandbox:condition.environment.sandbox,approvalPolicy:condition.environment.approvalPolicy});
   await runtime.beginSessionCreate(projectId,sessionId);
   const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
-  await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:actor,
+  await runtime.bindSession(projectId,sessionId,{owner:"evoloop-codex-app-server",projectId,sessionId,roleId:taskOwnerRoleId,
     cwd:condition.environment.cwd,authorizationScope:condition.environment.authorizationScope,
     nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`,
     resumeProfile:{actorId:reservedSession.actorId,model:reservedSession.model,sandbox:reservedSession.sandbox,
@@ -433,9 +451,18 @@ test("official commands attribute two terminal evaluation Runs to later deliveri
     artifactRef:`artifact:${artifact}`,artifactRevision:"v1",contentHash:hash(artifact),technicalResult,
     technicalEvidence:technicalResult==="failed"?"Failure output retained":"Fixed check passed",reason:"Register fixed Run output"});
   const firstCommand=makeDelivery(direct.runId,4,"passed","direct-output");
+  await seedSealingWorkerSubmission(pool,projectId,taskId,direct.runId,actor,firstCommand.operationId,
+    firstCommand.expectedVersion,{artifactRef:firstCommand.artifactRef,artifactRevision:firstCommand.artifactRevision,
+      contentHash:firstCommand.contentHash,technicalResult:firstCommand.technicalResult,
+      technicalEvidence:firstCommand.technicalEvidence,reason:firstCommand.reason});
   const first=await apply(firstCommand);
   assert.deepEqual(await workflow.execute(principal(projectId),firstCommand),first,"operation replay is idempotent");
-  const second=await apply(makeDelivery(wiki.runId,5,"failed","failed-wiki-output"));
+  const secondCommand=makeDelivery(wiki.runId,5,"failed","failed-wiki-output");
+  await seedSealingWorkerSubmission(pool,projectId,taskId,wiki.runId,actor,secondCommand.operationId,
+    secondCommand.expectedVersion,{artifactRef:secondCommand.artifactRef,artifactRevision:secondCommand.artifactRevision,
+      contentHash:secondCommand.contentHash,technicalResult:secondCommand.technicalResult,
+      technicalEvidence:secondCommand.technicalEvidence,reason:secondCommand.reason});
+  const second=await apply(secondCommand);
   const deliveries=await uow.read(projectId,reader=>reader.listDeliveries(taskId));
   assert.equal(deliveries.length,2);
   const directDelivery=deliveries.find(x=>x.id===first.revisionId)!;
@@ -485,10 +512,10 @@ test("official commands attribute two terminal evaluation Runs to later deliveri
 test("official delivery attribution rejects foreign Runs and preserves legacy null attribution", async () => {
   const fixture=await officialCase();
   const source=await officialRun(fixture,0,"completed"); await source.finish();
-  const {projectId,taskId,apply}=fixture;
+  const {projectId,taskId,taskOwnerRoleId,apply}=fixture;
   const otherTaskId=randomUUID();
   await apply({type:"task.create",projectId,operationId:randomUUID(),taskId:otherTaskId,title:"Other case",
-    content:"# Other case",acceptance:"Different acceptance",owner:actor});
+    content:"# Other case",acceptance:"Different acceptance",owner:taskOwnerRoleId});
   await apply({type:"task.start",projectId,operationId:randomUUID(),taskId:otherTaskId,expectedVersion:1,
     reason:"Start unrelated case"});
   const command=(pid:string,tid:string,runId:string|undefined,version:number)=>({type:"delivery.record" as const,
@@ -504,13 +531,15 @@ test("official delivery attribution rejects foreign Runs and preserves legacy nu
     VALUES($1,$2,$3,$4,$5,'artifact:invalid','v1',$6,'passed','check','wrong Task',$7,$8)`,
     [projectId,randomUUID(),otherTaskId,otherHead.currentRevisionId,source.runId,hash("invalid"),actor,now]),/foreign key/);
   const otherProjectId=randomUUID(),foreignTaskId=randomUUID();
+  const foreignOwnerRoleId=randomUUID(),foreignOwnerRoleRevisionId=randomUUID();
   const foreign=async(c:Parameters<typeof workflow.execute>[1])=>{
     const result=await workflow.execute(principal(otherProjectId),c);
     assert.equal(result.status,"applied",JSON.stringify(result)); return result;
   };
   await foreign({type:"project.create",projectId:otherProjectId,operationId:randomUUID(),title:"Other project"});
+  await seedTrialRole(otherProjectId, foreignOwnerRoleId, foreignOwnerRoleRevisionId);
   await foreign({type:"task.create",projectId:otherProjectId,operationId:randomUUID(),taskId:foreignTaskId,
-    title:"Foreign task",content:"# Foreign",acceptance:"Foreign check",owner:actor});
+    title:"Foreign task",content:"# Foreign",acceptance:"Foreign check",owner:foreignOwnerRoleId});
   await foreign({type:"task.start",projectId:otherProjectId,operationId:randomUUID(),taskId:foreignTaskId,
     expectedVersion:1,reason:"Start foreign task"});
   const foreignRun=await workflow.execute(principal(otherProjectId),command(otherProjectId,foreignTaskId,source.runId,2));

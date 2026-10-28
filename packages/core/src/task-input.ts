@@ -20,6 +20,7 @@ export async function taskInputSignature(tx: Reader, task: Task,
   if (basis.projectId !== task.projectId || basis.taskId !== task.id || basis.taskRevisionId !== revision.id || basis.id !== revision.basisSetId)
     throw new DomainError("TASK_INPUT_MISMATCH", "Sealed basis does not belong to the selected Task revision");
   const external = await tx.listTaskExternalSnapshot(task.id, revision.id);
+  const proposal = await tx.getTaskProposal(task.id, revision.id);
   const members = await Promise.all(basis.members.map(async item => {
     const source = need(await tx.getDocumentRevision(item.documentId, item.revisionId), "source basis document");
     if (source.projectId !== task.projectId || source.documentId !== item.documentId || source.id !== item.revisionId)
@@ -29,6 +30,8 @@ export async function taskInputSignature(tx: Reader, task: Task,
   return { title: revision.title, content: revision.content,
     contentDocumentId: revision.contentDocumentId, contentRevisionId: revision.contentRevisionId,
     acceptance: revision.acceptance, owner: revision.owner, kind: revision.kind ?? "unclassified",
+    ...(proposal?.acceptanceMode ? { acceptancePolicy: { mode: proposal.acceptanceMode,
+      consumer: proposal.consumer, useRequired: true as const } } : {}),
     // Keep the legacy serialized shape when no domain was selected; persisted evaluations omit this key.
     ...(revision.domainId ? { domainId: revision.domainId } : {}),
     basis: fixedOrder(members, item => item.documentId),

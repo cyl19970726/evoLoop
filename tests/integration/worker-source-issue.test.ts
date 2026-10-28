@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import { WorkflowService } from "@evoloop/core";
@@ -21,9 +22,10 @@ const projectId = id(), goalId = id(), stageId = id(), taskId = id(), taskRevisi
 const taskDocumentId = id(), taskDocumentRevisionId = id(), issueId = id(), issueRevisionId = id();
 const loopId = id(), inboxId = id(), dispatchId = id(), runId = id(), sessionId = id();
 const operationId = id(), sourceEventId = id(), actorId = "worker-original-business";
+const builderRoleId=fixtureRoleId("builder");
 const now = "2026-10-23T00:00:00Z";
 const identity: WorkerIdentity = { principal: { actorId: "worker-current-cognition", projectIds: [projectId], permissions: ["read", "write", "review"] },
-  scope: { projectId, loopId, taskId, runId, sessionId, roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", "builder"] } };
+  scope: { projectId, loopId, taskId, runId, sessionId, roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", builderRoleId] } };
 
 before(async () => {
   await migrate(connectionString, schema);
@@ -116,12 +118,13 @@ test("only the exact current dispatch source Issue can be linked, even before ad
       VALUES($1,$2,$3,'document','document',$4,1,$5)`, [projectId, id(), unrelatedOperationId, unrelatedIssueId, now]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  await seedFixtureRole(pool,projectId,builderRoleId);
   const command = (documentId: string) => ({ type: "task.create", projectId, operationId: id(),
-    taskId: id(), owner: "builder", stageId, documentIds: [documentId] });
+    taskId: id(), owner: builderRoleId, stageId, documentIds: [documentId] });
   const facts = workerGuardFacts(pool, identity);
   assert.equal(await facts.sourceIssueDocumentRevision?.(issueId, issueRevisionId), true);
   assert.equal(await authorizeWorkerCommand(identity, command(issueId), facts), true);
-  assert.equal(await authorizeWorkerCommand(identity, { ...command(issueId), type: "task.update", taskId, owner: "builder" }, facts), true);
+  assert.equal(await authorizeWorkerCommand(identity, { ...command(issueId), type: "task.update", taskId, owner: builderRoleId }, facts), true);
   assert.equal(await authorizeWorkerCommand(identity, command(unrelatedIssueId), facts), false);
   assert.equal(await facts.sourceIssueDocumentRevision?.(unrelatedIssueId, unrelatedRevisionId), false);
   assert.equal(await authorizeWorkerCommand(identity, command(id()), facts), false);
@@ -152,7 +155,7 @@ test("scoped HTTP publishes original Issue, creates linked Tasks, and core start
   assert.equal(published.json().status, "applied");
   const childId = id();
   const created = await workerCommand({ type: "task.create", taskId: childId,
-    stageId, title: "Fix source", content: "Use fixed issue", acceptance: "Verify repair", owner: "builder",
+    stageId, title: "Fix source", content: "Use fixed issue", acceptance: "Verify repair", owner: builderRoleId,
     consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
   assert.equal(created.statusCode, 200, created.body);
   assert.equal(created.json().status, "applied");
@@ -164,7 +167,7 @@ test("scoped HTTP publishes original Issue, creates linked Tasks, and core start
     item.documentId === issueId)?.revisionId, issueRevisionId);
   const laterChildId = id();
   const laterChild = await workerCommand({ type: "task.create", taskId: laterChildId, stageId,
-    title: "Later follow-up", content: "Use original issue", acceptance: "Verify repair", owner: "builder",
+    title: "Later follow-up", content: "Use original issue", acceptance: "Verify repair", owner: builderRoleId,
     consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
   assert.equal(laterChild.statusCode, 200, laterChild.body);
   const revised = await workflow.execute(owner, { type: "document.revise", projectId, operationId: id(),

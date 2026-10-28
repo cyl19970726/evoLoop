@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
@@ -13,7 +14,7 @@ import { WorkflowService } from "@evoloop/core";
 import { importDocumentPayload } from "@evoloop/core/documents";
 
 const url = process.env.TEST_DATABASE_URL;
-if (!url || !/\/evoloop_facade_test(?:\?|$)/.test(url)) throw new Error("Use dedicated evoloop_facade_test database");
+if (!url || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(url)) throw new Error("Use dedicated evoloop_[a-z0-9_]*test database");
 const schema = `facade_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 const now = "2026-10-20T09:00:00.000Z";
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -60,8 +61,10 @@ test("common facade journals role and schedule decisions and reads external docu
 
   applied(await service.execute(reviewer, command("project.create", { title: "Facade integration" })));
   const taskId = randomUUID(), roleId = randomUUID(), scheduleId = randomUUID();
+  const managerRoleId=fixtureRoleId("manager");
+  await seedFixtureRole(pool,projectId,managerRoleId);
   applied(await service.execute(writer, command("task.create", {
-    taskId, title: "Trial review", content: "# Review a report", acceptance: "Record judgement", owner: "manager", documentIds: [],
+    taskId, title: "Trial review", content: "# Review a report", acceptance: "Record judgement", owner: managerRoleId, documentIds: [],
   })));
 
   const propose = command("role.propose", { roleId, proposal: proposal(taskId) });
@@ -89,16 +92,16 @@ test("common facade journals role and schedule decisions and reads external docu
   assert.equal((await service.getRole(reviewer, projectId, roleId)).state, "retired");
   assert.equal((await service.listRoleRevisions(reviewer, projectId, roleId)).length, 4);
   assert.equal((await service.listRoleReviews(reviewer, projectId, roleId)).length, 1);
-  assert.equal((await service.listRoles(reviewer, projectId)).items.length, 1);
+  assert.equal((await service.listRoles(reviewer, projectId)).items.filter(item=>item.id===roleId).length, 1);
   rejected(await service.execute(writer, command("task.create", {
     taskId: randomUUID(), title: "Invalid assignment", content: "# Use retired role", acceptance: "No",
     owner: roleId, documentIds: [],
-  })), "ROLE_RETIRED");
+  })), "TASK_OWNER_ROLE_REQUIRED");
 
   const scheduleFields = {
     scheduleId, revisionId: randomUUID(), timezone: "UTC", rule: { kind: "once", atUtc: "2026-10-21T09:00:00.000Z" },
     misfire: { kind: "skip" }, overlap: "skip",
-    template: { title: "Report", content: "# Check report", acceptance: "Record result", owner: "manager" },
+    template: { title: "Report", content: "# Check report", acceptance: "Record result", owner: managerRoleId },
     authorization: { scopeId: "project", roleId: "manager", authorizedBy: "manager", expiresAtUtc: null },
     reason: "one bounded reminder",
   };
@@ -124,7 +127,7 @@ test("common facade journals role and schedule decisions and reads external docu
   rejected(await service.execute(reviewer, command("schedule.create", {
     ...scheduleFields, scheduleId: randomUUID(), revisionId: randomUUID(), watermarkUtc: now,
     template: { ...scheduleFields.template, owner: roleId }, state: "active",
-  })), "ROLE_RETIRED");
+  })), "TASK_OWNER_ROLE_REQUIRED");
 
   const documentId = randomUUID(), revisionId = randomUUID(), blobId = randomUUID();
   const bytes = Buffer.from("<html><body>Archived report</body></html>");

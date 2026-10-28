@@ -1,4 +1,4 @@
-import type { Principal } from '@evoloop/contracts';
+import type { Principal, TaskProposal } from '@evoloop/contracts';
 import { queueCommandSchema } from '@evoloop/contracts/queues';
 import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence,QueueHoldCode } from '@evoloop/contracts/queues';
 import { canonicalTaskInputJson,taskInputSignature } from '../task-input.js';
@@ -9,6 +9,9 @@ import type { SessionRecoveryTransaction } from '@evoloop/contracts/session-reco
 export type { ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence } from '@evoloop/contracts/queues';
 export interface QueueDecision {ready:boolean;code:QueueHoldCode|null;reason:string|null}
 const held=(code:QueueHoldCode,reason:string):QueueDecision=>({ready:false,code,reason});
+export function queueAcceptanceMatches(proposal:TaskProposal|null,entry:Pick<ResidentQueueEntry,'useRequired'|'consumerId'>):boolean{
+  return !proposal?.acceptanceMode || entry.useRequired && (!proposal.consumer || entry.consumerId===proposal.consumer);
+}
 export function evaluateQueueEntry(entry:ResidentQueueEntry,facts:QueueSourceFacts,dependencyReleased:boolean):QueueDecision{
   if(!dependencyReleased)return held('dependency','a prerequisite entry is not accepted');
   if(!facts.currentTaskRevisionId||!['todo','in_progress'].includes(facts.taskState))return held('task_unavailable','Task is not executable');
@@ -52,6 +55,9 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
       const task=await reader.getTask(item.taskId);
       if(!task||task.projectId!==c.projectId||task.state!=='in_progress'||task.currentRevisionId!==item.taskRevisionId)
         return fail('TASK_UNAVAILABLE','queue requires the current in-progress Task revision and sealed fixed input');
+      const proposal=await reader.getTaskProposal(task.id);
+      if(!queueAcceptanceMatches(proposal,item))
+        return fail('ACCEPTANCE_POLICY','queue consumer and use requirement must match the Task acceptance contract');
       await requireAssignedSession(reader,task,item.sessionId);
       const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(reader,task,item.taskRevisionId));
       entries.push({projectId:c.projectId,queueId:c.queueId,id:item.id,taskId:item.taskId,taskRevisionId:item.taskRevisionId,sourceInputJson,sessionId:item.sessionId,roleId:item.roleId,position,dependsOn:item.dependsOn,consumerId:item.consumerId,useRequired:item.useRequired,releaseRule:item.releaseRule,state:'queued',holdCode:null,holdReason:null,claimId:null,version:1});
@@ -75,6 +81,9 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
     if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');
     const entry=queue.entries.find(x=>x.id===c.entryId);if(!entry)return fail('NOT_FOUND','entry missing');
     const task=await reader.getTask(entry.taskId);if(!task||task.currentRevisionId!==c.taskRevisionId||task.state!=='in_progress')return fail('TASK_REVISION_CONFLICT','amendment requires current in-progress Task revision');
+    const proposal=await reader.getTaskProposal(task.id);
+    if(!queueAcceptanceMatches(proposal,entry))
+      return fail('ACCEPTANCE_POLICY','queue entry needs a new matching acceptance contract');
     const attempts=entry.claimId?await tx.listResidentQueueAttempts(entry.claimId):[];const last=attempts.at(-1);const run=last?await reader.getRuntimeRun(last.runId):null;
     if(last&&(!run||!terminal.has(run.state)))return fail('RUN_UNSETTLED','unknown or active Run cannot amend input');
     const sourceInputJson=canonicalTaskInputJson(await taskInputSignature(reader,task));
@@ -105,6 +114,8 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
         return fail('RECOVERY_MESSAGE_UNAVAILABLE','The pinned original message must still be queued on this Session');
     }
     const task=await reader.getTask(entry.taskId),session=await reader.getRuntimeSession(entry.sessionId);
+    if(task && !queueAcceptanceMatches(await reader.getTaskProposal(task.id),entry))
+      return fail('ACCEPTANCE_POLICY','queue entry no longer matches Task acceptance');
     if(!task||task.state!=='in_progress'||task.currentRevisionId!==c.expectedTaskRevisionId||!session||session.state!=='ready'||!session.nativeThreadId)
       return fail('TASK_REVISION_CONFLICT','Retry requires the current Task revision and original ready Session');
     if(session.executionProfile?.revision.revisionId!==c.expectedExecutionProfileRevisionId)
@@ -169,6 +180,8 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
         return fail('REWORK_SOURCE_MISMATCH','Only the exact completed Run of this unreleased claim may be reworked');
     }
     const task=await reader.getTask(entry.taskId),session=await reader.getRuntimeSession(entry.sessionId);
+    if(task && !queueAcceptanceMatches(await reader.getTaskProposal(task.id),entry))
+      return fail('ACCEPTANCE_POLICY','queue entry no longer matches Task acceptance');
     if(rework&&(!session||session.executionProfile?.activationState!=='active'||
       session.executionProfile.revision.revisionId!==rework.expectedExecutionProfileRevisionId))
       return fail('EXECUTION_PROFILE_CONFLICT','Rework requires the active reviewed execution profile');
@@ -220,6 +233,9 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
     const attempts=await tx.listResidentQueueAttempts(claim.claimId);const last=attempts.at(-1);const run=last?await reader.getRuntimeRun(last.runId):null;
     if(!run||!terminal.has(run.state))return fail('RUN_UNSETTLED','unknown or active Run cannot release');
     const task=await reader.getTask(entry.taskId);if(!task)return fail('TASK_UNAVAILABLE','Task missing');
+    const proposal=await reader.getTaskProposal(task.id);
+    if(!queueAcceptanceMatches(proposal,entry))
+      return fail('ACCEPTANCE_POLICY','queue entry no longer matches Task acceptance');
     if(canonicalTaskInputJson(await taskInputSignature(reader,task))!==entry.sourceInputJson)return fail('TASK_CHANGED','business input changed');
     if(c.decisionId){if(entry.releaseRule!=='bounded_decision'||!c.reason||!c.nextResponsibility)return fail('BOUNDED_DECISION_REQUIRED','explicit bounded Lead decision required');
       const ok=await tx.releaseResidentQueueBounded(c.claimId,c.decisionId,principal.actorId,c.reason,c.nextResponsibility);return result(queue,ok?c.claimId:null);}
