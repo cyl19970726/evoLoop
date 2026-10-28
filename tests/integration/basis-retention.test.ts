@@ -6,6 +6,7 @@ import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 
 function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
@@ -20,7 +21,7 @@ function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: Postgr
   return runtime;
 }
 const database = process.env.TEST_DATABASE_URL;
-if (!database || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(database))
+if (!database || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(database))
   throw new Error("Use a dedicated evoloop_*test database");
 
 test("a todo Task can explicitly retain a published older source without an impact", async t => {
@@ -52,11 +53,13 @@ test("a todo Task can explicitly retain a published older source without an impa
     if (result.status === "rejected") assert.equal(result.code, code);
   };
   applied(await issue({ type: "project.create", title: "Retained source test" }));
+  const ownerRoleId = fixtureRoleId(principal.actorId);
+  await seedFixtureRole(pool, projectId, ownerRoleId);
   const draftDocumentId = randomUUID(), draftTaskId = randomUUID();
   const neverAdopted = applied(await issue({ type: "document.create", documentId: draftDocumentId,
     title: "Never published draft", kind: "spec", body: "Draft r1" }));
   applied(await issue({ type: "task.create", taskId: draftTaskId, title: "Draft-linked work",
-    content: "Check source", acceptance: "Check", owner: principal.actorId, documentIds: [draftDocumentId] }));
+    content: "Check source", acceptance: "Check", owner: ownerRoleId, documentIds: [draftDocumentId] }));
   const publishedReplacement = applied(await issue({ type: "document.revise", documentId: draftDocumentId,
     expectedVersion: 1, body: "Published r2", reason: "First publication candidate" }));
   applied(await issue({ type: "document.publish", documentId: draftDocumentId,
@@ -69,7 +72,7 @@ test("a todo Task can explicitly retain a published older source without an impa
   assert.equal((await service.getTask(principal, projectId, draftTaskId)).task.state, "todo");
   const r1 = applied(await issue({ type: "document.create", documentId, title: "Specification", kind: "spec", body: "Fixed r1" }));
   applied(await issue({ type: "document.publish", documentId, expectedVersion: 1, revisionId: r1.revisionId!, reason: "Publish r1" }));
-  applied(await issue({ type: "task.create", taskId, title: "Use r1", content: "Implement fixed r1", acceptance: "Check r1", owner: principal.actorId, documentIds: [documentId] }));
+  applied(await issue({ type: "task.create", taskId, title: "Use r1", content: "Implement fixed r1", acceptance: "Check r1", owner: ownerRoleId, documentIds: [documentId] }));
   const r2 = applied(await issue({ type: "document.revise", documentId, expectedVersion: 2, body: "Changed r2", reason: "New scope" }));
   applied(await issue({ type: "document.publish", documentId, expectedVersion: 3, revisionId: r2.revisionId!, reason: "Publish r2" }));
   assert.equal((await service.getTask(principal, projectId, taskId)).impacts.length, 0,
@@ -100,15 +103,15 @@ test("a todo Task can explicitly retain a published older source without an impa
     [projectId, taskId, started.revisionId]), error => (error as { code?: string }).code === "23514");
 
   const sessionId = randomUUID(), runId = randomUUID();
-  applied(await issue({ type: "runtime.session.reserve", sessionId, roleId: principal.actorId, cwd: "/tmp/evoloop-retention-fixture",
+  applied(await issue({ type: "runtime.session.reserve", sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-retention-fixture",
     authorizationScope: "task:fixture", sandbox: "danger-full-access", approvalPolicy: "never" }));
   await trusted.beginSessionCreate(projectId, sessionId);
-  await trusted.bindSession(projectId, sessionId, { projectId, sessionId, roleId: principal.actorId,
+  await trusted.bindSession(projectId, sessionId, { projectId, sessionId, roleId: ownerRoleId,
     cwd: "/tmp/evoloop-retention-fixture", authorizationScope: "task:fixture", nativeThreadId: "fixture-owned-thread",
     nativeSessionId: "fixture-owned-thread", owner: "evoloop-codex-app-server" });
   applied(await issue({ type: "runtime.run.reserve", runId, taskId, sessionId, expectedVersion: started.version!, input: "Check fixed r1" }));
 
-  applied(await issue({ type: "task.create", taskId: laterTaskId, title: "Later work", content: "Use fixed r1", acceptance: "Check", owner: principal.actorId, documentIds: [documentId] }));
+  applied(await issue({ type: "task.create", taskId: laterTaskId, title: "Later work", content: "Use fixed r1", acceptance: "Check", owner: ownerRoleId, documentIds: [documentId] }));
   const firstLaterStart = applied(await issue({ type: "task.start", taskId: laterTaskId, expectedVersion: 1,
     basis, retentions: [retention], reason: "Start with explicit r1 decision" }));
   const reopened = applied(await issue({ type: "task.reopen", taskId: laterTaskId,
@@ -120,7 +123,7 @@ test("a todo Task can explicitly retain a published older source without an impa
     reason: "Restart with inherited fixed basis and checkpoint" }));
   const r3 = applied(await issue({ type: "document.revise", documentId, expectedVersion: 4, body: "Changed r3", reason: "Newer scope" }));
   applied(await issue({ type: "document.publish", documentId, expectedVersion: 5, revisionId: r3.revisionId!, reason: "Publish r3" }));
-  applied(await issue({ type: "task.create", taskId: staleTaskId, title: "Stale observation", content: "Use fixed r1", acceptance: "Check", owner: principal.actorId, documentIds: [documentId] }));
+  applied(await issue({ type: "task.create", taskId: staleTaskId, title: "Stale observation", content: "Use fixed r1", acceptance: "Check", owner: ownerRoleId, documentIds: [documentId] }));
   rejected(await issue({ type: "task.start", taskId: staleTaskId, expectedVersion: 1, basis,
     retentions: [retention], reason: "Stale r2 observation" }), "BASIS_CHANGED");
   assert.deepEqual((await service.getTask(principal, projectId, taskId)).basis?.retentions,

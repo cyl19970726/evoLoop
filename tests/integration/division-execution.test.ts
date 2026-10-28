@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
@@ -37,7 +38,7 @@ const url=process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop.*test/.test(new URL(url).pathname))
   throw new Error("dedicated PostgreSQL test database required");
 const hash=(s:string)=>createHash("sha256").update(s).digest("hex");
-const pid=randomUUID(),owner="controller",cognition="cognition-actor",cognitiveRole="cognition";
+const pid=randomUUID(),owner="controller",cognition="cognition-actor",cognitiveRole=fixtureRoleId("cognition");
 const roleId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
 const scope="m3-exact",cwd=join(tmpdir(),`evoloop-m3-execution-${randomUUID()}`);
@@ -79,6 +80,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   const denied=async(p:Promise<unknown>,code:string)=>assert.rejects(p,
     e=>e instanceof OrchestrationError&&e.code===code);
   await wf(owner,{type:"project.create",title:"M3 isolated execution"});
+  for (const roleId of [cognitiveRole,fixtureRoleId("prior-role")]) await seedFixtureRole(pool,pid,roleId);
   await wf(owner,{type:"goal.create",goalId,outcome:"Bounded result",constraints:"Local",
     consumer:"owner",authority:"reviewer",scope:"fixture",owner});
   await wf(owner,{type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
@@ -87,7 +89,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
     owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One decision"});
   await wf(owner,{type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Freeze"});
   await wf(owner,{type:"task.create",taskId:firstTaskId,stageId,title:"First trial work",content:"# Execute",acceptance:"One check",
-    owner:"prior-role",consumer:"owner",evidence:"Fixture",stopCondition:"One result"});
+    owner:fixtureRoleId("prior-role"),consumer:"owner",evidence:"Fixture",stopCondition:"One result"});
   // Workflow Task CAS takes this project advisory key. Division must not inspect
   // the first Task under a separate project-row lock while that CAS is in flight.
   let releaseTaskLock!:()=>void,signalTaskLock!:()=>void;
@@ -188,7 +190,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   assert.equal(observedReservedBeforeTransfer,true,`budget and child must commit before Task owner CAS: ${JSON.stringify(managed.status().faults)}`);
   assert.ok(managed.status().faults.some(f=>f.code==="FIXTURE_TRANSFER_CRASH"));
   assert.equal((await orchestration.getDispatch(principal(owner),pid,childId))?.state,"pending");
-  assert.equal((await workflow.getTask(principal(owner),pid,firstTaskId)).task.owner,"prior-role");
+  assert.equal((await workflow.getTask(principal(owner),pid,firstTaskId)).task.owner,fixtureRoleId("prior-role"));
   await denied(issue(owner,{type:"dispatch.claim",dispatchId:childId,claimToken:randomUUID(),
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()}),"HANDOFF_NOT_CONFIRMED");
   await managed.pump();

@@ -344,6 +344,7 @@ export async function applyWorkflow({
       if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "task must be in progress to deliver");
       if ((await tx.listRuntimeRuns(task.id)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state)))
         throw new DomainError("TASK_BUSY", "resolve the current or uncertain run before recording delivery");
+      let submittedByActorId: string | null = actorId;
       if (c.runId) {
         const run = found(await tx.getRuntimeRun(c.runId), "source Run");
         if (run.projectId !== c.projectId || run.taskId !== task.id)
@@ -354,10 +355,15 @@ export async function applyWorkflow({
         const currentInput = await taskInputSignature(tx, task);
         if (canonicalTaskInputJson(executedInput) !== canonicalTaskInputJson(currentInput))
           throw new DomainError("DELIVERY_INPUT_CHANGED", "Task business input changed since the source Run");
+        submittedByActorId = await tx.getSignedRunSubmitter?.(run.id, task.id, run.taskRevisionId,
+          actorId, c.operationId, c.expectedVersion, {artifactRef:c.artifactRef,artifactRevision:c.artifactRevision,
+            contentHash:c.contentHash,technicalResult:c.technicalResult,
+            technicalEvidence:c.technicalEvidence,reason:c.reason}) ?? null;
       }
       const revision = await newTaskRevision(tx, task, actorId, now, nextId, "in_progress", c.reason);
       const delivery: Delivery = { projectId: c.projectId, id: nextId(), taskId: task.id,
         taskRevisionId: revision.id, runId: c.runId ?? null,
+        submittedByActorId,
         artifactRef: c.artifactRef, artifactRevision: c.artifactRevision,
         contentHash: c.contentHash, technicalResult: c.technicalResult,
         technicalEvidence: c.technicalEvidence, reason: c.reason, actorId, createdAt: now };
@@ -369,9 +375,21 @@ export async function applyWorkflow({
       if (delivery.taskId !== c.taskId) throw new DomainError("WRONG_DELIVERY", "delivery belongs to another task");
       const task = found(await tx.getTask(c.taskId), "task");
       if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "consumer observation requires in-progress task");
+      const proposal = await tx.getTaskProposal(task.id);
+      if (proposal?.acceptanceMode && proposal.consumer && c.observer !== proposal.consumer)
+        throw new DomainError("CONSUMER_MISMATCH", "observation must come from the declared consumer actor");
+      if (proposal?.acceptanceMode === "independent_agent") {
+        if (principal.identityKind === "human" || c.observerKind !== "agent" || c.observer !== actorId)
+          throw new DomainError("INDEPENDENT_OBSERVER_REQUIRED", "independent acceptance requires the actual agent actor");
+        if (c.result === "used" && (!delivery.submittedByActorId || delivery.submittedByActorId === actorId))
+          throw new DomainError("SELF_ACCEPTANCE", "the submission actor cannot accept their own delivery");
+      }
+      if (proposal?.acceptanceMode === "human_required" &&
+        (principal.identityKind !== "human" || c.observerKind !== "human" || c.observer !== actorId || c.observer !== proposal.consumer))
+        throw new DomainError("TRUSTED_HUMAN_REQUIRED", "human-required acceptance needs the declared human's credential");
       if (c.observerKind === "agent" && c.observer !== actorId)
         throw new DomainError("OBSERVER_MISMATCH", "agent use must be reported by that agent");
-      if (c.observerKind === "human" && !principal.permissions.includes("review"))
+      if (c.observerKind === "human" && !proposal?.acceptanceMode && !principal.permissions.includes("review"))
         throw new DomainError("ATTESTATION_REQUIRED", "external human use requires reviewer attestation");
       const observation: ConsumerObservation = { projectId: c.projectId, id: nextId(), taskId: task.id,
         deliveryId: delivery.id, observer: c.observer, observerKind: c.observerKind, result: c.result,
@@ -396,13 +414,22 @@ export async function applyWorkflow({
         if (!latest || latest.id !== c.deliveryId || latest.taskRevisionId !== task.currentRevisionId)
           throw new DomainError("STALE_DELIVERY", "close requires latest delivery for the current Task revision");
         if (latest.technicalResult !== "passed") throw new DomainError("TECHNICAL_CHECK_FAILED", "latest delivery has not passed technical checks");
-        if (proposal?.useRequired) {
-          const observations = (await tx.listObservations(task.id)).filter(x => x.deliveryId === latest.id && x.observer === proposal.consumer);
-          if (observations.at(-1)?.result !== "used") throw new DomainError("USE_NOT_OBSERVED", "current delivery lacks declared-consumer use evidence");
+        if (proposal?.useRequired || proposal?.acceptanceMode) {
+          const observations = (await tx.listObservations(task.id)).filter(x => x.deliveryId === latest.id &&
+            (!proposal.consumer || x.observer === proposal.consumer));
+          const observed = observations.at(-1);
+          if (observed?.result !== "used") throw new DomainError("USE_NOT_OBSERVED", "current delivery lacks declared-consumer use evidence");
+          if (proposal?.acceptanceMode === "independent_agent" &&
+            (!latest.submittedByActorId || observed.observerKind !== "agent" || observed.actorId !== observed.observer ||
+              observed.actorId === latest.submittedByActorId))
+            throw new DomainError("SELF_ACCEPTANCE", "current Delivery lacks independent agent use");
+          if (proposal?.acceptanceMode === "human_required" &&
+            (observed.observerKind !== "human" || observed.actorId !== proposal.consumer || observed.observer !== proposal.consumer))
+            throw new DomainError("TRUSTED_HUMAN_REQUIRED", "current Delivery lacks the declared human's use");
         }
         closureEvidence = {deliveryId:latest.id,decisionId:null,sourceInboxId:null,sourceEventId:null,sourceTaskId:null,waitingInboxId:null,handoffDispatchId:null,handoffTaskId:null};
       } else {
-        if (proposal?.useRequired) throw new DomainError("USE_NOT_OBSERVED", "a cognition decision cannot replace required consumer use");
+        if (proposal?.useRequired || proposal?.acceptanceMode) throw new DomainError("USE_NOT_OBSERVED", "a cognition decision cannot replace required consumer use");
         const fact = await tx.getCognitiveClosureFact?.(c.decisionId!);
         if (!fact || fact.projectId !== c.projectId || fact.taskId !== task.id || fact.taskRevisionId !== task.currentRevisionId ||
           fact.purpose !== "cognition" || fact.recipientRoleId !== fact.cognitiveRoleId ||

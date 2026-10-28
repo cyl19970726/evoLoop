@@ -10,6 +10,7 @@ import type {
 import type { Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import type { CognitiveClosureFact, WaitingHandoffFact, ChildHandoffFact } from "@evoloop/contracts/ports";
 import { DomainError, WorkflowService } from "../src/index.ts";
+import { taskInputSignature } from "../src/task-input.ts";
 import type { RoleRecord, RoleRevision, RoleTrialReview, RoleHandoff, RoleSessionBinding } from "@evoloop/contracts/roles";
 import type { ScheduleDefinition, ScheduleRevision, Occurrence } from "@evoloop/contracts/scheduling";
 
@@ -18,6 +19,7 @@ const documentId = "00000000-0000-4000-8000-000000000002";
 const secondDocumentId = "00000000-0000-4000-8000-000000000003";
 const taskA = "00000000-0000-4000-8000-000000000004";
 const taskB = "00000000-0000-4000-8000-000000000005";
+const ownerRoleId = "00000000-0000-4000-8000-000000000006";
 const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
 
 type State = {
@@ -117,7 +119,13 @@ class MemoryUow implements UnitOfWork {
       listStages: async goalId => Object.values(state.stages).filter(item => !goalId || item.goalId === goalId),
       listStageRevisions: async stageId => state.stageRevisions.filter(item => item.stageId === stageId).sort((a, b) => a.version - b.version),
       listStageReviews: async stageId => state.stageReviews.filter(item => item.stageId === stageId),
-      getTaskProposal: async (taskId, revisionId) => state.proposals.filter(item => item.taskId === taskId && (!revisionId || item.taskRevisionId === revisionId)).at(-1) ?? null,
+      getTaskProposal: async (taskId, revisionId) => {
+        const targetId=revisionId ?? state.tasks[taskId]?.currentRevisionId;
+        const target=targetId ? state.taskRevisions[targetId] : null;
+        return state.proposals.filter(item => item.taskId === taskId && target &&
+          (state.taskRevisions[item.taskRevisionId]?.version ?? Infinity) <= target.version).at(-1) ?? null;
+      },
+      listTaskExternalSnapshot: async () => [],
       listTaskJudgements: async taskId => state.judgements.filter(item => item.taskId === taskId),
       getDelivery: async id => state.deliveries.find(item => item.id === id) ?? null,
       listDeliveries: async taskId => state.deliveries.filter(item => item.taskId === taskId),
@@ -253,6 +261,7 @@ class MemoryUow implements UnitOfWork {
 function fixture() {
   let sequence = 10;
   const uow = new MemoryUow();
+  uow.state.roles[ownerRoleId] = { projectId, id: ownerRoleId, state: "active" } as RoleRecord;
   const service = new WorkflowService({
     uow,
     clock: { now: () => "2026-10-20T00:00:00.000Z" },
@@ -273,7 +282,7 @@ async function seedTwoTasks(f: ReturnType<typeof fixture>, documentIds = [docume
   }
   for (const id of [taskA, taskB]) {
     await service.execute(principal, { type: "task.create", projectId, operationId: operation(), taskId: id,
-      title: "Task", content: "Do work", acceptance: "r1 acceptance", owner: "owner", documentIds });
+      title: "Task", content: "Do work", acceptance: "r1 acceptance", owner: ownerRoleId, documentIds });
     const basis = await Promise.all(documentIds.map(async (docId) => ({
       documentId: docId, revisionId: (await service.getDocument(principal, projectId, docId)).adopted!.id,
     })));
@@ -338,7 +347,7 @@ test("Task creation owns a primary Document and pins each changed body to an imm
   const f = fixture();
   await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
   const created = await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(),
-    taskId: taskA, title: "Implement", content: "First plan", acceptance: "Checks pass", owner: "owner", kind: "implementation" });
+    taskId: taskA, title: "Implement", content: "First plan", acceptance: "Checks pass", owner: ownerRoleId, kind: "implementation" });
   assert.equal(created.status, "applied");
   const initial = await f.service.getTask(principal, projectId, taskA);
   assert.equal(initial.task.state, "todo");
@@ -353,7 +362,7 @@ test("Task creation owns a primary Document and pins each changed body to an imm
   assert.equal(blocked.status === "rejected" ? blocked.code : null, "TASK_CONTENT_OWNED");
   const changed = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
     taskId: taskA, expectedVersion: 1, title: "Implement", content: "Second plan", acceptance: "Checks pass",
-    owner: "owner", reason: "Scope clarified" });
+    owner: ownerRoleId, reason: "Scope clarified" });
   assert.equal(changed.status, "applied");
   const next = await f.service.getTask(principal, projectId, taskA);
   assert.equal(next.task.content, "Second plan");
@@ -379,7 +388,7 @@ test("Task creation owns a primary Document and pins each changed body to an imm
     error instanceof DomainError && error.code === "FORBIDDEN");
   const premature = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
     taskId: taskA, expectedVersion: 3, title: "Implement", content: "Third plan", acceptance: "Checks pass",
-    owner: "owner", reason: "New work" });
+    owner: ownerRoleId, reason: "New work" });
   assert.equal(premature.status === "rejected" ? premature.code : null, "REOPEN_REQUIRED");
 });
 
@@ -387,13 +396,18 @@ test("reopen invalidates an earlier delivery before the same Task can close agai
   const f = fixture();
   await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
   await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(),
-    taskId: taskA, title: "Validate", content: "Check current behavior", acceptance: "Fixture passes", owner: "owner" });
+    taskId: taskA, title: "Validate", content: "Check current behavior", acceptance: "Fixture passes", owner: ownerRoleId });
   await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: taskA,
     expectedVersion: 1, reason: "Start" });
   const delivery = await f.service.execute(principal, { type: "delivery.record", projectId, operationId: f.operation(),
     taskId: taskA, expectedVersion: 2, artifactRef: "repo/check", artifactRevision: "abc123",
     contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "Fixture passed", reason: "Ready for acceptance" });
   assert.equal(delivery.status, "applied");
+  const reviewer: Principal = { actorId: "independent-reviewer", projectIds: [projectId], permissions: ["read", "write"] };
+  const use = await f.service.execute(reviewer, { type: "observation.record", projectId, operationId: f.operation(),
+    taskId: taskA, deliveryId: delivery.status === "applied" ? delivery.revisionId! : "", observer: reviewer.actorId,
+    observerKind: "agent", result: "used", evidence: "Reviewed current fixture", reason: "Independent use" });
+  assert.equal(use.status, "applied");
   const firstClose = await f.service.execute(principal, { type: "task.close", projectId, operationId: f.operation(),
     taskId: taskA, expectedVersion: 3, deliveryId: delivery.status === "applied" ? delivery.revisionId! : "",
     acceptanceResult: "met", acceptanceEvidence: "Criterion checked", reason: "Accepted" });
@@ -413,12 +427,141 @@ test("reopen invalidates an earlier delivery before the same Task can close agai
   assert.equal(stale.status === "rejected" ? stale.code : null, "STALE_DELIVERY");
 });
 
+test("new Task defaults to independent use; a registrar cannot make the submitter an independent consumer", async () => {
+  const f = fixture();
+  const executor: Principal = {actorId:"executor",projectIds:[projectId],permissions:["read","write"]};
+  const reviewer: Principal = {actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
+  await f.service.execute(principal,{type:"project.create",projectId,operationId:f.operation(),title:"Project"});
+  const create={type:"task.create" as const,projectId,operationId:f.operation(),taskId:taskA,
+    title:"Independent Task",content:"Deliver evidence",acceptance:"Different actor uses result",owner:ownerRoleId};
+  const first=await f.service.execute(principal,create);
+  assert.equal(first.status,"applied");
+  assert.deepEqual(await f.service.execute(principal,create),first,"same legacy-shaped command replays by original operation ID");
+  const detail=await f.service.getTask(principal,projectId,taskA);
+  assert.equal(detail.proposal?.acceptanceMode,"independent_agent");
+  assert.equal(detail.proposal?.useRequired,true);
+  await f.service.execute(principal,{type:"task.start",projectId,operationId:f.operation(),taskId:taskA,expectedVersion:1,reason:"Start"});
+  const saved=await f.service.execute(principal,{type:"delivery.record",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:2,artifactRef:"repo/result",artifactRevision:"r1",contentHash:"a".repeat(64),
+    technicalResult:"passed",technicalEvidence:"Checks passed",reason:"Registered by Lead"});
+  assert.equal(saved.status,"applied");
+  const deliveryId=saved.status==="applied"?saved.revisionId!:"";
+  const use=(actor:Principal,kind:"agent"|"human",result:"used"|"failed"="used")=>f.service.execute(actor,{
+    type:"observation.record",projectId,operationId:f.operation(),taskId:taskA,deliveryId,
+    observer:actor.actorId,observerKind:kind,result,evidence:"Read current artifact",reason:"Checked"});
+  // A Run delivery without its signed submitter cannot claim independent acceptance.
+  f.uow.state.deliveries[0]={...f.uow.state.deliveries[0]!,submittedByActorId:null};
+  const unproven=await use(reviewer,"agent");
+  assert.equal(unproven.status==="rejected"?unproven.code:null,"SELF_ACCEPTANCE");
+  // The trusted sealer binds the actual submitter, distinct from the Lead who registered the Delivery.
+  f.uow.state.deliveries[0]={...f.uow.state.deliveries[0]!,submittedByActorId:executor.actorId};
+  const self=await use(executor,"agent");
+  assert.equal(self.status==="rejected"?self.code:null,"SELF_ACCEPTANCE");
+  const fakeHuman=await use(reviewer,"human");
+  assert.equal(fakeHuman.status==="rejected"?fakeHuman.code:null,"INDEPENDENT_OBSERVER_REQUIRED");
+  assert.equal((await use(reviewer,"agent")).status,"applied");
+  const later=await f.service.execute(principal,{type:"delivery.record",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:3,artifactRef:"repo/result",artifactRevision:"r2",contentHash:"b".repeat(64),
+    technicalResult:"passed",technicalEvidence:"New checks passed",reason:"New current Delivery"});
+  assert.equal(later.status,"applied");
+  const laterId=later.status==="applied"?later.revisionId!:"";
+  const stale=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:4,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Old use",reason:"Close"});
+  assert.equal(stale.status==="rejected"?stale.code:null,"STALE_DELIVERY");
+  const noNewUse=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:4,deliveryId:laterId,acceptanceResult:"met",acceptanceEvidence:"Old use",reason:"Close"});
+  assert.equal(noNewUse.status==="rejected"?noNewUse.code:null,"USE_NOT_OBSERVED");
+  f.uow.state.deliveries[1]={...f.uow.state.deliveries[1]!,submittedByActorId:executor.actorId};
+  assert.equal((await f.service.execute(reviewer,{type:"observation.record",projectId,operationId:f.operation(),taskId:taskA,
+    deliveryId:laterId,observer:reviewer.actorId,observerKind:"agent",result:"used",evidence:"Used r2",reason:"Current review"})).status,"applied");
+  const closed=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:4,deliveryId:laterId,acceptanceResult:"met",acceptanceEvidence:"Independent review passed",reason:"Close"});
+  assert.equal(closed.status,"applied");
+});
+
+test("human-required use needs the configured human principal; a reviewer can close after genuine use", async () => {
+  const f=fixture();
+  await f.service.execute(principal,{type:"project.create",projectId,operationId:f.operation(),title:"Project"});
+  const created=await f.service.execute(principal,{type:"task.create",projectId,operationId:f.operation(),taskId:taskA,
+    title:"Human check",content:"Deliver",acceptance:"User confirms",owner:ownerRoleId,
+    acceptanceMode:"human_required",consumer:"real-user"});
+  assert.equal(created.status,"applied");
+  await f.service.execute(principal,{type:"task.start",projectId,operationId:f.operation(),taskId:taskA,expectedVersion:1,reason:"Start"});
+  const saved=await f.service.execute(principal,{type:"delivery.record",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:2,artifactRef:"repo/result",artifactRevision:"r1",contentHash:"b".repeat(64),
+    technicalResult:"passed",technicalEvidence:"Checks passed",reason:"Ready"});
+  const deliveryId=saved.status==="applied"?saved.revisionId!:"";
+  const observation=(actor:Principal)=>f.service.execute(actor,{type:"observation.record",projectId,operationId:f.operation(),
+    taskId:taskA,deliveryId,observer:"real-user",observerKind:"human",result:"used",evidence:"Used result",reason:"Confirmed"});
+  const fake=await observation({...principal,actorId:"real-user"});
+  assert.equal(fake.status==="rejected"?fake.code:null,"TRUSTED_HUMAN_REQUIRED");
+  const premature=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:3,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Claimed",reason:"Close"});
+  assert.equal(premature.status==="rejected"?premature.code:null,"USE_NOT_OBSERVED");
+  const human:Principal={actorId:"real-user",projectIds:[projectId],permissions:["read","write"],identityKind:"human"};
+  assert.equal((await observation(human)).status,"applied");
+  const closed=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:3,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Human use recorded",reason:"Close"});
+  assert.equal(closed.status,"applied");
+});
+
+test("an agent reviewer cannot downgrade human acceptance or replace its consumer", async () => {
+  const f=fixture();
+  await f.service.execute(principal,{type:"project.create",projectId,operationId:f.operation(),title:"Project"});
+  const created=await f.service.execute(principal,{type:"task.create",projectId,operationId:f.operation(),taskId:taskA,
+    title:"Human check",content:"Deliver",acceptance:"User confirms",owner:ownerRoleId,
+    acceptanceMode:"human_required",consumer:"real-user"});
+  assert.equal(created.status,"applied");
+  const update=(changes: {acceptanceMode?: "independent_agent"; consumer?: string}) => f.service.execute(principal,{
+    type:"task.update",projectId,operationId:f.operation(),taskId:taskA,expectedVersion:1,
+    title:"Human check",content:"Deliver",acceptance:"User confirms",owner:ownerRoleId,
+    reason:"Change acceptance",...changes});
+  const downgraded=await update({acceptanceMode:"independent_agent"});
+  assert.equal(downgraded.status==="rejected"?downgraded.code:null,"TRUSTED_HUMAN_REQUIRED");
+  const replaced=await update({consumer:"another-user"});
+  assert.equal(replaced.status==="rejected"?replaced.code:null,"TRUSTED_HUMAN_REQUIRED");
+  assert.equal((await f.service.getTask(principal,projectId,taskA)).proposal?.consumer,"real-user");
+  const human:Principal={actorId:"real-user",projectIds:[projectId],permissions:["read","write","review"],identityKind:"human"};
+  const released=await f.service.execute(human,{type:"task.update",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:1,title:"Human check",content:"Deliver",acceptance:"User confirms",owner:ownerRoleId,
+    acceptanceMode:"independent_agent",consumer:null,reason:"Human chose independent Agent review"});
+  assert.equal(released.status,"applied");
+  const policy=(await f.service.getTask(principal,projectId,taskA)).proposal;
+  assert.equal(policy?.acceptanceMode,"independent_agent");
+  assert.equal(policy?.consumer,"");
+});
+
+test("acceptance policy is part of the fixed Task input at each revision", async () => {
+  const f=fixture();
+  await f.service.execute(principal,{type:"project.create",projectId,operationId:f.operation(),title:"Project"});
+  await f.service.execute(principal,{type:"task.create",projectId,operationId:f.operation(),taskId:taskA,
+    title:"Review output",content:"Deliver",acceptance:"Use result",owner:ownerRoleId});
+  await f.service.execute(principal,{type:"task.start",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:1,reason:"Start"});
+  const first=(await f.service.getTask(principal,projectId,taskA)).revision.id;
+  const original=await f.uow.read(projectId,reader=>taskInputSignature(reader,f.uow.state.tasks[taskA]!,first));
+  assert.deepEqual(original.acceptancePolicy,{mode:"independent_agent",consumer:"",useRequired:true});
+  await f.service.execute(principal,{type:"task.reopen",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:2,reason:"Change acceptance"});
+  const changed=await f.service.execute(principal,{type:"task.update",projectId,operationId:f.operation(),taskId:taskA,
+    expectedVersion:3,title:"Review output",content:"Deliver",acceptance:"Use result",owner:ownerRoleId,
+    acceptanceMode:"human_required",consumer:"real-user",reason:"Human acceptance now required"});
+  assert.equal(changed.status,"applied");
+  const current=await f.uow.read(projectId,reader=>taskInputSignature(reader,f.uow.state.tasks[taskA]!));
+  assert.deepEqual(current.acceptancePolicy,{mode:"human_required",consumer:"real-user",useRequired:true});
+  assert.notDeepEqual(current,original);
+  const historical=await f.uow.read(projectId,reader=>taskInputSignature(reader,f.uow.state.tasks[taskA]!,first));
+  assert.deepEqual(historical,original,"the old revision keeps its original acceptance contract");
+});
+
 test("a settled cognition decision closes only its current Task revision; waiting needs a real handoff", async () => {
   const prepare = async () => {
     const f = fixture();
     await f.service.execute(principal, {type:"project.create",projectId,operationId:f.operation(),title:"Project"});
     await f.service.execute(principal, {type:"task.create",projectId,operationId:f.operation(),taskId:taskA,
-      title:"Review event",content:"Read fixed source",acceptance:"Record grounded choice",owner:"cognition"});
+      title:"Review event",content:"Read fixed source",acceptance:"Record grounded choice",owner:ownerRoleId});
+    // Historical cognition Tasks retain their signed Decision path rather than acquiring a new use contract.
+    f.uow.state.proposals[0] = {...f.uow.state.proposals[0]!,acceptanceMode:null,useRequired:false};
     await f.service.execute(principal, {type:"task.start",projectId,operationId:f.operation(),taskId:taskA,
       expectedVersion:1,reason:"Start review"});
     const task=(await f.service.getTask(principal,projectId,taskA)).task;
@@ -536,7 +679,7 @@ test("starting a migrated todo Task without basis input retains its fixed legacy
   await f.service.execute(principal, { type: "document.publish", projectId, operationId: f.operation(),
     documentId, expectedVersion: 1, revisionId: source.current.id, reason: "Publish source" });
   await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(),
-    taskId: taskA, title: "Legacy task", content: "Fixed task text", acceptance: "Pass", owner: "owner", documentIds: [documentId] });
+    taskId: taskA, title: "Legacy task", content: "Fixed task text", acceptance: "Pass", owner: ownerRoleId, documentIds: [documentId] });
   const current = await f.service.getTask(principal, projectId, taskA);
   const legacyBasisId = "00000000-0000-4000-8000-000000000099";
   f.uow.state.taskRevisions[current.revision.id] = { ...current.revision, state: "ready", basisSetId: legacyBasisId };
@@ -568,7 +711,7 @@ test("reopen and body update keep the prior published primary while inheriting e
     initial.basis?.members.find(item => item.documentId === documentId)?.revisionId);
   const updated = await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(),
     taskId: taskA, expectedVersion: 3, title: "Task", content: "Revised body", acceptance: "r1 acceptance",
-    owner: "owner", reason: "Replan body" });
+    owner: ownerRoleId, reason: "Replan body" });
   assert.equal(updated.status, "applied");
   const candidate = await f.service.getDocument(principal, projectId, primaryId);
   assert.equal(candidate.document.status, "published", "a new candidate does not unpublish the earlier revision");
@@ -620,9 +763,9 @@ test("explicit stage reassignment needs review and a complete active-stage propo
   await f.service.execute(principal, { type: "stage.accept", projectId, operationId: f.operation(), stageId,
     expectedVersion: 1, reason: "Approve" });
   await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(), taskId: taskA,
-    title: "Task", content: "Body", acceptance: "Check", owner: "owner" });
+    title: "Task", content: "Body", acceptance: "Check", owner: ownerRoleId });
   const command = { type: "task.update" as const, projectId, operationId: f.operation(), taskId: taskA,
-    expectedVersion: 1, title: "Task", content: "Body", acceptance: "Check", owner: "owner",
+    expectedVersion: 1, title: "Task", content: "Body", acceptance: "Check", owner: ownerRoleId,
     stageId, reason: "Bind stage" };
   const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
   await assert.rejects(f.service.execute(writer, command), error =>
@@ -729,7 +872,7 @@ test("candidate revision, duplicate operation and UTF-8 byte cap are enforced wi
   assert.equal(candidate.status, "applied");
   const proposal = "00000000-0000-4000-8000-000000000006";
   await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(), taskId: proposal,
-    title: "New task", content: "Do work", acceptance: "Check", owner: "owner", documentIds: [documentId] });
+    title: "New task", content: "Do work", acceptance: "Check", owner: ownerRoleId, documentIds: [documentId] });
   const outboxBefore = f.uow.state.outbox.length;
   const invalid = await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: proposal,
     expectedVersion: 1, basis: [{ documentId, revisionId: candidate.status === "applied" ? candidate.revisionId! : "" }], reason: "Try" });

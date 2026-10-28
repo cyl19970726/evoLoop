@@ -64,13 +64,13 @@ test("Task revisions pin the domain independently of kind and keep old revisions
     title:"Knowledge research",roleId,observedRoleVersion:1,routingReason:"research owner",
     authorizationEvidence:"reviewed assignment"});
   const created=await service.execute(principal,{type:"task.create",projectId,operationId:randomUUID(),taskId,
-    title:"Study",content:"Fixed problem",acceptance:"Evidence read",owner:"reviewer",kind:"research",domainId});
+    title:"Study",content:"Fixed problem",acceptance:"Evidence read",owner:roleId,kind:"research",domainId});
   assert.equal(created.status,"applied");
   const first=await service.getTask(principal,projectId,taskId);
   assert.equal(first.revision.domainId,domainId);
   assert.equal(first.revision.kind,"research");
   await service.execute(principal,{type:"task.update",projectId,operationId:randomUUID(),taskId,expectedVersion:1,
-    title:"Study",content:"Fixed problem",acceptance:"Evidence read",owner:"reviewer",kind:"research",domainId:null,
+    title:"Study",content:"Fixed problem",acceptance:"Evidence read",owner:roleId,kind:"research",domainId:null,
     reason:"unassign domain after review"});
   const current=await service.getTask(principal,projectId,taskId);
   assert.equal(current.revision.domainId,null);

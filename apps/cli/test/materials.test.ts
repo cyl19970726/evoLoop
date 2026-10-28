@@ -58,7 +58,8 @@ test("current todo context exposes linked planning pointers separately from read
     adoptedRevisionId: linkedRevision, contentHash: sha("Linked original"), status: "published",
     originalPath: `${root}/documents/${linked}/revisions/${linkedRevision}/original`};
   const responses: Record<string, unknown> = {
-    [`${root}/tasks/${taskId}`]: {task, revision: current, basis: null, links: [{documentId: linked}]},
+    [`${root}/tasks/${taskId}`]: {task, revision: current, basis: null, links: [{documentId: linked}],
+      proposal: {taskRevisionId, acceptanceMode:"independent_agent",consumer:"",useRequired:true}},
     [`${root}/tasks/${taskId}/revisions`]: [{revision: current, basis: null}],
     [`${root}/references/tasks/${taskId}/revisions/${taskRevisionId}`]: [],
     [`${root}/documents/${primary}/revisions/${primaryRevision}/original`]: {
@@ -77,6 +78,7 @@ test("current todo context exposes linked planning pointers separately from read
   assert.equal(result.status, "complete");
   assert.equal(result.task?.state, "todo");
   assert.equal(result.basis, null);
+  assert.deepEqual(result.acceptancePolicy,{acceptanceMode:"independent_agent",consumer:"",useRequired:true});
   assert.equal(result.routing.fixedDomainId,domainId);
   assert.equal(result.routing.current?.status,"external-manual");
   assert.deepEqual(result.routing.current?.verifiedCapabilities,["open","read","manual-claim"]);
@@ -93,6 +95,7 @@ test("current todo context exposes linked planning pointers separately from read
     [`${root}/tasks/${taskId}/revisions`]: [{revision: current, basis: null}, {revision: {...current, id: id(90)}, basis: null}],
   }), projectId, taskId, id(90));
   assert.deepEqual(historical.observedPlanningCandidates, []);
+  assert.equal(historical.acceptancePolicy,null,"current acceptance policy cannot be assigned to a historical revision");
 });
 
 test("rejects tampered, missing, duplicated and unsafe original resources before export", async () => {

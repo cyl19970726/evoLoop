@@ -69,3 +69,16 @@ test("managed Schedule target is exact and cannot be changed while pausing", asy
   await applySchedule(tx, principal, revise("stopped"), now);
   assert.equal(current!.state, "stopped");
 });
+
+test("scheduled human acceptance must name its consumer before the definition is saved", async () => {
+  const command=create();
+  command.authorization.expiresAtUtc=null;
+  command.template.acceptanceMode="human_required";
+  let saved:ScheduleDefinition|null=null;
+  const tx={getSchedule:async()=>null,insertSchedule:async(value:ScheduleDefinition)=>{saved=value;}} as unknown as SchedulingTransaction;
+  await assert.rejects(()=>applySchedule(tx,principal,command,now),/human-required/);
+  assert.equal(saved,null);
+  command.template.consumer="actual-user";
+  await applySchedule(tx,principal,command,now);
+  assert.equal(saved?.revision.template.consumer,"actual-user");
+});

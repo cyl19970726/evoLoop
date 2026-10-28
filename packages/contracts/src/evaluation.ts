@@ -12,6 +12,8 @@ const nextActionRef = z.union([fixedRef, z.strictObject({ kind: z.literal("task"
 export type EvaluationNextActionRef = z.infer<typeof nextActionRef>;
 const sourceSignature = z.strictObject({ title: note, contentDocumentId: id, contentRevisionId: id,
   domainId: id.optional(),
+  acceptancePolicy: z.strictObject({ mode: z.enum(["independent_agent", "human_required"]),
+    consumer: z.string().max(512), useRequired: z.literal(true) }).optional(),
   acceptance: note, owner: note, kind: note, basis: z.array(z.strictObject({ documentId: id, revisionId: id, contentHash: sha })).min(1).max(20),
   retentions: z.array(z.strictObject({ documentId: id, revisionId: id, observedAdoptedRevisionId: id,
     reason: note, actorId: note, createdAt: z.string().min(1) })).max(19),

@@ -5,6 +5,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test,{type TestContext} from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import {migrate,PostgresUnitOfWork} from "@evoloop/adapter-postgres";
 import {PgOrchestrationStore} from "@evoloop/adapter-postgres/orchestration";
 import {WorkflowService,RuntimeWorkflowService} from "@evoloop/core";
@@ -48,7 +49,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
-  const controllerId="study-controller",reviewerId="study-reviewer",role="cognition",business="business";
+  const controllerId="study-controller",reviewerId="study-reviewer",role=fixtureRoleId("cognition"),business=fixtureRoleId("business");
   const scope="study-cognition-scope",cwd=`/tmp/evoloop-waiting-study-${"c".repeat(180)}`;
   const principal=(actorId:string)=>({actorId,projectIds:[projectId],
     permissions:["read","write","review"] as Array<"read"|"write"|"review">});
@@ -80,6 +81,8 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   const run=async(actor:ReturnType<typeof principal>,input:Record<string,unknown>,operationId=randomUUID())=>
     orchestration.execute(actor,{projectId,operationId,...input} as never);
   await wf({type:"project.create",title:"Waiting study continuation"});
+  await seedFixtureRole(pool,projectId,role,{templateKey:"cognition"});
+  for (const roleId of [business,fixtureRoleId("prior-role")]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"Decide from fixed Runs",constraints:"Bounded",consumer:controllerId,
     authority:reviewerId,scope:"fixture",owner:controllerId});
   await wf({type:"stage.propose",stageId,goalId,deliverable:"Study",learningQuestion:"What changed?",reason:"Fixture"});
@@ -88,7 +91,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   if(ending==="division"){
     divisionTaskId=randomUUID();divisionRoleId=randomUUID();divisionDocumentId=randomUUID();
     await wf({type:"task.create",taskId:divisionTaskId,stageId,title:"Trial first work",content:"# Trial",
-      acceptance:"One result",owner:"prior-role",consumer:controllerId,evidence:"Study",
+      acceptance:"One result",owner:fixtureRoleId("prior-role"),consumer:controllerId,evidence:"Study",
       stopCondition:"Trial once"});
     const document=await wf({type:"document.create",documentId:divisionDocumentId,kind:"report",
       title:"Fixed division diagnosis",body:"# Fixed handoff"});
@@ -482,7 +485,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     assert.equal(consumed.entityId,childId);
     assert.equal((await orchestration.getDispatch(controller,projectId,childId))?.state,"pending");
     assert.equal((await orchestration.getLoop(controller,projectId,loopId))?.dispatchCount,4);
-    assert.equal((await workflow.getTask(controller,projectId,divisionTaskId)).task.owner,"prior-role",
+    assert.equal((await workflow.getTask(controller,projectId,divisionTaskId)).task.owner,fixtureRoleId("prior-role"),
       "consumption reserves budget before any normal Task transfer");
     return;
   }

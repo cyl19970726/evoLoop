@@ -15,6 +15,7 @@ import type { SessionAssignmentReader, SessionAssignmentTransaction } from "./se
 import type { SessionObservationReader } from "./session-observation.js";
 import type { NativeInputReader, NativeInputTransaction } from "./native-input.js";
 import type { NativeObservationReader, NativeObservationTransaction } from "./native-observation.js";
+import type { DeliveryIntent } from "./orchestration.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
@@ -47,7 +48,12 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listStages(goalId?: string): Promise<Stage[]>;
   listStageRevisions(stageId: string): Promise<StageRevision[]>;
   listStageReviews(stageId: string): Promise<StageReview[]>;
+  /** Latest policy at or before the selected revision; omit revision for the current Task. */
   getTaskProposal(taskId: string, taskRevisionId?: string): Promise<TaskProposal | null>;
+  /** Verify a signed Run submission in authoritative storage before attributing Delivery. */
+  getSignedRunSubmitter?(runId: string, taskId: string, taskRevisionId: string,
+    actorId: string, deliveryOperationId: string, expectedTaskVersion: number,
+    intent: DeliveryIntent): Promise<string | null>;
   listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
   getDelivery(id: string): Promise<Delivery | null>;
   listDeliveries(taskId: string): Promise<Delivery[]>;

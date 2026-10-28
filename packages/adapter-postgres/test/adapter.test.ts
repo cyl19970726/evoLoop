@@ -70,6 +70,78 @@ test("migration can run twice without changing history", async () => {
   assert.equal(result.rows[0].count, before.rows[0].count);
 });
 
+test("acceptance policy readback follows the selected Task revision", async () => {
+  const p=project(),source=document(p.id),item=readyTask(p.id,source.head.id,source.revision.id);
+  const laterId=randomUUID(),laterBasisId=randomUUID();
+  await uow.transaction(p.id,async tx=>{
+    await tx.insertProject(p);
+    await tx.insertDocument(source.head); await tx.insertDocumentRevision(source.revision);
+    await tx.insertDocument(item.primary.head); await tx.insertDocumentRevision(item.primary.revision);
+    await tx.insertTask(item.head); await tx.insertTaskRevision(item.revision); await tx.insertSealedBasisSet(item.basis);
+    await tx.insertTaskProposal({projectId:p.id,taskId:item.head.id,taskRevisionId:item.revision.id,
+      stageId:null,consumer:"",useRequired:true,acceptanceMode:"independent_agent",evidence:"",stopCondition:"",createdAt:now});
+    await tx.insertTaskRevision({...item.revision,id:laterId,version:2,basisSetId:laterBasisId,reason:"New acceptance"});
+    await tx.insertSealedBasisSet({...item.basis,id:laterBasisId,taskRevisionId:laterId});
+    await tx.updateTask({...item.head,version:2,currentRevisionId:laterId},1);
+    await tx.insertTaskProposal({projectId:p.id,taskId:item.head.id,taskRevisionId:laterId,
+      stageId:null,consumer:"real-user",useRequired:true,acceptanceMode:"human_required",evidence:"",stopCondition:"",createdAt:now});
+  });
+  const historical=await uow.read(p.id,reader=>reader.getTaskProposal(item.head.id,item.revision.id));
+  const current=await uow.read(p.id,reader=>reader.getTaskProposal(item.head.id));
+  assert.equal(historical?.acceptanceMode,"independent_agent");
+  assert.equal(current?.acceptanceMode,"human_required");
+  assert.equal(current?.consumer,"real-user");
+});
+
+test("ordinary submission attribution requires the frozen terminal Run version", async () => {
+  const p=project(),source=document(p.id),item=readyTask(p.id,source.head.id,source.revision.id);
+  const sessionId=randomUUID(),runId=randomUUID(),operationId=randomUUID(),deliveryOperationId=randomUUID();
+  const intent={artifactRef:"repo:result",artifactRevision:"abc123",contentHash:sha("result"),
+    technicalResult:"passed" as const,technicalEvidence:"checked",reason:"done"};
+  await uow.transaction(p.id,async tx=>{
+    await tx.insertProject(p);
+    await tx.insertDocument(source.head);await tx.insertDocumentRevision(source.revision);
+    await tx.insertDocument(item.primary.head);await tx.insertDocumentRevision(item.primary.revision);
+    await tx.insertTask(item.head);await tx.insertTaskRevision(item.revision);await tx.insertSealedBasisSet(item.basis);
+    await tx.insertRuntimeSession({projectId:p.id,id:sessionId,roleId:"operator",cwd:"/tmp/ordinary",authorizationScope:"project",
+      model:null,sandbox:"danger-full-access",approvalPolicy:"never",state:"ready",version:1,
+      nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`,operationId:randomUUID(),actorId:actor,
+      createdAt:now,updatedAt:now});
+  });
+  await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,
+    operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'fixed',$8,'completed',3,$9,$10,now(),now())`,
+    [p.id,runId,item.head.id,item.revision.id,item.basis.id,sessionId,randomUUID(),sha("fixed"),`turn-${runId}`,actor]);
+  // 041 is owned by the ordinary submission PR. The 040-only test database supplies
+  // its queried columns; once 041 lands this exercises its real table and guards.
+  const exists=await pool.query("SELECT to_regclass('ordinary_run_submission') AS relation");
+  const temporaryTable=!exists.rows[0]?.relation;
+  if(temporaryTable)assert.equal(await uow.read(p.id,r=>r.getSignedRunSubmitter!(runId,item.head.id,
+    item.revision.id,actor,deliveryOperationId,1,intent)),null,"040-only deployment has no ordinary signer");
+  if(temporaryTable)await pool.query(`CREATE TABLE ordinary_run_submission (
+    project_id uuid,submission_id uuid,run_id uuid,task_id uuid,session_id uuid,task_revision_id uuid,
+    run_input_hash text,operation_id uuid,command_hash text,delivery_operation_id uuid,delivery_intent jsonb,
+    submitted_by text,state text,version integer,expected_task_version integer,terminal_run_version integer,
+    sealed_by text,created_at_utc timestamptz,updated_at_utc timestamptz)`);
+  try{
+    await pool.query(`INSERT INTO ordinary_run_submission(project_id,submission_id,run_id,task_id,session_id,
+      task_revision_id,run_input_hash,operation_id,command_hash,delivery_operation_id,delivery_intent,
+      submitted_by,state,version,created_at_utc,updated_at_utc)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'submitted',1,now(),now())`,
+      [p.id,randomUUID(),runId,item.head.id,sessionId,item.revision.id,sha("fixed"),operationId,sha("command"),
+        deliveryOperationId,JSON.stringify(intent),actor]);
+    await pool.query(`UPDATE ordinary_run_submission SET state='sealing',version=2,expected_task_version=1,
+      terminal_run_version=3,sealed_by='coordinator',updated_at_utc=now() WHERE project_id=$1 AND run_id=$2`,[p.id,runId]);
+    const signer=()=>uow.read(p.id,r=>r.getSignedRunSubmitter!(runId,item.head.id,item.revision.id,actor,
+      deliveryOperationId,1,intent));
+    assert.equal(await signer(),actor);
+    await pool.query(`UPDATE runtime_run SET version=4,updated_at=now() WHERE project_id=$1 AND run_id=$2`,[p.id,runId]);
+    assert.equal(await signer(),null,"stale sealing version cannot attribute a later Run state");
+  }finally{
+    if(temporaryTable)await pool.query("DROP TABLE ordinary_run_submission");
+  }
+});
+
 test("session close intent and verification survive PostgreSQL readback without removing history", async () => {
   const p = project();
   const sessionId = randomUUID(), closeOperationId = randomUUID();

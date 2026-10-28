@@ -8,9 +8,10 @@ import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
 import type { CommandResult, Principal } from "@evoloop/contracts";
 import { buildServer } from "../../apps/coordinator/src/server.js";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const database = process.env.TEST_DATABASE_URL;
-if (!database || !/\/evoloop_[a-z_]*test(?:\?|$)/.test(database)) throw new Error("Use a dedicated evoloop_*test database");
+if (!database || !/\/evoloop_[a-z0-9_]*test(?:\?|$)/.test(database)) throw new Error("Use a dedicated evoloop_*test database");
 
 test("migration 019 preserves an existing Delivery closure without changing its evidence", async t => {
   const schema=`task_closure_legacy_${randomUUID().replaceAll("-","")}`;
@@ -20,7 +21,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
   // Current Task writes need nullable domain fields during seeding; remove both
   // before upgrading the populated historical 018 schema to exercise 019 and 026.
-  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid");
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),taskId=randomUUID(),actorId="legacy-reviewer";
@@ -32,7 +33,9 @@ test("migration 019 preserves an existing Delivery closure without changing its 
     assert.equal(result.status,"applied",JSON.stringify(result));return result as Extract<CommandResult,{status:"applied"}>;
   };
   await issue({type:"project.create",title:"Legacy closure"});
-  await issue({type:"task.create",taskId,title:"Old delivered task",content:"# Old body",acceptance:"Artifact checked",owner:actorId});
+  const ownerRoleId=fixtureRoleId(actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
+  await issue({type:"task.create",taskId,title:"Old delivered task",content:"# Old body",acceptance:"Artifact checked",owner:ownerRoleId});
   await issue({type:"task.start",taskId,expectedVersion:1,reason:"Begin"});
   const delivery=await issue({type:"delivery.record",taskId,expectedVersion:2,artifactRef:"fixture:old",artifactRevision:"r1",
     contentHash:"a".repeat(64),technicalResult:"passed",technicalEvidence:"Checked",reason:"Original delivery"});
@@ -44,7 +47,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
     [projectId,closureId,taskId,current.currentRevisionId,delivery.revisionId,actorId]);
   const original=(await pool.query("SELECT project_id,closure_id,task_id,task_revision_id,delivery_id,acceptance_result,acceptance_evidence,reason,actor_id,created_at FROM task_closure WHERE closure_id=$1",[closureId])).rows[0];
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[projectId])).rows[0].n>0,true);
-  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id");
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
   assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0);
   await runner({databaseUrl:database!,dir:migrations,direction:"up",migrationsTable:"pgmigrations",schema,count:8,
@@ -80,27 +83,30 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   const projectId = randomUUID(), taskId = randomUUID();
   const principal: Principal = { actorId: "task-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const token = randomUUID() + randomUUID(), writerToken = randomUUID() + randomUUID();
+  const token = randomUUID() + randomUUID(), writerToken = randomUUID() + randomUUID(), consumerToken = randomUUID() + randomUUID();
   const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
     clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const app = await buildServer({ service, credentials: [{ token, ...principal },
-    { token: writerToken, actorId: "task-writer", projectIds: [projectId], permissions: ["read", "write"] }] });
+    { token: writerToken, actorId: "task-writer", projectIds: [projectId], permissions: ["read", "write"] },
+    { token: consumerToken, actorId: "report-consumer", projectIds: [projectId], permissions: ["read", "write"] }] });
   t.after(async () => {
     await app.close(); await pool.end();
     const admin = new pg.Client({ connectionString: database }); await admin.connect();
     try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); }
   });
-  const send = async (command: Record<string, unknown>,operationId=randomUUID()) => {
-    const reply = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` },
+  const send = async (command: Record<string, unknown>,operationId=randomUUID(),credential=token) => {
+    const reply = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${credential}` },
       payload: { projectId, operationId, ...command } });
     return { reply, result: reply.json() as CommandResult };
   };
   const applied = (result: CommandResult) => { assert.equal(result.status, "applied", JSON.stringify(result)); return result as Extract<CommandResult, { status: "applied" }>; };
   applied((await send({ type: "project.create", title: "Simple Task" })).result);
+  const ownerRoleId=fixtureRoleId(principal.actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const original = "# Produce one report\n\nShow the checked result.";
   const created = applied((await send({ type: "task.create", taskId, title: "Report", content: original,
-    acceptance: "The report exists and its check passes", owner: principal.actorId })).result);
+    acceptance: "The report exists and its check passes", owner: ownerRoleId })).result);
   const first = await service.getTask(principal, projectId, taskId);
   assert.equal(first.task.state, "todo");
   assert.equal(first.task.content, original);
@@ -117,14 +123,14 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   const revisedBody = "# Produce one report\n\nShow the checked result and cite the source.";
   const updated = applied((await send({ type: "task.update", taskId, expectedVersion: created.version,
     title: "Report", content: revisedBody, acceptance: "The report exists and its check passes",
-    owner: principal.actorId, reason: "Clarify what the report must show" })).result);
+    owner: ownerRoleId, reason: "Clarify what the report must show" })).result);
   const second = await service.getTask(principal, projectId, taskId);
   assert.equal(second.task.content, revisedBody);
   assert.notEqual(second.task.contentRevisionId, first.task.contentRevisionId);
   assert.equal((await service.getTaskRevision(principal, projectId, taskId, first.revision.id)).revision.content, original);
   assert.equal((await service.getDocumentRevision(principal, projectId, first.task.contentDocumentId, first.task.contentRevisionId)).body, original);
   const stale = await send({ type: "task.update", taskId, expectedVersion: created.version, title: "Stale",
-    content: revisedBody, acceptance: "The report exists and its check passes", owner: principal.actorId, reason: "Wrong version" });
+    content: revisedBody, acceptance: "The report exists and its check passes", owner: ownerRoleId, reason: "Wrong version" });
   assert.equal(stale.result.status, "rejected");
   if (stale.result.status === "rejected") assert.equal(stale.result.code, "VERSION_CONFLICT");
   const genericEdit = await send({ type: "document.revise", documentId: first.task.contentDocumentId,
@@ -144,7 +150,7 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   assert.equal((await service.getDocument(principal, projectId, active.task.contentDocumentId)).document.status, "published");
   const illegalBodyChange = await send({ type: "task.update", taskId, expectedVersion: started.version,
     title: "Report", content: "# Changed while executing", acceptance: "The report exists and its check passes",
-    owner: principal.actorId, reason: "Must reopen first" });
+    owner: ownerRoleId, reason: "Must reopen first" });
   assert.equal(illegalBodyChange.result.status, "rejected");
   const failed = applied((await send({ type: "delivery.record", taskId, expectedVersion: started.version,
     artifactRef: "repo://report", artifactRevision: "first", contentHash: "a".repeat(64),
@@ -157,8 +163,8 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
     artifactRef: "repo://report", artifactRevision: "second", contentHash: "b".repeat(64),
     technicalResult: "passed", technicalEvidence: "Check passed", reason: "Corrected candidate" })).result);
   const oldUse=applied((await send({type:"observation.record",taskId,deliveryId:delivered.revisionId,
-    observer:principal.actorId,observerKind:"agent",result:"used",evidence:"Inspected first report",
-    reason:"First use"})).result);
+    observer:"report-consumer",observerKind:"agent",result:"used",evidence:"Inspected first report",
+    reason:"First use"},randomUUID(),consumerToken)).result);
   const closed = applied((await send({ type: "task.close", taskId, expectedVersion: delivered.version,
     deliveryId: delivered.revisionId, acceptanceResult: "met", acceptanceEvidence: "Report and check inspected", reason: "Accepted" })).result);
   const done = await service.getTask(principal, projectId, taskId);
@@ -174,7 +180,7 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   const priorPublishedContentRevision = done.task.contentRevisionId;
   const changed = applied((await send({ type: "task.update", taskId, expectedVersion: reopened.version,
     title: "Report", content: "# Produce the next report", acceptance: "The next report and its check pass",
-    owner: principal.actorId, reason: "New reporting cycle" })).result);
+    owner: ownerRoleId, reason: "New reporting cycle" })).result);
   const pendingMain = await service.getDocument(principal, projectId, done.task.contentDocumentId);
   assert.equal(pendingMain.document.status, "published", "editing a reopened Task keeps the old published source visible");
   assert.equal(pendingMain.document.adoptedRevisionId, priorPublishedContentRevision);
@@ -191,8 +197,8 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
     artifactRef:"repo://report",artifactRevision:"third",contentHash:"c".repeat(64),
     technicalResult:"passed",technicalEvidence:"New report checked",reason:"New reporting cycle"})).result);
   const secondUse=applied((await send({type:"observation.record",taskId,deliveryId:secondDelivery.revisionId,
-    observer:principal.actorId,observerKind:"agent",result:"used",evidence:"Inspected new report",
-    reason:"Second use"})).result);
+    observer:"report-consumer",observerKind:"agent",result:"used",evidence:"Inspected new report",
+    reason:"Second use"},randomUUID(),consumerToken)).result);
   const secondCloseCommand={type:"task.close",taskId,expectedVersion:secondDelivery.version,
     deliveryId:secondDelivery.revisionId,acceptanceResult:"met",acceptanceEvidence:"New report and check inspected",
     reason:"Accepted second cycle"};
@@ -241,7 +247,7 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
 
   const linkedTaskId = randomUUID();
   applied((await send({ type: "task.create", taskId: linkedTaskId, title: "Use fixed specification",
-    content: "# Follow the published specification", acceptance: "One checked result", owner: principal.actorId,
+    content: "# Follow the published specification", acceptance: "One checked result", owner: ownerRoleId,
     documentIds: [specId] })).result);
   const linkedStart = applied((await send({ type: "task.start", taskId: linkedTaskId, expectedVersion: 1,
     basis: [{ documentId: specId, revisionId: spec.revisionId }], reason: "Start with fixed specification" })).result);

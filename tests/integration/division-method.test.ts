@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService, OrchestrationError } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
@@ -43,7 +44,7 @@ test("PG method records a choice, then permits only its original todo Task throu
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
   const parentTaskId=randomUUID(),firstTaskId=randomUUID(),otherTaskId=randomUUID();
-  const owner="owner",cognition="cognition",business="business",other="other-business";
+  const owner="owner",cognition=fixtureRoleId("cognition"),business=fixtureRoleId("business"),other=fixtureRoleId("other-business");
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   withPersistedResumeProfile(runtime,uow);
@@ -68,6 +69,7 @@ test("PG method records a choice, then permits only its original todo Task throu
   const issue=(actor:string,command:Record<string,unknown>)=>orchestration.execute(principal(actor,projectId),
     {projectId,operationId:randomUUID(),...command} as never);
   await wf({type:"project.create",title:"Method continuation"});
+  for (const roleId of [cognition,business,other]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"One bounded result",constraints:"Local",consumer:owner,authority:owner,scope:"fixture",owner});
   await wf({type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
   await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
@@ -278,7 +280,7 @@ test("PG final cognition decision prevents a late method child before budget or 
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
-  const parentTaskId=randomUUID(),firstTaskId=randomUUID(),owner="owner",cognition="cognition",business="business";
+  const parentTaskId=randomUUID(),firstTaskId=randomUUID(),owner="owner",cognition=fixtureRoleId("cognition"),business=fixtureRoleId("business");
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
   withPersistedResumeProfile(runtime,uow);
@@ -294,6 +296,7 @@ test("PG final cognition decision prevents a late method child before budget or 
   const issue=(command:Record<string,unknown>)=>orchestration.execute(principal(owner,projectId),
     {projectId,operationId:randomUUID(),...command} as never);
   await wf({type:"project.create",title:"Method late-child boundary"});
+  for (const roleId of [cognition,business]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"One bounded result",constraints:"Local",consumer:owner,authority:owner,scope:"fixture",owner});
   await wf({type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
   await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});

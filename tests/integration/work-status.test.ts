@@ -8,9 +8,10 @@ import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 import { readWorkStatuses } from "../../apps/coordinator/src/orchestration/work-status.js";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const database=process.env.TEST_DATABASE_URL;
-if (!database || new URL(database).pathname !== "/evoloop_journey_eval_test")
+if (!database || !/\/evoloop_[a-z0-9_]*test$/.test(new URL(database).pathname))
   throw new Error("work status requires the isolated evoloop_journey_eval_test database");
 
 test("paged work status uses exact project facts and separates formal cognition from ordinary research",async t=>{
@@ -24,9 +25,10 @@ test("paged work status uses exact project facts and separates formal cognition 
   const workflow=new WorkflowService({uow,clock:{now:()=>fixedTime},ids:{next:nextId},hasher:{hash}});
   const projectId=randomUUID(),otherProjectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID();
   const cognitionId=randomUUID(),researchId=randomUUID(),loopId=randomUUID(),ownerId="work-status-owner";
+  const plannerRole=fixtureRoleId("planner"), researcherRole=fixtureRoleId("researcher"), builderRole=fixtureRoleId("builder");
   const principal={actorId:ownerId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId && scope==="fixture-scope" ?
-    {projectId,scopeId:scope,actorId:ownerId,roleId:"planner",active:true}:null,
+    {projectId,scopeId:scope,actorId:ownerId,roleId:plannerRole,active:true}:null,
     canActAsRole:async()=>true,wasActorRole:async()=>false});
   const orchestration=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash});
   const token=randomUUID()+randomUUID(),otherToken=randomUUID()+randomUUID();
@@ -42,26 +44,27 @@ test("paged work status uses exact project facts and separates formal cognition 
   };
   const managed=async(command:Record<string,unknown>)=>orchestration.execute(principal,{projectId,operationId:randomUUID(),...command} as never);
   await issue({type:"project.create",title:"Isolated work status"});
+  for (const roleId of [plannerRole,researcherRole,builderRole]) await seedFixtureRole(pool,projectId,roleId);
   await issue({type:"goal.create",goalId,outcome:"交付可核对报告",constraints:"隔离 fixture",consumer:"声明消费者",
     authority:"owner",scope:"fixture",owner:ownerId});
   await issue({type:"stage.propose",stageId,goalId,deliverable:"固定报告",learningQuestion:"是否有实际使用",reason:"Fixture"});
   await issue({type:"stage.accept",stageId,expectedVersion:1,reason:"Activate"});
   await issue({type:"task.create",taskId:cognitionId,stageId,title:"System source record",kind:"research",
-    content:"# Formal cognition",acceptance:"One decision",owner:"planner",consumer:"声明消费者",
+    content:"# Formal cognition",acceptance:"One decision",owner:plannerRole,consumer:"声明消费者",
     evidence:"Formal source",stopCondition:"One decision"});
   await issue({type:"task.start",taskId:cognitionId,expectedVersion:1,reason:"Fix cognition"});
   await issue({type:"task.create",taskId:researchId,stageId,title:"Ordinary research",kind:"research",
-    content:"# Research",acceptance:"One report",owner:"researcher",consumer:"声明消费者",useRequired:true,
+    content:"# Research",acceptance:"One report",owner:researcherRole,consumer:"声明消费者",useRequired:true,
     evidence:"Delivery and use",stopCondition:"One report"});
   await issue({type:"task.start",taskId:researchId,expectedVersion:1,reason:"Fix research"});
   const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
-  await managed({type:"loop.enroll",loopId,goalId,stageId,cognitiveRoleId:"planner",allowedBusinessRoleIds:["builder"],
+  await managed({type:"loop.enroll",loopId,goalId,stageId,cognitiveRoleId:plannerRole,allowedBusinessRoleIds:[builderRole],
     sourceAfter:{createdAtUtc:last.created_at.toISOString(),eventId:last.event_id},maxRuns:1,maxConcurrent:1,reason:"Fixture"});
   const loop=(await orchestration.getLoop(principal,projectId,loopId))!;
-  const inbox=await managed({type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,recipientRoleId:"planner",purpose:"cognitive_review"});
+  const inbox=await managed({type:"inbox.accept",loopId,sourceEventId:loop.bootstrapEventId,recipientRoleId:plannerRole,purpose:"cognitive_review"});
   await managed({type:"inbox.ack",inboxId:inbox.entityId,expectedVersion:1,reason:"Read source"});
   await managed({type:"dispatch.request",inboxId:inbox.entityId,expectedInboxVersion:2,dispatchId:randomUUID(),
-    parentDispatchId:null,taskId:cognitionId,expectedTaskVersion:2,recipientRoleId:"planner",purpose:"cognition",
+    parentDispatchId:null,taskId:cognitionId,expectedTaskVersion:2,recipientRoleId:plannerRole,purpose:"cognition",
     authorizationScopeId:"fixture-scope",reason:"Plan"});
   const oldDelivery=await issue({type:"delivery.record",taskId:researchId,expectedVersion:2,artifactRef:"fixture:old-report",
     artifactRevision:"v1",contentHash:hash("old report"),technicalResult:"failed",technicalEvidence:"Superseded fixture",
@@ -70,8 +73,11 @@ test("paged work status uses exact project facts and separates formal cognition 
     artifactRevision:"v2",contentHash:hash("report"),technicalResult:"passed",technicalEvidence:"Fixture",
     reason:"Latest fixed research report"});
   assert.ok(oldDelivery.revisionId > delivery.revisionId,"older delivery ID sorts after the newer one at the same timestamp");
-  await issue({type:"observation.record",taskId:researchId,deliveryId:delivery.revisionId,observer:"声明消费者",
-    observerKind:"human",result:"used",evidence:"Actual fixture use",reason:"Observed use"});
+  const consumer={actorId:"声明消费者",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const use=await workflow.execute(consumer,{type:"observation.record",projectId,operationId:randomUUID(),taskId:researchId,
+    deliveryId:delivery.revisionId,observer:consumer.actorId,observerKind:"agent",result:"used",
+    evidence:"Actual fixture use",reason:"Observed use"});
+  assert.equal(use.status,"applied",JSON.stringify(use));
   const endpoint=`/api/projects/${projectId}/orchestration/work-status?taskIds=${cognitionId},${researchId}`;
   const request=(auth:string,path=endpoint)=>app.inject({method:"GET",url:path,headers:{authorization:`Bearer ${auth}`}});
   const response=await request(token);

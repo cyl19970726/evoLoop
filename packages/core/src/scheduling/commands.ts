@@ -14,12 +14,17 @@ function sameMisfire(a: ScheduleRevision["misfire"], b: ScheduleRevision["misfir
 }
 const sameTemplate = (a: ScheduleRevision["template"], b: ScheduleRevision["template"]): boolean =>
   a.title === b.title && a.content === b.content && a.acceptance === b.acceptance && a.owner === b.owner &&
+  a.consumer === b.consumer && a.acceptanceMode === b.acceptanceMode &&
   a.managedTarget?.loopId === b.managedTarget?.loopId && a.managedTarget?.stageId === b.managedTarget?.stageId;
 
 /** Called by the shared command journal inside the project transaction. */
 export async function applySchedule(tx: SchedulingTransaction, principal: Principal, command: ScheduleCommand, now: string) {
   if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "Schedule authorization requires project review permission");
   if (command.authorization.authorizedBy !== principal.actorId) throw new DomainError("FORBIDDEN", "Schedule authorization must identify the authenticated reviewer");
+  if (!command.template.managedTarget && command.template.acceptanceMode === "human_required" && !command.template.consumer)
+    throw new DomainError("ACCEPTANCE_POLICY", "human-required scheduled Tasks need the exact human consumer actor");
+  if (command.template.managedTarget && (command.template.acceptanceMode || command.template.consumer))
+    throw new DomainError("ACCEPTANCE_POLICY", "managed cognition schedules use their signed Decision contract");
   if (command.state === "active" && command.template.managedTarget) {
     const target = command.template.managedTarget;
     const stage = await tx.getStage(target.stageId);

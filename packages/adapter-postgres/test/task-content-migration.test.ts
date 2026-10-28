@@ -144,15 +144,19 @@ test("012 backfills nonempty legacy history byte-exactly without rewriting seale
 
   // Old immutable schedule JSON still uses `goal`. The adapter projects it as
   // content and materializes a new draft Task+primary Document without rewriting history.
-  const scheduleId = randomUUID();
+  const scheduleId = randomUUID(), scheduleOwnerRoleId = randomUUID(), scheduleOwnerRoleRevisionId = randomUUID();
   const scheduleRevisionId = randomUUID();
   const planned = "2026-10-21T12:00:00.000Z";
   await client.query("BEGIN");
   try {
+    await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial','scheduler',$4,$4,$4)`, [projectId, scheduleOwnerRoleId, scheduleOwnerRoleRevisionId, now]);
+    await client.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'scheduler','legacy schedule fixture',$4,$4)`, [projectId, scheduleOwnerRoleId, scheduleOwnerRoleRevisionId, now]);
     await client.query("INSERT INTO schedule_definition(project_id,schedule_id,version,current_revision_id,state,watermark_utc) VALUES($1,$2,1,$3,'active',$4)", [projectId, scheduleId, scheduleRevisionId, "2026-10-21T11:00:00.000Z"]);
     await client.query(`INSERT INTO schedule_revision(project_id,schedule_id,revision_id,version,timezone,rule,misfire,overlap_policy,task_template,authorization_scope,actor_id,reason,created_at_utc)
       VALUES($1,$2,$3,1,'UTC','{}'::jsonb,'{}'::jsonb,'skip',$4::jsonb,$5::jsonb,'scheduler','old template',$6)`,
-      [projectId, scheduleId, scheduleRevisionId, JSON.stringify({ title: "Scheduled", goal: "Old template body\r\n", acceptance: "Check", owner: "worker" }),
+      [projectId, scheduleId, scheduleRevisionId, JSON.stringify({ title: "Scheduled", goal: "Old template body\r\n", acceptance: "Check", owner: scheduleOwnerRoleId }),
         JSON.stringify({ roleId: "scheduler", expiresAtUtc: null }), now]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }

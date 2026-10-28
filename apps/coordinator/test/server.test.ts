@@ -52,6 +52,10 @@ test("auth rejects malformed, short and duplicate credentials", () => {
   assert.equal(authenticate(`Basic ${token}`, credentials), null);
   assert.equal(authConfigSchema.safeParse([...credentials, ...credentials]).success, false);
   assert.equal(authConfigSchema.safeParse([{ ...credentials[0], token: "short" }]).success, false);
+  assert.equal(authConfigSchema.safeParse([...credentials, {...credentials[0]!,token:"h".repeat(40),identityKind:"human"}]).success,false);
+  const human=authConfigSchema.parse([{...credentials[0]!,identityKind:"human"}]);
+  assert.equal(authenticate(`Bearer ${token}`,human)?.identityKind,"human");
+  assert.equal(authenticate(`Bearer ${token}`,credentials)?.identityKind,"agent");
 });
 
 test("current study reviewer accepts equivalent token rotation but never combines partial project grants", () => {

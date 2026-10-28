@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { PgOrchestrationStore } from "@evoloop/adapter-postgres/orchestration";
@@ -27,7 +28,7 @@ if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated
 const schema=`el_workerfacts_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),owner="fact-owner",worker="worker-fact-business",cognitiveActor="worker-fact-cognition";
-const businessRole="fact-business",cognitiveRole="fact-cognition";
+const businessRole=fixtureRoleId("fact-business"),cognitiveRole=fixtureRoleId("fact-cognition");
 const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
@@ -44,6 +45,7 @@ test("worker PG facts bind fixed Run sources and current Goal/Stage scope",async
   await migrate(url!,schema);
   t.after(async()=>{await pool.end();const cleanup=new pg.Client({connectionString:url});await cleanup.connect();try{await cleanup.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await cleanup.end();}});
   await issue({type:"project.create",title:"Worker fact boundaries"});
+  for (const roleId of [businessRole,cognitiveRole]) await seedFixtureRole(pool,projectId,roleId);
   const goalId=randomUUID(),otherGoalId=randomUUID(),stageId=randomUUID(),otherStageId=randomUUID(),foreignStageId=randomUUID();
   for(const id of [goalId,otherGoalId]) await issue({type:"goal.create",goalId:id,outcome:"Bounded fact verification",constraints:"Local",consumer:"owner",authority:"reviewer",scope:"test",owner});
   for(const [id,goal] of [[stageId,goalId],[otherStageId,goalId],[foreignStageId,otherGoalId]]){

@@ -5,6 +5,7 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/evoloop.*test/.test(new URL(url).pathname)) throw new Error("dedicated evoloop test database required");
@@ -38,6 +39,8 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
     finally { await cleanup.end(); }
   });
   applied(await issue(reviewer, { type: "project.create", title: "Discussion regression" }));
+  const ownerRoleId=fixtureRoleId(reviewer.actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const goalId = randomUUID(), stageId = randomUUID(), otherStageId = randomUUID(), taskId = randomUUID(), sourceId = randomUUID();
   applied(await issue(reviewer, { type: "goal.create", goalId, outcome: "Usable direction", constraints: "Project scope",
     consumer: "owner", authority: "reviewer", scope: "current project", owner: reviewer.actorId }));
@@ -53,7 +56,7 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
     revisionId: source.revisionId, reason: "Reviewed" }));
   const stageTaskId = randomUUID();
   applied(await issue(reviewer, { type: "task.create", taskId: stageTaskId, stageId,
-    title: "Stage-owned task", content: "# Check one path", acceptance: "Evidence logged", owner: reviewer.actorId,
+    title: "Stage-owned task", content: "# Check one path", acceptance: "Evidence logged", owner: ownerRoleId,
     documentIds: [sourceId], consumer: "Project owner", evidence: "Initial observation", stopCondition: "After one trial" }));
   const acceptedStageTask = applied(await issue(reviewer, { type: "task.start", taskId: stageTaskId,
     expectedVersion: 1, basis: [{ documentId: sourceId, revisionId: source.revisionId }], reason: "Begin trial" }));
@@ -68,7 +71,7 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   await assert.rejects(service.getDiscussion(reviewer, projectId, wrongDiscussionId), /not found/);
   await assert.rejects(service.getDocument(reviewer, projectId, wrongDocumentId), /not found/);
   const task = applied(await issue(reviewer, { type: "task.create", taskId, title: "Trial task", content: "# Try one path",
-    acceptance: "Result recorded", owner: reviewer.actorId, documentIds: [sourceId] }));
+    acceptance: "Result recorded", owner: ownerRoleId, documentIds: [sourceId] }));
   const discussionId = randomUUID(), documentId = randomUUID();
   const prepare = { type: "discussion.prepare", discussionId, documentId, kind: "direction", title: "Next direction",
     body: "Contrary observation: a second team could not use the result.", goal: { id: goalId, version: 1 },

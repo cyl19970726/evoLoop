@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
 import type { CommandResult, Principal } from "@evoloop/contracts";
@@ -45,6 +46,8 @@ test("document reverse Task lookup returns current exact references in UUID page
     return result as Extract<CommandResult, { status: "applied" }>;
   };
   await send({ type: "project.create", title: "Document task references" });
+  const ownerRoleId=fixtureRoleId(owner.actorId);
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const source = await send({ type: "document.create", documentId: sourceDocumentId, title: "Shared source", body: "private source body" });
   await send({ type: "document.adopt", documentId: sourceDocumentId, expectedVersion: 1,
     revisionId: source.revisionId, reason: "Publish the fixed source for basis use" });
@@ -53,7 +56,7 @@ test("document reverse Task lookup returns current exact references in UUID page
   for (let index = 0; index < 51; index++) {
     const taskId = randomUUID(); ids.push(taskId);
     await send({ type: "task.create", taskId, title: `Reference ${index}`, content: `task body ${index}`,
-      acceptance: "Current reference appears", owner: owner.actorId, documentIds: [sourceDocumentId] });
+      acceptance: "Current reference appears", owner: ownerRoleId, documentIds: [sourceDocumentId] });
     if (index === 0) {
       await send({ type: "task.start", taskId, expectedVersion: 1,
         basis: [{ documentId: sourceDocumentId, revisionId: source.revisionId }], reason: "Set current fixed basis" });
@@ -63,18 +66,18 @@ test("document reverse Task lookup returns current exact references in UUID page
   const historyOnlyBasisTaskId = randomUUID();
   ids.push(historyOnlyBasisTaskId);
   await send({ type: "task.create", taskId: historyOnlyBasisTaskId, title: "Historical basis only", content: "history body",
-    acceptance: "Historical basis is excluded", owner: owner.actorId, documentIds: [sourceDocumentId] });
+    acceptance: "Historical basis is excluded", owner: ownerRoleId, documentIds: [sourceDocumentId] });
   await send({ type: "task.start", taskId: historyOnlyBasisTaskId, expectedVersion: 1,
     basis: [{ documentId: sourceDocumentId, revisionId: source.revisionId }], reason: "Set historical basis" });
   await send({ type: "task.cancel", taskId: historyOnlyBasisTaskId, expectedVersion: 2, reason: "End old revision" });
   await send({ type: "task.reopen", taskId: historyOnlyBasisTaskId, expectedVersion: 3, reason: "Return to todo" });
   await send({ type: "task.update", taskId: historyOnlyBasisTaskId, expectedVersion: 4, title: "Historical basis only",
-    content: "history body", acceptance: "Historical basis is excluded", owner: owner.actorId,
+    content: "history body", acceptance: "Historical basis is excluded", owner: ownerRoleId,
     basis: [], reason: "Drop old source from current revision" });
 
   const contentTaskId = randomUUID();
   await send({ type: "task.create", taskId: contentTaskId, title: "Primary content match", content: "unique private task body",
-    acceptance: "Primary document is discoverable", owner: owner.actorId });
+    acceptance: "Primary document is discoverable", owner: ownerRoleId });
   const contentTask = await service.getTask(owner, projectId, contentTaskId);
   const endpoint = (documentId: string) => `/api/projects/${projectId}/documents/${documentId}/tasks`;
   const headers = { authorization: `Bearer ${readerToken}` };
@@ -101,7 +104,7 @@ test("document reverse Task lookup returns current exact references in UUID page
   const content = await app.inject({ url: endpoint(contentTask.task.contentDocumentId), headers });
   assert.equal(content.statusCode, 200, content.body);
   assert.deepEqual(content.json(), { items: [{ projectId, id: contentTaskId, title: "Primary content match",
-    state: "todo", owner: owner.actorId, kind: null, version: 1, currentRevisionId: contentTask.task.currentRevisionId,
+    state: "todo", owner: ownerRoleId, kind: null, version: 1, currentRevisionId: contentTask.task.currentRevisionId,
     relations: ["content"] }], nextCursor: null });
   assert.equal(JSON.stringify(content.json()).includes("unique private task body"), false);
 

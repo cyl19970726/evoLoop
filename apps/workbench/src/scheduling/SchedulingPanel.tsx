@@ -33,7 +33,13 @@ function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition): Fie
     { name: "title", label: "新提议任务的名称", value: revision?.template.title ?? "" },
     { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "" },
     { name: "acceptance", label: "新提议任务的接受条件", kind: "textarea", value: revision?.template.acceptance ?? "" },
-    { name: "owner", label: "任务责任者", value: revision?.template.owner ?? "" },
+    { name: "owner", label: "任务责任角色 ID", value: revision?.template.owner ?? "" },
+    ...(revision?.template.managedTarget ? [] : [
+      { name: "acceptanceMode", label: "任务验收方式", kind: "select" as const, value: revision?.template.acceptanceMode ?? "independent_agent",
+        options: [option("independent_agent", "独立 Agent 验收"), option("human_required", "必须本人验收")] },
+      { name: "consumer", label: "指定验收身份（可选）", optional: true, value: revision?.template.consumer ?? "",
+        hint: "本人验收必须填写受信身份 ID；独立 Agent 可留空。" },
+    ]),
     { name: "grant", label: "已配置的日程授权", kind: "select", value: oldGrant ? grantKey(oldGrant) : choices[0]?.value ?? "", options: choices,
       hint: "仅显示当前身份在本项目的授权；已撤回的旧授权只允许暂停或停止。" },
     { name: "expiresAtUtc", label: "授权到期（ISO 8601，可留空）", optional: true, value: revision?.authorization.expiresAtUtc ?? "" },
@@ -131,7 +137,7 @@ function ScheduleCard({ definition, context, refresh, grants }: { definition: Sc
     <dl><div><dt>规则</dt><dd>{ruleText(revision.rule)} · {revision.timezone}</dd></div>
       <div><dt>错过</dt><dd>{revision.misfire.kind === "bounded" ? `最多补做 ${revision.misfire.maxCatchUp} 次` : revision.misfire.kind === "latest" ? "只取最近一次" : "跳过"}</dd></div>
       <div><dt>重叠</dt><dd>{revision.overlap === "queue" ? "排队" : "跳过"}</dd></div>
-      <div><dt>新任务正文</dt><dd><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}</p></dd></div>
+      <div><dt>新任务正文</dt><dd><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}；{revision.template.managedTarget ? "受管判断合同" : revision.template.acceptanceMode === "human_required" ? "本人验收" : "独立 Agent 验收"}{revision.template.consumer ? ` · ${revision.template.consumer}` : ""}</p></dd></div>
       <div><dt>授权</dt><dd>{revision.authorization.scopeId} · 职责 {revision.authorization.roleId} · 授权人 {revision.authorization.authorizedBy} · 到期 {revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"}</dd></div>
       {target && <div><dt>受管目标</dt><dd>{targetRead.state === "verified" ? `阶段产物：${targetRead.stageName} · 工作链 ${target.loopId.slice(0,8)}（${targetRead.loopState === "paused" ? "已暂停" : "运行中"}）` : targetRead.state === "checking" ? "正在核对绑定的工作链与阶段…" : "绑定暂不可核对"}
         <details><summary>核对固定目标标识</summary><p>Loop <code>{target.loopId}</code> · Stage <code>{target.stageId}</code>{targetRead.goalId && <> · Goal <code>{targetRead.goalId}</code></>}</p></details></dd></div>}

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { WorkflowService, RuntimeWorkflowService } from "@evoloop/core";
 import { OrchestrationService } from "@evoloop/core/orchestration";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
@@ -31,7 +32,7 @@ function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: Postgr
   return runtime;
 }
 const database = process.env.TEST_DATABASE_URL;
-if (!database || new URL(database).pathname !== "/evoloop_journey_eval_test")
+if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(database).pathname))
   throw new Error("worker CLI/HTTP test requires the isolated evoloop_journey_eval_test database");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const principal = (projectId: string, actorId: string) => ({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
@@ -47,7 +48,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
   withPersistedResumeProfile(runtime,uow);
   const projectId=randomUUID(),loopId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),cognitiveTaskId=randomUUID();
-  const cognitiveRole="fixture-planner",businessRole="fixture-builder",controller="fixture-controller";
+  const cognitiveRole=fixtureRoleId("fixture-planner"),businessRole=fixtureRoleId("fixture-builder"),controller="fixture-controller";
   const cognitiveScope="fixture-cognition-scope",businessScope="fixture-business-scope";
   const ownerToken=randomUUID()+randomUUID();
   const gitRoot=join(directory,"git");
@@ -121,6 +122,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     return cli(wrapper,["command","run",file],expected);
   }
   await issue({type:"project.create",title:"Isolated worker HTTP matrix"});
+  await seedFixtureRole(pool,projectId,cognitiveRole,{templateKey:"cognition"});
+  await seedFixtureRole(pool,projectId,businessRole);
   await issue({type:"goal.create",goalId,outcome:"Check one fixed source",constraints:"Fixture only",consumer:"owner",authority:"controller",scope:"isolated",owner:controller});
   await issue({type:"stage.propose",stageId,goalId,deliverable:"One bounded action",learningQuestion:"Can worker read and act?",reason:"Fixture stage"});
   await issue({type:"stage.accept",stageId,expectedVersion:1,reason:"Active fixture stage"});
@@ -128,7 +131,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const basis=await issue({type:"document.create",documentId:basisId,title:"Frozen basis",body:source});
   await issue({type:"document.adopt",documentId:basisId,expectedVersion:1,revisionId:basis.revisionId,reason:"Fix source"});
   await issue({type:"task.create",taskId:cognitiveTaskId,stageId,title:"Review source",content:"# Decide next action",acceptance:"One signed result",
-    owner:cognitiveRole,documentIds:[basisId],consumer:"owner",evidence:"Fixture",stopCondition:"One decision"});
+    owner:cognitiveRole,documentIds:[basisId],consumer:controller,evidence:"Fixture",stopCondition:"One decision"});
   await issue({type:"task.start",taskId:cognitiveTaskId,expectedVersion:1,basis:[{documentId:basisId,revisionId:basis.revisionId}],reason:"Freeze cognitive task"});
   const last=(await pool.query("SELECT created_at,event_id FROM outbox_event WHERE project_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT 1",[projectId])).rows[0];
   await orchestrate({type:"loop.enroll",loopId,goalId,stageId,cognitiveRoleId:cognitiveRole,allowedBusinessRoleIds:[businessRole],
@@ -203,7 +206,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(wrapper,["original",reportId,"--revision",reportRevisionId])).body,"# Worker evidence");
   const childTaskId=randomUUID();
   await workerCommand(wrapper,{type:"task.create",taskId:childTaskId,stageId,title:"Bounded child action",content:"# Next",
-    acceptance:"One check",owner:businessRole,consumer:"owner",evidence:"Source reviewed",stopCondition:"One action"});
+    acceptance:"One check",owner:businessRole,consumer:controller,evidence:"Source reviewed",stopCondition:"One action"});
   assert.equal((await cli(wrapper,["task",childTaskId])).task.id,childTaskId);
   await issue({type:"task.start",taskId:childTaskId,expectedVersion:1,reason:"Fixture seals child scope before dispatch"});
   const fixedRun=await cli(wrapper,["read","run",runId]);
@@ -299,8 +302,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     deliveryId:businessSealed.deliveryId,decisionId:null,evidenceRef:"fixture:business-report",reason:"Signed report sealed"});
   const observationLoopId=randomUUID(),observationTaskId=randomUUID();
   await issue({type:"task.create",taskId:observationTaskId,stageId,title:"Review independent feedback",
-    content:"# Consumer feedback",acceptance:"Read fixed observation",owner:cognitiveRole,
-    consumer:"fixture",evidence:"Independent observation",stopCondition:"One check"});
+    content:"# Consumer feedback",acceptance:"Read fixed observation",owner:cognitiveRole,kind:"research",
+    consumer:cognitiveRole,useRequired:false,evidence:"Independent observation",stopCondition:"One check"});
   await issue({type:"task.start",taskId:observationTaskId,expectedVersion:1,reason:"Fix observation review"});
   const observationCursor=(await pool.query(`SELECT created_at,event_id FROM outbox_event WHERE project_id=$1
     ORDER BY created_at DESC,event_id DESC LIMIT 1`,[projectId])).rows[0];
@@ -346,8 +349,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.ok(observationGap?.event_id);
   const observationRecoveryTaskId=randomUUID();
   await issue({type:"task.create",taskId:observationRecoveryTaskId,stageId,title:"Recover observed cognition",
-    content:"# Read the fixed gap",acceptance:"One bounded recovery",owner:cognitiveRole,
-    consumer:"fixture",evidence:"Formal terminal gap",stopCondition:"One check"});
+    content:"# Read the fixed gap",acceptance:"One bounded recovery",owner:cognitiveRole,kind:"research",
+    consumer:cognitiveRole,useRequired:false,evidence:"Formal terminal gap",stopCondition:"One check"});
   await issue({type:"task.start",taskId:observationRecoveryTaskId,expectedVersion:1,reason:"Fix recovery scope"});
   const observationRecoveryInbox=await orchestrate({type:"inbox.accept",loopId:observationLoopId,
     sourceEventId:observationGap.event_id,recipientRoleId:cognitiveRole,purpose:"cognitive_review"});
@@ -359,8 +362,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     authorizationScopeId:cognitiveScope,reason:"Recover from formal gap source"});
   const unrelatedTaskId=randomUUID(),unrelatedObservationOperationId=randomUUID();
   await issue({type:"task.create",taskId:unrelatedTaskId,stageId,title:"Review separate feedback",
-    content:"# Separate observation",acceptance:"Separate check",owner:cognitiveRole,
-    consumer:"fixture",evidence:"Different Task",stopCondition:"One check"});
+    content:"# Separate observation",acceptance:"Separate check",owner:cognitiveRole,kind:"research",
+    consumer:cognitiveRole,useRequired:false,evidence:"Different Task",stopCondition:"One check"});
   await issue({type:"task.start",taskId:unrelatedTaskId,expectedVersion:1,reason:"Fix separate scope"});
   await issue({type:"observation.record",operationId:unrelatedObservationOperationId,taskId:cognitiveTaskId,
     deliveryId:settled.deliveryId,observer:controller,observerKind:"agent",result:"notUsed",
@@ -528,7 +531,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   // A separate accepted Run records a signed decision instead of a submission.
   const secondLoopId=randomUUID(),secondSessionId=randomUUID(),secondRunId=randomUUID(),secondTaskId=randomUUID();
   await issue({type:"task.create",taskId:secondTaskId,stageId,title:"Independent decision",content:"# Decide whether to wait",
-    acceptance:"One signed waiting reason",owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One decision"});
+    acceptance:"One signed waiting reason",owner:cognitiveRole,kind:"research",consumer:cognitiveRole,
+    useRequired:false,evidence:"Fixture",stopCondition:"One decision"});
   await issue({type:"task.start",taskId:secondTaskId,expectedVersion:1,reason:"Freeze second fixture"});
   const gitRefId=randomUUID();
   const observedGit=new Map<string,{revision:string;body:string}>([[gitRefId,{revision:commit,body:gitBody}]]);
@@ -917,7 +921,8 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
     "FORBIDDEN");
   const unknownLoopId=randomUUID(),unknownTaskId=randomUUID(),unknownSessionId=randomUUID(),unknownRunId=randomUUID();
   await issue({type:"task.create",taskId:unknownTaskId,stageId,title:"Unresolved work",content:"# Unknown",
-    acceptance:"Do not infer terminal",owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One Run"});
+    acceptance:"Do not infer terminal",owner:cognitiveRole,kind:"research",consumer:cognitiveRole,
+    useRequired:false,evidence:"Fixture",stopCondition:"One Run"});
   const unknownGitRefId=randomUUID();
   const unknownGitBody="# Gap fixed source\n";
   await writeFile(join(gitRoot,"gap.md"),unknownGitBody);

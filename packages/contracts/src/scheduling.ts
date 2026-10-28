@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Stage } from "./workflow.js";
+import type { AcceptanceMode } from "./workflow.js";
 
 const scheduleText = z.string().trim().min(1).max(4000);
 const scheduleRuleSchema = z.discriminatedUnion("kind", [
@@ -12,6 +13,7 @@ const scheduleFields = {
   rule: scheduleRuleSchema,
   misfire: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("skip") }), z.strictObject({ kind: z.literal("latest") }), z.strictObject({ kind: z.literal("bounded"), maxCatchUp: z.number().int().min(1).max(100) })]),
   overlap: z.enum(["skip", "queue"]), template: z.strictObject({ title: scheduleText, content: z.string().min(1).max(65536), acceptance: scheduleText, owner: scheduleText,
+    consumer: scheduleText.optional(), acceptanceMode: z.enum(["independent_agent", "human_required"]).optional(),
     managedTarget: z.strictObject({ loopId: z.uuid(), stageId: z.uuid() }).optional() }),
   authorization: z.strictObject({ scopeId: scheduleText, roleId: scheduleText, authorizedBy: scheduleText, expiresAtUtc: z.iso.datetime().nullable() }),
   reason: scheduleText,
@@ -29,7 +31,7 @@ export type ScheduleRule =
 
 export type MisfirePolicy = { kind: "skip" } | { kind: "latest" } | { kind: "bounded"; maxCatchUp: number };
 export type OverlapPolicy = "skip" | "queue";
-export interface ScheduledTaskTemplate { title: string; content: string; acceptance: string; owner: string; managedTarget?: { loopId: string; stageId: string } | undefined }
+export interface ScheduledTaskTemplate { title: string; content: string; acceptance: string; owner: string; consumer?: string | undefined; acceptanceMode?: AcceptanceMode | undefined; managedTarget?: { loopId: string; stageId: string } | undefined }
 export interface ScheduleAuthorization {
   scopeId: string;
   roleId: string;

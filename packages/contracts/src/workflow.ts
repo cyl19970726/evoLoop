@@ -182,6 +182,7 @@ export interface StageReview {
   actorId: string;
   createdAt: string;
 }
+export type AcceptanceMode = "independent_agent" | "human_required";
 export interface TaskProposal {
   projectId: string;
   taskId: string;
@@ -189,6 +190,8 @@ export interface TaskProposal {
   stageId: string | null;
   consumer: string;
   useRequired: boolean;
+  /** Null is the historical contract; new Tasks always set an explicit mode. */
+  acceptanceMode?: AcceptanceMode | null;
   evidence: string;
   stopCondition: string;
   createdAt: string;
@@ -212,6 +215,8 @@ export interface Delivery {
   taskRevisionId: string;
   /** Explicitly declared source Run; null for deliveries registered without one. */
   runId: string | null;
+  /** Trusted submission signer. Null for historical or manually registered Run deliveries. */
+  submittedByActorId?: string | null;
   artifactRef: string;
   artifactRevision: string;
   contentHash: string;

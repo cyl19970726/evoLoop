@@ -36,6 +36,7 @@ function fixture() {
     getDocument: async (key: string) => key === primaryId ? { id: primaryId, adoptedRevisionId: id(6) } : null,
     getGitSourceRef: async () => null,
     listTaskExternalSnapshot: async () => [],
+    getTaskProposal: async () => null,
     insertTaskExternalSnapshot: async () => {},
     getEvaluation: async (key: string, rev?: string) => state.definitions.filter(item => item.evaluationId === key && (!rev || item.id === rev)).at(-1) ?? null,
     listEvaluationAttempts: async (key: string, rev: string) => state.attempts.filter(item => item.evaluationId === key && item.revisionId === rev),

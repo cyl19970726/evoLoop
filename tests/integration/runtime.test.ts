@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
+import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
@@ -19,7 +20,7 @@ function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: Postgr
   return runtime;
 }
 const url = process.env.TEST_DATABASE_URL;
-if (!url || !/evoloop_runtime_test/.test(new URL(url).pathname)) {
+if (!url || !/\/evoloop_[a-z0-9_]*test$/.test(new URL(url).pathname)) {
   throw new Error("dedicated evoloop_runtime_test database required");
 }
 const schema = `el_runtime_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
@@ -58,19 +59,21 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   });
 
   applied(await issue({ type: "project.create", title: "Runtime integration" }));
+  const ownerRoleId=fixtureRoleId("runtime-owner");
+  await seedFixtureRole(pool,projectId,ownerRoleId);
   const documentId = randomUUID();
   const document = applied(await issue({ type: "document.create", documentId, title: "Requirement", body: "Original basis" }));
   applied(await issue({ type: "document.adopt", documentId, expectedVersion: 1, revisionId: document.revisionId, reason: "Initial basis" }));
   const taskId = randomUUID();
-  applied(await issue({ type: "task.create", taskId, title: "Produce output", content: "# One artifact\nProduce output from the fixed source.", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted requirement" }));
+  applied(await issue({ type: "task.create", taskId, title: "Produce output", content: "# One artifact\nProduce output from the fixed source.", acceptance: "Review output", owner: ownerRoleId, documentIds: [documentId], evidence: "Accepted requirement" }));
   const ready = applied(await issue({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" }));
   const otherTaskId = randomUUID();
-  applied(await issue({ type: "task.create", taskId: otherTaskId, title: "Second output", content: "# One artifact\nProduce another output.", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Second accepted requirement" }));
+  applied(await issue({ type: "task.create", taskId: otherTaskId, title: "Second output", content: "# One artifact\nProduce another output.", acceptance: "Review output", owner: ownerRoleId, documentIds: [documentId], evidence: "Second accepted requirement" }));
   applied(await issue({ type: "task.start", taskId: otherTaskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin second task" }));
 
   const sessionId = randomUUID();
   const sessionOperation = randomUUID();
-  const reserveSession = { type: "runtime.session.reserve", sessionId, roleId: "runtime-owner", cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", sandbox: "danger-full-access", approvalPolicy: "never" };
+  const reserveSession = { type: "runtime.session.reserve", sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", sandbox: "danger-full-access", approvalPolicy: "never" };
   const sessionReceipt = applied(await issue(reserveSession, sessionOperation));
   assert.deepEqual(await issue(reserveSession, sessionOperation), sessionReceipt);
   assert.equal((await runtime.beginSessionCreate(projectId, sessionId)).state, "creating");
@@ -78,7 +81,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal((await workflow.listRuntimeSessionEvents(principal, projectId, sessionId)).some(e => e.kind === "runtime.approvalDeclined"), true);
   await assert.rejects(runtime.beginSessionCreate(projectId, sessionId), /already attempted/);
   assert.deepEqual(await runtime.recoverDispatching(projectId), { sessions: [sessionId], runs: [] });
-  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: "runtime-owner", cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1" };
+  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1" };
   await assert.rejects(runtime.bindSession(projectId, sessionId, { ...binding, projectId: randomUUID() }), /does not match/);
   assert.equal((await runtime.bindSession(projectId, sessionId, binding)).state, "ready");
   await assert.rejects(runtime.recordSessionApprovalDeclined(projectId, sessionId, "foreign-thread", null, "Invalid"), /owned thread/);
@@ -202,7 +205,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
 
   const readyTask = async (title: string) => {
     const id = randomUUID();
-    applied(await issue({ type: "task.create", taskId: id, title, content: "# One artifact\nUse the accepted basis.", acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Accepted basis" }));
+    applied(await issue({ type: "task.create", taskId: id, title, content: "# One artifact\nUse the accepted basis.", acceptance: "Review output", owner: ownerRoleId, documentIds: [documentId], evidence: "Accepted basis" }));
     applied(await issue({ type: "task.start", taskId: id, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin work" }));
     return id;
   };
@@ -223,7 +226,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
 
   const manuallyStartedTaskId = randomUUID();
   applied(await issue({ type: "task.create", taskId: manuallyStartedTaskId, title: "Manual start", content: "# Try a Turn",
-    acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Current adopted basis" }));
+    acceptance: "Review output", owner: ownerRoleId, documentIds: [documentId], evidence: "Current adopted basis" }));
   const manualStart = applied(await issue({ type: "task.start", taskId: manuallyStartedTaskId,
     expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Human starts Task" }));
   const manualRunId = randomUUID();
@@ -234,7 +237,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
 
   const unresolvedTaskId = randomUUID();
   applied(await issue({ type: "task.create", taskId: unresolvedTaskId, title: "Uncertain dispatch", content: "# Try one Turn",
-    acceptance: "Review output", owner: "runtime-owner", documentIds: [documentId], evidence: "Current adopted basis" }));
+    acceptance: "Review output", owner: ownerRoleId, documentIds: [documentId], evidence: "Current adopted basis" }));
   const unresolvedReady = applied(await issue({ type: "task.start", taskId: unresolvedTaskId,
     expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Begin uncertain dispatch" }));
   const unresolvedRunId = randomUUID();

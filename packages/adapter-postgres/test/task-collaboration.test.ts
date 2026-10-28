@@ -18,6 +18,16 @@ const uow = new PostgresUnitOfWork(pool);
 const now = "2026-10-25T00:00:00.000Z";
 const hash = (body: string) => createHash("sha256").update(body).digest("hex");
 
+async function seedTrialRole(projectId:string,roleId:string,revisionId:string,actorId:string,createdAt:string):Promise<void>{
+  const client=await pool.connect();try{await client.query("BEGIN");
+    await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial',$4,$5,$5,$5)`,[projectId,roleId,revisionId,actorId,createdAt]);
+    await client.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,$4,'fixture',$5,$5)`,[projectId,roleId,revisionId,actorId,createdAt]);
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+}
+
 before(async () => { await migrate(url, schema); });
 after(async () => {
   await pool.end();
@@ -96,6 +106,7 @@ test("Task Discussion and fixed-reference events survive PostgreSQL readback, CA
 
 async function continuationScenario(withExternalChange: boolean, adoptionTiming: "running" | "completed" = "running") {
   const projectId = randomUUID();
+  const workerRoleId = randomUUID(), workerRoleRevisionId = randomUUID();
   const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
   let currentTime = "2026-10-25T01:00:00.000Z";
@@ -107,6 +118,7 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
     return result as Extract<typeof result, { status: "applied" }>;
   };
   await execute(issuer, { type: "project.create", title: "Continuation regression" });
+  await seedTrialRole(projectId, workerRoleId, workerRoleRevisionId, issuer.actorId, currentTime);
   const sourceId = randomUUID();
   const source = await execute(issuer, { type: "document.create", documentId: sourceId,
     title: "Basis", body: "Original accepted basis" });
@@ -114,16 +126,16 @@ async function continuationScenario(withExternalChange: boolean, adoptionTiming:
     revisionId: source.revisionId, reason: "Fixed source" });
   const taskId = randomUUID();
   await execute(issuer, { type: "task.create", taskId, title: "Answer question", content: "Do the work",
-    acceptance: "Use answer", owner: worker.actorId, documentIds: [sourceId] });
+    acceptance: "Use answer", owner: workerRoleId, documentIds: [sourceId] });
   const ready = await execute(issuer, { type: "task.start", taskId, expectedVersion: 1,
     basis: [{ documentId: sourceId, revisionId: source.revisionId }], reason: "Begin" });
   const sessionId = randomUUID(), cwd = "/tmp/p1c-continuation", authorizationScope = "project:p1c";
-  await execute(issuer, { type: "runtime.session.reserve", sessionId, roleId: worker.actorId, cwd,
+  await execute(issuer, { type: "runtime.session.reserve", sessionId, roleId: workerRoleId, cwd,
     authorizationScope, sandbox: "danger-full-access", approvalPolicy: "never" });
   await runtime.beginSessionCreate(projectId, sessionId);
   const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sessionId)))!;
   await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId,
-    roleId: worker.actorId, cwd, authorizationScope, nativeThreadId: `thread-${projectId}`,
+    roleId: workerRoleId, cwd, authorizationScope, nativeThreadId: `thread-${projectId}`,
     nativeSessionId: `native-${projectId}`,
     resumeProfile:{actorId:reservedSession.actorId,model:reservedSession.model,sandbox:reservedSession.sandbox,
       approvalPolicy:reservedSession.approvalPolicy,executionProfileRevisionId:reservedSession.executionProfile!.revision.revisionId} });
