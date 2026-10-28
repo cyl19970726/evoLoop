@@ -79,8 +79,11 @@ test("v2 first read verifies identity and fixed input, then shows complete accep
   assert.equal(result.change.answeredQuestions[0]?.contentHash,digest("answer"));
   assert.match(result.change.answeredQuestions[0]!.bodyCommand,new RegExp(answerRevisionId));
   assert.deepEqual(result.change.requiredLegacyInput?.taskRevisionId,id(18));
-  assert.match(result.change.requiredLegacyInput!.readCommand,/--out NEW_PRIVATE_FILE$/);
-  assert.match(result.change.requiredLegacyInput!.readCommand,new RegExp(digest("legacy authorization")));
+  const legacySubcommand=result.change.requiredLegacyInput!.readSubcommand;
+  assert.match(legacySubcommand,/^run-input .* --out NEW_PRIVATE_FILE$/);
+  assert.match(legacySubcommand,new RegExp(digest("legacy authorization")));
+  assert.equal(`/absolute/private/recipient-cli ${legacySubcommand}`,
+    `/absolute/private/recipient-cli run-input ${id(17)} --project ${projectId} --hash ${digest("legacy authorization")} --out NEW_PRIVATE_FILE`);
   assert.ok(!JSON.stringify(result).includes("old fixed source body"));
   await assert.rejects(materialHandoff(api("other"),projectId,runId,digest(input)),/identity/);
   await assert.rejects(materialHandoff(api(actorId,input+"corrupt"),projectId,runId,digest(input)),/inconsistent|hash/);
