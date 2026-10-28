@@ -33,6 +33,9 @@ test("ordinary result intent keeps its original operation and has a direct readb
   assert.deepEqual(request.recovery, { kind: "ordinary", path: `/api/projects/${project}/ordinary-runs/operations/${operation}` });
   assert.throws(() => prepareRequest("ordinary.submit", project, { ...body, projectId: other }), /differs/);
   assert.throws(() => prepareRequest("ordinary.submit", project, { ...body, runInputHash: "bad" }), /runInputHash/);
+  const spaced = prepareRequest("ordinary.submit", project, { ...body,
+    deliveryIntent: { ...body.deliveryIntent, artifactRef: "  doc/revision  " } });
+  assert.equal((spaced.body as typeof body).deliveryIntent.artifactRef, "doc/revision");
 });
 
 test("request schema exposes exact enums and nested required fields from shared contracts", () => {

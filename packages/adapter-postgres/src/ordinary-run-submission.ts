@@ -2,6 +2,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import type { OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import type { RuntimeRunRecord } from "@evoloop/contracts/runtime";
+import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { DomainError } from "@evoloop/contracts/ports";
 import { PgRuntimeStore } from "./runtime.js";
 
@@ -51,10 +52,18 @@ export class PgOrdinaryRunSubmissionStore {
     if(!run)return null;
     const queue=await this.client.query("SELECT 1 FROM resident_queue_attempt WHERE project_id=$1 AND run_id=$2",[this.projectId,runId]);
     if(queue.rows.length){
-      const r=await this.client.query(`SELECT DISTINCT d.collaboration_recipient_actor_id AS actor_id
+      let handoff: ReturnType<typeof parseQueueHandoff>;
+      try { handoff=parseQueueHandoff(run.input); }
+      catch { throw new DomainError("QUEUE_HANDOFF_INVALID","Fixed queue Run handoff is invalid"); }
+      if(!handoff || handoff.taskId!==run.taskId || handoff.taskRevisionId!==run.taskRevisionId ||
+        handoff.basisSetId!==run.basisSetId) return null;
+      const r=await this.client.query(`SELECT d.collaboration_recipient_actor_id AS actor_id
         FROM discussion d WHERE d.project_id=$1 AND d.kind='task_collaboration' AND d.collaboration_run_id=$2
-          AND d.task_id=$3 AND d.task_revision_id=$4 AND d.collaboration_session_id=$5`,
-        [this.projectId,runId,run.taskId,run.taskRevisionId,run.sessionId]);
+          AND d.task_id=$3 AND d.task_revision_id=$4 AND d.collaboration_session_id=$5
+          AND d.discussion_id=$6 AND d.collaboration_recipient_actor_id=$7
+          AND d.collaboration_issuer_actor_id=$8`,
+        [this.projectId,runId,run.taskId,run.taskRevisionId,run.sessionId,
+          handoff.channel.discussionId,handoff.channel.recipientActorId,handoff.channel.issuerActorId]);
       return r.rows.length===1?r.rows[0].actor_id:null;
     }
     const r=await this.client.query(`SELECT recipient_actor_id AS actor_id FROM task_session_assignment

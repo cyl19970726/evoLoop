@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { before, after, test } from 'node:test';
 import pg from 'pg';
 import { migrate } from '../src/index.ts';
@@ -69,6 +69,8 @@ test('first signed intent is unique, fixed, versioned and scoped to explicit rec
       runInputHash:hash,operationId:randomUUID(),commandHash:hash,deliveryOperationId:randomUUID(),deliveryIntent:intent,
       submittedBy:'worker',state:'submitted',version:1,expectedTaskVersion:null,terminalRunVersion:null,
       sealedBy:null,deliveryId:null,reason:null,createdAtUtc:now,updatedAtUtc:now};
+    await assert.rejects(store.insert({...first,state:'blocked',reason:'forged initial settlement'}),
+      /First Run submission must be an unsealed intent/);
     await store.insert(first);
     assert.deepEqual(await store.get(runId),first);
     assert.equal((await store.getByOperationId(first.operationId))?.id,first.id);
@@ -78,13 +80,14 @@ test('first signed intent is unique, fixed, versioned and scoped to explicit rec
     await assert.rejects(store.insert({...first,runId:randomUUID()}),/fixed binding|foreign key/);
     await assert.rejects(store.update({...first,submittedBy:'reserver',state:'sealing',version:2},1),/original intent/);
     await assert.rejects(store.update({...first,state:'sealing',version:2},2),/version changed/);
-    await store.update({...first,state:'sealing',version:2,expectedTaskVersion:1,updatedAtUtc:'2026-10-29T00:01:00.000Z'},1);
+    const sealFields={expectedTaskVersion:1,terminalRunVersion:1,sealedBy:'coordinator'};
+    await store.update({...first,...sealFields,state:'sealing',version:2,updatedAtUtc:'2026-10-29T00:01:00.000Z'},1);
     assert.equal((await store.get(runId))?.version,2);
     const blockedReason='Delivery receipt is unresolved; reconcile before retry';
-    await store.update({...first,state:'unknown',version:3,expectedTaskVersion:1,reason:blockedReason,
+    await store.update({...first,...sealFields,state:'unknown',version:3,reason:blockedReason,
       updatedAtUtc:'2026-10-29T00:02:00.000Z'},2);
     assert.equal((await store.get(runId))?.reason,blockedReason);
-    await store.update({...first,state:'sealing',version:4,expectedTaskVersion:1,reason:blockedReason,
+    await store.update({...first,...sealFields,state:'sealing',version:4,reason:blockedReason,
       updatedAtUtc:'2026-10-29T00:03:00.000Z'},3);
     assert.equal((await store.get(runId))?.state,'sealing');
     assert.equal((await store.get(runId))?.reason,blockedReason,'retry retains the blocked reason for review');
@@ -97,6 +100,7 @@ test('queue attempt requires its exact collaboration recipient, not the Run or S
   const client=await pool.connect();
   const queueId=randomUUID(),entryId=randomUUID(),claimId=randomUUID(),roleId=randomUUID(),roleRevisionId=randomUUID();
   const discussionId=randomUUID(),channelDocumentId=randomUUID(),channelRevisionId=randomUUID();
+  const queueRunId=randomUUID(),queueRunOperationId=randomUUID();
   try{
     await client.query('BEGIN');
     const store=new PgOrdinaryRunSubmissionStore(client,projectId);
@@ -105,6 +109,15 @@ test('queue attempt requires its exact collaboration recipient, not the Run or S
       [projectId,sessionId]);
     assert.equal(session.rows[0].actor_id,'reserver');
     assert.equal(await store.getFixedRecipient(runId),'worker','static owned assignment supports this Run before queue linkage');
+
+    const fixedInput=JSON.stringify({protocol:'evoloop-run-v2',taskId,taskRevisionId:revisionId,basisSetId:basisId,
+      kind:'queue.claim',reason:null,previousRun:null,answers:[],
+      channel:{discussionId,recipientActorId:'queue-recipient',issuerActorId:'lead'}});
+    await client.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,
+      input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'completed',1,'queue-turn','reserver',$10,$10)`,
+      [projectId,queueRunId,taskId,revisionId,basisId,sessionId,queueRunOperationId,fixedInput,
+        createHash('sha256').update(fixedInput).digest('hex'),now]);
 
     await client.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,
       created_at_utc,review_at_utc,trial_started_at_utc)
@@ -123,8 +136,8 @@ test('queue attempt requires its exact collaboration recipient, not the Run or S
       [projectId,queueId,entryId,claimId,taskId,sessionId,roleId,now]);
     await client.query(`INSERT INTO resident_queue_attempt(project_id,claim_id,sequence,run_id,operation_id,
       task_revision_id,reserved_at) VALUES($1,$2,1,$3,$4,$5,$6)`,
-      [projectId,claimId,runId,runOperationId,revisionId,now]);
-    assert.equal(await store.getFixedRecipient(runId),null,
+      [projectId,claimId,queueRunId,queueRunOperationId,revisionId,now]);
+    assert.equal(await store.getFixedRecipient(queueRunId),null,
       'a queue attempt must not fall back to the static assignment without its channel');
 
     await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,
@@ -140,10 +153,27 @@ test('queue attempt requires its exact collaboration recipient, not the Run or S
       collaboration_session_id,collaboration_issuer_actor_id,collaboration_recipient_actor_id)
       VALUES($1,$2,1,'task_collaboration','prepared',$3,$4,$5,$6,$7,'','[]'::jsonb,'','',
         'lead',$8,$8,$9,$10,'lead','queue-recipient')`,
-      [projectId,discussionId,channelDocumentId,channelRevisionId,channelRevisionId,taskId,revisionId,now,runId,sessionId]);
-    assert.equal(await store.getFixedRecipient(runId),'queue-recipient');
-    assert.notEqual(await store.getFixedRecipient(runId),session.rows[0].actor_id);
-    assert.notEqual(await store.getFixedRecipient(runId),'worker');
+      [projectId,discussionId,channelDocumentId,channelRevisionId,channelRevisionId,taskId,revisionId,now,queueRunId,sessionId]);
+    assert.equal(await store.getFixedRecipient(queueRunId),'queue-recipient');
+    assert.notEqual(await store.getFixedRecipient(queueRunId),session.rows[0].actor_id);
+    assert.notEqual(await store.getFixedRecipient(queueRunId),'worker');
+    const extraDiscussionId=randomUUID(),extraDocumentId=randomUUID(),extraRevisionId=randomUUID();
+    await client.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,
+      adopted_revision_id,kind,status) VALUES($1,$2,'Other channel',1,$3,NULL,'discussion','draft')`,
+      [projectId,extraDocumentId,extraRevisionId]);
+    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,
+      author,created_at,reason,media_type,original_name,assets_manifest)
+      VALUES($1,$2,$3,'# Other','markdown',$4,'lead',$5,'fixed','text/markdown','other.md','[]'::jsonb)`,
+      [projectId,extraDocumentId,extraRevisionId,hash,now]);
+    await client.query(`INSERT INTO discussion(project_id,discussion_id,version,kind,status,document_id,
+      prepared_document_revision_id,current_document_revision_id,task_id,task_revision_id,question,options,
+      authorization_boundary,target_session_label,actor_id,created_at,updated_at,collaboration_run_id,
+      collaboration_session_id,collaboration_issuer_actor_id,collaboration_recipient_actor_id)
+      VALUES($1,$2,1,'task_collaboration','prepared',$3,$4,$4,$5,$6,'','[]'::jsonb,'','',
+        'lead',$7,$7,$8,$9,'lead','other-recipient')`,
+      [projectId,extraDiscussionId,extraDocumentId,extraRevisionId,taskId,revisionId,now,queueRunId,sessionId]);
+    assert.equal(await store.getFixedRecipient(queueRunId),'queue-recipient',
+      'another channel for this Run cannot replace its input-pinned recipient');
     await client.query('COMMIT');
   }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 });

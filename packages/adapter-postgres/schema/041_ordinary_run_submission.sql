@@ -17,6 +17,7 @@ CREATE TABLE ordinary_run_submission (
   PRIMARY KEY (project_id,run_id),
   UNIQUE (project_id,submission_id), UNIQUE (project_id,operation_id),
   UNIQUE (project_id,delivery_operation_id),
+  CHECK (operation_id <> delivery_operation_id),
   FOREIGN KEY (project_id,run_id) REFERENCES runtime_run(project_id,run_id),
   FOREIGN KEY (project_id,task_id,task_revision_id) REFERENCES task_revision(project_id,task_id,revision_id),
   FOREIGN KEY (project_id,session_id) REFERENCES runtime_session(project_id,session_id),
@@ -35,6 +36,8 @@ CREATE TABLE ordinary_run_submission (
     terminal_run_version IS NULL AND sealed_by IS NULL AND delivery_id IS NULL AND reason IS NULL)),
   CHECK (state <> 'sealed' OR (expected_task_version IS NOT NULL AND terminal_run_version IS NOT NULL
     AND sealed_by IS NOT NULL AND delivery_id IS NOT NULL)),
+  CHECK (state NOT IN ('sealing','unknown') OR (expected_task_version IS NOT NULL
+    AND terminal_run_version IS NOT NULL AND sealed_by IS NOT NULL)),
   CHECK (state <> 'rejected' OR (reason IS NOT NULL AND length(btrim(reason)) > 0)),
   CHECK (state <> 'blocked' OR (reason IS NOT NULL AND length(btrim(reason)) > 0 AND delivery_id IS NULL)),
   CHECK (state NOT IN ('submitted','blocked','sealing','unknown') OR delivery_id IS NULL)
@@ -66,6 +69,9 @@ CREATE TRIGGER ordinary_run_submission_identity BEFORE UPDATE OR DELETE ON ordin
 
 CREATE FUNCTION validate_ordinary_run_submission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF NEW.state <> 'submitted' OR NEW.version <> 1 THEN
+    RAISE EXCEPTION 'First Run submission must be an unsealed intent' USING ERRCODE='23514';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM runtime_run r WHERE r.project_id=NEW.project_id AND r.run_id=NEW.run_id
     AND r.task_id=NEW.task_id AND r.session_id=NEW.session_id AND r.task_revision_id=NEW.task_revision_id
     AND r.input_hash=NEW.run_input_hash) THEN

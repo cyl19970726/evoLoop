@@ -107,6 +107,18 @@ test("unknown recovery refuses a changed Task and terminal Run version", async (
   assert.equal(f.calls.length, 1);
 });
 
+test("a committed original Delivery still seals after terminal observation version advances", async () => {
+  const f = fixture(); assert.equal((await f.seal(projectId, runId)).status, "sealed");
+  const pending = { ...f.record!, state: "unknown" as const, deliveryId: null, version: f.record!.version + 1 };
+  const g = fixture(pending);
+  g.setRun({ version: run.version + 1 });
+  g.setOperation(f.operation);
+  g.setDelivery({ projectId, id: f.record!.deliveryId!, taskId, taskRevisionId: randomUUID(), runId,
+    ...intent, actorId: actor.actorId, createdAt: run.updatedAt });
+  assert.equal((await g.seal(projectId, runId)).status, "sealed");
+  assert.equal(g.calls.length, 0, "recovery reads the prior operation without a second Delivery call");
+});
+
 test("readback rejects wrong command hash and refuses mismatched actual Delivery", async () => {
   const f = fixture(); assert.equal((await f.seal(projectId, runId)).status, "sealed");
   const s = { ...f.record!, state: "unknown" as const, deliveryId: null, version: f.record!.version + 1 };

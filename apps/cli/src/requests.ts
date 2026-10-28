@@ -211,8 +211,10 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       break;
     }
   }
+  // The receipt and POST must carry the same normalized bytes for safe same-ID recovery.
+  const savedBody = name === "ordinary.submit" ? ordinaryRunSubmissionSchema.parse(body) : bodyInput;
   return { projectId, id: receiptId,
     operationId: name === "knowledge.reconcile" ? id : serverOperationId,
-    ...(id ? { targetId: id } : {}), kind: name, path: path!, body: bodyInput,
+    ...(id ? { targetId: id } : {}), kind: name, path: path!, body: savedBody,
     recovery: recovery!, confirmation: confirmation! };
 }

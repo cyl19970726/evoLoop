@@ -62,8 +62,6 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
     if (s.state === "rejected") return { status: "rejected", reason: s.reason ?? "WORKFLOW_REJECTED" };
     if (run.state !== "completed" && s.deliveryIntent.technicalResult !== "failed")
       return blocked(s, "FAILED_RUN_CANNOT_PASS_TECHNICAL_RESULT");
-    if (s.terminalRunVersion !== null && s.terminalRunVersion !== run.version)
-      return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
     const actor = await deps.resolveSubmittedActor(s.projectId, s.submittedBy);
     if (!actor || actor.actorId !== s.submittedBy || !actor.projectIds.includes(s.projectId) ||
       !actor.permissions.includes("read") || !actor.permissions.includes("write"))
@@ -79,10 +77,6 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
       if (!await save(s, fixed)) return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
       s = { ...s, ...fixed, version: s.version + 1 };
     }
-    if (s.state === "blocked") {
-      if (!await save(s, { state: "sealing", reason: null })) return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
-      s = { ...s, state: "sealing", reason: null, version: s.version + 1 };
-    }
     if (s.sealedBy !== deps.sealer.actorId || !deliveryCommand(s))
       return { status: "unknown", reason: "SEAL_OWNER_OR_TASK_VERSION_MISSING" };
     const command = deliveryCommand(s)!;
@@ -90,6 +84,12 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
     try { operation = await deps.workflow.getOperation(actor, s.projectId, s.deliveryOperationId); }
     catch { return { status: "unknown", reason: "DELIVERY_OPERATION_UNCONFIRMED" }; }
     if (!operation) {
+      if (s.terminalRunVersion !== null && s.terminalRunVersion !== run.version)
+        return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
+      if (s.state === "blocked") {
+        if (!await save(s, { state: "sealing", reason: null })) return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
+        s = { ...s, state: "sealing", reason: null, version: s.version + 1 };
+      }
       const detail = await deps.workflow.getTask(deps.sealer, s.projectId, s.taskId);
       if (detail.task.version !== s.expectedTaskVersion || detail.task.currentRevisionId !== s.taskRevisionId ||
         detail.task.state !== "in_progress" || detail.deliveries?.some(d => d.runId === runId))
