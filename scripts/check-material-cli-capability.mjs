@@ -16,7 +16,7 @@ if (!entries.length) {
 let failed = false;
 for (const entry of entries) {
   const ready = await supportsFixedHandoff(entry.command, entry.cliActorId, entry.projectId);
-  process.stdout.write(`${ready ? "ready" : "incompatible"} session=${entry.sessionId} task=${entry.taskId ?? "*"} actor=${entry.cliActorId}\n`);
+  process.stdout.write(`${ready ? "ready" : "incompatible"} scope=${entry.sessionId ? `session:${entry.sessionId}` : `role:${entry.roleId}`} task=${entry.taskId ?? "*"} actor=${entry.cliActorId}\n`);
   if (!ready) failed = true;
 }
 if (failed) process.exitCode = 1;

@@ -55,6 +55,15 @@ export async function buildServer(options: {
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
+  sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
+    cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
+    cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
+    skills:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}>;
+  readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
+    Promise<{path:string;commit:string;contentHash:string;body:string;
+      references:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}|null>;
+  readRoleSkillSource?: (projectId:string,roleId:string,name:string,path:string,commit:string,hash:string) =>
+    Promise<{path:string;commit:string;contentHash:string;body:string}|null>;
   references?: ReferenceRouteOptions;
   scheduling?: SchedulingPump;
   schedulingGrants?: (projectId: string, actorId: string) => ScheduleGrant[];
@@ -173,6 +182,68 @@ export async function buildServer(options: {
     return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
   });
   app.get("/api/projects/:projectId", async request => options.service.getProject(who(request.principal), params(request.params).projectId!));
+  app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
+    const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
+    const q=z.strictObject({roleId:z.uuid(),cwd:z.string().optional(),authorizationScope:z.string().optional(),
+      model:z.string().optional()}).parse(request.query);
+    const principal=who(request.principal);
+    if(!principal.permissions.includes("review"))throw new DomainError("FORBIDDEN","Session preparation requires project review permission");
+    await options.service.getProject(principal,p.projectId);
+    const role=await options.service.getRole(principal,p.projectId,q.roleId);
+    let session:RuntimeSessionRecord|null=null;
+    try { session=await options.service.getRuntimeSession(principal,p.projectId,p.sessionId); }
+    catch(error){ if(!(error instanceof DomainError && error.code==="NOT_FOUND"))throw error; }
+    if(session && (session.roleId!==q.roleId||session.actorId!==principal.actorId))
+      throw new DomainError("SESSION_SCOPE_MISMATCH","Existing Session belongs to another Role or requester");
+    const cwd=session?.cwd??q.cwd,authorizationScope=session?.authorizationScope??q.authorizationScope;
+    if(!cwd||!authorizationScope)throw new DomainError("PREPARATION_PROFILE_REQUIRED","New Session needs cwd and authorizationScope");
+    const config=await options.sessionPreparation?.({projectId:p.projectId,sessionId:p.sessionId,roleId:q.roleId,
+      sessionActorId:principal.actorId,cwd,authorizationScope,model:session?.model??q.model??null});
+    if(!config)throw new DomainError("PREPARATION_UNAVAILABLE","Session preparation is unavailable");
+    const bindings=await options.service.listRoleSessionBindings(principal,p.projectId,q.roleId);
+    const bound=bindings.some(value=>value.sessionId===p.sessionId);
+    const profile=session?await options.service.getRuntimeSessionProfile(principal,p.projectId,p.sessionId):null;
+    const missing=[...(!config.runtimeAvailable?["runtime_unavailable"]:[]),
+      ...(!config.grantReady?["runtime_grant"]:[]),...(!config.cwdReady?["cwd"]:[]),
+      ...(!config.roleActorId?["role_actor"]:[]),...(!config.materialCli?["material_cli"]:
+        !config.materialCli.ready?["material_cli_incompatible"]:[]),
+      ...(!config.skills.length?["role_skill"]:[]),
+      ...(!["trial","active"].includes(role.state)?["role_inactive"]:[]),
+      ...(session?.state==="unknown"?["session_unknown"]:[]),
+      ...(session&&session.state==="ready"&&!bound?["role_binding"]:[]),
+      ...(session&&session.state==="ready"&&!profile?["display_profile"]:[])];
+    return {projectId:p.projectId,sessionId:p.sessionId,roleId:q.roleId,roleVersion:role.version,roleRevisionId:role.currentRevisionId,
+      roleState:role.state,responsibility:{goal:role.proposal.goal,independentResponsibility:role.proposal.independentResponsibility,
+        workflow:role.proposal.workflow,handoffBoundary:role.proposal.handoffBoundary},
+      session:session?{state:session.state,version:session.version,actorId:session.actorId,cwd:session.cwd,
+        authorizationScope:session.authorizationScope,model:session.model,sandbox:session.sandbox,
+        approvalPolicy:session.approvalPolicy,nativeThreadId:session.nativeThreadId,nativeSessionId:session.nativeSessionId,
+        operationId:session.operationId}:null,
+      profile:profile?{version:profile.version,displayName:profile.displayName,purpose:profile.purpose}:null,
+      bound,config,missing,readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile&&missing.length===0,
+      communication:{taskDiscussion:"available",nativeLeadMessage:"unverified",nextAction:"Use the Task discussion and confirm native communication in the actual host"},
+      nameSync:"Saved profile is visible; native Thread name requires the runner's independent sync check",
+      emptyThreadVisibility:"Native Desktop list may filter Threads without a first message; no message is created by preparation"};
+  });
+  app.get("/api/projects/:projectId/roles/:roleId/skills/:name", async request => {
+    const p=z.strictObject({projectId:z.uuid(),roleId:z.uuid(),name:z.string().regex(/^[A-Za-z0-9_-]+$/)}).parse(request.params);
+    const q=z.strictObject({commit:z.string().regex(/^[a-f0-9]{40}$/),hash:z.string().regex(/^[a-f0-9]{64}$/)}).parse(request.query);
+    const principal=who(request.principal);
+    await options.service.getRole(principal,p.projectId,p.roleId);
+    const skill=await options.readRoleSkill?.(p.projectId,p.roleId,p.name,q.commit,q.hash);
+    if(!skill)throw new DomainError("NOT_FOUND","Role skill is not configured");
+    return skill;
+  });
+  app.get("/api/projects/:projectId/roles/:roleId/skills/:name/source",async request=>{
+    const p=z.strictObject({projectId:z.uuid(),roleId:z.uuid(),name:z.string().regex(/^[A-Za-z0-9_-]+$/)}).parse(request.params);
+    const q=z.strictObject({path:z.string().min(1).max(512),commit:z.string().regex(/^[a-f0-9]{40}$/),
+      hash:z.string().regex(/^[a-f0-9]{64}$/)}).parse(request.query);
+    const principal=who(request.principal);
+    await options.service.getRole(principal,p.projectId,p.roleId);
+    const source=await options.readRoleSkillSource?.(p.projectId,p.roleId,p.name,q.path,q.commit,q.hash);
+    if(!source)throw new DomainError("NOT_FOUND","Role skill source is not configured");
+    return source;
+  });
   app.get("/api/projects/:projectId/scheduling/status", async request => {
     const projectId = params(request.params).projectId!;
     const principal = who(request.principal);

@@ -6,6 +6,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFixedSkill, readRoleSkillSource, roleSkillReferences, roleSkillSourceReferences } from "./session-preparation/skills.js";
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
@@ -71,6 +72,7 @@ const currentStudyReviewer = async (projectId: string, actorId: string) =>
 const port = Number(process.env.EVOLOOP_PORT ?? "4318");
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid EVOLOOP_PORT.");
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTimeoutMillis: 5000, query_timeout: 15000 });
+const skillSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 pool.on("error", () => { /* Requests receive explicit unavailable responses; credentials are never logged. */ });
 const lease = await acquireCoordinatorLease(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -336,7 +338,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
     if (brokered) return brokered;
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,
-      run.projectId, session.id, session.actorId, run.taskId) : null;
+      run.projectId, session.id, session.actorId, run.taskId, session.roleId) : null;
     if (!entry) return null;
     const channels = await pool.query(`SELECT collaboration_recipient_actor_id AS recipient FROM discussion
       WHERE project_id=$1 AND kind='task_collaboration' AND task_id=$2
@@ -356,6 +358,17 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       !await supportsFixedHandoff(entry.command, entry.cliActorId, run.projectId))
       throw new PreflightError("CLI_HANDOFF_UNAVAILABLE", {kind:"task",id:run.taskId,revisionId:run.taskRevisionId});
     return {command: entry.command, actorId: entry.cliActorId};
+  },
+  roleContextForRun: async (session,run) => {
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.roleId))return null;
+    const principal=(await currentIdentity()).find(value=>value.projectIds.includes(run.projectId)&&value.permissions.includes("read"));
+    if(!principal)throw new Error("Role source authority is unavailable");
+    const role=await service.getRole(principal,run.projectId,session.roleId);
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const configured=current.runtime?.roleSkills.find(value=>value.projectId===run.projectId&&value.roleId===session.roleId);
+    const paths=configured?.paths??[".agents/skills/evoloop-workflow/SKILL.md"];
+    const skills=await roleSkillReferences(skillSourceRoot,paths);
+    return {roleId:role.id,revisionId:role.currentRevisionId,skills};
   },
   workerTraceAuthority: (identity, targetRunId) =>
     workerGuardFacts(pool, identity,currentStudyReviewer).fixedRunTrace!(targetRunId),
@@ -513,6 +526,37 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
+  sessionPreparation: async input => {
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,
+      input.sessionId,input.sessionActorId,undefined,input.roleId) : null;
+    const roleActor=current.residentQueue?.enabled ? current.residentQueue.roleActors.find(value=>
+      value.projectId===input.projectId&&value.roleId===input.roleId) : null;
+    const configured=current.runtime?.roleSkills.find(value=>value.projectId===input.projectId&&value.roleId===input.roleId);
+    const paths=configured?.paths??[".agents/skills/evoloop-workflow/SKILL.md"];
+    const skills=await roleSkillReferences(skillSourceRoot,paths).catch(()=>[]);
+    return {runtimeAvailable:!!runner?.status().available,
+      grantReady:!!current.runtime?.enabled&&current.hasRuntimeGrant({projectId:input.projectId,actorId:input.sessionActorId,
+        roleId:input.roleId,authorizationScope:input.authorizationScope,cwd:input.cwd,sandbox:"danger-full-access",
+        model:input.model,approvalPolicy:"never"}),
+      cwdReady:await current.allowedRuntimeCwd(input.projectId,input.cwd),
+      materialCli:cli?{actorId:cli.cliActorId,command:cli.command,
+        ready:await supportsFixedHandoff(cli.command,cli.cliActorId,input.projectId)}:null,
+      roleActorId:roleActor&&await currentProjectWriter(input.projectId,roleActor.actorId)?roleActor.actorId:null,
+      skills:skills.map(value=>({...value,readSubcommand:`get '/api/projects/${input.projectId}/roles/${input.roleId}/skills/${value.path.split("/")[2]}?commit=${value.commit}&hash=${value.contentHash}'`}))};
+  },
+  readRoleSkill: async (projectId,roleId,name,commit,hash) => {
+    // A Role may change its current skill list; an earlier fixed handoff remains readable.
+    const path=`.agents/skills/${name}/SKILL.md`;
+    const skill=await readFixedSkill(skillSourceRoot,path,commit,hash);
+    const references=await roleSkillSourceReferences(skillSourceRoot,path,commit);
+    return {...skill,references:references.map(value=>({...value,
+      readSubcommand:`get '/api/projects/${projectId}/roles/${roleId}/skills/${name}/source?path=${encodeURIComponent(value.path)}&commit=${commit}&hash=${value.contentHash}'`}))};
+  },
+  readRoleSkillSource: async (projectId,roleId,name,path,commit,hash) => {
+    const skillPath=`.agents/skills/${name}/SKILL.md`;
+    return readRoleSkillSource(skillSourceRoot,skillPath,path,commit,hash);
+  },
   references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId), runSessionAvailable},
   scheduling,
   schedulingGrants: (projectId, actorId) => integrations.scheduling?.enabled

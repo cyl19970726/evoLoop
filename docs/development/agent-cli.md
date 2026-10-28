@@ -4,6 +4,14 @@
 
 ## 先发现能力，再读任务
 
+### 准备或复用受管 Session
+
+项目审阅者可在私有 JSON 文件中指定 `projectId`、`sessionId`、`operationId`、`roleId` 和 `mode`（`create` 或 `reuse`），调用 `session prepare --file /PRIVATE/PATH.json`。新建还须写 `cwd`、`authorizationScope` 和 `displayName`；可选 `model`、`purpose`。先用 `session` 核本人身份。此入口依次使用现有 `runtime.session.reserve`、`session.profile.set`、`role.bindSession`，返回真实 Session 状态、配置缺项、固定职责和 skill 引用；它不分配 Task，也不生成新的执行授权或凭据。`waiting_for_native_thread` 表示预留已保存、原生 Thread 仍待核；`recovery_required` 表示原操作或 Session 状态未知，须按原回执对账。不可改用新 Session ID 绕过未知。显示资料已保存不证明原生 Thread 名称同步完成。
+
+配置中的 `runtime.materialCli` 可按原 `sessionId` 精确绑定，或为同一项目、Role 和 Session 发起者设置 `roleId` 备用绑定；精确 Task/Session 绑定优先。`runtime.roleSkills` 按项目和 Role 列出 `.agents/skills/<name>/SKILL.md`，未列时默认项目业务 skill。受管首包给出职责修订和 skill 的服务源码 commit/hash 固定读取入口；首次承接、版本变化或上下文不可用时读取，普通接续只核引用，不重复加载全文。准备状态会报告当前服务是否有对应 grant、可信 CLI、Role actor、项目工作目录及 skill。新增 grant 或 CLI 绑定仍须按[本机运行](local-run.md)部署配置，旧的 Session 专用绑定继续有效。原生联系 Lead 的能力须在实际宿主验证；Task discussion 可留问题，保存消息不证明 Lead 已收到。
+
+固定版 skill 的响应也列出它直接引用的 `references/*.md` 和仓库 `docs/**/*.md` 的同提交 hash 与按需读取命令。需要这些方法时使用返回的命令读取，避免从 Session 的旧工作区取得另一版本。未被该 skill 引用的路径不能通过此入口读取。
+
 从仓库运行 `npm run --silent cli -- help` 查看**当前构建实际支持**的语法；`command types`、`command schema TYPE` 列出通用命令及其校验结构；`request types`、`request schema NAME` 列出专用请求、嵌套必填字段和枚举。不要按文档中的例子猜一个服务器不存在的命令。`--help`、`id`、schema/type 查询无需凭据；业务读取与写入需要 `EVOLOOP_API_URL`、`EVOLOOP_TOKEN`，可用 `EVOLOOP_PROJECT` 指定默认项目。令牌通过私有环境变量提供，不写入命令行参数、JSON 请求文件或公开日志；承载配置的本机文件应在仓库外或明确被 Git 忽略。
 
 ```sh

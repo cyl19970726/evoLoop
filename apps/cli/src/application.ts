@@ -9,6 +9,7 @@ import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "
 import { sessionWorkPath } from "./session-work.js";
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
+import { prepareSession } from "./session-preparation.js";
 
 type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
@@ -74,6 +75,7 @@ const help = {
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
     "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
+    "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "materials TASK_UUID --project UUID --revision UUID (bounded fixed Task and sealed basis catalog)",
@@ -133,6 +135,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       throw new ReceiptError("INVALID_SESSION", "Cannot bind intent to a server-verified identity.");
     return { actorId: principal.actorId, projectIds: principal.projectIds as string[] };
   };
+  if(action==="session"&&args.words[1]==="prepare"){
+    check(args,2,["file"]);
+    const file=option(args,"file");if(!file)throw new UsageError("session prepare requires --file PRIVATE_JSON");
+    return prepareSession(JSON.parse(await readFile(file,"utf8")),client,store,origin,token,
+      await verifiedActor(),value=>io.stderr(JSON.stringify(value)+"\n"));
+  }
   if (action === "session") { check(args, 1); return client.get("/api/session"); }
   if (action === "project") { check(args, 2); return client.get(`/api/projects/${uuid(args.words[1], "Project")}`); }
   if (action === "get") { check(args, 2); return client.get(args.words[1]!); }

@@ -10,7 +10,7 @@ import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
 import { fixedDocumentMaterial, fixedDocumentSummary } from "./materials.js";
-import { buildLightweightInput, type CliBootstrap } from "./lightweight-input.js";
+import { buildLightweightInput, type CliBootstrap, type RoleContextReference } from "./lightweight-input.js";
 import { PreflightError, safePreflightReport } from "./preflight-report.js";
 import type { NativeInputBridge } from "./native-input.js";
 import type { NativeObservationBridge } from "./native-observation.js";
@@ -136,6 +136,7 @@ export class RuntimeRunner {
     mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
     /** Trusted, exact Session/actor/Task CLI entry; never inferred from Task or Run prose. */
     cliEntryForRun?(session: RuntimeSessionRecord | null, run: RuntimeRunRecord): Promise<CliBootstrap | null>;
+    roleContextForRun?(session: RuntimeSessionRecord, run: RuntimeRunRecord): Promise<RoleContextReference | null>;
     readDocumentOriginal?: ReadDocumentOriginal;
     profileForSession?(principal: Principal, session: RuntimeSessionRecord): Promise<SessionProfileRecord | null>;
     readEvaluationMaterial?: ReadEvaluationMaterial;
@@ -591,7 +592,8 @@ export class RuntimeRunner {
       catch { throw new PreflightError("FIXED_SOURCE_INVALID", source); }
     }
     const cliEntry = await this.deps.cliEntryForRun?.(session, run) ?? null;
-    return buildLightweightInput(run, fixed.revision, fixed.basis, documents, cliEntry);
+    const roleContext = session && cliEntry ? await this.deps.roleContextForRun?.(session,run) ?? null : null;
+    return buildLightweightInput(run, fixed.revision, fixed.basis, documents, cliEntry, roleContext);
   }
 
   private async evaluationSources(principal: Principal, session: RuntimeSessionRecord, run: RuntimeRunRecord,

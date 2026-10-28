@@ -900,9 +900,17 @@ export class WorkflowService {
   listRuntimeRuns(principal: Principal, projectId: string, taskId?: string) { return this.read(principal, projectId, reader => reader.listRuntimeRuns(taskId)); }
   listRuntimeEvents(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRuntimeRun(runId), "Runtime run"); return reader.listRuntimeEvents(runId); }); }
   listRuntimeSessionEvents(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRuntimeSession(sessionId), "Runtime session"); return reader.listRuntimeSessionEvents(sessionId); }); }
+  getRuntimeSessionProfile(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => {
+    required(await reader.getRuntimeSession(sessionId), "Runtime session");
+    return reader.sessionAssignments?.getSessionProfile({kind:"owned",sessionId}) ?? null;
+  }); }
   getRole(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => required(await reader.getRole(roleId), "Role")); }
   listRoles(principal: Principal, projectId: string, limit = 50, cursor?: string) { return this.read(principal, projectId, reader => reader.listRoles(pageLimit(limit), cursor)); }
   listRoleRevisions(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listRevisions(roleId); }); }
+  getRoleRevision(principal: Principal, projectId: string, roleId: string, revisionId: string) { return this.read(principal, projectId, async reader => {
+    required(await reader.getRole(roleId), "Role");
+    return required((await reader.listRevisions(roleId)).find(value => value.id === revisionId), "Role revision");
+  }); }
   listRoleReviews(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listReviews(roleId); }); }
   listRoleHandoffs(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listHandoffs(roleId); }); }
   listRoleSessionBindings(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listSessionBindings(roleId); }); }

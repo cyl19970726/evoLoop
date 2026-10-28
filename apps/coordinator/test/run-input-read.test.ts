@@ -22,7 +22,9 @@ test("v2 queue handoff is readable Markdown with one fixed first read and no rep
   const documents=[{documentId,revisionId,contentHash:hash(content),format:"markdown",mediaType:"text/markdown",
     bodyBytes:Buffer.byteLength(content),assetCount:0,assetBytes:0}];
   const packet=buildLightweightInput(run,revision,basis,documents,
-    {command:"/private/bound-cli",actorId:"recipient"});
+    {command:"/private/bound-cli",actorId:"recipient"},
+    {roleId:randomUUID(),revisionId:randomUUID(),skills:[{path:".agents/skills/evoloop-workflow/SKILL.md",
+      commit:"a".repeat(40),contentHash:"b".repeat(64)}]});
   assert.equal(packet.protocol,"evoloop-markdown-v2");
   assert.match(packet.input,/^\[evoloop-run-operation:/);
   assert.match(packet.input,/# 任务：Fix the handoff/);
@@ -30,8 +32,11 @@ test("v2 queue handoff is readable Markdown with one fixed first read and no rep
   assert.match(packet.input,new RegExp(`/private/bound-cli handoff ${runId} --project ${projectId} --hash ${run.inputHash}`));
   assert.match(packet.input,/Cover the missing case/);
   assert.match(packet.input,new RegExp(channelId));
+  assert.match(packet.input,/roles\/[0-9a-f-]+\/revisions\/[0-9a-f-]+/);
+  assert.match(packet.input,/skills\/evoloop-workflow\?commit=/);
+  assert.doesNotMatch(packet.input,/skill body or private credential/);
   assert.doesNotMatch(packet.input,/Do not lose the final boundary|"taskPreview"|"runInstructionExactInline"/);
-  assert.ok(packet.byteLength<2500);
+  assert.ok(packet.byteLength<3500);
   assert.throws(()=>buildLightweightInput(run,revision,basis,documents),/CLI_ENTRY_UNAVAILABLE/);
   assert.throws(()=>buildLightweightInput(run,revision,basis,documents,
     {command:"/private/wrong-cli",actorId:"other"}),/FIXED_SOURCE_INVALID/);
