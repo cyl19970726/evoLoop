@@ -26,6 +26,7 @@ function fixture(initial: OrdinaryRunSubmissionRecord | null = submission()) {
   let record = initial, currentRun = { ...run }, principal: Principal | null = actor;
   let taskVersion = 2, taskRevisionId = run.taskRevisionId, manual: Delivery[] = [];
   let operation: Operation | null = null, delivery: Delivery | null = null, executeMode: "normal" | "lost" | "missing" = "normal";
+  let onTaskRead: (() => void) | null = null;
   const calls: { actorId: string; command: any }[] = [];
   const deps: OrdinaryRunSealerDependencies = {
     readSubmission: async () => record,
@@ -35,13 +36,14 @@ function fixture(initial: OrdinaryRunSubmissionRecord | null = submission()) {
     sealer, now: () => "2026-10-29T01:00:00Z",
     readDelivery: async () => delivery,
     workflow: {
-      getTask: async () => ({ task: { projectId, id: taskId, version: taskVersion, currentRevisionId: taskRevisionId, state: "in_progress" }, deliveries: manual }) as any,
+      getTask: async () => { onTaskRead?.(); return { task: { projectId, id: taskId, version: taskVersion, currentRevisionId: taskRevisionId, state: "in_progress" }, deliveries: manual } as any; },
       getOperation: async () => operation,
       execute: async (who, command) => {
         calls.push({ actorId: who.actorId, command });
         if (executeMode === "missing") throw new Error("no response");
         delivery = { projectId, id: randomUUID(), taskId, taskRevisionId: randomUUID(), runId,
-          ...intent, actorId: who.actorId, createdAt: run.updatedAt };
+          ...intent, actorId: who.actorId, submittedByActorId: who.actorId,
+          sourceRunVersion: currentRun.version, createdAt: run.updatedAt };
         operation = { projectId, id: command.operationId, actorId: who.actorId, commandType: command.type,
           commandHash: createHash("sha256").update(canonicalJson({ actorId: who.actorId, command })).digest("hex"),
           result: { status: "applied", operationId: command.operationId, entityId: taskId, revisionId: delivery.id }, createdAt: run.updatedAt };
@@ -53,6 +55,7 @@ function fixture(initial: OrdinaryRunSubmissionRecord | null = submission()) {
   return { seal: createOrdinaryRunSealer(deps), calls, get record() { return record; }, get operation() { return operation; },
     setRun(value: Partial<RuntimeRunRecord>) { currentRun = { ...currentRun, ...value }; },
     setActor(value: Principal | null) { principal = value; }, setTask(version: number, revision = taskRevisionId) { taskVersion = version; taskRevisionId = revision; },
+    onTaskRead(callback: () => void) { onTaskRead = callback; },
     setManual(value: Delivery[]) { manual = value; }, setOperation(value: Operation | null) { operation = value; },
     setDelivery(value: Delivery | null) { delivery = value; }, setMode(value: typeof executeMode) { executeMode = value; } };
 }
@@ -77,6 +80,13 @@ test("a failed Run cannot seal a passed technical result", async () => {
   const f = fixture(); f.setRun({ state: "failed" });
   assert.equal((await f.seal(projectId, runId)).reason, "FAILED_RUN_CANNOT_PASS_TECHNICAL_RESULT");
   assert.equal(f.record?.state, "blocked");
+  assert.equal(f.calls.length, 0);
+});
+
+test("a terminal correction after the first Run read blocks the Delivery call", async () => {
+  const f = fixture();
+  f.onTaskRead(() => f.setRun({ state: "failed", version: run.version + 1 }));
+  assert.equal((await f.seal(projectId, runId)).reason, "TERMINAL_RUN_VERSION_CHANGED");
   assert.equal(f.calls.length, 0);
 });
 
@@ -107,15 +117,16 @@ test("unknown recovery refuses a changed Task and terminal Run version", async (
   assert.equal(f.calls.length, 1);
 });
 
-test("a committed original Delivery still seals after terminal observation version advances", async () => {
+test("a committed original Delivery does not seal after terminal observation version advances", async () => {
   const f = fixture(); assert.equal((await f.seal(projectId, runId)).status, "sealed");
   const pending = { ...f.record!, state: "unknown" as const, deliveryId: null, version: f.record!.version + 1 };
   const g = fixture(pending);
   g.setRun({ version: run.version + 1 });
   g.setOperation(f.operation);
   g.setDelivery({ projectId, id: f.record!.deliveryId!, taskId, taskRevisionId: randomUUID(), runId,
-    ...intent, actorId: actor.actorId, createdAt: run.updatedAt });
-  assert.equal((await g.seal(projectId, runId)).status, "sealed");
+    ...intent, actorId: actor.actorId, submittedByActorId: actor.actorId,
+    sourceRunVersion: run.version, createdAt: run.updatedAt });
+  assert.equal((await g.seal(projectId, runId)).reason, "TERMINAL_RUN_VERSION_CHANGED");
   assert.equal(g.calls.length, 0, "recovery reads the prior operation without a second Delivery call");
 });
 
@@ -125,6 +136,17 @@ test("readback rejects wrong command hash and refuses mismatched actual Delivery
   const g = fixture(s); g.setOperation({ ...f.operation!, commandHash: "0".repeat(64) });
   assert.equal((await g.seal(projectId, runId)).reason, "DELIVERY_OPERATION_MISMATCH");
   g.setOperation(f.operation); g.setDelivery({ projectId, id: f.record!.deliveryId!, taskId, taskRevisionId: randomUUID(), runId,
-    ...intent, actorId: "manual", createdAt: run.updatedAt });
+    ...intent, actorId: "manual", submittedByActorId: actor.actorId,
+    sourceRunVersion: run.version, createdAt: run.updatedAt });
   assert.equal((await g.seal(projectId, runId)).reason, "DELIVERY_MISMATCH"); assert.equal(g.record?.state, "blocked");
+});
+
+test("a Delivery with the right writer but wrong signed author cannot be sealed", async () => {
+  const f = fixture(); assert.equal((await f.seal(projectId, runId)).status, "sealed");
+  const s = { ...f.record!, state: "unknown" as const, deliveryId: null, version: f.record!.version + 1 };
+  const g = fixture(s); g.setOperation(f.operation);
+  g.setDelivery({ projectId, id: f.record!.deliveryId!, taskId, taskRevisionId: randomUUID(), runId,
+    ...intent, actorId: actor.actorId, submittedByActorId: "wrong-author",
+    sourceRunVersion: run.version, createdAt: run.updatedAt });
+  assert.equal((await g.seal(projectId, runId)).reason, "DELIVERY_MISMATCH");
 });

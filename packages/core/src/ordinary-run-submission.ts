@@ -9,6 +9,7 @@ import { canonicalJson } from "./index.js";
 export interface OrdinaryRunSubmissionStore {
   get(runId: string): Promise<OrdinaryRunSubmissionRecord | null>;
   getByOperationId(operationId: string): Promise<OrdinaryRunSubmissionRecord | null>;
+  hasWorkflowOperation(operationId: string): Promise<boolean>;
   getRun(runId: string): Promise<RuntimeRunRecord | null>;
   getFixedRecipient(runId: string): Promise<string | null>;
   hasManagedDispatch(runId: string): Promise<boolean>;
@@ -41,6 +42,8 @@ export async function submitOrdinaryRun(
       throw new DomainError("SUBMISSION_EXISTS", "Run already has a different signed result intent");
     return prior; // The original write may have succeeded before its response was lost.
   }
+  if (await store.hasWorkflowOperation(command.deliveryOperationId))
+    throw new DomainError("OPERATION_REUSED", "Delivery operation ID already belongs to a workflow command");
   const run = await store.getRun(command.runId);
   if (!run || run.projectId !== command.projectId || run.taskId !== command.taskId ||
     run.sessionId !== command.sessionId || run.taskRevisionId !== command.taskRevisionId ||

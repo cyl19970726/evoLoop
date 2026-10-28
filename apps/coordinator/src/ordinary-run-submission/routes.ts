@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Principal } from "@evoloop/contracts";
+import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
 import { ordinaryRunSubmissionSchema, type OrdinaryRunSubmissionCommand,
   type OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -9,6 +9,7 @@ export interface OrdinaryRunSubmissionRoutes {
   submit(principal: Principal, command: OrdinaryRunSubmissionCommand): Promise<OrdinaryRunSubmissionRecord>;
   getByOperation(principal: Principal, projectId: string, operationId: string): Promise<OrdinaryRunSubmissionRecord | null>;
   getByRun(principal: Principal, projectId: string, runId: string): Promise<OrdinaryRunSubmissionRecord | null>;
+  readRun(projectId: string, runId: string): Promise<RuntimeRunRecord | null>;
 }
 
 export function registerOrdinaryRunSubmissionRoutes(app: FastifyInstance, service: OrdinaryRunSubmissionRoutes): void {
@@ -34,7 +35,11 @@ export function registerOrdinaryRunSubmissionRoutes(app: FastifyInstance, servic
   app.get("/api/projects/:projectId/ordinary-runs/:runId/submission", async request => {
     const { projectId, runId } = z.strictObject({ projectId: z.uuid(), runId: z.uuid() }).parse(request.params);
     const record = await service.getByRun(who(request.principal), projectId, runId);
-    return record ? { status: record.state, submission: record } :
+    const run = record?.state === "sealed" ? await service.readRun(projectId, runId) : null;
+    const stale = record?.state === "sealed" && (!run || run.version !== record.terminalRunVersion ||
+      (record.deliveryIntent.technicalResult === "passed" && run.state !== "completed"));
+    return record ? { status: stale ? "blocked" as const : record.state, submission: record,
+      ...(stale ? { reason: "TERMINAL_RUN_VERSION_CHANGED" } : {}) } :
       { status: "absent" as const, reason: "SUBMISSION_ABSENT", runId };
   });
 }

@@ -31,8 +31,10 @@ function deliveryCommand(s: OrdinaryRunSubmissionRecord) {
 
 function matchesDelivery(s: OrdinaryRunSubmissionRecord, d: Delivery | null): boolean {
   const intent = s.deliveryIntent;
+  const fixed = d as (Delivery & { submittedByActorId?: string | null }) | null;
   return !!d && d.projectId === s.projectId && d.taskId === s.taskId && d.runId === s.runId &&
-    d.actorId === s.submittedBy && d.artifactRef === intent.artifactRef &&
+    d.actorId === s.submittedBy && fixed?.submittedByActorId === s.submittedBy &&
+    d.artifactRef === intent.artifactRef &&
     d.artifactRevision === intent.artifactRevision && d.contentHash === intent.contentHash &&
     d.technicalResult === intent.technicalResult && d.technicalEvidence === intent.technicalEvidence &&
     d.reason === intent.reason;
@@ -56,9 +58,13 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
       run.sessionId !== s.sessionId || run.taskRevisionId !== s.taskRevisionId || run.inputHash !== s.runInputHash)
       return blocked(s, "SUBMISSION_BINDING_MISMATCH");
     if (!terminal(run)) return { status: "pending", reason: "TERMINAL_RUN_REQUIRED" };
-    if (s.state === "sealed") return s.deliveryId
-      ? { status: "sealed", reason: "ALREADY_SEALED", deliveryId: s.deliveryId }
-      : { status: "rejected", reason: "SEALED_WITHOUT_DELIVERY" };
+    if (s.state === "sealed") {
+      if (!s.deliveryId) return { status: "rejected", reason: "SEALED_WITHOUT_DELIVERY" };
+      if (s.terminalRunVersion !== run.version ||
+        (s.deliveryIntent.technicalResult === "passed" && run.state !== "completed"))
+        return { status: "pending", reason: "TERMINAL_RUN_VERSION_CHANGED" };
+      return { status: "sealed", reason: "ALREADY_SEALED", deliveryId: s.deliveryId };
+    }
     if (s.state === "rejected") return { status: "rejected", reason: s.reason ?? "WORKFLOW_REJECTED" };
     if (run.state !== "completed" && s.deliveryIntent.technicalResult !== "failed")
       return blocked(s, "FAILED_RUN_CANNOT_PASS_TECHNICAL_RESULT");
@@ -94,6 +100,10 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
       if (detail.task.version !== s.expectedTaskVersion || detail.task.currentRevisionId !== s.taskRevisionId ||
         detail.task.state !== "in_progress" || detail.deliveries?.some(d => d.runId === runId))
         return blocked(s, "TASK_INPUT_OR_DELIVERY_CHANGED");
+      const currentRun = await deps.readRun(projectId, runId);
+      if (!currentRun || currentRun.version !== s.terminalRunVersion ||
+        (s.deliveryIntent.technicalResult === "passed" && currentRun.state !== "completed"))
+        return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
       try { await deps.workflow.execute(actor, command); }
       catch { /* A lost response can follow a committed transaction. */ }
       try { operation = await deps.workflow.getOperation(actor, s.projectId, s.deliveryOperationId); }
@@ -114,6 +124,12 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
         return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
       return { status: "rejected", reason: operation.result.code };
     }
+    let confirmedRun: RuntimeRunRecord | null;
+    try { confirmedRun = await deps.readRun(projectId, runId); }
+    catch { return { status: "unknown", reason: "TERMINAL_RUN_UNCONFIRMED" }; }
+    if (!confirmedRun || confirmedRun.version !== s.terminalRunVersion ||
+      (s.deliveryIntent.technicalResult === "passed" && confirmedRun.state !== "completed"))
+      return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
     const deliveryId = operation.result.revisionId;
     let delivery: Delivery | null = null;
     try { if (deliveryId) delivery = await deps.readDelivery(s.projectId, deliveryId); }

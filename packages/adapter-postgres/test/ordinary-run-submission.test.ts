@@ -96,6 +96,51 @@ test('first signed intent is unique, fixed, versioned and scoped to explicit rec
   }finally{client.release();}
 });
 
+test('reserved Delivery operation is checked against the workflow journal',async()=>{
+  const client=await pool.connect();
+  const operationId=randomUUID();
+  try{
+    const store=new PgOrdinaryRunSubmissionStore(client,projectId);
+    assert.equal(await store.hasWorkflowOperation(operationId),false);
+    await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,'worker',$3,'document.create',$4::jsonb,$5)`,
+      [projectId,operationId,hash,JSON.stringify({status:'applied',operationId,entityId:documentId,version:1}),now]);
+    assert.equal(await store.hasWorkflowOperation(operationId),true);
+  }finally{client.release();}
+});
+
+test('a later workflow command cannot consume the signed Delivery operation ID',async()=>{
+  const client=await pool.connect();
+  try{
+    const saved=await new PgOrdinaryRunSubmissionStore(client,projectId).get(runId);
+    assert.ok(saved);
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,'worker',$3,'document.create',$4::jsonb,$5)`,
+      [projectId,saved.deliveryOperationId,hash,
+        JSON.stringify({status:'applied',operationId:saved.deliveryOperationId,entityId:documentId,version:1}),now]);
+    await assert.rejects(client.query('COMMIT'),/reserved for a signed Run submission/);
+    await client.query('ROLLBACK');
+    assert.equal(await new PgOrdinaryRunSubmissionStore(client,projectId).hasWorkflowOperation(saved.deliveryOperationId),false);
+  }finally{client.release();}
+});
+
+test('the signer can read a definite rejection of the reserved Delivery operation',async()=>{
+  const client=await pool.connect();
+  try{
+    const saved=await new PgOrdinaryRunSubmissionStore(client,projectId).get(runId);
+    assert.ok(saved);
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+      VALUES($1,$2,$3,$4,'delivery.record',$5::jsonb,$6)`,
+      [projectId,saved.deliveryOperationId,saved.submittedBy,hash,
+        JSON.stringify({status:'rejected',operationId:saved.deliveryOperationId,code:'VERSION_CONFLICT',message:'Task changed'}),now]);
+    await client.query('COMMIT');
+    assert.equal(await new PgOrdinaryRunSubmissionStore(client,projectId).hasWorkflowOperation(saved.deliveryOperationId),true);
+  }catch(error){await client.query('ROLLBACK');throw error;}
+  finally{client.release();}
+});
+
 test('queue attempt requires its exact collaboration recipient, not the Run or Session creator',async()=>{
   const client=await pool.connect();
   const queueId=randomUUID(),entryId=randomUUID(),claimId=randomUUID(),roleId=randomUUID(),roleRevisionId=randomUUID();

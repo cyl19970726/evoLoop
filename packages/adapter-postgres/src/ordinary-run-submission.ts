@@ -36,6 +36,11 @@ export class PgOrdinaryRunSubmissionStore {
     return r.rows[0]?recordOf(r.rows[0]):null;
   }
 
+  async hasWorkflowOperation(operationId: string): Promise<boolean> {
+    const r=await this.client.query("SELECT 1 FROM operation_journal WHERE project_id=$1 AND operation_id=$2",[this.projectId,operationId]);
+    return r.rowCount!==null && r.rowCount>0;
+  }
+
   async getRun(runId: string): Promise<RuntimeRunRecord | null> {
     return new PgRuntimeStore(this.client,this.projectId).getRuntimeRun(runId);
   }
@@ -66,9 +71,18 @@ export class PgOrdinaryRunSubmissionStore {
           handoff.channel.discussionId,handoff.channel.recipientActorId,handoff.channel.issuerActorId]);
       return r.rows.length===1?r.rows[0].actor_id:null;
     }
-    const r=await this.client.query(`SELECT recipient_actor_id AS actor_id FROM task_session_assignment
-      WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND target_kind='owned'
-        AND target_id=$4 AND state IN ('assigned','accepted') AND recipient_actor_id IS NOT NULL`,
+    // reserve validates the R1 assignment, then creates R2 as the Run's fixed revision.
+    // The assignment cannot move during this active Run. An unassigned legacy direct Run
+    // has no durable recipient fact here; do not infer one from its reserver or Session owner.
+    const r=await this.client.query(`SELECT a.recipient_actor_id AS actor_id FROM task_session_assignment a
+      JOIN task_revision current ON current.project_id=a.project_id AND current.task_id=a.task_id
+        AND current.revision_id=$3
+      JOIN task_revision assigned ON assigned.project_id=a.project_id AND assigned.task_id=a.task_id
+        AND assigned.revision_id=a.task_revision_id AND
+          (assigned.revision_id=current.revision_id OR
+            (current.reason='Runtime dispatch reserved' AND assigned.version=current.version-1))
+      WHERE a.project_id=$1 AND a.task_id=$2 AND a.target_kind='owned'
+        AND a.target_id=$4 AND a.state IN ('assigned','accepted') AND a.recipient_actor_id IS NOT NULL`,
       [this.projectId,run.taskId,run.taskRevisionId,run.sessionId]);
     return r.rows[0]?.actor_id??null;
   }

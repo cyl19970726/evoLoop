@@ -81,3 +81,37 @@ BEGIN
 END $$;
 CREATE TRIGGER ordinary_run_submission_binding BEFORE INSERT ON ordinary_run_submission
   FOR EACH ROW EXECUTE FUNCTION validate_ordinary_run_submission();
+
+-- The future Delivery operation ID is reserved for this exact signed intent. A
+-- deferred check can see the Delivery row written in the same workflow transaction.
+CREATE FUNCTION guard_ordinary_delivery_operation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE s ordinary_run_submission%ROWTYPE;
+BEGIN
+  SELECT * INTO s FROM ordinary_run_submission
+    WHERE project_id=NEW.project_id AND delivery_operation_id=NEW.operation_id;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  -- Preserve a definite rejection of the signer's original Delivery command so
+  -- the sealer can read and classify that operation instead of looping on unknown.
+  IF NEW.command_type='delivery.record' AND NEW.actor_id=s.submitted_by
+    AND NEW.result->>'status'='rejected' AND s.state IN ('sealing','unknown') THEN
+    RETURN NULL;
+  END IF;
+  IF NEW.command_type<>'delivery.record' OR NEW.actor_id<>s.submitted_by
+    OR NEW.result->>'status'<>'applied' OR NEW.result->>'entityId'<>s.task_id::text
+    OR s.state NOT IN ('sealing','unknown') OR NOT EXISTS (
+      SELECT 1 FROM delivery d WHERE d.project_id=s.project_id
+        AND d.delivery_id=(NEW.result->>'revisionId')::uuid AND d.task_id=s.task_id
+        AND d.run_id=s.run_id AND d.actor_id=s.submitted_by
+        AND d.artifact_ref=s.delivery_intent->>'artifactRef'
+        AND d.artifact_revision=s.delivery_intent->>'artifactRevision'
+        AND d.content_hash=s.delivery_intent->>'contentHash'
+        AND d.technical_result=s.delivery_intent->>'technicalResult'
+        AND d.technical_evidence=s.delivery_intent->>'technicalEvidence'
+        AND d.reason=s.delivery_intent->>'reason') THEN
+    RAISE EXCEPTION 'Delivery operation is reserved for a signed Run submission' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER ordinary_delivery_operation_guard
+  AFTER INSERT ON operation_journal DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION guard_ordinary_delivery_operation();

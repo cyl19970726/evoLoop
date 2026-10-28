@@ -91,9 +91,9 @@ Run 确认终态后，用 `delivery.record` 并提供 `runId` 显式登记产物
 
 ### 普通 Run 本人提交与终态封存
 
-先用本 Run 配置的 CLI `session` 核身份，读取固定输入和产物原件。`request schema ordinary.submit` 给出精确正文：`projectId`、原 `operationId`、独立 `submissionId`、`runId`、`taskId`、`sessionId`、`taskRevisionId`、`runInputHash`、预留的 `deliveryOperationId`，以及 `deliveryIntent` 中产物引用、修订、内容 hash、`technicalResult`、检查证据和原因。在 Run 仍有效时用 `request ordinary.submit --project UUID --file PRIVATE_JSON` 署名提交；服务从该 Run 的固定接收者校验作者，不能用请求字段指定作者，队列预留者或 Session 创建者也不能代签。`failed`／`interrupted` 的部分成果若提交，技术结果须为 `failed`。
+先用本 Run 配置的 CLI `session` 核身份，读取固定输入和产物原件。`request schema ordinary.submit` 给出精确正文：`projectId`、原 `operationId`、独立 `submissionId`、`runId`、`taskId`、`sessionId`、`taskRevisionId`、`runInputHash`、预留的 `deliveryOperationId`，以及 `deliveryIntent` 中产物引用、修订、内容 hash、`technicalResult`、检查证据和原因。在 Run 仍有效时用 `request ordinary.submit --project UUID --file PRIVATE_JSON` 署名提交；服务从该 Run 的固定接收者校验作者，不能用请求字段指定作者，队列预留者或 Session 创建者也不能代签。旧 direct Run 若没有固定 assignment／recipient 事实，本路径明确拒绝首次提交；须由有权者核旧产物并按旧合同登记，后续新 Run 再固定接收者，不能从可变的 Session actor 猜作者。`failed`／`interrupted` 的部分成果若提交，技术结果须为 `failed`。
 
-请求结果未知时保留私有 receipt 和原 JSON，用 `receipts show`／`receipts reconcile` 核原 operation；只有原意图满足 CLI 重试条件时才用 `receipts retry`，不换 ID、作者或正文。提交确认只证明意图保存。Run 终态后，用 `get /api/projects/PROJECT_UUID/ordinary-runs/RUN_UUID/submission` 读取其状态，再核 `deliveryOperationId` 与 Task Delivery；`sealed` 须匹配同一 Run、作者、产物和结果。`blocked`、`unknown`、`rejected` 或无提交时记录原因并交给责任者恢复，不让 Lead 代写或据聊天末句补造结果。封存者与提交作者分别留痕；Delivery 不代消费者签使用，也不自动关闭 Task。
+请求结果未知时保留私有 receipt 和原 JSON，用 `receipts show`／`receipts reconcile` 核原 operation；只有原意图满足 CLI 重试条件时才用 `receipts retry`，不换 ID、作者或正文。提交确认只证明意图保存。执行者在本轮回读 submission 与固定报告后结束 Turn，不等待或轮询自己的 Run 终态。封存器与 Lead 在终态后用 `get /api/projects/PROJECT_UUID/ordinary-runs/RUN_UUID/submission` 读取其状态，再核 `deliveryOperationId` 与 Task Delivery；执行者下次接续时也可读回。`sealed` 须匹配同一 Run、提交作者、产物和结果。`blocked`、`unknown`、`rejected` 或无提交时记录原因并交给责任者恢复，不让 Lead 代写或据聊天末句补造结果。封存者与提交作者分别留痕；Delivery 不代消费者签使用，也不自动关闭 Task。
 
 ## 观察会话、具体接手与普通消息
 

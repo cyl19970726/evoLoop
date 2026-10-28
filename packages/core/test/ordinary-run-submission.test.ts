@@ -23,17 +23,19 @@ function fixture(state = "running") {
   const records = new Map<string, OrdinaryRunSubmissionRecord>();
   let recipient = "worker";
   let managed = false;
+  const workflowOperations = new Set<string>();
   const run = { id: runId, projectId, taskId, sessionId, taskRevisionId: revisionId,
     inputHash: "a".repeat(64), state } as RuntimeRunRecord;
   const store: OrdinaryRunSubmissionStore = {
     get: async id => records.get(id) ?? null,
     getByOperationId: async id => [...records.values()].find(item => item.operationId === id) ?? null,
+    hasWorkflowOperation: async id => workflowOperations.has(id),
     getRun: async () => run,
     getFixedRecipient: async () => recipient,
     hasManagedDispatch: async () => managed,
     insert: async item => { records.set(item.runId, item); },
   };
-  return { store, records, run, setRecipient: (value: string) => { recipient = value; },
+  return { store, records, run, workflowOperations, setRecipient: (value: string) => { recipient = value; },
     setManaged: (value: boolean) => { managed = value; } };
 }
 const now = "2026-10-29T00:00:00.000Z";
@@ -71,4 +73,11 @@ test("first intent needs exact active ordinary Run binding", async () => {
   await assert.rejects(submit(f.store, actor("worker"), wrong), { code: "RUN_MISMATCH" });
   f.setRecipient("someone-else");
   await assert.rejects(submit(f.store, actor("worker"), command()), { code: "FORBIDDEN" });
+});
+
+test("a prior workflow operation cannot be frozen as the future Delivery operation", async () => {
+  const f = fixture();
+  f.workflowOperations.add(command().deliveryOperationId);
+  await assert.rejects(submit(f.store, actor("worker"), command()), { code: "OPERATION_REUSED" });
+  assert.equal(f.records.size, 0);
 });
