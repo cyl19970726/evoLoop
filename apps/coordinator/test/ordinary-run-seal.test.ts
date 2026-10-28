@@ -28,13 +28,14 @@ function fixture(initial: OrdinaryRunSubmissionRecord | null = submission()) {
   let taskVersion = 2, taskRevisionId = run.taskRevisionId, manual: Delivery[] = [];
   let operation: Operation | null = null, delivery: Delivery | null = null, executeMode: "normal" | "lost" | "missing" = "normal";
   let onTaskRead: (() => void) | null = null;
+  let writable = true;
   const calls: { actorId: string; command: any }[] = [];
   const deps: OrdinaryRunSealerDependencies = {
     readSubmission: async () => record,
     updateSubmission: async (next, expected) => { if (!record || record.version !== expected) return false; record = next; return true; },
     readRun: async () => currentRun,
     resolveSubmittedActor: async () => principal,
-    sealer, now: () => "2026-10-29T01:00:00Z",
+    sealer, now: () => "2026-10-29T01:00:00Z", canWrite: () => writable,
     readDelivery: async () => delivery,
     workflow: {
       getTask: async () => { onTaskRead?.(); return { task: { projectId, id: taskId, version: taskVersion, currentRevisionId: taskRevisionId, state: "in_progress" }, deliveries: manual } as any; },
@@ -57,6 +58,7 @@ function fixture(initial: OrdinaryRunSubmissionRecord | null = submission()) {
     setRun(value: Partial<RuntimeRunRecord>) { currentRun = { ...currentRun, ...value }; },
     setActor(value: Principal | null) { principal = value; }, setTask(version: number, revision = taskRevisionId) { taskVersion = version; taskRevisionId = revision; },
     onTaskRead(callback: () => void) { onTaskRead = callback; },
+    setWritable(value: boolean) { writable = value; },
     setManual(value: Delivery[]) { manual = value; }, setOperation(value: Operation | null) { operation = value; },
     setDelivery(value: Delivery | null) { delivery = value; }, setMode(value: typeof executeMode) { executeMode = value; } };
 }
@@ -89,6 +91,14 @@ test("a terminal correction after the first Run read blocks the Delivery call", 
   f.onTaskRead(() => f.setRun({ state: "failed", version: run.version + 1 }));
   assert.equal((await f.seal(projectId, runId)).reason, "TERMINAL_RUN_VERSION_CHANGED");
   assert.equal(f.calls.length, 0);
+});
+
+test("lease lost during seal prevents the next write", async () => {
+  const f = fixture();
+  f.onTaskRead(() => f.setWritable(false));
+  await assert.rejects(f.seal(projectId, runId), { code: "LEASE_LOST" });
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.record?.state, "submitted");
 });
 
 test("revocation, binding changes, task changes and a manual Delivery block execution", async () => {

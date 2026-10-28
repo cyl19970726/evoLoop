@@ -4,6 +4,7 @@ import type { Delivery } from "@evoloop/contracts/workflow";
 import type { OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import type { WorkflowService } from "@evoloop/core";
 import { canonicalJson } from "@evoloop/core";
+import { DomainError } from "@evoloop/contracts/ports";
 
 export type OrdinarySealResult = { status: "sealed" | "pending" | "unknown" | "rejected" | "absent"; reason: string; deliveryId?: string };
 
@@ -18,6 +19,7 @@ export interface OrdinaryRunSealerDependencies {
   readDelivery(projectId: string, deliveryId: string): Promise<Delivery | null>;
   sealer: Principal;
   now(): string;
+  canWrite(): boolean;
 }
 
 const terminal = (run: RuntimeRunRecord) => ["completed", "failed", "interrupted"].includes(run.state);
@@ -31,9 +33,9 @@ function deliveryCommand(s: OrdinaryRunSubmissionRecord) {
 
 function matchesDelivery(s: OrdinaryRunSubmissionRecord, d: Delivery | null): boolean {
   const intent = s.deliveryIntent;
-  const fixed = d as (Delivery & { submittedByActorId?: string | null }) | null;
   return !!d && d.projectId === s.projectId && d.taskId === s.taskId && d.runId === s.runId &&
-    d.actorId === s.submittedBy && fixed?.submittedByActorId === s.submittedBy &&
+    d.actorId === s.submittedBy && d.submittedByActorId === s.submittedBy &&
+    d.sourceRunVersion === s.terminalRunVersion &&
     d.artifactRef === intent.artifactRef &&
     d.artifactRevision === intent.artifactRevision && d.contentHash === intent.contentHash &&
     d.technicalResult === intent.technicalResult && d.technicalEvidence === intent.technicalEvidence &&
@@ -41,8 +43,11 @@ function matchesDelivery(s: OrdinaryRunSubmissionRecord, d: Delivery | null): bo
 }
 
 export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
-  const save = async (s: OrdinaryRunSubmissionRecord, patch: Partial<OrdinaryRunSubmissionRecord>) =>
-    deps.updateSubmission({ ...s, ...patch, version: s.version + 1, updatedAtUtc: deps.now() }, s.version);
+  const fence = () => { if (!deps.canWrite()) throw new DomainError("LEASE_LOST", "Coordinator lease lost before ordinary seal write"); };
+  const save = async (s: OrdinaryRunSubmissionRecord, patch: Partial<OrdinaryRunSubmissionRecord>) => {
+    fence();
+    return deps.updateSubmission({ ...s, ...patch, version: s.version + 1, updatedAtUtc: deps.now() }, s.version);
+  };
   const blocked = async (s: OrdinaryRunSubmissionRecord, reason: string): Promise<OrdinarySealResult> => {
     if (s.state !== "blocked" || s.reason !== reason)
       await save(s, { state: "blocked", reason });
@@ -109,6 +114,7 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
       if (!currentRun || currentRun.version !== s.terminalRunVersion ||
         (s.deliveryIntent.technicalResult === "passed" && currentRun.state !== "completed"))
         return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
+      fence();
       try { await deps.workflow.execute(actor, command); }
       catch { /* A lost response can follow a committed transaction. */ }
       try { operation = await deps.workflow.getOperation(actor, s.projectId, s.deliveryOperationId); }
