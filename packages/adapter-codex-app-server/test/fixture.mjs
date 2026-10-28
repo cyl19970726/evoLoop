@@ -13,6 +13,7 @@ let archived = mode === "already-archived";
 let turnStarts = 0;
 let observedResumes = 0;
 let lastTurnModel = null;
+let threadName = null;
 const sequenceInputs = [];
 let unloaded = mode.startsWith('full-unloaded');
 for await (const line of lines) {
@@ -112,6 +113,15 @@ for await (const line of lines) {
     if (mode === "lost-archive-ack") continue;
     send({ id, result: {} }); continue;
   }
+  if (method === "thread/name/set") {
+    if (params.threadId !== thread.id || typeof params.name !== "string" || !params.name.trim()) {
+      send({ id, error: { code: -32602, message: "invalid name target" } }); continue;
+    }
+    if (mode === "name-sync-reject") { send({ id, error: { code: -32000, message: "name rejected" } }); continue; }
+    threadName = params.name;
+    if (mode !== "name-sync-lost") send({ id, result: {} });
+    continue;
+  }
   if (method === "thread/list") {
     if (params.archived !== true || params.cwd !== thread.cwd || params.sourceKinds !== undefined ||
       params.useStateDbOnly !== true || params.limit !== 100) {
@@ -135,7 +145,7 @@ for await (const line of lines) {
       NODE_OPTIONS: process.env.NODE_OPTIONS ?? null,
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
-    const nativeThread={...thread,...(mode.startsWith('full-')||mode==='full-sequence'?{model:unloaded?null:'gpt-6-sol'}:{}),status:{type:unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
+    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode==='full-sequence'?{model:unloaded?null:'gpt-6-sol'}:{}),status:{type:unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;

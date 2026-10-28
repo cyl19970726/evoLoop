@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -49,6 +50,118 @@ class FakeRuntime {
   async listItems(): Promise<RuntimePage<unknown>> { return { data: [], nextCursor: null }; }
   async startTurn() { this.starts++; throw Error("unknown start must not replay"); }
 }
+
+test("owned Session names follow the newest business profile across creation, edits and native failures", async () => {
+  const owned: RuntimeSessionRecord = { ...session, id: randomUUID(), state: "reserved",
+    nativeThreadId: null, nativeSessionId: null };
+  let profile: SessionProfileRecord | null = { projectId, target: { kind: "owned", sessionId: owned.id },
+    version: 1, displayName: "方案设计", purpose: "", membership: "current", tenure: "temporary",
+    actorId, reason: "initial", updatedAt: new Date().toISOString() };
+  let reject = false, loseReply = false;
+  class NamingRuntime extends FakeRuntime {
+    name: string | null = null;
+    writes: string[] = [];
+    onWrite: ((name: string) => void) | null = null;
+    override async create() { return { ...await super.create(), sessionId: owned.id }; }
+    async readThreadName(binding: RuntimeBinding) {
+      assert.equal(binding.sessionId, owned.id);
+      assert.equal(binding.nativeThreadId, "owned-thread");
+      return this.name;
+    }
+    async setThreadName(binding: RuntimeBinding, name: string) {
+      assert.equal(binding.sessionId, owned.id);
+      this.writes.push(name);
+      if (reject) throw new RuntimeServerError("thread/name/set", 1, -32000, "private rejection");
+      this.onWrite?.(name);
+      this.name = name;
+      if (loseReply) throw new RuntimeUnknownError("thread/name/set", 2, "lost reply");
+    }
+  }
+  const native = new NamingRuntime();
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [owned],
+    listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    beginSessionCreate: async () => {}, bindSession: async (_project: string, id: string, binding: RuntimeBinding) => {
+      assert.equal(id, owned.id); owned.state = "ready";
+      owned.nativeThreadId = binding.nativeThreadId; owned.nativeSessionId = binding.nativeSessionId;
+    } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & NamingRuntime,
+    workflow, trusted, profileForSession: async (_principal, current) => current.id === owned.id ? profile : null,
+    principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    assert.equal(owned.state, "ready");
+    assert.deepEqual(native.writes, ["方案设计"], "the preexisting profile names the exact newly bound Thread");
+    await runner.pump();
+    assert.equal(native.name, "方案设计");
+    assert.deepEqual(native.writes, ["方案设计"], "an unchanged profile cannot cause repeated native writes");
+    profile = { ...profile!, version: 2, displayName: "方案设计 · 更新" };
+    await runner.pump();
+    profile = { ...profile, version: 3, displayName: "最终名称" };
+    await runner.pump();
+    assert.deepEqual(native.writes, ["方案设计", "方案设计 · 更新", "最终名称"]);
+    reject = true;
+    profile = { ...profile, version: 4, displayName: "被拒名称" };
+    await runner.pump(); await runner.pump();
+    assert.equal(native.writes.filter(name => name === "被拒名称").length, 1);
+    assert.equal(native.name, "最终名称");
+    assert.equal(runner.status(projectId).faults.find(f => f.phase === "session_name_sync")?.sessionId, owned.id);
+    reject = false;
+    native.disconnect("fixture reconnect");
+    await runner.recover();
+    assert.equal(native.name, "被拒名称", "reconnection compares native state before retrying the current profile");
+    loseReply = true;
+    profile = { ...profile, version: 5, displayName: "恢复名称" };
+    await runner.pump();
+    assert.equal(native.name, "恢复名称", "lost acknowledgement is settled by exact native readback");
+    assert.equal(runner.status(projectId).faults.find(f => f.phase === "session_name_sync"), undefined);
+    loseReply = false;
+    profile = { ...profile, version: 6, displayName: "中途旧名" };
+    native.onWrite = name => {
+      if (name === "中途旧名") profile = { ...profile!, version: 7, displayName: "最终最新名" };
+    };
+    await runner.pump(); await runner.pump();
+    assert.equal(native.name, "最终最新名", "a newer profile wins after an older native request completes");
+    assert.equal(native.starts, 0);
+    profile = { ...profile, version: 8, target: { kind: "external", linkId: randomUUID() }, displayName: "外部名称" };
+    await runner.pump();
+    assert.equal(native.name, "最终最新名", "an external target cannot rename the owned Thread");
+    owned.state = "closed";
+    profile = { ...profile, version: 9, target: { kind: "owned", sessionId: owned.id }, displayName: "关闭后名称" };
+    await runner.pump();
+    assert.equal(native.name, "最终最新名");
+  } finally { await runner.stop(); }
+});
+
+test("a profile added after the owned Thread is ready names that same Thread without a Turn", async () => {
+  let profile: SessionProfileRecord | null = null;
+  class ReadyThread extends FakeRuntime {
+    name: string | null = null;
+    async readThreadName(binding: RuntimeBinding) { assert.equal(binding.nativeThreadId, session.nativeThreadId); return this.name; }
+    async setThreadName(binding: RuntimeBinding, name: string) {
+      assert.equal(binding.nativeThreadId, session.nativeThreadId); this.name = name;
+    }
+  }
+  const native = new ReadyThread();
+  const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & ReadyThread,
+    workflow: { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+      listRuntimeRuns: async () => [] } as unknown as WorkflowService,
+    trusted: { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService,
+    profileForSession: async () => profile,
+    principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    assert.equal(native.name, null);
+    profile = { projectId, target: { kind: "owned", sessionId: session.id }, version: 1,
+      displayName: "绑定后命名", purpose: "", membership: "current", tenure: "temporary",
+      actorId, reason: "late profile", updatedAt: new Date().toISOString() };
+    await runner.pump();
+    assert.equal(native.name, "绑定后命名");
+    assert.equal(native.starts, 0);
+  } finally { await runner.stop(); }
+});
 
 test("a project lookup failure is retained, while a genuinely absent project is skipped", async () => {
   const runtime = new FakeRuntime();

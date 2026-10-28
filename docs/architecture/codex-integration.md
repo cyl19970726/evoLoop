@@ -146,6 +146,8 @@ Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能�
 
 ## 状态与恢复规则
 
+受管 Session 的展示名由项目侧版本化 `session.profile.set` 拥有。协调器只在 ready 且有精确 owned Thread 绑定时，将最新 profile 名称与原生 `thread/read` 的 `name` 比较；不同才用固定 0.164 协议的 `thread/name/set` 写到该 Thread，再读回核对。命名不启动 Turn；外部链接和已关闭 Session 不参与。每个 profile 修订在一条原生连接上最多尝试一次，拒绝或结果未知留在 runner 的名称同步故障中；新修订或重连先读回再恢复，不靠空 RPC 回执宣称 Desktop 可见。业务保存成功、原生读回一致、Desktop 实际按名找到同一 Thread 是三个不同证据。
+
 适配器至少区分 `requested`、`accepted`、`running`、`turn_completed`／`turn_failed`／`turn_interrupted`、`unknown`；任务层使用 PostgreSQL TaskStore 的状态机，飞书同步另有 Sync 状态。`turn/completed.status = completed` 只表示 Codex Turn 结束，随后仍需核对 Item 最终状态、文件／检查结果、交付物和使用反馈。`item/completed` 是 Item 的最终观察，增量 delta 不是最终文本。审批请求由客户端按既有授权及服务端策略路由，记录决定依据；需要人的判断时才转交授权人，不能擅自放宽权限或默认接受未知请求。[官方事件与审批说明](https://learn.chatgpt.com/docs/app-server#approvals)
 
 断线或超时后按 `operationId` 回读 PostgreSQL Journal、Task 与 outbox → 对已知 `threadId` 用 `thread/read`／分页历史定位 Turn／Item → 将证据落到操作状态。能证实效果已发生则续跟踪；能证实未发生才考虑重发；没有足够 ID 或证据则保持 `unknown`，不盲重试。App Server 的请求 ID 仅用于连接上的请求／响应匹配；本机 schema 中可选的 `clientUserMessageId` 未经验证为跨重试的去重机制。重启先处理未知派发和待验收成果，再领取新任务。通知无已验证全局重放游标；持久历史分页与 PostgreSQL 本体对账是恢复依据；飞书绑定按需另行对账。

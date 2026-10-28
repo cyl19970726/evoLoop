@@ -5,6 +5,7 @@ import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import type { WorkflowService } from "@evoloop/core";
+import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
@@ -19,7 +20,7 @@ import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId,
   uniqueEvaluationSources, verifyEvaluationPacket, type ReadEvaluationMaterial } from "./evaluation-materials.js";
 
 interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
-type RuntimeFaultPhase = "project_scan" | "session_create" | "session_close" | "profile_activation" | "run_preflight" | "business_profile_restore" | "run_start" | "run_bind" | "run_reconcile" | "approval_receipt";
+type RuntimeFaultPhase = "project_scan" | "session_create" | "session_name_sync" | "session_close" | "profile_activation" | "run_preflight" | "business_profile_restore" | "run_start" | "run_bind" | "run_reconcile" | "approval_receipt";
 type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
 export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
   phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string;
@@ -28,6 +29,7 @@ export interface RuntimeFault { projectId: string; sessionId: string | null; run
 const faultMessage: Record<RuntimeFaultPhase, string> = {
   project_scan: "项目运行状态暂不可读取；新派发须等待恢复。",
   session_create: "会话创建结果尚未核实；保留原会话 ID，不自动重试。",
+  session_name_sync: "原生会话名称尚未核对一致；业务名称已保存，请核对原 Thread 或等待连接恢复。",
   session_close: "会话归档尚未核实；保留原关闭意图，只读对账等待恢复。",
   profile_activation: "模型配置的原生生效尚未核实；同一会话的后续启动保持阻止。",
   run_preflight: "运行前置校验未通过；请核对原 Run 的持久状态。",
@@ -105,6 +107,7 @@ export class RuntimeRunner {
   private busy: Promise<void> | null = null;
   private stopped = false;
   private registered = new Set<string>();
+  private checkedNames = new Map<string, number>();
   private interruptAttempted = new Set<string>();
   private approvalQueue: { id: string | number; projectId?: string; sessionId?: string; threadId?: string; turnId?: string; method: string }[] = [];
   private approvalFlush: Promise<void> | null = null;
@@ -134,6 +137,7 @@ export class RuntimeRunner {
     /** Trusted, exact Session/actor/Task CLI entry; never inferred from Task or Run prose. */
     cliEntryForRun?(session: RuntimeSessionRecord | null, run: RuntimeRunRecord): Promise<CliBootstrap | null>;
     readDocumentOriginal?: ReadDocumentOriginal;
+    profileForSession?(principal: Principal, session: RuntimeSessionRecord): Promise<SessionProfileRecord | null>;
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
@@ -160,10 +164,11 @@ export class RuntimeRunner {
     const key=this.faultKey(projectId,phase,sessionId,runId);
     this.faults.delete(key);this.faults.set(key,fault);
   }
-  private clearFault(projectId: string, sessionId?: string, runId?: string, phase?: RuntimeFaultPhase) {
+  private clearFault(projectId: string, sessionId?: string, runId?: string, phase?: RuntimeFaultPhase,
+    preservePhase?: RuntimeFaultPhase) {
     for (const [key,fault] of this.faults) {
       if (fault.projectId === projectId && fault.sessionId === (sessionId ?? null) && fault.runId === (runId ?? null) &&
-          (phase ? fault.phase === phase : fault.phase !== "approval_receipt")) this.faults.delete(key);
+          (phase ? fault.phase === phase : fault.phase !== "approval_receipt" && fault.phase !== preservePhase)) this.faults.delete(key);
     }
   }
   private principal(projectId: string): Principal {
@@ -242,7 +247,7 @@ export class RuntimeRunner {
       await this.deps.nativeInputs?.drain();
       await this.deps.nativeObservation?.drain();
       this.runtime = this.deps.runtimeFactory();
-      this.registered.clear(); this.interruptAttempted.clear();
+      this.registered.clear(); this.checkedNames.clear(); this.interruptAttempted.clear();
       this.attachRuntime();
       await this.runtime.open();
       await this.deps.nativeInputs?.opened();
@@ -280,7 +285,8 @@ export class RuntimeRunner {
         const sessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
         const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
         for (const session of sessions) {
-          if (session.state === "ready" || session.state === "closed") this.clearFault(projectId, session.id);
+          if (session.state === "ready") this.clearFault(projectId, session.id, undefined, undefined, "session_name_sync");
+          if (session.state === "closed") this.clearFault(projectId, session.id);
           if (session.state === "reserved") {
             try { await this.create(session); }
             catch (error) { this.recordFault(projectId,"session_create",error,session.id); }
@@ -292,6 +298,10 @@ export class RuntimeRunner {
               if(await this.authorized(session) && await this.deps.allowedCwd(session.projectId,session.cwd))
                 await this.executionBinding(session);
             } catch(error) { this.recordFault(projectId,"profile_activation",error,session.id); }
+          }
+          if (session.state === "ready" && this.deps.profileForSession) {
+            try { await this.syncSessionName(principal, session); }
+            catch (error) { this.recordFault(projectId,"session_name_sync",error,session.id); }
           }
           if (session.state === "closing") {
             try { if (await this.closeSession(session)) this.clearFault(projectId,session.id); }
@@ -376,6 +386,38 @@ export class RuntimeRunner {
       await this.deps.trusted.markSessionUnknown(session.projectId, session.id, "Thread creation acknowledgement unavailable; no automatic retry");
       this.recordFault(session.projectId,"session_create",error,session.id,undefined,"unknown_outcome");
     }
+  }
+  private async syncSessionName(principal: Principal, session: RuntimeSessionRecord): Promise<void> {
+    const profile = await this.deps.profileForSession!(principal, session);
+    if (!profile || profile.projectId !== session.projectId || profile.target.kind !== "owned" ||
+        profile.target.sessionId !== session.id) return;
+    if (this.checkedNames.get(session.id) === profile.version) return;
+    if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
+    if (!this.runtime.readThreadName || !this.runtime.setThreadName) throw new Error("Native Thread naming unavailable");
+    const binding = bindingOf(session);
+    await this.runtime.registerBinding(binding);
+    const currentName = await this.runtime.readThreadName(binding);
+    if (currentName === profile.displayName) {
+      this.checkedNames.set(session.id, profile.version);
+      this.clearFault(session.projectId, session.id, undefined, "session_name_sync");
+      return;
+    }
+    // A profile change during native I/O wins; the next cycle reads its new version.
+    const latest = await this.deps.profileForSession!(principal, session);
+    if (!latest || latest.version !== profile.version || latest.displayName !== profile.displayName) return;
+    // One native attempt per profile revision. A lost reply is read back, never replayed
+    // in this connection; reconnect or a newer business name makes a fresh comparison.
+    this.checkedNames.set(session.id, profile.version);
+    let failure: unknown = null;
+    try { await this.runtime.setThreadName(binding, profile.displayName); }
+    catch (error) { failure = error; }
+    try {
+      if (await this.runtime.readThreadName(binding) === profile.displayName) {
+        this.clearFault(session.projectId, session.id, undefined, "session_name_sync");
+        return;
+      }
+    } catch (error) { failure ??= error; }
+    throw failure ?? new Error("Native Thread name does not match the saved profile");
   }
   private async resumeForRun(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) throw new Error("Session authority is no longer available");

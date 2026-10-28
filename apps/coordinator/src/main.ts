@@ -323,6 +323,10 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+  profileForSession: (_principal, session) => uow.read(session.projectId, async reader => {
+    if (!reader.sessionAssignments) throw new Error("Session profile storage unavailable");
+    return reader.sessionAssignments.getSessionProfile({ kind: "owned", sessionId: session.id });
+  }),
   cliEntryForRun: async (session, run) => {
     if (!session || session.id !== run.sessionId || session.projectId !== run.projectId || session.state !== "ready") return null;
     const brokered = await brokeredCliForRun(managedCliBroker, session, run);
