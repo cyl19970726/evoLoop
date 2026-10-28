@@ -62,8 +62,10 @@ export async function buildServer(options: {
   readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
     Promise<{path:string;commit:string;contentHash:string;body:string;
       references:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}|null>;
-  readRoleSkillSource?: (projectId:string,roleId:string,name:string,path:string,commit:string,hash:string) =>
-    Promise<{path:string;commit:string;contentHash:string;body:string}|null>;
+  readRoleSkillSource?: (projectId:string,roleId:string,name:string,path:string,via:string,commit:string,hash:string) =>
+    Promise<{path:string;commit:string;contentHash:string;body:string;
+      references:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>;
+      cycleReferencesOmitted:number;referenceLimitReached:boolean}|null>;
   references?: ReferenceRouteOptions;
   scheduling?: SchedulingPump;
   schedulingGrants?: (projectId: string, actorId: string) => ScheduleGrant[];
@@ -203,12 +205,30 @@ export async function buildServer(options: {
     const bindings=await options.service.listRoleSessionBindings(principal,p.projectId,q.roleId);
     const bound=bindings.some(value=>value.sessionId===p.sessionId);
     const profile=session?await options.service.getRuntimeSessionProfile(principal,p.projectId,p.sessionId):null;
+    let recovery:Awaited<ReturnType<WorkflowService["getSessionRecovery"]>>|null=null;
+    let recoveryUnavailable=false;
+    if(session)try {recovery=await options.service.getSessionRecovery(principal,p.projectId,p.sessionId);}
+    catch(error){if(error instanceof DomainError&&error.code==="RECOVERY_UNAVAILABLE")recoveryUnavailable=true;else throw error;}
+    const executionProfile=session?.executionProfile??recovery?.executionProfile??null;
+    const actualFull=!!session&&session.sandbox==="danger-full-access"&&session.approvalPolicy==="never";
+    const activationReady=!executionProfile||executionProfile.activationState==="active"&&
+      executionProfile.activeRevisionId===executionProfile.revision.revisionId&&
+      executionProfile.revision.sandbox==="danger-full-access"&&executionProfile.revision.approvalPolicy==="never"&&
+      executionProfile.revision.cwd===session?.cwd&&
+      executionProfile.revision.authorizationScope===session.authorizationScope&&
+      executionProfile.revision.model===session.model;
+    const recoveryReady=!!recovery&&!recovery.partial&&recovery.gate?.phase==="open";
     const missing=[...(!config.runtimeAvailable?["runtime_unavailable"]:[]),
       ...(!config.grantReady?["runtime_grant"]:[]),...(!config.cwdReady?["cwd"]:[]),
       ...(!config.roleActorId?["role_actor"]:[]),...(!config.materialCli?["material_cli"]:
         !config.materialCli.ready?["material_cli_incompatible"]:[]),
+      ...(config.materialCli&&config.roleActorId&&config.materialCli.actorId!==config.roleActorId?["material_cli_actor_mismatch"]:[]),
       ...(!config.skills.length?["role_skill"]:[]),
       ...(!["trial","active"].includes(role.state)?["role_inactive"]:[]),
+      ...(session&&!actualFull?["session_execution_profile_restricted"]:[]),
+      ...(session&&!activationReady?[`execution_profile_${executionProfile!.activationState}`]:[]),
+      ...(session&&!recoveryReady?[recoveryUnavailable||!recovery?.gate?"recovery_unavailable":
+        recovery.partial?"recovery_partial":`recovery_${recovery.gate.phase}`]:[]),
       ...(session?.state==="unknown"?["session_unknown"]:[]),
       ...(session&&session.state==="ready"&&!bound?["role_binding"]:[]),
       ...(session&&session.state==="ready"&&!profile?["display_profile"]:[])];
@@ -220,7 +240,10 @@ export async function buildServer(options: {
         approvalPolicy:session.approvalPolicy,nativeThreadId:session.nativeThreadId,nativeSessionId:session.nativeSessionId,
         operationId:session.operationId}:null,
       profile:profile?{version:profile.version,displayName:profile.displayName,purpose:profile.purpose}:null,
-      bound,config,missing,readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile&&missing.length===0,
+      bound,config,missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
+      executionProfile:executionProfile?{revision:executionProfile.revision,activationState:executionProfile.activationState,
+        activeRevisionId:executionProfile.activeRevisionId,activationOperationId:executionProfile.activationOperationId}:null,
+      readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile&&missing.length===0,
       communication:{taskDiscussion:"available",nativeLeadMessage:"unverified",nextAction:"Use the Task discussion and confirm native communication in the actual host"},
       nameSync:"Saved profile is visible; native Thread name requires the runner's independent sync check",
       emptyThreadVisibility:"Native Desktop list may filter Threads without a first message; no message is created by preparation"};
@@ -230,17 +253,22 @@ export async function buildServer(options: {
     const q=z.strictObject({commit:z.string().regex(/^[a-f0-9]{40}$/),hash:z.string().regex(/^[a-f0-9]{64}$/)}).parse(request.query);
     const principal=who(request.principal);
     await options.service.getRole(principal,p.projectId,p.roleId);
-    const skill=await options.readRoleSkill?.(p.projectId,p.roleId,p.name,q.commit,q.hash);
+    let skill;
+    try {skill=await options.readRoleSkill?.(p.projectId,p.roleId,p.name,q.commit,q.hash);}
+    catch {throw new DomainError("FIXED_SOURCE_UNAVAILABLE","Fixed Role skill or its linked source is unavailable");}
     if(!skill)throw new DomainError("NOT_FOUND","Role skill is not configured");
     return skill;
   });
   app.get("/api/projects/:projectId/roles/:roleId/skills/:name/source",async request=>{
     const p=z.strictObject({projectId:z.uuid(),roleId:z.uuid(),name:z.string().regex(/^[A-Za-z0-9_-]+$/)}).parse(request.params);
-    const q=z.strictObject({path:z.string().min(1).max(512),commit:z.string().regex(/^[a-f0-9]{40}$/),
+    const q=z.strictObject({path:z.string().min(1).max(512),via:z.string().min(1).max(4096),
+      commit:z.string().regex(/^[a-f0-9]{40}$/),
       hash:z.string().regex(/^[a-f0-9]{64}$/)}).parse(request.query);
     const principal=who(request.principal);
     await options.service.getRole(principal,p.projectId,p.roleId);
-    const source=await options.readRoleSkillSource?.(p.projectId,p.roleId,p.name,q.path,q.commit,q.hash);
+    let source;
+    try {source=await options.readRoleSkillSource?.(p.projectId,p.roleId,p.name,q.path,q.via,q.commit,q.hash);}
+    catch {throw new DomainError("FIXED_SOURCE_UNAVAILABLE","Fixed linked source or its source trail is unavailable");}
     if(!source)throw new DomainError("NOT_FOUND","Role skill source is not configured");
     return source;
   });

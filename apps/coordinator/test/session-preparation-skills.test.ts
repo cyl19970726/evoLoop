@@ -39,19 +39,26 @@ test("linked references and repo docs remain readable from the same fixed commit
     await run("git",["init","-q",root]);
     await mkdir(join(root,".agents/skills/example/references"),{recursive:true});
     await mkdir(join(root,"docs/development"),{recursive:true});
-    await writeFile(join(root,skill),"[Writing](references/writing.md) [CLI](../../../docs/development/agent-cli.md#start) [Private](../../../private.md)\n");
-    await writeFile(join(root,writing),"fixed writing\n");
-    await writeFile(join(root,guide),"fixed CLI\n");
+    await writeFile(join(root,skill),"[Writing](references/writing.md) [Private](../../../private.md)\n");
+    await writeFile(join(root,writing),"fixed writing [CLI](../../../../docs/development/agent-cli.md#start)\n");
+    await writeFile(join(root,guide),"fixed CLI [Writing](../../.agents/skills/example/references/writing.md)\n");
     await run("git",["-C",root,"add","."]);
     await run("git",["-C",root,"-c","user.name=Test","-c","user.email=test@example.invalid","commit","-qm","source"]);
     const [reference]=await roleSkillReferences(root,[skill]);
     assert.ok(reference);
     const sources=await roleSkillSourceReferences(root,skill,reference.commit);
-    assert.deepEqual(sources.map(value=>value.path).sort(),[guide,writing].sort());
+    assert.deepEqual(sources.map(value=>value.path),[writing]);
     await writeFile(join(root,guide),"new CLI\n");
-    const fixed=await readRoleSkillSource(root,skill,guide,reference.commit,hash("fixed CLI\n"));
-    assert.equal(fixed.body,"fixed CLI\n");
+    await assert.rejects(readRoleSkillSource(root,skill,guide,reference.commit,hash("fixed CLI\n")),/not linked/);
+    const first=await readRoleSkillSource(root,skill,writing,reference.commit,hash("fixed writing [CLI](../../../../docs/development/agent-cli.md#start)\n"));
+    assert.deepEqual(first.references.map(value=>value.path),[guide]);
+    const fixed=await readRoleSkillSource(root,skill,guide,reference.commit,
+      hash("fixed CLI [Writing](../../.agents/skills/example/references/writing.md)\n"),[skill,writing]);
+    assert.match(fixed.body,/fixed CLI/);
+    assert.deepEqual(fixed.references,[]);
+    assert.equal(fixed.cycleReferencesOmitted,1);
     await assert.rejects(readRoleSkillSource(root,skill,"private.md",reference.commit,hash("anything")),/not linked/);
-    await assert.rejects(readRoleSkillSource(root,skill,guide,reference.commit,hash("new CLI\n")),/hash mismatch/);
+    await assert.rejects(readRoleSkillSource(root,skill,guide,reference.commit,hash("new CLI\n"),[skill,writing]),/hash mismatch/);
+    await assert.rejects(readRoleSkillSource(root,skill,guide,reference.commit,hash("new CLI\n"),[skill,guide]),/trail/);
   } finally {await rm(root,{recursive:true,force:true});}
 });

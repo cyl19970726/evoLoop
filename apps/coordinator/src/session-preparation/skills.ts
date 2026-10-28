@@ -33,7 +33,8 @@ function linkedSources(path:string,body:string):string[] {
     const target=posix.normalize(posix.join(posix.dirname(path),link));
     if(safeSource.test(target))sources.add(target);
   }
-  return [...sources].slice(0,32);
+  if(sources.size>32)throw new Error("Fixed source has too many direct references");
+  return [...sources];
 }
 
 async function readSource(root:string,path:string,commit:string,expectedHash?:string){
@@ -45,16 +46,34 @@ async function readSource(root:string,path:string,commit:string,expectedHash?:st
   return {path,commit,contentHash,body};
 }
 
-export async function roleSkillSourceReferences(root:string,skillPath:string,commit:string){
-  const skill=await readFixedSkill(root,skillPath,commit);
-  const paths=linkedSources(skillPath,skill.body);
+async function sourceReferences(root:string,path:string,commit:string,body:string){
+  const paths=linkedSources(path,body);
   return Promise.all(paths.map(path=>readSource(root,path,commit).then(({body:_body,...reference})=>reference)));
 }
 
-export async function readRoleSkillSource(root:string,skillPath:string,path:string,commit:string,hash:string){
-  const direct=await roleSkillSourceReferences(root,skillPath,commit);
-  if(!direct.some(value=>value.path===path))throw new Error("Source is not linked by this Role skill");
-  return readSource(root,path,commit,hash);
+export async function roleSkillSourceReferences(root:string,skillPath:string,commit:string){
+  const skill=await readFixedSkill(root,skillPath,commit);
+  return sourceReferences(root,skillPath,commit,skill.body);
+}
+
+/** Every hop is checked against its parent at the same commit; only selected children are returned. */
+export async function readRoleSkillSource(root:string,skillPath:string,path:string,commit:string,hash:string,
+  via:string[]=[skillPath]){
+  if(via.length<1||via.length>8||via[0]!==skillPath||new Set(via).size!==via.length)
+    throw new Error("Invalid fixed source trail");
+  let parent=await readFixedSkill(root,skillPath,commit);
+  for(const hop of via.slice(1)){
+    if(!linkedSources(parent.path,parent.body).includes(hop))throw new Error("Source trail is not linked by this Role skill");
+    parent=await readSource(root,hop,commit);
+  }
+  if(!linkedSources(parent.path,parent.body).includes(path)||via.includes(path))
+    throw new Error("Source is not linked by this Role skill");
+  const source=await readSource(root,path,commit,hash);
+  const children=await sourceReferences(root,path,commit,source.body);
+  const trail=[...via,path];
+  const references=trail.length>=8?[]:children.filter(value=>!trail.includes(value.path));
+  return {...source,references,cycleReferencesOmitted:children.filter(value=>trail.includes(value.path)).length,
+    referenceLimitReached:trail.length>=8&&children.some(value=>!trail.includes(value.path))};
 }
 
 export async function roleSkillReferences(root: string, paths: string[]) {

@@ -551,11 +551,14 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
     const skill=await readFixedSkill(skillSourceRoot,path,commit,hash);
     const references=await roleSkillSourceReferences(skillSourceRoot,path,commit);
     return {...skill,references:references.map(value=>({...value,
-      readSubcommand:`get '/api/projects/${projectId}/roles/${roleId}/skills/${name}/source?path=${encodeURIComponent(value.path)}&commit=${commit}&hash=${value.contentHash}'`}))};
+      readSubcommand:`get '/api/projects/${projectId}/roles/${roleId}/skills/${name}/source?path=${encodeURIComponent(value.path)}&via=${encodeURIComponent(path)}&commit=${commit}&hash=${value.contentHash}'`}))};
   },
-  readRoleSkillSource: async (projectId,roleId,name,path,commit,hash) => {
+  readRoleSkillSource: async (projectId,roleId,name,path,via,commit,hash) => {
     const skillPath=`.agents/skills/${name}/SKILL.md`;
-    return readRoleSkillSource(skillSourceRoot,skillPath,path,commit,hash);
+    const trail=via.split("|");
+    const source=await readRoleSkillSource(skillSourceRoot,skillPath,path,commit,hash,trail);
+    return {...source,references:source.references.map(value=>({...value,
+      readSubcommand:`get '/api/projects/${projectId}/roles/${roleId}/skills/${name}/source?path=${encodeURIComponent(value.path)}&via=${encodeURIComponent([...trail,path].join("|"))}&commit=${commit}&hash=${value.contentHash}'`}))};
   },
   references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId), runSessionAvailable},
   scheduling,

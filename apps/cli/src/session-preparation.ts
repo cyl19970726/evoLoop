@@ -1,4 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { link, mkdir, open, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
 import { commandSchema } from "@evoloop/contracts";
 import { ApiClient } from "./client.js";
@@ -15,6 +17,25 @@ const specificationSchema=z.strictObject({
 });
 export type SessionPreparationSpec=z.infer<typeof specificationSchema>;
 
+async function freezePreparation(spec:SessionPreparationSpec,store:ReceiptStore,origin:string,actor:VerifiedActor){
+  const file=join(store.directory,`.prepare-${spec.operationId}.json`);
+  const body={...spec,actorId:actor.actorId,apiUrl:origin};
+  const content=JSON.stringify(body,Object.keys(body).sort());
+  await mkdir(store.directory,{recursive:true,mode:0o700});
+  const temporary=join(store.directory,`.prepare-${spec.operationId}-${randomUUID()}.tmp`);
+  try {
+    const handle=await open(temporary,"wx",0o600);
+    try {await handle.writeFile(content);await handle.sync();} finally {await handle.close();}
+    try {await link(temporary,file);}
+    catch(error){if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;}
+  } finally {await rm(temporary,{force:true});}
+  let saved:unknown;
+  try {saved=JSON.parse(await readFile(file,"utf8"));}
+  catch {throw new Error("The saved preparation intent is incomplete; preserve this operation ID for recovery");}
+  if(JSON.stringify(saved)!==content)
+    throw new Error("This preparation operation already has a different saved intent; use a new ID for changed inputs");
+}
+
 /** Stage IDs remain stable across process restarts and cannot be reused with altered command bodies. */
 function stageId(base:string,stage:string):string {
   const hex=createHash("sha256").update(`session-preparation:${base}:${stage}`).digest("hex");
@@ -30,6 +51,7 @@ export async function prepareSession(input:unknown,client:ApiClient,store:Receip
   actor:VerifiedActor,diagnostic:(value:unknown)=>void) {
   const spec=specificationSchema.parse(input);
   if(!actor.projectIds.includes(spec.projectId))throw new Error("CLI identity does not belong to the selected project");
+  await freezePreparation(spec,store,origin,actor);
   const endpoint=`/api/projects/${spec.projectId}/session-preparation/${spec.sessionId}`;
   const query=new URLSearchParams({roleId:spec.roleId});
   if(spec.cwd)query.set("cwd",spec.cwd);

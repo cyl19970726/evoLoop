@@ -41,7 +41,7 @@ test("preparation reserves once, waits for native binding, then names and binds 
     const second=await prepareSession(spec,api,store,"http://localhost:4318","private-token",actor,diagnostic);
     assert.equal(second.status,"ready");
     assert.deepEqual(posts.map(value=>value.type),["runtime.session.reserve","session.profile.set","role.bindSession"]);
-    const third=await prepareSession({...spec,mode:"reuse"},api,store,"http://localhost:4318","private-token",actor,diagnostic);
+    const third=await prepareSession({...spec,mode:"reuse",operationId:id(5)},api,store,"http://localhost:4318","private-token",actor,diagnostic);
     assert.equal(third.status,"ready");
     assert.equal(posts.length,3,"reuse does not reserve another Session or assign a Task");
   } finally {await rm(dir,{recursive:true,force:true});}
@@ -75,7 +75,42 @@ test("a confirmed reservation cannot be silently reused with changed inputs",asy
     const store=new ReceiptStore(dir);
     await prepareSession(spec,api,store,"http://localhost:4318","private-token",actor,()=>{});
     await assert.rejects(prepareSession({...spec,cwd:"/other/project"},api,store,
-      "http://localhost:4318","private-token",actor,()=>{}),/saved reservation has different inputs/);
+      "http://localhost:4318","private-token",actor,()=>{}),/different saved intent/);
     assert.equal(posts,1);
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test("the complete preparation intent is frozen before native readiness and on reuse",async()=>{
+  const dir=await mkdtemp(join(tmpdir(),"evoloop-prepare-intent-"));
+  try {
+    let posts=0,view=snapshot(null);
+    const api={get:async()=>view,post:async(_path:string,body:unknown)=>{
+      posts++;
+      const kind=(body as Record<string,unknown>).type;
+      if(kind==="runtime.session.reserve")view=snapshot({state:"reserved",operationId,roleId,actorId:"lead",cwd:spec.cwd,
+        authorizationScope:spec.authorizationScope});
+      if(kind==="session.profile.set")view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,
+        authorizationScope:spec.authorizationScope},{version:1,displayName:spec.displayName,purpose:spec.purpose});
+      if(kind==="role.bindSession")view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,
+        authorizationScope:spec.authorizationScope},{version:1,displayName:spec.displayName,purpose:spec.purpose},true);
+      return {status:"applied",operationId:(body as Record<string,unknown>).operationId,entityId:sessionId,version:1};
+    }} as ApiClient;
+    const store=new ReceiptStore(dir);
+    const first=await prepareSession(spec,api,store,"http://localhost:4318","private-token",actor,()=>{});
+    assert.equal(first.status,"waiting_for_native_thread");
+    await assert.rejects(prepareSession({...spec,displayName:"改名"},api,store,
+      "http://localhost:4318","private-token",actor,()=>{}),/different saved intent/);
+    await assert.rejects(prepareSession({...spec,mode:"reuse"},api,store,
+      "http://localhost:4318","private-token",actor,()=>{}),/different saved intent/);
+    assert.equal(posts,1);
+    view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,
+      authorizationScope:spec.authorizationScope});
+    await assert.rejects(prepareSession({...spec,purpose:"new purpose"},api,store,
+      "http://localhost:4318","private-token",actor,()=>{}),/different saved intent/);
+    const next={...spec,mode:"reuse" as const,operationId:id(8)};
+    const reused=await prepareSession(next,api,store,"http://localhost:4318","private-token",actor,()=>{});
+    assert.equal(reused.status,"ready");
+    await assert.rejects(prepareSession({...next,displayName:"other"},api,store,
+      "http://localhost:4318","private-token",actor,()=>{}),/different saved intent/);
   } finally {await rm(dir,{recursive:true,force:true});}
 });
