@@ -51,6 +51,9 @@ export interface LeaderWorkDependency {
   state: TaskState;
   currentRevisionId: string;
   acceptanceSatisfied: boolean;
+  actorId?: string | null;
+  reason?: string | null;
+  createdAt?: string | null;
 }
 
 export interface LeaderWorkAssignment {
@@ -99,7 +102,10 @@ export interface LeaderWorkTask {
   queueHold: string | null;
   goal: { goalId: string; outcome: string } | null;
   stage: { stageId: string; deliverable: string } | null;
-  plan: { plannedStartAt: string | null; dueAt: string | null; priority: number | null } | null;
+  plan: {
+    plannedStartAt: string | null; dueAt: string | null; priority: number | null;
+    version?: number; actorId?: string | null; updatedAt?: string | null;
+  } | null;
   dependencies: LeaderWorkDependency[];
   dates: {
     createdAt: string;

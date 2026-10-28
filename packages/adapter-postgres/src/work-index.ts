@@ -131,6 +131,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     plan: row.plan_version === null || row.plan_version === undefined ? null : {
       plannedStartAt: optionalIso(row.planned_start_at), dueAt: optionalIso(row.due_at),
       priority: row.priority === null || row.priority === undefined ? null : int(row.priority),
+      version: int(row.plan_version), actorId: row.plan_actor_id ?? null, updatedAt: optionalIso(row.plan_updated_at),
     },
     dependencies: row.dependency_facts ?? [],
     dates: {
@@ -187,7 +188,8 @@ async function taskRows(db: Database, projectId: string, includeClosed: boolean)
       impact.pending_impact_count,queue_entry.hold_code AS queue_hold,
       stage.stage_id,stage.deliverable AS stage_deliverable,
       goal.goal_id,goal.outcome AS goal_outcome,
-      plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,
+      plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,plan.actor_id AS plan_actor_id,
+      plan.updated_at AS plan_updated_at,
       COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts,
       closure.closure_id IS NOT NULL AS has_closure
     FROM task t
@@ -228,7 +230,7 @@ async function taskRows(db: Database, projectId: string, includeClosed: boolean)
     LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(jsonb_build_object('taskId',d.depends_on_task_id,'title',dt.title,'state',dt.state,
-        'currentRevisionId',dt.current_revision_id,
+        'currentRevisionId',dt.current_revision_id,'actorId',d.actor_id,'reason',d.reason,'createdAt',d.created_at,
         'acceptanceSatisfied',EXISTS(SELECT 1 FROM task_closure c
           WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
             AND c.task_revision_id=dt.current_revision_id)

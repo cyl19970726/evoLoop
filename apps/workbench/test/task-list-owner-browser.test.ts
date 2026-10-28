@@ -43,7 +43,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
         nextAction:"核对当前版本后按既有 assignment/queue 规则安排执行",
         responsible:{kind:"role",id:roleA,label:`负责 Role ${roleA}`},assignment:null,latestRun:null,delivery:null,
         pendingImpactCount:0,queueHold:null,goal:null,stage:null,
-        plan:{plannedStartAt:null,dueAt:null,priority:null},dependencies:[],
+        plan:{plannedStartAt:null,dueAt:null,priority:null,version:1,actorId:roleA,updatedAt:stamp},dependencies:[],
         dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},
         actionKey:`task:${taskId}:v1:ready`}],nextCursor:null,total:1,counts:{ready:1},changeSequence:4,observedAt:stamp,partial:false};
       else if (url.pathname.startsWith(`${p}/roles/`)) {
