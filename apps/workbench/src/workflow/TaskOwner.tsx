@@ -10,7 +10,10 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
 };
 
-export function TaskOwner({ token, projectId, owner, readKey }: { token: string; projectId: string; owner: string; readKey: string }) {
+export function TaskOwner({ token, projectId, owner, readKey, onResolved }: {
+  token: string; projectId: string; owner: string; readKey: string;
+  onResolved?: (title: string | null) => void;
+}) {
   const [role, setRole] = useState<RoleRecord | null>(null);
   const [roleError, setRoleError] = useState("");
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
@@ -19,6 +22,7 @@ export function TaskOwner({ token, projectId, owner, readKey }: { token: string;
   useEffect(() => {
     let active = true;
     setRole(null); setRoleError(""); setSessions([]); setSessionNote(""); setReading(isRoleOwnerId(owner));
+    onResolved?.(null);
     if (!isRoleOwnerId(owner)) return () => { active = false; };
     const base = `/api/projects/${encodeURIComponent(projectId)}`;
     void (async () => {
@@ -26,6 +30,7 @@ export function TaskOwner({ token, projectId, owner, readKey }: { token: string;
         const found = await readOwnerRole(token, projectId, owner);
         if (!active) return;
         setRole(found);
+        onResolved?.(found.proposal.title.trim() || null);
         try {
           const [bindings, registered] = await Promise.all([
             request<RoleSessionBinding[]>(token, `${base}/roles/${encodeURIComponent(owner)}/bindings`, 15000),
@@ -42,7 +47,10 @@ export function TaskOwner({ token, projectId, owner, readKey }: { token: string;
           else if (bound.size === 0) setSessionNote("该职责暂无已登记的受管会话绑定；任务具体承接请看下方分派。");
         } catch (cause) { if (active) setSessionNote(`会话关联暂不可核对：${errorText(cause)}`); }
       } catch (cause) {
-        if (active) setRoleError(cause instanceof ApiError && cause.status === 404 ? "未找到已登记职责" : `职责暂不可核对：${errorText(cause)}`);
+        if (active) {
+          onResolved?.(null);
+          setRoleError(cause instanceof ApiError && cause.status === 404 ? "未找到已登记职责" : `职责暂不可核对：${errorText(cause)}`);
+        }
       } finally { if (active) setReading(false); }
     })();
     return () => { active = false; };

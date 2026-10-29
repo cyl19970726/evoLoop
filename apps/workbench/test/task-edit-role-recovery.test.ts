@@ -54,7 +54,8 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
   const leader: LeaderWorkTask = {
     kind: "task", taskId: task.id, version: task.version, currentRevisionId: task.currentRevisionId,
     workChangeSequence: 21, title: task.title, taskKind: "implementation", taskState: "todo",
-    phase: "blocked", nextAction: "等待前置结果验收", responsible: { kind: "role", id: owner, label: "实施负责人" },
+    phase: "blocked", nextAction: "等待前置结果验收",
+    responsible: { kind: "role", id: owner, label: `负责 Role ${owner}` },
     assignment: null, latestRun: null, delivery: null, pendingImpactCount: 0, queueHold: "dependency",
     goal: { goalId: "10000005-0000-4000-8000-000000000005", outcome: "交付可核对结果" },
     stage: { stageId: "10000006-0000-4000-8000-000000000006", deliverable: "最小切片" },
@@ -74,11 +75,12 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
     evidence: "来自需求会话的固定依据", stopCondition: "前置结果变化时停止", createdAt: "2026-10-29T00:00:00Z",
   } } as TaskDetail;
   const html = renderToStaticMarkup(createElement(LeaderTaskFacts, {
-    leader, detail: withAcceptance, projectId: task.projectId,
+    leader, detail: withAcceptance, projectId: task.projectId, responsibleName: "验收与流程负责人",
   }));
   assert.match(html, /等待前置结果验收/);
   assert.match(html, /P2 · 计划开始/);
-  assert.match(html, /实施负责人/);
+  assert.match(html, /责任<\/dt><dd>验收与流程负责人/);
+  assert.doesNotMatch(html, new RegExp(`负责 Role ${owner}`));
   assert.match(html, /acceptance-agent/);
   assert.match(html, /来自需求会话的固定依据/);
   assert.match(html, /仍在等待真实验收/);

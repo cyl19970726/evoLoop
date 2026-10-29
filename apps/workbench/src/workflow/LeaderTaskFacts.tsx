@@ -9,17 +9,19 @@ const ShortId = ({ value }: { value: string }) =>
 const taskHref = (projectId: string, taskId: string) =>
   `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
 
-export function LeaderTaskFacts({ leader, detail, projectId }: {
-  leader: LeaderWorkTask; detail: TaskDetail; projectId: string;
+export function LeaderTaskFacts({ leader, detail, projectId, responsibleName }: {
+  leader: LeaderWorkTask; detail: TaskDetail; projectId: string; responsibleName?: string | null;
 }) {
   const plan = leader.plan;
   const consumer = detail.proposal?.consumer ?? leader.delivery?.consumer ?? null;
   const source = detail.proposal?.evidence?.trim() || null;
+  const responsibility = leader.responsible.kind === "role" && leader.responsible.id === detail.task.owner &&
+    responsibleName?.trim() ? responsibleName.trim() : leader.responsible.label;
   return <section className="panel task-focus task-leader-facts">
     <div className="panel-head"><h2>当前工作与安排</h2><span className="pill subtle">{leaderPhaseLabel[leader.phase]}</span></div>
     <p className="task-attention"><strong>下一步：</strong>{leader.nextAction}</p>
     <dl>
-      <div><dt>责任</dt><dd>{leader.responsible.label}
+      <div><dt>责任</dt><dd>{responsibility}
         {leader.assignment && <> · {leader.assignment.state === "accepted" ? "已承接" : leader.assignment.state === "assigned" ? "待承接" : "已释放"}
           {leader.assignment.recipientActorId && <> · 接收者 {leader.assignment.recipientActorId}</>}
           <br /><small>{leader.assignment.targetKind === "owned" ? "受管 Session" : "外部 HostLink"} <ShortId value={leader.assignment.targetId} /></small></>}

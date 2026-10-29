@@ -60,6 +60,22 @@ function int(value: unknown): number {
   return typeof value === "number" ? value : Number(value);
 }
 
+/** Changes that affect a Task itself or the current acceptance state of its direct prerequisites. */
+function relatedTaskChangeScope(projectColumn: string, taskColumn: string, changeAlias: string): string {
+  return `(
+    ${changeAlias}.task_id=${taskColumn}
+    OR (
+      ${changeAlias}.entity_kind IN ('task','closure','queue')
+      AND EXISTS (
+        SELECT 1 FROM task_dependency related_dependency
+        WHERE related_dependency.project_id=${projectColumn}
+          AND related_dependency.task_id=${taskColumn}
+          AND related_dependency.depends_on_task_id=${changeAlias}.task_id
+      )
+    )
+  )`;
+}
+
 function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if (row.phase) return row.phase as LeaderWorkPhase;
   if (row.state === "cancelled") return "cancelled";
@@ -169,8 +185,14 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
     LEFT JOIN LATERAL (SELECT e.hold_code FROM resident_queue_entry e
       WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.hold_code IS NOT NULL
       ORDER BY e.position,e.entry_id LIMIT 1) queue_gate ON true
-    LEFT JOIN LATERAL (SELECT COALESCE(MAX(c.sequence),0)::bigint AS work_change_sequence
-      FROM leader_work_change c WHERE c.project_id=t.project_id AND c.task_id=t.task_id) work_change_latest ON true
+    LEFT JOIN LATERAL (SELECT GREATEST(
+        COALESCE((SELECT MAX(c.sequence) FROM leader_work_change c
+          WHERE c.project_id=t.project_id AND c.task_id=t.task_id),0),
+        COALESCE((SELECT MAX(c.sequence) FROM task_dependency d
+          JOIN leader_work_change c ON c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
+          WHERE d.project_id=t.project_id AND d.task_id=t.task_id
+            AND c.entity_kind IN ('task','closure','queue')),0)
+      )::bigint AS work_change_sequence) work_change_latest ON true
     LEFT JOIN task_dependency_head dependency_head
       ON dependency_head.project_id=t.project_id AND dependency_head.task_id=t.task_id
     LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
@@ -179,8 +201,9 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       FROM leader_work_review r WHERE r.project_id=t.project_id AND r.task_id=t.task_id
         AND r.task_version=t.version AND r.task_revision_id=t.current_revision_id
         AND NOT EXISTS(SELECT 1 FROM leader_work_change c
-          WHERE c.project_id=r.project_id AND c.task_id=r.task_id
-            AND c.sequence>r.reviewed_change_sequence AND c.entity_kind<>'review')
+          WHERE c.project_id=r.project_id AND c.sequence>r.reviewed_change_sequence
+            AND c.entity_kind<>'review'
+            AND ${relatedTaskChangeScope("r.project_id", "r.task_id", "c")})
       ORDER BY r.review_sequence DESC LIMIT 1) review_latest ON true
     LEFT JOIN LATERAL (
       SELECT EXISTS (
@@ -602,7 +625,8 @@ export class PgLeaderWorkWriter {
       if (task.rows[0].current_revision_id !== command.expectedTaskRevisionId)
         throw new DomainError("VERSION_CONFLICT", "Task revision changed before the review decision");
       const sequence = await client.query(`SELECT COALESCE(MAX(sequence),0)::bigint AS sequence
-        FROM leader_work_change WHERE project_id=$1 AND task_id=$2`, [projectId, command.taskId]);
+        FROM leader_work_change c WHERE c.project_id=$1
+          AND ${relatedTaskChangeScope("$1", "$2", "c")}`, [projectId, command.taskId]);
       if (int(sequence.rows[0]?.sequence ?? 0) !== command.expectedWorkChangeSequence)
         throw new DomainError("WORK_INDEX_CHANGED",
           "Task-related work changed after the Leader read; reload before recording a review");

@@ -148,6 +148,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [leaderTask, setLeaderTask] = useState<LeaderWorkTask | null>(null);
   const [leaderTaskError, setLeaderTaskError] = useState("");
+  const [responsibleName, setResponsibleName] = useState<string | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
   const landingRef = useRef<TaskTab | null>(null);
@@ -181,7 +182,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const leaderRequestRef = useRef(0);
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
     setTab(selectedRevision ? "history" : taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
-    setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError("");
+    setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError(""); setResponsibleName(null);
   }, [id, projectId]);
   useEffect(() => {
     if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
@@ -292,7 +293,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     <header className="task-page-header">
       <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
       <p><a href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(id)}`}>查看此任务的评价与后果 →</a></p>
-      <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} /><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
+      <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /><span>任务固定修订 <ShortId value={detail.revision.id} /></span></div>
     </header>
     {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => selectTab("history")}>查看历史时间线 →</button></Alert>}
     {error && <Alert kind="error">当前任务回读失败：{error}。页首保留上次读回内容，不能视为当前状态；编辑草稿仍留在本页。</Alert>}
@@ -301,7 +302,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </button>)}</div>
     <section role="tabpanel" id={panelId("overview")} aria-labelledby={tabId("overview")} hidden={tab !== "overview"}>
       <div className="task-overview-grid">
-        {leaderTask && <LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} />}
+        {leaderTask && <LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} responsibleName={responsibleName} />}
         {leaderTaskError && <section className="panel task-focus"><Alert kind="error">{leaderTaskError}</Alert></section>}
         <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} /><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
         <section className="panel task-focus"><h2>验收条件</h2><p>{detail.task.acceptance}</p><p className="task-fineprint">{detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的 Agent 使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}{detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。</p></section>

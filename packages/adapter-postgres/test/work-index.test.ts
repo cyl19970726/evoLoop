@@ -387,6 +387,98 @@ test("Leader review compares the exact per-Task change position read before the 
   })).status, "applied");
 });
 
+test("direct prerequisite close and reopen invalidate only the dependent review position", async () => {
+  const fixture = await seedProject();
+  const writer = new PgLeaderWorkWriter(pool);
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const dependentId = fixture.dependent.head.id;
+  const before = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const beforePosition = before.items.find(item => item.taskId === dependentId)!.workChangeSequence;
+  const initialReview = {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: dependentId,
+    expectedTaskVersion: 1, expectedTaskRevisionId: fixture.dependent.revision.id,
+    expectedWorkChangeSequence: beforePosition, decision: "deferred" as const,
+    reason: "The direct prerequisite is still in progress",
+  };
+  assert.equal((await writer.setTaskReview(who, fixture.project.id, initialReview)).status, "applied");
+  const afterInitialReview = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const reviewPositionAfterWrite = afterInitialReview.items.find(item => item.taskId === dependentId)!.workChangeSequence;
+  assert.ok(reviewPositionAfterWrite > beforePosition);
+
+  await writer.setTaskPlan(who, fixture.project.id, {
+    projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.prerequisite.head.id,
+    expectedTaskVersion: 1, expectedPlanVersion: 0, plannedStartAt: null, dueAt: null,
+    priority: 3, reason: "This prerequisite plan does not change its acceptance position",
+  });
+  const afterPrerequisitePlan = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const reviewed = afterPrerequisitePlan.items.find(item => item.taskId === dependentId)!;
+  assert.equal(reviewed.workChangeSequence, reviewPositionAfterWrite);
+  assert.equal(reviewed.review?.decision, "deferred",
+    "an unrelated prerequisite plan position does not replace the dependent review");
+
+  const delivered = await workflow.execute(who, { type: "delivery.record", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
+    artifactRef: "fixture://direct-prerequisite", artifactRevision: "accepted-v1",
+    contentHash: hash("direct prerequisite accepted"), technicalResult: "passed",
+    technicalEvidence: "The current prerequisite revision passed checks",
+    reason: "Deliver the current prerequisite revision" });
+  assert.equal(delivered.status, "applied", JSON.stringify(delivered));
+  const closed = await workflow.execute(who, { type: "task.close", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: delivered.version!,
+    deliveryId: delivered.revisionId!, acceptanceResult: "met",
+    acceptanceEvidence: "The current prerequisite revision was accepted",
+    reason: "Satisfy the dependent's direct prerequisite" });
+  assert.equal(closed.status, "applied", JSON.stringify(closed));
+
+  const afterClose = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const closePosition = reviewPositionAfterWrite;
+  const closedDependent = afterClose.items.find(item => item.taskId === dependentId)!;
+  assert.equal(closedDependent.dependencies[0]!.acceptanceSatisfied, true);
+  assert.ok(closedDependent.workChangeSequence > closePosition,
+    "the direct prerequisite closure belongs to the dependent's current review position");
+  assert.equal(closedDependent.review, null, "the pre-close decision is retained only as history");
+  assert.equal(afterClose.counts.review_deferred, 0);
+  assert.equal((await pool.query(`SELECT count(*)::int AS count FROM leader_work_review
+    WHERE project_id=$1 AND task_id=$2`, [fixture.project.id, dependentId])).rows[0].count, 1);
+  await assert.rejects(writer.setTaskReview(who, fixture.project.id, {
+    ...initialReview, operationId: randomUUID(), decision: "acknowledged",
+    reason: "This review still uses the pre-close position",
+  }), (error: { code?: string }) => error.code === "WORK_INDEX_CHANGED");
+  const afterCloseReview = await writer.setTaskReview(who, fixture.project.id, {
+    ...initialReview, operationId: randomUUID(), expectedWorkChangeSequence: closedDependent.workChangeSequence,
+    decision: "acknowledged", reason: "Reviewed the accepted direct prerequisite",
+  });
+  assert.equal(afterCloseReview.status, "applied");
+  const currentAfterClose = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const currentReview = currentAfterClose.items.find(item => item.taskId === dependentId)!;
+  assert.equal(currentReview.review?.decision, "acknowledged");
+
+  const reopened = await workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: closed.version!,
+    reason: "Reopen the direct prerequisite for another cycle" });
+  assert.equal(reopened.status, "applied", JSON.stringify(reopened));
+  const afterReopen = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const reopenedDependent = afterReopen.items.find(item => item.taskId === dependentId)!;
+  assert.equal(reopenedDependent.dependencies[0]!.acceptanceSatisfied, false);
+  assert.ok(reopenedDependent.workChangeSequence > currentReview.workChangeSequence);
+  assert.equal(reopenedDependent.review, null, "reopening the prerequisite retires the prior current decision");
+  assert.equal(afterReopen.counts.review_acknowledged, 0);
+  await assert.rejects(writer.setTaskReview(who, fixture.project.id, {
+    ...initialReview, operationId: randomUUID(), expectedWorkChangeSequence: currentReview.workChangeSequence,
+    decision: "deferred", reason: "This review predates the prerequisite reopen",
+  }), (error: { code?: string }) => error.code === "WORK_INDEX_CHANGED");
+  assert.equal((await writer.setTaskReview(who, fixture.project.id, {
+    ...initialReview, operationId: randomUUID(), expectedWorkChangeSequence: reopenedDependent.workChangeSequence,
+    decision: "deferred", reason: "Reviewed the reopened direct prerequisite",
+  })).status, "applied");
+  assert.equal((await pool.query(`SELECT count(*)::int AS count FROM leader_work_review
+    WHERE project_id=$1 AND task_id=$2`, [fixture.project.id, dependentId])).rows[0].count, 3,
+  "superseded decisions remain immutable history");
+});
+
 test("runtime reservation enforces current Task acceptance and invalidates after prerequisite reopen", async () => {
   const fixture = await seedProject();
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
