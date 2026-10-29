@@ -9,6 +9,7 @@ import { knowledgeClient, type SourceDocument } from "./client";
 import { findFixedKnowledgeTitle, matchesKnowledgeRevision, readKnowledgeRoute, transitionKnowledgeRoute,
   unresolvedFixedKnowledgeTitle } from "./knowledgeRoute";
 import "./knowledge.css";
+import { knowledgeAvailability } from "./availability";
 
 interface ExternalReceipt { projectId: string; actorId: string; operationId: string; kind: "publish" | "retract"; targetId: string; createdAt: string }
 const receiptKey = "evoloop.external-knowledge-operations.v1";
@@ -76,6 +77,8 @@ function Graph({ graph, onOpen }: { graph: KnowledgeGraph; onOpen(id: string, re
 export function KnowledgePanel({ context, refresh }: { context: MutationContext; refresh: number }) {
   const client = useMemo(() => knowledgeClient(context.token, context.projectId), [context.token, context.projectId]);
   const [pages, setPages] = useState<KnowledgeSummary[]>([]);
+  const [listingReading, setListingReading] = useState(true);
+  const [observedAt, setObservedAt] = useState<string | null>(null);
   const [pageCursor, setPageCursor] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<KnowledgeCandidateSummary[]>([]);
   const [candidateCursor, setCandidateCursor] = useState<string | null>(null);
@@ -137,12 +140,12 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   }, [context.projectId]);
   useEffect(() => {
     let active = true;
-    setError("");
+    setError(""); setListingReading(true);
     Promise.all([client.capabilities(), client.pages(), client.candidates(), client.sources()])
       .then(([caps, nextPages, nextCandidates, nextSources]) => { if (!active) return;
         setCapabilities(caps); setPages(nextPages.items); setPageCursor(nextPages.nextCursor);
-        setCandidates(nextCandidates.items); setCandidateCursor(nextCandidates.nextCursor); setSources(nextSources.items); })
-      .catch(cause => { if (active) setError(errorText(cause)); });
+        setCandidates(nextCandidates.items); setCandidateCursor(nextCandidates.nextCursor); setSources(nextSources.items); setObservedAt(new Date().toISOString()); })
+      .catch(cause => { if (active) setError(errorText(cause)); }).finally(() => { if (active) setListingReading(false); });
     return () => { active = false; };
   }, [context.token, context.projectId, refresh, localRefresh]);
   useEffect(() => {
@@ -292,7 +295,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   };
   const currentRevision = !fixedRevision && page?.knowledgeId === selectedId ? page.revision
     : currentHead?.knowledgeId === selectedId ? currentHead.revision : undefined;
-  const visiblePage = matchesKnowledgeRevision(page, selectedId, fixedRevision) ? page : null;
+  const visiblePage = page?.projectId === context.projectId && matchesKnowledgeRevision(page, selectedId, fixedRevision) ? page : null;
   const readingCurrent = !!visiblePage && (!fixedRevision || visiblePage.revision === currentRevision);
   const relationScope = `${context.projectId}\0${context.token}`;
   const relationName = (id: string, revision: string) => {
@@ -334,15 +337,16 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     return () => { active = false; };
   }, [client, relationScope, relationTargetKeyList, graph, relationTitleCache]);
   const returnHref = knowledgeReturnHref(context.projectId);
+  const availability = knowledgeAvailability(capabilities);
   return <div className="knowledge-space">
     <div className="knowledge-toolbar">
-      <div><p className="muted">独立知识空间 · 固定修订与可追溯来源</p></div>
+      <div><p className="knowledge-purpose">理解当前认识，核对来源与反例，再决定是否修订。</p></div>
       <div className="actions"><button onClick={refreshAll}>回读当前状态</button>
         <a className="button-link" href={`#/p/${context.projectId}/evaluations${selectedId ? `?knowledgePageId=${encodeURIComponent(selectedId)}` : ""}`}>关联评价 →</a>
         {canWrite && <button onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</button>}
         <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
     </div>
-    {capabilities && <p className="muted">后端 {capabilities.backendVersion ?? "不可达"} · 语义索引未验证。页面只显示已登记的固定关系。</p>}
+    <section className={`knowledge-read-state${availability.fullRead ? "" : " limited"}`} aria-label="知识服务与读取范围"><strong>{availability.title}</strong><p>{availability.detail}</p><small>{listingReading ? "正在重新核对…" : observedAt ? `读于 ${new Date(observedAt).toLocaleString("zh-CN")}${error ? " · 保留上次读回，当前状态待核" : ""}` : "尚未完整读回"}</small><details><summary>服务与索引证据</summary><p>后端报告版本：{capabilities?.backendVersion ?? "未报告"} · 固定修订读取：{capabilities?.fixedRevisionRead ?? "未核"} · 语义索引：未验证。列表与图只覆盖已登记的关系，不能推断来源完整或认识正确。</p></details></section>
     {error && view !== "invalid" && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
     {view === "invalid" && <section className="knowledge-invalid-route"><Notice error>{routeError || "此知识链接路径或参数不受支持。请从知识列表重新打开固定版本。"}</Notice>
       <button onClick={showList}>返回知识列表</button></section>}
@@ -350,10 +354,10 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
       <button disabled={busy} onClick={() => reconcile(item.operationId)}>按此 ID 对账</button></Notice>)}
 
     {view === "list" && <section className="knowledge-list" aria-label="已发布知识列表">
-      <div className="knowledge-list-head"><h2>已发布知识</h2><span className="muted">选一页阅读全文与固定依据</span></div>
+      <div className="knowledge-list-head"><h2>{availability.fullRead ? "知识页面" : "可核对的固定引用"}</h2><span className="muted">{availability.fullRead ? "打开正文、条件与支持/挑战来源" : "登记关系可查；正文仍须实际读取"}</span></div>
       {pages.length ? pages.map(item => <button className="knowledge-list-row" key={item.knowledgeId} onClick={() => openPage(item.knowledgeId)}>
         <span><strong>{item.title}</strong><small>{statusText(item.pageType)} · 修订 {item.revision.slice(0, 8)}</small></span>
-        <span>{statusText(item.validity)} <span aria-hidden="true">→</span></span></button>) : <p className="empty">暂无已发布知识。</p>}
+        <span>{statusText(item.validity)} <span aria-hidden="true">→</span></span></button>) : <p className="empty">{listingReading ? "正在读取知识与固定引用…" : error ? "列表尚未完整读回，请重试读取或核对来源。" : availability.fullRead ? "当前读取范围尚无知识页面。" : "当前读取范围尚无已登记的固定引用。"}</p>}
       {pageCursor && <button onClick={async () => { try { const next = await client.pages(pageCursor); setPages(previous => [...previous, ...next.items]); setPageCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多知识</button>}
     </section>}
 

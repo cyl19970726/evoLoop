@@ -20,6 +20,7 @@ import { readRoute, href, date, ShortId, Alert, type Route } from "./ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "./ui/returnRoute";
 import { TaskPage } from "./workflow/TaskPage";
 import { DocumentPage } from "./documents/DocumentPage";
+import { DocumentIndex } from "./documents/DocumentIndex";
 import { WorkbenchShell, sectionNames } from "./ui/WorkbenchShell";
 import { WorkIndex } from "./workflow/WorkIndex";
 import { CreateTaskPage } from "./workflow/CreateTaskPage";
@@ -316,7 +317,8 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   }, [key, positionKey]);
   const { projectId, token, principal } = context;
   function page(r: Route, active: boolean) {
-    if (["work", "inbox", "documents"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox" | "documents"} />;
+    if (r.section === "documents") return <DocumentIndex context={context} refresh={refresh} />;
+    if (["work", "inbox"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox"} />;
     if (r.section === "create-task") return <CreateTaskPage context={context} refresh={refresh} />;
     if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} active={active} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
