@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
 import { errorText, request } from "../api";
 import { MarkdownBody } from "../ui/MarkdownBody";
+import { imagePreview } from "./imagePreview";
 
 interface AvailableOriginal {
   status: "available"; revision: DocumentPayloadRevision; body: string;
@@ -101,9 +102,10 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
   const [prepared, setPrepared] = useState<{ revisionId: string; hash: string; html: string } | null>(null);
   const preview = original && prepared?.revisionId === original.revision.id && prepared.hash === original.revision.contentHash ? prepared.html : null;
   const [assetPreview, setAssetPreview] = useState<string | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    setOriginal(null); setAssetPreview(null); setError("");
+    setOriginal(null); setAssetPreview(null); setAssetError(null); setError("");
     request<Original>(token, base(projectId, documentId, revisionId), 30000)
       .then(result => {
         if (result.revision.projectId !== projectId || result.revision.documentId !== documentId || result.revision.id !== revisionId)
@@ -137,17 +139,17 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
         style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>
-    {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => <li key={asset.path}>
+    {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}>
       <span className="break-anywhere">{asset.path}<small>{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
-      <span className="actions"><button onClick={() => setAssetPreview(value => value === asset.path ? null : asset.path)}
+      <span className="actions"><button onClick={() => { setAssetError(null); setAssetPreview(value => value === asset.path ? null : asset.path); }}
         aria-expanded={assetPreview === asset.path}> {assetPreview === asset.path ? "收起预览" : "预览"}</button>
       <button onClick={() => download(asset.path.split("/").at(-1) ?? "resource",
         new Blob([blobBytes(asset.base64)], { type: asset.mediaType }))}>下载</button></span>
       {assetPreview === asset.path && <div className="doc-asset-preview">
-        {asset.mediaType === "image/svg+xml" ? <img alt={`资源 ${asset.path} 的静态预览`} src={`data:image/svg+xml;base64,${asset.base64}`} />
+        {image && assetError !== asset.path ? <>{image.mismatch && <p>资源声明为 {asset.mediaType}，图片字节识别为 {image.mediaType}。预览按图片解码，下载保留原字节。</p>}<img alt={`资源 ${asset.path} 的静态预览`} src={`data:${image.mediaType};base64,${asset.base64}`} onError={() => setAssetError(asset.path)} /></>
           : asset.mediaType === "text/css" ? <pre>{new TextDecoder().decode(bytes(asset.base64))}</pre>
-          : <p>此资源类型无法在页面安全预览，请下载查看。</p>}
+          : <p>{assetError === asset.path ? "图片未能解码，请下载原件核对。" : "此资源格式暂不支持页面预览，可下载原件查看。"}</p>}
       </div>}
-    </li>)}</ul></div>}
+    </li>; })}</ul></div>}
   </section>;
 }
