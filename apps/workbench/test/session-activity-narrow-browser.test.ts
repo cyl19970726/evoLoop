@@ -156,7 +156,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
-  await page.locator(".session-current-work").getByText("已认领，本次运行中", { exact: false }).waitFor();
+  await page.locator(".session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/ready-message`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await page.locator(".session-status-badge").getByText("消息处理中").waitFor();
@@ -171,11 +171,11 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await fetch(`${base}/__fixture/completed-claim`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await page.locator(".session-current-work").getByText("最近一次执行已结束，结果待核对", { exact: false }).waitFor();
-  assert.equal(await page.locator(".session-current-work").getByText("已认领，待运行", { exact: false }).count(), 0, "completed claim is not pending run");
+  assert.equal(await page.locator(".session-current-work").getByText("Run／队列已认领或占用；当前运行待核对", { exact: false }).count(), 0, "completed claim is not pending run");
   await page.locator(".session-activity-list").getByText("历史记录：已结束", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/active-run`);
   await page.getByRole("button", { name: "重新读取" }).click();
-  await page.locator(".session-current-work").getByText("已认领，本次运行中", { exact: false }).waitFor();
+  await page.locator(".session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
   assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
   async function showTool(index: number) { const tool = page.locator(".session-trace-item").nth(index); await tool.locator("summary").waitFor(); if (await tool.getAttribute("open") === null) await tool.locator("summary").click(); }
