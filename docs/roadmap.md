@@ -14,6 +14,20 @@ S1a 只证明第一层的一小段：已采纳需求改版能让两个尚未运�
 
 ## 当前基线
 
+以下先给**当前可用范围与仍欠的证据**；后面的按日期记录保留当时版本与失败，不自动成为现在的完整能力。仓库 `main@064bb623` 含 PR #151 的文档差异，原本机服务的已核版本为 `6b290ed`；后续合入/发布须各核实际版本。
+
+| 工作能力 | 有界结果 | 下一项不能从中推定的结果 |
+| --- | --- | --- |
+| 轻量交接与读取 | PR137/142 的固定目录、Markdown 首包、分页正文和独立资源读取已由原 HTML/PNG 样本实际使用；旧 Run 与 hash 可回查。 | 接手者总是先加载正确方法、所有材料聚合输出不会截断，或整体时间/质量增益。 |
+| Session 与方法 | PR143 的 `session prepare` 创建/复用同一受管 Thread 和两 Task 接续已实跑；PR144 的现有项目方法被无本轮历史的 Session 使用。 | Desktop 外部聊天自动唤醒、Lead 原生主动通知、产品/架构新专属 Skill 的必要性。 |
+| 本人交付与独立验收 | PR145/147 区分本人 `ordinary.submit`、终态后 Delivery、指定消费者实际使用与 Task 关闭；已有不同 actor 实跑。 | Run 完成即交付、作者自测即独立使用、真人整体体验。 |
+| 人类观察与安排 | PR124 的双栏 Session 路径和 PR149 的 Lead 工作发现/计划/依赖/处理决定经原入口独立 Agent 使用。 | 任务列表/详情新设计已采纳、Session 关闭诊断全链完成，或长期可用性收益。 |
+| 仍在验收的边界 | 失败 Session 恢复任务有已合入工程差异，但当前消费者观察 `failed`；CLI 三个工作管理请求的 PR150 已合入、原任务仍待使用；模型 PR152 及前端体验任务仍按各自 Task/PR 核状态。 | 这些任务不能因代码、目录、CI 或报告存在而写成实际消费通过。飞书实连、真人亲用及长期净收益仍未证。 |
+
+### 保留的实施与验收历史
+
+以下按日期保留源码、试点和修复发生时的证据及后来纠正。新工作先用上表定位当前范围，再按需要追固定 Task、PR 和下方历史；历史文字中的“待做”与“通过”只属于当时样本。
+
 **2026-10-29 的本机常驻协作补验：**当前实际服务对应 `6b290ed`、schema 042。PR [#142](https://github.com/cyl19970726/evoLoop/pull/142) 的分层 Run handoff、[#143](https://github.com/cyl19970726/evoLoop/pull/143) 的 Session 准备与派发时固定 Role/Skill、[#145](https://github.com/cyl19970726/evoLoop/pull/145) 的普通 Run 本人提交与终态封存、[#147](https://github.com/cyl19970726/evoLoop/pull/147) 的独立验收责任，以及 [#146](https://github.com/cyl19970726/evoLoop/pull/146)、[#148](https://github.com/cyl19970726/evoLoop/pull/148)、[#149](https://github.com/cyl19970726/evoLoop/pull/149) 的 Lead 工作状态与页面修复均已合入。实际业务中，原受管 Session 完成任务说明、本人署名提交、终态后生成交付、不同 actor 使用、反馈返工、再次使用和关闭；前项通过后同 Session 队列承接下一任务。Lead 在普通页面保存并回读计划、依赖和处理决定，发现并复测修复了旧暂缓标签及显示名问题。对应的 [CLI 接手与恢复](development/agent-cli.md)、[产品任务验收](product/tasks-and-documents.md)和[Codex 承载](architecture/codex-integration.md)为后续执行正文。该证据来自有限 Agent 使用与本机服务，未证明真人整体体验、所有失败分支或长期效益。Flash/Kimi 模型支持、CLI 请求方法、正常 Session 关闭入口和新任务列表/详情设计仍在独立任务验收中；模型目录出现某名称不证明它曾在本轮实际运行。
 
 **本轮常驻协作已有本机有界实跑证据。** [PR #88](https://github.com/cyl19970726/evoLoop/pull/88) 的职责分类、业务领域与 owned/external 承载登记，以及 [PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的同一 owned Session 队列、Task 问答与动作回执已部署；四个正式 Role、三个 HostLink 和三个 BusinessDomain 已实际核回。原 Session 先后完成两项真实任务：各自通道中的问题得到固定答复并实际采用，消费者使用并关闭前项后，调度器自动且仅一次把后项交给原 Thread。受限仓库动作由实际有权者承接，[PR #96](https://github.com/cyl19970726/evoLoop/pull/96) 正常合并，保留真实执行者。[PR #90](https://github.com/cyl19970726/evoLoop/pull/90)、[PR #97](https://github.com/cyl19970726/evoLoop/pull/97) 与 [PR #98](https://github.com/cyl19970726/evoLoop/pull/98) 的本机工作台已由独立代理沿普通入口核对任务与负责人、未入队工作、七模板状态、原会话历史、固定交付与来源 Run 返回路径；具体范围及宿主限制见[工作台](product/workbench.md#对象关系与能力职责)。[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的故障与并发证据来自隔离数据库和替身宿主回归。实跑仅覆盖这两项任务和已记录页面路径，不扩大为其他任务、所有失败分支或长期无人值守保证。领域路由不授权自动启动，外部聊天保持已核人工承接；飞书实连和完整角色探索讨论仍后置。源码检查、合入、本机部署、任务使用和最终验收分别留证。

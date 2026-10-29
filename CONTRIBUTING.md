@@ -13,7 +13,7 @@ evoLoop 当前包含正式文档、隔离实验和本机试用切片；当前能
 | 文档构建工具或原型行为修改 | 相关脚本/资产、现有测试、[开发规范的检查分层](docs/development/standards.md#按变更选择检查) | 只读受影响的产品路径；图、布局或交互变化按文档维护做浏览器检查。 |
 | 业务实现、运行时或 connector 接入 | 对应产品目标、相关架构合同及[业务实现入口](docs/development/standards.md#开始业务实现时) | 确认尚未采纳的技术选择，再读该组件的验收项；隔离实验不等于生产实现。 |
 
-更多页面从[文档导航](docs/README.md)查找。当前规则的证据、适用范围与交付口径集中在[开发规范](docs/development/standards.md)。
+更多页面从[文档导航](docs/README.md)查找。产品定义只给价值与判据，完整跨 Session 行为在[功能场景](docs/product/functional-scenarios.md)；架构先读[总览](docs/architecture/overview.md)，再按所改对象进入合同或运行专题。一个任务的过程 Document/Task 仍保存本次要求与证据，已采纳的长期规则才进入 Git 正式正文。当前规则的证据、适用范围与交付口径集中在[开发规范](docs/development/standards.md)。
 
 ## 提出与完成变更
 

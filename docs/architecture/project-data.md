@@ -8,13 +8,15 @@
 
 认知 session 决定下一步时，需要同时知道：我们希望达成什么、依据是什么、已经做了什么、实际效果如何，以及哪里仍有冲突。孤立的任务表只表达行动，文档描述目标与约定，Wiki 保存可修订的解释；缺少关系和版本，Agent 仍需靠聊天历史猜测它们怎样连接。
 
-evoLoop 因而维护稳定的对象身份与关系，让一次查询能得到相关需求修订、任务状态、关键认识、来源及结果。统一的是项目范围、身份、版本、权限和读取入口；各类正文保留明确的维护位置。它是原有四部分的共同数据基础，不新增一个固定 Agent 角色。
+evoLoop 因而维护稳定的对象身份与关系，让一次查询能得到相关需求修订、任务状态、关键认识、来源及结果。统一的是项目范围、身份、版本、权限和读取入口；各类正文保留明确的维护位置。Role 是持续责任，Session 是承载实例，Task 是工作承诺，Run 是一次执行；其中任何一个对象的“完成”都不能替其他对象签收。它是原有四部分的共同数据基础，不新增一个固定 Agent 角色。
 
 | 对象 | 持续回答的问题 | 主数据与正文位置 |
 | --- | --- | --- |
 | Task | 谁在什么依据、业务领域下做什么，如何验收，四态进度到哪一步？ | evoLoop PostgreSQL；飞书记录是协作视图，编辑通过核心规则接收 |
 | BusinessDomain / BusinessDomainRevision | 稳定业务领域怎样命名、映射哪项持续职责、为何改变？ | evoLoop PostgreSQL 保存独立领域 ID、修订与 Role 映射；领域不是 `Task.kind` |
 | Role / HostLink | 持续职责由哪个受管 Session 或经核实的外部承载承担？ | evoLoop PostgreSQL 保存 Role 修订、正式 Session 绑定及分开的 host link 和能力核实记录 |
+| Session / Run | 哪个实例按哪一版 Task/Basis 实际执行，原生结果与恢复状态是什么？ | PostgreSQL 保存受管身份、派发、固定 Run 输入和观察；Codex Thread/Turn 是外部运行历史，不代替 Task 状态 |
+| Delivery / Observation | 谁提交了哪份固定产物，声明消费者实际用了什么、结果如何？ | PostgreSQL 分别保存署名交付和使用观察；有权者按当前 Task 修订另行验收关闭 |
 | Document / DocumentRevision | 任务主正文及 issue/spec/discussion/report 的完整内容是什么？ | PostgreSQL 管理过程文档修订及内联正文或唯一受控载荷引用；Git 正式文档独立按 repo/path/commit/hash 引用 |
 | Discussion / DiscussionEvent | 负责人带什么固定依据讨论分工或方向，承接、决定及后续对象怎样追证？ | PostgreSQL 保存状态、固定引用与追加事件；交接和人工登记正文只存过程 DocumentRevision，不另存一份聊天正文 |
 | Knowledge | 为什么这样判断，哪些证据支持或挑战，适用条件是什么？ | 外置 Wiki / KnowledgeRepository；evoLoop 保存稳定引用和相关对象关系 |

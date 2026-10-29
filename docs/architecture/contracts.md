@@ -199,7 +199,7 @@ Codex App Server 协议版本由本机运行配置显式固定；省略时维持
 
 首期仍用单活协调者串行派发，租约、并发条件和失去独占后的停写行为在 PostgreSQL 上验证；不再把飞书记录字段当独占锁。数据库条件更新能约束内部抢占，却不提供跨 Codex、飞书和 Wiki 的恰好一次副作用。
 
-协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；各对象显示当前读回的状态、观察时间与下一责任；Run 的终态不能代替任务验收或消费者使用。
+协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；各对象显示当前读回的状态、观察时间与下一责任；Run 的终态不能代替任务验收或消费者使用。普通受管执行者的 `ordinary.submit` 先绑定当前 Run、Task 修订和固定结果意图；原 Run 未知或仍在途时不伪造 Delivery，终态封存核对后才生成本轮唯一固定交付。声明消费者对当前交付的 Observation 与有权者的 Task close 各自独立；返工后的旧交付或旧 `used` 不验收新修订。业务操作方法见[Agent CLI](../development/agent-cli.md#普通-run-本人提交与终态封存)，完整用户接力见[功能场景](../product/functional-scenarios.md#场景-2业务-session-怎样接任务提交结果并带回问题)。
 
 `GET /api/projects/:projectId/orchestration/work-status` 为已分页 Task 列表补充最多50项的工作事实，只依赖项目读取权限和已迁移数据库，不依赖自动 Loop、controller 或原生运行时启用。普通启动和受管模式各只注册一次同一读取入口；读取不启动泵、派发或模型。无派发的普通 Task 保持普通工作标签，存储读取失败明确报错，不伪装为没有工作；受管 worker 的读取范围仍由原鉴权限制。
 
