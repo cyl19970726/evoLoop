@@ -38,6 +38,18 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
         : {items:[task(taskId,currentOwner,"澄清分工页待办"),task("30000006-0000-4000-8000-000000000006","acceptance-owner","逻辑责任者"),task("30000007-0000-4000-8000-000000000007",unknown,"未知职责")],nextCursor:"next"};
       else if (url.pathname === `${p}/impacts`) value=[];
       else if (url.pathname === `${p}/orchestration/work-status`) value={items:[]};
+      else if (url.pathname === `${p}/work-management/index`) value={items:[{kind:"task",taskId,version:1,
+        currentRevisionId:taskId,workChangeSequence:4,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",
+        nextAction:"核对当前版本后按既有 assignment/queue 规则安排执行",
+        responsible:{kind:"role",id:roleA,label:`负责 Role ${roleA}`},assignment:null,latestRun:null,delivery:null,
+        pendingImpactCount:0,queueHold:null,goal:null,stage:null,
+        plan:{plannedStartAt:null,dueAt:null,priority:null,version:1,actorId:roleA,updatedAt:stamp},dependencies:[],
+        dependencyVersion:0,
+        review:{reviewId:"30000030-0000-4000-8000-000000000030",decision:"deferred",actorId:"acceptance-owner",
+          reason:"Wait for the prerequisite",operationId:"30000031-0000-4000-8000-000000000031",
+          reviewedChangeSequence:3,at:stamp},
+        dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},
+        actionKey:`task:${taskId}:v1:ready:4`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
       else if (url.pathname.startsWith(`${p}/roles/`)) {
         const id=url.pathname.slice(`${p}/roles/`.length);reads.push(id);
         if (id===roleA && holdA) {holdA=false;held++;await new Promise<void>(resolve=>{releaseA=resolve;});}
@@ -56,8 +68,13 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.goto(`${base}/#/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
+  await page.getByRole("heading",{name:"现在需要处理什么"}).waitFor();
+  assert.match(await page.locator(".leader-work").innerText(),/可开始/);
+  assert.match(await page.locator(".leader-work").innerText(),/变更序号 4/);
+  assert.match(await page.locator(".leader-work").innerText(),/Leader 已暂缓/);
   const row=page.getByRole("row").filter({hasText:"澄清分工页待办"});
   await row.getByRole("link",{name:"开发流程与规范负责人"}).waitFor();
+  await page.locator(".leader-work").getByText(/负责 开发流程与规范负责人/).waitFor();
   assert.match(await row.locator(".task-list-owner").innerText(),/30000002/);
   assert.match(await row.getByRole("link",{name:"开发流程与规范负责人"}).getAttribute("href")??"",/\/roles$/);
   assert.match(await page.getByRole("row").filter({hasText:"逻辑责任者"}).innerText(),/acceptance-owner/);

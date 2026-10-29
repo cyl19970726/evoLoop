@@ -83,7 +83,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   }, [context.token, context.projectId, refresh]);
   return <div className="journey-board">
     <section className="panel"><div className="panel-head"><h2>日程</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
-      <p>日程只按授权范围创建待办任务；任务仍需由负责人或 Agent 核对正文、开始与执行。</p>
+      <p>日程只按授权范围创建待办任务；生成后仍需在任务详情核对责任、计划、依赖、开始与执行。</p>
       {loading && <p>正在读取日程…</p>}{error && <Notice error>日程暂不可读：{error}</Notice>}
       {status && <Notice error={["disabled","unavailable","no-authority","error","stopped"].includes(status.state)}>
         协调器状态：{({ idle:"待检查",running:"检查中",disabled:"未启用",unavailable:"不可用", "no-authority":"没有可运行授权",error:"检查失败",stopped:"已停止" } as Record<SchedulingStatus["state"],string>)[status.state]}

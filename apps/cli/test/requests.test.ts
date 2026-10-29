@@ -14,7 +14,9 @@ test("registry exposes every bounded named route and target/body requirements", 
   const names = (requestTypes() as Array<{ name: string; requiredBodyKeys: string[]; targetId: string | null }>);
   assert.deepEqual(names.map(item => item.name), [
     "document.import", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
-    "reference.git-register", "reference.formal-decide", "reference.task-decide", "runtime.reconcile", "runtime.recover", "ordinary.submit",
+    "reference.git-register", "reference.formal-decide", "reference.task-decide",
+    "work.plan.set", "work.dependencies.set", "work.review.set",
+    "runtime.reconcile", "runtime.recover", "ordinary.submit",
   ]);
   assert.ok(names.find(item => item.name === "document.import")?.requiredBodyKeys.includes("command.operationId"));
   assert.equal(names.find(item => item.name === "knowledge.reconcile")?.targetId, "original publish operationId");
@@ -45,8 +47,8 @@ test("request schema exposes exact enums and nested required fields from shared 
   assert.deepEqual(candidate.properties.epistemicStatus.enum, ["observation", "inference", "hypothesis", "adopted", "disputed", "superseded"]);
   assert.ok(candidate.properties.sources.items.required.includes("documentId"));
   assert.ok(candidate.properties.sources.items.required.includes("revisionId"));
-  const review = requestSchema("knowledge.review") as any;
-  assert.deepEqual(review.properties.decision.enum, ["accept", "reject"]);
+  const knowledgeReview = requestSchema("knowledge.review") as any;
+  assert.deepEqual(knowledgeReview.properties.decision.enum, ["accept", "reject"]);
   const imported = requestSchema("document.import") as any;
   assert.ok(imported.required.includes("command"));
   assert.ok(imported.properties.command.properties.source.anyOf || imported.properties.command.properties.source.oneOf);
@@ -57,6 +59,15 @@ test("request schema exposes exact enums and nested required fields from shared 
   assert.ok(!reference.required.includes("taskId"));
   const runtime = requestSchema("runtime.reconcile") as any;
   assert.deepEqual(runtime.required, ["expectedVersion", "reason"]);
+  const plan = requestSchema("work.plan.set") as any;
+  assert.ok(plan.required.includes("expectedPlanVersion"));
+  assert.ok(!plan.required.includes("taskId"));
+  const dependencies = requestSchema("work.dependencies.set") as any;
+  assert.ok(dependencies.required.includes("dependsOnTaskIds"));
+  const workReview = requestSchema("work.review.set") as any;
+  assert.ok(workReview.required.includes("expectedTaskRevisionId"));
+  assert.ok(workReview.required.includes("expectedWorkChangeSequence"));
+  assert.deepEqual(workReview.properties.decision.enum, ["acknowledged", "deferred"]);
 });
 
 test("local request validation emits specific INVALID_INPUT instead of generic errors", () => {
@@ -89,6 +100,14 @@ test("journal-backed requests carry the exact server operation and core recovery
     repositoryId: "source-repo", path: "docs/accepted.md", commit: "a".repeat(40), contentHash: sha });
   assert.equal(git.path, `/api/projects/${project}/references/git`);
   assert.equal(git.operationId, operation);
+  const plan = prepareRequest("work.plan.set", project, { operationId: operation, expectedTaskVersion: 2,
+    expectedPlanVersion: 0, plannedStartAt: null, dueAt: null, priority: 1, reason: "Order this work" }, target);
+  assert.equal(plan.path, `/api/projects/${project}/work-management/tasks/${target}/plan`);
+  assert.deepEqual(plan.recovery, { kind: "core", path: `/api/projects/${project}/operations/${operation}` });
+  const preparedReview = prepareRequest("work.review.set", project, { operationId: operation, expectedTaskVersion: 2,
+    expectedTaskRevisionId: revision, expectedWorkChangeSequence: 12,
+    decision: "deferred", reason: "Revisit after the dependency settles" }, target);
+  assert.equal(preparedReview.path, `/api/projects/${project}/work-management/tasks/${target}/review`);
   assert.throws(() => prepareRequest("knowledge.publish", project, { operationId: operation }, target, receipt), /not --receipt/);
 });
 
@@ -99,13 +118,13 @@ test("knowledge routes distinguish candidate, publish and manual decision recove
   const proposed = prepareRequest("knowledge.propose", project, candidateBody);
   assert.equal(proposed.confirmation, "candidate");
   assert.deepEqual(proposed.recovery, { kind: "candidate", path: `/api/projects/${project}/knowledge/candidates/${receipt}` });
-  const review = prepareRequest("knowledge.review", project, { candidateRevision: revision, contentHash: sha,
+  const reviewRequest = prepareRequest("knowledge.review", project, { candidateRevision: revision, contentHash: sha,
     expectedRevision: null, decision: "accept", reason: "Checked" }, target, receipt);
-  assert.equal(review.id, receipt);
-  assert.equal(review.operationId, null);
-  assert.equal(review.targetId, target);
-  assert.equal(review.confirmation, "review");
-  assert.equal(review.recovery.kind, "manual", "candidate state cannot prove the lost review reply");
+  assert.equal(reviewRequest.id, receipt);
+  assert.equal(reviewRequest.operationId, null);
+  assert.equal(reviewRequest.targetId, target);
+  assert.equal(reviewRequest.confirmation, "review");
+  assert.equal(reviewRequest.recovery.kind, "manual", "candidate state cannot prove the lost review reply");
   const published = prepareRequest("knowledge.publish", project, { operationId: operation }, target);
   assert.deepEqual(published.recovery, { kind: "publish", path: `/api/projects/${project}/knowledge/operations/${operation}/reconcile` });
   const reconciled = prepareRequest("knowledge.reconcile", project, {}, operation, receipt);

@@ -10,6 +10,7 @@ export type RequestName =
   | "document.import"
   | "knowledge.propose" | "knowledge.review" | "knowledge.publish" | "knowledge.reconcile" | "knowledge.retract-source"
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
+  | "work.plan.set" | "work.dependencies.set" | "work.review.set"
   | "runtime.reconcile" | "runtime.recover" | "ordinary.submit";
 
 export class RequestInputError extends Error {
@@ -34,6 +35,9 @@ const help: readonly RequestHelp[] = [
   { name: "reference.git-register", requiredBodyKeys: ["operationId", "referenceId", "repositoryId", "path", "commit", "contentHash"], targetId: null, operationId: "body", recovery: "core" },
   { name: "reference.formal-decide", requiredBodyKeys: ["operationId", "decisionId", "gitReferenceId", "documentId", "documentRevisionId", "decision", "reason"], targetId: null, operationId: "body", recovery: "core" },
   { name: "reference.task-decide", requiredBodyKeys: ["operationId", "decisionId", "taskRevisionId", "expectedTaskVersion", "slotId", "expectedHeadVersion", "decision", "kind", "referenceId", "revision", "contentHash", "reason", "actionImpact"], targetId: "taskId", operationId: "body", recovery: "core" },
+  { name: "work.plan.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedPlanVersion", "plannedStartAt", "dueAt", "priority", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
+  { name: "work.dependencies.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedDependencyVersion", "dependsOnTaskIds", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
+  { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "expectedWorkChangeSequence", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
   { name: "ordinary.submit", requiredBodyKeys: ["projectId", "operationId", "submissionId", "runId", "taskId", "sessionId", "taskRevisionId", "runInputHash", "deliveryOperationId", "deliveryIntent"], targetId: null, operationId: "body", recovery: "ordinary" },
@@ -47,6 +51,26 @@ const referenceFormalBody = formalSourceDecisionSchema.omit({ projectId: true, a
 // Derive its route-body shape from the same fields; full validation below retains the refinement.
 const { projectId: _projectField, actorId: _actorField, taskId: _taskField, ...referenceTaskShape } = taskExternalReferenceSchema.shape;
 const referenceTaskBody = z.strictObject(referenceTaskShape);
+const workPlanBody = z.strictObject({
+  operationId: idSchema, expectedTaskVersion: z.number().int().positive(),
+  expectedPlanVersion: z.number().int().nonnegative(), plannedStartAt: z.iso.datetime({ offset: true }).nullable(),
+  dueAt: z.iso.datetime({ offset: true }).nullable(), priority: z.number().int().min(1).max(4).nullable(),
+  reason: z.string().trim().min(1).max(4000),
+}).refine(value => !value.plannedStartAt || !value.dueAt ||
+  Date.parse(value.plannedStartAt) <= Date.parse(value.dueAt), {
+  path: ["dueAt"], message: "dueAt must not precede plannedStartAt",
+});
+const workDependenciesBody = z.strictObject({
+  operationId: idSchema, expectedTaskVersion: z.number().int().positive(),
+  expectedDependencyVersion: z.number().int().nonnegative(),
+  dependsOnTaskIds: z.array(idSchema).max(100).refine(ids => new Set(ids).size === ids.length, "duplicate Task IDs"),
+  reason: z.string().trim().min(1).max(4000),
+});
+const workReviewBody = z.strictObject({
+  operationId: idSchema, expectedTaskVersion: z.number().int().positive(), expectedTaskRevisionId: idSchema,
+  expectedWorkChangeSequence: z.number().int().nonnegative(),
+  decision: z.enum(["acknowledged", "deferred"]), reason: z.string().trim().min(1).max(4000),
+});
 function bodySchema(name: string) {
   switch (name as RequestName) {
     case "document.import": return documentImportSchema;
@@ -59,6 +83,9 @@ function bodySchema(name: string) {
     case "reference.git-register": return referenceGitBody;
     case "reference.formal-decide": return referenceFormalBody;
     case "reference.task-decide": return referenceTaskBody;
+    case "work.plan.set": return workPlanBody;
+    case "work.dependencies.set": return workDependenciesBody;
+    case "work.review.set": return workReviewBody;
     case "runtime.reconcile": return runtimeReconcileSchema;
     case "ordinary.submit": return ordinaryRunSubmissionSchema;
     default: throw new RequestInputError(`Unsupported request ${name}; inspect request types`);
@@ -191,6 +218,24 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       const command = taskExternalReferenceSchema.safeParse({ ...body, projectId, taskId: id, actorId: body.actorId ?? "authenticated actor" });
       if (!command.success) throw new RequestInputError(`Invalid task reference decision: ${command.error.issues[0]?.message ?? "schema mismatch"}`);
       path = `${base}/references/tasks/${id}/decisions`; recovery = { kind: "core", path: `${base}/operations/${receiptId}` }; confirmation = "command";
+      break;
+    }
+    case "work.plan.set": {
+      path = `${base}/work-management/tasks/${id}/plan`;
+      recovery = { kind: "core", path: `${base}/operations/${receiptId}` };
+      confirmation = "command";
+      break;
+    }
+    case "work.dependencies.set": {
+      path = `${base}/work-management/tasks/${id}/dependencies`;
+      recovery = { kind: "core", path: `${base}/operations/${receiptId}` };
+      confirmation = "command";
+      break;
+    }
+    case "work.review.set": {
+      path = `${base}/work-management/tasks/${id}/review`;
+      recovery = { kind: "core", path: `${base}/operations/${receiptId}` };
+      confirmation = "command";
       break;
     }
     case "runtime.reconcile": {

@@ -31,7 +31,8 @@
     "./allocation-relations": "./dist/allocation-relations.js",
     "./session-recovery": "./dist/session-recovery.js",
     "./native-input": "./dist/native-input.js",
-    "./native-observation": "./dist/native-observation.js"
+    "./native-observation": "./dist/native-observation.js",
+    "./work-index": "./dist/work-index.js"
   },
   "dependencies": {
     "zod": "4.6.7"

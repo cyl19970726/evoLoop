@@ -114,6 +114,29 @@ test("task revision history uses the task-scoped read endpoint", async () => {
   });
 });
 
+test("Leader write separates operation metadata from the strict HTTP body", async () => {
+  const operationId = "operation-1";
+  let requestBody: Record<string, unknown> | null = null;
+  await withFetch(async (input, init) => {
+    assert.equal(input, "/api/projects/project-1/work-management/tasks/task-1/plan");
+    assert.equal(init?.method, "PUT");
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ status: "applied", operationId, entityId: "task-1", version: 2 });
+  }, async () => {
+    const result = await api("token").leaderPlan("project-1", "task-1", {
+      type: "work.plan.set",
+      projectId: "project-1", taskId: "task-1", operationId,
+      expectedTaskVersion: 1, expectedPlanVersion: 0,
+      plannedStartAt: null, dueAt: null, priority: 2, reason: "Lead ordered this work",
+    } as never);
+    assert.deepEqual(result, { status: "applied", operationId, entityId: "task-1", version: 2 });
+  });
+  assert.ok(requestBody);
+  assert.equal("type" in requestBody!, false);
+  assert.equal(requestBody!.operationId, operationId);
+  assert.equal(requestBody!.expectedPlanVersion, 0);
+});
+
 test("discussion reads stay within the authorized project and expose immutable events", async () => {
   const requested: string[] = [];
   await withFetch(async input => {

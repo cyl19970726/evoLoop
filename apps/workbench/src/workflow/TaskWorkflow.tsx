@@ -1,5 +1,11 @@
 import * as React from "react";
 import type { DocumentDetail, RuntimeRunRecord, TaskDetail, TaskRevision, TaskRevisionState } from "@evoloop/contracts";
+import type {
+  LeaderWorkDependenciesCommand, LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
+} from "@evoloop/contracts/work-index";
+import {
+  leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
+} from "@evoloop/contracts/work-index";
 import { api, safeArtifactHref } from "../api";
 import { runtimeClient } from "../runtime/client";
 import { ActionForm, Notice, option, reasonField, type MutationContext } from "./ActionForm";
@@ -8,6 +14,10 @@ import { RevisionHistory } from "./RevisionHistory";
 import { useRoleChoices } from "./useRoleChoices";
 
 const { useEffect, useState } = React;
+const withoutOperationType = (value: Record<string, unknown>) => {
+  const { type: _operationType, ...body } = value;
+  return body;
+};
 
 export const taskStateLabel: Record<TaskRevisionState, string> = {
   todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消",
@@ -16,7 +26,10 @@ export const taskStateLabel: Record<TaskRevisionState, string> = {
 };
 export const taskKindLabel = { implementation: "实施", research: "调研", validation: "验证" } as const;
 
-export function TaskWorkflow({ context, detail, documents, mode = "actions" }: { context: MutationContext; detail: TaskDetail; documents?: Record<string, DocumentDetail>; mode?: "actions" | "delivery" | "history" }) {
+export function TaskWorkflow({ context, detail, documents, leader, mode = "actions" }: {
+  context: MutationContext; detail: TaskDetail; documents?: Record<string, DocumentDetail>;
+  leader?: LeaderWorkTask | null; mode?: "actions" | "delivery" | "history";
+}) {
   const task = detail.task;
   const [roleRetry, setRoleRetry] = useState(0);
   const roleChoices = useRoleChoices(context.token, context.projectId, `${task.version}:${roleRetry}`, mode === "actions");
@@ -116,6 +129,59 @@ export function TaskWorkflow({ context, detail, documents, mode = "actions" }: {
         ...(detail.proposal.stopCondition ? { stopCondition: detail.proposal.stopCondition } : {}),
       } : {}), reason: v.reason };
     }} />}
+    {leader ? <>
+      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="设置计划、截止与优先级"
+        validateCommand={value => { leaderWorkPlanCommandSchema.parse(withoutOperationType(value)); }}
+        sendCommand={command => api(context.token).leaderPlan(context.projectId, task.id, command as unknown as LeaderWorkPlanCommand)}
+        fields={[
+          { name: "plannedStartAt", label: "计划开始（ISO 8601，可留空）", optional: true,
+            value: leader.plan?.plannedStartAt ?? "", hint: "只表示负责人安排的开始时间，不改变 Task 四态。" },
+          { name: "dueAt", label: "计划截止（ISO 8601，可留空）", optional: true,
+            value: leader.plan?.dueAt ?? "" },
+          { name: "priority", label: "人工优先级（可留空）", kind: "select", optional: true,
+            value: leader.plan?.priority ? String(leader.plan.priority) : "",
+            options: [option("1", "P1 · 最高"), option("2", "P2"), option("3", "P3"), option("4", "P4 · 最低")] },
+          { ...reasonField, value: "" },
+        ]}
+        build={v => ({
+          type: "work.plan.set", taskId: task.id, expectedTaskVersion: task.version,
+          expectedPlanVersion: leader.plan?.version ?? 0,
+          plannedStartAt: v.plannedStartAt.trim() ? new Date(v.plannedStartAt).toISOString() : null,
+          dueAt: v.dueAt.trim() ? new Date(v.dueAt).toISOString() : null,
+          priority: v.priority ? Number(v.priority) : null, reason: v.reason,
+        })} />
+      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="设置前置 Task 依赖"
+        validateCommand={value => { leaderWorkDependenciesCommandSchema.parse(withoutOperationType(value)); }}
+        sendCommand={command => api(context.token).leaderDependencies(context.projectId, task.id,
+          command as unknown as LeaderWorkDependenciesCommand)}
+        fields={[
+          { name: "dependsOnTaskIds", label: "前置 Task UUID（逗号或换行分隔）",
+            value: leader.dependencies.map(item => item.taskId).join("\n"),
+            hint: "保存前核对每项当前修订；依赖只在真实验收或 accepted queue release 后满足。" },
+          reasonField,
+        ]}
+        build={v => ({
+          type: "work.dependencies.set", taskId: task.id, expectedTaskVersion: task.version,
+          expectedDependencyVersion: leader.dependencyVersion,
+          dependsOnTaskIds: v.dependsOnTaskIds.split(/[\s,]+/).map(item => item.trim()).filter(Boolean),
+          reason: v.reason,
+        })} />
+      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="记录 Leader 处理决定"
+        validateCommand={value => { leaderWorkReviewCommandSchema.parse(withoutOperationType(value)); }}
+        sendCommand={command => api(context.token).leaderReview(context.projectId, task.id,
+          command as unknown as LeaderWorkReviewCommand)}
+        fields={[
+          { name: "decision", label: "决定", kind: "select", value: leader.review?.decision ?? "acknowledged",
+            options: [option("acknowledged", "已核对当前工作"), option("deferred", "暂缓，等待明确条件")] },
+          { ...reasonField, value: leader.review?.reason ?? "" },
+        ]}
+        build={v => ({
+          type: "work.review.set", taskId: task.id, expectedTaskVersion: task.version,
+          expectedTaskRevisionId: task.currentRevisionId,
+          expectedWorkChangeSequence: leader.workChangeSequence,
+          decision: v.decision, reason: v.reason,
+        })} />
+    </> : <Notice>当前工作的计划、依赖与 Leader 决定暂未读回。正文和其他任务操作仍可继续，但不会用旧版本补写规划。</Notice>}
     {task.state === "todo" && context.principal.permissions.includes("review") && <ActionForm context={context} review title="修订验收责任" fields={[
       { name: "acceptanceMode", label: "验收方式", kind: "select", value: acceptanceMode ?? "legacy", options: [
         ...(acceptanceMode ? [] : [option("legacy", "保留旧任务历史合同")]),

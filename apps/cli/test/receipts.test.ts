@@ -28,6 +28,14 @@ const retryableIntent = (): Intent => {
   return { ...intent, kind: "project.create", body: { projectId, operationId: intent.operationId,
     type: "project.create", title: "Recover the original intent" } };
 };
+const leaderPlanIntent = (): Intent => {
+  const operationId = randomUUID();
+  return { id: randomUUID(), projectId, operationId, kind: "work.plan.set", targetId: entityId,
+    path: `/api/projects/${projectId}/work-management/tasks/${entityId}/plan`,
+    body: { operationId, expectedTaskVersion: 1, expectedPlanVersion: 0, plannedStartAt: null,
+      dueAt: null, priority: 2, reason: "Leader ordered this work" },
+    recovery: { kind: "core", path: `/api/projects/${projectId}/operations/${operationId}` }, confirmation: "command" };
+};
 async function temporaryStore(t: import("node:test").TestContext): Promise<ReceiptStore> {
   const directory = await mkdtemp(join(tmpdir(), "evoloop-receipts-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -154,6 +162,52 @@ test("explicit core retry after an unconfirmed missing operation sends the same 
   assert.equal(result.operationId, intent.operationId);
   assert.equal(result.requestHash, (await store.get(intent.id)).requestHash);
   assert.deepEqual(methods, ["GET", "POST"]);
+});
+
+test("Leader planning requests reconcile and replay through their exact route", async t => {
+  const store = await temporaryStore(t), intent = leaderPlanIntent(), actor = verifiedActor("original-agent");
+  await store.prepare(apiUrl, token, intent, actor);
+  const command = { ...intent.body as object, projectId, taskId: entityId };
+  let gets = 0, posts = 0;
+  const transport = client(async (url, init) => {
+    if (init?.method === "GET") {
+      gets++;
+      return response({ code: "OPERATION_NOT_FOUND" }, 404);
+    }
+    posts++;
+    assert.equal((url as URL).pathname, intent.path);
+    assert.deepEqual(JSON.parse(String(init?.body)), intent.body);
+    return response({ status: "applied", operationId: intent.operationId, entityId, version: 1 });
+  });
+  const published = await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor);
+  assert.equal(published.state, "confirmed");
+  assert.equal(gets, 1);
+  assert.equal(posts, 1);
+  const replay = leaderPlanIntent(), actor2 = actor;
+  await store.prepare(apiUrl, token, replay, actor2);
+  const replayCommand = { ...replay.body as object, projectId, taskId: entityId };
+  const committed = client(async (_url, init) => {
+    assert.equal(init?.method, "GET");
+    return response({ id: replay.operationId, projectId, actorId: "original-agent", commandType: replay.kind,
+      commandHash: createHash("sha256").update(canonicalJson({ ...replayCommand, actorId: "original-agent" })).digest("hex"),
+      result: { status: "applied", operationId: replay.operationId, entityId, version: 1 } });
+  });
+  assert.equal((await retryReceipt(committed, store, apiUrl, token, replay.id, () => {}, actor2)).state, "confirmed");
+});
+
+test("Leader review decisions reconcile through the same exact-route receipt path", async t => {
+  const store = await temporaryStore(t), operationId = randomUUID(), actor = verifiedActor("original-agent");
+  const intent: Intent = { id: randomUUID(), projectId, operationId, kind: "work.review.set", targetId: entityId,
+    path: `/api/projects/${projectId}/work-management/tasks/${entityId}/review`,
+    body: { operationId, expectedTaskVersion: 2, expectedTaskRevisionId: randomUUID(), expectedWorkChangeSequence: 12,
+      decision: "deferred", reason: "Revisit after the dependency settles" },
+    recovery: { kind: "core", path: `/api/projects/${projectId}/operations/${operationId}` }, confirmation: "command" };
+  await store.prepare(apiUrl, token, intent, actor);
+  const command = { ...intent.body as object, projectId, taskId: entityId };
+  const transport = client(async () => response({ id: operationId, projectId, actorId: "original-agent",
+    commandType: intent.kind, commandHash: createHash("sha256").update(canonicalJson({ ...command, actorId: "original-agent" })).digest("hex"),
+    result: { status: "applied", operationId, entityId, version: 2 } }));
+  assert.equal((await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor)).state, "confirmed");
 });
 
 test("retry does not POST after unavailable, denied, malformed or unrelated not-found readback", async t => {

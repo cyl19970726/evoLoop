@@ -123,10 +123,18 @@ export function allowBrowserRequest(scope:BrowserReadScope,urlText:string,method
     const url=new URL(urlText);
     const path=url.pathname+url.search;
     const apiPaths=scope.routes.flatMap(value=>value.apiPaths);
+    let derived=!!derivedPaths?.has(path);
+    const cursors=url.searchParams.getAll("cursor");
+    if(!derived && derivedPaths && cursors.length===1 && cursors[0]!.length<=1024 &&
+      cursors[0]!.trim()===cursors[0] && !/[\u0000-\u001f\u007f]/.test(cursors[0]!) &&
+      url.pathname===`/api/projects/${scope.projectId}/work-management/index`) {
+      const base=new URL(url);base.searchParams.delete("cursor");
+      derived=derivedPaths.has(base.pathname+base.search);
+    }
     return url.origin===scope.origin && !url.username && !url.password && method==="GET" &&
       ["document","script","stylesheet","image","font","fetch","xhr"].includes(resourceType) &&
       (path==="/" || /^\/assets\/[a-zA-Z0-9._/-]+$/.test(path) || path==="/api/session" || apiPaths.includes(path) ||
-        !!derivedPaths?.has(path) && ["fetch","xhr"].includes(resourceType));
+        derived && ["fetch","xhr"].includes(resourceType));
   } catch { return false; }
 }
 
@@ -175,9 +183,14 @@ class ListedProjectPageGrants {
     this.receivedPages.add(fingerprint);this.pages=nextPages;
     for(const id of ids)this.objectIds.add(id);
     if(this.kind==="tasks"){
-      for(const id of ids)this.derivedPaths.add(`/api/projects/${this.scope.projectId}/tasks/${id}`);
+      for(const id of ids) {
+        this.derivedPaths.add(`/api/projects/${this.scope.projectId}/tasks/${id}`);
+        this.derivedPaths.add(`/api/projects/${this.scope.projectId}/work-management/tasks/${id}`);
+      }
       if(ids.length)this.derivedPaths.add(`/api/projects/${this.scope.projectId}/orchestration/work-status?taskIds=${ids.map(encodeURIComponent).join(",")}`);
     }
+    this.derivedPaths.add(`/api/projects/${this.scope.projectId}/work-management/index?view=${this.kind}&limit=50`);
+    this.derivedPaths.add(`/api/projects/${this.scope.projectId}/work-management/index?view=${this.kind}&limit=50&includeClosed=true`);
     if(nextPath){this.cursorOwners.set(parsed.data.nextCursor!,path);this.pagePaths.add(nextPath);this.derivedPaths.add(nextPath);}
     return true;
   }

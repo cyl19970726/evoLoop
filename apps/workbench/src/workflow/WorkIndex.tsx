@@ -10,6 +10,10 @@ import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
 import { businessNextStep, cognitionSummary, visibleWorkGroups, type WorkTaskStatus } from "./workStatusPresentation";
 import { isRoleOwnerId, readOwnerRole } from "./ownerRole";
 import "./work-status.css";
+import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
+import {
+  appendLeaderWorkPage, leaderPhaseLabel, loadLeaderDocumentsForIds, visibleLeaderDocuments,
+} from "./leaderWorkLoad";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
@@ -17,6 +21,7 @@ const documentKinds = { issue: "问题", spec: "规范", discussion: "讨论", r
 const documentStatuses = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
 const searchPageLimit = 10;
 const searchItemLimit = 500;
+const leaderPhaseOrder = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_assignment", "ready", "running", "unassigned"] as const;
 type OwnerName = { title?: string; error?: string };
 type WorkStatusProblem = { kind: "unavailable" | "partial"; diagnostic: string };
 const partialStatusDiagnostic = "接口未返回全部已载入任务的工作进度。";
@@ -49,6 +54,11 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [documentStatus, setDocumentStatus] = useState("active");
   const [create, setCreate] = useState(false);
   const [ownerNames, setOwnerNames] = useState<{ scope: string; values: Record<string, OwnerName> }>({ scope: "", values: {} });
+  const [leaderWork, setLeaderWork] = useState<LeaderWorkPage<LeaderWorkTask> | null>(null);
+  const [leaderDocuments, setLeaderDocuments] = useState<Record<string, LeaderWorkDocument>>({});
+  const [leaderDocumentCoverage, setLeaderDocumentCoverage] = useState<"idle" | "loading" | "complete" | "partial">("idle");
+  const [leaderWorkBusy, setLeaderWorkBusy] = useState(false);
+  const [leaderWorkError, setLeaderWorkError] = useState("");
   const epoch = useRef(0);
   const statusSnapshot = useRef<Record<string, WorkTaskStatus>>({});
   const pages = useRef<{ tasks: Page<Task>; documents: Page<Document> }>({
@@ -57,6 +67,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const pendingPage = useRef<{ tasks?: Promise<boolean>; documents?: Promise<boolean> }>({});
   const cursorHistory = useRef<{ tasks: Set<string>; documents: Set<string> }>({ tasks: new Set(), documents: new Set() });
   const pageCount = useRef({ tasks: 0, documents: 0 });
+  const visibleDocuments = visibleLeaderDocuments(documents.items, documentStatus, kindFilter, query);
+  const visibleDocumentSignature = visibleDocuments.map(item => item.id).join(",");
   useEffect(() => {
     let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; statusSnapshot.current = {}; setLoading(true); setError(""); setStatuses({}); setStatusProblem(null); setStatusRetrying(false);
     const client = api(token);
@@ -70,6 +82,41 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     }).catch(cause => { if (active) setError(errorText(cause)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [token, projectId, refresh, recheck]);
+  useEffect(() => {
+    let active = true;
+    setLeaderWorkError("");
+    setLeaderWorkBusy(false);
+    if (loading) return () => { active = false; };
+    if (view === "documents") setLeaderWork(null);
+    else setLeaderDocuments({});
+    if (view === "documents") {
+      setLeaderDocumentCoverage("loading");
+      void (async () => {
+        const result = await loadLeaderDocumentsForIds(
+          cursor => api(token).leaderWork(projectId, "documents", cursor,
+            documentStatus === "all" || documentStatus === "archived"),
+          visibleDocuments.map(item => item.id));
+        if (!active) return;
+        setLeaderDocuments(Object.fromEntries(result.items));
+        setLeaderDocumentCoverage(result.complete ? "complete" : "partial");
+        if (!result.complete) setLeaderWorkError("文档索引缺少已加载的文档行；请重新读取后再核对。");
+      })().catch(cause => {
+        if (active && !(cause instanceof ApiError && cause.status === 404)) {
+          setLeaderDocumentCoverage("partial");
+          setLeaderWorkError(`文档生命周期暂未读回：${errorText(cause)}`);
+        }
+      });
+      return () => { active = false; };
+    }
+    setLeaderDocumentCoverage("idle");
+    api(token).leaderWork(projectId, "tasks").then(result => {
+      if (active) setLeaderWork(result as LeaderWorkPage<LeaderWorkTask>);
+    }).catch(cause => {
+      if (active && !(cause instanceof ApiError && cause.status === 404))
+        setLeaderWorkError(`待处理对账暂未读回：${errorText(cause)}`);
+    });
+    return () => { active = false; };
+  }, [token, projectId, refresh, recheck, view, loading, visibleDocumentSignature, documentStatus]);
   useEffect(() => {
     const reread = () => { if (document.visibilityState === "visible") setRecheck(value => value + 1); };
     window.addEventListener("focus", reread);
@@ -175,6 +222,23 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       if (readEpoch === epoch.current) setStatusRetrying(false);
     }
   }
+  async function moreLeaderWork() {
+    const current = leaderWork;
+    if (!current?.nextCursor || leaderWorkBusy) return;
+    setLeaderWorkBusy(true);
+    setLeaderWorkError("");
+    try {
+      const next = await api(token).leaderWork(projectId, "tasks", current.nextCursor);
+      const merged = appendLeaderWorkPage(current, next as LeaderWorkPage<LeaderWorkTask>);
+      setLeaderWork(previous => previous?.changeSequence === current.changeSequence
+        ? merged
+        : previous);
+    } catch (cause) {
+      setLeaderWorkError(`Leader 对账续页未读回：${errorText(cause)}`);
+    } finally {
+      setLeaderWorkBusy(false);
+    }
+  }
   const pending = impacts.filter(i => i.state === "pending");
   const visibleTasks = tasks.items.filter(t => (view !== "inbox" || t.state === "todo") && (filter === "all" || filter === "open" && (t.state === "todo" || t.state === "in_progress") || t.state === filter) && (kindFilter === "all" || t.kind === kindFilter) &&
     `${t.title} ${t.owner} ${t.id} ${statuses[t.id]?.cognition ? cognitionSummary(statuses[t.id]!).title : ""}`.toLowerCase().includes(query.toLowerCase()))
@@ -208,14 +272,18 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const resolvedOwners = ownerNames.scope === ownerScope ? ownerNames.values : {};
   const classificationUnavailable = Boolean(statusProblem) && !Object.keys(statuses).length;
   const {primary:primaryTasks,cognition:cognitionTasks,unknown:unknownTasks,primaryKind}=visibleWorkGroups(visibleTasks,statuses,classificationUnavailable);
-  const visibleDocuments = documents.items.filter(d => (documentStatus === "all" || (documentStatus === "active" ? d.status !== "archived" : d.status === documentStatus)) && (kindFilter === "all" || d.kind === kindFilter) && `${d.title} ${d.id}`.toLowerCase().includes(query.toLowerCase()));
   const title = view === "documents" ? "过程文档" : view === "inbox" ? "待判断与复核" : "任务";
   return <div className="content work-index">
     <div className="page-title-row"><div><h1>{title}</h1><p className="lede">{view === "documents" ? "按类型阅读完整正文、固定修订与发布状态。" : view === "inbox" ? "阅读待办任务与依据变化，按当前状态决定下一步。" : "阅读任务正文、验收、固定依据与最新结果。"}</p></div>
       {view === "documents" ? <Button onClick={() => setCreate(!create)} aria-expanded={create}><Plus size={16} />保存文档</Button> : <a className="button-link" href={href(projectId, "create-task")}><Plus size={16} />创建任务</a>}
     </div>
+    {view === "work" && leaderWork && <LeaderWorkOverview page={leaderWork} projectId={projectId}
+      ownerNames={resolvedOwners} busy={leaderWorkBusy} onMore={() => void moreLeaderWork()} />}
+    {leaderWorkError && <p className="work-list-read-status" role="status">{leaderWorkError}</p>}
     {view !== "documents" && <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")} aria-current={view === "work" ? "page" : undefined}>任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current={view === "inbox" ? "page" : undefined}>依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>}
     {view === "documents" && <nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")} aria-current="page">过程文档</a><a href={href(projectId, "knowledge")}>知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav>}
+    {view === "documents" && leaderDocumentCoverage === "partial" &&
+      <p className="work-list-read-status" role="status">文档生命周期尚未完整覆盖；未读到的行不会推测，可重新读取后再核对。</p>}
     {view === "documents" && create && <div className="panel"><h2>保存过程文档</h2><ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" }, { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(documentKinds).filter(([key]) => key !== "task").map(([key, label]) => option(key, label)) }, { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]} build={v => ({ type: "document.create", documentId: crypto.randomUUID(), title: v.title, body: v.body, kind: v.kind || null })} /><UploadDocument context={context} /></div>}
     {view === "inbox" && <section className="panel impact-summary"><div className="panel-head"><h2>依据变化</h2><span>{pending.length} 项待复核</span></div>{!pending.length ? <p className="empty">当前没有待复核的依据变化。</p> : <ul className="impact-list">{pending.map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>{tasks.items.find(t => t.id === i.taskId)?.title ?? `任务 ${i.taskId.slice(0, 8)}`}</strong><span>固定 <ShortId value={i.fromRevisionId} /> / 新采纳 <ShortId value={i.toRevisionId} /></span><span>查看影响</span></a></li>)}</ul>}</section>}
     <section className="list-surface" aria-label={title} aria-busy={loading}>
@@ -230,7 +298,10 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       {error && <div className="list-message"><Alert kind="error">读取失败：{error}</Alert><button onClick={context.onChanged}>重试读取</button></div>}
       {searching && <p className="list-message" role="status">正在搜索后续页面；结果尚未完整。</p>}
       {searchError && <div className="list-message"><Alert kind="error">搜索未完成：{searchError}。当前结果只覆盖已载入项目。</Alert></div>}
-      {!loading && !error && <>{view === "documents" ? <div className="table-wrap"><table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>当前修订</th><th>已发布修订</th></tr></thead><tbody>{visibleDocuments.map(d => <tr key={d.id}><td><a href={href(projectId, "document", d.id)}>{d.title}</a><small><ShortId value={d.id} />{d.primaryTaskId && <> · <a href={href(projectId, "task", d.primaryTaskId)}>所属任务</a></>}</small></td><td>{d.kind ? documentKinds[d.kind] : "未分类"}</td><td><span className="pill subtle">{documentStatuses[d.status]}</span></td><td><ShortId value={d.currentRevisionId} /></td><td>{d.adoptedRevisionId ? <ShortId value={d.adoptedRevisionId} /> : "未发布"}</td></tr>)}</tbody></table></div> : view === "work" ? <>
+      {!loading && !error && <>{view === "documents" ? <div className="table-wrap"><table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>修订与时间</th><th>用途与下一动作</th></tr></thead><tbody>{visibleDocuments.map(d => {
+        const lifecycle=leaderDocuments[d.id];
+        return <tr key={d.id}><td><a href={href(projectId,"document",d.id)}>{d.title}</a><small><ShortId value={d.id}/>{d.primaryTaskId&&<> · <a href={href(projectId,"task",d.primaryTaskId)}>所属任务</a></>}{lifecycle&&<> · 创建 {new Date(lifecycle.dates.createdAt).toLocaleString("zh-CN")}</>}</small></td><td className="leader-doc-kind">{d.kind?documentKinds[d.kind]:"未分类"}</td><td className="leader-doc-status"><span className="pill subtle">{documentStatuses[d.status]}</span>{lifecycle&&<small className="leader-doc-time">{lifecycle.dates.changedAt?`最近变化 ${new Date(lifecycle.dates.changedAt).toLocaleString("zh-CN")}`:"最近变化未知"}</small>}</td><td className="leader-doc-revision"><span>当前 <ShortId value={d.currentRevisionId}/></span><small>{lifecycle&&new Date(lifecycle.dates.currentRevisionAt).toLocaleString("zh-CN")}</small><span>已采纳 {d.adoptedRevisionId?<ShortId value={d.adoptedRevisionId}/>:"未发布"}</span>{lifecycle?.dates.adoptedAt&&<small>{new Date(lifecycle.dates.adoptedAt).toLocaleString("zh-CN")}</small>}</td><td>{lifecycle?<>{lifecycle.references.length?`${lifecycle.references.length} 个引用任务`:"尚无引用任务"}<small>{lifecycle.nextAction}</small></>:<span>生命周期未读回</span>}</td></tr>;
+      })}</tbody></table></div> : view === "work" ? <>
         {statusProblem && <div className="work-status-warning" role="status"><p>{statusProblem.kind === "partial" ? "部分任务的工作进度尚未读回，已加载任务仍可查看。" : "工作进度暂时无法读取，已加载任务仍可查看。"}</p>
           <button type="button" disabled={statusRetrying} onClick={() => void retryWorkStatus()}>{statusRetrying ? "正在重试…" : "重试读取工作进度"}</button>
           <details><summary>查看诊断信息</summary><code>{statusProblem.diagnostic}</code></details></div>}
@@ -244,6 +315,45 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     </section>
     {view === "work" && <><p className="work-guidance">需要推进或调整工作时，先与已有 Agent 沟通；由 Agent 执行变更后，在这里回读核对。</p><div className="context-links"><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "discussions")}>阅读负责人讨论材料</a><a href={href(projectId, "documents")}>阅读过程文档</a><a href={href(projectId, "inbox")}>依据复核{pending.length ? `（${pending.length}）` : ""}</a></div></>}
   </div>;
+}
+
+function LeaderWorkOverview({ page, projectId, ownerNames, busy, onMore }: {
+  page: LeaderWorkPage<LeaderWorkTask>; projectId: string; ownerNames: Record<string, OwnerName>;
+  busy: boolean; onMore: () => void;
+}) {
+  const counts = page.counts;
+  const visible = [...page.items].sort((a, b) => leaderPhaseOrder.indexOf(a.phase as typeof leaderPhaseOrder[number]) -
+    leaderPhaseOrder.indexOf(b.phase as typeof leaderPhaseOrder[number]));
+  return <section className="leader-work" aria-labelledby="leader-work-title">
+    <header><div><p className="eyebrow">Leader 对账</p><h2 id="leader-work-title">现在需要处理什么</h2></div><p>{page.observedAt ? `读于 ${new Date(page.observedAt).toLocaleString("zh-CN")}` : "尚未读回"} · 变更序号 {page.changeSequence}</p></header>
+    <div className="leader-work-phases">{leaderPhaseOrder.filter(phase => counts[phase]).map(phase =>
+      <span key={phase} className={`leader-phase phase-${phase}`}>{leaderPhaseLabel[phase]} <strong>{counts[phase]}</strong></span>)}</div>
+    {(counts.review_deferred || counts.review_acknowledged) && <div className="leader-work-phases" aria-label="Leader 处理决定">
+      {counts.review_deferred ? <span className="leader-phase phase-unassigned">已暂缓 <strong>{counts.review_deferred}</strong></span> : null}
+      {counts.review_acknowledged ? <span className="leader-phase phase-ready">已核对 <strong>{counts.review_acknowledged}</strong></span> : null}
+    </div>}
+    {visible.length ? <ol className="leader-work-list">{visible.map(item => <li key={item.taskId}>
+      <span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span>
+      <div><a href={href(projectId,"task",item.taskId)}>{item.title}</a><p>{item.nextAction}</p>
+        <small>{item.responsible.kind === "role" && ownerNames[item.responsible.id ?? ""]?.title
+          ? `负责 ${ownerNames[item.responsible.id!]!.title}` : item.responsible.label}{item.plan?.priority?` · P${item.plan.priority}`:""}
+          {item.dependencies.length?` · ${item.dependencies.length} 项依赖`:""}
+          {item.plan?.dueAt?` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}`:" · 截止未设置"}</small>
+        <small>创建 {new Date(item.dates.createdAt).toLocaleString("zh-CN")} · 业务变化 {new Date(item.dates.businessChangedAt).toLocaleString("zh-CN")}
+          {item.plan?.plannedStartAt?` · 计划开始 ${new Date(item.plan.plannedStartAt).toLocaleString("zh-CN")}`:""}
+          {item.dates.startedAt?` · 实际开始 ${new Date(item.dates.startedAt).toLocaleString("zh-CN")}`:""}
+          {item.dates.completedAt?` · 完成 ${new Date(item.dates.completedAt).toLocaleString("zh-CN")}`:""}
+        </small>
+        {item.review && <small className="leader-review-note">Leader {item.review.decision === "deferred" ? "已暂缓" : "已核对"}：
+          {item.review.reason} · {new Date(item.review.at).toLocaleString("zh-CN")}</small>}</div>
+      <span className="leader-action-key" title={item.actionKey}>任务 v{item.version}</span>
+    </li>)}</ol> : <p className="empty">当前没有未关闭工作。</p>}
+    <footer>按当前 Task 版本、assignment、Run、Delivery、使用观察、依据复核和依赖派生；运行结束不等于验收。
+      {page.partial && " 服务端只返回了部分工作，结果不完整。"}
+      {page.nextCursor && <button type="button" className="quiet" disabled={busy} onClick={onMore}>
+        {busy ? "正在读取 Leader 续页…" : `继续读取 Leader 对账（${page.items.length}/${page.total}）`}
+      </button>}</footer>
+  </section>;
 }
 
 function FileEmpty() { return <Search size={27} strokeWidth={1.4} aria-hidden="true" />; }

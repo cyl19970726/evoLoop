@@ -3,8 +3,10 @@ import type { WorkflowService } from "@evoloop/core";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
 import { initialRoleTemplates } from "@evoloop/contracts/roles";
+import type { LeaderWorkIndexReader } from "./work-index.js";
+import { registerLeaderWorkRoutes } from "./leader-routes.js";
 
-export async function registerWorkManagementRoutes(app: FastifyInstance, service: WorkflowService) {
+export async function registerWorkManagementRoutes(app: FastifyInstance, service: WorkflowService, workIndex?: LeaderWorkIndexReader) {
   const params = (value: unknown) => z.object({ projectId: z.uuid(), id: z.uuid().optional() }).parse(value);
   const principal = (request: { principal: import("@evoloop/contracts").Principal | null }) => {
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
@@ -60,4 +62,5 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.uuid().optional() }).parse(request.query);
     return service.listDocumentTaskReferences(principal(request), p.projectId, p.id!, q.limit, q.cursor);
   });
+  if (workIndex) registerLeaderWorkRoutes(app, service, workIndex);
 }

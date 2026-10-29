@@ -1,6 +1,8 @@
 import * as React from "react";
 import type { FormEvent, ReactNode } from "react";
-import { commandSchema, type Command, type Principal, type Operation } from "@evoloop/contracts";
+import {
+  commandSchema, type Command, type CommandResult, type Operation, type Permission, type Principal,
+} from "@evoloop/contracts";
 import { api, errorText, isStaleConflict, isUnconfirmed } from "../api";
 
 const { useEffect, useState } = React;
@@ -9,6 +11,7 @@ export interface RecoverableCommand {
   projectId: string; operationId: string; type: Operation["commandType"];
   taskId?: string; goalId?: string; stageId?: string | null; documentId?: string; discussionId?: string;
 }
+type SubmittableCommand = Command | (Record<string, unknown> & RecoverableCommand);
 export interface MutationContext {
   token: string; projectId: string; principal: Principal; blocked: boolean;
   draftScope?: string; draftBaseline?: string;
@@ -31,9 +34,13 @@ export function readableDraft(title: string, fields: Field[], values: Record<str
 }
 
 /** Shared command submission preserves the draft and persists the operation ID before any write. */
-export function ActionForm({ context, title, fields, build, review = false, onApplied, initiallyOpen = false, embedded = false }: {
+export function ActionForm({ context, title, fields, build, validateCommand, sendCommand, review = false,
+  requiredPermissions, onApplied, initiallyOpen = false, embedded = false }: {
   context: MutationContext; title: string; fields: Field[]; review?: boolean; initiallyOpen?: boolean; embedded?: boolean;
   build(values: Record<string, string>): Record<string, unknown>; onApplied?: (result: { entityId: string; revisionId?: string }) => void;
+  validateCommand?: (command: Record<string, unknown>) => void;
+  sendCommand?: (command: SubmittableCommand) => Promise<CommandResult>;
+  requiredPermissions?: Permission[];
 }) {
   const initial = () => Object.fromEntries(fields.map(f => [f.name, f.value ?? (f.kind === "multi" ? "[]" : "")]));
   const draftKey = context.draftScope ? `${context.principal.actorId}:${context.projectId}:${context.draftScope}:${title}` : null;
@@ -47,7 +54,8 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
   const [stale, setStale] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [copyFallback, setCopyFallback] = useState(false);
-  const allowed = context.principal.permissions.includes(review ? "review" : "write");
+  const allowed = (requiredPermissions ?? [review ? "review" : "write"])
+    .every(permission => context.principal.permissions.includes(permission));
   const baselineChanged = dirty && readBaseline !== context.draftBaseline;
   useEffect(() => {
     if (dirty) return;
@@ -57,8 +65,12 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
     event.preventDefault();
     if (busy || !allowed || context.blocked || stale || baselineChanged) return;
     setMessage(""); setFailed(false);
-    let command: Command;
-    try { command = commandSchema.parse({ ...build(values), projectId: context.projectId, operationId: crypto.randomUUID() }); }
+    let command: SubmittableCommand;
+    try {
+      const candidate = { ...build(values), projectId: context.projectId, operationId: crypto.randomUUID() };
+      if (validateCommand) { validateCommand(candidate); command = candidate as SubmittableCommand; }
+      else command = commandSchema.parse(candidate);
+    }
     catch { setMessage("请补全必需字段并检查输入格式。"); setFailed(true); return; }
     setBusy(true);
     let recorded = false;
@@ -66,7 +78,7 @@ export function ActionForm({ context, title, fields, build, review = false, onAp
     catch { /* A receipt that could not be saved must never send its command. */ }
     if (!recorded) { setBusy(false); setMessage("浏览器不能保存恢复回执，本次尚未提交。"); setFailed(true); return; }
     try {
-      const result = await api(context.token).command(command);
+      const result = sendCommand ? await sendCommand(command) : await api(context.token).command(command as Command);
       context.onKnown(command.operationId);
       if (result.status === "rejected") {
         setMessage(result.message); setFailed(true); setStale(isStaleConflict(result.code));

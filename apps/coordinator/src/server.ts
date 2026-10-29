@@ -28,6 +28,7 @@ import type { DeliveryStore } from "@evoloop/contracts/delivery";
 import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
+import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
 import { registerOrchestrationRoutes, registerPlanningSourcesRoute, registerWorkStatusRoute,
@@ -76,6 +77,7 @@ export async function buildServer(options: {
   readEvaluationPacket?: ReadEvaluationPacket;
   orchestration?: OrchestrationRouteOptions;
   workStatuses?: WorkStatusesReader;
+  workIndex?: LeaderWorkIndexReader;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
   ordinarySubmissions?: OrdinaryRunSubmissionRoutes;
@@ -482,7 +484,7 @@ export async function buildServer(options: {
   if (workStatuses) registerWorkStatusRoute(app, workStatuses);
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
-  await registerWorkManagementRoutes(app, options.service);
+  await registerWorkManagementRoutes(app, options.service, options.workIndex);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });
   if (options.documents) {

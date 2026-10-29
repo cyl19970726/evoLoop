@@ -19,16 +19,28 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
     case "assignment": path = `/tasks/${id()}/assignment${options.has("history") ? "/history" : ""}`;
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
-    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|history KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
+    case "leader":
+      if (words[1] === "changes") {
+        path = "/work-management/changes";
+        allowed = ["limit", "cursor"];
+      } else {
+        path = "/work-management/index";
+        allowed = ["limit", "cursor", "documents", "closed"];
+        query.set("view", options.has("documents") ? "documents" : "tasks");
+        if (options.has("closed")) query.set("includeClosed", "true");
+      }
+      break;
+    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes]|history KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
   }
-  const count = kind === "list" ? 1 : kind === "changes" && !words[1] ? 1 : 2;
+  const count = kind === "list" ? 1 : kind === "changes" && !words[1] ? 1 :
+    kind === "leader" ? (words[1] === "changes" ? 2 : 1) : 2;
   if (words.length !== count) throw new Error("Unexpected Session work arguments.");
   for (const [name, value] of options) {
     if (name === "project") continue;
     if (!allowed.includes(name)) throw new Error(`--${name} does not apply to work ${kind}.`);
-    if (name === "history") continue;
+    if (name === "history" || name === "documents" || name === "closed") continue;
     if (typeof value !== "string") throw new Error(`--${name} requires a value.`);
-    if (name === "limit") query.set(name, String(z.coerce.number().int().min(1).max(kind === "changes" ? 100 : 50).parse(value)));
+    if (name === "limit") query.set(name, String(z.coerce.number().int().min(1).max(kind === "changes" || kind === "leader" ? 100 : 50).parse(value)));
     else if (name === "task") query.set("taskId", z.uuid().parse(value));
     else if (name === "membership") query.set(name, z.enum(["current", "historical", "unclassified", "all"]).parse(value));
     else if (name === "importance") query.set(name, z.enum(["important", "all"]).parse(value));

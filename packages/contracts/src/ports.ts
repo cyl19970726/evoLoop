@@ -56,6 +56,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
     intent: DeliveryIntent): Promise<string | null>;
   /** Fixed consumer and latest Run of an active Queue claim for this Task. */
   getClaimedQueueAcceptanceForTask?(taskId: string): Promise<{ consumerId: string; runId: string } | null>;
+  /** Current Task dependencies that still lack closure or accepted Queue release on the prerequisite revision. */
+  listTaskDependencyBlockers?(taskId: string): Promise<TaskDependencyBlocker[]>;
   listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
   getDelivery(id: string): Promise<Delivery | null>;
   listDeliveries(taskId: string): Promise<Delivery[]>;
@@ -79,6 +81,13 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listBasisDecisions(taskId: string): Promise<BasisDecision[]>;
   getOperation(id: string): Promise<Operation | null>;
   findTasksUsingDocument(documentId: string): Promise<Task[]>;
+}
+export interface TaskDependencyBlocker {
+  taskId: string;
+  title: string;
+  state: Task["state"];
+  currentRevisionId: string;
+  reason: string;
 }
 export interface CognitiveClosureFact {
   projectId: string; decisionId: string; actorId: string; kind: "no_action" | "waiting" | "stop" | "failed";

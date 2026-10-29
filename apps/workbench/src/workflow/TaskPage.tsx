@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useId, type FormEvent } from "react";
 import type { BasisSet, Command, DocumentDetail, DocumentRevision, Impact, TaskDetail, TaskRevision } from "@evoloop/contracts";
+import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { api, ApiError, errorText, isUnconfirmed } from "../api";
 import { Alert, ShortId, RevisionBody, date, href, taskListHref } from "../ui/shared";
 import type { MutationContext } from "./ActionForm";
@@ -15,6 +16,8 @@ import { DeliveryArtifact, DeliveryObservation, DeliveryPanel, useDeliveryNames 
 import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash } from "../orchestration/navigation";
+import { LeaderTaskFacts } from "./LeaderTaskFacts";
+import { leaderProjectionMatchesTask } from "./leaderWorkLoad";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -143,6 +146,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     ? proposedReturn : null;
   const sessionReturnTitle = routeQuery.get("returnTitle")?.slice(0, 80).trim() || "Session";
   const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [leaderTask, setLeaderTask] = useState<LeaderWorkTask | null>(null);
+  const [leaderTaskError, setLeaderTaskError] = useState("");
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
   const landingRef = useRef<TaskTab | null>(null);
@@ -173,9 +178,11 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [observedAt, setObservedAt] = useState<Date | null>(null);
   const [reading, setReading] = useState(false);
   const historyRequestRef = useRef(0);
+  const leaderRequestRef = useRef(0);
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
     setTab(selectedRevision ? "history" : taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
-    setDetail(null); setBasisDocuments({}); }, [id, projectId]);
+    setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError("");
+  }, [id, projectId]);
   useEffect(() => {
     if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
     const targetRun = tab === "runtime" ? taskRunFromHash(window.location.hash, projectId, id) : null;
@@ -200,6 +207,29 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     }).catch(cause => { if (active) { setError(errorText(cause)); setReading(false); } });
     return () => { active = false; };
   }, [token, projectId, id, refresh, readVersion]);
+  useEffect(() => {
+    if (!detail || detail.task.id !== id) return;
+    const request = ++leaderRequestRef.current;
+    let active = true;
+    setLeaderTask(null); setLeaderTaskError("");
+    api(token).leaderTask(projectId, id).then(value => {
+      if (!active || request !== leaderRequestRef.current) return;
+      if (!leaderProjectionMatchesTask(value, {
+        id, version: detail.task.version, currentRevisionId: detail.task.currentRevisionId,
+      })) {
+        setLeaderTaskError("任务或工作安排已在读取期间变化；正在重新核对。");
+        setReadVersion(current => current + 1);
+        return;
+      }
+      setLeaderTask(value);
+    }).catch(cause => {
+      if (active && request === leaderRequestRef.current) {
+        setLeaderTask(null);
+        setLeaderTaskError(`当前工作安排暂未读回：${errorText(cause)}`);
+      }
+    });
+    return () => { active = false; };
+  }, [token, projectId, id, refresh, readVersion, detail?.task.version, detail?.task.currentRevisionId]);
   useEffect(() => {
     const reread = () => { if (document.visibilityState === "visible") setReadVersion(value => value + 1); };
     window.addEventListener("focus", reread);
@@ -271,6 +301,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </button>)}</div>
     <section role="tabpanel" id={panelId("overview")} aria-labelledby={tabId("overview")} hidden={tab !== "overview"}>
       <div className="task-overview-grid">
+        {leaderTask && <LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} />}
+        {leaderTaskError && <section className="panel task-focus"><Alert kind="error">{leaderTaskError}</Alert></section>}
         <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} /><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
         <section className="panel task-focus"><h2>验收条件</h2><p>{detail.task.acceptance}</p><p className="task-fineprint">{detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的 Agent 使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}{detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。</p></section>
         <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => selectTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
@@ -304,7 +336,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       {historical?.taskId === id && <><p><strong>v{historical.revision.version} · {taskStateLabel[historical.revision.state]}</strong> · {date(historical.revision.createdAt)} · {historical.revision.actorId}</p><p><strong>当次理由：</strong>{historical.revision.reason}</p><p><a href={href(projectId, "document", historical.revision.contentDocumentId, historical.revision.contentRevisionId)}>当次正文原件 <ShortId value={historical.revision.contentRevisionId} /> ↗</a></p><MarkdownBody source={historical.revision.content} identity={`history-${historical.revision.id}`} projectId={projectId} /><p><strong>当时验收：</strong>{historical.revision.acceptance}</p><Basis basis={historical.basis} projectId={projectId} /></>}
       <p><a href={href(projectId, "task", id)}>返回当前任务 →</a></p>
     </section>}
-    <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} mode="history" />
+    <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} leader={leaderTask} mode="history" />
     <section className="panel"><h2>已作决定</h2>
       {!detail.decisions.length && <p className="empty">尚无复核决定。</p>}
       {detail.decisions.map(d => <div className="decision" key={d.id}><strong>{d.decision === "adopt" ? "采用新修订" : "保留原依据"}</strong><span>{date(d.createdAt)} · {d.actorId}</span><p>{d.reason}</p><button className="quiet" onClick={() => showHistory(d.previousTaskRevisionId)}>查看决定前的任务依据</button></div>)}
@@ -312,7 +344,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </section>
     </section>
     <section role="tabpanel" id={panelId("actions")} aria-labelledby={tabId("actions")} hidden={tab !== "actions"}>
-      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} documents={basisDocuments} mode="actions" />
+      <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} documents={basisDocuments}
+        leader={leaderTask} mode="actions" />
     </section>
   </div>;
 }

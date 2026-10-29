@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
 import { api, errorText } from "../api";
-import { Alert, ShortId, RevisionBody, documentReturnHref, href, readRoute } from "../ui/shared";
+import { Alert, ShortId, RevisionBody, date, documentReturnHref, href, readRoute } from "../ui/shared";
 import { ActionForm, type MutationContext } from "../workflow/ActionForm";
 import { UploadDocument } from "./UploadDocument";
 import { DocumentOrigin } from "./DocumentOrigin";
@@ -91,9 +91,9 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     {taskOwned && <Alert>这是任务主文档。此处只阅读固定修订；请从{detail.document.primaryTaskId
       ? <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a> : "所属任务页"}修改正文。</Alert>}
     <div className="doc-version-status" aria-label="文档修订状态">
-      <span><strong>正在阅读</strong> <ShortId value={revision.id} />{revision.id === detail.current.id ? " · 当前版" : " · 固定历史版"}</span>
-      <span><strong>当前版</strong> <ShortId value={detail.current.id} /></span>
-      <span><strong>已发布版</strong> {detail.adopted ? <ShortId value={detail.adopted.id} /> : "尚未发布"}</span>
+      <span><strong>正在阅读</strong> <ShortId value={revision.id} />{revision.id === detail.current.id ? " · 当前版" : " · 固定历史版"}<small>{date(revision.createdAt)}</small></span>
+      <span><strong>当前版</strong> <ShortId value={detail.current.id} /><small>{date(detail.current.createdAt)}</small></span>
+      <span><strong>已发布版</strong> {detail.adopted ? <><ShortId value={detail.adopted.id} /><small>{date(detail.adopted.createdAt)}</small></> : "尚未发布"}</span>
     </div>
     {revision.id !== detail.adopted?.id && <p className="muted">所读修订不是已发布版；引用它时请核对任务固定依据。</p>}
     <div className="actions doc-version-actions">

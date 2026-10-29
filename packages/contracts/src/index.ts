@@ -65,6 +65,7 @@ export const commandSchema = z.discriminatedUnion("type", [
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandInput = z.input<typeof commandSchema>;
+export type LeaderWorkRequestType = "work.plan.set" | "work.dependencies.set" | "work.review.set";
 export type Permission = "read" | "write" | "review";
 export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; identityKind?: "agent" | "human" | undefined }
 export interface Project { id: string; title: string; createdAt: string }
@@ -139,7 +140,9 @@ export interface RejectedResult {
 export type CommandResult = AppliedResult | RejectedResult;
 export interface Operation {
   projectId: string; id: string; actorId: string; commandHash: string;
-  commandType: Command["type"] | "document.payload" | "reference.git" | "reference.formal" | "reference.task"; result: CommandResult; createdAt: string;
+  commandType: Command["type"] | LeaderWorkRequestType |
+    "document.payload" | "reference.git" | "reference.formal" | "reference.task";
+  result: CommandResult; createdAt: string;
 }
 export interface OutboxEvent {
   projectId: string; id: string; operationId: string; effectKey: string;

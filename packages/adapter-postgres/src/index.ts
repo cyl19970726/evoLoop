@@ -187,6 +187,24 @@ class PgReader implements Reader {
     if(result.rows.length>1)throw new DomainError("QUEUE_AMBIGUOUS","multiple active Queue claims require reconciliation");
     return result.rows[0]?{consumerId:result.rows[0].consumer_id,runId:result.rows[0].run_id}:null;
   }
+  async listTaskDependencyBlockers(taskId: string): Promise<import("@evoloop/contracts/ports").TaskDependencyBlocker[]> {
+    const relation=await this.client.query("SELECT to_regclass('task_dependency') AS relation");
+    if(!relation.rows[0]?.relation)return [];
+    const result=await this.client.query(`SELECT d.depends_on_task_id,dt.title,dt.state,dt.current_revision_id,d.reason
+      FROM task_dependency d
+      JOIN task dt ON dt.project_id=d.project_id AND dt.task_id=d.depends_on_task_id
+      WHERE d.project_id=$1 AND d.task_id=$2 AND NOT (
+        EXISTS(SELECT 1 FROM task_closure c WHERE c.project_id=d.project_id
+          AND c.task_id=d.depends_on_task_id AND c.task_revision_id=dt.current_revision_id)
+        OR EXISTS(SELECT 1 FROM resident_queue_claim q
+          JOIN resident_queue_attempt a ON a.project_id=q.project_id AND a.claim_id=q.claim_id
+          WHERE q.project_id=d.project_id AND q.task_id=d.depends_on_task_id
+            AND q.release_kind='accepted' AND a.task_revision_id=dt.current_revision_id))
+      ORDER BY dt.title,d.depends_on_task_id LIMIT 101`,[this.projectId,taskId]);
+    if(result.rows.length>100)throw new DomainError("RESULT_TOO_LARGE","Task dependency gate exceeds 100 prerequisites");
+    return result.rows.map(row=>({taskId:row.depends_on_task_id,title:row.title,state:row.state,
+      currentRevisionId:row.current_revision_id,reason:row.reason}));
+  }
   listRuntimeRuns(taskId?: string) { return this.runtime.listRuntimeRuns(taskId); }
   listRuntimeEvents(runId: string) { return this.runtime.listRuntimeEvents(runId); }
   listRuntimeSessionEvents(sessionId: string) { return this.runtime.listRuntimeSessionEvents(sessionId); }

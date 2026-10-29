@@ -5,6 +5,10 @@ import type {
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
 } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workflow/workStatusPresentation";
+import type {
+  LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
+  LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
+} from "@evoloop/contracts/work-index";
 
 export interface Session {
   principal: Principal;
@@ -76,6 +80,11 @@ const key = (value: string) => encodeURIComponent(value);
 
 export function api(token: string, timeoutMs = 15000) {
   const call = <T>(path: string, init?: RequestInit) => request<T>(token, path, timeoutMs, init);
+  const leaderWrite = async <T extends { operationId: string }>(path: string, command: T & { type?: string }): Promise<CommandResult> => {
+    const body = { ...command } as Record<string, unknown>;
+    delete body.type;
+    return checkedCommandResult(await call<unknown>(path, { method: "PUT", body: JSON.stringify(body) }), command.operationId);
+  };
   return {
     session: () => call<Session>("/api/session"),
     project: (p: string) => call<Project>(projectPath(p)),
@@ -95,6 +104,19 @@ export function api(token: string, timeoutMs = 15000) {
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`),
+    leaderWork: (p: string, view: "tasks" | "documents", cursor?: string, includeClosed = false) =>
+      call<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>(
+        `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`),
+    leaderTask: (p: string, id: string) => call<LeaderWorkTask>(
+      `${projectPath(p)}/work-management/tasks/${key(id)}`),
+    leaderPlan: (p: string, id: string, command: LeaderWorkPlanCommand & { type?: string }) =>
+      leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/plan`, command),
+    leaderDependencies: (p: string, id: string, command: LeaderWorkDependenciesCommand & { type?: string }) =>
+      leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/dependencies`, command),
+    leaderReview: (p: string, id: string, command: LeaderWorkReviewCommand & { type?: string }) =>
+      leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/review`, command),
+    leaderWorkChanges: (p: string, cursor?: string) => call<LeaderWorkChangesPage>(
+      `${projectPath(p)}/work-management/changes?limit=100${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),
@@ -139,7 +161,7 @@ export function isUnconfirmed(error: unknown): boolean {
 
 const staleConflictCodes = new Set([
   "VERSION_CONFLICT", "BASELINE_CHANGED", "DOCUMENT_CHANGED", "DECISION_TARGET_CHANGED",
-  "REVIEW_TARGET_CHANGED", "TARGET_CHANGED",
+  "REVIEW_TARGET_CHANGED", "TARGET_CHANGED", "WORK_INDEX_CHANGED",
 ]);
 /** A 409 can be a correct business refusal; only changed observed versions or pointers require readback. */
 export function isStaleConflict(value: unknown): boolean {
