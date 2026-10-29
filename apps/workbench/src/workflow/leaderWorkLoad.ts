@@ -1,6 +1,7 @@
 import type {
   LeaderWorkDocument, LeaderWorkPage, LeaderWorkPhase, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
+import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { cognitionSummary, type WorkTaskStatus } from "./workStatusPresentation.js";
 
 export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
@@ -14,18 +15,54 @@ export interface LeaderDocumentLoad {
   complete: boolean;
 }
 
+export const leaderWorkStatusBatchSize = 50;
+
+export async function loadLeaderWorkStatuses(
+  taskIds: readonly string[],
+  read: (ids: string[]) => Promise<WorkTaskStatus[]>,
+): Promise<{ statuses: WorkTaskStatus[]; missing: string[] }> {
+  const ids = [...new Set(taskIds)];
+  const found = new Map<string, WorkTaskStatus>();
+  for (let offset = 0; offset < ids.length; offset += leaderWorkStatusBatchSize) {
+    const batch = ids.slice(offset, offset + leaderWorkStatusBatchSize);
+    const allowed = new Set(batch);
+    for (const status of await read(batch)) {
+      if (!allowed.has(status.taskId)) throw new Error("Leader 行状态响应包含未请求的 Task");
+      if (found.has(status.taskId)) throw new Error("Leader 行状态响应重复包含同一 Task");
+      found.set(status.taskId, status);
+    }
+  }
+  return { statuses: [...found.values()], missing: ids.filter(id => !found.has(id)) };
+}
+
+/** Only an explicitly registered profile name counts as a Session display name. */
+export function leaderSessionDisplayName(session: Pick<ObservedSession, "profile">): string | null {
+  const name = session.profile?.displayName?.trim();
+  return name || null;
+}
+
 export function leaderWorkItemPresentation(
-  item: LeaderWorkTask, status?: WorkTaskStatus, resolvedRoleTitle?: string,
+  item: LeaderWorkTask, status?: WorkTaskStatus, resolvedRoleTitle?: string, resolvedSessionTitle?: string,
 ): { title: string; responsibility: string } {
   if (status?.cognition)
     return {
       title: cognitionSummary(status).title,
       responsibility: "历史判断记录 · 原任务责任见原任务",
     };
+  if (!status)
+    return {
+      title: "任务记录 · 来源状态待核对",
+      responsibility: item.responsible.kind === "session"
+        ? `${item.assignment?.targetKind === "external" ? "外部 HostLink" : "受管 Session"} · ${resolvedSessionTitle?.trim() || "名称待核对"}`
+        : "责任与来源待核对",
+    };
   const roleTitle = item.responsible.kind === "role" && item.responsible.id ? resolvedRoleTitle?.trim() : null;
+  const sessionTitle = item.responsible.kind === "session" ? resolvedSessionTitle?.trim() : null;
   return {
     title: item.title,
-    responsibility: roleTitle ? `负责 ${roleTitle}` : item.responsible.label,
+    responsibility: item.responsible.kind === "session"
+      ? `${item.assignment?.targetKind === "external" ? "外部 HostLink" : "受管 Session"} · ${sessionTitle || "名称待核对"}`
+      : roleTitle ? `负责 ${roleTitle}` : item.responsible.label,
   };
 }
 
