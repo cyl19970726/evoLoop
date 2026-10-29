@@ -98,6 +98,37 @@ test("ordinary 404 recovery replays the identical saved request once", async t =
   assert.deepEqual(methods,["GET","POST"]);
 });
 
+test("legacy model-less reservation never replays after operation GET 404 or a mismatched readback",async t=>{
+  const store=await temporaryStore(t),operationId=randomUUID(),sessionId=randomUUID(),actor=verifiedActor("original-agent");
+  const body={type:"runtime.session.reserve",projectId,operationId,sessionId,roleId:randomUUID(),
+    cwd:"/tmp/legacy",authorizationScope:"legacy",sandbox:"danger-full-access",approvalPolicy:"never"};
+  const intent:Intent={id:operationId,operationId,projectId,kind:body.type,path:"/api/commands",body,
+    recovery:{kind:"core",path:`/api/projects/${projectId}/operations/${operationId}`},confirmation:"command"};
+  await store.prepare(apiUrl,token,intent,actor);
+  let posts=0;
+  const absent=client(async (_url,init)=>{
+    if(init?.method==="POST")posts++;
+    return response({code:"OPERATION_NOT_FOUND"},404);
+  });
+  await assert.rejects(()=>retryReceipt(absent,store,apiUrl,token,intent.id,()=>{},actor),error=>{
+    assert.ok(error instanceof ReceiptError);
+    assert.equal(error.code,"RESULT_UNCONFIRMED");
+    assert.equal((error.data as {nextAction:string}).nextAction,"review_original_operation_and_session");
+    return true;
+  });
+  assert.equal((await store.get(intent.id)).state,"pending");
+  const mismatch=client(async (_url,init)=>{
+    if(init?.method==="POST")posts++;
+    return response({id:operationId,projectId,actorId:actor.actorId,commandType:body.type,
+      commandHash:"0".repeat(64),result:{status:"applied",operationId,entityId:sessionId,version:1}});
+  });
+  await assert.rejects(()=>retryReceipt(mismatch,store,apiUrl,token,intent.id,()=>{},actor),pendingError);
+  assert.equal((await store.get(intent.id)).state,"pending");
+  await assert.rejects(()=>retryReceipt(absent,store,apiUrl,token,intent.id,()=>{},verifiedActor("other-agent")),
+    error=>error instanceof ReceiptError&&error.code==="RECEIPT_SCOPE_MISMATCH");
+  assert.equal(posts,0);
+});
+
 test("lost successful POST response keeps its local ID and reconciles by the distinct backend operation ID", async t => {
   const store = await temporaryStore(t), intent = coreIntent();
   let posts = 0, gets = 0;

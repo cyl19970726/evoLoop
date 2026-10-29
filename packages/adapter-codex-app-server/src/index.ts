@@ -55,6 +55,8 @@ const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["actorId","model","sandbox","approvalPolicy","executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+const safeModelIdentity = (value:unknown):string|null => typeof value==="string"&&
+  /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(value)?value:null;
 const safeProviderCode = (value: unknown): string | null => typeof value === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : null;
 function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
   const native = object(value);
@@ -154,6 +156,10 @@ export interface DynamicToolCall { threadId: string; turnId: string; callId: str
 export interface DynamicToolResult { contentItems: ({type:"inputText";text:string}|{type:"inputImage";imageUrl:string})[]; success: boolean }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+type ModelListResult = {status:"available"|"empty"|"unavailable";models:string[];error:string|null;observedAtUtc:string};
+const MODEL_LIST_PAGE_SIZE = 100;
+const MODEL_LIST_MAX_PAGES = 5;
+const MODEL_LIST_CACHE_MS = 10_000;
 interface PendingNativeInput { capture: NativeInputCapture; requestId: string | number; attempted: boolean }
 
 const nativeRequestKey=(value:unknown):string|null=>
@@ -225,6 +231,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   private readonly dynamicToolTimeout: number;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly expectedVersion: PinnedProtocolVersion;
+  private modelListCache: {value:ModelListResult;expiresAt:number}|null = null;
+  private modelListPending: Promise<ModelListResult>|null = null;
 
   constructor(private readonly options: CodexAppServerOptions = {}) {
     this.executable = options.executable ?? "codex";
@@ -278,6 +286,66 @@ export class CodexAppServerAdapter implements RuntimePort {
     catch{throw new RuntimeUnknownError('item/tool/requestUserInput',null,'native input response write outcome unknown');}
   }
   onDisconnect(listener: (reason: string) => void): () => void { this.disconnects.add(listener); return () => this.disconnects.delete(listener); }
+
+  /** Catalog observation only; a listed slug does not prove a Turn can use it. */
+  async listModels():Promise<ModelListResult>{
+    const now=Date.now();
+    if(this.modelListCache&&now<this.modelListCache.expiresAt&&this.isReady())
+      return {...this.modelListCache.value,models:[...this.modelListCache.value.models]};
+    if(this.modelListPending){
+      const value=await this.modelListPending;
+      return {...value,models:[...value.models]};
+    }
+    const connection=this.connectionId;
+    const read=async():Promise<ModelListResult>=>{
+      const models:string[]=[];
+      const seenModels=new Set<string>();
+      const seenCursors=new Set<string>();
+      let cursor:string|undefined;
+      const deadline=Date.now()+this.timeout;
+      try{
+        if(!this.isReady())throw new RuntimeProtocolError('App Server not ready');
+        for(let page=0;page<MODEL_LIST_MAX_PAGES;page++){
+          const remaining=deadline-Date.now();
+          if(remaining<=0)throw new RuntimeUnknownError('model/list',null,'response timeout');
+          const result=object(await this.request('model/list',{
+            limit:MODEL_LIST_PAGE_SIZE,...(cursor?{cursor}:{})},remaining));
+          if(!result||!Array.isArray(result.data)||result.data.length>MODEL_LIST_PAGE_SIZE||
+            result.nextCursor!==null&&result.nextCursor!==undefined&&
+              (typeof result.nextCursor!=='string'||!result.nextCursor.length))
+            throw new RuntimeProtocolError('invalid model/list response');
+          for(const entry of result.data){
+            const model=object(entry)?.model;
+            if(typeof model!=='string'||!model.length||model.length>256||model.trim()!==model)
+              throw new RuntimeProtocolError('invalid model/list entry');
+            if(!seenModels.has(model)){seenModels.add(model);models.push(model);}
+          }
+          if(result.nextCursor==null){
+            return {status:models.length?'available':'empty',models,error:null,observedAtUtc:new Date().toISOString()};
+          }
+          if(seenCursors.has(result.nextCursor))throw new RuntimeProtocolError('repeated model/list cursor');
+          seenCursors.add(result.nextCursor);
+          cursor=result.nextCursor;
+        }
+        throw new RuntimeProtocolError('model/list pagination limit reached');
+      }catch(error){
+        const code=error instanceof RuntimeUnknownError&&error.message.includes('timeout')?'model_list_timeout':
+          error instanceof RuntimeServerError?'model_list_rejected':
+          error instanceof RuntimeProtocolError&&/pagination limit|cursor/.test(error.message)?'model_list_incomplete':
+          error instanceof RuntimeProtocolError&&/invalid model\/list/.test(error.message)?'model_list_invalid_response':
+          'model_list_unavailable';
+        return {status:'unavailable',models:[],error:code,observedAtUtc:new Date().toISOString()};
+      }
+    };
+    const pending=read();
+    this.modelListPending=pending;
+    try{
+      const value=await pending;
+      if(connection===this.connectionId&&this.isReady())
+        this.modelListCache={value,expiresAt:Date.now()+MODEL_LIST_CACHE_MS};
+      return {...value,models:[...value.models]};
+    }finally{if(this.modelListPending===pending)this.modelListPending=null;}
+  }
 
   private appServerArguments():string[]{
     return this.options.nativeUserInput===true?
@@ -587,6 +655,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   private disconnect(reason: string): void {
     const wasConnected = this.ready || !!this.child;
     this.ready = false;
+    this.modelListCache=null;
+    this.modelListPending=null;
     this.conversationQualifications.clear();
     for(const handle of [...this.pendingNativeInputs.keys()])this.closeNativeInput(handle,'disconnected');
     this.connectionId=null;
@@ -643,6 +713,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         (thread.model!=null&&thread.model!==result.model))
         throw new RuntimeUnknownError('thread/start',null,'full Session creation acknowledgement did not confirm native policy');
       const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER,
+        observedModel:safeModelIdentity(result.model),observedProvider:safeModelIdentity(result.modelProvider),
         ...(spec.actorId ? {resumeProfile:{actorId:spec.actorId,model:spec.model??null,sandbox:spec.sandbox,
           approvalPolicy:spec.approvalPolicy,...(spec.executionProfileRevisionId?
             {executionProfileRevisionId:spec.executionProfileRevisionId}:{})}} : {}) };

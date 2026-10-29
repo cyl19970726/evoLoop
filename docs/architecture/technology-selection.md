@@ -98,7 +98,7 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 表中飞书真实租户、可选 MCP 与完整图谱仍是后续工作；日程、Codex 运行时和 OpenViking 已有受限本机路径。S1a 固定版本：TypeScript 7.0.2、Fastify 5.12.7、Zod 4.6.7、pg 8.23.1、node-pg-migrate 9.0.0、React 19.3.1、Vite 8.3.4；真实验证使用 PostgreSQL 18.6。版本由各包 manifest 和根锁文件控制。JSON Schema 合同采用字符串时间、普通 JSON 数据，不使用不能等价导出的 transform/date 等结构；导出失败应报错，不能降成任意类型。飞书 SDK 的事件接入、cron-parser 的时区计算和 MCP 工具传输只提供各自原语，仍须遵守项目合同。[飞书 SDK][feishu] · [时间计算][cron] · [MCP SDK][mcp]
 
-前端补充按[工作台产品设计](../product/workbench.md)与[前端架构](frontend.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；S1a 的读取与复核页面已接通本机 API，其余完整页面和部署未实现。
+前端补充按[工作台产品设计](../product/workbench.md)与[前端架构](../frontend/architecture.md)的提案：同源工作台、共同 Query/Command API、可追溯版本和分源状态。存储表设计见[存储逻辑](storage.md)，PG/Git/Wiki 的资料桥接和纠正传播见[知识关联](knowledge-flow.md)。这修订此前暂不设计 Web 前端的建议；S1a 的读取与复核页面已接通本机 API，其余完整页面和部署未实现。
 
 ## 5. 数据与部署边界
 

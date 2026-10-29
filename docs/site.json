@@ -28,6 +28,56 @@
       "group": "产品与阶段"
     },
     {
+      "path": "docs/frontend/README.md",
+      "title": "前端文档",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/experience.md",
+      "title": "体验与信息架构",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/design-system.md",
+      "title": "设计系统与共同交互",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/overview.md",
+      "title": "项目总览",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/tasks.md",
+      "title": "任务列表与详情",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/documents.md",
+      "title": "过程文档阅读",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/knowledge.md",
+      "title": "知识空间",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/schedules.md",
+      "title": "日程与触发",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/team-and-sessions.md",
+      "title": "团队与具体 Session",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/architecture.md",
+      "title": "前端架构",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/product/agent-loop.md",
       "title": "Agent loop：四部分协作",
       "group": "产品与阶段"
@@ -126,7 +176,7 @@
     },
     {
       "path": "docs/architecture/frontend.md",
-      "title": "前端架构与交互边界",
+      "title": "前端架构旧入口",
       "group": "架构 · 界面与知识专题",
       "headingAliases": {
         "3-组件路由与查询模型": "2-组件路由与查询模型",

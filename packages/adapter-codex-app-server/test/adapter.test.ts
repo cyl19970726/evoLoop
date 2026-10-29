@@ -28,6 +28,8 @@ test("native naming changes only the exact owned Thread and verifies its readbac
     t.after(() => adapter.close());
     await adapter.open();
     const binding = await adapter.create(fullSpec);
+    assert.equal(binding.observedModel,"gpt-6-sol");
+    assert.equal(binding.observedProvider,"openai");
     assert.equal(await adapter.readThreadName(binding), null);
     if (mode === "name-sync-reject") await assert.rejects(() => adapter.setThreadName(binding, "方案设计"), RuntimeServerError);
     else if (mode === "name-sync-lost") await assert.rejects(() => adapter.setThreadName(binding, "方案设计"), RuntimeUnknownError);

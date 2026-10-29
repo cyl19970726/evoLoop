@@ -169,6 +169,7 @@ export class RuntimeWorkflowService {
       if (binding.owner !== "evoloop-codex-app-server" || binding.projectId !== projectId || binding.sessionId !== sessionId ||
         binding.roleId !== current.roleId || binding.cwd !== current.cwd || binding.authorizationScope !== current.authorizationScope ||
         !binding.nativeThreadId || !binding.nativeSessionId ||
+        (binding.observedModel != null && current.model != null && binding.observedModel !== current.model) ||
         current.executionProfile && (binding.resumeProfile?.executionProfileRevisionId !== current.executionProfile.revision.revisionId ||
           binding.resumeProfile.model !== current.executionProfile.revision.model ||
           binding.resumeProfile.actorId!==current.actorId||binding.resumeProfile.sandbox!==current.sandbox||
@@ -176,7 +177,9 @@ export class RuntimeWorkflowService {
         throw new DomainError("FOREIGN_BINDING", "native binding does not match reserved project session");
       }
       const next = { ...current, state: "ready" as const, version: current.version + 1,
-        nativeThreadId: binding.nativeThreadId, nativeSessionId: binding.nativeSessionId, updatedAt: this.deps.clock.now() };
+        nativeThreadId: binding.nativeThreadId, nativeSessionId: binding.nativeSessionId,
+        observedModel:binding.observedModel??null,observedProvider:binding.observedProvider??null,
+        updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeSession(next, current.version);
       await this.emit(tx, null, sessionId, "session.bound", "Owned native thread bound", null, projectId);
       return next;

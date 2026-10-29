@@ -8,6 +8,8 @@ import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { PgOrdinaryRunSubmissionStore } from "@evoloop/adapter-postgres/ordinary-run-submission";
 import { submitOrdinaryRun } from "@evoloop/core/ordinary-run-submission";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
+import { buildServer } from "../../apps/coordinator/src/server.js";
+import type { RuntimeRunner } from "../../apps/coordinator/src/runtime/runner.js";
 
 
 function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: PostgresUnitOfWork): RuntimeWorkflowService {
@@ -78,16 +80,38 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   const reserveSession = { type: "runtime.session.reserve", sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", sandbox: "danger-full-access", approvalPolicy: "never" };
   const sessionReceipt = applied(await issue(reserveSession, sessionOperation));
   assert.deepEqual(await issue(reserveSession, sessionOperation), sessionReceipt);
+  const oldCommand={...reserveSession,projectId,operationId:sessionOperation};
+  const ownerToken="o".repeat(40),otherToken="n".repeat(40);
+  const app=await buildServer({service:workflow,credentials:[
+    {token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:["read","write","review"]},
+    {token:otherToken,actorId:"other-reviewer",projectIds:[projectId],permissions:["read","write","review"]}],
+    runtime:{status:()=>({available:false,error:"offline"})} as RuntimeRunner});
+  try{
+    const post=(token:string,payload:unknown)=>app.inject({method:"POST",url:"/api/commands",
+      headers:{authorization:`Bearer ${token}`},payload});
+    const recovered=await post(ownerToken,oldCommand);
+    assert.equal(recovered.statusCode,200,recovered.body);
+    assert.deepEqual(recovered.json(),sessionReceipt,"same ID returns the durable result while runtime is unavailable");
+    const changed=await post(ownerToken,{...oldCommand,cwd:"/tmp/changed"});
+    assert.equal(changed.json().code,"OPERATION_REUSED","core still checks the original command hash");
+    const foreign=await post(otherToken,oldCommand);
+    assert.equal(foreign.json().code,"FORBIDDEN","another actor cannot read the old operation");
+    assert.deepEqual((await workflow.getOperation(principal,projectId,sessionOperation))?.result,sessionReceipt);
+  }finally{await app.close();}
   assert.equal((await runtime.beginSessionCreate(projectId, sessionId)).state, "creating");
   await runtime.recordSessionApprovalDeclined(projectId, sessionId, "owned-thread-1", null, "Approval declined before durable native binding");
   assert.equal((await workflow.listRuntimeSessionEvents(principal, projectId, sessionId)).some(e => e.kind === "runtime.approvalDeclined"), true);
   await assert.rejects(runtime.beginSessionCreate(projectId, sessionId), /already attempted/);
   assert.deepEqual(await runtime.recoverDispatching(projectId), { sessions: [sessionId], runs: [] });
-  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1" };
+  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1", observedModel:"gpt-6-sol",observedProvider:"openai" };
   await assert.rejects(runtime.bindSession(projectId, sessionId, { ...binding, projectId: randomUUID() }), /does not match/);
   assert.equal((await runtime.bindSession(projectId, sessionId, binding)).state, "ready");
   await assert.rejects(runtime.recordSessionApprovalDeclined(projectId, sessionId, "foreign-thread", null, "Invalid"), /owned thread/);
   assert.equal((await workflow.getRuntimeSession(principal, projectId, sessionId)).nativeThreadId, "owned-thread-1");
+  const observed=await workflow.getRuntimeSession(principal,projectId,sessionId);
+  assert.equal(observed.model,null,"configured default remains distinct from native observation");
+  assert.equal(observed.observedModel,"gpt-6-sol");
+  assert.equal(observed.observedProvider,"openai");
 
   const runId = randomUUID();
   const runOperation = randomUUID();
