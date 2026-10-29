@@ -1,6 +1,6 @@
 # Wiki 工作台：知识点、专题与关系浏览
 
-状态：**知识全文、来源、历史与候选审阅已有受限本机前端路径；专题和完整图谱仍是目标设计**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；没有因此声称直接复制了上游组件。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](frontend.md)及[Wiki 集成方案](wiki-integration.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。按 DEC-027，当前先用 OpenViking 0.5.1 承载受限外置知识空间，后续可能换成自研知识库；浏览器只依赖 evoLoop 的读取模型，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。真人使用与生产能力待验，见[本机运行](../development/local-run.md)。
+状态：**知识全文、来源、历史与候选审阅已有受限本机前端路径；专题和完整图谱仍是目标设计**。参考 nashsu/llm_wiki 固定版 **v0.6.12 / `48fd970e`** 的阅读交互与图谱实现；没有因此声称直接复制了上游组件。evoLoop 的共同 API、身份、权限、固定版本与命令规则以[前端架构](../frontend/architecture.md)及[Wiki 集成方案](wiki-integration.md)为准；[Wiki 维护机制](wiki-maintenance.md)负责贡献、综合、审阅与发布，[知识流](knowledge-flow.md)负责跨 Task/Document 的依据链，[存储设计](storage.md)负责 PG 主数据。按 DEC-027，当前先用 OpenViking 0.5.1 承载受限外置知识空间，后续可能换成自研知识库；浏览器只依赖 evoLoop 的读取模型，Wiki 正文和内部页关系不得在 PG 或浏览器再建可编辑副本。真人使用与生产能力待验，见[本机运行](../development/local-run.md)。
 
 本页先回答读者如何进入专题、读完整知识页并追踪修订，再说明查询与权限如何保证这些阅读路径；固定上游组件仅是后面的实现参考。
 
@@ -67,13 +67,13 @@ flowchart LR
   classDef data fill:#E2F4F2,stroke:#297A73,color:#154B47
 ```
 
-黄＝视图；蓝＝浏览器读取/临时交互；紫＝共同 API；青＝权威边界。浏览器只接收授权后的数据，不引入数据库驱动、Tauri 文件命令、上游服务凭据或模型客户端。TanStack Query 缓存只能加速读取；发布成功回读固定修订并使相应列表、页、图和待审查询失效。[前端架构](frontend.md#2-组件路由与查询模型)
+黄＝视图；蓝＝浏览器读取/临时交互；紫＝共同 API；青＝权威边界。浏览器只接收授权后的数据，不引入数据库驱动、Tauri 文件命令、上游服务凭据或模型客户端。TanStack Query 缓存只能加速读取；发布成功回读固定修订并使相应列表、页、图和待审查询失效。[前端架构](../frontend/architecture.md#2-组件路由与查询模型)
 
 建议的只读 query 形状是 `listKnowledge(project, type/topic/status/source, cursor)`、`getKnowledge(id, revision)`、`getTopicMembers(id, revision, cursor)`、`getLinks(id, revision, direction, cursor)`、`getGraphNeighborhood(focus, depth≤1, limit)`、`listReview(project, state, cursor)`。每个响应返回稳定 ID、固定 revision、内容/来源校验、状态、权限能力、`observedAt` 与缺项；图边另给类型、方向、两端 revision 和来源。搜索结果标记命中的是正文、来源摘要还是原件。服务端对列表、关系遍历、搜索和原件逐项鉴权并限量；不可达时显示最后核对时间和缺项，不把缓存旧页显示为当前有效。
 
 ### 焦点图的组件接缝与阅读联动
 
-图谱留在 `/knowledge/graph`，作为知识入口内的关系导航；总览／工作／知识仍是三个主入口，首个交付切片仍按[前端架构](frontend.md#6-实现切片与验收)先完成 Task、过程文档及固定依据的可导航读取。图在知识阅读切片中加入，不要求首次进入就加载全库或完成全局布局。
+图谱留在 `/knowledge/graph`，作为知识入口内的关系导航；总览／工作／知识仍是三个主入口，首个交付切片仍按[前端架构](../frontend/architecture.md#6-实现切片与验收)先完成 Task、过程文档及固定依据的可导航读取。图在知识阅读切片中加入，不要求首次进入就加载全库或完成全局布局。
 
 建议 `GraphScene` 接收共同 API 返回的有界 `GraphNeighborhood`、焦点/选中稳定 ID、过滤条件、加载/截断/缺项状态与可用能力，只上抛 `onFocus`、`onSelectNode`、`onSelectEdge`、`onExpand(cursor)`、`onOpenKnowledge(id, revision)`、`onOpenEvidence(edgeId)` 等意图事件；页面容器负责路由、授权查询、版本比较和缓存失效。`RendererGraphologySigma` 是可替换的渲染实现建议，只接收 `GraphScene` 的可视节点/边并回报命中与视口事件，不导入 OpenViking SDK、Tauri/store，也不自行推断关系或读取全库。关系列表与图使用同一查询结果和事件；以后换 SVG、Canvas 或别的渲染器，阅读与查询合同不变。具体字段以[Wiki 集成方案的拟议 DTO](wiki-integration.md#5-查询-dto-与错误语义)和后续浏览器 schema 为准，这里的组件名/事件是实施建议。
 
@@ -81,9 +81,9 @@ flowchart LR
 
 邻域查询由共同 API 限深度、节点/边数和游标，响应标记 `truncated`、`nextCursor`、分源缺项和水位；界面明确显示“仅部分关系”，展开只请求下一页。搜索、筛选和邻域均逐项执行项目权限；缓存键至少隔离身份、项目、授权版本、焦点/过滤/游标、固定修订与知识投影代次。权限收紧、切项目/身份、发布或撤回后丢弃相应图/列表/页缓存并重新核对，旧图不得继续以当前可见关系呈现。切换知识修订时取消旧请求和布局计算；若后续使用 ForceAtlas2 worker，由 `GraphScene` 创建/中止并在卸载时释放，渲染器释放图实例、监听器和画布资源。布局只影响坐标，不改变边语义；小邻域可先用确定性简单布局。
 
-图页可固定焦点修订，也可请求“当前”投影；两种视图都显示各自的知识 manifest/索引水位与 `observedAt`。固定页修订并不保证整个邻域来自同一历史瞬间：邻居、反链索引、PG Task 关系和来源端可能各有核对时间。版本切换保留焦点 ID，但重查邻域、双链和来源，明确标记缺项/滞后；不得把局部版本比较呈现为全库历史原子快照。[跨源一致性](frontend.md#2-组件路由与查询模型)
+图页可固定焦点修订，也可请求“当前”投影；两种视图都显示各自的知识 manifest/索引水位与 `observedAt`。固定页修订并不保证整个邻域来自同一历史瞬间：邻居、反链索引、PG Task 关系和来源端可能各有核对时间。版本切换保留焦点 ID，但重查邻域、双链和来源，明确标记缺项/滞后；不得把局部版本比较呈现为全库历史原子快照。[跨源一致性](../frontend/architecture.md#2-组件路由与查询模型)
 
-命令仅走共同 API：`submitKnowledgeCorrection` 创建候选，`reviewKnowledgeCandidate` 记录决定，`publishKnowledgeCandidate` 在受控写入口核旧 revision 并回读，`requestImpactReview` 连接 PG 跨对象影响。写入成功后回包丢失用同一 operation ID 查询和核对；Review 状态、Wiki 发布、派生索引完成及新 session 实际采用分别显示。[维护机制](wiki-maintenance.md#首片与发布门槛) · [前端命令流程](frontend.md#3-修改刷新与失败如何呈现)
+命令仅走共同 API：`submitKnowledgeCorrection` 创建候选，`reviewKnowledgeCandidate` 记录决定，`publishKnowledgeCandidate` 在受控写入口核旧 revision 并回读，`requestImpactReview` 连接 PG 跨对象影响。写入成功后回包丢失用同一 operation ID 查询和核对；Review 状态、Wiki 发布、派生索引完成及新 session 实际采用分别显示。[维护机制](wiki-maintenance.md#首片与发布门槛) · [前端命令流程](../frontend/architecture.md#3-修改刷新与失败如何呈现)
 
 ## 3. 从 nashsu 固定版抽取的前端机制
 

@@ -2,7 +2,7 @@
 
 2026-10-29。此页登记当前方向及待验证选择；引用来源是已公开抽象的项目要求和[历史来源说明](references/lineage.md)。原始会话不随公开仓库发布。编号用于其他文档引用，详细方案只在所属正文维护。
 
-当前有效边界速查：[两张产品卫星图](product/definition.md#两张产品卫星图经营交付与组织改进)（DEC-034）· [两维度与四部分](product/definition.md#两个维度四个组成部分)（DEC-012）· [领域自主与分工](product/daily-loop.md#一条提议怎样变成可做的任务)（DEC-002/013/034）· [任务、过程文档、Git 与外置 Wiki 的权威](architecture/project-data.md)（DEC-006/018/022/023）· [表格和 Markdown/HTML 全文](product/workbench.md#从表格打开完整过程文档)（DEC-024）· [阶段与当前状态](roadmap.md)。旧决定、被取代部分和 PROP 的验证状态仍以下表及其来源为准。
+当前有效边界速查：[两张产品卫星图](product/definition.md#两张产品卫星图经营交付与组织改进)（DEC-034）· [两维度与四部分](product/definition.md#两个维度四个组成部分)（DEC-012）· [领域自主与分工](product/daily-loop.md#一条提议怎样变成可做的任务)（DEC-002/013/034）· [任务、过程文档、Git 与外置 Wiki 的权威](architecture/project-data.md)（DEC-006/018/022/023）· [表格和 Markdown/HTML 全文](frontend/pages/documents.md#从表格打开完整过程文档)（DEC-024）· [阶段与当前状态](roadmap.md)。旧决定、被取代部分和 PROP 的验证状态仍以下表及其来源为准。
 
 ## 用户已确定的方向
 
@@ -58,7 +58,7 @@
 | PROP-006 | core、contracts 与平台适配分层，单活 daemon 装配；日程与任务主数据按 DEC-018 存于 evoLoop | 语言与部署选型、外置运行记录实现、真实表结构及时间/去重/重叠语义 |
 | PROP-007 | 主应用推荐 TS/Node 24 LTS、npm workspaces、Fastify、Zod；主数据及运行存储按 DEC-017/018 使用 PostgreSQL | S1a 已采用并锁定 TS/Node/npm/Fastify/Zod、PG 驱动与迁移，见[技术选型](architecture/technology-selection.md)；协议迁移与生产恢复仍待后续验证 |
 | PROP-008 | OpenViking 接入方向已由 DEC-027 采纳；独立服务、认知维护留在 evoLoop 与有限 fork 仍按能力细化 | v0.5.1 是新候选而非已通过版本；核所有写入入口、来源撤回、修订/恢复及许可安排后再确定补丁 |
-| PROP-009 | 同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](architecture/frontend.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，远程手机访问需登录/常在线部署 |
+| PROP-009 | 同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](frontend/architecture.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，远程手机访问需登录/常在线部署 |
 | PROP-010 | 采用固定 Task/Document 修订、类型化关系和来源桥接，连接 PG、Git 与外置 Wiki | 见[存储](architecture/storage.md)与[知识关联](architecture/knowledge-flow.md)；需实测约束、纠正传播、权限变化和跨系统恢复 |
 | PROP-011 | 经共同 API 改造知识阅读/关系/Review，按固定来源接 OpenViking 与 PG/Git；原型覆盖六条产品路径 | [集成方案](architecture/wiki-integration.md)和[原型审阅](research/workbench-prototype-review.md)说明切片；待验证代码移植、许可安排、发布恢复和真实效果 |
 

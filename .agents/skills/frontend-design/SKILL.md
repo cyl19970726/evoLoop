@@ -6,6 +6,10 @@ license: Complete terms in LICENSE.txt
 
 # Frontend Design
 
+## evoLoop project entry
+
+Start at [`docs/frontend/README.md`](../../../docs/frontend/README.md), then read the affected page specification and the shared experience/design-system rules before changing UI. Product goals and complete business scenarios remain in `docs/product/`; API/data/authorization contracts remain in `docs/architecture/`. Preserve the two navigation rails, use real scoped API data, and distinguish target design, implementation, author checks, independent use and human feedback. Verify selected-object identity, fixed revisions, unknown recovery and return paths at the changed surface. This project-local skill supports frontend engineering; it does not replace the `evoloop-workflow` business skill or authorize deployment.
+
 Approach this as the design lead at a design studio known for giving every client a distinct visual identity that is not mistaken for anyone else's. This client has already rejected proposals that felt cliché or templated, and is paying for a distinctive point of view: make deliberate, opinionated choices about palette, typography, and layout that are specific to this brief, and take aesthetic risk if justified.
 
 ## Ground your designs in the subject matter
