@@ -20,9 +20,10 @@
 <text class="plain-edge-label plain-label-main" x="950" y="203" text-anchor="middle">Task 投影</text>
 <path class="plain-edge plain-feedback" d="M1030,360 L1048,360 L1048,195 L1020,195 L1020,145 L1010,145" marker-end="url(#plain-feedback-arrow)"/>
 <text class="plain-edge-label plain-label-feedback" x="1015" y="285" text-anchor="middle">编辑后受控核验</text>
-<g class="plain-node"><title>目标与判断责任：人类 · 认知／领域 Session</title><rect x="30" y="80" width="205" height="90" rx="4"/>
+<g class="plain-node"><title>目标与判断责任：人类 · 系统／业务／User Session</title><rect x="30" y="80" width="205" height="90" rx="4"/>
 <text class="plain-node-label" x="42" y="105">目标与判断责任</text>
-<text class="plain-node-line" x="42" y="126">人类 · 认知／领域 Session</text>
+<text class="plain-node-line" x="42" y="126">人类 · 系统／业务／User</text>
+<text class="plain-node-line" x="42" y="142">Session</text>
 </g>
 <g class="plain-node"><title>人机入口：人：工作台观察与反馈；Agent：业务 skill → CLI</title><rect x="310" y="80" width="205" height="90" rx="4"/>
 <text class="plain-node-label" x="322" y="105">人机入口</text>

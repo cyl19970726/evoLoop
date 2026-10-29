@@ -1,0 +1,214 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "目标蓝图 · Evocation 与 User Session 联合改进",
+    "locale": "zh-CN",
+    "output": "docs/assets/company-evocation-loop.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "evidence",
+      "label": "独立输入 · 用户方向、内部事实与亲自体验"
+    },
+    {
+      "id": "system",
+      "label": "系统职责二 · Evocation 复盘与自我提升"
+    },
+    {
+      "id": "change",
+      "label": "把发现转成方法与组织调整"
+    },
+    {
+      "id": "evaluate",
+      "label": "User Session 复测 · Evocation 据结果采纳"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "intent",
+      "lane": "evidence",
+      "col": 3,
+      "type": "external",
+      "label": "用户方向与intent",
+      "sublabel": "Human Requirement 按需澄清"
+    },
+    {
+      "id": "outcome",
+      "lane": "evidence",
+      "col": 1,
+      "type": "database",
+      "label": "Leader与业务事实",
+      "sublabel": "trace、交付、返工与成本"
+    },
+    {
+      "id": "user",
+      "lane": "evidence",
+      "col": 2,
+      "type": "backend",
+      "label": "User Session 亲自体验",
+      "sublabel": "产品、交接、对话与成果"
+    },
+    {
+      "id": "observe",
+      "lane": "system",
+      "col": 2,
+      "type": "backend",
+      "label": "Evocation 联合复盘",
+      "sublabel": "汇合内外证据与每日BP"
+    },
+    {
+      "id": "diagnose",
+      "lane": "system",
+      "col": 3,
+      "type": "backend",
+      "label": "区分改进对象",
+      "sublabel": "交接关系／角色方法／产品"
+    },
+    {
+      "id": "improvement",
+      "lane": "system",
+      "col": 4,
+      "type": "database",
+      "label": "改进任务与资源",
+      "sublabel": "授权内建Task或调整Session"
+    },
+    {
+      "id": "trial",
+      "lane": "change",
+      "col": 4,
+      "type": "backend",
+      "label": "试行方法与分工",
+      "sublabel": "skill、工具、职责与容量"
+    },
+    {
+      "id": "check",
+      "lane": "evaluate",
+      "col": 4,
+      "type": "security",
+      "label": "User Session 复测",
+      "sublabel": "下一真实任务与用户经历"
+    },
+    {
+      "id": "adopt",
+      "lane": "evaluate",
+      "col": 5,
+      "type": "database",
+      "label": "Evocation 判断去留",
+      "sublabel": "有效采用，无效修订或撤回"
+    }
+  ],
+  "edges": [
+    {
+      "id": "s0",
+      "from": "intent",
+      "to": "observe",
+      "label": "用户想要什么",
+      "role": "branch"
+    },
+    {
+      "id": "s1",
+      "from": "outcome",
+      "to": "observe",
+      "label": "内部轨迹和结果",
+      "role": "branch"
+    },
+    {
+      "id": "s2",
+      "from": "user",
+      "to": "observe",
+      "label": "体验证据与卡点",
+      "role": "main"
+    },
+    {
+      "id": "s3",
+      "from": "observe",
+      "to": "diagnose",
+      "label": "找可改原因",
+      "role": "main"
+    },
+    {
+      "id": "s4",
+      "from": "diagnose",
+      "to": "improvement",
+      "label": "比较替代办法",
+      "role": "main"
+    },
+    {
+      "id": "s5",
+      "from": "improvement",
+      "to": "trial",
+      "label": "与Leader共享任务与排期",
+      "role": "main"
+    },
+    {
+      "id": "s6",
+      "from": "trial",
+      "to": "check",
+      "label": "实际消费与复测",
+      "role": "main"
+    },
+    {
+      "id": "s7",
+      "from": "check",
+      "to": "adopt",
+      "label": "效果决定去留",
+      "role": "main"
+    },
+    {
+      "id": "s8",
+      "from": "adopt",
+      "to": "observe",
+      "label": "带新结果进入下轮",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "一对互补的观察者",
+      "items": [
+        "User Session先按公开用户目标真实操作、对话和消费成果，保留原始困惑与证据。",
+        "Evocation再结合Leader和业务Session trace解释原因；不先把审计答案教给体验者。",
+        "两者分工互补，User Session不只是读trace后给一段评价。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "复盘至少覆盖这些问题",
+      "items": [
+        "横向：Leader和其他Session如何交接，哪里反复传话、遗漏或等待。",
+        "纵向：单个角色怎样工作，哪些方法可提炼为skill，哪些错误的机制需要修。",
+        "端到端：用户能否使用产品、理解成果并完成目标；项目本身的新需求也进入Task。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Evocation可以推动改变",
+      "items": [
+        "在授权内可形成改进Task、提炼和试用项目skill、准备或调整Session。",
+        "日常依赖与任务顺序和Leader共享，不另建一套相互冲突的任务表。",
+        "不是每次事故都加规则，也不是每次改进都增加常驻Session；按真实收益保留或撤回。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "每天约一小时看懂全局",
+      "items": [
+        "Leader贡献业务进度；User Session贡献亲用结果；Evocation汇总问题、根因、改进和经验。",
+        "BP先给大图和重点取舍，再下钻证据；一小时是讨论预算，不是全天工作的审批闸。",
+        "Human Requirement可在晨间或单独对话中澄清方向，结论回到intent、Document与Task。"
+      ]
+    }
+  ],
+  "mainPath": [
+    "user",
+    "observe",
+    "diagnose",
+    "improvement",
+    "trial",
+    "check",
+    "adopt"
+  ]
+}

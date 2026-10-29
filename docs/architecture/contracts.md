@@ -88,7 +88,7 @@ HTML 原件保存为数据，不直接执行。默认阅读策略是静态预览
 
 贡献与发布分开：业务 session 提交“旧判断、观察与片段、解释/反例、建议范围”，Wiki 维护者负责与现行页综合、保留相反解释、处理过时链接和影响任务。新来源时间更晚不自动成为更正确的结论。来源撤回触发依赖查找及复核；受影响页先标待审，不能仅删除源记录就假定综合正文同步正确。决定的权威来自人类或授权范围内的责任者，不来自模型语气。
 
-专门认知 session 初期可同时承担 Wiki 综合维护；其项目判断和下一步选择通过任务与阶段约定落实，KnowledgeRepository 不因存储了一个建议而自动批准或执行该建议。Wiki evaluator 的产品验收范围见[建设与有效性评价](../product/wiki-evaluation.md)。
+Wiki 综合维护由有权维护者承担，领域判断由相应责任者承担；Leader 组织受影响任务，Evocation 结合独立体验研究跨任务方法和组织问题。现有“认知”模板仅是历史配置事实，不自动授予发布或统一审批职责。下一步选择通过任务与阶段约定落实，KnowledgeRepository 不因存储了一个建议而自动批准或执行该建议。Wiki evaluator 的产品验收范围见[建设与有效性评价](../product/wiki-evaluation.md)。
 
 页发布须声明读入基线与操作 ID。当前选型未能承诺可靠的页级条件写；在受限试点中采用单维护者串行发布、发布前回读与快照，旁路写入视为必须对账的风险。只有固定版本证明服务器确实拒绝旧基线写入，才可宣称多维护者安全发布。两候选的已观察结果见[验证摘要](../references/validation-summary.md)；按 DEC-027，首个集成后端选择 OpenViking，具体版本及生产能力尚未验收。
 
@@ -175,7 +175,7 @@ Codex App Server 协议版本由本机运行配置显式固定；省略时维持
 
 `runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。
 
-分工管理者能读取任务负荷、结果、使用反馈和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 session 可提出，分工管理者不控制全部业务任务。[方向出处](../references/lineage.md)
+Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回；Leader 组织试行承接。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 Session 可提出，Evocation 不控制全部业务任务。[产品职责](../product/functional-scenarios.md#共同前提谁负责信息在哪里)
 
 要在后台 runner 已运行时给首次认知固定 trace，`loop.enroll` 可选以 paused 状态登记，再由原有声明命令以 Loop CAS 固定材料，最后通过原有 `loop.state active` 开始。旧 enroll 省略初态仍为 active，历史操作摘要与预算不变；暂停中的 runner 不建立新的 Task/Dispatch/Run。
 
@@ -199,7 +199,7 @@ Codex App Server 协议版本由本机运行配置显式固定；省略时维持
 
 首期仍用单活协调者串行派发，租约、并发条件和失去独占后的停写行为在 PostgreSQL 上验证；不再把飞书记录字段当独占锁。数据库条件更新能约束内部抢占，却不提供跨 Codex、飞书和 Wiki 的恰好一次副作用。
 
-协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；各对象显示当前读回的状态、观察时间与下一责任；Run 的终态不能代替任务验收或消费者使用。
+协调者消费 PostgreSQL 中 TaskStore 当前状态和 RoleRegistry 约定，按已授权规则选责任者，再调用 SessionRuntime；它不作知识真值或产品价值的最终裁决。最小运行记录保留：任务/Role/Session、派发操作 ID、预期动作、请求时间、运行时回执、最近已知状态、检查水位与下一次核对时间。业务 Task、外部同步 Sync、运行 Run 和效果 Review 各有状态，不合并成一个“完成”；各对象显示当前读回的状态、观察时间与下一责任；Run 的终态不能代替任务验收或消费者使用。普通受管执行者的 `ordinary.submit` 先绑定当前 Run、Task 修订和固定结果意图；原 Run 未知或仍在途时不伪造 Delivery，终态封存核对后才生成本轮唯一固定交付。声明消费者对当前交付的 Observation 与有权者的 Task close 各自独立；返工后的旧交付或旧 `used` 不验收新修订。业务操作方法见[Agent CLI](../development/agent-cli.md#普通-run-本人提交与终态封存)，完整用户接力见[功能场景](../product/functional-scenarios.md#场景-2业务-session-怎样接任务提交结果并带回问题)。
 
 `GET /api/projects/:projectId/orchestration/work-status` 为已分页 Task 列表补充最多50项的工作事实，只依赖项目读取权限和已迁移数据库，不依赖自动 Loop、controller 或原生运行时启用。普通启动和受管模式各只注册一次同一读取入口；读取不启动泵、派发或模型。无派发的普通 Task 保持普通工作标签，存储读取失败明确报错，不伪装为没有工作；受管 worker 的读取范围仍由原鉴权限制。
 

@@ -6,7 +6,7 @@
 
 ## 责任和数据边界
 
-认知 session 负责比较新旧依据、综合认识、列出反例和适用条件，并提交候选差异；人或授权维护者作审阅决定。外置 KnowledgeRepository 保存来源正文、知识正文与固定修订、知识内部的来源依赖和被取代关系。若选择 OpenViking，它承载内容读写、检索和可选 Wiki compile；普通 API 写页不自动完成综合、冲突裁决或撤回传播。[OpenViking 固定版接入研究](../research/wiki-base-selection-20261019.md)
+提出或采用认识的领域责任者比较新旧依据、列出反例和适用条件，并提交候选差异；人或授权维护者作审阅决定。Leader 组织受影响 Task 的复核，Evocation 只在跨任务方法或组织问题上结合 User Session 体验提出改进。外置 KnowledgeRepository 保存来源正文、知识正文与固定修订、知识内部的来源依赖和被取代关系。若选择 OpenViking，它承载内容读写、检索和可选 Wiki compile；普通 API 写页不自动完成综合、冲突裁决或撤回传播。[OpenViking 固定版接入研究](../research/wiki-base-selection-20261019.md)
 
 evoLoop 的 PostgreSQL 保存 Task、Document/Revision、跨对象 Relation、知识固定引用、维护任务、贡献/投递回执、影响复核和发布操作结果；不复制可编辑 Wiki 正文或内部依赖。飞书只是 Task connector。工作台显示来源、候选、差异、待审阅与实际使用证据，通过共同 API 发命令，不在浏览器另设一套发布状态。外置知识端不可达或固定修订失效时，需该依据的派发暂停；PG 中的回执不能伪装成内容已被采纳。[知识流](knowledge-flow.md#3-任务执行时怎样读取) · [存储设计](storage.md#权威与共同键)
 
@@ -17,7 +17,7 @@ flowchart TB
   P["PG / Git 固定修订<br/>Task · Document · 正式规范 · 亲用反馈"]:::source
   B["SourceBridge<br/>白名单 · 权限 · hash · 回执"]:::bridge
   S["外置来源修订<br/>原 ID · revision · 时间 · 状态"]:::source
-  A["认知 session<br/>来源分析 → 旧页/反例比较 → 综合"]:::agent
+  A["领域责任者与有权维护者<br/>来源分析 → 旧页/反例比较 → 综合"]:::agent
   C["候选页与差异<br/>依据 · 争议 · 取代范围"]:::knowledge
   R["Review<br/>人或授权维护者决定"]:::review
   K["外置 Wiki 固定修订<br/>发布后回读核对"]:::knowledge
@@ -42,7 +42,7 @@ flowchart TB
 
 ## 首片与发布门槛
 
-维护时先区分四种结果：候选已形成、审阅已作决定、正文已发布并回读、后续 session 已实际采用。若来源撤回、权限收紧或旧判断与新证据冲突，认知 session 应保留相反解释和旧修订，提出受影响页面与 Task/Document 的复核；未核实的关键依据挡住新派发。发布操作结果未知时按相同操作 ID 对账，不能重新发一条新操作。详细命令时序见[Wiki 集成接缝](wiki-integration.md#4-命令发布和纠正)。
+维护时先区分四种结果：候选已形成、审阅已作决定、正文已发布并回读、后续 Session 已实际采用。若来源撤回、权限收紧或旧判断与新证据冲突，领域责任者与有权维护者应保留相反解释和旧修订，提出受影响页面与 Task/Document 的复核；未核实的关键依据挡住新派发。发布操作结果未知时按相同操作 ID 对账，不能重新发一条新操作。详细命令时序见[Wiki 集成接缝](wiki-integration.md#4-命令发布和纠正)。
 
 用一份已采纳原生需求、一份 Git 固定规范、一条 Task、两个互有分歧的来源和一个 Wiki 主题完成纵向试验：贡献固定来源 → 编出候选 → 审阅差异 → 单发布者按旧 revision 发布并回读 → 新 session 使用该 revision 完成可检查产物 → 用户纠正/撤回一来源 → 影响旧页和 Task/Document → 复核后再由新 session 使用。保留所有候选、被取代判断、未决解释和实际采用证据；与直接读取原始材料对照，不能以页数、通知送达或一次答对断言收益。[共同验证协议](../research/wiki-validation-protocol-20261019.md)
 
@@ -51,8 +51,8 @@ flowchart TB
 
 | 固定版机制与证据 | evoLoop 落点 | 必须增加的差异 | 首次验证 |
 | --- | --- | --- | --- |
-| `purpose.md` 定目标、`schema.md` 定类型/路由；[模板](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/templates.ts)、[生成规则](../research/nashsu-llm-wiki/feature-workflows.md#23-模型整理与知识更新) | 外置 Wiki 空间的项目约束与认知 session 维护规则 | 类型注明事实/解释/假设/决定/争议，规则引用固定版本；schema 不替代来源核对 | 未接受提议不得被写成已决定 |
-| 先分析材料，再生成来源摘要与实体/概念页；[摄入](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/ingest.ts) | SourceBridge 固定输入，认知 session 比较旧 Wiki 后产候选 | 跨旧页寻找影响；新来源不能只增加新页。S02 修正后旧中心页未传播已实测 | 新规则替代旧建议，旧导航页与受影响页都更新 |
+| `purpose.md` 定目标、`schema.md` 定类型/路由；[模板](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/templates.ts)、[生成规则](../research/nashsu-llm-wiki/feature-workflows.md#23-模型整理与知识更新) | 外置 Wiki 空间的项目约束与维护规则 | 类型注明事实/解释/假设/决定/争议，规则引用固定版本；schema 不替代来源核对 | 未接受提议不得被写成已决定 |
+| 先分析材料，再生成来源摘要与实体/概念页；[摄入](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/ingest.ts) | SourceBridge 固定输入，有权维护者与领域责任者比较旧 Wiki 后产候选 | 跨旧页寻找影响；新来源不能只增加新页。S02 修正后旧中心页未传播已实测 | 新规则替代旧建议，旧导航页与受影响页都更新 |
 | 同页正文合并、来源数组合并；[独立合并函数](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/page-merge.ts) | 候选差异生成可参考其算法或单独评估抽取 | 合并前固定旧页 revision、来源 revision；冲突保留两解，发布以服务端基线校验 | 同基线两候选只允许一版发布；失败可重审 |
 | 页级 `sources`、Related/反例及 Review 阅读；[来源生命周期](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/lib/source-lifecycle.ts)、[Review store](https://github.com/nashsu/llm_wiki/blob/48fd970e206a02a6d2028d1dbfc41b7a0345bf0b/src/stores/review-store.ts) | 外置 Wiki 存内部依赖；工作台装配可核来源、差异及审阅入口；PG 记决定与影响事项 | 固定 source/knowledge revision、受影响页/主张待复核；撤回不能只删 `sources` 或把另一解释判真 | 撤回 S05 后正文标待复核，E17 两解仍可追溯 |
 
