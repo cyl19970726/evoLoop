@@ -104,6 +104,7 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   assert.equal(await page.getByText("已读队列范围内没有确认的领取占用。").count(),0);
   await fetch(`${base}/__fixture/mode?value=normal`);
   await page.getByRole("button",{name:"重新读取"}).click();
+  await page.locator(".overview-queue-details > summary").click();
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   await page.getByRole("link",{name:"下一任务"}).waitFor();
   await page.getByText(/等待消费者使用与验收/).first().waitFor();

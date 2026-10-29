@@ -149,8 +149,10 @@ function ProjectChooser({ token, principal, receipts, operationNotice, onRefresh
   const [refresh, setRefresh] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [reading, setReading] = useState(true);
   useEffect(() => {
     let active = true;
+    setReading(true);
     Promise.all(principal.projectIds.map(async id => {
       try { return { project: await api(token).project(id), id }; }
       catch { return { project: null, id }; }
@@ -158,6 +160,7 @@ function ProjectChooser({ token, principal, receipts, operationNotice, onRefresh
       if (!active) return;
       setProjects(results.flatMap(r => r.project ? [r.project] : []));
       setMissing(results.filter(r => !r.project).map(r => r.id));
+      setReading(false);
     });
     return () => { active = false; };
   }, [principal.projectIds, token, refresh]);
@@ -170,11 +173,13 @@ function ProjectChooser({ token, principal, receipts, operationNotice, onRefresh
   }
   return <section className="content narrow">
     <div className="eyebrow">选择项目</div><h1>你的项目</h1>
+    <p className="lede">进入具体项目，核对当前工作、完整依据与下一责任。</p>
     <button type="button" className="quiet" onClick={refreshProjects} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新项目"}</button>
     {refreshError && <Alert kind="error">刷新失败：{refreshError}</Alert>}
     {operationNotice && <Alert>{operationNotice}</Alert>}
     {receipts.map(receipt => <OperationCheck key={receipt.operationId} receipt={receipt} token={token} onConfirmed={result => { onConfirmed(receipt, result); setRefresh(value => value + 1); }} />)}
-    {projects.length ? <div className="project-list">{projects.map(p => <a className="project-item" key={p.id} href={href(p.id, "work")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入任务列表 →</span></a>)}</div> : <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
+    {reading && <p role="status">正在核对授权项目；已有列表来自上次读取。</p>}
+    {projects.length ? <div className="project-list">{projects.filter(p => principal.projectIds.includes(p.id)).map(p => <a className="project-item" key={p.id} href={href(p.id, "work")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入任务列表 →</span></a>)}</div> : !reading && <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
     {missing.length > 0 && <Alert>有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在项目不会被覆盖。</Alert>}
     {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { setRefresh(v => v + 1); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
   </section>;
@@ -328,8 +333,8 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       return <EvaluationPage context={context} evaluationId={r.id} selectedRevision={r.revision} refresh={refresh}
         taskId={query.get("taskId") ?? undefined} knowledgePageId={query.get("knowledgePageId") ?? undefined} />;
     }
-    if (r.section === "operations") return <div className="content"><h1 tabIndex={-1}>待核对操作</h1><p className="lede">结果未知时先查原操作 ID，确认前不要重复提交。</p>{operations}</div>;
-    if (r.section === "repository") return <div className="content"><h1 tabIndex={-1}>仓库规范</h1><p className="lede">产品、架构与开发规范由仓库 docs 维护。它们与过程文档分别保存。</p><section className="panel"><h2>正式文档</h2><div className="repository-links"><a href="https://github.com/cyl19970726/evoLoop/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">贡献与变更入口 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/README.md" target="_blank" rel="noreferrer">文档目录 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/decisions.md" target="_blank" rel="noreferrer">当前决定 ↗</a></div><p className="muted">以上打开仓库现行文档；任务实际采用的固定 commit 与摘要在相应任务依据中查阅。</p></section><details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
+    if (r.section === "operations") return <div className="content"><h1 tabIndex={-1}>待核对操作</h1><p className="lede">核对当前身份在本项目保存的操作回执；结果未知时沿原 ID 查询，确认前不重复提交。知识发布/撤回及协作的专用回执仍在相应页面。</p>{operations}</div>;
+    if (r.section === "repository") return <div className="content"><h1 tabIndex={-1}>仓库规范</h1><p className="lede">产品、架构与开发规范由仓库 docs 维护。它们与过程文档分别保存。</p><section className="panel"><h2>正式文档</h2><div className="repository-links"><a href="https://github.com/cyl19970726/evoLoop/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">贡献与变更入口 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/README.md" target="_blank" rel="noreferrer">文档目录 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/frontend/README.md" target="_blank" rel="noreferrer">前端页面与交互文档 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/product/definition.md" target="_blank" rel="noreferrer">产品目标与两条循环 ↗</a><a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/decisions.md" target="_blank" rel="noreferrer">当前决定 ↗</a></div><p className="muted">以上打开仓库现行文档；任务实际采用的固定 commit 与摘要在相应任务依据中查阅。</p></section><details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     const components = { journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : r.session ? <RuntimePanel context={context} refresh={refresh} targetSessionId={r.session} /> : <TeamWorkspace context={context} refresh={refresh} />, schedules: <SchedulingPanel context={context} refresh={refresh} />, roles: <RolesPanel context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };

@@ -77,7 +77,7 @@ export function CollaborationPanel({ context, refresh }: { context: MutationCont
   return <div className="journey-board"><section className="panel"><div className="panel-head"><h2>飞书任务协作</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
     {loading&&<p>正在读取协作状态…</p>}{error&&<Notice error>{error}</Notice>}
     {!loading&&!error&&<><p><strong>{!configured?"未配置":verifiedAt?"已核实远端读取":"已配置，尚未核实远端读取"}</strong>{verifiedAt&&` · 最近核实 ${stamp(verifiedAt)}`}</p>
-      {connectionError&&<Notice error>{connectionError}</Notice>}
+      {connectionError&&<Notice error={configured}><p>{configured ? "本次未能核实飞书连接，请先回读状态和原操作结果。" : "飞书连接尚未配置。当前可继续使用项目内的任务、文档和使用记录。"}</p><details><summary>连接诊断</summary>{connectionError}</details></Notice>}
       <p>任务、投影同步、通知和实际阅读分别核对；远端表格不会直接改写已接受任务。</p>
       {configured&&<button type="button" disabled={!allowed||busy||pending.some(x=>x.kind==="poll")} onClick={()=>void action("poll",context.projectId,undefined,()=>client.poll())}>回读远端变化</button>}
       {pending.length>0&&<Notice error>有 {pending.length} 项写入结果尚未核实。仅保存项目、对象与操作 ID，没有保存令牌。先回读状态和尝试记录；未知投影只可对账。</Notice>}

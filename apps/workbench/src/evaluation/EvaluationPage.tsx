@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EvaluationAssessment, EvaluationAttempt, EvaluationConclusion, EvaluationFixedRef, EvaluationRevision, RuntimeRunRecord, RuntimeSessionRecord, TaskDetail } from "@evoloop/contracts";
 import { api, errorText, safeArtifactHref } from "../api";
 import { date } from "../ui/shared";
@@ -22,34 +22,45 @@ function FixedRef({ value, projectId, currentTitle }: { value: EvaluationFixedRe
 }
 
 export function EvaluationPage({ context, evaluationId, selectedRevision, refresh, taskId, knowledgePageId }: { context: MutationContext; evaluationId?: string; selectedRevision?: string; refresh: number; taskId?: string; knowledgePageId?: string }) {
-  const [list, setList] = useState<EvaluationRevision[]>([]);
+  const scope = JSON.stringify([context.token, context.projectId, context.principal.actorId, evaluationId, selectedRevision, taskId, knowledgePageId]);
+  const [loadedScope, setLoadedScope] = useState("");
+  const [storedList, setList] = useState<EvaluationRevision[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [read, setRead] = useState<EvaluationRead | null>(null);
-  const [error, setError] = useState("");
+  const [storedRead, setRead] = useState<EvaluationRead | null>(null);
+  const [storedError, setError] = useState("");
+  const list = loadedScope === scope ? storedList : [];
+  const read = loadedScope === scope ? storedRead : null;
+  const error = loadedScope === scope ? storedError : "";
   const [epoch, setEpoch] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const generation = useRef(0);
   useEffect(() => {
     let active = true;
+    generation.current++;
+    setLoading(true);
     setError(""); setRead(null); setList([]); setCursor(null);
     if (evaluationId) api(context.token).evaluation(context.projectId, evaluationId, selectedRevision)
-      .then(value => { if (active) setRead(value); }).catch(cause => { if (active) setError(errorText(cause)); });
+      .then(value => { if (active) { setRead(value); setLoadedScope(scope); } }).catch(cause => { if (active) { setError(errorText(cause)); setLoadedScope(scope); } }).finally(() => { if (active) setLoading(false); });
     else api(context.token).evaluations(context.projectId, undefined, taskId, knowledgePageId)
-      .then(value => { if (active) { setList(value.items); setCursor(value.nextCursor); } }).catch(cause => { if (active) setError(errorText(cause)); });
-    return () => { active = false; };
-  }, [context.token, context.projectId, evaluationId, selectedRevision, taskId, knowledgePageId, refresh, epoch]);
+      .then(value => { if (active) { setList(value.items); setCursor(value.nextCursor); setLoadedScope(scope); } }).catch(cause => { if (active) { setError(errorText(cause)); setLoadedScope(scope); } }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; generation.current++; };
+  }, [context.token, context.projectId, evaluationId, selectedRevision, taskId, knowledgePageId, refresh, epoch, scope]);
   async function more() {
-    if (!cursor) return;
-    try { const result = await api(context.token).evaluations(context.projectId, cursor, taskId, knowledgePageId); setList(previous => [...previous, ...result.items]); setCursor(result.nextCursor); }
-    catch (cause) { setError(errorText(cause)); }
+    if (!cursor || loadedScope !== scope) return;
+    const started = generation.current;
+    try { const result = await api(context.token).evaluations(context.projectId, cursor, taskId, knowledgePageId); if (started !== generation.current) return; setList(previous => [...previous, ...result.items]); setCursor(result.nextCursor); }
+    catch (cause) { if (started === generation.current) setError(errorText(cause)); }
   }
   return <div className="content evaluation-page">
-    <div className="evaluation-heading"><div><a className="back" href={evaluationHref(context.projectId)}>评价</a><h1>{evaluationId ? "固定评价与实际尝试" : "评价"}</h1><p className="muted">同一共同任务、同一指令与环境下，逐次看真实运行、交付、成本和判断。失败与未知也保留。</p></div><button type="button" onClick={() => setEpoch(value => value + 1)}>回读当前记录</button></div>
+    <div className="evaluation-heading"><div>{evaluationId && <a className="back" href={evaluationHref(context.projectId)}>返回评价列表</a>}<h1>{evaluationId ? "固定评价与实际尝试" : "评价"}</h1><p className="muted">同一共同任务、同一指令与环境下，逐次看真实运行、交付、成本和判断。失败与未知也保留。</p></div><button type="button" onClick={() => setEpoch(value => value + 1)}>回读当前记录</button></div>
     {error && <Notice error>{error}</Notice>}
+    {taskId && <p className="context-links">当前仅看此任务的评价 · <a href={`#/p/${context.projectId}/tasks/${taskId}`}>返回来源任务</a></p>}
     {!evaluationId ? <>
-      <section className="panel"><h2>已建立的评价</h2>{!list.length && !error && <p className="empty">尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。</p>}
+      <section className="panel" aria-busy={loading || loadedScope !== scope}><h2>已建立的评价</h2>{(loading || loadedScope !== scope) && <p>正在读取当前范围的评价…</p>}{!loading && loadedScope === scope && !list.length && !error && <p className="empty">当前范围尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。</p>}
         <div className="evaluation-list">{list.map(item => <a key={`${item.evaluationId}:${item.id}`} href={evaluationListHref(context.projectId, item)}><strong>{item.definition.question}</strong><span>匹配定义 v{item.version} · 共同任务 {short(item.definition.case.taskId)} · {date(item.createdAt)}</span></a>)}</div>
-        {cursor && <button type="button" onClick={() => void more()}>继续读取</button>}
+        {cursor && loadedScope === scope && <button type="button" onClick={() => void more()}>继续读取</button>}
       </section>
-      <DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { window.location.hash = evaluationHref(context.projectId, id); }} />
+      <details className="panel workflow-detail"><summary>需要时建立新的冻结评价</summary><DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { window.location.hash = evaluationHref(context.projectId, id); }} /></details>
     </> : read ? <EvaluationDetail key={`${read.revision.evaluationId}:${read.revision.id}`} context={context} read={read} selectedRevision={!!selectedRevision} onChanged={() => setEpoch(value => value + 1)} />
       : !error && <p>正在读取冻结定义与逐次记录…</p>}
   </div>;
