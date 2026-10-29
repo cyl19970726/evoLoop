@@ -5,17 +5,23 @@ import { ArrowRight, X } from "lucide-react";
 import { api, errorText } from "../api";
 import { href } from "../ui/shared";
 import { TaskCurrentWork } from "./TaskCurrentWork";
-import { currentDelivery, matchingProjection } from "./taskExperience";
+import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskExperience";
 import { DeliveryArtifact, useDeliveryNames } from "./DeliveryPanel";
 
 const empty: NonNullable<TaskDetail["deliveries"]> = [];
 export function TaskPreview({ token, projectId, id, item, actorId, returnTo, onClose }: {
   token: string; projectId: string; id: string; item?: LeaderWorkTask; actorId: string; returnTo: string; onClose: () => void;
 }) {
-  const [detail, setDetail] = useState<TaskDetail | null>(null), [problem, setProblem] = useState("");
+  const [read, setRead] = useState<{ projectId: string; taskId: string; detail: TaskDetail | null; problem: string } | null>(null);
+  const selectedRead = read?.projectId === projectId && read.taskId === id ? read : null;
+  const detail = matchingTaskDetail(selectedRead?.detail ?? null, projectId, id);
+  const problem = selectedRead?.problem ?? "";
   useEffect(() => {
-    let active = true; setDetail(null); setProblem("");
-    api(token).task(projectId, id).then(value => { if (active) setDetail(value); }).catch(cause => { if (active) setProblem(errorText(cause)); });
+    let active = true; setRead(null);
+    api(token).task(projectId, id).then(value => {
+      if (!matchingTaskDetail(value, projectId, id)) throw new Error("任务摘要响应与所选项目、任务不符");
+      if (active) setRead({ projectId, taskId: id, detail: value, problem: "" });
+    }).catch(cause => { if (active) setRead({ projectId, taskId: id, detail: null, problem: errorText(cause) }); });
     return () => { active = false; };
   }, [token, projectId, id, item?.workChangeSequence]);
   const names = useDeliveryNames(token, projectId, detail?.deliveries ?? empty);

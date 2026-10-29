@@ -52,3 +52,26 @@ test("done tasks keep the exact closure-bound delivery, while reopened tasks can
   assert.equal(currentDelivery(detail)?.id, "accepted");
   assert.equal(currentDelivery({ ...detail, task: { state: "in_progress", currentRevisionId: "reopened-rev" } as Task }), undefined);
 });
+
+test("closed assignments retain their Session link but are never labelled current acceptance or execution", async () => {
+  const { assignmentStatusLabel } = await import("../src/workflow/taskExperience.ts");
+  for (const taskState of ["done", "cancelled"] as const) {
+    const closed = work({ taskState });
+    assert.equal(assignmentSessionKey(closed), "external:session", "retain the evidence entry");
+    assert.equal(assignmentStatusLabel(closed), "历史承接 · 当时已接受");
+    assert.equal(isMyCurrentWork(closed, "me"), false);
+    assert.match(executionSummary(closed), /历史 Run/);
+    assert.doesNotMatch(executionSummary(closed), /已接手|外部运行状态未知/);
+    assert.match(executionSummary(work({ ...closed, latestRun: { runId: "old", state: "running" } })), /历史 Run：运行中/);
+  }
+  assert.equal(assignmentStatusLabel(work()), "已接受");
+});
+
+test("the first render after a selection change rejects the previous Task or project before effects", async () => {
+  const { matchingTaskDetail } = await import("../src/workflow/taskExperience.ts");
+  const loadedA = { task: { id: "A", projectId: "project-one", title: "A facts" }, deliveries: [] } as unknown as TaskDetail;
+  assert.equal(matchingTaskDetail(loadedA, "project-one", "A"), loadedA);
+  assert.equal(matchingTaskDetail(loadedA, "project-one", "B"), null, "A body cannot appear beside the B link");
+  assert.equal(matchingTaskDetail(loadedA, "project-two", "A"), null, "same Task id in a different project is not the same selection");
+  assert.equal(matchingTaskDetail(null, "project-one", "B"), null);
+});
