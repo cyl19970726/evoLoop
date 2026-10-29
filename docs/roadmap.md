@@ -1,6 +1,6 @@
 # 阶段路线与当前状态
 
-2026-10-25。阶段划分是当前实施建议；进入下一阶段取决于验收证据，尚无承诺日期。已实现切片的任务状态由本机 evoLoop/PostgreSQL 管理；飞书协作入口仍待接入。本页汇总能力阶段、已验证范围和进入条件。
+2026-10-29。阶段划分是当前实施建议；进入下一阶段取决于验收证据，尚无承诺日期。已实现切片的任务状态由本机 evoLoop/PostgreSQL 管理；飞书协作入口仍待接入。本页汇总能力阶段、已验证范围和进入条件。
 
 **先理解目标体验，再选择当下工作。** [产品旅程 J1—J6](product/definition.md#从一个目标走到第一次有效交付)描述未来使用者从目标到首次有效交付及下一步；本页 M0—M4 描述 evoLoop 自身的实施阶段，两者不是同一套编号。下面的文档调查示例可在当前仓库执行，但不代替目标产品的首次接入体验；它也不证明旅程已运行。
 
@@ -13,6 +13,8 @@
 S1a 只证明第一层的一小段：已采纳需求改版能让两个尚未运行的任务保留旧依据并分别作新旧基线选择，失败后仍可查决定。它尚未证明任务真正执行、交付被亲用、认知改变下一步、Wiki 有效、动态分工有收益或项目可持续运行。每次扩片均应选择能连接上一层到下一层的真实使用场景，记录预期、观察和反证；未发生的效果保持未知。
 
 ## 当前基线
+
+**2026-10-29 的本机常驻协作补验：**当前实际服务对应 `6b290ed`、schema 042。PR [#142](https://github.com/cyl19970726/evoLoop/pull/142) 的分层 Run handoff、[#143](https://github.com/cyl19970726/evoLoop/pull/143) 的 Session 准备与派发时固定 Role/Skill、[#145](https://github.com/cyl19970726/evoLoop/pull/145) 的普通 Run 本人提交与终态封存、[#147](https://github.com/cyl19970726/evoLoop/pull/147) 的独立验收责任，以及 [#146](https://github.com/cyl19970726/evoLoop/pull/146)、[#148](https://github.com/cyl19970726/evoLoop/pull/148)、[#149](https://github.com/cyl19970726/evoLoop/pull/149) 的 Lead 工作状态与页面修复均已合入。实际业务中，原受管 Session 完成任务说明、本人署名提交、终态后生成交付、不同 actor 使用、反馈返工、再次使用和关闭；前项通过后同 Session 队列承接下一任务。Lead 在普通页面保存并回读计划、依赖和处理决定，发现并复测修复了旧暂缓标签及显示名问题。对应的 [CLI 接手与恢复](development/agent-cli.md)、[产品任务验收](product/tasks-and-documents.md)和[Codex 承载](architecture/codex-integration.md)为后续执行正文。该证据来自有限 Agent 使用与本机服务，未证明真人整体体验、所有失败分支或长期效益。Flash/Kimi 模型支持、CLI 请求方法、正常 Session 关闭入口和新任务列表/详情设计仍在独立任务验收中；模型目录出现某名称不证明它曾在本轮实际运行。
 
 **本轮常驻协作已有本机有界实跑证据。** [PR #88](https://github.com/cyl19970726/evoLoop/pull/88) 的职责分类、业务领域与 owned/external 承载登记，以及 [PR #91](https://github.com/cyl19970726/evoLoop/pull/91) 的同一 owned Session 队列、Task 问答与动作回执已部署；四个正式 Role、三个 HostLink 和三个 BusinessDomain 已实际核回。原 Session 先后完成两项真实任务：各自通道中的问题得到固定答复并实际采用，消费者使用并关闭前项后，调度器自动且仅一次把后项交给原 Thread。受限仓库动作由实际有权者承接，[PR #96](https://github.com/cyl19970726/evoLoop/pull/96) 正常合并，保留真实执行者。[PR #90](https://github.com/cyl19970726/evoLoop/pull/90)、[PR #97](https://github.com/cyl19970726/evoLoop/pull/97) 与 [PR #98](https://github.com/cyl19970726/evoLoop/pull/98) 的本机工作台已由独立代理沿普通入口核对任务与负责人、未入队工作、七模板状态、原会话历史、固定交付与来源 Run 返回路径；具体范围及宿主限制见[工作台](product/workbench.md#对象关系与能力职责)。[PR #99](https://github.com/cyl19970726/evoLoop/pull/99) 的故障与并发证据来自隔离数据库和替身宿主回归。实跑仅覆盖这两项任务和已记录页面路径，不扩大为其他任务、所有失败分支或长期无人值守保证。领域路由不授权自动启动，外部聊天保持已核人工承接；飞书实连和完整角色探索讨论仍后置。源码检查、合入、本机部署、任务使用和最终验收分别留证。
 
