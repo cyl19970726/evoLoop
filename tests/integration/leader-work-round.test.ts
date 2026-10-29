@@ -63,6 +63,7 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     ],
   });
   let dependencyOperation: string | null = null, dependencyUnavailable = true;
+  let reviewLostOperation: string | null = null;
   app.addHook("preHandler", async (request, reply) => {
     if (dependencyUnavailable && request.method === "PUT" && request.url ===
       `/api/projects/${projectId}/work-management/tasks/${dependentTaskId}/dependencies` &&
@@ -70,6 +71,12 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
       dependencyUnavailable = false;
       return reply.code(503).send({ code: "BACKEND_BUSY", message: "Injected failure before transaction" });
     }
+  });
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (request.method === "PUT" && request.url ===
+      `/api/projects/${projectId}/work-management/tasks/${dependentTaskId}/review` &&
+      (request.body as { operationId?: string }).operationId === reviewLostOperation) reply.raw.destroy();
+    return payload;
   });
   t.after(() => app.close());
   const apiUrl = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -201,12 +208,17 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     [projectId, dependencyOperation])).rows[0]?.n, 1);
   const workBeforeReview = await cli(["get", exactUrl]);
   const reviewOperation = randomUUID();
-  const review = await request("work.review.set", dependentTaskId, {
+  reviewLostOperation = reviewOperation;
+  await request("work.review.set", dependentTaskId, {
     operationId: reviewOperation, expectedTaskVersion: workBeforeReview.version,
     expectedTaskRevisionId: workBeforeReview.currentRevisionId,
     expectedWorkChangeSequence: workBeforeReview.workChangeSequence,
-    decision: "deferred", reason: "Wait for the prerequisite acceptance" });
-  assert.equal(review.status, "applied");
+    decision: "deferred", reason: "Wait for the prerequisite acceptance" }, leadToken, 3);
+  assert.equal((await cli(["receipts", "show", reviewOperation])).state, "pending");
+  const review = await cli(["receipts", "reconcile", reviewOperation]);
+  assert.equal(review.state, "confirmed");
+  assert.equal(review.result.status, "applied");
+  reviewLostOperation = null;
   assert.equal((await cli(["get", exactUrl])).review.operationId, reviewOperation);
   const conflictOperation = randomUUID();
   const conflict = await request("work.plan.set", dependentTaskId, { ...planBody, operationId: conflictOperation,

@@ -30,7 +30,7 @@ const retryableIntent = (): Intent => {
 };
 const leaderPlanIntent = (): Intent => {
   const operationId = randomUUID();
-  return { id: randomUUID(), projectId, operationId, kind: "work.plan.set", targetId: entityId,
+  return { id: operationId, projectId, operationId, kind: "work.plan.set", targetId: entityId, method: "PUT",
     path: `/api/projects/${projectId}/work-management/tasks/${entityId}/plan`,
     body: { operationId, expectedTaskVersion: 1, expectedPlanVersion: 0, plannedStartAt: null,
       dueAt: null, priority: 2, reason: "Leader ordered this work" },
@@ -168,13 +168,14 @@ test("Leader planning requests reconcile and replay through their exact route", 
   const store = await temporaryStore(t), intent = leaderPlanIntent(), actor = verifiedActor("original-agent");
   await store.prepare(apiUrl, token, intent, actor);
   const command = { ...intent.body as object, projectId, taskId: entityId };
-  let gets = 0, posts = 0;
+  let gets = 0, writes = 0;
   const transport = client(async (url, init) => {
     if (init?.method === "GET") {
       gets++;
       return response({ code: "OPERATION_NOT_FOUND" }, 404);
     }
-    posts++;
+    writes++;
+    assert.equal(init?.method, "PUT");
     assert.equal((url as URL).pathname, intent.path);
     assert.deepEqual(JSON.parse(String(init?.body)), intent.body);
     return response({ status: "applied", operationId: intent.operationId, entityId, version: 1 });
@@ -182,7 +183,7 @@ test("Leader planning requests reconcile and replay through their exact route", 
   const published = await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor);
   assert.equal(published.state, "confirmed");
   assert.equal(gets, 1);
-  assert.equal(posts, 1);
+  assert.equal(writes, 1);
   const replay = leaderPlanIntent(), actor2 = actor;
   await store.prepare(apiUrl, token, replay, actor2);
   const replayCommand = { ...replay.body as object, projectId, taskId: entityId };
@@ -193,6 +194,28 @@ test("Leader planning requests reconcile and replay through their exact route", 
       result: { status: "applied", operationId: replay.operationId, entityId, version: 1 } });
   });
   assert.equal((await retryReceipt(committed, store, apiUrl, token, replay.id, () => {}, actor2)).state, "confirmed");
+});
+
+test("a rejected legacy POST receipt stays rejected after the CLI learns PUT", async t => {
+  const store = await temporaryStore(t), { method: _oldMethod, ...oldIntent } = leaderPlanIntent();
+  const actor = verifiedActor("original-agent");
+  let writes = 0;
+  const transport = client(async (_url, init) => {
+    writes++;
+    assert.equal(init?.method, "POST");
+    return response({ code: "ROUTE_NOT_FOUND", message: "Route POST not found" }, 404);
+  });
+  await assert.rejects(() => dispatchMutation(transport, store, apiUrl, token, oldIntent, () => {}, actor),
+    error => error instanceof CliApiError && error.status === 404);
+  const saved = await store.get(oldIntent.id);
+  assert.equal(saved.state, "rejected");
+  assert.equal(saved.method, undefined);
+  await assert.rejects(() => dispatchMutation(transport, store, apiUrl, token,
+    { ...oldIntent, method: "PUT" }, () => {}, actor),
+    error => error instanceof ReceiptError && error.code === "OPERATION_REUSE");
+  assert.equal((await retryReceipt(transport, store, apiUrl, token, oldIntent.id, () => {}, actor)).state, "rejected");
+  assert.equal((await reconcileReceipt(transport, store, apiUrl, token, oldIntent.id, actor)).state, "rejected");
+  assert.equal(writes, 1);
 });
 
 test("Leader review decisions reconcile through the same exact-route receipt path", async t => {
