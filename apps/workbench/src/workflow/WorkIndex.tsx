@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Document, Impact, Page, Task } from "@evoloop/contracts";
 import { Plus, Search, RefreshCw } from "lucide-react";
 import { ApiError, api, errorText } from "../api";
+import { sessionClient } from "../sessions/client";
 import { ActionForm, option, type MutationContext } from "./ActionForm";
 import { UploadDocument } from "../documents/UploadDocument";
 import { Alert, ShortId, href } from "../ui/shared";
@@ -12,7 +13,8 @@ import { isRoleOwnerId, readOwnerRole } from "./ownerRole";
 import "./work-status.css";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  appendLeaderWorkPage, leaderPhaseLabel, leaderWorkItemPresentation, loadLeaderDocumentsForIds, visibleLeaderDocuments,
+  appendLeaderWorkPage, leaderPhaseLabel, leaderWorkItemPresentation, loadLeaderDocumentsForIds,
+  loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "./leaderWorkLoad";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
@@ -24,6 +26,7 @@ const searchItemLimit = 500;
 const leaderPhaseOrder = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_assignment", "ready", "running", "unassigned"] as const;
 type OwnerName = { title?: string; error?: string };
 type WorkStatusProblem = { kind: "unavailable" | "partial"; diagnostic: string };
+type LeaderSessionName = { title: string | null; error: string | null };
 const partialStatusDiagnostic = "接口未返回全部已载入任务的工作进度。";
 
 function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
@@ -59,6 +62,12 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [leaderDocumentCoverage, setLeaderDocumentCoverage] = useState<"idle" | "loading" | "complete" | "partial">("idle");
   const [leaderWorkBusy, setLeaderWorkBusy] = useState(false);
   const [leaderWorkError, setLeaderWorkError] = useState("");
+  const [leaderStatuses, setLeaderStatuses] = useState<Record<string, WorkTaskStatus>>({});
+  const [leaderStatusReading, setLeaderStatusReading] = useState(false);
+  const [leaderStatusError, setLeaderStatusError] = useState("");
+  const [leaderSessionNames, setLeaderSessionNames] = useState<Record<string, LeaderSessionName>>({});
+  const [leaderSessionReading, setLeaderSessionReading] = useState(false);
+  const [leaderSessionError, setLeaderSessionError] = useState("");
   const epoch = useRef(0);
   const statusSnapshot = useRef<Record<string, WorkTaskStatus>>({});
   const pages = useRef<{ tasks: Page<Task>; documents: Page<Document> }>({
@@ -71,6 +80,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const visibleDocumentSignature = visibleDocuments.map(item => item.id).join(",");
   useEffect(() => {
     let active = true; ++epoch.current; pendingPage.current = {}; cursorHistory.current = { tasks: new Set(), documents: new Set() }; pageCount.current = { tasks: 0, documents: 0 }; statusSnapshot.current = {}; setLoading(true); setError(""); setStatuses({}); setStatusProblem(null); setStatusRetrying(false);
+    setLeaderStatuses({}); setLeaderStatusError(""); setLeaderStatusReading(false);
+    setLeaderSessionNames({}); setLeaderSessionError(""); setLeaderSessionReading(false);
     const client = api(token);
     Promise.all([client.tasks(projectId), client.documents(projectId), client.impacts(projectId)]).then(async ([t, d, i]) => {
       if (active) { pages.current = { tasks: t, documents: d }; pageCount.current = { tasks: 1, documents: 1 }; setTasks(t); setDocuments(d); setImpacts(i); setObservedAt(new Date()); }
@@ -117,6 +128,78 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     });
     return () => { active = false; };
   }, [token, projectId, refresh, recheck, view, loading, visibleDocumentSignature, documentStatus]);
+  const leaderStatusSignature = leaderWork?.items.map(item => item.taskId).join(",") ?? "";
+  const ordinaryStatusSignature = Object.keys(statuses).sort().join(",");
+  const leaderStatusKnownSignature = Object.keys(leaderStatuses).sort().join(",");
+  useEffect(() => {
+    let active = true;
+    setLeaderStatusError("");
+    setLeaderStatusReading(false);
+    if (view !== "work" || !leaderWork) return () => { active = false; };
+    const known = new Set([...Object.keys(statuses), ...Object.keys(leaderStatuses)]);
+    const missing = [...new Set(leaderWork.items.map(item => item.taskId))].filter(id => !known.has(id));
+    if (!missing.length) return () => { active = false; };
+    setLeaderStatusReading(true);
+    const client = api(token);
+    void loadLeaderWorkStatuses(missing, async ids => (await client.workStatuses(projectId, ids)).items)
+      .then(result => {
+        if (!active) return;
+        setLeaderStatuses(current => ({
+          ...current, ...Object.fromEntries(result.statuses.map(status => [status.taskId, status])),
+        }));
+        if (result.missing.length)
+          setLeaderStatusError(`Leader 行来源状态仅读回 ${result.statuses.length}/${missing.length} 项；未读回的行不使用原始标题推定来源。`);
+      })
+      .catch(cause => {
+        if (active) setLeaderStatusError(`Leader 行来源状态暂不可读：${errorText(cause)}。未读回的行只显示待核对。`);
+      })
+      .finally(() => { if (active) setLeaderStatusReading(false); });
+    return () => { active = false; };
+  }, [token, projectId, view, refresh, recheck, leaderStatusSignature, ordinaryStatusSignature,
+    leaderStatusKnownSignature]);
+  function sessionKeyFor(item: LeaderWorkTask): string | null {
+    if (item.responsible.kind !== "session" || !item.responsible.id) return null;
+    return `${item.assignment?.targetKind === "external" ? "external" : "owned"}:${item.responsible.id}`;
+  }
+  const leaderSessionSignature = leaderWork?.items.map(sessionKeyFor).filter((key): key is string => !!key)
+    .filter((key, index, keys) => keys.indexOf(key) === index).sort().join(",") ?? "";
+  const leaderSessionKnownSignature = Object.entries(leaderSessionNames)
+    .filter(([, value]) => !!value.title).map(([key]) => key).sort().join(",");
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setLeaderSessionError("");
+    setLeaderSessionReading(false);
+    if (view !== "work" || !leaderWork) return () => { active = false; controller.abort(); };
+    const known = new Set(Object.entries(leaderSessionNames).filter(([, value]) => !!value.title).map(([key]) => key));
+    const missing = leaderSessionSignature.split(",").filter(Boolean).filter(key => !known.has(key));
+    if (!missing.length) return () => { active = false; controller.abort(); };
+    setLeaderSessionReading(true);
+    const client = sessionClient(token, projectId), results: Record<string, LeaderSessionName> = {};
+    const queue = [...missing];
+    const read = async () => {
+      while (active && queue.length) {
+        const key = queue.shift()!;
+        try {
+          const value = await client.snapshot(key, controller.signal);
+          if (!value || value.session.key !== key) throw new Error("会话目录未返回该 Session");
+          const title = value.session.title.trim();
+          results[key] = { title: title || null, error: title ? null : "Session 展示名称未登记" };
+        } catch (cause) {
+          if (!active || controller.signal.aborted) return;
+          results[key] = { title: null, error: errorText(cause) };
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(4, queue.length) }, read)).then(() => {
+      if (!active) return;
+      setLeaderSessionNames(current => ({ ...current, ...results }));
+      const unavailable = Object.values(results).filter(value => !value.title).length;
+      if (unavailable) setLeaderSessionError(
+        `${unavailable} 个 Leader 责任 Session 的展示名称暂不可读；名称待核对，Session ID 与入口仍保留。`);
+    }).finally(() => { if (active) setLeaderSessionReading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [token, projectId, view, refresh, recheck, leaderSessionSignature, leaderSessionKnownSignature]);
   useEffect(() => {
     const reread = () => { if (document.visibilityState === "visible") setRecheck(value => value + 1); };
     window.addEventListener("focus", reread);
@@ -278,7 +361,10 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       {view === "documents" ? <Button onClick={() => setCreate(!create)} aria-expanded={create}><Plus size={16} />保存文档</Button> : <a className="button-link" href={href(projectId, "create-task")}><Plus size={16} />创建任务</a>}
     </div>
     {view === "work" && leaderWork && <LeaderWorkOverview page={leaderWork} projectId={projectId}
-      ownerNames={resolvedOwners} statuses={statuses} busy={leaderWorkBusy} onMore={() => void moreLeaderWork()} />}
+      ownerNames={resolvedOwners} statuses={statuses} leaderStatuses={leaderStatuses}
+      sessionNames={leaderSessionNames} sourceReading={leaderStatusReading || leaderSessionReading}
+      sourceProblem={leaderStatusError || leaderSessionError} busy={leaderWorkBusy}
+      onMore={() => void moreLeaderWork()} />}
     {leaderWorkError && <p className="work-list-read-status" role="status">{leaderWorkError}</p>}
     {view !== "documents" && <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")} aria-current={view === "work" ? "page" : undefined}>任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current={view === "inbox" ? "page" : undefined}>依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>}
     {view === "documents" && <nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")} aria-current="page">过程文档</a><a href={href(projectId, "knowledge")}>知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav>}
@@ -317,9 +403,12 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   </div>;
 }
 
-function LeaderWorkOverview({ page, projectId, ownerNames, statuses, busy, onMore }: {
+function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatuses, sessionNames,
+  sourceReading, sourceProblem, busy, onMore }: {
   page: LeaderWorkPage<LeaderWorkTask>; projectId: string; ownerNames: Record<string, OwnerName>;
-  statuses: Record<string, WorkTaskStatus>; busy: boolean; onMore: () => void;
+  statuses: Record<string, WorkTaskStatus>; leaderStatuses: Record<string, WorkTaskStatus>;
+  sessionNames: Record<string, LeaderSessionName>; sourceReading: boolean; sourceProblem: string;
+  busy: boolean; onMore: () => void;
 }) {
   const counts = page.counts;
   const visible = [...page.items].sort((a, b) => leaderPhaseOrder.indexOf(a.phase as typeof leaderPhaseOrder[number]) -
@@ -332,14 +421,22 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, busy, onMor
       {counts.review_deferred ? <span className="leader-phase phase-unassigned">已暂缓 <strong>{counts.review_deferred}</strong></span> : null}
       {counts.review_acknowledged ? <span className="leader-phase phase-ready">已核对 <strong>{counts.review_acknowledged}</strong></span> : null}
     </div>}
+    {sourceReading && <p className="muted" role="status">正在核对 Leader 行的来源与责任名称…</p>}
+    {sourceProblem && <p className="muted" role="status">{sourceProblem}</p>}
     {visible.length ? <ol className="leader-work-list">{visible.map(item => {
-      const status = statuses[item.taskId];
+      const status = leaderStatuses[item.taskId] ?? statuses[item.taskId];
+      const sessionKey = item.responsible.kind === "session" && item.responsible.id
+        ? `${item.assignment?.targetKind === "external" ? "external" : "owned"}:${item.responsible.id}`
+        : null;
       const presentation = leaderWorkItemPresentation(item, status,
-        item.responsible.kind === "role" ? ownerNames[item.responsible.id ?? ""]?.title : undefined);
+        item.responsible.kind === "role" ? ownerNames[item.responsible.id ?? ""]?.title : undefined,
+        sessionKey ? sessionNames[sessionKey]?.title ?? undefined : undefined);
       return <li key={item.taskId}>
       <span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span>
       <div><a href={href(projectId,"task",item.taskId)}>{presentation.title}</a><p>{item.nextAction}</p>
-        <small>{presentation.responsibility}{item.plan?.priority?` · P${item.plan.priority}`:""}
+        <small>{presentation.responsibility}
+          {sessionKey && item.responsible.id && <> · <a href={`${href(projectId,"runtime")}?session=${encodeURIComponent(sessionKey)}&tab=overview`}>打开 Session</a> · <ShortId value={item.responsible.id} /></>}
+          {item.plan?.priority?` · P${item.plan.priority}`:""}
           {item.dependencies.length?` · ${item.dependencies.length} 项依赖`:""}
           {item.plan?.dueAt?` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}`:" · 截止未设置"}</small>
         <small>创建 {new Date(item.dates.createdAt).toLocaleString("zh-CN")} · 业务变化 {new Date(item.dates.businessChangedAt).toLocaleString("zh-CN")}

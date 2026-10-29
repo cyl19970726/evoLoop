@@ -3,7 +3,7 @@ import test from "node:test";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
   appendLeaderWorkPage, leaderProjectionMatchesTask, leaderWorkItemPresentation, loadLeaderDocumentsForIds,
-  visibleLeaderDocuments,
+  loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "../src/workflow/leaderWorkLoad.ts";
 import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
@@ -66,6 +66,18 @@ test("Leader index continuation retains prior Task rows in the same changing sna
     page(["two"], 8, null)), /快照已变化/);
 });
 
+test("Leader row statuses are deduplicated and read within the existing 50-item request limit", async () => {
+  const ids = Array.from({ length: 51 }, (_, index) => `task-${index}`);
+  const calls: string[][] = [];
+  const result = await loadLeaderWorkStatuses([...ids, ids[0]!], async batch => {
+    calls.push(batch);
+    return batch.map(taskId => ({ taskId } as WorkTaskStatus));
+  });
+  assert.deepEqual(calls.map(batch => batch.length), [50, 1]);
+  assert.equal(result.statuses.length, 51);
+  assert.deepEqual(result.missing, []);
+});
+
 test("active Document enrichment never asks the default index for hidden archived rows", () => {
   const items = [
     { id: "draft", title: "Draft", kind: "spec", status: "draft" as const },
@@ -124,4 +136,11 @@ test("Leader overview maps historical cognition to readable source labels", () =
     responsible:{kind:"role",id:"role-1",label:"Role role-1"}}, {
     ...status,cognition:false
   }, "交付负责人"), {title:"普通业务任务",responsibility:"负责 交付负责人"});
+  assert.deepEqual(leaderWorkItemPresentation({...item,
+    responsible:{kind:"session",id:"session-1",label:"受管 Session session-1"},
+    assignment:{state:"accepted",targetKind:"owned",targetId:"session-1",recipientActorId:"worker"},
+  }, undefined, undefined, "产品文档"), {
+    title:"任务记录 · 来源状态待核对",
+    responsibility:"受管 Session · 产品文档",
+  });
 });
