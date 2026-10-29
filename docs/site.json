@@ -28,6 +28,11 @@
       "group": "产品与阶段"
     },
     {
+      "path": "DESIGN.md",
+      "title": "界面设计约定（试行）",
+      "group": "产品与阶段"
+    },
+    {
       "path": "docs/product/agent-loop.md",
       "title": "Agent loop：四部分协作",
       "group": "产品与阶段"
