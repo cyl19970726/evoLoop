@@ -86,7 +86,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
       throw new DomainError("SESSION_NOT_READY", "only a bound ready session can close normally");
     if ((await tx.listRuntimeRuns()).some(run => run.sessionId === session.id && ["requested", "dispatching", "running", "unknown"].includes(run.state)))
       throw new DomainError("SESSION_BUSY", "session has active or unresolved work");
-    await tx.sessionMessages?.assertSessionVacant(session.id);
+    await tx.sessionMessages?.assertSessionVacant(session.id,true);
     try { await tx.queue?.assertQueueSessionVacant(session.id); }
     catch { throw new DomainError("QUEUE_OCCUPIED", "session has an unreleased queue claim"); }
     const next = { ...session, state: "closing" as const, closeOperationId: command.operationId,

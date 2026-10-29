@@ -6,6 +6,7 @@ import { migrate,PostgresUnitOfWork } from '../src/index.ts';
 import { WorkflowService } from '@evoloop/core';
 import { SessionMessageService,applySessionMessage } from '@evoloop/core/session-messages';
 import { SessionMessagePump } from '../../../apps/coordinator/src/session-messages/pump.ts';
+import { PgSessionMessages } from '../src/session-messages.ts';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 
 const url=process.env.TEST_DATABASE_URL;
@@ -51,6 +52,87 @@ before(async()=>{
 });
 after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();
   try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
+
+test('queued owned message blocks close until cancellation; a rejected close replays and a closed Session rejects new posts',async()=>{
+  const targetSessionId=randomUUID(),otherSessionId=randomUUID(),messageId=randomUUID();
+  await seedFullSession(targetSessionId);await seedFullSession(otherSessionId);
+  const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
+  const reviewer={actorId:'receiver',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const post={type:'session.message.post' as const,projectId,operationId:randomUUID(),messageId,
+    target:{kind:'owned' as const,sessionId:targetSessionId},content:'Keep this pending'};
+  assert.equal((await workflow.execute(sender,post)).status,'applied');
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.assertSessionVacant(targetSessionId));
+  await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.assertSessionVacant(targetSessionId,true)),
+    error=>(error as {code?:string}).code==='SESSION_BUSY');
+  const unrelated=await workflow.execute(reviewer,{type:'runtime.session.close',projectId,operationId:randomUUID(),
+    sessionId:otherSessionId,expectedVersion:1,reason:'No messages for this Session'});
+  assert.equal(unrelated.status,'applied');
+  const close={type:'runtime.session.close' as const,projectId,operationId:randomUUID(),
+    sessionId:targetSessionId,expectedVersion:1,reason:'Work complete'};
+  const blocked=await workflow.execute(reviewer,close);
+  assert.equal(blocked.status,'rejected');
+  if(blocked.status==='rejected')assert.equal(blocked.code,'SESSION_BUSY');
+  assert.equal((await workflow.getRuntimeSession(reviewer,projectId,targetSessionId)).state,'ready');
+  assert.equal((await service.get(projectId,messageId)).state,'queued');
+  const cancelled=await workflow.execute(sender,{type:'session.message.cancel',projectId,
+    operationId:randomUUID(),messageId,expectedVersion:1,reason:'Withdraw pending message'});
+  assert.equal(cancelled.status,'applied');
+  assert.deepEqual(await workflow.execute(reviewer,close),blocked,'fixed rejection remains replayable');
+  const accepted=await workflow.execute(reviewer,{...close,operationId:randomUUID()});
+  assert.equal(accepted.status,'applied');
+  const closing=await workflow.getRuntimeSession(reviewer,projectId,targetSessionId);
+  assert.equal(closing.state,'closing');assert.equal(closing.closeAttemptedAt,null);
+  const late=await workflow.execute(sender,{...post,operationId:randomUUID(),messageId:randomUUID()});
+  assert.equal(late.status,'rejected');
+  if(late.status==='rejected')assert.equal(late.code,'SESSION_NOT_READY');
+});
+
+test('owned message insertion waits for the Session row lock and rejects after close commits',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const closer=await pool.connect(),poster=await pool.connect();
+  try{
+    await closer.query('BEGIN');await poster.query('BEGIN');
+    await closer.query('SELECT 1 FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',
+      [projectId,targetSessionId]);
+    await closer.query("UPDATE runtime_session SET state='closing',version=version+1,updated_at=now(),close_operation_id=$3 WHERE project_id=$1 AND session_id=$2",
+      [projectId,targetSessionId,randomUUID()]);
+    let settled=false;
+    const inserting=new PgSessionMessages(poster,projectId).insertSessionMessage({...item(),target:{kind:'owned',sessionId:targetSessionId}})
+      .finally(()=>{settled=true;});
+    await new Promise(resolve=>setTimeout(resolve,30));
+    assert.equal(settled,false,'insert must wait behind close row lock');
+    await closer.query('COMMIT');
+    await assert.rejects(inserting,error=>(error as {code?:string}).code==='SESSION_NOT_READY');
+    await poster.query('ROLLBACK');
+    const count=await pool.query('SELECT count(*)::int AS count FROM session_message WHERE project_id=$1 AND session_id=$2',
+      [projectId,targetSessionId]);
+    assert.equal(count.rows[0]?.count,0);
+  }finally{await closer.query('ROLLBACK').catch(()=>{});await poster.query('ROLLBACK').catch(()=>{});closer.release();poster.release();}
+});
+
+test('close waits for a concurrent owned message insert and observes its queued state',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const poster=await pool.connect();
+  const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+  const reviewer={actorId:'receiver',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  try{
+    await poster.query('BEGIN');
+    await new PgSessionMessages(poster,projectId).insertSessionMessage({...item(),target:{kind:'owned',sessionId:targetSessionId}});
+    let settled=false;
+    const closing=workflow.execute(reviewer,{type:'runtime.session.close',projectId,operationId:randomUUID(),
+      sessionId:targetSessionId,expectedVersion:1,reason:'Close concurrent with a message'}).finally(()=>{settled=true;});
+    await new Promise(resolve=>setTimeout(resolve,30));
+    assert.equal(settled,false,'close must wait for the in-flight message transaction');
+    await poster.query('COMMIT');
+    const result=await closing;
+    assert.equal(result.status,'rejected');
+    if(result.status==='rejected')assert.equal(result.code,'SESSION_BUSY');
+    assert.equal((await workflow.getRuntimeSession(reviewer,projectId,targetSessionId)).state,'ready');
+  }finally{await poster.query('ROLLBACK').catch(()=>{});poster.release();}
+});
 
 test('read refuses a bound Turn whose processing identity differs from the original message',async()=>{
   const message={...item(),state:'processing' as const};

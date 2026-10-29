@@ -17,6 +17,7 @@ import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
 import { currentWorkRelationLabel, idleSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { NativeSessionPanel } from "./NativeSessionPanel";
+import { SessionClosePanel } from "./SessionClosePanel";
 import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import "./workspace.css";
@@ -77,6 +78,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [filter, setFilter] = useState<ActivityFilter>(() => viewFromHash(sessionKey).filter);
   const [open, setOpen] = useState<string[]>(() => viewFromHash(sessionKey).open);
   const [informationOpen, setInformationOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
   const [error, setError] = useState("");
   const [confirmedRead, setConfirmedRead] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -268,7 +270,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const currentRunId = activeBusy && ["requested", "dispatching", "running", "unknown"].includes(session.latestBusinessRun?.state ?? "")
     ? session.latestBusinessRun?.id ?? null : null;
   return <div className="content session-workspace">
-    <div className="session-workspace-head"><div><h1>{session.title} <span className="session-status-badge">{statusLabel}</span></h1><p>{session.profile?.purpose || session.roles.map(role => role.responsibility).filter(Boolean).join("；") || "用途尚未登记"}</p></div><div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button></div></div>
+    <div className="session-workspace-head"><div><h1>{session.title} <span className="session-status-badge">{statusLabel}</span></h1><p>{session.profile?.purpose || session.roles.map(role => role.responsibility).filter(Boolean).join("；") || "用途尚未登记"}</p></div><div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button><button type="button" aria-expanded={closeOpen} aria-controls="session-close-panel" onClick={() => setCloseOpen(value => !value)}>{session.kind === "owned" ? "关闭受管 Session" : "归档与归类"}</button></div></div>
     <div className="session-meta"><span>配置模型 <strong>{current.resources.configuredModel.value ?? "未提供"}</strong></span><span>思考强度 <strong>未提供</strong></span><span>{session.kind === "owned" ? "项目受管" : "外部接入"}</span><span>{tenureLabel(session.profile)}</span><span>权限 <strong>未提供</strong></span><span>{sessionMembership(session.membership)}</span></div>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     <section className="session-current-work"><div>
@@ -283,6 +285,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     {(session.runtimeState === "unknown" || session.runtimeState === "closed" || recoveryRead.status === "failed") && session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={`${href(context.projectId, "runtime")}?view=execution`} />}
     <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}。{current.metadata.partial || historyPartial ? "来源仅展示已读范围。" : ""}</p>
     {limitation.length > 0 && <details className="session-workspace-limitations"><summary>来源限制与未确认信息</summary><ul>{limitation.map(item => <li key={item}>{item}</li>)}</ul></details>}
+    {closeOpen && <div id="session-close-panel"><SessionClosePanel context={context} snapshot={current} currentRead={active && !loading && !error && confirmedRead === readKey} onReadAgain={() => setReadAgain(value => value + 1)} /></div>}
     <details className="session-information" onToggle={event => setInformationOpen(event.currentTarget.open)}><summary>会话信息 · 原聊天、职责与配置</summary><div className="session-info-open"><h2>原聊天入口</h2><SessionOpenEntry session={session} token={context.token} projectId={context.projectId} currentRead={active && !loading && !error} active={active} /></div><section className="session-workspace-section"><h2>职责与分派</h2>{session.roles.map(role => <p key={role.id}><a href={href(context.projectId, "roles")}>{role.title}</a> · {role.responsibility}</p>)}<h3>具体分派</h3>{current.assignments.length ? <ul>{current.assignments.map(item => <li key={`${item.assignment.taskId}:${item.assignment.version}`}><a href={taskHref(item.task.id)}>{item.task.title}</a> · {assignmentLabel(item)}</li>)}</ul> : <p>没有具体分派。</p>}<details><summary>角色责任范围 · {current.roleTasks.length} 项</summary><p>角色负责这些任务，不表示此 Session 已接手。</p><ul>{current.roleTasks.map(task => <li key={task.id}><a href={taskHref(task.id)}>{task.title}</a></li>)}</ul></details>{active && informationOpen && <AllocationBacklinks context={context} filter={{ sessionKey }} refresh={refresh + readAgain} />}<SessionProfileForm context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} /></section>
     <section className="session-workspace-section"><h2>资源观察</h2><p className="muted">配置模型、实际模型和用量分别列示；缺少可靠来源时显示不可用原因，不填零。</p>{session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryResources read={recoveryRead} queueHref={`${href(context.projectId, "runtime")}?view=execution`} />}<dl className="session-resource-list">{([
       ["configuredModel", "配置模型"], ["actualModel", "实际运行模型"], ["inputTokens", "输入 Token"], ["outputTokens", "输出 Token"], ["cost", "费用"], ["processMemory", "进程内存"],

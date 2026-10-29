@@ -365,13 +365,21 @@ test("failed archive precheck stops before durable attempt or native write", asy
 
 test("archive failure keeps a redacted rejection or unknown timeout category without replay", async t => {
   for (const sample of [
-    { name: "explicit native rejection", error: new RuntimeServerError("thread/archive", 7, -32600, "no rollout found; secret=private"), category: "native_rejected" },
-    { name: "response timeout", error: new RuntimeUnknownError("thread/archive", 7, "reply unavailable; secret=private"), category: "unknown_outcome" },
+    { name: "explicit native rejection", error: new RuntimeServerError("thread/archive", 7, -32600,
+      "rollout not found; path=/private/session/body; token=private-token; secret=private"), category: "native_rejected", readbackFails: false },
+    { name: "explicit rejection followed by failed readback", error: new RuntimeServerError("thread/archive", 7, -32600,
+      "rollout not found; path=/private/session/body; token=private-token; secret=private"), category: "native_rejected", readbackFails: true },
+    { name: "response timeout", error: new RuntimeUnknownError("thread/archive", 7, "reply unavailable; secret=private"),
+      category: "unknown_outcome", readbackFails: false },
   ] as const) await t.test(sample.name, async () => {
     const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
-    let archives = 0, confirms = 0;
+    let archives = 0, confirms = 0, reads = 0;
     class FailureRuntime extends FakeRuntime {
-      async isThreadArchived() { return false; }
+      async isThreadArchived() {
+        reads++;
+        if (sample.readbackFails && reads > 1) throw new RuntimeUnknownError("thread/list", 8, "private readback");
+        return false;
+      }
       async archiveThread() { archives++; throw sample.error; }
     }
     const native = new FailureRuntime();
@@ -387,10 +395,22 @@ test("archive failure keeps a redacted rejection or unknown timeout category wit
       await runner.start();
       assert.equal(archives, 1); assert.equal(confirms, 0); assert.equal(closing.state, "closing");
       assert.deepEqual(runner.status(projectId).faults.map(f => [f.phase, f.category]), [["session_close", sample.category]]);
-      assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /rollout found|reply unavailable|secret=private/);
+      const fault = runner.status(projectId).faults[0]!;
+      if (sample.error instanceof RuntimeServerError) {
+        assert.equal(fault.nativeMethod, "thread/archive");
+        assert.equal(fault.nativeCode, -32600);
+        assert.equal(fault.nativeCategory, "rollout_not_found");
+      } else {
+        assert.equal(fault.nativeMethod, undefined);
+        assert.equal(fault.nativeCode, undefined);
+        assert.equal(fault.nativeCategory, undefined);
+      }
+      assert.doesNotMatch(JSON.stringify(runner.status(projectId)), /rollout not found|reply unavailable|private|token=|secret=|\/private\/session\/body/);
       await runner.pump();
       assert.equal(archives, 1,"persisted attempt never replays");
-      assert.deepEqual(runner.status(projectId).faults.map(f => f.category), [sample.category]);
+      assert.equal(runner.status(projectId).faults[0]?.category, sample.category);
+      if (sample.error instanceof RuntimeServerError)
+        assert.equal(runner.status(projectId).faults[0]?.nativeCategory, "rollout_not_found");
     } finally { await runner.stop(); }
   });
 });
