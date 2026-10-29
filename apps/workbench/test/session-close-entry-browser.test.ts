@@ -35,7 +35,9 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
     capabilities: { observe: unavailable, send: { ...unavailable, mode: "unavailable" }, open: { ...unavailable, ref: null },
       interrupt: unavailable, close: unavailable }, source, metadata });
   const snapshot = () => ({ session: observedSession(), observationCursor: "0", currentWork: null,
-    assignments: blocked ? [{ assignment: { state: "accepted", taskId }, task: { id: taskId, title: "未完任务", state: "in_progress", relation: "accepted", source }, stale: false }] : [],
+    assignments: blocked ? [{ assignment: { state: "accepted", taskId }, task: { id: taskId, title: "未完任务", state: "in_progress", relation: "accepted", source }, stale: false }]
+      : Array.from({ length: 20 }, (_, index) => ({ assignment: { state: "accepted", taskId: `${taskId}:${index}` },
+        task: { id: `${taskId}:${index}`, title: "已完成任务", state: "done", relation: "accepted", source }, stale: false })),
     roleTasks: [], queue: blocked ? [{ entryId: "claim", taskId, taskTitle: "未完任务", state: "claimed", position: 1, holdReason: null }] : [],
     results: [], questions: [], activity: [], resources,
     metadata: blocked ? metadata : { ...metadata, partial: true, limitations: ["活动首屏仅展示前20项，请从分页历史继续读取。"] } });
@@ -61,9 +63,10 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/messages`) value = blocked ? {
         items: [{ projectId, id: "message", content: "待处理消息", createdAt: stamp, updatedAt: stamp,
           target: { kind: "owned", sessionId }, state: "queued" }], nextCursor: null, metadata } : {
-        items: [{ projectId, id: url.searchParams.has("cursor") ? "older" : "recent", content: "已处理消息", createdAt: stamp,
+        items: [{ projectId, id: `settled-${url.searchParams.get("cursor") ?? "0"}`, content: "已处理消息", createdAt: stamp,
           updatedAt: stamp, target: { kind: "owned", sessionId }, state: "replied" }],
-        nextCursor: url.searchParams.has("cursor") ? null : "older", metadata: { ...metadata, partial: true,
+        nextCursor: Number(url.searchParams.get("cursor") ?? "0") < 21
+          ? String(Number(url.searchParams.get("cursor") ?? "0") + 1) : null, metadata: { ...metadata, partial: true,
           limitations: ["消息正文预览已截断。"] } };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         commandCount++;

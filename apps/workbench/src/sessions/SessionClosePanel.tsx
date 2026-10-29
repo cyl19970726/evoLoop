@@ -23,8 +23,9 @@ const unsettledMessage = new Set(["queued", "processing", "unknown", "manual_pen
 export function closeBlockers(snapshot: SessionSnapshot, read: CloseRead): string[] {
   const { session } = snapshot;
   const blockers: string[] = [];
-  const sourceLimited = snapshot.assignments.length >= 20 || snapshot.queue.length >= 20
-    || snapshot.metadata.limitations.some(item => item.startsWith("响应大小限制：已省略部分") && /分派|队列/.test(item));
+  const sourceLimited = snapshot.metadata.limitations.some(item =>
+    item.startsWith("分派首屏") || item.startsWith("队列首屏")
+    || (item.startsWith("响应大小限制：已省略部分") && /分派|队列/.test(item)));
   if (sourceLimited) blockers.push("分派或队列来源未完整读回，不能确认全部关联工作");
   if (session.busy !== false) blockers.push("会话仍忙碌或忙碌状态未确认");
   const tasks = snapshot.assignments.filter(item => item.assignment.state !== "released"
@@ -56,6 +57,7 @@ export function SessionClosePanel({ context, snapshot, currentRead, onReadAgain 
   useEffect(() => {
     if (!ownedId) return;
     let live = true;
+    const controller = new AbortController();
     setRead(null); setReadError(""); setLoading(true);
     const runtime = runtimeClient(context.token, context.projectId);
     const work = sessionClient(context.token, context.projectId);
@@ -63,14 +65,13 @@ export function SessionClosePanel({ context, snapshot, currentRead, onReadAgain 
       const items: SessionMessageRecord[] = [];
       const seen = new Set<string>();
       let cursor: string | undefined;
-      for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
-        const page = await work.messages(session.key, cursor);
+      while (true) {
+        const page = await work.messages(session.key, cursor, controller.signal);
         items.push(...page.items);
         if (!page.nextCursor) return { items, complete: true };
         if (seen.has(page.nextCursor)) return { items, complete: false };
         seen.add(page.nextCursor); cursor = page.nextCursor;
       }
-      return { items, complete: false };
     }
     void Promise.all([runtime.sessions(), runtime.runs(), readMessages(), runtime.status()]).then(([sessions, runs, messages, status]) => {
       if (!live) return;
@@ -85,7 +86,7 @@ export function SessionClosePanel({ context, snapshot, currentRead, onReadAgain 
       setReadError("");
     }).catch(cause => { if (live) { setRead(null); setReadError(errorText(cause)); } })
       .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
+    return () => { live = false; controller.abort(); };
   }, [context.token, context.projectId, session.key, ownedId, session.runtimeState, reload]);
 
   const runtime = read?.session;
