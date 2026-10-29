@@ -12,7 +12,7 @@
     }
   },
   "components": [
-    {"id":"actors","type":"external","label":"目标与判断责任","sublabel":"人类 · 认知／领域 Session","pos":[40,80],"size":[170,72],"sources":[{"path":"docs/architecture/overview.md","line":19}]},
+    {"id":"actors","type":"external","label":"目标与判断责任","sublabel":"人类 · 系统／业务／User Session","pos":[40,80],"size":[170,72],"sources":[{"path":"docs/architecture/overview.md","line":19}]},
     {"id":"entry","type":"frontend","label":"人机入口","sublabel":"工作台／业务 skill＋CLI","pos":[270,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":7},{"path":".agents/skills/evoloop-workflow/SKILL.md","line":8}]},
     {"id":"api","type":"backend","label":"共同 API","sublabel":"身份、命令与查询入口","pos":[510,80],"size":[155,72],"sources":[{"path":"docs/architecture/packages.md","line":128},{"path":"docs/architecture/packages.md","line":7}]},
     {"id":"core","type":"backend","label":"core 业务用例","sublabel":"权限 · 状态 · 固定基线","pos":[730,80],"size":[170,72],"sources":[{"path":"docs/architecture/packages.md","line":119}]},

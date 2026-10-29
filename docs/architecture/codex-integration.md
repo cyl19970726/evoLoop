@@ -88,7 +88,7 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 一条 PostgreSQL Task 可经历多个 Codex Turn、换 Thread 接续，甚至由多个业务 session 分工；一条 Thread 也可处理多个相关 Turn。关系通过 `taskId`、`roleId`、项目 `sessionId`、原生 `threadId`／`turnId`、操作 ID 和有效时间段串联，不能把任一外部 ID 当另一层的主键。新持续 Role 需要缺口证据、试行与回看；`thread/start` 和 `thread/fork` 只创建运行实例／历史分支。当前静态路径先将 Session 持久预留为 `reserved`，runner 从自己的 `thread/start` 回执保存原生 Thread、Session 与实际目录后才标为 `ready`；`role.bindSession` 仅能绑定同项目、同 Role、已有原生 Thread 的 ready owned Session，不接受任意 Desktop chat ID 或原生 session ID。绑定不会替自动 Loop 选用该 Session：当前自动派发按 Dispatch 创建新的受管 Session；普通 `runtime.run.reserve` 可在同一 ready Session 上另开 Turn，但仍须核在途／未知、Task 责任和固定输入与当前授权。评价尝试另有每次新建 Session 的要求。实际步骤见[Agent CLI 的首次业务任务路径](../development/agent-cli.md#建立常驻业务职责与首个受管任务)。
 
-需求与 dogfood 缺陷先说明复现、预期、实际结果、影响范围和证据；尚未决定的问题可留在 issue/spec 或讨论，明确的授权工作创建 todo Task。开始时固定主正文和必要材料，再进入 in_progress；验收默认留原任务内。飞书可作为协作入口，但入站编辑先转为受验证的 command。责任 session 可以自行修复所在领域问题、提交成果与知识候选；需要跨领域承接时协调者按 Role 范围派发并回收。专门认知 session 综合使用反馈、冲突与下一步，但不是局部行动的必经审批环节。任务的交付状态、派发操作状态和实际使用效果分别记录。
+需求与 dogfood 缺陷先说明复现、预期、实际结果、影响范围和证据；尚未决定的问题可留在 issue/spec 或讨论，明确的授权工作创建 todo Task。开始时固定主正文和必要材料，再进入 in_progress；验收默认留原任务内。飞书可作为协作入口，但入站编辑先转为受验证的 command。责任 Session 可以自行修复所在领域问题、提交成果与知识候选；Leader 按 Role 范围组织跨任务承接与验收。Evocation 对照内部 trace 与 User Session 亲用诊断重复出现的方法和组织问题；Human Requirement 按需澄清用户方向。任务的交付状态、派发操作状态和实际使用效果分别记录。
 
 定时器属于 evoLoop：日程定义、触发实例、去重与恢复水位存 PostgreSQL，具体归属以 [ScheduleStore 合同](contracts.md#7-schedulestore-与触发实例)为准；每次需要执行的到期工作形成独立 Task。飞书日程视图若需要则经 connector 投影，不成为另一权威。触发先回读 PostgreSQL 当前状态、知识固定修订和已登记在途 Turn，再决定是否派发；定时通知或 `turn/start` 回执不证明工作被采用。协调服务由事件加对账触发完成回收与认知下一步，不能等 worker 自己想起发消息。App Server 文档没有提供供此设计依赖的通用 cron 方法；宿主产品自身“计划任务”需要独立接入与验证，不隐式代替此调度器。无人值守任务碰到审批或权限不足时进入待人处理；可安全运行范围与 SDK 批处理选择留给试点决定。
 

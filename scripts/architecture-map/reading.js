@@ -21,7 +21,7 @@ export const READING_MECHANISMS = Object.freeze({
     lead: '判断、执行与反馈相连；交付、验收和实际效果分别核对。',
     route: ['decision', 'task', 'run', 'use', 'review', 'wiki', 'decision'],
     steps: [
-      { region: 'decision', title: '提出有依据的判断', body: '领域 session 对照目标、来源和反例；跨领域时由认知责任综合。人类负责人保留目标、授权与关键取舍。', gate: '判断可以选择继续、补证、修订、停止或等待。' },
+      { region: 'decision', title: '提出有依据的判断', body: '各领域 Session 对照目标、来源和反例作职责内判断；Leader 组织跨任务取舍，Evocation 研究组织与方法问题。人类负责人保留目标、授权与关键取舍。', gate: '判断可以选择继续、补证、修订、停止或等待。' },
       { region: 'task', title: '接受并固定任务依据', body: 'Task 写明承接者、交付和验收；TaskBasis 固定本次实际采用的过程 Document、知识或 Git 来源修订。', gate: '已授权、已接受且关键依据有效，才允许派发。' },
       { region: 'run', title: '运行与交付', body: '一次 Task 可有多次 Run；每次保留固定输入和历史。普通受管执行者可本人署名结果意图，协调器在原 Run 已知终态后封存固定 Delivery。', gate: 'Turn 终态、本人提交和 Delivery 都不等于 Task 验收。' },
       { region: 'use', title: '观察真实使用与效果', body: '声明的消费者沿原路径使用当前固定交付，记录采用或失败；有权者再按 Task 判据关闭或返工。', gate: '未实际使用时效果为未知；若 Task 判据要求消费，缺少消费证据不能验收；使用观察与 Task 关闭分别留证。' },

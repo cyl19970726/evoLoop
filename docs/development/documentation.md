@@ -35,7 +35,7 @@ Document Table 与 Git 正式文档的连接按[项目数据](../architecture/pr
 
 确认一项过程结论值得长期使用后，先看它回答读者哪一个问题，再改该页的唯一正文：目标和判据归产品定义，完整跨 Session 接力归功能场景，Role/Task/Run 与数据权威归项目数据和合同，实际命令归 Agent CLI，工程检查归开发规范，当前做到哪里归阶段路线。原过程 Document、Task、PR 与使用观察保留固定修订和失败历史；在正文只写已成立的规则、适用版本和未验边界，不复制逐次 Run 流水账。领域责任者维护自己的页，Lead 对跨域顺序和实际验收负责；小修无需让所有领域重复审批。
 
-**图随所属事实改。** 产品协作图和时序图以 `product/functional-scenarios.md` 的 Mermaid 为权威，日常和工作台图只画各自局部问题；架构结构图以 `assets/evoloop-system-structure.architecture.json` 为权威，四张机制预览以 `assets/evoloop-system.model.json` 与 `scripts/architecture-map/reading.js` 为权威，由 `architecture:build` 生成 SVG/HTML。合同、数据和运行专题的 Mermaid 在相应 Markdown 原位维护。改图时同改图前的问题、图后的证据边界和跨页下钻链接；生成物不得独立手改。原结构与生成步骤见[架构图与正文的位置](#架构图与正文的位置)。
+**图随所属事实改。** 两张[产品卫星图](../product/definition.md#两张产品卫星图经营交付与组织改进)的可维护源分别是[经营图源](../assets/company-delivery-loop.workflow.json)与[改进图源](../assets/company-evocation-loop.workflow.json)；同名 HTML 是确认过的完整交互图，PNG 是其静态预览。2026-10-29 首次纳入时保留原版 HTML 字节，仅将图源 `meta.output` 改为仓库内相对路径；经营预览从同一原版 HTML 的 Archify visual-check 生成，改进预览沿用同 hash 的原预览。后续改图先核[产品定义](../product/definition.md)和[完整场景](../product/functional-scenarios.md)的演员与交接，再修改图源、重生成 HTML 和预览，检查内容与图源一致，浏览器核宽窄屏可读；不要只手改 PNG 或 HTML。细字以完整交互图放大阅读。产品局部时序图仍以 `product/functional-scenarios.md` 的 Mermaid 为权威，日常和工作台图只画各自局部问题；架构结构图以 `assets/evoloop-system-structure.architecture.json` 为权威，四张机制预览以 `assets/evoloop-system.model.json` 与 `scripts/architecture-map/reading.js` 为权威，由 `architecture:build` 生成 SVG/HTML。合同、数据和运行专题的 Mermaid 在相应 Markdown 原位维护。改图时同改图前的问题、图后的证据边界和跨页下钻链接；架构生成物不得独立手改。原结构与生成步骤见[架构图与正文的位置](#架构图与正文的位置)。
 
 ## 一次正式修订怎样完成
 

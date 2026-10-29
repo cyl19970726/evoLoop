@@ -40,7 +40,7 @@ Codex 隔离研究曾使用 Python 跑通受限闭环，[PR #2](https://github.c
 
 ### 认知维护默认沿用我们的 session
 
-默认链路是：各领域提交材料与候选认识 → 专门认知维护 session 读取现行页及原始依据 → 形成差异、反例和影响任务 → 受控发布 → 新 session 按固定修订消费并反馈。运行认知工作的 Agent 仍由 evoLoop 的 SessionRuntime 承载。
+默认链路是：领域责任者提交材料与候选认识 → 有权维护者读取现行页及原始依据 → 形成差异、反例和影响任务 → 受控发布 → 新 Session 按固定修订消费并反馈。领域判断保留在各 Agent 的职责内；Leader 组织受影响 Task，Evocation 结合 User Session 亲用研究跨任务方法问题。运行这类工作的 Agent 仍由 evoLoop 的 SessionRuntime 承载。
 
 OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自动完成综合判断。原生 `/compile` 是另一种可用维护执行方式，涉及其 Agent Runtime；首期不同时启用两个能更新当前知识的编译者。只有比较证明原生编译在质量、成本或维护上更合适，才在同一知识合同后替换该执行方式。上游解析/摘要/嵌入的模型配置与 Codex 账号是独立边界，不能假设选定 Codex 就自动配置了 Wiki 模型服务。
 
@@ -72,7 +72,7 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 
 ## 4. 推荐决定
 
-**已选数据方向：evoLoop 的 PostgreSQL 持有 Task、Schedule、原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态与运行 Journal/outbox；飞书是受控协作投影和编辑入口。** 推荐以 TypeScript + Node.js 24 LTS 的模块化单体实现协调服务，首个知识后端 OpenViking 通过 HTTP 适配，由 evoLoop 的认知 session 负责项目知识维护；默认由 Codex App Server 承载自动执行和认知会话。TS/Node 已在 S1a 落地；部署与 Codex 自动执行尚未接入，知识后端方向已选，具体版本仍待验。
+**已选数据方向：evoLoop 的 PostgreSQL 持有 Task、Schedule、原生 Document/DocumentRevision、跨对象 Relation、ExternalBinding/同步状态与运行 Journal/outbox；飞书是受控协作投影和编辑入口。** 推荐以 TypeScript + Node.js 24 LTS 的模块化单体实现协调服务，首个知识后端 OpenViking 通过 HTTP 适配；Wiki 综合维护由实际获权的维护者负责，业务判断不集中给一个认知会话。默认由 Codex App Server 承载受管执行。TS/Node 已在 S1a 落地；部署与自动执行范围、知识后端具体版本仍按阶段证据核验。
 
 这套选择对应当前负担：很多工作发生在跨 session 的判断、文档版本、对象关联、状态变化、平台 I/O 和失败恢复上。统一主数据让任务、原生需求文档及关系保留稳定 ID、审核和版本，并可在同库提交变更及出站 outbox；没有证据说明需要多节点调度或另一个聊天产品。
 
