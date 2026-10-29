@@ -1,0 +1,245 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "目标蓝图 · Leader 驱动业务交付",
+    "locale": "zh-CN",
+    "output": "docs/assets/company-delivery-loop.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "intent",
+      "label": "需求输入 · 人的方向与业务问题"
+    },
+    {
+      "id": "lead",
+      "label": "系统职责一 · Leader 任务管理"
+    },
+    {
+      "id": "execution",
+      "label": "业务 Session · 实际执行"
+    },
+    {
+      "id": "acceptance",
+      "label": "独立验收 · 默认 Agent，指定才由人"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "source",
+      "lane": "intent",
+      "col": 0,
+      "type": "external",
+      "label": "人／定时发现问题",
+      "sublabel": "用户想法与业务反馈"
+    },
+    {
+      "id": "intake",
+      "lane": "intent",
+      "col": 1,
+      "type": "backend",
+      "label": "需求澄清与转化",
+      "sublabel": "Human Requirement 可按需承接"
+    },
+    {
+      "id": "pool",
+      "lane": "intent",
+      "col": 2,
+      "type": "database",
+      "label": "Task 与 Document",
+      "sublabel": "授权内可自动创建"
+    },
+    {
+      "id": "plan",
+      "lane": "lead",
+      "col": 2,
+      "type": "backend",
+      "label": "Leader 组织工作",
+      "sublabel": "依赖、顺序、承接与验收人"
+    },
+    {
+      "id": "dispatch",
+      "lane": "lead",
+      "col": 3,
+      "type": "messagebus",
+      "label": "任务引擎派发",
+      "sublabel": "按顺序交原 Session"
+    },
+    {
+      "id": "sync",
+      "lane": "lead",
+      "col": 5,
+      "type": "backend",
+      "label": "Leader 对账与推进",
+      "sublabel": "周期读取新增、待验、阻塞"
+    },
+    {
+      "id": "work",
+      "lane": "execution",
+      "col": 3,
+      "type": "backend",
+      "label": "业务 Session 执行",
+      "sublabel": "职责＋skill＋当前 Task"
+    },
+    {
+      "id": "submit",
+      "lane": "execution",
+      "col": 4,
+      "type": "database",
+      "label": "执行者提交结果",
+      "sublabel": "成果、检查、问题和来源"
+    },
+    {
+      "id": "verify",
+      "lane": "acceptance",
+      "col": 4,
+      "type": "security",
+      "label": "指定验收者亲用",
+      "sublabel": "默认验收 Session；可指定人"
+    },
+    {
+      "id": "done",
+      "lane": "acceptance",
+      "col": 5,
+      "type": "database",
+      "label": "通过后关闭并释放",
+      "sublabel": "未通过沿原 Task 返工"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "from": "source",
+      "to": "intake",
+      "label": "发现或沟通",
+      "role": "main"
+    },
+    {
+      "id": "e1",
+      "from": "intake",
+      "to": "pool",
+      "label": "固定任务与依据",
+      "role": "main"
+    },
+    {
+      "id": "e2",
+      "from": "pool",
+      "to": "plan",
+      "label": "待分配工作",
+      "role": "main"
+    },
+    {
+      "id": "e3",
+      "from": "plan",
+      "to": "dispatch",
+      "label": "确定顺序与职责",
+      "role": "main"
+    },
+    {
+      "id": "e4",
+      "from": "dispatch",
+      "to": "work",
+      "label": "可靠交接",
+      "role": "main"
+    },
+    {
+      "id": "e5",
+      "from": "work",
+      "to": "submit",
+      "label": "结果写回",
+      "role": "main"
+    },
+    {
+      "id": "e6",
+      "from": "submit",
+      "to": "verify",
+      "label": "Run终态且交付就绪",
+      "role": "main"
+    },
+    {
+      "id": "e7",
+      "from": "verify",
+      "to": "done",
+      "label": "达到该Task验收",
+      "role": "main"
+    },
+    {
+      "id": "e8",
+      "from": "done",
+      "to": "sync",
+      "label": "事实更新",
+      "role": "return"
+    },
+    {
+      "id": "e9",
+      "from": "sync",
+      "to": "plan",
+      "label": "继续／调整／结束",
+      "role": "return"
+    },
+    {
+      "id": "e10",
+      "from": "verify",
+      "to": "work",
+      "label": "未通过：同任务返工",
+      "role": "error"
+    }
+  ],
+  "mainPath": [
+    "source",
+    "intake",
+    "pool",
+    "plan",
+    "dispatch",
+    "work",
+    "submit",
+    "verify",
+    "done",
+    "sync"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "三种系统职责各有重心",
+      "items": [
+        "Leader管任务推进；Evocation看工作方式并推动自我提升；Human Requirement按需与你聊方向和需求。",
+        "User Session是独立体验／评价职责，与Evocation配合；不额外设第四个统筹中心。",
+        "逻辑分工已在本轮明确，实际常驻会话与自动化尚待配置和验证。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "授权与验收是两件事",
+      "items": [
+        "授权范围内，Agent可自行建任务、排期和执行；不是每个Task都先等人审批。",
+        "任务明确验收人和方式；只有指定human review的那一项等待用户。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "写回与同步的落地缺口",
+      "items": [
+        "执行者先提交有来源的阶段结果；运行真正结束后才能形成可验收交付。",
+        "当前Run结束≠Task完成。Lead先周期对账，通知只是加速；漏通知也可从台账恢复。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "时间只负责触发检查",
+      "items": [
+        "日程可触发需求挖掘、架构巡检或Lead对账；不要求每次都制造新任务。",
+        "用户每日看的应是简明BP、关键图、取舍和结果；细节按需下钻。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "日常工作与每日复盘相互连接",
+      "items": [
+        "业务任务按自己的验收要求推进，不默认等待一次晨会或Evocation审计。",
+        "User Session可按指定消费者职责承接部分验收；其代理体验不能冒充真人满意。",
+        "Leader提供真实进度与阻塞，Evocation汇合内部证据和独立体验，形成每日BP。"
+      ]
+    }
+  ]
+}

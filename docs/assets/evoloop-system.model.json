@@ -58,8 +58,8 @@
       "id": "cognition-role",
       "parent": "actors",
       "lane": 0,
-      "label": "专门认知 session",
-      "summary": "跨领域综合依据并选择下一步",
+      "label": "Leader 与需求澄清",
+      "summary": "Leader 组织跨任务接续；Human Requirement 按需澄清方向",
       "kind": "actor",
       "status": "selected",
       "sources": [
@@ -74,8 +74,8 @@
       "id": "domain-session",
       "parent": "actors",
       "lane": 0,
-      "label": "领域 session",
-      "summary": "理解、实现、修复并交付证据",
+      "label": "业务与 User Session",
+      "summary": "领域判断和交付；独立体验、消费与复测",
       "kind": "actor",
       "status": "selected",
       "sources": [
@@ -90,8 +90,8 @@
       "id": "division-role",
       "parent": "actors",
       "lane": 0,
-      "label": "分工管理责任",
-      "summary": "比较替代办法；职责试行、回看与撤回",
+      "label": "Evocation 改进责任",
+      "summary": "对照内部事实与亲用，试行方法和组织并评价去留",
       "kind": "actor",
       "status": "selected",
       "sources": [
@@ -596,7 +596,7 @@
         },
         {
           "label": "判断",
-          "value": "认知/分工由责任 session 或人承担；core 使决定、输入和效果可追溯。"
+          "value": "各 Agent 在职责内判断；Leader 组织任务，Evocation 与 User Session 改进方法；core 使输入和效果可追溯。"
         }
       ]
     },

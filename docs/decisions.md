@@ -1,8 +1,8 @@
 # 决定与设计状态
 
-2026-10-20。此页登记当前方向及待验证选择；引用来源是已公开抽象的项目要求和[历史来源说明](references/lineage.md)。原始会话不随公开仓库发布。编号用于其他文档引用，详细方案只在所属正文维护。
+2026-10-29。此页登记当前方向及待验证选择；引用来源是已公开抽象的项目要求和[历史来源说明](references/lineage.md)。原始会话不随公开仓库发布。编号用于其他文档引用，详细方案只在所属正文维护。
 
-当前有效边界速查：[两维度与四部分](product/definition.md#两个维度四个组成部分)（DEC-012）· [领域自主与分工](product/daily-loop.md#一条提议怎样变成可做的任务)（DEC-002/013/014）· [任务、过程文档、Git 与外置 Wiki 的权威](architecture/project-data.md)（DEC-006/018/022/023）· [表格和 Markdown/HTML 全文](product/workbench.md#从表格打开完整过程文档)（DEC-024）· [阶段与当前状态](roadmap.md)。旧决定、被取代部分和 PROP 的验证状态仍以下表及其来源为准。
+当前有效边界速查：[两张产品卫星图](product/definition.md#两张产品卫星图经营交付与组织改进)（DEC-034）· [两维度与四部分](product/definition.md#两个维度四个组成部分)（DEC-012）· [领域自主与分工](product/daily-loop.md#一条提议怎样变成可做的任务)（DEC-002/013/034）· [任务、过程文档、Git 与外置 Wiki 的权威](architecture/project-data.md)（DEC-006/018/022/023）· [表格和 Markdown/HTML 全文](product/workbench.md#从表格打开完整过程文档)（DEC-024）· [阶段与当前状态](roadmap.md)。旧决定、被取代部分和 PROP 的验证状态仍以下表及其来源为准。
 
 ## 用户已确定的方向
 
@@ -10,8 +10,8 @@
 | --- | --- | --- |
 | DEC-001 | 职责从真实工作与效果证据中演进 | 不预置固定完整角色阵容；职责试行必须可回看、合并或撤回 |
 | DEC-002 | 所有 session 都形成和使用认识，领域 session 可以负责修复 | 不设置唯一认知者或唯一执行瓶颈；委派仍有最终责任者 |
-| DEC-003 | 专门的分工管理 session 判断新角色需求 | 综合日志以外的负荷、产物、使用、运行与未来目标证据 |
-| DEC-004 | 专门认知 session 整合领域认识并推动下一步，初期同时承担 Wiki 综合维护 | 本轮补充明确其认知推进责任；全员仍能形成认识与处理本领域工作，是否进一步拆维护实例按证据决定 |
+| DEC-003 | 专门的分工管理 session 判断新角色需求；**职责归位已被 DEC-034 修订** | 其证据要求保留；组织与方法改进由 Evocation 结合 User Session 亲用承担，具体 Role/Session 以实际配置为准 |
+| DEC-004 | 专门认知 session 整合领域认识并推动下一步，初期同时承担 Wiki 综合维护；**中央入口已被 DEC-034 取代** | 保留当时的来源和 Wiki 来源审阅要求；每个 Agent 在职责内判断，Wiki 发布由有权维护者执行 |
 | DEC-005 | 早期第一阶段以飞书作为任务主数据；**权威部分已被 DEC-018 取代** | 保留当时减少自建成本的依据；飞书继续作为首个协作入口，当前任务主数据归 evoLoop |
 | DEC-006 | 认知正文在开发 repo 外，Markdown 可接受 | 正式文档在 Git；持续 Wiki、原始材料与运行数据独立存放 |
 | DEC-007 | 正式文档可以由仓库源文件渲染 HTML | 只维护一份正文；可发布文档默认公开，未来使用项目子域名 |
@@ -21,7 +21,7 @@
 | DEC-011 | 所有可公开探索统一进入 `docs/research/` 并可在文档站阅读 | 原 validation 报告已归入 research；研究计划、观察与建议保留状态，原始运行材料不随报告公开 |
 | DEC-012 | 以认知演进和协作执行两个维度思考产品，按四部分呈现架构 | 四部分为认知循环、动态多 session、Task 与状态机、LLM Wiki 与有效性评价；目标是有实际效果的 Agent loop，不预设四个固定岗位 |
 | DEC-013 | 各领域从真实工作提出 dogfood issue 和新需求到统一任务表 | 区分来源、类型与接受状态；常规授权内修复可直接接受，需要独立判断的需求先分流再执行 |
-| DEC-014 | 负责人的日常入口是与分工 session 讨论分工、与认知 session 讨论下一步 | 准备依据和选择，决定落入知识、任务和职责说明；常规工作不依赖人类传话 |
+| DEC-014 | 负责人的日常入口曾按分工与认知 session 拆开；**默认会话路由已被 DEC-034 修订** | Human Requirement 按需澄清方向；Leader 组织任务，Evocation 与 User Session 复盘方法；常规授权内工作不依赖人类传话 |
 | DEC-015 | 支持一次性和周期性工作，并明确 Codex 接入与包边界 | 定时工作进入统一任务规则；协议、触发、恢复及实现结构须有明确说明与验证 |
 | DEC-016 | 业务技术实现之前确认语言、核心技术、Wiki 集成/改造对象和包架构 | 先形成有依据的推荐与替代方案，明确包责任和版本能力，再推进业务代码；实验语言不自动成为应用选型 |
 | DEC-017 | 从第一版使用 PostgreSQL 保存运行状态，减少以后更换数据库引擎的迁移成本 | 替代早先 SQLite 建议；随后 DEC-018 将其范围扩展到项目主数据。数据库版本、驱动、迁移、部署和恢复仍需落地验证 |
@@ -42,8 +42,9 @@
 
 | DEC-031 | Task 正文统一由 Document 保存，任务使用四态并在原任务内验收 | content 承载完整说明，acceptance 留 Task；一次创建 Task 与主正文，固定修订防止改写执行依据。Task 类型轻量可选、Doc 用途与格式分开；Task 仅 todo/in_progress/done/cancelled，默认不增待验收状态或验收子 Task。skill 指导清楚正文、必要图与有理由的固定链接；后续增强按实际使用证据决定。迁移和验收以路线 C5 为准。 |
 
-| DEC-032 | 按完整功能场景连接所有模块，并区分 System Session 与业务 Session；分工研究真实工作后演进职责 | 认知和分工承担系统责任；业务职责初期覆盖架构、产品、开发流程规范、功能开发，并按需创建临时体验实例。认知综合 Task/Document、仓库、Wiki 与使用反馈规划工作；分工研究现有 Session 的真实 trace、任务类型、负担与结果再试行拆分。一次性执行、周期检查、issue 回流修复和复测见[功能场景规划](product/functional-scenarios.md)。分类是产品责任模型，不表示新增权限等级或已实现代码枚举；唤醒、hook、自动接续和逐 Session 关闭仍须设计与验证。 |
+| DEC-032 | 按完整功能场景连接所有模块，并区分 System Session 与业务 Session；**演员分工已被 DEC-034 修订** | 一次性执行、周期检查、issue 回流修复和复测继续纳入[功能场景](product/functional-scenarios.md)。原认知/分工演员是历史设计；新方向的 Lead、Evocation、Human Requirement 与 User Session 分工以 DEC-034 为准。分类仍不是新增权限等级或已实现代码枚举；唤醒、hook 和外部自动接续仍须单独验证。 |
 | DEC-033 | 所有新建 Session 使用 `danger-full-access`、`approvalPolicy: never` 与正常网络；普通消息和业务工作共享原 Session、Thread、adapter 与工具面 | 取代消息专用进程／purpose、只读权限资格门与业务权限恢复状态机。既有 sender/receiver grant 和 `maxTurns` 预算继续限定身份与成本；project/Task/Document 授权不变。旧 Session、Run 与 profile snapshots 保留历史值，不经冷切迁移重写。native permission ack 未收到时仍为 unknown；thread/read 不足以证明权限或确认 lost ack。当前仅 fake adapter 与专用 PG 验证，未证明 Lead 实际使用、发布或部署。 |
+| DEC-034 | 以经营交付和组织方法改进两张卫星图定义 Agent Company 的完整场景 | Leader 管任务组合、依赖、顺序、承接与验收安排；Human Requirement 按需澄清方向；业务 Agent 自行判断并交付；User Session 独立亲用，Evocation 对照内部 trace 与亲用证据试行方法/组织改进。两循环共用 Task/Document/Run/Delivery/Observation。保留 DEC-012 的四种支撑能力、DEC-002 的领域自主与 DEC-003 的证据要求；修订 DEC-003/004/014/032 的中央演员与默认路由。图是目标责任，现有 Role 名称及有限实跑不证明全链自动化；详见[产品定义](product/definition.md)与[完整场景](product/functional-scenarios.md)。 |
 
 ## 当前设计提议
 
@@ -94,3 +95,5 @@ DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期
 DEC-032 依据 2026-10-23 用户对完整功能场景、新的 Session 责任分类、真实工作驱动职责拆分与任务回流的明确要求；补充 DEC-001—004、008、014—015、025、030。原始私有会话不随仓库发布。前三条旅程在新场景页细化，后三条暂作待继续确认的关联索引；具体 hook、守护部署和唤醒方式仍是候选机制，未将其记为已通过运行验证。
 
 DEC-033 依据 2026-10-27 用户对 Task9a v5 的明确新选择：每个新 Session 使用 full/never/正常网络，普通消息与业务工作共享原生会话和常规工具配置，取消消息专用 readonly/cold 权限状态机。它取代 Codex 接入文档中旧的消息只读资格、purpose 专用适配器和冷切恢复要求；保留历史实验及 0.154.0 记录作为当时证据，不改旧 Session/Run snapshot。消息 receiver/sender 授权与 `maxTurns` 预算仍约束身份和成本，GUI reader 的 Run 范围与 Document iframe sandbox 不变。当前代码证据限 fake adapter 与专用 PostgreSQL 检查，Lead 原生使用、发布与部署仍未验证。
+
+DEC-034 依据 2026-10-29 用户对 Agent Company 完整蓝图、两张原图与相应场景的确认。固定来源是过程 Document `92e03220-59bb-4dea-b63a-bcd204f30f31` 的修订 `67b7ad3e-e64c-4800-a55e-784a50354492`；可公开的目标语义与原图已纳入[产品定义](product/definition.md#两张产品卫星图经营交付与组织改进)。原报告含本机运行和内部路径，不作为 Git 正文发布。此决定改变产品职责和阅读路径；现有运行配置、自动唤醒、真人亲用和持续收益各按[阶段路线](roadmap.md#当前基线)单独核验。

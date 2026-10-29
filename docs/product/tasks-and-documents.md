@@ -14,11 +14,14 @@ Task 保存简短标题、负责人、验收标准、工作状态和主正文的
 
 ```mermaid
 flowchart LR
-  T["Task<br/>标题 · 负责人 · 状态 · 验收"] -->|固定主正文修订| D["Document：任务说明<br/>完整正文 · 图 · 附件"]
-  D -->|按需引用| R["其他过程文档<br/>issue · spec · discussion · report"]
+  T["Task<br/>责任 · 状态 · 验收"] -->|唯一主正文修订| D["Document：任务说明<br/>全文 · 图 · 附件"]
+  T -->|按需关联并固定采用版| R["其他过程 Document<br/>issue · spec · discussion · report"]
+  T -->|本轮固定成果| E["Delivery<br/>产物与技术检查"]
+  E -->|声明消费者实际使用| O["Observation<br/>used · failed · notUsed"]
 ```
 
-Task 的执行、文档发布、Run 的终态和消费者实际使用分别回答不同问题。任务完成也不表示整个项目目标已达成。
+
+图只解释使用者会遇到的对象关系：普通关联链接不是执行依据；开始时才固定实际采用的修订。Task 的执行、文档发布、Run 的终态、本人署名提交、固定交付和消费者实际使用分别回答不同问题。普通受管执行者可在本 Run 结束前签署 `ordinary.submit`；协调器在已知终态后封存 Delivery，指定消费者使用后由有权者核当前修订关闭。任务完成也不表示整个项目目标已达成；命令及运行条件见[Agent CLI](../development/agent-cli.md#提交与核对)。
 
 ## Task 类型与状态
 

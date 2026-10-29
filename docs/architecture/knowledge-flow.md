@@ -77,7 +77,7 @@ flowchart TB
   A["触发<br/>文档采纳 / Git 指定分支更新 / 阶段评审"]:::event
   B["SourceBridge<br/>白名单 · 权限 · 固定修订读取"]:::process
   C["外置只读来源修订<br/>原对象引用 · 内容校验 · 状态"]:::data
-  D["维护任务<br/>认知 session 核新旧依据与反例"]:::process
+  D["维护任务<br/>领域责任者与有权维护者核新旧依据与反例"]:::process
   E["候选知识差异<br/>适用条件 · 争议 · 被取代关系"]:::knowledge
   F["受控发布与回读<br/>固定知识修订及发布清单"]:::knowledge
   G["影响事项<br/>关联需求 / 任务 / 正式规范待复核"]:::event

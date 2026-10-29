@@ -14,72 +14,41 @@ Codex App Server 是对话执行边界，不是 evoLoop 任务数据库、知识
 
 已实现的普通受管 Run 以固定 TaskRevision、Basis、收件 actor 和 input hash 形成首包；新协议用带 hash 的 handoff 先核身份与完整验收，再按材料目录读取长正文和所需原件。Session 准备报告当时的 Role 修订与项目 skill 来源；派发 Run 时重新读取当前引用并固定到该 Run 首包，准备本身不派 Task。执行者在有效 Run 内用自己的业务 CLI 身份提交 `ordinary.submit`，保存不可变产物和技术结果意图；终态封存器核原 Run、提交者及原意图后生成对应 Delivery，并记录封存者。Lead 回读 Run、submission、Delivery，声明消费者实际使用并签观察，有权者验收后关闭 Task；队列的 accepted release 才允许受依赖的后项领取。未提交、封存阻断、旧 direct Run 缺固定收件事实或原生结果未知都保留独立缺口和恢复入口。具体命令及例外见[Agent CLI](../development/agent-cli.md#普通-run-本人提交与终态封存)，Task 的验收合同见[任务与过程文档](../product/tasks-and-documents.md#验收留在原任务里)。这条链在本机有限任务中实际使用，不能由代码路径推定所有旧 Run、Desktop 聊天或真人体验均已覆盖。
 
-下面的时序图用于核对**拟议 App Server 线程怎样承接一次已接受任务，以及运行事件何时回到主数据和验收**。它画的是自管 Thread 路径；Desktop 的人工讨论入口与限制见上文。若只需理解工作目的，先读[总览的工作回路](overview.md#3-沿一轮工作理解系统)。
+下面的时序图专门回答：**已接受的 Task 如何进入一个 owned Thread、如何取得固定原件，以及 Run、本人提交、Delivery 和独立使用何时分别成立。** 它是[产品场景 2](../product/functional-scenarios.md#场景-2业务-session-怎样接任务提交结果并带回问题)的运行时下钻，非所有外部宿主的共同保证。飞书仅是拟议 connector，不作为本图的默认起点；其同步方向见[项目数据](project-data.md#5-飞书-connector-的职责)。
 
 ```mermaid
-%%{init: {"sequence":{"mirrorActors":false,"messageMargin":30}}}%%
 sequenceDiagram
-  autonumber
-  box rgb(255,241,214) 目标与协作入口
-  actor H as 人类／使用者
-  participant F as 飞书 Bitable 投影
-  end
-  box rgb(229,240,255) 主数据与协调
-  participant P as PostgreSQL Task／Doc／Relation
-  participant C as evoLoop 协调＋定时器
-  participant R as Role／Session 映射
-  end
-  box rgb(231,242,233) 会话运行
+  actor L as Lead／责任者
+  participant P as evoLoop Task／协调器
   participant A as Codex App Server
+  participant B as owned 业务 Session
+  actor U as 声明消费者
+  opt 首次准备或复用
+    L->>P: session prepare：登记或复用 Session／Role
+    P->>A: thread/start 或原 Thread resume
+    A-->>P: Thread 身份、配置与实际状态
   end
-  box rgb(226,244,242) 认知与依据
-  participant K as 外置 Wiki／证据
+  L->>P: 接受 Task；明确本次责任与顺序
+  P->>P: 核 Task／Basis、授权、占用、预算
+  P->>A: turn/start：本次 Run 的有界 Markdown 入口
+  A-->>P: Turn ID 与过程事件
+  P-->>B: 固定 Run／Task／材料目录
+  B->>P: 用项目 CLI 核身份并按修订／hash 读取原件
+  opt 需要 Lead 答复
+    B->>P: 原 Task 通道记录问题
+    L->>P: 答复或按权限修订任务
+    P-->>B: 后续 Run 固定答复并继续
   end
-  H->>F: 提出需求／报告 dogfood 缺陷，附验收与来源
-  F-->>C: 变更提示
-  C->>F: 回读远端记录与基线
-  F-->>C: 受支持字段及外部身份
-  C->>P: core 校验后提交 Task command
-  P-->>C: 任务修订＋outbox
-  C->>P: 回读已接受任务、授权、判据与固定修订
-  C->>R: 选责任 Role 和承载 Session，核交接条件
-  alt 尚无承载 Thread
-    C->>A: thread/start(cwd, model, sandbox, approvalPolicy)
-    A-->>C: thread.id、sessionId、instructionSources
-    C->>R: 登记本次承载与外部 ID
-  else 已登记 Thread
-    C->>A: thread/resume(threadId, excludeTurns=true, 当前执行配置)
-    A-->>C: 当前元数据／状态
-  end
-  C->>A: turn/start(threadId, task brief 与固定依据)
-  A-->>C: turn.id，inProgress
-  A-->>C: item/*、审批请求、turn/completed
-  C->>A: 必要时回读 thread/turns/list、thread/items/list
-  C->>P: 写 Run 观察与交付待核，按本体对账
-  P-->>C: 待同步 outbox
-  C->>F: connector 投影并回读
-  F-->>C: 远端记录及同步基线
-  C->>P: 更新 ExternalBinding 与 Sync
-  Note over C,A: 领域 session 经项目工具提交交付与知识候选
-  C->>K: 按维护约定保存候选及来源
-  C->>A: 向验收责任者派发实际使用任务
-  A-->>C: 使用记录及与原目标的差距
-  opt 判据需要人的体验或目标取舍
-    C->>H: 提供具体成果和待决定问题
-    H-->>C: 使用评价／取舍
-  end
-  C->>P: 按判据记录验收与效果状态
-  alt 认知 Role 有已登记的自动承载实例
-    C->>A: 派发阶段回看，关联当前决定修订
-    A-->>C: 认识修订与有依据的下一步候选
-    C->>K: 通过维护入口发布认识修订
-    C->>P: 登记下一提议，沿正常接受规则推进
-  else 仅有不可自动唤醒的 Desktop 实例
-    C->>P: 保留待承接回看，记录缺少自动入口
-  end
+  B->>P: ordinary.submit：本人签产物与检查意图
+  A-->>P: 原生终态；未知时按原 ID 回读
+  P->>P: 核终态与意图后封存唯一 Delivery
+  P-->>U: 固定交付可读取
+  U->>P: 实际使用并记录当前交付的 Observation
+  L->>P: 核验收、关闭原 Task 或安排返工
+  P->>P: 满足条件才检查下一项队列
 ```
 
-图例：人类＝目标与使用；飞书＝协作投影；PostgreSQL＝任务／文档／关系主数据；协调层＝派发与定时恢复；Codex＝运行事件；Wiki＝有来源的认识。图中 `turn/completed` 到 PostgreSQL“交付待核”之间保留任务约定的责任者核验，不自动判任务完成。图表达**拟议流**，没有端到端运行记录。
+`session prepare` 不分配 Task，Role 绑定不自动授予运行权限；Markdown 首包提供固定入口和目录，正文与资源由执行者按需读取。`ordinary.submit` 属普通受管业务身份，旧静态 Run 和 brokered worker 各按自己的合同交付。Turn 终态、Delivery、消费者 Observation、Task 关闭和下一 Run 是不同事件；失败或未知不能悄悄放行下一项。原生消息能在同一 Thread 排队，但 Task 问题的保存不证明 Lead 已获主动通知。当前本机有界实跑见[阶段路线](../roadmap.md#当前基线)；Desktop external 仍按人工领取和能力核实，不沿本图画成自动唤醒。故障恢复细则见[下文](#状态与恢复规则)，通用跨系统 `unknown` 见[总览恢复图](overview.md#派发结果未知先对账再决定)。
 
 ## 受管 worker 自动接续候选
 
@@ -119,7 +88,7 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 一条 PostgreSQL Task 可经历多个 Codex Turn、换 Thread 接续，甚至由多个业务 session 分工；一条 Thread 也可处理多个相关 Turn。关系通过 `taskId`、`roleId`、项目 `sessionId`、原生 `threadId`／`turnId`、操作 ID 和有效时间段串联，不能把任一外部 ID 当另一层的主键。新持续 Role 需要缺口证据、试行与回看；`thread/start` 和 `thread/fork` 只创建运行实例／历史分支。当前静态路径先将 Session 持久预留为 `reserved`，runner 从自己的 `thread/start` 回执保存原生 Thread、Session 与实际目录后才标为 `ready`；`role.bindSession` 仅能绑定同项目、同 Role、已有原生 Thread 的 ready owned Session，不接受任意 Desktop chat ID 或原生 session ID。绑定不会替自动 Loop 选用该 Session：当前自动派发按 Dispatch 创建新的受管 Session；普通 `runtime.run.reserve` 可在同一 ready Session 上另开 Turn，但仍须核在途／未知、Task 责任和固定输入与当前授权。评价尝试另有每次新建 Session 的要求。实际步骤见[Agent CLI 的首次业务任务路径](../development/agent-cli.md#建立常驻业务职责与首个受管任务)。
 
-需求与 dogfood 缺陷先说明复现、预期、实际结果、影响范围和证据；尚未决定的问题可留在 issue/spec 或讨论，明确的授权工作创建 todo Task。开始时固定主正文和必要材料，再进入 in_progress；验收默认留原任务内。飞书可作为协作入口，但入站编辑先转为受验证的 command。责任 session 可以自行修复所在领域问题、提交成果与知识候选；需要跨领域承接时协调者按 Role 范围派发并回收。专门认知 session 综合使用反馈、冲突与下一步，但不是局部行动的必经审批环节。任务的交付状态、派发操作状态和实际使用效果分别记录。
+需求与 dogfood 缺陷先说明复现、预期、实际结果、影响范围和证据；尚未决定的问题可留在 issue/spec 或讨论，明确的授权工作创建 todo Task。开始时固定主正文和必要材料，再进入 in_progress；验收默认留原任务内。飞书可作为协作入口，但入站编辑先转为受验证的 command。责任 Session 可以自行修复所在领域问题、提交成果与知识候选；Leader 按 Role 范围组织跨任务承接与验收。Evocation 对照内部 trace 与 User Session 亲用诊断重复出现的方法和组织问题；Human Requirement 按需澄清用户方向。任务的交付状态、派发操作状态和实际使用效果分别记录。
 
 定时器属于 evoLoop：日程定义、触发实例、去重与恢复水位存 PostgreSQL，具体归属以 [ScheduleStore 合同](contracts.md#7-schedulestore-与触发实例)为准；每次需要执行的到期工作形成独立 Task。飞书日程视图若需要则经 connector 投影，不成为另一权威。触发先回读 PostgreSQL 当前状态、知识固定修订和已登记在途 Turn，再决定是否派发；定时通知或 `turn/start` 回执不证明工作被采用。协调服务由事件加对账触发完成回收与认知下一步，不能等 worker 自己想起发消息。App Server 文档没有提供供此设计依赖的通用 cron 方法；宿主产品自身“计划任务”需要独立接入与验证，不隐式代替此调度器。无人值守任务碰到审批或权限不足时进入待人处理；可安全运行范围与 SDK 批处理选择留给试点决定。
 
