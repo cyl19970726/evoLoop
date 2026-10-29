@@ -99,16 +99,18 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.goto(`${base}/#/p/${a}/overview`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
+  await page.locator("#workspace-main:focus").waitFor();
   await page.getByText(/摘要读取失败：队列暂不可读/).waitFor();
   assert.match(await page.locator("body").innerText(),/尚未读回项目摘要/);
   assert.equal(await page.getByText("已读队列范围内没有确认的领取占用。").count(),0);
   await fetch(`${base}/__fixture/mode?value=normal`);
   await page.getByRole("button",{name:"重新读取"}).click();
+  await page.locator(".overview-queue-details > summary").click();
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   await page.getByRole("link",{name:"下一任务"}).waitFor();
   await page.getByText(/等待消费者使用与验收/).first().waitFor();
   assert.match(await page.locator("body").innerText(),/观察于/);
-  assert.equal(await page.locator('[data-page-key="overview:::"]').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await page.getByRole("heading",{name:"项目总览",exact:true}).locator("..").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   assert.equal(errors.length,0,errors.join(" | "));
   await fetch(`${base}/__fixture/mode?value=fail`);
   await page.getByRole("button",{name:"重新读取"}).click();
@@ -121,7 +123,8 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await fetch(`${base}/__fixture/mode?value=normal`);
   const before=Number(await (await fetch(`${base}/__fixture/reads`)).text());
   await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/work`;},a);
-  await page.locator('[data-page-key="work:::"]').waitFor({state:"visible"});
+  await page.getByRole("heading",{name:"任务",exact:true}).waitFor();
+  await page.locator("#workspace-main:focus").waitFor();
   await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/overview`;},a);
   await page.getByRole("link",{name:"当前任务"}).waitFor({timeout:5000}).catch(async ()=>{
     assert.fail(`Return did not refresh. Reads ${await (await fetch(`${base}/__fixture/reads`)).text()} Body ${await page.locator("body").innerText()} Errors ${errors.join(" | ")}`);
@@ -185,5 +188,12 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await fetch(`${base}/__fixture/release-b`);
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   assert.equal(await page.getByRole("link",{name:"乙项目任务"}).count(),0);
+  await page.getByLabel("打开项目导航", {exact:true}).click();
+  await page.getByRole("link", {name:"文档与知识",exact:true}).press("Enter");
+  await page.getByRole("heading", {name:"过程文档",exact:true}).waitFor();
+  await page.locator("#workspace-main:focus").waitFor();
+  await page.getByLabel("打开项目导航", {exact:true}).click();
+  await page.getByRole("button", {name:"关闭导航",exact:true}).click();
+  await page.locator('button[aria-label="打开项目导航"]:focus').waitFor();
   assert.equal(errors.length,0,errors.join(" | "));
 });

@@ -3,19 +3,30 @@ import type { Project } from "@evoloop/contracts";
 import { api, errorText } from "../api";
 import { Alert, date, href } from "../ui/shared";
 import type { MutationContext } from "../workflow/ActionForm";
+const permissionLabel: Record<string,string> = {read:"读取项目",write:"提交业务变更",review:"审阅与复核",approve:"接受与验收"};
 
 export function ProjectSettings({ context, refresh }: { context: MutationContext; refresh: number }) {
-  const [project, setProject] = useState<Project | null>(null);
+  const scope = `${context.projectId}:${context.principal.actorId}:${context.token}`;
+  const [read, setRead] = useState<{scope: string; project: Project; observedAt: string} | null>(null);
   const [error, setError] = useState("");
+  const [reading, setReading] = useState(true);
   useEffect(() => {
     let active = true;
-    api(context.token).project(context.projectId).then(value => { if (active) { setProject(value); setError(""); } })
-      .catch(cause => { if (active) setError(errorText(cause)); });
+    setReading(true);
+    api(context.token).project(context.projectId).then(value => {
+      if (value.id !== context.projectId) throw new Error("项目响应与当前范围不符");
+      if (active) { setRead({scope,project:value,observedAt:new Date().toISOString()}); setError(""); }
+    }).catch(cause => { if (active) setError(errorText(cause)); }).finally(() => { if (active) setReading(false); });
     return () => { active = false; };
-  }, [context.token, context.projectId, refresh]);
-  return <div className="content narrow"><h1>项目设置</h1><p className="lede">查看当前项目和访问范围。会话授权与项目设置分开核对，连接现有聊天不会自动获得发送或运行权限。</p>
-    {error && <Alert kind="error">项目暂不可读取：{error}<button onClick={context.onChanged}>重试</button></Alert>}
-    {project && <section className="panel"><h2>{project.title}</h2><dl><div><dt>项目建立时间</dt><dd>{date(project.createdAt)}</dd></div><div><dt>当前身份</dt><dd>{context.principal.actorId}</dd></div><div><dt>当前权限</dt><dd>{context.principal.permissions.join("、") || "只读范围待核对"}</dd></div></dl></section>}
-    <section className="panel"><h2>来源与操作</h2><div className="context-links"><a href={href(context.projectId, "repository")}>仓库正式文档</a><a href={href(context.projectId, "operations")}>待核对操作</a><a href={href(context.projectId, "roles")}>职责与会话连接</a></div><p className="muted">Task、Schedule 和过程文档以当前项目记录为准；仓库正式文档保留在 Git，知识原文保留在外置知识空间。</p></section>
+  }, [context.token, context.projectId, scope, refresh]);
+  const current = read?.scope === scope ? read : null;
+  return <div className="content project-settings"><h1>项目设置</h1><p className="lede">核对当前项目、登录身份与事实来源。具体执行、消息和日程授权在各自对象中判断。</p>
+    {error && <Alert kind="error">项目本次读取失败：{error}。{current && "保留上次读回。"}<button onClick={context.onChanged}>重新读取</button></Alert>}
+    <section className="panel"><div className="panel-head"><h2>{current?.project.title ?? "正在核对项目…"}</h2><button className="quiet" onClick={context.onChanged}>重新读取</button></div>
+      {current && <p className="muted">项目建立于 {date(current.project.createdAt)} · 读于 {date(current.observedAt)}{error ? "（旧数据）" : reading ? " · 正在重新核对" : ""}</p>}
+      <div className="project-access-grid"><section><h3>当前登录身份</h3><strong>{context.principal.actorId}</strong><p>连接已有会话不自动获得向其发消息或启动Run的授权。</p></section><section><h3>权限声明</h3><ul>{context.principal.permissions.map(permission=><li key={permission}>{permissionLabel[permission] ?? permission}</li>)}</ul><p>具体对象、操作、固定版本与可用承载仍由服务端核验。</p></section></div>
+      <details><summary>项目与身份标识</summary><p>项目 <code>{context.projectId}</code> · 身份类型 {context.principal.identityKind ?? "未报告"}</p></details>
+    </section>
+    <section className="panel"><h2>从相应权威继续</h2><div className="project-source-links"><a href={href(context.projectId,"work")}><strong>工作记录</strong><span>Task、交付、独立使用和下一责任</span></a><a href={href(context.projectId,"repository")}><strong>仓库正式文档</strong><span>产品、前端、架构与开发规则</span></a><a href={href(context.projectId,"knowledge")}><strong>知识空间</strong><span>外置正文、固定来源与反例</span></a><a href={href(context.projectId,"runtime")}><strong>团队与具体会话</strong><span>职责、承接、实际运行与能力</span></a><a href={href(context.projectId,"operations")}><strong>待核对操作</strong><span>当前身份的原操作回执与恢复</span></a></div></section>
   </div>;
 }

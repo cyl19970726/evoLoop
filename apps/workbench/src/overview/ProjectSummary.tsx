@@ -9,6 +9,9 @@ import { isRoleOwnerId, readOwnerRole } from "../workflow/ownerRole";
 import { scanProjectTasks, selectSummary, taskMatchesQueue, type SummaryItem } from "./summary";
 import { visibleWorkGroups, type WorkTaskStatus } from "../workflow/workStatusPresentation";
 
+import { ProjectContext } from "./ProjectContext";
+import "./overview.css";
+
 interface Snapshot {
   scope: string;
   queues: ResidentQueue[];
@@ -149,20 +152,22 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
   const selection = current ? selectSummary(current.queues) : null;
   const groups = current ? visibleWorkGroups(current.activeTasks, current.statuses, !!current.statusError && !Object.keys(current.statuses).length) : null;
   const stale = !!current && (pending || !!error);
-  return <div className="content"><h1 tabIndex={-1}>项目总览</h1>
-    <p className="lede">当前业务任务、待处理事项与具体承接；来源记录可在下方展开。</p>
-    <div className="context-links"><a href={href(projectId, "work")}>全部任务</a><a href={href(projectId, "runtime")}>分工与承载</a><a href={href(projectId, "inbox")}>待判断与复核</a></div>
+  return <div className="content project-overview"><h1 tabIndex={-1}>项目总览</h1>
+    <p className="lede">从目标差距、实际使用和当前责任判断下一步。</p>
     <p className="muted">{current ? `观察于 ${date(current.observedAt)}${stale ? " · 上次读回，当前状态待核对" : ""}` : pending ? "正在读取项目摘要…" : "尚未读回项目摘要"}　<button type="button" onClick={() => setReread(value => value + 1)} disabled={pending}>重新读取</button></p>
     {error && <Alert kind="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Alert>}
     {current?.failedNames ? <Alert>有 {current.failedNames} 个名称未读回；仅显示登记 ID，并保留原任务与承载入口。</Alert> : null}
+    <ProjectContext token={token} projectId={projectId} refresh={refresh + reread} active={active} />
+    <div className="context-links"><a href={href(projectId, "work")}>全部任务</a><a href={href(projectId, "runtime")}>分工与承载</a><a href={href(projectId, "inbox")}>待判断与复核</a></div>
     <section className="panel"><h2>当前业务任务</h2>
-      {groups?.primary.length ? <ul>{groups.primary.map(task => <ActiveTaskItem key={task.id} task={task} snapshot={current!} projectId={projectId} />)}</ul>
+      {groups?.primary.length ? <ul>{groups.primary.slice(0,4).map(task => <ActiveTaskItem key={task.id} task={task} snapshot={current!} projectId={projectId} />)}</ul>
         : current && !stale && !current.taskScan.truncated ? <p className="empty">已读任务中没有可确认的进行中业务任务；判断接续与未分类记录见下方。</p>
           : current?.taskScan.truncated ? <p>已读范围内未见进行中的任务；后续任务尚未读到，不能判断项目为空。</p>
             : <p>进行中的任务待读回。</p>}
       {current?.statusError && <p className="muted">工作分类暂不可读：{current.statusError}；上方保留已读任务，请到原任务核对。</p>}
       {current && <p className="muted">已读 {current.taskScan.pages} 页，见到 {current.taskScan.total} 项进行中。{current.taskScan.truncated ? "后续任务尚未读完。" : ""} <a href={href(projectId, "work")}>查看全部任务</a></p>}
     </section>
+    <details className="panel overview-queue-details"><summary>队列与承接明细{selection ? ` · ${selection.total.held} 条暂停或待核记录` : ""}</summary><p className="muted">队列占用、下一顺位和历史待核记录；当前任务进度仍以原任务为准。</p>
     <section className="panel"><h2>待处理</h2>
       {selection?.held.length ? <ul>{selection.held.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="held" />)}</ul> : selection?.total.held === 0 && !stale ? <p className="empty">已读队列中没有暂停项。</p> : <p>暂停事项待读回。</p>}
       {!!selection?.omittedByKind.held && <p>另有 {selection.omittedByKind.held} 项未展开。<a href={href(projectId, "runtime")}>查看完整队列</a></p>}
@@ -176,6 +181,7 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
       {selection?.next.length ? <ul>{selection.next.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="next" />)}</ul> : selection?.total.next === 0 && !stale ? <p className="empty">已采纳队列中没有读到下一顺位。</p> : !selection?.omittedByKind.next ? <p>下一顺位待读回。</p> : null}
       {!!selection?.omittedByKind.next && <p role="status">另有 {selection.omittedByKind.next} 项下一顺位未展开；请看<a href={href(projectId, "runtime")}>完整队列</a>。</p>}
     </section>
+    </details>
     {!!(groups?.cognition.length || groups?.unknown.length) && <details className="panel"><summary>判断接续与来源待核对 · {(groups?.cognition.length ?? 0) + (groups?.unknown.length ?? 0)} 项</summary>
       <p>这些任务仍保持原状态与责任；此处按已读结构化来源分组，打开原任务可查看完整依据。</p>
       <ul>{[...(groups?.cognition ?? []), ...(groups?.unknown ?? [])].map(task => <ActiveTaskItem key={task.id} task={task} snapshot={current!} projectId={projectId} />)}</ul>
