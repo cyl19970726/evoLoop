@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { createHash } from "node:crypto";
-import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
+import type { Operation, Principal, RuntimeRunRecord } from "@evoloop/contracts";
 import type { Delivery } from "@evoloop/contracts/workflow";
 import type { OrdinaryRunSubmissionCommand, OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { DomainError, type UnitOfWork } from "@evoloop/contracts/ports";
@@ -8,7 +8,12 @@ import { submitOrdinaryRun } from "@evoloop/core/ordinary-run-submission";
 import { PgOrdinaryRunSubmissionStore } from "@evoloop/adapter-postgres/ordinary-run-submission";
 
 export class OrdinaryRunSubmissionService {
-  constructor(private readonly pool: Pool, private readonly uow: UnitOfWork) {}
+  constructor(private readonly pool: Pool, private readonly uow: UnitOfWork,
+    private readonly canWrite: () => boolean = () => true) {}
+
+  private requireLease(): void {
+    if (!this.canWrite()) throw new DomainError("LEASE_LOST", "Coordinator lease lost before ordinary submission write");
+  }
 
   private async transaction<T>(projectId: string, action: (store: PgOrdinaryRunSubmissionStore) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -16,7 +21,9 @@ export class OrdinaryRunSubmissionService {
     try {
       await client.query("BEGIN"); open = true;
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [projectId]);
+      this.requireLease(); // The pool and project lock may have waited after the HTTP or pump check.
       const value = await action(new PgOrdinaryRunSubmissionStore(client, projectId));
+      this.requireLease(); // A known loss before COMMIT rolls back this transaction.
       try { await client.query("COMMIT"); open = false; }
       catch (error) { destroy = true; throw error; }
       return value;
@@ -68,6 +75,17 @@ export class OrdinaryRunSubmissionService {
     return this.withStore(projectId, store => store.getRun(runId));
   }
 
+  /** Internal recovery read, confined to the immutable submission's reserved operation. */
+  async readDeliveryOperation(submission: OrdinaryRunSubmissionRecord): Promise<Operation | null> {
+    const fixed = await this.readSubmission(submission.projectId, submission.runId);
+    if (!fixed || fixed.id !== submission.id || fixed.operationId !== submission.operationId ||
+      fixed.deliveryOperationId !== submission.deliveryOperationId ||
+      fixed.submittedBy !== submission.submittedBy || fixed.commandHash !== submission.commandHash ||
+      fixed.deliveryCommandHash !== submission.deliveryCommandHash)
+      throw new DomainError("SUBMISSION_CONFLICT", "Original Run submission changed during recovery");
+    return this.uow.read(submission.projectId, reader => reader.getOperation(submission.deliveryOperationId));
+  }
+
   async updateSubmission(next: OrdinaryRunSubmissionRecord, expectedVersion: number): Promise<boolean> {
     return this.transaction(next.projectId, async store => {
       const actual = await store.get(next.runId);
@@ -93,4 +111,18 @@ export class OrdinaryRunSubmissionService {
   async getFixedRecipient(projectId: string, runId: string): Promise<string | null> {
     return this.withStore(projectId, store => store.getFixedRecipient(runId));
   }
+}
+
+/** The callback runs after the underlying PostgreSQL transaction has its project lock. */
+export function leaseCheckedUnitOfWork(uow: UnitOfWork, canWrite: () => boolean): UnitOfWork {
+  const check = () => { if (!canWrite()) throw new DomainError("LEASE_LOST", "Coordinator lease lost before Delivery commit"); };
+  return {
+    read: (projectId, action) => uow.read(projectId, action),
+    transaction: (projectId, action) => uow.transaction(projectId, async tx => {
+      check();
+      const result = await action(tx);
+      check();
+      return result;
+    }),
+  };
 }

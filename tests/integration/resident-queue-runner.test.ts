@@ -13,7 +13,7 @@ import { canonicalTaskInputJson, taskInputSignature } from '../../packages/core/
 import { ResidentQueuePump } from '../../apps/coordinator/src/resident-queue/pump.js';
 import { RuntimeRunner } from '../../apps/coordinator/src/runtime/runner.js';
 import { buildServer } from '../../apps/coordinator/src/server.js';
-import { OrdinaryRunSubmissionService } from '../../apps/coordinator/src/ordinary-run-submission/service.js';
+import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from '../../apps/coordinator/src/ordinary-run-submission/service.js';
 import { OrdinaryRunSealPump } from '../../apps/coordinator/src/ordinary-run-submission/pump.js';
 import { createOrdinaryRunSealer } from '../../apps/coordinator/src/ordinary-run-submission/seal.js';
 import { runInputPage } from '../../apps/coordinator/src/runtime/input-read.js';
@@ -357,17 +357,55 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
         assert.ok(ordinaryIntent);
         // A fresh service and pump simulate recovery after coordinator restart.
         const ordinary=new OrdinaryRunSubmissionService(pool,uow);
+        const originalSubmission=(await ordinary.readSubmission(projectId,runBefore.id))!;
+        let submissionLease=true;
+        const fencedSubmission=new OrdinaryRunSubmissionService(pool,uow,()=>submissionLease);
+        const admissionLock=await pool.connect();
+        try{
+          await admissionLock.query('BEGIN');
+          await admissionLock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[projectId]);
+          const pending=fencedSubmission.updateSubmission({...originalSubmission,state:'blocked',reason:'test fence',
+            version:originalSubmission.version+1},originalSubmission.version);
+          let waiting=false;
+          for(let i=0;i<100;i++){
+            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+              AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid()`);
+            if(activity.rowCount){waiting=true;break;}
+            await new Promise(resolve=>setTimeout(resolve,10));
+          }
+          assert.equal(waiting,true,'submission write must be waiting on the project lock');
+          submissionLease=false;
+          await admissionLock.query('COMMIT');
+          await assert.rejects(pending,{code:'LEASE_LOST'});
+          assert.equal((await ordinary.readSubmission(projectId,runBefore.id))?.state,'submitted');
+        }finally{admissionLock.release();}
+        let signerAuthorized=true, dropCommittedRead=true;
+        const sealWorkflow=new WorkflowService({uow:leaseCheckedUnitOfWork(uow,()=>true),
+          clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
         const seal=new OrdinaryRunSealPump({canWrite:()=>true,listProjects:()=>ordinary.listUnsettledProjects(),
           listUnsettled:(p,limit,after)=>ordinary.listUnsettled(p,limit,after),
           seal:(p,r)=>createOrdinaryRunSealer({readSubmission:(p,r)=>ordinary.readSubmission(p,r),
             updateSubmission:(next,expected)=>ordinary.updateSubmission(next,expected),
             readRun:(p,r)=>ordinary.readRun(p,r),readDelivery:(p,d)=>ordinary.readDelivery(p,d),
-            resolveSubmittedActor:async()=>({actorId:businessActor,projectIds:[projectId],permissions:['read','write']}),
-            workflow,sealer:{actorId:'system:ordinary-run-sealer',projectIds:[projectId],permissions:['read','write','review']},
+            readDeliveryOperation:async s=>{
+              const operation=await ordinary.readDeliveryOperation(s);
+              if(operation&&dropCommittedRead){dropCommittedRead=false;throw new Error('committed reply/read lost');}
+              return operation;
+            },
+            resolveSubmittedActor:async()=>signerAuthorized?
+              {actorId:businessActor,projectIds:[projectId],permissions:['read','write']}:null,
+            workflow:sealWorkflow,sealer:{actorId:'system:ordinary-run-sealer',projectIds:[projectId],permissions:['read','write','review']},
             now:()=>new Date().toISOString(),canWrite:()=>true})(p,r)});
+        await seal.cycle();
+        assert.equal((await ordinary.readSubmission(projectId,runBefore.id))?.state,'unknown');
+        assert.equal((await workflow.getTask(controller,projectId,taskId)).deliveries?.length,1,
+          'the Delivery committed before its read response was lost');
+        signerAuthorized=false;
         await seal.cycle();
         const signed=await ordinary.readSubmission(projectId,runBefore.id);
         assert.equal(signed?.state,'sealed',seal.status().lastError??'');
+        await assert.rejects(ordinary.readDeliveryOperation({...signed!,deliveryOperationId:randomUUID()}),
+          {code:'SUBMISSION_CONFLICT'},'internal history read stays bound to the original operation');
         assert.equal(signed.terminalRunVersion,completed.version);
         const detail=await workflow.getTask(controller,projectId,taskId);
         assert.equal(detail.deliveries?.length,1);
@@ -375,6 +413,32 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
         assert.equal(delivery.id,signed.deliveryId);
         assert.equal(delivery.submittedByActorId,businessActor);
         assert.equal(delivery.sourceRunVersion,completed.version);
+        const hold=await pool.connect();
+        let locked=false;
+        try{
+          await hold.query('BEGIN');
+          await hold.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[projectId]);
+          locked=true;
+          let leaseHeld=true;
+          const fencedWorkflow=new WorkflowService({uow:leaseCheckedUnitOfWork(uow,()=>leaseHeld),
+            clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
+          const blockedOperation=randomUUID(),blockedDocument=randomUUID();
+          const pending=fencedWorkflow.execute(controller,{type:'document.create',projectId,
+            operationId:blockedOperation,documentId:blockedDocument,title:'Must not start',body:'Lease lost while waiting'});
+          let waiting=false;
+          for(let i=0;i<100;i++){
+            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+              AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid()`);
+            if(activity.rowCount){waiting=true;break;}
+            await new Promise(resolve=>setTimeout(resolve,10));
+          }
+          assert.equal(waiting,true,'Delivery transaction must be waiting on the project lock before lease loss');
+          leaseHeld=false;
+          await hold.query('COMMIT');locked=false;
+          await assert.rejects(pending,{code:'LEASE_LOST'});
+          assert.equal(await uow.read(projectId,reader=>reader.getOperation(blockedOperation)),null);
+          assert.equal(await uow.read(projectId,reader=>reader.getDocument(blockedDocument)),null);
+        }finally{if(locked)await hold.query('ROLLBACK');hold.release();}
         await seal.cycle();
         assert.equal((await workflow.getTask(controller,projectId,taskId)).deliveries?.length,1);
         const replay=await ordinaryApp!.inject({method:'POST',url:`${ordinaryPath}/submissions`,

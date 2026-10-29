@@ -216,6 +216,7 @@ test("HTTP round connects creator Task, Leader projection, dependency, ordinary 
     readSubmission: (p, r) => ordinary.readSubmission(p, r),
     updateSubmission: (next, expected) => ordinary.updateSubmission(next, expected),
     readRun: (p, r) => ordinary.readRun(p, r),
+    readDeliveryOperation: submission => ordinary.readDeliveryOperation(submission),
     readDelivery: (p, d) => ordinary.readDelivery(p, d),
     resolveSubmittedActor: async () => ({ actorId: worker.actorId, projectIds: [projectId], permissions: ["read", "write"] }),
     workflow, sealer: { actorId: "system:ordinary-run-sealer", projectIds: [projectId],
