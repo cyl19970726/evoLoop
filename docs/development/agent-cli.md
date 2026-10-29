@@ -171,9 +171,9 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 3. **固定任务依据和授权。** 负责人读取 Task 正文与关联原件，按 `task.start` 封存本轮依据并进入 in_progress。另落实项目、Role、actor、scope 的当前精确 runtime grant，核目录、模型和业务对象访问范围；新 Session 的 OS 执行配置固定为 `danger-full-access`、`approvalPolicy: never`、正常网络。Role 文本和其他 Role 的 grant 不授业务对象访问权。
 4. **建立并绑定承载。** 按 `command schema runtime.session.reserve` 预留 Session；schema 的新 Session 默认是 full/never，正常调用无需覆写该策略。runner 创建 owned Thread 后，只有收到 full/never 的原生权限确认并回读身份和实际目录，才将执行态标为 `active`；无确认或回执不完整保留 unknown。再按 `command schema role.bindSession` 绑定同项目、同 Role 的项目 `sessionId`；不能填 Desktop chat ID 或原生 session ID。
 5. **派发并核运行。** 按 `command schema runtime.run.reserve` 提供当前 Task 版本、ready Session 与固定工作输入，回读 Turn 和终态。Task 须 in_progress 且 owner 与 Session Role 一致，Task 和 Session 均无在途或 unknown Run；普通后续 Turn 可复用空闲 ready Session，评价尝试须另建 Session。结果不明时按[原操作恢复](#未知结果与本地回执)核对。
-6. **核产物与交付。** 负责人亲验产物、检查、Run 终态与输入一致性后，以自身授权执行 `delivery.record`，提供 `runId`、真实产物引用、修订/hash 与检查证据，结构以命令 schema 为准。按原 Task 判据关闭；仅声明 `useRequired` 时才要求指定消费者真实 `used` 观察。
+6. **核产物与交付。** 当前普通 Run 的固定收件人在 Run 有效时按[本人提交](#普通-run-本人提交与终态封存)以业务 CLI 身份签 `ordinary.submit`，固定真实产物引用、修订/hash 与检查证据；终态封存器核原 Run 后生成 Delivery。负责人亲验 submission、Run 终态、Delivery 与固定输入一致性；声明 `useRequired` 时先由指定消费者对当前交付真实签 `used` 观察，再由有权者按原 Task 判据关闭。历史 direct Run 缺固定收件事实时，本人提交明确拒绝，有权者核旧产物后才按旧合同以 `delivery.record` 和 `runId` 登记。
 
-普通 Run 不发 worker CLI 身份或自动生成 Delivery，控制者不能代签 `worker.submit` 或冒充 Agent 消费者亲用；外部真人消费仍按既有 reviewer attestation 合同记录。worker 自助报告须走[受管 Dispatch/broker 路径](#受管执行与自动接续)。自动 Loop 逐 Dispatch 新建 Session，绑定不触发复用；Desktop 自动桥接和侧栏注册没有已验证保证，普通业务长期自动巡检仍未实现。Role 与承载实例的合同见[RoleRegistry 与 SessionRuntime](../architecture/contracts.md#4-roleregistry-与-sessionruntime)。
+普通 Run 不发 broker worker 身份，控制者不能代签 `ordinary.submit`、`worker.submit` 或冒充 Agent 消费者亲用；外部真人消费仍按既有 reviewer attestation 合同记录。worker 自助报告须走[受管 Dispatch/broker 路径](#受管执行与自动接续)。自动 Loop 逐 Dispatch 新建 Session，绑定不触发复用；Desktop 自动桥接和侧栏注册没有已验证保证，普通业务长期自动巡检仍未实现。Role 与承载实例的合同见[RoleRegistry 与 SessionRuntime](../architecture/contracts.md#4-roleregistry-与-sessionruntime)。
 
 ## Lead 分派、返工与再次承接
 
