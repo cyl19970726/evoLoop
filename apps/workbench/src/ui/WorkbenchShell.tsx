@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { BookOpen, BriefcaseBusiness, CalendarDays, ChevronLeft, ChevronRight, FolderOpen, Home, ListTodo, Menu, Settings, TriangleAlert, Users } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger } from "../components/ui/sheet";
 import { Button } from "../components/ui/button";
@@ -17,18 +17,37 @@ const functions = [
 export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token, logout, children }: { route: Route; projectTitle: string; actor: string; receiptCount: number; token: string; logout(): void; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
+  const navigationFromMenu = useRef(false);
+  const closeAfterNavigation = () => {
+    navigationFromMenu.current = open;
+    setOpen(false);
+  };
+  const changeMenu = (next: boolean) => {
+    if (next) navigationFromMenu.current = false;
+    setOpen(next);
+  };
+  const closeFocus = (event: Event) => {
+    const navigated = navigationFromMenu.current;
+    navigationFromMenu.current = false;
+    const content = navigated ? document.getElementById("workspace-main") : null;
+    if (content) {
+      // Navigation hands focus to content; cancellation keeps Radix's trigger restore.
+      event.preventDefault();
+      content.focus({ preventScroll: true });
+    }
+  };
   const projectId = route.projectId!;
   const current = route.section === "task" || route.section === "create-task" || route.section === "journey" || route.section === "inbox" || route.section === "evaluations" ? "work"
     : ["document", "knowledge", "repository"].includes(route.section) ? "documents"
       : ["roles", "discussions", "collaboration"].includes(route.section) ? "runtime"
         : route.section === "runtime" && route.session ? "" : route.section;
   const isKnowledge = route.section === "knowledge";
-  const link = (section: Section, title: string, Icon: typeof Home) => <a key={section} href={href(projectId, section)} className={current === section ? "selected" : ""} aria-current={current === section ? "page" : undefined} onClick={() => setOpen(false)}><Icon size={18} aria-hidden="true" /><span>{title}</span></a>;
+  const link = (section: Section, title: string, Icon: typeof Home) => <a key={section} href={href(projectId, section)} className={current === section ? "selected" : ""} aria-current={current === section ? "page" : undefined} onClick={closeAfterNavigation}><Icon size={18} aria-hidden="true" /><span>{title}</span></a>;
   const sidebar = <>
-    <a className="project-switch" href="#/" onClick={() => setOpen(false)}><span className="project-monogram">E</span><span><small>当前项目</small><strong title={projectTitle}>{projectTitle || "读取项目…"}</strong></span><ChevronRight size={15} aria-hidden="true" /></a>
+    <a className="project-switch" href="#/" onClick={closeAfterNavigation}><span className="project-monogram">E</span><span><small>当前项目</small><strong title={projectTitle}>{projectTitle || "读取项目…"}</strong></span><ChevronRight size={15} aria-hidden="true" /></a>
     <nav className="project-functions" aria-label="项目功能">{functions.map(item => link(item.section, item.title, item.Icon))}</nav>
-    <SessionNavigation token={token} projectId={projectId} selectedId={route.section === "runtime" && route.session ? route.session.includes(":") ? route.session : `owned:${route.session}` : undefined} onNavigate={() => setOpen(false)} />
-    <div className="nav-resources"><a href={href(projectId, "operations")} onClick={() => setOpen(false)}><TriangleAlert size={17} />待核对操作{receiptCount > 0 && <span className="nav-count">{receiptCount}</span>}</a><a href={href(projectId, "repository")} onClick={() => setOpen(false)}><FolderOpen size={17} />仓库规范</a><a href={href(projectId, "settings")} onClick={() => setOpen(false)}><Settings size={17} />项目设置</a></div>
+    <SessionNavigation token={token} projectId={projectId} selectedId={route.section === "runtime" && route.session ? route.session.includes(":") ? route.session : `owned:${route.session}` : undefined} onNavigate={closeAfterNavigation} />
+    <div className="nav-resources"><a href={href(projectId, "operations")} onClick={closeAfterNavigation}><TriangleAlert size={17} />待核对操作{receiptCount > 0 && <span className="nav-count">{receiptCount}</span>}</a><a href={href(projectId, "repository")} onClick={closeAfterNavigation}><FolderOpen size={17} />仓库规范</a><a href={href(projectId, "settings")} onClick={closeAfterNavigation}><Settings size={17} />项目设置</a></div>
   </>;
   return <div className={`workbench-layout ${collapsed ? "sidebar-collapsed" : ""}`}>
     <a className="skip-link" href="#workspace-main" onClick={e => { e.preventDefault(); document.getElementById("workspace-main")?.focus(); }}>跳到内容</a>
@@ -40,7 +59,7 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
     </nav>
     <aside className="project-sidebar" aria-label="项目导航">{sidebar}</aside>
     <div className="workspace-body">{import.meta.env.DEV && <div className="development-preview" role="status">{window.location.port === "5181" ? "开发测试预览 · 模拟数据 · 尚未发布" : "开发预览 · 连接现有数据 · 尚未发布"}</div>}<header className="workspace-header"><div className="workspace-heading">
-      <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="ghost" size="icon" className="mobile-menu" aria-label="打开项目导航"><Menu size={19} /></Button></SheetTrigger><SheetContent side="left" className="mobile-navigation"><SheetHeader><SheetTitle>项目导航</SheetTitle><SheetDescription>选择功能或 Session，查看当前工作。</SheetDescription></SheetHeader><nav aria-label="移动项目导航"><div className="mobile-modules">{link("work", "工作", BriefcaseBusiness)}{link("knowledge", "知识", BookOpen)}{link("overview", "总览", Home)}</div>{sidebar}</nav></SheetContent></Sheet>
+      <Sheet open={open} onOpenChange={changeMenu}><SheetTrigger asChild><Button variant="ghost" size="icon" className="mobile-menu" aria-label="打开项目导航"><Menu size={19} /></Button></SheetTrigger><SheetContent side="left" className="mobile-navigation" onCloseAutoFocus={closeFocus}><SheetHeader><SheetTitle>项目导航</SheetTitle><SheetDescription>选择功能或 Session，查看当前工作。</SheetDescription></SheetHeader><nav aria-label="移动项目导航"><div className="mobile-modules">{link("work", "工作", BriefcaseBusiness)}{link("knowledge", "知识", BookOpen)}{link("overview", "总览", Home)}</div>{sidebar}</nav></SheetContent></Sheet>
       <button className="sidebar-toggle quiet" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "展开项目导航" : "收起项目导航"} aria-expanded={!collapsed}>{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</button><span>工作台 <span className="breadcrumb-divider">/</span> <strong>{route.section === "runtime" && route.session ? "会话" : sectionNames[route.section]}</strong></span></div>
       <div className="workspace-account"><a href={href(projectId, "operations")} className="receipt-link" aria-label={`待核对操作 ${receiptCount} 项`}><TriangleAlert size={16} aria-hidden="true" /><span>{receiptCount ? `${receiptCount} 项待核对` : "操作回执"}</span></a><span className="actor-name" title={actor}>{actor}</span><button className="quiet" onClick={logout}>退出</button></div></header><main id="workspace-main" tabIndex={-1}>{children}</main></div>
   </div>;

@@ -188,10 +188,37 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await fetch(`${base}/__fixture/release-b`);
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   assert.equal(await page.getByRole("link",{name:"乙项目任务"}).count(),0);
+  const observeMenuClose = async () => page.getByRole("dialog").evaluate(dialog => {
+    const trigger = document.querySelector('button[aria-label="打开项目导航"]')!;
+    document.documentElement.dataset.menuTriggerRestore = "no";
+    document.documentElement.dataset.menuCloseComplete = "pending";
+    const record = () => { document.documentElement.dataset.menuTriggerRestore = "yes"; };
+    trigger.addEventListener("focusin", record);
+    // Observe the actual close lifecycle, not a transient main:focus match.
+    dialog.addEventListener("focusScope.autoFocusOnUnmount", () => queueMicrotask(() => {
+      trigger.removeEventListener("focusin", record);
+      document.documentElement.dataset.menuCloseComplete = "done";
+    }), { once: true });
+  });
   await page.getByLabel("打开项目导航", {exact:true}).click();
+  await observeMenuClose();
   await page.getByRole("link", {name:"文档与知识",exact:true}).press("Enter");
   await page.getByRole("heading", {name:"过程文档",exact:true}).waitFor();
-  await page.locator("#workspace-main:focus").waitFor();
+  await page.waitForFunction(() => document.documentElement.dataset.menuCloseComplete === "done");
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.menuTriggerRestore), "no");
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => !!document.activeElement?.closest("#workspace-main")), true,
+    "after the cold route and close lifecycle, next Tab starts in content");
+  await page.getByLabel("打开项目导航", {exact:true}).click();
+  await observeMenuClose();
+  await page.getByRole("link", {name:"文档与知识",exact:true}).press("Enter");
+  await page.waitForFunction(() => document.documentElement.dataset.menuCloseComplete === "done");
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.menuTriggerRestore), "no");
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => !!document.activeElement?.closest("#workspace-main")), true,
+    "selecting the current page still hands off focus without a route-key change");
   await page.getByLabel("打开项目导航", {exact:true}).click();
   await page.getByRole("button", {name:"关闭导航",exact:true}).click();
   await page.locator('button[aria-label="打开项目导航"]:focus').waitFor();
