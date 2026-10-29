@@ -24,7 +24,7 @@ type RuntimeFaultPhase = "project_scan" | "session_create" | "session_name_sync"
 type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
 export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
   phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string;
-  nativeMethod?: "thread/resume" | "turn/start"; nativeCode?: number;
+  nativeMethod?: "thread/archive" | "thread/resume" | "turn/start"; nativeCode?: number;
   nativeCategory?: RuntimeServerError["category"] }
 const faultMessage: Record<RuntimeFaultPhase, string> = {
   project_scan: "项目运行状态暂不可读取；新派发须等待恢复。",
@@ -157,7 +157,7 @@ export class RuntimeRunner {
     const fault: RuntimeFault = {projectId,sessionId:sessionId??null,runId:runId??null,
       phase,category,message:faultMessage[phase],observedAtUtc:new Date().toISOString()};
     if ((error instanceof RuntimeServerError || error instanceof RuntimeUnknownError) &&
-      (error.method === "thread/resume" || error.method === "turn/start")) fault.nativeMethod = error.method;
+      (error.method === "thread/archive" || error.method === "thread/resume" || error.method === "turn/start")) fault.nativeMethod = error.method;
     if (error instanceof RuntimeServerError) {
       fault.nativeCode = error.code;
       fault.nativeCategory = error.category;
@@ -354,24 +354,26 @@ export class RuntimeRunner {
     // inspect validates the exact persisted thread/session/cwd binding before archive.
     await this.runtime.inspect(binding);
     await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
-    let archiveCategory: RuntimeFaultCategory = "unknown_outcome";
+    let archiveError: RuntimeServerError | null = null;
     try { await this.runtime.archiveThread(binding); }
     catch (error) {
       // Only an explicit native rejection is classifiable; lost replies remain unknown.
-      if (error instanceof RuntimeServerError) archiveCategory = faultCategory(error);
+      if (error instanceof RuntimeServerError) archiveError = error;
     }
     let archivedAfter: boolean;
     try { archivedAfter = await this.runtime.isThreadArchived(binding); }
     catch {
       // The archive may have happened even when verification itself fails.
-      this.recordFault(session.projectId,"session_close",null,session.id,undefined,archiveCategory);
+      this.recordFault(session.projectId,"session_close",archiveError,session.id,undefined,
+        archiveError ? faultCategory(archiveError) : "unknown_outcome");
       return false;
     }
     if (archivedAfter) {
       await this.deps.trusted.confirmSessionClosed(session.projectId, binding, session.closeOperationId);
       return true;
     }
-    this.recordFault(session.projectId,"session_close",null,session.id,undefined,archiveCategory);
+    this.recordFault(session.projectId,"session_close",archiveError,session.id,undefined,
+      archiveError ? faultCategory(archiveError) : "unknown_outcome");
     return false;
   }
   private async create(session: RuntimeSessionRecord): Promise<void> {

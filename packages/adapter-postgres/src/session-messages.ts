@@ -83,7 +83,14 @@ export class PgSessionMessages implements SessionMessageTransaction {
     return !!r.rows[0];
   }
   async insertSessionMessage(v:SessionMessageRecord):Promise<void>{
-    this.scope(v.projectId);await this.client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,link_id,sender_actor_id,content,context_task_id,context_task_revision_id,reply_to_message_id,state,version,created_at,updated_at)
+    this.scope(v.projectId);
+    if(v.target.kind==='owned'){
+      // Serialize posting with close after the command's earlier ready read.
+      const session=await this.client.query('SELECT state FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',
+        [this.projectId,v.target.sessionId]);
+      if(session.rows[0]?.state!=='ready')throw new DomainError('SESSION_NOT_READY','owned recipient must be a ready Session');
+    }
+    await this.client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,link_id,sender_actor_id,content,context_task_id,context_task_revision_id,reply_to_message_id,state,version,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [v.projectId,v.id,v.operationId,v.target.kind,v.target.kind==='owned'?v.target.sessionId:null,v.target.kind==='external'?v.target.linkId:null,v.senderActorId,v.content,v.context?.taskId??null,v.context?.taskRevisionId??null,v.replyToMessageId,v.state,v.version,v.createdAt,v.updatedAt]);
   }
@@ -117,11 +124,13 @@ export class PgSessionMessages implements SessionMessageTransaction {
       VALUES($1,$2,true,$3,$4) ON CONFLICT(project_id,session_id) DO UPDATE
       SET must_yield_business=true,last_message_id=$3,updated_at=$4`,[this.projectId,sessionId,messageId,at]);
   }
-  async assertSessionVacant(sessionId:string):Promise<void>{
+  async assertSessionVacant(sessionId:string,includeQueued=false):Promise<void>{
     await this.client.query('SELECT session_id FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,sessionId]);
     const r=await this.client.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
       AND state IN ('requested','dispatching','running','unknown')) OR EXISTS(SELECT 1 FROM session_message_processing
-      WHERE project_id=$1 AND session_id=$2 AND state IN ('dispatching','running','unknown')) AS occupied`,[this.projectId,sessionId]);
+      WHERE project_id=$1 AND session_id=$2 AND state IN ('dispatching','running','unknown'))
+      OR ($3::boolean AND EXISTS(SELECT 1 FROM session_message WHERE project_id=$1 AND session_id=$2
+        AND target_kind='owned' AND state='queued')) AS occupied`,[this.projectId,sessionId,includeQueued]);
     if(r.rows[0]?.occupied)throw new DomainError('SESSION_BUSY','Session has an active or unresolved turn');
   }
 }
