@@ -25,6 +25,7 @@ const replayableOrchestration = new Set(["loop.enroll", "loop.state", "inbox.acc
 export interface Recovery { kind: "core" | "orchestration" | "ordinary" | "candidate" | "publish" | "manual"; path: string }
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
+  method?: "PUT"; // Absence preserves the POST method of existing receipts.
   confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover";
   targetId?: string;
 }
@@ -181,7 +182,7 @@ export async function dispatchMutation(client: ApiClient, store: ReceiptStore, a
 
 async function submitReceipt(client: ApiClient, store: ReceiptStore, receipt: Receipt, replay = false): Promise<unknown> {
   let result: unknown;
-  try { result = await client.post(receipt.path, receipt.body); }
+  try { result = receipt.method === "PUT" ? await client.put(receipt.path, receipt.body) : await client.post(receipt.path, receipt.body); }
   catch (error) {
     if (replay && error instanceof CliApiError && rejected(receipt, error.data)) {
       await store.update(receipt, { state: "rejected", result: error.data });
@@ -217,7 +218,8 @@ export async function retryReceipt(client: ApiClient, store: ReceiptStore, apiUr
     throw new ReceiptError("RETRY_UNSUPPORTED", "Replay requires the original server-verified actor. Older receipts can only be reconciled.");
   const intent: Intent = { id: receipt.id, projectId: receipt.projectId, operationId: receipt.operationId,
     kind: receipt.kind, path: receipt.path, body: receipt.body, confirmation: receipt.confirmation,
-    recovery: receipt.recovery, ...(receipt.targetId === undefined ? {} : { targetId: receipt.targetId }) };
+    recovery: receipt.recovery, ...(receipt.method === undefined ? {} : { method: receipt.method }),
+    ...(receipt.targetId === undefined ? {} : { targetId: receipt.targetId }) };
   if (sha(canonical(intent)) !== receipt.requestHash)
     throw new ReceiptError("INVALID_RECEIPT", "Saved intent changed; preserve the original receipt and reconcile it.");
   const business = commandSchema.safeParse(receipt.body);

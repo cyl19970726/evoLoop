@@ -103,11 +103,16 @@ test("journal-backed requests carry the exact server operation and core recovery
   const plan = prepareRequest("work.plan.set", project, { operationId: operation, expectedTaskVersion: 2,
     expectedPlanVersion: 0, plannedStartAt: null, dueAt: null, priority: 1, reason: "Order this work" }, target);
   assert.equal(plan.path, `/api/projects/${project}/work-management/tasks/${target}/plan`);
+  assert.equal(plan.method, "PUT");
   assert.deepEqual(plan.recovery, { kind: "core", path: `/api/projects/${project}/operations/${operation}` });
+  const dependencies = prepareRequest("work.dependencies.set", project, { operationId: operation, expectedTaskVersion: 2,
+    expectedDependencyVersion: 0, dependsOnTaskIds: [], reason: "Order dependencies" }, target);
+  assert.equal(dependencies.method, "PUT");
   const preparedReview = prepareRequest("work.review.set", project, { operationId: operation, expectedTaskVersion: 2,
     expectedTaskRevisionId: revision, expectedWorkChangeSequence: 12,
     decision: "deferred", reason: "Revisit after the dependency settles" }, target);
   assert.equal(preparedReview.path, `/api/projects/${project}/work-management/tasks/${target}/review`);
+  assert.equal(preparedReview.method, "PUT");
   assert.throws(() => prepareRequest("knowledge.publish", project, { operationId: operation }, target, receipt), /not --receipt/);
 });
 
