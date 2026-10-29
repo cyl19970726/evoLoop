@@ -7,6 +7,13 @@ type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
 const lifecycle: Record<string, string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "生命周期待核对", closed: "已关闭",
 };
+const runStates: Record<string, string> = {
+  requested: "待启动", dispatching: "启动中", running: "运行中", completed: "已结束",
+  failed: "失败", interrupted: "已中断", unknown: "结果未知",
+};
+export function runStateLabel(state: string): string {
+  return runStates[state] ?? `状态待核对（${state}）`;
+}
 
 export function sessionLifecycleLabel(session: StatusSource): string {
   if (session.kind === "external") return "外部接入，原会话状态需核对";
@@ -37,13 +44,13 @@ export function currentWorkRelationLabel(work: ObservedTask, session: StatusSour
   recoveryPhase?: string): string {
   if (work.relation === "accepted") return "具体 Session 已接手";
   if (work.relation === "assigned") return "已分派，待确认接手";
-  if (work.relation === "run") return "有正式运行关联";
+  if (work.relation === "run") return "有 Run 关联；不表示具体分派已接受";
   if (work.relation !== "claimed") return "角色责任，不代表已接手";
   const run = session.latestBusinessRun?.taskId === work.id ? session.latestBusinessRun : null;
-  if (!run) return "已认领，待运行";
-  if (run.state === "requested") return "已认领，本次运行待启动";
-  if (run.state === "dispatching") return "已认领，本次运行启动中";
-  if (run.state === "running") return "已认领，本次运行中";
+  if (!run) return "Run／队列已认领或占用；当前运行待核对";
+  if (run.state === "requested") return "Run 已认领，本次运行待启动";
+  if (run.state === "dispatching") return "Run 已认领，本次运行启动中";
+  if (run.state === "running") return "Run 已认领，本次运行中";
   if (run.state === "completed") {
     if (recoveryPhase === "reworking") return "前次执行已结束，同任务返工待运行";
     if (recoveryPhase === "retrying") return "前次执行已结束，已批准重试待运行";

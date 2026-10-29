@@ -4,6 +4,7 @@ import { errorText } from "../api";
 import { Alert, date, href } from "../ui/shared";
 import type { MutationContext } from "../workflow/ActionForm";
 import { sessionClient } from "../sessions/client";
+import { runStateLabel, sessionStatusLabel } from "../sessions/sessionStatusPresentation";
 import { RuntimePanel } from "../runtime/RuntimePanel";
 import { DiscussionPanel } from "../discussions/DiscussionPanel";
 import { RolesPanel } from "./RolesPanel";
@@ -19,6 +20,15 @@ function requestedTab(): TeamTab {
 
 function sessionHref(projectId: string, key: string) {
   return `${href(projectId, "runtime")}?session=${encodeURIComponent(key)}`;
+}
+
+function teamWorkLabel(item: ObservedSession): string {
+  if (!item.currentTask) return "没有可确认的当前工作";
+  if (item.currentTask.relation === "accepted") return "具体 Session 已接手";
+  if (item.currentTask.relation === "assigned") return "已分派，待确认接手";
+  if (item.currentTask.relation === "claimed") return "Run／队列已认领或占用；不表示分派已接受";
+  if (item.currentTask.relation === "run") return "有 Run 关联；不表示分派已接受";
+  return "同职责关联；不表示本 Session 已接手";
 }
 
 export function TeamWorkspace({ context, refresh }: { context: MutationContext; refresh: number }) {
@@ -79,12 +89,11 @@ export function TeamWorkspace({ context, refresh }: { context: MutationContext; 
         {loading && <p className="team-directory-state">正在读取实际会话…</p>}
         {error && <div className="team-directory-state"><Alert kind="error">会话列表暂不可读取：{error}。职责档案仍可单独查看。</Alert></div>}
         {!loading && !error && !visible.length && <p className="team-directory-state">{cursor ? "当前页未列出当前团队会话，可继续加载。" : "目前没有可确认的当前团队会话。"}</p>}
-        {visible.length > 0 && <div className="table-wrap"><table className="team-table"><thead><tr><th>职责</th><th>实际会话</th><th>负责什么</th><th>当前承接</th><th>状态</th></tr></thead><tbody>{visible.map(item => <tr key={item.key}>
-          <td><strong>{item.roles.map(role => role.title).join("、") || "职责待核对"}</strong></td>
-          <td><a href={sessionHref(context.projectId, item.key)}>{item.title}</a><small>{item.kind === "owned" ? "项目受管" : "外部连接"} · {memberLabel[item.membership]}</small></td>
-          <td>{item.roles.map(role => role.responsibility).filter(Boolean).join("；") || item.profile?.purpose || "范围尚未登记"}</td>
-          <td>{item.currentTask ? <a href={href(context.projectId, "task", item.currentTask.id)}>{item.currentTask.title}</a> : "暂无可确认的当前任务"}<small>{item.currentTask?.relation === "accepted" ? "具体 Session 已接手" : item.currentTask?.relation === "assigned" ? "已分派，待接手" : item.currentTask?.relation === "claimed" || item.currentTask?.relation === "run" ? "正式运行关联" : "角色责任不等于接手"}</small></td>
-          <td><span className="team-state">{item.busy === true ? "忙碌" : item.busy === false ? "空闲" : "未知"}</span><small>{item.runtimeState || "没有可确认的运行状态"}</small></td>
+        {visible.length > 0 && <div className="table-wrap team-table-wrap"><table className="team-table"><thead><tr><th>实际会话</th><th>职责</th><th>当前工作与关系</th><th>状态</th></tr></thead><tbody>{visible.map(item => <tr key={item.key}>
+          <td data-label="实际会话"><a className="team-session-name" href={sessionHref(context.projectId, item.key)}>{item.title}</a><small>{item.kind === "owned" ? "项目受管" : "外部连接"} · {memberLabel[item.membership]}</small></td>
+          <td data-label="职责"><strong>{item.roles.map(role => role.title).join("、") || "职责待核对"}</strong><p className="team-responsibility-preview">{item.roles.map(role => role.responsibility).filter(Boolean).join("；") || item.profile?.purpose || "范围尚未登记"}</p><details className="team-responsibility"><summary>阅读完整职责与用途</summary><p>{item.roles.map(role => role.responsibility).filter(Boolean).join("；") || item.profile?.purpose || "范围尚未登记"}</p></details></td>
+          <td data-label="当前工作与关系">{item.currentTask ? <a href={href(context.projectId, "task", item.currentTask.id)}>{item.currentTask.title}</a> : "没有可确认的当前工作"}<small>{teamWorkLabel(item)}</small>{item.latestBusinessRun && <small>最近 Run：{runStateLabel(item.latestBusinessRun.state)} · {date(item.latestBusinessRun.updatedAt)}</small>}</td>
+          <td data-label="状态"><span className="team-state">{sessionStatusLabel(item)}</span><small>{item.lastProgressAt ? `最近进展 ${date(item.lastProgressAt)}` : "进展时间未提供"}</small></td>
         </tr>)}</tbody></table></div>}
         {moreError && <div className="team-directory-state"><Alert kind="error">后续会话未读回：{moreError}</Alert></div>}
         {cursor && !loading && <div className="team-directory-foot"><button type="button" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "读取中…" : "加载更多会话"}</button></div>}

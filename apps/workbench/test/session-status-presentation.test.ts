@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
+import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, runStateLabel, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
 import type { SessionResult } from "@evoloop/contracts/session-observation";
 
 test("owned lifecycle takes priority over activity and only ready can be idle", () => {
@@ -70,8 +70,17 @@ test("a claimed Task uses its matching Run result before describing the next act
   assert.equal(currentWorkRelationLabel(work, { ...session("task-1", "completed"), busy: false }, "awaiting_acceptance"), "执行已结束，等待交付与验收");
   assert.equal(currentWorkRelationLabel(work, session("task-1", "completed")), "最近一次执行已结束，结果待核对");
   assert.equal(currentWorkRelationLabel(work, session("task-1", "completed"), "reworking"), "前次执行已结束，同任务返工待运行");
-  assert.equal(currentWorkRelationLabel(work, session("task-1", "running"), "reworking"), "已认领，本次运行中");
+  assert.equal(currentWorkRelationLabel(work, session("task-1", "running"), "reworking"), "Run 已认领，本次运行中");
   assert.equal(currentWorkRelationLabel(work, { ...session("task-1", "unknown"), busy: true }), "最近一次执行结果未知，待核对");
-  assert.equal(currentWorkRelationLabel(work, session("other-task", "completed")), "已认领，待运行");
-  assert.equal(currentWorkRelationLabel(work, { kind: "owned", runtimeState: "ready", busy: false, latestBusinessRun: null }), "已认领，待运行");
+  assert.equal(currentWorkRelationLabel(work, session("other-task", "completed")), "Run／队列已认领或占用；当前运行待核对");
+  assert.equal(currentWorkRelationLabel(work, { kind: "owned", runtimeState: "ready", busy: false, latestBusinessRun: null }), "Run／队列已认领或占用；当前运行待核对");
+  assert.equal(currentWorkRelationLabel({ ...work, relation: "run" }, session("task-1", "running")), "有 Run 关联；不表示具体分派已接受");
+  assert.equal(currentWorkRelationLabel({ ...work, relation: "accepted" }, session("task-1", "running")), "具体 Session 已接手");
+});
+
+test("recent Run states are readable without implying assignment acceptance", () => {
+  assert.equal(runStateLabel("completed"), "已结束");
+  assert.equal(runStateLabel("failed"), "失败");
+  assert.equal(runStateLabel("unknown"), "结果未知");
+  assert.equal(runStateLabel("unrecognized"), "状态待核对（unrecognized）");
 });
