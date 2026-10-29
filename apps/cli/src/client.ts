@@ -6,7 +6,7 @@ export interface ApiClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 
-/** Transport outcome, not a business-command result. A POST marked unconfirmed must never be replayed blindly. */
+/** Transport outcome, not a business-command result. An unconfirmed write must never be replayed blindly. */
 export class CliApiError extends Error {
   constructor(
     public readonly status: number,
@@ -52,6 +52,7 @@ export class ApiClient {
 
   get(path: string): Promise<unknown> { return this.request("GET", path); }
   post(path: string, body: unknown): Promise<unknown> { return this.request("POST", path, body); }
+  put(path: string, body: unknown): Promise<unknown> { return this.request("PUT", path, body); }
 
   private endpoint(path: string): URL {
     if (typeof path !== "string" || !path.startsWith("/api/") || path.includes("#") || path.startsWith("//"))
@@ -64,10 +65,10 @@ export class ApiClient {
     return url;
   }
 
-  private async request(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  private async request(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<unknown> {
     const url = this.endpoint(path); // Reject cross-origin input before a token can be sent.
     let serialized: string | undefined;
-    if (method === "POST") {
+    if (method !== "GET") {
       try { serialized = JSON.stringify(body); }
       catch { throw new CliApiError(0, "INVALID_REQUEST_BODY", null, false); }
       if (serialized === undefined) throw new CliApiError(0, "INVALID_REQUEST_BODY", null, false);
@@ -77,22 +78,22 @@ export class ApiClient {
     const deadline = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         controller.abort();
-        reject(new CliApiError(0, "TIMEOUT", null, method === "POST"));
+        reject(new CliApiError(0, "TIMEOUT", null, method !== "GET"));
       }, this.timeoutMs);
     });
     try {
       const init: RequestInit = { method, redirect: "manual", signal: controller.signal,
-        headers: { Authorization: `Bearer ${this.token}`, ...(method === "POST" ? { "Content-Type": "application/json" } : {}) } };
-      if (method === "POST") init.body = serialized!;
+        headers: { Authorization: `Bearer ${this.token}`, ...(method !== "GET" ? { "Content-Type": "application/json" } : {}) } };
+      if (method !== "GET") init.body = serialized!;
       const response = await Promise.race([
         this.fetchFn(url, init),
         deadline,
       ]);
       // An injected transport may ignore redirect:manual. Never accept a followed or foreign response.
       if (response.redirected || (response.url && new URL(response.url).origin !== this.base.origin))
-        throw new CliApiError(response.status, "REDIRECT_BLOCKED", null, method === "POST");
+        throw new CliApiError(response.status, "REDIRECT_BLOCKED", null, method !== "GET");
       if (response.status >= 300 && response.status < 400 || response.type === "opaqueredirect")
-        throw new CliApiError(response.status, "REDIRECT_BLOCKED", null, method === "POST");
+        throw new CliApiError(response.status, "REDIRECT_BLOCKED", null, method !== "GET");
 
       let data: unknown;
       try {
@@ -100,16 +101,16 @@ export class ApiClient {
         data = JSON.parse(raw);
       } catch (error) {
         if (error instanceof CliApiError) throw error;
-        if (response.ok) throw new CliApiError(response.status, "INVALID_RESPONSE", null, method === "POST");
+        if (response.ok) throw new CliApiError(response.status, "INVALID_RESPONSE", null, method !== "GET");
         throw new CliApiError(response.status, `HTTP_${response.status}`, null,
-          method === "POST" && (response.status === 0 || response.status >= 500));
+          method !== "GET" && (response.status === 0 || response.status >= 500));
       }
       if (!response.ok) throw new CliApiError(response.status, responseCode(data, response.status), data,
-        method === "POST" && (response.status === 0 || response.status >= 500 || response.status < 400));
+        method !== "GET" && (response.status === 0 || response.status >= 500 || response.status < 400));
       return data;
     } catch (error) {
       if (error instanceof CliApiError) throw error;
-      throw new CliApiError(0, "TRANSPORT_UNKNOWN", null, method === "POST");
+      throw new CliApiError(0, "TRANSPORT_UNKNOWN", null, method !== "GET");
     } finally {
       if (timer) clearTimeout(timer);
     }

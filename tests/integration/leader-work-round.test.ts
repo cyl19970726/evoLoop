@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import pg from "pg";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
@@ -16,7 +20,7 @@ if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(database).path
   throw new Error("dedicated evoloop_*_test database required");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
-test("HTTP round connects creator Task, Leader projection, dependency, ordinary Delivery, use, close and release", async t => {
+test("real CLI Leader writes connect to the HTTP round, recovery, authorization and Delivery", async t => {
   const schema = `el_leader_round_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   await migrate(database, schema);
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
@@ -35,6 +39,8 @@ test("HTTP round connects creator Task, Leader projection, dependency, ordinary 
   const consumer: Principal = { actorId: "acceptance-owner", projectIds: [projectId], permissions: ["read", "write"] };
   const lead: Principal = { actorId: "leader", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const workerToken = "w".repeat(40), consumerToken = "c".repeat(40), leadToken = "l".repeat(40);
+  const cliDirectory = await mkdtemp(join(tmpdir(), "evoloop-leader-cli-"));
+  t.after(() => rm(cliDirectory, { recursive: true, force: true }));
   const uow = new PostgresUnitOfWork(pool, {
     grant: async () => true, binding: async () => true, lead: async () => true,
     input: async (reader, taskId) => canonicalTaskInputJson(await taskInputSignature(reader, (await reader.getTask(taskId))!)),
@@ -56,7 +62,45 @@ test("HTTP round connects creator Task, Leader projection, dependency, ordinary 
       { token: leadToken, actorId: lead.actorId, projectIds: [projectId], permissions: ["read", "write", "review"] },
     ],
   });
+  let dependencyOperation: string | null = null, dependencyUnavailable = true;
+  let reviewLostOperation: string | null = null;
+  app.addHook("preHandler", async (request, reply) => {
+    if (dependencyUnavailable && request.method === "PUT" && request.url ===
+      `/api/projects/${projectId}/work-management/tasks/${dependentTaskId}/dependencies` &&
+      (request.body as { operationId?: string }).operationId === dependencyOperation) {
+      dependencyUnavailable = false;
+      return reply.code(503).send({ code: "BACKEND_BUSY", message: "Injected failure before transaction" });
+    }
+  });
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (request.method === "PUT" && request.url ===
+      `/api/projects/${projectId}/work-management/tasks/${dependentTaskId}/review` &&
+      (request.body as { operationId?: string }).operationId === reviewLostOperation) reply.raw.destroy();
+    return payload;
+  });
   t.after(() => app.close());
+  const apiUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  async function cli(args: string[], token = leadToken, expectedCode = 0) {
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((done, fail) => {
+      const child = spawn(process.execPath, [resolve("apps/cli/dist/main.js"), ...args], {
+        env: { ...process.env, EVOLOOP_API_URL: apiUrl, EVOLOOP_TOKEN: token,
+          EVOLOOP_PROJECT: projectId, EVOLOOP_STATE_DIR: join(cliDirectory, "receipts") },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "", stderr = "";
+      child.stdout.on("data", data => { stdout += String(data); });
+      child.stderr.on("data", data => { stderr += String(data); });
+      child.once("error", fail);
+      child.once("close", code => done({ code, stdout, stderr }));
+    });
+    assert.equal(result.code, expectedCode, result.stderr);
+    return result.stdout ? JSON.parse(result.stdout) : { diagnostic: result.stderr };
+  }
+  async function request(name: string, taskId: string, body: Record<string, unknown>, token = leadToken, expectedCode = 0) {
+    const file = join(cliDirectory, `${body.operationId}.json`);
+    await writeFile(file, JSON.stringify(body), { mode: 0o600 });
+    return cli(["request", name, "--id", taskId, "--file", file], token, expectedCode);
+  }
 
   const applied = (command: Parameters<typeof workflow.execute>[1], principal = lead) =>
     workflow.execute(principal, command).then(result => {
@@ -131,13 +175,13 @@ test("HTTP round connects creator Task, Leader projection, dependency, ordinary 
   assert.equal(projected.statusCode, 200, projected.body);
   const projectedTask = projected.json() as { version: number; workChangeSequence: number; currentRevisionId: string };
   const planOperation = randomUUID();
-  const plan = await app.inject({ method: "PUT", url: `${exactUrl}/plan`,
-    headers: { authorization: `Bearer ${leadToken}` },
-    payload: { operationId: planOperation, expectedTaskVersion: projectedTask.version, expectedPlanVersion: 0,
-      plannedStartAt: new Date(Date.now() + 60_000).toISOString(),
-      dueAt: new Date(Date.now() + 3_600_000).toISOString(), priority: 2,
-      reason: "Leader scheduled the fixed round" } });
-  assert.equal(plan.statusCode, 200, plan.body);
+  const planBody = { operationId: planOperation, expectedTaskVersion: projectedTask.version, expectedPlanVersion: 0,
+    plannedStartAt: new Date(Date.now() + 60_000).toISOString(),
+    dueAt: new Date(Date.now() + 3_600_000).toISOString(), priority: 2,
+    reason: "Leader scheduled the fixed round" };
+  const plan = await request("work.plan.set", dependentTaskId, planBody);
+  assert.equal(plan.status, "applied");
+  assert.equal((await cli(["get", exactUrl])).plan.priority, 2);
   const planOperationRead = await app.inject({
     url: `/api/projects/${projectId}/operations/${planOperation}`,
     headers: { authorization: `Bearer ${leadToken}` },
@@ -145,14 +189,51 @@ test("HTTP round connects creator Task, Leader projection, dependency, ordinary 
   assert.equal(planOperationRead.statusCode, 200, planOperationRead.body);
   assert.equal(planOperationRead.json().commandType, "work.plan.set");
 
-  const dependency = await app.inject({
-    method: "PUT", url: `${exactUrl}/dependencies`,
-    headers: { authorization: `Bearer ${leadToken}` },
-    payload: { operationId: randomUUID(), expectedTaskVersion: projectedTask.version,
-      expectedDependencyVersion: 0, dependsOnTaskIds: [prerequisiteTaskId],
-      reason: "Require the current prerequisite acceptance" },
-  });
-  assert.equal(dependency.statusCode, 200, dependency.body);
+  dependencyOperation = randomUUID();
+  const dependencyBody = { operationId: dependencyOperation, expectedTaskVersion: projectedTask.version,
+    expectedDependencyVersion: 0, dependsOnTaskIds: [prerequisiteTaskId],
+    reason: "Require the current prerequisite acceptance" };
+  await request("work.dependencies.set", dependentTaskId, dependencyBody, leadToken, 3);
+  assert.equal((await cli(["receipts", "show", dependencyOperation])).state, "pending");
+  await cli(["receipts", "reconcile", dependencyOperation], leadToken, 3);
+  const dependency = await cli(["receipts", "retry", dependencyOperation]);
+  assert.equal(dependency.state, "confirmed");
+  assert.equal(dependency.method, "PUT");
+  assert.deepEqual((await cli(["get", exactUrl])).dependencies.map((item: { taskId: string }) => item.taskId), [prerequisiteTaskId]);
+  const replay = await app.inject({ method: "PUT", url: `${exactUrl}/dependencies`,
+    headers: { authorization: `Bearer ${leadToken}` }, payload: dependencyBody });
+  assert.equal(replay.statusCode, 200, replay.body);
+  assert.deepEqual(replay.json(), dependency.result);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2",
+    [projectId, dependencyOperation])).rows[0]?.n, 1);
+  const workBeforeReview = await cli(["get", exactUrl]);
+  const reviewOperation = randomUUID();
+  reviewLostOperation = reviewOperation;
+  await request("work.review.set", dependentTaskId, {
+    operationId: reviewOperation, expectedTaskVersion: workBeforeReview.version,
+    expectedTaskRevisionId: workBeforeReview.currentRevisionId,
+    expectedWorkChangeSequence: workBeforeReview.workChangeSequence,
+    decision: "deferred", reason: "Wait for the prerequisite acceptance" }, leadToken, 3);
+  assert.equal((await cli(["receipts", "show", reviewOperation])).state, "pending");
+  const review = await cli(["receipts", "reconcile", reviewOperation]);
+  assert.equal(review.state, "confirmed");
+  assert.equal(review.result.status, "applied");
+  reviewLostOperation = null;
+  assert.equal((await cli(["get", exactUrl])).review.operationId, reviewOperation);
+  const conflictOperation = randomUUID();
+  const conflict = await request("work.plan.set", dependentTaskId, { ...planBody, operationId: conflictOperation,
+    priority: 3, reason: "Stale plan version must fail" }, leadToken, 1);
+  assert.match(conflict.diagnostic, /VERSION_CONFLICT/);
+  assert.equal((await cli(["receipts", "show", conflictOperation])).state, "rejected");
+  assert.equal((await cli(["get", exactUrl])).plan.priority, 2);
+  const deniedOperation = randomUUID();
+  const denied = await request("work.review.set", dependentTaskId, {
+    operationId: deniedOperation, expectedTaskVersion: workBeforeReview.version,
+    expectedTaskRevisionId: workBeforeReview.currentRevisionId,
+    expectedWorkChangeSequence: workBeforeReview.workChangeSequence,
+    decision: "deferred", reason: "Actor lacks project review permission" }, workerToken, 1);
+  assert.match(denied.diagnostic, /FORBIDDEN/);
+  assert.equal((await cli(["receipts", "show", deniedOperation])).state, "rejected");
   const prerequisite = (await workflow.getTask(lead, projectId, prerequisiteTaskId)).task;
   const dependent = (await workflow.getTask(lead, projectId, dependentTaskId)).task;
   for (const [queueId, entryId, taskId, revisionId] of [

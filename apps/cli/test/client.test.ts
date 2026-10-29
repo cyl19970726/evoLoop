@@ -84,6 +84,21 @@ test("POST network failure and 5xx are unknown, without automatic retries", asyn
   assert.equal(attempts, 3);
 });
 
+test("PUT sends JSON and treats a lost write response as unknown", async () => {
+  let attempts = 0;
+  const body = { operationId: "stable" };
+  const client = new ApiClient({ apiUrl: origin, token, fetch: async (_input, init) => {
+    attempts++;
+    assert.equal(init?.method, "PUT");
+    assert.equal(init?.body, JSON.stringify(body));
+    assert.equal((init?.headers as Record<string, string>)["Content-Type"], "application/json");
+    throw new Error("connection closed");
+  } });
+  await assert.rejects(() => client.put("/api/projects/p/work-management/tasks/t/plan", body),
+    isError("TRANSPORT_UNKNOWN", 0, true));
+  assert.equal(attempts, 1);
+});
+
 test("opaque transport failure cannot confirm a POST", async () => {
   const client = new ApiClient({ apiUrl: origin, token, fetch: async () => Response.error() });
   await assert.rejects(() => client.post("/api/commands", {}), isError("HTTP_0", 0, true));
