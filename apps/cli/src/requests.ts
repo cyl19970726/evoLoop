@@ -2,6 +2,7 @@ import { idSchema } from "@evoloop/contracts";
 import { documentImportSchema } from "@evoloop/contracts/process-documents";
 import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowledgeReviewInputSchema } from "@evoloop/contracts/knowledge";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
+import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { Intent, Recovery } from "./receipts.js";
 
@@ -10,7 +11,7 @@ export type RequestName =
   | "knowledge.propose" | "knowledge.review" | "knowledge.publish" | "knowledge.reconcile" | "knowledge.retract-source"
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
   | "work.plan.set" | "work.dependencies.set" | "work.review.set"
-  | "runtime.reconcile" | "runtime.recover";
+  | "runtime.reconcile" | "runtime.recover" | "ordinary.submit";
 
 export class RequestInputError extends Error {
   readonly code = "INVALID_INPUT" as const;
@@ -39,6 +40,7 @@ const help: readonly RequestHelp[] = [
   { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "expectedWorkChangeSequence", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
+  { name: "ordinary.submit", requiredBodyKeys: ["projectId", "operationId", "submissionId", "runId", "taskId", "sessionId", "taskRevisionId", "runInputHash", "deliveryOperationId", "deliveryIntent"], targetId: null, operationId: "body", recovery: "ordinary" },
 ];
 export function requestTypes(): unknown[] { return help.map(item => ({ ...item, requiredBodyKeys: [...item.requiredBodyKeys] })); }
 
@@ -85,6 +87,7 @@ function bodySchema(name: string) {
     case "work.dependencies.set": return workDependenciesBody;
     case "work.review.set": return workReviewBody;
     case "runtime.reconcile": return runtimeReconcileSchema;
+    case "ordinary.submit": return ordinaryRunSubmissionSchema;
     default: throw new RequestInputError(`Unsupported request ${name}; inspect request types`);
   }
 }
@@ -246,9 +249,17 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       path = `${base}/runtime/recover`; recovery = { kind: "manual", path: `${base}/runtime` }; confirmation = "runtime-recover";
       break;
     }
+    case "ordinary.submit": {
+      path = `${base}/ordinary-runs/submissions`;
+      recovery = { kind: "ordinary", path: `${base}/ordinary-runs/operations/${receiptId}` };
+      confirmation = "ack";
+      break;
+    }
   }
+  // The receipt and POST must carry the same normalized bytes for safe same-ID recovery.
+  const savedBody = name === "ordinary.submit" ? ordinaryRunSubmissionSchema.parse(body) : bodyInput;
   return { projectId, id: receiptId,
     operationId: name === "knowledge.reconcile" ? id : serverOperationId,
-    ...(id ? { targetId: id } : {}), kind: name, path: path!, body: bodyInput,
+    ...(id ? { targetId: id } : {}), kind: name, path: path!, body: savedBody,
     recovery: recovery!, confirmation: confirmation! };
 }

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { appendLeaderWorkPage, loadLeaderDocumentsForIds, visibleLeaderDocuments } from "../src/workflow/leaderWorkLoad.ts";
+import {
+  appendLeaderWorkPage, leaderProjectionMatchesTask, loadLeaderDocumentsForIds, visibleLeaderDocuments,
+} from "../src/workflow/leaderWorkLoad.ts";
 
 const document = (id: string): LeaderWorkDocument => ({
   kind: "document", documentId: id, version: 1, title: id, documentKind: "report", status: "published",
@@ -72,4 +74,20 @@ test("active Document enrichment never asks the default index for hidden archive
     ["draft", "published"]);
   assert.deepEqual(visibleLeaderDocuments(items, "archived", "spec", "").map(item => item.id),
     ["archived"]);
+});
+
+test("late Leader reads cannot cross Task identity, version or revision", () => {
+  const current = { id: "task-two", version: 3, currentRevisionId: "revision-three" };
+  assert.equal(leaderProjectionMatchesTask({
+    taskId: "task-two", version: 3, currentRevisionId: "revision-three",
+  }, current), true);
+  assert.equal(leaderProjectionMatchesTask({
+    taskId: "task-one", version: 3, currentRevisionId: "revision-three",
+  }, current), false);
+  assert.equal(leaderProjectionMatchesTask({
+    taskId: "task-two", version: 2, currentRevisionId: "revision-three",
+  }, current), false);
+  assert.equal(leaderProjectionMatchesTask({
+    taskId: "task-two", version: 3, currentRevisionId: "revision-two",
+  }, current), false);
 });

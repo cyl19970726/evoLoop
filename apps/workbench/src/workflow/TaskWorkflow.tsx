@@ -14,6 +14,10 @@ import { RevisionHistory } from "./RevisionHistory";
 import { useRoleChoices } from "./useRoleChoices";
 
 const { useEffect, useState } = React;
+const withoutOperationType = (value: Record<string, unknown>) => {
+  const { type: _operationType, ...body } = value;
+  return body;
+};
 
 export const taskStateLabel: Record<TaskRevisionState, string> = {
   todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消",
@@ -127,7 +131,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
     }} />}
     {leader ? <>
       <ActionForm context={context} review requiredPermissions={["write", "review"]} title="设置计划、截止与优先级"
-        validateCommand={value => { leaderWorkPlanCommandSchema.parse(value); }}
+        validateCommand={value => { leaderWorkPlanCommandSchema.parse(withoutOperationType(value)); }}
         sendCommand={command => api(context.token).leaderPlan(context.projectId, task.id, command as unknown as LeaderWorkPlanCommand)}
         fields={[
           { name: "plannedStartAt", label: "计划开始（ISO 8601，可留空）", optional: true,
@@ -147,7 +151,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
           priority: v.priority ? Number(v.priority) : null, reason: v.reason,
         })} />
       <ActionForm context={context} review requiredPermissions={["write", "review"]} title="设置前置 Task 依赖"
-        validateCommand={value => { leaderWorkDependenciesCommandSchema.parse(value); }}
+        validateCommand={value => { leaderWorkDependenciesCommandSchema.parse(withoutOperationType(value)); }}
         sendCommand={command => api(context.token).leaderDependencies(context.projectId, task.id,
           command as unknown as LeaderWorkDependenciesCommand)}
         fields={[
@@ -163,7 +167,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
           reason: v.reason,
         })} />
       <ActionForm context={context} review requiredPermissions={["write", "review"]} title="记录 Leader 处理决定"
-        validateCommand={value => { leaderWorkReviewCommandSchema.parse(value); }}
+        validateCommand={value => { leaderWorkReviewCommandSchema.parse(withoutOperationType(value)); }}
         sendCommand={command => api(context.token).leaderReview(context.projectId, task.id,
           command as unknown as LeaderWorkReviewCommand)}
         fields={[

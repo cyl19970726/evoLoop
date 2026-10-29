@@ -122,6 +122,11 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   if ((await tx.listImpacts(task.id)).some(item => item.state === "pending")) {
     throw new DomainError("PENDING_BASIS_REVIEW", "review pending basis impacts before dispatch");
   }
+  const dependencyBlockers = await tx.listTaskDependencyBlockers?.(task.id) ?? [];
+  if (dependencyBlockers.length)
+    throw new DomainError("TASK_DEPENDENCY_BLOCKED",
+      `Task dependencies require current acceptance before dispatch: ${dependencyBlockers.slice(0, 3)
+        .map(item => `${item.title} (${item.currentRevisionId})`).join(", ")}`);
   const previous = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "task revision");
   const originalBasis = required(previous.basisSetId ? await tx.getBasisSet(task.id, previous.id, previous.basisSetId) : null, "sealed basis");
   const previousExternal = command.evaluation ? await tx.listTaskExternalSnapshot(task.id, previous.id) : [];

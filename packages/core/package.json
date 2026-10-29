@@ -13,6 +13,7 @@
     "./delivery": "./dist/delivery/index.js",
     "./references": "./dist/references/index.js",
     "./orchestration": "./dist/orchestration/index.js",
+    "./ordinary-run-submission": "./dist/ordinary-run-submission.js",
     "./session-assignments": "./dist/session-assignments/index.js",
     "./session-messages": "./dist/session-messages/index.js",
     "./native-input": "./dist/native-input/index.js",

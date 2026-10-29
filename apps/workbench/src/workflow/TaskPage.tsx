@@ -17,6 +17,7 @@ import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash } from "../orchestration/navigation";
 import { LeaderTaskFacts } from "./LeaderTaskFacts";
+import { leaderProjectionMatchesTask } from "./leaderWorkLoad";
 import "./task-page.css";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -177,9 +178,11 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [observedAt, setObservedAt] = useState<Date | null>(null);
   const [reading, setReading] = useState(false);
   const historyRequestRef = useRef(0);
+  const leaderRequestRef = useRef(0);
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
     setTab(selectedRevision ? "history" : taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
-    setDetail(null); setBasisDocuments({}); }, [id, projectId]);
+    setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError("");
+  }, [id, projectId]);
   useEffect(() => {
     if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
     const targetRun = tab === "runtime" ? taskRunFromHash(window.location.hash, projectId, id) : null;
@@ -205,18 +208,28 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     return () => { active = false; };
   }, [token, projectId, id, refresh, readVersion]);
   useEffect(() => {
+    if (!detail || detail.task.id !== id) return;
+    const request = ++leaderRequestRef.current;
     let active = true;
-    setLeaderTaskError("");
+    setLeaderTask(null); setLeaderTaskError("");
     api(token).leaderTask(projectId, id).then(value => {
-      if (active) setLeaderTask(value);
+      if (!active || request !== leaderRequestRef.current) return;
+      if (!leaderProjectionMatchesTask(value, {
+        id, version: detail.task.version, currentRevisionId: detail.task.currentRevisionId,
+      })) {
+        setLeaderTaskError("任务或工作安排已在读取期间变化；正在重新核对。");
+        setReadVersion(current => current + 1);
+        return;
+      }
+      setLeaderTask(value);
     }).catch(cause => {
-      if (active) {
+      if (active && request === leaderRequestRef.current) {
         setLeaderTask(null);
         setLeaderTaskError(`当前工作安排暂未读回：${errorText(cause)}`);
       }
     });
     return () => { active = false; };
-  }, [token, projectId, id, refresh, readVersion]);
+  }, [token, projectId, id, refresh, readVersion, detail?.task.version, detail?.task.currentRevisionId]);
   useEffect(() => {
     const reread = () => { if (document.visibilityState === "visible") setReadVersion(value => value + 1); };
     window.addEventListener("focus", reread);

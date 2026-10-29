@@ -23,6 +23,14 @@ export function appendLeaderWorkPage<T extends { taskId: string }>(
   return { ...next, items: [...current.items, ...next.items.filter(item => !seen.has(item.taskId))] };
 }
 
+export function leaderProjectionMatchesTask(
+  candidate: Pick<LeaderWorkTask, "taskId" | "version" | "currentRevisionId">,
+  task: { id: string; version: number; currentRevisionId: string },
+): boolean {
+  return candidate.taskId === task.id && candidate.version === task.version &&
+    candidate.currentRevisionId === task.currentRevisionId;
+}
+
 export function visibleLeaderDocuments<T extends {
   id: string; title: string; kind: string | null; status: "draft" | "published" | "archived";
 }>(items: readonly T[], status: string, kind: string, query: string): T[] {

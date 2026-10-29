@@ -2,7 +2,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 
 const prefix = "evoloop-preflight-v1:";
 export type PreflightCode = "INPUT_LIMIT" | "FIXED_SOURCE_INVALID" | "FIXED_SOURCE_UNAVAILABLE" |
-  "AUTHORIZATION" | "TASK_CHANGED" | "CLI_ENTRY_UNAVAILABLE" | "CLI_HANDOFF_UNAVAILABLE" | "PREFLIGHT_UNAVAILABLE";
+  "AUTHORIZATION" | "RECIPIENT_UNBOUND" | "TASK_CHANGED" | "CLI_ENTRY_UNAVAILABLE" | "CLI_HANDOFF_UNAVAILABLE" | "PREFLIGHT_UNAVAILABLE";
 export interface PreflightReport {
   version: 1; code: PreflightCode; category: "size" | "integrity" | "unavailable" | "authorization" | "changed";
   actualBytes: number | null; limitBytes: number | null;
@@ -21,6 +21,7 @@ const nextAction: Record<PreflightCode, string> = {
   FIXED_SOURCE_INVALID: "按固定修订核对资料元数据与哈希；修正来源后重新封存任务依据。",
   FIXED_SOURCE_UNAVAILABLE: "用本 Run 的执行身份读取固定资料；恢复缺失来源或由负责人正式重选依据。",
   AUTHORIZATION: "核对当前执行身份和固定资料读取授权；不要借其他身份代读。",
+  RECIPIENT_UNBOUND: "新独立验收任务须在启动前固定真实执行接收者及其业务 CLI 身份；保留本 Run 的预检失败，不从预约者或 Session 创建者猜成果作者。",
   TASK_CHANGED: "核对当前 Task 修订与本 Run 的固定修订；由负责人按正常返工流程处理。",
   CLI_ENTRY_UNAVAILABLE: "核对本 Session 的项目、实际执行者和 Task；配置可用的业务 CLI 入口后按正式恢复流程处理，不要搜索令牌。",
   CLI_HANDOFF_UNAVAILABLE: "配置的业务 CLI 未通过 handoff 命令和当前身份预检；先升级该入口并核 help/session，再按原 Run 的正式恢复流程处理。不要启动替代 Turn。",
@@ -37,7 +38,7 @@ export function safePreflightReport(error: unknown): { report: PreflightReport; 
     "PREFLIGHT_UNAVAILABLE";
   const category: PreflightReport["category"] = code === "INPUT_LIMIT" ? "size" :
     code === "FIXED_SOURCE_INVALID" ? "integrity" : code === "FIXED_SOURCE_UNAVAILABLE" ? "unavailable" :
-    code === "AUTHORIZATION" ? "authorization" : code === "TASK_CHANGED" ? "changed" : "unavailable";
+    code === "AUTHORIZATION" || code === "RECIPIENT_UNBOUND" ? "authorization" : code === "TASK_CHANGED" ? "changed" : "unavailable";
   const safeBytes = (value: number | null) => value !== null && Number.isSafeInteger(value) && value >= 0 ? value : null;
   const report: PreflightReport = { version: 1, code, category,
     actualBytes: error instanceof PreflightError ? safeBytes(error.actualBytes) : null,

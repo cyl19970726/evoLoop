@@ -387,6 +387,70 @@ test("Leader review compares the exact per-Task change position read before the 
   })).status, "applied");
 });
 
+test("runtime reservation enforces current Task acceptance and invalidates after prerequisite reopen", async () => {
+  const fixture = await seedProject();
+  const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const sessionId = randomUUID();
+  await uow.transaction(fixture.project.id, async tx => {
+    await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+    await tx.insertRuntimeRun({ projectId: fixture.project.id, id: randomUUID(), taskId: fixture.prerequisite.head.id,
+      taskRevisionId: fixture.prerequisite.revision.id, basisSetId: fixture.prerequisite.basis.id, sessionId,
+      operationId: randomUUID(), input: "terminal prerequisite work", inputHash: hash("terminal prerequisite work"),
+      state: "completed", version: 1, nativeTurnId: `turn-${randomUUID()}`, interruptRequested: false,
+      resultSummary: "Terminal is not acceptance", actorId: actor, createdAt: now, updatedAt: now });
+  });
+  const blockers = await uow.read(fixture.project.id, reader =>
+    reader.listTaskDependencyBlockers!(fixture.dependent.head.id));
+  assert.deepEqual(blockers.map(item => item.taskId), [fixture.prerequisite.head.id],
+    "a terminal prerequisite Run remains unsatisfied");
+  const started = await workflow.execute(who, { type: "task.start", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.dependent.head.id, expectedVersion: 1, basis: [],
+    reason: "Start dependent work" });
+  assert.equal(started.status, "applied", JSON.stringify(started));
+  const blocked = await workflow.execute(who, { type: "runtime.run.reserve", projectId: fixture.project.id,
+    operationId: randomUUID(), runId: randomUUID(), taskId: fixture.dependent.head.id, sessionId,
+    expectedVersion: started.version!, input: "Execute dependent work" });
+  assert.equal(blocked.status, "rejected");
+  if (blocked.status === "rejected") assert.equal(blocked.code, "TASK_DEPENDENCY_BLOCKED");
+
+  const delivered = await workflow.execute(who, { type: "delivery.record", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
+    artifactRef: "https://example.test/prerequisite", artifactRevision: "accepted",
+    contentHash: hash("prerequisite"), technicalResult: "passed", technicalEvidence: "Current checks and use passed",
+    reason: "Accept prerequisite current revision" });
+  assert.equal(delivered.status, "applied", JSON.stringify(delivered));
+  const closed = await workflow.execute(who, { type: "task.close", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: delivered.version!,
+    deliveryId: delivered.revisionId!, acceptanceResult: "met", acceptanceEvidence: "Current revision accepted",
+    reason: "Close prerequisite current revision" });
+  assert.equal(closed.status, "applied", JSON.stringify(closed));
+
+  const dependentRun = await workflow.execute(who, { type: "runtime.run.reserve", projectId: fixture.project.id,
+    operationId: randomUUID(), runId: randomUUID(), taskId: fixture.dependent.head.id, sessionId,
+    expectedVersion: started.version!, input: "Execute dependent work" });
+  assert.equal(dependentRun.status, "applied", JSON.stringify(dependentRun));
+  const dependentCurrentVersion = (await uow.read(fixture.project.id,
+    reader => reader.getTask(fixture.dependent.head.id)))!.version;
+  await pool.query(`UPDATE runtime_run SET state='completed',native_turn_id=$4,version=version+1,updated_at=$3
+    WHERE project_id=$1 AND run_id=$2`, [fixture.project.id, dependentRun.entityId, now, `turn-${dependentRun.entityId}`]);
+
+  const reopened = await workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: closed.version!,
+    reason: "Create a new prerequisite revision" });
+  assert.equal(reopened.status, "applied", JSON.stringify(reopened));
+  const afterReopen = await workflow.execute(who, { type: "runtime.run.reserve", projectId: fixture.project.id,
+    operationId: randomUUID(), runId: randomUUID(), taskId: fixture.dependent.head.id, sessionId,
+    expectedVersion: dependentCurrentVersion, input: "A new attempt must wait for the new prerequisite revision" });
+  assert.equal(afterReopen.status, "rejected");
+  if (afterReopen.status === "rejected") assert.equal(afterReopen.code, "TASK_DEPENDENCY_BLOCKED");
+});
+
 test("a newer completed Run waits for its own Delivery instead of reviving an older failed one", () => {
   const row = {
     task_id: "task", version: 4, current_revision_id: "revision", title: "Retried work",

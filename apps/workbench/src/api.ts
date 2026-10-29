@@ -80,8 +80,11 @@ const key = (value: string) => encodeURIComponent(value);
 
 export function api(token: string, timeoutMs = 15000) {
   const call = <T>(path: string, init?: RequestInit) => request<T>(token, path, timeoutMs, init);
-  const leaderWrite = async <T extends { operationId: string }>(path: string, command: T): Promise<CommandResult> =>
-    checkedCommandResult(await call<unknown>(path, { method: "PUT", body: JSON.stringify(command) }), command.operationId);
+  const leaderWrite = async <T extends { operationId: string }>(path: string, command: T & { type?: string }): Promise<CommandResult> => {
+    const body = { ...command } as Record<string, unknown>;
+    delete body.type;
+    return checkedCommandResult(await call<unknown>(path, { method: "PUT", body: JSON.stringify(body) }), command.operationId);
+  };
   return {
     session: () => call<Session>("/api/session"),
     project: (p: string) => call<Project>(projectPath(p)),
@@ -106,11 +109,11 @@ export function api(token: string, timeoutMs = 15000) {
         `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`),
     leaderTask: (p: string, id: string) => call<LeaderWorkTask>(
       `${projectPath(p)}/work-management/tasks/${key(id)}`),
-    leaderPlan: (p: string, id: string, command: LeaderWorkPlanCommand) =>
+    leaderPlan: (p: string, id: string, command: LeaderWorkPlanCommand & { type?: string }) =>
       leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/plan`, command),
-    leaderDependencies: (p: string, id: string, command: LeaderWorkDependenciesCommand) =>
+    leaderDependencies: (p: string, id: string, command: LeaderWorkDependenciesCommand & { type?: string }) =>
       leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/dependencies`, command),
-    leaderReview: (p: string, id: string, command: LeaderWorkReviewCommand) =>
+    leaderReview: (p: string, id: string, command: LeaderWorkReviewCommand & { type?: string }) =>
       leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/review`, command),
     leaderWorkChanges: (p: string, cursor?: string) => call<LeaderWorkChangesPage>(
       `${projectPath(p)}/work-management/changes?limit=100${cursor ? `&cursor=${key(cursor)}` : ""}`),

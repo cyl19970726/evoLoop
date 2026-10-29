@@ -11,7 +11,8 @@
     "./delivery": "./dist/delivery.js",
     "./references": "./dist/references.js",
     "./orchestration": "./dist/orchestration.js",
-    "./work-index": "./dist/work-index.js"
+    "./work-index": "./dist/work-index.js",
+    "./ordinary-run-submission": "./dist/ordinary-run-submission.js"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",
