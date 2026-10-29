@@ -297,7 +297,8 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     };
     handle = requestAnimationFrame(() => {
       restore();
-      document.querySelector<HTMLElement>(`[data-page-key="${CSS.escape(key)}"] h1`)?.focus({ preventScroll: true });
+      // The landmark stays focusable while page titles may still be loading.
+      document.getElementById("workspace-main")?.focus({ preventScroll: true });
     });
     window.addEventListener("wheel", stop, { once: true });
     window.addEventListener("touchstart", stop, { once: true });
