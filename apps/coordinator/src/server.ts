@@ -19,7 +19,7 @@ import { registerAllocationRelationRoutes } from "./allocation-relations/routes.
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
-import type { RuntimeGrant } from "./configuration.js";
+import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
 import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
 import { registerCollaborationRoutes } from "./collaboration/routes.js";
@@ -57,6 +57,7 @@ export async function buildServer(options: {
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
+  listRuntimeModels?: () => Promise<{status:"available"|"empty"|"unavailable";models:string[];error:string|null;observedAtUtc:string}>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
     cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
@@ -125,6 +126,17 @@ export async function buildServer(options: {
   const who = (p: Principal | null) => { if (!p) throw new DomainError("FORBIDDEN", "未认证"); return p; };
   const params = (value: unknown) => z.record(z.string(), idSchema).parse(value);
   const callerGrants = (projectId:string,actorId:string) => (options.runtimeGrants?.(projectId,actorId) ?? []).filter(g=>g.projectId===projectId && g.actorId===actorId);
+  const catalog = async () => {
+    if (!options.runtime?.status().available || !options.listRuntimeModels) return {status:"unavailable" as const,models:[] as string[],error:"模型目录暂不可读取",observedAtUtc:new Date().toISOString()};
+    try { return await options.listRuntimeModels(); }
+    catch { return {status:"unavailable" as const,models:[] as string[],error:"模型目录读取失败或超时",observedAtUtc:new Date().toISOString()}; }
+  };
+  const requireActiveModel = async (model:string|null) => {
+    const current=await catalog();
+    if(current.status==="unavailable")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","模型目录读取失败或超时，未创建会话或运行。请稍后重试。");
+    if(current.status==="empty")throw new DomainError("MODEL_CATALOG_EMPTY","当前模型目录为空，未创建会话或运行。");
+    if(model && !current.models.includes(model))throw new DomainError("MODEL_NOT_ACTIVE",`模型 ${model} 当前不在 App Server 可用目录中，未创建会话或运行。`);
+  };
   const callerSchedulingGrants = (projectId: string, actorId: string) =>
     (options.schedulingGrants?.(projectId, actorId) ?? []).filter(g => g.projectId === projectId && g.actorId === actorId);
   const currentCapabilities = (principal: Principal | null = null) => ({ ...capabilities,
@@ -154,6 +166,11 @@ export async function buildServer(options: {
       }
       if (command.type === "runtime.session.reserve") {
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
+        const sameEnvironment=callerGrants(command.projectId,principal.actorId).filter(g=>g.roleId===command.roleId&&
+          g.authorizationScope===command.authorizationScope&&g.cwd===command.cwd&&g.sandbox===command.sandbox&&
+          (g.approvalPolicy??(g.sandbox==="danger-full-access"?"never":"on-request"))===command.approvalPolicy);
+        if(!dynamic&&sameEnvironment.length&&!sameEnvironment.some(g=>grantAllowsModel(g,command.model??null)))
+          throw new DomainError("MODEL_NOT_AUTHORIZED",`模型 ${command.model??"默认模型"} 未获此环境授权，未创建会话。`);
         if (dynamic ? !await options.authorizeDynamicSession?.(principal,command) :
           !await options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
           roleId: command.roleId, authorizationScope: command.authorizationScope, cwd: command.cwd,
@@ -162,6 +179,7 @@ export async function buildServer(options: {
           if (!await options.authorizeDynamicSession?.(principal, command))
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
         }
+        if(!dynamic)await requireActiveModel(command.model??null);
       }
       // Closing is a reviewer request; the runner archives under the original Session grant.
       if (command.type === "runtime.run.reserve") {
@@ -174,6 +192,7 @@ export async function buildServer(options: {
           if (!await options.authorizeDynamicRun?.(principal, command, session))
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
+        if(!dynamic)await requireActiveModel(session.model);
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
@@ -206,6 +225,12 @@ export async function buildServer(options: {
     const config=await options.sessionPreparation?.({projectId:p.projectId,sessionId:p.sessionId,roleId:q.roleId,
       sessionActorId:principal.actorId,cwd,authorizationScope,model:session?.model??q.model??null});
     if(!config)throw new DomainError("PREPARATION_UNAVAILABLE","Session preparation is unavailable");
+    const selectedModel=session?.model??q.model??null;
+    const matchingEnvironment=callerGrants(p.projectId,principal.actorId).filter(g=>g.roleId===q.roleId&&
+      g.authorizationScope===authorizationScope&&g.cwd===cwd&&g.sandbox==="danger-full-access"&&
+      (g.approvalPolicy??"never")==="never");
+    const modelAuthorized=!matchingEnvironment.length||matchingEnvironment.some(g=>grantAllowsModel(g,selectedModel));
+    const modelCatalog=await catalog();
     const bindings=await options.service.listRoleSessionBindings(principal,p.projectId,q.roleId);
     const bound=bindings.some(value=>value.sessionId===p.sessionId);
     const profile=session?await options.service.getRuntimeSessionProfile(principal,p.projectId,p.sessionId):null;
@@ -223,7 +248,10 @@ export async function buildServer(options: {
       executionProfile.revision.model===session.model;
     const recoveryReady=!!recovery&&!recovery.partial&&recovery.gate?.phase==="open";
     const missing=[...(!config.runtimeAvailable?["runtime_unavailable"]:[]),
-      ...(!config.grantReady?["runtime_grant"]:[]),...(!config.cwdReady?["cwd"]:[]),
+      ...(!config.grantReady?[modelAuthorized?"runtime_grant":"model_not_authorized"]:[]),...(!config.cwdReady?["cwd"]:[]),
+      ...(!session&&modelCatalog.status==="unavailable"?["model_catalog_unavailable"]:[]),
+      ...(!session&&modelCatalog.status==="empty"?["model_catalog_empty"]:[]),
+      ...(!session&&selectedModel&&modelCatalog.status==="available"&&!modelCatalog.models.includes(selectedModel)?["model_not_active"]:[]),
       ...(!config.roleActorId?["role_actor"]:[]),...(!config.materialCli?["material_cli"]:
         !config.materialCli.ready?["material_cli_incompatible"]:[]),
       ...(config.materialCli&&config.roleActorId&&config.materialCli.actorId!==config.roleActorId?["material_cli_actor_mismatch"]:[]),
@@ -240,11 +268,13 @@ export async function buildServer(options: {
       roleState:role.state,responsibility:{goal:role.proposal.goal,independentResponsibility:role.proposal.independentResponsibility,
         workflow:role.proposal.workflow,handoffBoundary:role.proposal.handoffBoundary},
       session:session?{state:session.state,version:session.version,actorId:session.actorId,cwd:session.cwd,
-        authorizationScope:session.authorizationScope,model:session.model,sandbox:session.sandbox,
+        authorizationScope:session.authorizationScope,model:session.model,observedModel:session.observedModel??null,
+        observedProvider:session.observedProvider??null,sandbox:session.sandbox,
         approvalPolicy:session.approvalPolicy,nativeThreadId:session.nativeThreadId,nativeSessionId:session.nativeSessionId,
         operationId:session.operationId}:null,
       profile:profile?{version:profile.version,displayName:profile.displayName,purpose:profile.purpose}:null,
-      bound,config,missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
+      bound,config,modelCatalog:{status:modelCatalog.status,error:modelCatalog.error,observedAtUtc:modelCatalog.observedAtUtc},
+      missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
       executionProfile:executionProfile?{revision:executionProfile.revision,activationState:executionProfile.activationState,
         activeRevisionId:executionProfile.activeRevisionId,activationOperationId:executionProfile.activationOperationId}:null,
       readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile&&missing.length===0,
@@ -287,6 +317,18 @@ export async function buildServer(options: {
     const projectId = params(request.params).projectId!;
     await options.service.getProject(who(request.principal), projectId);
     return { ...(options.runtime?.status(projectId) ?? { available: false, error: "尚未配置 Codex 执行服务", faults: [] }), allowedCwds: [...new Set(callerGrants(projectId,who(request.principal).actorId).map(g=>g.cwd))], grants: callerGrants(projectId,who(request.principal).actorId) };
+  });
+  app.get("/api/projects/:projectId/runtime/models", async request => {
+    const projectId=params(request.params).projectId!,principal=who(request.principal);
+    await options.service.getProject(principal,projectId);
+    const current=await catalog();
+    const fullGrants=callerGrants(projectId,principal.actorId).filter(g=>g.sandbox==="danger-full-access"&&
+      (g.approvalPolicy??"never")==="never"&&g.networkAccess!==false);
+    const allowed=new Set(fullGrants.flatMap(grantModels));
+    return {...current,models:current.status==="available"?current.models.filter(model=>allowed.has(model)):[],
+      authorizedModels:[...allowed],environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
+        cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
+          current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/sessions/:id/recovery", async request => {

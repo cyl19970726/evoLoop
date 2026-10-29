@@ -23,6 +23,8 @@ export type RuntimeRunState = "requested" | "dispatching" | "running" | "complet
 export interface RuntimeSessionRecord {
   projectId: string; id: string; roleId: string; cwd: string; authorizationScope: string;
   model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access"; approvalPolicy: "on-request" | "untrusted" | "never";
+  /** Native thread/start acknowledgement. Null for historical Sessions without this observation. */
+  observedModel?: string | null; observedProvider?: string | null;
   state: RuntimeSessionState; version: number; nativeThreadId: string | null; nativeSessionId: string | null;
   operationId: string; actorId: string; createdAt: string; updatedAt: string;
   /** Persisted native-start permit; null/absent for historical unmanaged Sessions. */
@@ -79,6 +81,7 @@ export interface RuntimeBinding {
   cwd: string;
   authorizationScope: string;
   owner: "evoloop-codex-app-server";
+  observedModel?: string | null; observedProvider?: string | null;
   /** Persisted Session profile for an exact native resume; omitted only for legacy read-only inspection. */
   resumeProfile?: { actorId: string; model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access";
     approvalPolicy: "on-request" | "untrusted" | "never"; executionProfileRevisionId?: string };

@@ -1,15 +1,16 @@
 import type { RuntimeRecordEvent, RuntimeReconcilePartial, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { request } from "../api";
 export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string;
-  sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null;
+  sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null; models?: string[];
   approvalPolicy?: "on-request" | "untrusted" | "never"; networkAccess?: boolean }
 export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[] }
+export interface RuntimeModels { status: "available" | "empty" | "unavailable"; models: string[]; error?: string | null }
 export interface NativeResult { messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }
 export function runtimeClient(token: string, projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/runtime`;
   const get = <T>(path: string) => request<T>(token, base + path, 15000);
   return {
-    status: () => get<RuntimeStatus>(""), sessions: () => get<RuntimeSessionRecord[]>("/sessions"),
+    status: () => get<RuntimeStatus>(""), models: () => get<RuntimeModels>("/models"), sessions: () => get<RuntimeSessionRecord[]>("/sessions"),
     runs: (taskId?: string) => get<RuntimeRunRecord[]>(`/runs${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`),
     run: (runId: string) => get<RuntimeRunRecord>(`/runs/${encodeURIComponent(runId)}`),
     events: (runId: string) => get<RuntimeRecordEvent[]>(`/runs/${encodeURIComponent(runId)}/events`),

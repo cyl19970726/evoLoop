@@ -83,11 +83,15 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal((await workflow.listRuntimeSessionEvents(principal, projectId, sessionId)).some(e => e.kind === "runtime.approvalDeclined"), true);
   await assert.rejects(runtime.beginSessionCreate(projectId, sessionId), /already attempted/);
   assert.deepEqual(await runtime.recoverDispatching(projectId), { sessions: [sessionId], runs: [] });
-  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1" };
+  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1", observedModel:"gpt-6-sol",observedProvider:"openai" };
   await assert.rejects(runtime.bindSession(projectId, sessionId, { ...binding, projectId: randomUUID() }), /does not match/);
   assert.equal((await runtime.bindSession(projectId, sessionId, binding)).state, "ready");
   await assert.rejects(runtime.recordSessionApprovalDeclined(projectId, sessionId, "foreign-thread", null, "Invalid"), /owned thread/);
   assert.equal((await workflow.getRuntimeSession(principal, projectId, sessionId)).nativeThreadId, "owned-thread-1");
+  const observed=await workflow.getRuntimeSession(principal,projectId,sessionId);
+  assert.equal(observed.model,null,"configured default remains distinct from native observation");
+  assert.equal(observed.observedModel,"gpt-6-sol");
+  assert.equal(observed.observedProvider,"openai");
 
   const runId = randomUUID();
   const runOperation = randomUUID();

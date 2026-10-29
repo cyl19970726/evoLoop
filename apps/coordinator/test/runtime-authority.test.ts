@@ -101,6 +101,7 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
     const service = { ...workManagementQueries, execute: async () => { calls++; return { status: "applied", operationId, entityId: sessionId, version: 1 }; } } as unknown as WorkflowService;
     const runtime = { status: () => ({ available: true, error: null }) } as RuntimeRunner;
     const app = await buildServer({ service, credentials: credentials as never, runtime,
+      listRuntimeModels:async()=>({status:"available",models:["gpt-6"],error:null,observedAtUtc:new Date().toISOString()}),
       allowedRuntimeCwd: config.allowedRuntimeCwd, allowedRuntimeCwds: config.allowedRuntimeCwds,
       hasRuntimeGrant: config.hasRuntimeGrant });
     try {
@@ -116,6 +117,29 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
       assert.equal(calls, 1);
     } finally { await app.close(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("legacy model and bounded models remain exact within one full execution grant",async()=>{
+  const directory=await mkdtemp(join(tmpdir(),"evoloop-model-grants-"));
+  try{
+    const file=join(directory,"integrations.json");
+    await writeFile(file,JSON.stringify({runtime:{enabled:true,grants:[{...grant,model:"gpt-6",
+      models:["deepseek/deepseek-flash","kimi-code-cn/k3.1-pro"]}]}}));
+    const config=await loadIntegrations(file);
+    for(const model of ["gpt-6","deepseek/deepseek-flash","kimi-code-cn/k3.1-pro"])
+      assert.equal(config.hasRuntimeGrant({...grant,model}),true,model);
+    for(const model of ["deepseek/deepseek-v4-pro","DeepSeek/deepseek-flash",null])
+      assert.equal(config.hasRuntimeGrant({...grant,model}),false,String(model));
+    assert.equal(config.hasRuntimeGrant({...grant,model:"gpt-6",actorId:"other"}),false);
+    assert.equal(config.hasRuntimeGrant({...grant,model:"gpt-6",cwd:"/tmp/other"}),false);
+    assert.equal(config.hasRuntimeGrant({...grant,model:"gpt-6",sandbox:"workspace-write"}),false);
+    await writeFile(file,JSON.stringify({runtime:{enabled:true,grants:[{...grant,model:"gpt-6"}]}}));
+    const legacy=await loadIntegrations(file);
+    assert.equal(legacy.hasRuntimeGrant({...grant,model:"gpt-6"}),true);
+    assert.equal(legacy.hasRuntimeGrant({...grant,model:"deepseek/deepseek-flash"}),false);
+    await writeFile(file,JSON.stringify({runtime:{enabled:true,grants:[{...grant,models:["*"]}]}}));
+    await assert.rejects(loadIntegrations(file),/Invalid integration configuration/);
+  }finally{await rm(directory,{recursive:true,force:true});}
 });
 
 test("a bound dynamic Session cannot fall back to the same Role's static grant after revocation", async () => {
