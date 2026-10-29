@@ -3,7 +3,9 @@ import { request } from "../api";
 export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null;
   approvalPolicy?: "on-request" | "untrusted" | "never"; networkAccess?: boolean }
-export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[] }
+export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[];
+  faults?: { sessionId: string | null; phase: string; category: string; nativeMethod?: string; nativeCode?: number;
+    nativeCategory?: string; observedAtUtc: string }[] }
 export interface NativeResult { messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }
 export function runtimeClient(token: string, projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/runtime`;

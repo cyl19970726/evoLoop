@@ -55,6 +55,6 @@ export interface SessionMessageTransaction extends SessionMessageReader {
   insertSessionMessageReadReceipt(messageId: string, actorId: string, evidence: string, at: string): Promise<void>;
   setSessionMessageBlockedReason(messageId:string,reason:string|null):Promise<void>;
   markSessionMessageSettled(sessionId:string,messageId:string,at:string):Promise<void>;
-  /** Includes unresolved Task Runs and unresolved ordinary processing; preserves queue claim ownership. */
-  assertSessionVacant(sessionId: string): Promise<void>;
+  /** Includes unresolved Task Runs and ordinary processing; close also checks queued messages. */
+  assertSessionVacant(sessionId: string, includeQueued?: boolean): Promise<void>;
 }

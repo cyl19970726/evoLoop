@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { commandSchema, type BasisSet, type Delivery, type Principal, type Task, type TaskRevision } from "@evoloop/contracts";
 import type { EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationRevision } from "@evoloop/contracts/evaluation";
-import type { Transaction } from "@evoloop/contracts/ports";
+import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import { applyEvaluation, taskSignature } from "../src/evaluation/index.ts";
 import { reserveRuntime } from "../src/runtime/reserve.ts";
 import { RuntimeWorkflowService } from "../src/runtime/service.ts";
@@ -83,6 +83,31 @@ test("session close admits only an idle bound session and blocks later Run reser
     operationId: id(101), runId: id(102), taskId, sessionId: id(10), expectedVersion: 2, input: "Do work" },
     now: "2026-10-21T01:01:00Z", nextId: () => id(103), hash: () => hash }),
   error => (error as { code?: string }).code === "SESSION_NOT_READY");
+});
+
+test("session close requests queued message occupancy while cancelled messages permit close", async () => {
+  for (const state of ["queued", "cancelled"] as const) {
+    const { state: records, tx } = fixture();
+    let checks = 0;
+    Object.assign(tx, {sessionMessages: {
+      assertSessionVacant: async (sessionId:string,includeQueued?:boolean) => {
+        assert.equal(sessionId,id(10));assert.equal(includeQueued,true);checks++;
+        if (state === "queued")throw new DomainError("SESSION_BUSY","queued message occupies Session");
+      },
+    }});
+    const close = () => reserveRuntime({tx,principal,command:{type:"runtime.session.close",projectId,
+      operationId:id(106),sessionId:id(10),expectedVersion:2,reason:"Work complete"},
+      now:"2026-10-21T01:00:00Z",nextId:()=>id(107),hash:()=>hash});
+    if (state === "queued") {
+      await assert.rejects(close(), error => (error as {code?:string}).code === "SESSION_BUSY");
+      assert.equal(records.sessions[0]?.state,"ready");
+      assert.equal(records.events.length,0);
+    } else {
+      await close();
+      assert.equal(records.sessions[0]?.state,"closing");
+    }
+    assert.equal(checks,1);
+  }
 });
 
 test("normal session close rejects unknown creation and already closed sessions", async () => {
