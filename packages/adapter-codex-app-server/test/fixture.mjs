@@ -14,6 +14,7 @@ let turnStarts = 0;
 let observedResumes = 0;
 let lastTurnModel = null;
 let threadName = null;
+let modelListReads = 0;
 const sequenceInputs = [];
 let unloaded = mode.startsWith('full-unloaded');
 for await (const line of lines) {
@@ -52,6 +53,22 @@ for await (const line of lines) {
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
+  if (method === "model/list") {
+    modelListReads++;
+    if (params.limit !== 100) { send({id,error:{code:-32602,message:"wrong page size"}}); continue; }
+    if (mode === "model-timeout") continue;
+    if (mode === "model-reject") { send({id,error:{code:-32000,message:"private token and path"}}); continue; }
+    if (mode === "model-invalid") { send({id,result:{data:[{id:"display-only"}],nextCursor:null}}); continue; }
+    if (mode === "model-empty") { send({id,result:{data:[],nextCursor:null}}); continue; }
+    if (mode === "model-loop") { send({id,result:{data:[{model:"gpt-6-astra"}],nextCursor:"again"}}); continue; }
+    if (mode === "model-overflow") { send({id,result:{data:[{model:`slug-${modelListReads}`}],nextCursor:`page-${modelListReads}`}}); continue; }
+    if (mode === "model-page") {
+      send({id,result:params.cursor==="next"?
+        {data:[{id:"different-id",model:"gpt-6-luna",displayName:"Luna"},{model:"gpt-6-astra"}],nextCursor:null}:
+        {data:[{id:"different-id",model:"gpt-6-astra",displayName:"Astra"}],nextCursor:"next"}}); continue;
+    }
+    send({id,result:{data:[{model:`gpt-6-astra-${modelListReads}`,displayName:"Astra"}],nextCursor:null}}); continue;
+  }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
   if (mode === "timeout" && method === "turn/start") continue;

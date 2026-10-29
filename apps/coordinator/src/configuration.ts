@@ -16,6 +16,8 @@ const grant = z.strictObject({
   // Legacy grants remain readable for original-operation reconciliation. New reservations require full execution.
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("danger-full-access"),
   model: z.string().min(1).max(100).optional(),
+  models: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/)).min(1).max(12).refine(values => new Set(values).size === values.length,
+    "Runtime model choices must be unique").optional(),
   networkAccess: z.boolean().optional(),
   approvalPolicy: z.enum(["on-request", "untrusted", "never"]).optional(),
 }).transform(value => ({...value,
@@ -24,12 +26,16 @@ const grant = z.strictObject({
 })).refine(value => value.sandbox !== "danger-full-access" ||
   value.networkAccess && value.approvalPolicy === "never",
   "Full execution requires normal networking and never approval");
-export type RuntimeGrant = Omit<z.infer<typeof grant>, "networkAccess" | "approvalPolicy" | "model"> &
-  Partial<Pick<z.infer<typeof grant>, "networkAccess" | "approvalPolicy">> & {model?: string | null | undefined};
+export type RuntimeGrant = Omit<z.infer<typeof grant>, "networkAccess" | "approvalPolicy" | "model" | "models"> &
+  Partial<Pick<z.infer<typeof grant>, "networkAccess" | "approvalPolicy">> & {model?: string | null | undefined; models?: string[] | undefined};
+export const grantModels = (value: Pick<RuntimeGrant,"model"|"models">): string[] =>
+  [...new Set([...(value.model ? [value.model] : []),...(value.models ?? [])])];
+export const grantAllowsModel = (value: Pick<RuntimeGrant,"model"|"models">, model: string | null | undefined): boolean =>
+  model == null ? !value.model && !value.models?.length : grantModels(value).includes(model);
 export function runtimeThreadConfig(grants: RuntimeGrant[], spec: RuntimeSessionSpec): Record<string, unknown> | undefined {
   const current=grants.find(value => value.actorId === spec.actorId && value.projectId === spec.projectId &&
     value.roleId === spec.roleId && value.authorizationScope === spec.authorizationScope && value.cwd === spec.cwd &&
-    value.sandbox === spec.sandbox && (value.model ?? null) === (spec.model ?? null) &&
+    value.sandbox === spec.sandbox && grantAllowsModel(value,spec.model) &&
     (value.approvalPolicy ?? (value.sandbox === "danger-full-access" ? "never" : "on-request")) === spec.approvalPolicy);
   return current && spec.sandbox === "workspace-write"
     ? {"sandbox_workspace_write.network_access": current.networkAccess === true} : undefined;
@@ -147,7 +153,7 @@ export async function loadIntegrations(path?: string) {
   const hasRuntimeGrant = (scope: RuntimeGrant): boolean => grants.some(g =>
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
     g.authorizationScope === scope.authorizationScope && g.cwd === scope.cwd && g.sandbox === scope.sandbox &&
-    (scope.model === undefined || (g.model ?? null) === scope.model) &&
+    (scope.model === undefined || grantAllowsModel(g,scope.model)) &&
     (scope.approvalPolicy === undefined || (g.approvalPolicy ?? (g.sandbox === "danger-full-access" ? "never" : "on-request")) === scope.approvalPolicy));
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
     if (!allowedRuntimeCwds(projectId).includes(cwd) &&

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { commandSchema } from "@evoloop/contracts";
 import { ApiClient } from "./client.js";
-import { dispatchMutation, reconcileReceipt, record, ReceiptStore, type VerifiedActor } from "./receipts.js";
+import { dispatchMutation, reconcileReceipt, record, ReceiptError, ReceiptStore, type VerifiedActor } from "./receipts.js";
 
 const specificationSchema=z.strictObject({
   projectId:z.uuid(),sessionId:z.uuid(),operationId:z.uuid(),roleId:z.uuid(),
@@ -17,10 +17,23 @@ const specificationSchema=z.strictObject({
 });
 export type SessionPreparationSpec=z.infer<typeof specificationSchema>;
 
-async function freezePreparation(spec:SessionPreparationSpec,store:ReceiptStore,origin:string,actor:VerifiedActor){
+async function freezePreparation(spec:SessionPreparationSpec,store:ReceiptStore,origin:string,actor:VerifiedActor,
+  existingOnly=false){
   const file=join(store.directory,`.prepare-${spec.operationId}.json`);
   const body={...spec,actorId:actor.actorId,apiUrl:origin};
   const content=JSON.stringify(body,Object.keys(body).sort());
+  if(existingOnly){
+    let saved:unknown;
+    try {saved=JSON.parse(await readFile(file,"utf8"));}
+    catch(error){
+      if((error as NodeJS.ErrnoException).code==="ENOENT")
+        throw new Error("New Session preparation needs an exact model slug from models --project; no frozen legacy preparation exists for this operation ID");
+      throw error;
+    }
+    if(JSON.stringify(saved)!==content)
+      throw new Error("This preparation operation already has a different saved intent; use its original receipt");
+    return;
+  }
   await mkdir(store.directory,{recursive:true,mode:0o700});
   const temporary=join(store.directory,`.prepare-${spec.operationId}-${randomUUID()}.tmp`);
   try {
@@ -51,7 +64,8 @@ export async function prepareSession(input:unknown,client:ApiClient,store:Receip
   actor:VerifiedActor,diagnostic:(value:unknown)=>void) {
   const spec=specificationSchema.parse(input);
   if(!actor.projectIds.includes(spec.projectId))throw new Error("CLI identity does not belong to the selected project");
-  await freezePreparation(spec,store,origin,actor);
+  const legacyCreate=spec.mode==="create"&&!spec.model;
+  await freezePreparation(spec,store,origin,actor,legacyCreate);
   const endpoint=`/api/projects/${spec.projectId}/session-preparation/${spec.sessionId}`;
   const query=new URLSearchParams({roleId:spec.roleId});
   if(spec.cwd)query.set("cwd",spec.cwd);
@@ -64,20 +78,32 @@ export async function prepareSession(input:unknown,client:ApiClient,store:Receip
       projectId:spec.projectId,kind:command.type,path:"/api/commands",body:command,confirmation:"command",
       recovery:{kind:"core",path:`/api/projects/${spec.projectId}/operations/${command.operationId}`}},diagnostic,actor);
   };
+  let reservationReceipt=false;
   for(const id of [spec.operationId,stageId(spec.operationId,"profile"),stageId(spec.operationId,"role-binding")]){
     let receipt;
     try { receipt=await store.get(id); }
     catch(error){ if((error as NodeJS.ErrnoException).code==="ENOENT")continue; throw error; }
     store.checkScope(receipt,origin,token,actor);
     if(id===spec.operationId && spec.mode==="create" && receipt.kind==="runtime.session.reserve"){
+      reservationReceipt=true;
       const original=record(receipt.body);
       if(original?.sessionId!==spec.sessionId||original?.roleId!==spec.roleId||original?.cwd!==spec.cwd||
         original?.authorizationScope!==spec.authorizationScope||original?.model!==(spec.model??undefined))
         throw new Error("The saved reservation has different inputs; use its original receipt");
     }
-    if(receipt.state==="pending")receipt=await reconcileReceipt(client,store,origin,token,id,actor);
+    if(receipt.state==="pending")try {receipt=await reconcileReceipt(client,store,origin,token,id,actor);}
+    catch(error){
+      if(legacyCreate&&error instanceof ReceiptError&&error.code==="RESULT_UNCONFIRMED")
+        throw new ReceiptError("RESULT_UNCONFIRMED",
+          "Legacy preparation is still unconfirmed. Keep the original file, receipt, and operation ID; a project reviewer must inspect the original operation and Session before deciding recovery.",
+          {...record(error.data),nextAction:"review_original_operation_and_session"});
+      throw error;
+    }
     if(receipt.state==="rejected")return {status:"recovery_required",reason:"saved_operation_rejected",operationId:id};
   }
+  if(legacyCreate&&!reservationReceipt)
+    return {status:"recovery_required",reason:"legacy_reservation_receipt_missing",operationId:spec.operationId,
+      nextAction:"review_original_operation_and_session"};
   let snapshot=await inspect();
   const session=record(snapshot.session);
   if(spec.mode==="reuse"&&!session)return {status:"blocked",reason:"session_missing",snapshot};
@@ -85,6 +111,9 @@ export async function prepareSession(input:unknown,client:ApiClient,store:Receip
     return {status:"blocked",reason:"session_belongs_to_another_reservation",snapshot};
   if(session&&(spec.cwd&&session.cwd!==spec.cwd||spec.authorizationScope&&session.authorizationScope!==spec.authorizationScope||
     spec.model!==undefined&&session.model!==spec.model))return {status:"blocked",reason:"session_profile_mismatch",snapshot};
+  if(legacyCreate&&!session)
+    return {status:"recovery_required",reason:"legacy_reservation_session_missing",operationId:spec.operationId,
+      nextAction:"review_original_operation_and_session",snapshot};
   const missing=(snapshot.missing as string[]).filter(code=>!["role_binding","display_profile","session_unknown"].includes(code));
   if(missing.length)return {status:"blocked",reason:"configuration_or_state",missing,snapshot};
   if(!session){

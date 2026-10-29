@@ -18,6 +18,7 @@ import { recoveryActivationLabel } from "../sessions/recoveryPresentation";
 import { eligibleOwnedSessions } from "../sessions/assignmentEligibility";
 import { taskRunFromHash } from "../orchestration/navigation";
 import { preflightPresentation } from "./preflightPresentation";
+import { SessionCreation } from "./SessionCreation";
 import "./session-focus.css";
 
 function readErrorText(cause: unknown): string {
@@ -32,7 +33,6 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
 };
 type RoleName = { title?: string; error?: string };
-const grantKey = (g: { roleId: string; cwd: string; authorizationScope: string; sandbox: string; model?: string | null }) => JSON.stringify([g.roleId, g.cwd, g.authorizationScope, g.sandbox, g.model ?? null]);
 export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
@@ -182,16 +182,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     {loadedScope === sessionScope && visibleSessions.length === 0 && !hasTarget && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
     {visibleSessions.filter(session => !focusedSession || session.id !== focusedSession.id).map(session => <SessionCard key={session.id} context={context} session={session} focused={false} anchor={!task} role={resolvedRoles[session.roleId]} />)}
     {status?.available && status.grants.length > 0 && grants.length === 0 && <Notice>当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新会话。</Notice>}
-    {status?.available && grants.length > 0 && <details className="workflow-detail"><summary>创建授权范围内的新会话</summary>
-      <p className="muted">新会话统一登记完整本机权限（danger-full-access）及无需逐次审批（never）。创建请求不等于原生配置已激活；请回读会话状态与执行配置。</p>
-      <ActionForm context={context} review title="登记并创建会话" fields={[
-      { name: "grant", label: "已配置的完整权限授权", kind: "select", options: grants.map(g => option(grantKey(g), `${g.roleId} · ${g.authorizationScope} · ${g.cwd} · ${g.model ?? "默认模型"}`)) },
-    ]} build={v => {
-      const grant = grants.find(g => grantKey(g) === v.grant);
-      if (!grant) throw new Error("需要有效授权");
-      return { type: "runtime.session.reserve", sessionId: crypto.randomUUID(), roleId: grant.roleId, authorizationScope: grant.authorizationScope,
-        cwd: grant.cwd, sandbox: "danger-full-access", approvalPolicy: "never", ...(grant.model ? { model: grant.model } : {}) };
-    }} /></details>}
+    {status?.available && grants.length > 0 && <SessionCreation context={context} grants={grants} refresh={refresh + epoch} />}
     {task && task.state === "in_progress" && taskAssignment?.error && <Notice error>具体分派暂不可核对：{taskAssignment.error}。请先回读任务分派记录，暂不创建队列或预留新运行。</Notice>}
     {task && task.state === "in_progress" && assignmentStale && <Notice error>任务修订已变化，原具体分派固定在旧修订。请先核对并重新指定或释放分派。</Notice>}
     {task && task.state === "in_progress" && assigned?.target.kind === "external" && <Notice>本任务已分派给外部人工会话，不能改由其他受管 Session 创建队列或预留运行；请先正式释放或重新分派。</Notice>}
@@ -233,6 +224,7 @@ function SessionCard({context,session,focused,anchor,role}:{context:MutationCont
   return <details ref={ref} className="workflow-detail runtime-session-card" id={anchor ? `runtime-session-${session.id}` : undefined}>
     <summary><SessionRoleLabel projectId={context.projectId} roleId={session.roleId} role={role} /> · {sessionState[session.state]} · Session {session.id.slice(0, 8)}</summary>
     <dl><div><dt>职责 ID</dt><dd>{session.roleId}</dd></div><div><dt>授权工作范围</dt><dd>{session.authorizationScope}</dd></div><div><dt>工作区</dt><dd>{session.cwd}</dd></div><div><dt>当前登记权限</dt><dd>{session.sandbox} · {session.approvalPolicy}</dd></div><div><dt>稳定会话 ID</dt><dd>{session.id}</dd></div><div><dt>原生线程</dt><dd>{session.nativeThreadId ?? "尚未确认"}</dd></div></dl>
+    <p>创建时配置模型：<code>{session.model ?? "未显式指定"}</code>；原生创建回执：模型 <code>{session.observedModel ?? "未知"}</code>，provider <code>{session.observedProvider ?? "未知"}</code>。此回执不代表某个 Turn 已成功。</p>
     {profile ? <p>目标执行配置 v{profile.revision.version}：<code>{profile.revision.sandbox}</code> · <code>{profile.revision.approvalPolicy}</code> · 模型 <code>{profile.revision.model ?? "未显式指定"}</code> · {activationLabel}。{activeProfile ? "此修订已登记激活。" : profile.activeRevisionId ? "目标修订尚未确认激活；原已激活修订继续单独保留。" : "尚无已确认的原生配置修订。"}</p>
       : <p className="muted">未读到执行配置修订；不能从创建时权限推断当前原生配置。</p>}
     {legacyProfile && session.state === "ready" && !["attempting", "unknown"].includes(profile.activationState) && context.principal.permissions.includes("write") && context.principal.permissions.includes("review") && <details className="workflow-detail"><summary>将原会话登记为完整权限</summary>

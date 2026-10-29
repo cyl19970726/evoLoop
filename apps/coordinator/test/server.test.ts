@@ -156,6 +156,7 @@ test("runtime Run reservation requires a grant for the Session's current model",
       return{status:"applied",operationId:command.operationId,entityId:sessionId,version:1};},
   } as unknown as WorkflowService,
   runtime:{status:()=>({available:true,error:null,faults:[]})} as unknown as Parameters<typeof buildServer>[0]['runtime'],
+  listRuntimeModels:async()=>({status:"available",models:["approved-model"],error:null,observedAtUtc:new Date().toISOString()}),
   hasRuntimeGrant:scope=>scope.model==="approved-model"&&scope.actorId==="local-owner"&&
     scope.approvalPolicy==="on-request"});
   try{

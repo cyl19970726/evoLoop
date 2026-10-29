@@ -46,7 +46,7 @@ const legacyTables = ["project", "process_document", "document_revision", "docum
 async function legacySnapshot(): Promise<Record<string, unknown[]>> {
   const result: Record<string, unknown[]> = {};
   for (const table of legacyTables) {
-    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'":"to_jsonb(t)"}-'native_environment_epoch' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
+    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'":"to_jsonb(t)"}-'native_environment_epoch'-'observed_model'-'observed_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
     result[table] = rows.rows.map(row => row.row).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   }
   return result;
@@ -241,7 +241,13 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
     WHERE project_id=$1 ORDER BY sequence`,[projectId])).rows;
   const headBefore034=(await client.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence;
   await migrate(url!,schema);
-  assert.deepEqual(await legacySnapshot(),before034,'034 may add a configured snapshot but must preserve all old columns');
+  assert.deepEqual(await legacySnapshot(),before034,'upgrade may add nullable observation fields but must preserve all old columns');
+  const legacyModelObservation=(await client.query(`SELECT count(*)::int AS total,
+    count(*) FILTER (WHERE observed_model IS NOT NULL OR observed_provider IS NOT NULL)::int AS invented
+    FROM runtime_session WHERE project_id=$1`,[projectId])).rows[0];
+  assert.ok(legacyModelObservation.total>0);
+  assert.equal(legacyModelObservation.invented,0,
+    '043 must leave native model and provider unknown for old Sessions');
   assert.deepEqual((await client.query('SELECT to_jsonb(c) AS row FROM session_observation_change c WHERE project_id=$1 ORDER BY sequence',[projectId])).rows,
     journalBefore034,'034 configured snapshot backfill must not invent a new native event');
   assert.equal((await client.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence,headBefore034);

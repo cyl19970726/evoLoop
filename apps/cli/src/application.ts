@@ -78,6 +78,7 @@ const help = {
     "work leader --project UUID [--documents] [--closed] [--limit 1..100 --cursor CURSOR]",
     "work leader changes --project UUID [--cursor CURSOR --limit 1..100] (monotonic Task/Document change feed)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
+    "models --project UUID (read authorized, currently available App Server models before session prepare)",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "materials TASK_UUID --project UUID --revision UUID (bounded fixed Task and sealed basis catalog)",
@@ -144,6 +145,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       await verifiedActor(),value=>io.stderr(JSON.stringify(value)+"\n"));
   }
   if (action === "session") { check(args, 1); return client.get("/api/session"); }
+  if (action === "models") { check(args, 1, ["project"]); return client.get(`/api/projects/${project()}/runtime/models`); }
   if (action === "project") { check(args, 2); return client.get(`/api/projects/${uuid(args.words[1], "Project")}`); }
   if (action === "get") { check(args, 2); return client.get(args.words[1]!); }
   if (action === "command") {
