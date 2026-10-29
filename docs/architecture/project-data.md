@@ -172,7 +172,7 @@ flowchart TB
 
 ## 7. 首个切片与实际验收
 
-本页定义所有权；具体表/键/修订约束见[存储逻辑](storage.md)，从 PG 与 Git 固定来源到 Wiki、再返回任务复核的流程见[知识关联](knowledge-flow.md)。用户阅读和修改这些对象的入口见[工作台产品](../product/workbench.md)与[前端架构](frontend.md)。
+本页定义所有权；具体表/键/修订约束见[存储逻辑](storage.md)，从 PG 与 Git 固定来源到 Wiki、再返回任务复核的流程见[知识关联](knowledge-flow.md)。用户阅读和修改这些对象的入口见[工作台产品](../product/workbench.md)与[前端架构](../frontend/architecture.md)。
 
 先建立最小项目、Task/过程Document/Relation 合同、PostgreSQL 版本化存储和 CLI 入口，再接工作台的读取、提议与复核切片；完整富文本协作编辑后置。受限的 S1a 可先实现内联 Markdown 过程文档的已批准修订、ready Task、封存依据、导航关联、影响复核及 Journal/outbox；不因此宣称已接通飞书、Git、Wiki 或 Blob。完成 S1 时连接飞书任务投影，再验证受控字段回写；GitSourceRef 可从显式登记 repo/path/commit/hash 开始。之后接入已通过门槛的 Wiki，并保留首期单活动协调者。
 

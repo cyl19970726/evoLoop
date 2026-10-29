@@ -80,7 +80,7 @@ Wiki 候选和不可变修订正文存于**开发仓库外的 OpenViking 服务*
 
 受管日程接续复用 `ScheduleStore` 与现有 Loop：日程新修订可选固定 Loop/Stage，物化时保存同一业务 Task 的 Stage；PG 来源查询与 core 共同核验 occurrence、原操作和固定修订，再交认知选择现有 child 派发。旧无目标日程维持只产 todo；不向所有同范围 Loop 广播，也不新增调度服务。暂停、未知和旧排队边界见[日程合同](contracts.md#可选的受管目标)。
 
-前端组件与 Query/Command 读写分工见[前端架构](frontend.md)。目标中的 `core/knowledge` SourceBridge 将组合各来源端口，`core/queries` 将装配有限上下文与页面读取模型；目前这些目录尚未建立，现有读取由协调 API 授权后装配来源和知识端口。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
+前端组件与 Query/Command 读写分工见[前端架构](../frontend/architecture.md)。目标中的 `core/knowledge` SourceBridge 将组合各来源端口，`core/queries` 将装配有限上下文与页面读取模型；目前这些目录尚未建立，现有读取由协调 API 授权后装配来源和知识端口。Git 文档接入与 Wiki 回写影响见[知识关联](knowledge-flow.md)，数据库内部约束见[存储设计](storage.md)。
 
 工作文档结论整理到正式文档的 `DocumentIncorporation` 归 `core/documents`，跨对象来源关系归 `core/relations`，页面进度由 `core/queries` 组合；不为此新增独立服务。PostgreSQL 只记过程文档来源、仓库目标基线、差异/PR 和核实的合入结果；目标是独立 Git 来源而非 Document 行，`adapter-git-documents` 继续只读。正式正文写入及审阅交给获授权的仓库任务，构建与部署独立记录。详见[整理流程](project-data.md#6-工作文档怎样沉淀为仓库正式文档)。
 

@@ -158,6 +158,6 @@ PG 事务能约束本库变更与待发意图，无法与飞书、Wiki、Codex �
 | 对象与权威：[项目数据](project-data.md) | 一条工作关系应连谁，正文在哪里，何时固定修订 | [领域合同](contracts.md)、[存储设计](storage.md) |
 | 认识怎样回来：[知识流](knowledge-flow.md) → [Wiki 维护](wiki-maintenance.md) | 来源如何被理解，修订怎样影响旧页、任务和下一消费者 | [Wiki 集成](wiki-integration.md)的 DTO、端口与候选后端接缝 |
 | 实现怎样装配：[包架构](packages.md) → [技术选型](technology-selection.md) | 一项能力属于哪个模块/进程，为何选它、采用前缺什么 | [Codex 接入](codex-integration.md)与具体适配合同 |
-| 人怎样阅读与决定：[前端架构](frontend.md) → [Wiki 工作区](wiki-workspace.md) | 用户从哪里找依据、作取舍、核对后果，哪些仅为界面视图 | [工作台产品](../product/workbench.md)、[Wiki 集成](wiki-integration.md) |
+| 人怎样阅读与决定：[前端架构](../frontend/architecture.md) → [Wiki 工作区](wiki-workspace.md) | 用户从哪里找依据、作取舍、核对后果，哪些仅为界面视图 | [工作台产品](../product/workbench.md)、[Wiki 集成](wiki-integration.md) |
 
 若要检验自己是否理解，可解释上面的通知场景，画出主要责任与数据归属，再推演“需求改版且飞书断线”会改变哪些记录、保留哪些历史、阻止哪些动作。找不到答案时应能定位到具体专题和缺项，而不是依赖作者重新讲一遍。

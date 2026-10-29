@@ -1,6 +1,6 @@
 # Wiki 维护机制：借鉴 nashsu/llm_wiki
 
-状态：2026-10-20 **设计提议，尚未实现、复制源码或 fork**。OpenViking 仍是待验证的外置内容服务候选；本页借鉴 nashsu/llm_wiki **v0.6.12（`48fd970e`）**的编纂和阅读机制，不把两个产品并列设为 Wiki 权威。输入和跨对象影响见[知识流](knowledge-flow.md)，PG 记录见[存储设计](storage.md)，人的阅读与命令入口见[工作台架构](frontend.md)。上游能力依据固定版[功能核查](../research/nashsu-llm-wiki/feature-workflows.md)、[架构](../research/nashsu-llm-wiki/architecture.md)与[实测](../research/nashsu-llm-wiki/results.md)；这些研究不等于本设计已经运行。
+状态：2026-10-20 **设计提议，尚未实现、复制源码或 fork**。OpenViking 仍是待验证的外置内容服务候选；本页借鉴 nashsu/llm_wiki **v0.6.12（`48fd970e`）**的编纂和阅读机制，不把两个产品并列设为 Wiki 权威。输入和跨对象影响见[知识流](knowledge-flow.md)，PG 记录见[存储设计](storage.md)，人的阅读与命令入口见[工作台架构](../frontend/architecture.md)。上游能力依据固定版[功能核查](../research/nashsu-llm-wiki/feature-workflows.md)、[架构](../research/nashsu-llm-wiki/architecture.md)与[实测](../research/nashsu-llm-wiki/results.md)；这些研究不等于本设计已经运行。
 
 本页先跟随一条固定来源进入候选、审阅、发布、影响复核与后续使用；实现者再查固定上游机制与复制许可。
 

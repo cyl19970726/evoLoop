@@ -1,6 +1,6 @@
 # Wiki 前端与知识服务集成
 
-状态：**本机受限知识接缝已运行，完整目标与生产部署未验**。用户已确定 PostgreSQL 持有 evoLoop 任务、日程、原生文档与跨对象关系；按 DEC-027，OpenViking 是首个接入的外置 Wiki 后端。**0.5.1 已完成受限写读、重启回读和普通工作台候选审阅发布**；语义索引、多写者、长期恢复和生产能力仍待验证。nashsu/llm_wiki **v0.6.12（`48fd970e`）是前端参考**。本页保留目标接缝，不改变[领域合同](contracts.md)、[存储权威](storage.md)、[知识流](knowledge-flow.md)、[Wiki 维护](wiki-maintenance.md)和[工作台架构](frontend.md)。2026-10-20 的候选核查使用本地 0.5.0 checkout 与 0.5.1 固定源码，不能把旧版实验当新版实测；后来的本机证据见[本机运行](../development/local-run.md)。[候选核查](../research/wiki-base-selection-20261019.md) · [技术取舍](technology-selection.md)
+状态：**本机受限知识接缝已运行，完整目标与生产部署未验**。用户已确定 PostgreSQL 持有 evoLoop 任务、日程、原生文档与跨对象关系；按 DEC-027，OpenViking 是首个接入的外置 Wiki 后端。**0.5.1 已完成受限写读、重启回读和普通工作台候选审阅发布**；语义索引、多写者、长期恢复和生产能力仍待验证。nashsu/llm_wiki **v0.6.12（`48fd970e`）是前端参考**。本页保留目标接缝，不改变[领域合同](contracts.md)、[存储权威](storage.md)、[知识流](knowledge-flow.md)、[Wiki 维护](wiki-maintenance.md)和[工作台架构](../frontend/architecture.md)。2026-10-20 的候选核查使用本地 0.5.0 checkout 与 0.5.1 固定源码，不能把旧版实验当新版实测；后来的本机证据见[本机运行](../development/local-run.md)。[候选核查](../research/wiki-base-selection-20261019.md) · [技术取舍](technology-selection.md)
 
 本页是工作台与外置知识服务的实现接缝：先沿一次读取、来源进入和发布纠正走完数据路径，最后查 API 字段、上游路由与组件映射。人的浏览和维护判断分别见[Wiki 工作区](wiki-workspace.md)与[Wiki 维护机制](wiki-maintenance.md)。
 
