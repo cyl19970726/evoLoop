@@ -122,6 +122,7 @@ test("Leader overview hides empty review counts and maps cognition history to re
     await page.goto(`${base}/#/p/${projectId}/work`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
+    await page.locator(".leader-work-disclosure > summary").click();
     const overview = page.locator(".leader-work");
     await overview.getByRole("heading", { name: "现在需要处理什么" }).waitFor();
     assert.equal(await overview.locator(".leader-work-phases").count(), 1);

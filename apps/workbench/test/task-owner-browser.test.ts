@@ -89,6 +89,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
   await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
+  await pageBrowser.locator(".task-role-history > summary").click();
   const owner=pageBrowser.locator(`[data-page-key="task:${taskId}::"] .task-owner-meta`);
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Role label missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
@@ -147,6 +148,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
   await owner.getByText(/职责暂不可核对：职责暂不可读/).waitFor();
   assert.equal(await owner.getByRole("link",{name:"开发流程职责"}).count(),0);
   await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`#/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
+  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"] .task-role-history > summary`).click();
   const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"] .task-owner-meta`);
   await unknown.getByText(/未找到已登记职责/).waitFor();
   assert.match(await unknown.innerText(),new RegExp(unknownOwner));
