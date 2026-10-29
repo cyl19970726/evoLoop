@@ -68,6 +68,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.goto(`${base}/#/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
+  await page.locator(".leader-work-disclosure > summary").click();
   await page.getByRole("heading",{name:"现在需要处理什么"}).waitFor();
   assert.match(await page.locator(".leader-work").innerText(),/可开始/);
   assert.match(await page.locator(".leader-work").innerText(),/变更序号 4/);
@@ -82,9 +83,9 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.includes("acceptance-owner"),false);
   assert.equal(initialReads.includes(offPageRole),false);
-  await page.getByRole("textbox",{name:"搜索全部任务"}).fill("跨页任务");
+  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("跨页任务");
   await page.getByRole("row").filter({hasText:"跨页任务"}).getByRole("link",{name:"跨页职责"}).waitFor();
-  await page.getByRole("textbox",{name:"搜索全部任务"}).fill("");
+  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("");
   await row.getByRole("link",{name:"开发流程与规范负责人"}).waitFor();
   assert.equal(await page.locator(".task-list-table").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await fetch(`${base}/__fixture/hold`);
