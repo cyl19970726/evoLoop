@@ -35,6 +35,7 @@ import { registerOrchestrationRoutes, registerPlanningSourcesRoute, registerWork
   type PlanningSourcesReader } from "./orchestration/routes.js";
 import { authorizeWorkerRequest, type WorkerGuardFacts } from "./workers/guard.js";
 import type { WorkerIdentity } from "./workers/types.js";
+import { registerOrdinaryRunSubmissionRoutes, type OrdinaryRunSubmissionRoutes } from "./ordinary-run-submission/routes.js";
 
 declare module "fastify" { interface FastifyRequest { principal: Principal | null; workerIdentity: WorkerIdentity | null } }
 const pageSchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: idSchema.optional() });
@@ -77,6 +78,7 @@ export async function buildServer(options: {
   workStatuses?: WorkStatusesReader;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
+  ordinarySubmissions?: OrdinaryRunSubmissionRoutes;
   sourceConfiguration?(principal: Principal | null): {git: boolean; wiki: boolean};
 }) {
   const credentials = authConfigSchema.parse(options.credentials);
@@ -475,6 +477,7 @@ export async function buildServer(options: {
   });
   if (options.references) registerReferenceRoutes(app, options.references);
   if (options.orchestration) registerOrchestrationRoutes(app, options.orchestration);
+  if (options.ordinarySubmissions) registerOrdinaryRunSubmissionRoutes(app, options.ordinarySubmissions);
   const workStatuses = options.workStatuses ?? options.orchestration?.workStatuses;
   if (workStatuses) registerWorkStatusRoute(app, workStatuses);
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);

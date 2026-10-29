@@ -12,6 +12,10 @@ import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, Runt
 import { canonicalTaskInputJson, taskInputSignature } from '../../packages/core/src/task-input.js';
 import { ResidentQueuePump } from '../../apps/coordinator/src/resident-queue/pump.js';
 import { RuntimeRunner } from '../../apps/coordinator/src/runtime/runner.js';
+import { buildServer } from '../../apps/coordinator/src/server.js';
+import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from '../../apps/coordinator/src/ordinary-run-submission/service.js';
+import { OrdinaryRunSealPump } from '../../apps/coordinator/src/ordinary-run-submission/pump.js';
+import { createOrdinaryRunSealer } from '../../apps/coordinator/src/ordinary-run-submission/seal.js';
 import { runInputPage } from '../../apps/coordinator/src/runtime/input-read.js';
 import { materialRunInput } from '../../apps/cli/src/lightweight-materials.js';
 
@@ -34,6 +38,7 @@ const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 
 class FakeManagedRuntime {
   constructor(private unknownStartOnce=false){}
+  onStart?:()=>Promise<void>;
   ready=false;
   starts:{binding:RuntimeBinding;input:string;operationId:string}[]=[];
   turn:RuntimeTurn|null=null;
@@ -57,6 +62,7 @@ class FakeManagedRuntime {
   }
   async startTurn(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>{
     this.starts.push({binding,input,operationId});
+    await this.onStart?.();
     this.turn={id:'fake-turn-1',status:'completed',completedAtUtc:new Date().toISOString()};
     if(this.unknownStartOnce){this.unknownStartOnce=false;throw new Error('native start reply lost after Turn was created');}
     return {id:this.turn.id,status:'inProgress'};
@@ -262,6 +268,36 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
     return;
   }
   const fake=new FakeManagedRuntime(lostReply);
+  let ordinaryApp:Awaited<ReturnType<typeof buildServer>>|null=null;
+  let ordinaryIntent:Record<string,unknown>|null=null;
+  const ordinaryPath=`/api/projects/${projectId}/ordinary-runs`;
+  const workerToken='w'.repeat(40),leadToken='l'.repeat(40);
+  if(scenario==='normal'){
+    const ordinary=new OrdinaryRunSubmissionService(pool,uow);
+    ordinaryApp=await buildServer({service:workflow,ordinarySubmissions:ordinary,
+      credentials:[{token:workerToken,actorId:businessActor,projectIds:[projectId],permissions:['read','write']},
+        {token:leadToken,actorId:controller.actorId,projectIds:[projectId],permissions:['read','write','review']}]});
+    const intent={projectId,operationId:randomUUID(),submissionId:randomUUID(),deliveryOperationId:randomUUID(),
+      runId:runBefore.id,taskId,sessionId,taskRevisionId:runBefore.taskRevisionId,runInputHash:runBefore.inputHash,
+      deliveryIntent:{artifactRef:'fixture:ordinary-artifact',artifactRevision:'fixed-v1',contentHash:hash('ordinary-artifact'),
+        technicalResult:'passed',technicalEvidence:'Fixed artifact inspected',reason:'Business Session result'}};
+    ordinaryIntent=intent;
+    fake.onStart=async()=>{
+      const send=(token:string,payload:unknown)=>ordinaryApp!.inject({method:'POST',url:`${ordinaryPath}/submissions`,
+        headers:{authorization:`Bearer ${token}`},payload});
+      const wrong=await send(leadToken,intent);
+      assert.equal(wrong.statusCode,403,wrong.body);
+      const signed=await send(workerToken,intent);
+      assert.equal(signed.statusCode,200,signed.body);
+      assert.equal(signed.json().submittedBy,businessActor);
+      // Recover a lost HTTP response using the same operation, without a second intent.
+      const recovered=await ordinaryApp!.inject({url:`${ordinaryPath}/operations/${intent.operationId}`,
+        headers:{authorization:`Bearer ${workerToken}`}});
+      assert.equal(recovered.statusCode,200,recovered.body);
+      assert.equal(recovered.json().submission.commandHash.length,64);
+      assert.equal((await send(workerToken,{...intent,deliveryIntent:{...intent.deliveryIntent,reason:'changed'}})).statusCode,409);
+    };
+  }
   const makeRunner=()=>new RuntimeRunner({runtimeFactory:()=>fake as unknown as RuntimePort & FakeManagedRuntime,
     workflow,trusted,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,
     cliEntryForRun:async()=>({command:'/private/fixture-cli',actorId:businessActor})});
@@ -317,10 +353,114 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
       assert.match(completed.resultSummary??'',/Fixed Task result/);
       assert.equal((await pool.query(`SELECT 1 FROM outbox_event WHERE project_id=$1 AND operation_id=$2
         AND kind='runtime.run.completed'`,[projectId,attempt.operationId])).rowCount,1);
+      if(scenario==='normal'){
+        assert.ok(ordinaryIntent);
+        // A fresh service and pump simulate recovery after coordinator restart.
+        const ordinary=new OrdinaryRunSubmissionService(pool,uow);
+        const originalSubmission=(await ordinary.readSubmission(projectId,runBefore.id))!;
+        let submissionLease=true;
+        const fencedSubmission=new OrdinaryRunSubmissionService(pool,uow,()=>submissionLease);
+        const admissionLock=await pool.connect();
+        try{
+          await admissionLock.query('BEGIN');
+          await admissionLock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[projectId]);
+          const pending=fencedSubmission.updateSubmission({...originalSubmission,state:'blocked',reason:'test fence',
+            version:originalSubmission.version+1},originalSubmission.version);
+          let waiting=false;
+          for(let i=0;i<100;i++){
+            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+              AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid()`);
+            if(activity.rowCount){waiting=true;break;}
+            await new Promise(resolve=>setTimeout(resolve,10));
+          }
+          assert.equal(waiting,true,'submission write must be waiting on the project lock');
+          submissionLease=false;
+          await admissionLock.query('COMMIT');
+          await assert.rejects(pending,{code:'LEASE_LOST'});
+          assert.equal((await ordinary.readSubmission(projectId,runBefore.id))?.state,'submitted');
+        }finally{admissionLock.release();}
+        let signerAuthorized=true, dropCommittedRead=true;
+        const sealWorkflow=new WorkflowService({uow:leaseCheckedUnitOfWork(uow,()=>true),
+          clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
+        const seal=new OrdinaryRunSealPump({canWrite:()=>true,listProjects:()=>ordinary.listUnsettledProjects(),
+          listUnsettled:(p,limit,after)=>ordinary.listUnsettled(p,limit,after),
+          seal:(p,r)=>createOrdinaryRunSealer({readSubmission:(p,r)=>ordinary.readSubmission(p,r),
+            updateSubmission:(next,expected)=>ordinary.updateSubmission(next,expected),
+            readRun:(p,r)=>ordinary.readRun(p,r),readDelivery:(p,d)=>ordinary.readDelivery(p,d),
+            readDeliveryOperation:async s=>{
+              const operation=await ordinary.readDeliveryOperation(s);
+              if(operation&&dropCommittedRead){dropCommittedRead=false;throw new Error('committed reply/read lost');}
+              return operation;
+            },
+            resolveSubmittedActor:async()=>signerAuthorized?
+              {actorId:businessActor,projectIds:[projectId],permissions:['read','write']}:null,
+            workflow:sealWorkflow,sealer:{actorId:'system:ordinary-run-sealer',projectIds:[projectId],permissions:['read','write','review']},
+            now:()=>new Date().toISOString(),canWrite:()=>true})(p,r)});
+        await seal.cycle();
+        assert.equal((await ordinary.readSubmission(projectId,runBefore.id))?.state,'unknown');
+        assert.equal((await workflow.getTask(controller,projectId,taskId)).deliveries?.length,1,
+          'the Delivery committed before its read response was lost');
+        signerAuthorized=false;
+        await seal.cycle();
+        const signed=await ordinary.readSubmission(projectId,runBefore.id);
+        assert.equal(signed?.state,'sealed',seal.status().lastError??'');
+        await assert.rejects(ordinary.readDeliveryOperation({...signed!,deliveryOperationId:randomUUID()}),
+          {code:'SUBMISSION_CONFLICT'},'internal history read stays bound to the original operation');
+        assert.equal(signed.terminalRunVersion,completed.version);
+        const detail=await workflow.getTask(controller,projectId,taskId);
+        assert.equal(detail.deliveries?.length,1);
+        const delivery=detail.deliveries![0]!;
+        assert.equal(delivery.id,signed.deliveryId);
+        assert.equal(delivery.submittedByActorId,businessActor);
+        assert.equal(delivery.sourceRunVersion,completed.version);
+        const hold=await pool.connect();
+        let locked=false;
+        try{
+          await hold.query('BEGIN');
+          await hold.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[projectId]);
+          locked=true;
+          let leaseHeld=true;
+          const fencedWorkflow=new WorkflowService({uow:leaseCheckedUnitOfWork(uow,()=>leaseHeld),
+            clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
+          const blockedOperation=randomUUID(),blockedDocument=randomUUID();
+          const pending=fencedWorkflow.execute(controller,{type:'document.create',projectId,
+            operationId:blockedOperation,documentId:blockedDocument,title:'Must not start',body:'Lease lost while waiting'});
+          let waiting=false;
+          for(let i=0;i<100;i++){
+            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+              AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid()`);
+            if(activity.rowCount){waiting=true;break;}
+            await new Promise(resolve=>setTimeout(resolve,10));
+          }
+          assert.equal(waiting,true,'Delivery transaction must be waiting on the project lock before lease loss');
+          leaseHeld=false;
+          await hold.query('COMMIT');locked=false;
+          await assert.rejects(pending,{code:'LEASE_LOST'});
+          assert.equal(await uow.read(projectId,reader=>reader.getOperation(blockedOperation)),null);
+          assert.equal(await uow.read(projectId,reader=>reader.getDocument(blockedDocument)),null);
+        }finally{if(locked)await hold.query('ROLLBACK');hold.release();}
+        await seal.cycle();
+        assert.equal((await workflow.getTask(controller,projectId,taskId)).deliveries?.length,1);
+        const replay=await ordinaryApp!.inject({method:'POST',url:`${ordinaryPath}/submissions`,
+          headers:{authorization:`Bearer ${workerToken}`},payload:ordinaryIntent});
+        assert.equal(replay.statusCode,200,replay.body);
+        assert.equal(replay.json().submissionId,signed.id);
+        const used=await workflow.execute(controller,{type:'observation.record',projectId,operationId:randomUUID(),
+          taskId,deliveryId:delivery.id,observer:controller.actorId,observerKind:'agent',result:'used',
+          evidence:'Independent consumer inspected the fixed artifact',reason:'Use confirmed'});
+        assert.equal(used.status,'applied',JSON.stringify(used));
+        const current=(await workflow.getTask(controller,projectId,taskId)).task;
+        const closed=await workflow.execute(controller,{type:'task.close',projectId,operationId:randomUUID(),taskId,
+          expectedVersion:current.version,deliveryId:delivery.id,acceptanceResult:'met',
+          acceptanceEvidence:'Independent consumer used the fixed artifact',reason:'Accepted'});
+        assert.equal(closed.status,'applied',JSON.stringify(closed));
+        await queuePump.tick();
+        assert.equal((await workflow.getResidentQueue(controller,projectId,queueId)).entries[0]?.state,'released');
+      }
       await settledRunner.pump();
       await queuePump.tick();
       assert.equal(fake.starts.length,1,'a settled Run never starts a second native Turn');
       assert.equal((await workflow.listResidentQueueAttempts(controller,projectId,claimed.claimId!)).length,1);
     }finally{if(settledRunner!==runner)await settledRunner.stop();}
-  }finally{await runner.stop();}
+  }finally{await runner.stop();await ordinaryApp?.close();}
 });

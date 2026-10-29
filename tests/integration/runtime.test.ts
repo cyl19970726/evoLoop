@@ -5,6 +5,8 @@ import pg from "pg";
 import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
+import { PgOrdinaryRunSubmissionStore } from "@evoloop/adapter-postgres/ordinary-run-submission";
+import { submitOrdinaryRun } from "@evoloop/core/ordinary-run-submission";
 import type { Command, CommandResult, Principal } from "@evoloop/contracts";
 
 
@@ -94,6 +96,11 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   const runReceipt = applied(await issue(reserveRun, runOperation));
   assert.deepEqual(await issue(reserveRun, runOperation), runReceipt);
   const run = await workflow.getRuntimeRun(principal, projectId, runId);
+  const legacyClient = await pool.connect();
+  try {
+    assert.equal(await new PgOrdinaryRunSubmissionStore(legacyClient, projectId).getFixedRecipient(runId), null,
+      "an unassigned direct Run has no durable recipient fact; its reserver cannot be inferred as author");
+  } finally { legacyClient.release(); }
   const frozen = await workflow.getTaskRevision(principal, projectId, taskId, run.taskRevisionId);
   assert.equal(frozen.revision.state, "in_progress");
   assert.equal(frozen.basis?.id, run.basisSetId);
@@ -235,9 +242,38 @@ test("runtime reservations freeze task basis and recover uncertain native starts
     acceptance: "Review output", owner: ownerRoleId, documentIds: [documentId], evidence: "Current adopted basis" }));
   const manualStart = applied(await issue({ type: "task.start", taskId: manuallyStartedTaskId,
     expectedVersion: 1, basis: [{ documentId, revisionId: updatedDocument.revisionId }], reason: "Human starts Task" }));
+  const assignmentClient = await pool.connect();
+  try {
+    await assignmentClient.query(`INSERT INTO task_session_assignment(project_id,task_id,version,task_revision_id,
+      target_kind,target_id,recipient_actor_id,state,actor_id,reason,updated_at)
+      VALUES($1,$2,1,$3,'owned',$4,$5,'assigned',$5,'fixed recipient before reserve',now())`,
+      [projectId,manuallyStartedTaskId,manualStart.revisionId,sessionId,principal.actorId]);
+  } finally { assignmentClient.release(); }
   const manualRunId = randomUUID();
-  applied(await issue({ ...reserveRun, runId: manualRunId, taskId: manuallyStartedTaskId,
-    expectedVersion: manualStart.version }));
+  const lead: Principal = { ...principal, actorId: "runtime-lead" };
+  applied(await workflow.execute(lead, { ...reserveRun, projectId, operationId: randomUUID(),
+    runId: manualRunId, taskId: manuallyStartedTaskId, expectedVersion: manualStart.version } as Command));
+  const recipientClient = await pool.connect();
+  try {
+    await recipientClient.query("BEGIN");
+    const store = new PgOrdinaryRunSubmissionStore(recipientClient, projectId);
+    const fixedRun = (await store.getRun(manualRunId))!;
+    assert.notEqual(fixedRun.taskRevisionId, manualStart.revisionId);
+    assert.equal(fixedRun.actorId, lead.actorId);
+    assert.equal(await store.getFixedRecipient(manualRunId), principal.actorId,
+      "real reserve R1→R2 keeps the fixed assignment recipient");
+    const signedIntent = { projectId, operationId: randomUUID(), submissionId: randomUUID(),
+      deliveryOperationId: randomUUID(), runId: manualRunId, taskId: manuallyStartedTaskId,
+      sessionId, taskRevisionId: fixedRun.taskRevisionId, runInputHash: fixedRun.inputHash,
+      deliveryIntent: { artifactRef: "repo:test", artifactRevision: "r1", contentHash: "a".repeat(64),
+        technicalResult: "passed" as const, technicalEvidence: "test", reason: "result" } };
+    await assert.rejects(submitOrdinaryRun(store, lead, signedIntent, new Date().toISOString(), deps.hasher),
+      { code: "FORBIDDEN" });
+    const signed = await submitOrdinaryRun(store, principal, signedIntent, new Date().toISOString(), deps.hasher);
+    assert.equal(signed.submittedBy, principal.actorId);
+    await recipientClient.query("COMMIT");
+  } catch (error) { await recipientClient.query("ROLLBACK"); throw error; }
+  finally { recipientClient.release(); }
   assert.equal((await runtime.rejectDispatch(projectId, manualRunId, "No external Turn started")).state, "failed");
   await resumeKnown(manualRunId);
 

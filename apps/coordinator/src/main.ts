@@ -24,7 +24,7 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
-import { supportsFixedHandoff } from "./runtime/material-cli-capability.js";
+import { supportsFixedHandoff, supportsMaterialCli } from "./runtime/material-cli-capability.js";
 import { PreflightError } from "./runtime/preflight-report.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { NativeInputBridge } from "./runtime/native-input.js";
@@ -58,6 +58,10 @@ import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
+import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
+import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 
@@ -115,9 +119,10 @@ const uow = new PostgresUnitOfWork(pool, {
 });
 const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
+const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
 const service = new WorkflowService({
   uow, clock, ids,
-  hasher: { hash: value => createHash("sha256").update(value, "utf8").digest("hex") },
+  hasher,
   recoveryAuthority: staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
   collaborationAuthority: {
@@ -142,6 +147,8 @@ const service = new WorkflowService({
     },
   },
 });
+const ordinarySubmissions = new OrdinaryRunSubmissionService(pool, uow, lease.canWrite);
+const ordinarySealWorkflow = new WorkflowService({uow:leaseCheckedUnitOfWork(uow, lease.canWrite),clock,ids,hasher});
 const trustedRuntime = new RuntimeWorkflowService({ uow, clock, ids });
 const configuredBlobRoot = process.env.EVOLOOP_BLOB_ROOT;
 if (configuredBlobRoot && !isAbsolute(configuredBlobRoot)) throw new Error("EVOLOOP_BLOB_ROOT must be an absolute external data directory.");
@@ -339,6 +346,11 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,
       run.projectId, session.id, session.actorId, run.taskId, session.roleId) : null;
+    const proposal = await uow.read(run.projectId, reader => reader.getTaskProposal(run.taskId, run.taskRevisionId));
+    if (proposal?.acceptanceMode) {
+      const recipient = await ordinarySubmissions.getFixedRecipient(run.projectId, run.id);
+      requireOrdinaryRecipient(proposal.acceptanceMode, recipient, entry?.cliActorId ?? null, run.taskId, run.taskRevisionId);
+    }
     if (!entry) return null;
     const channels = await pool.query(`SELECT collaboration_recipient_actor_id AS recipient FROM discussion
       WHERE project_id=$1 AND kind='task_collaboration' AND task_id=$2
@@ -354,9 +366,12 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       if (paths[1] && !(await stat(paths[1])).isFile()) return null;
     }
     catch { return null; }
-    if (parseQueueHandoff(run.input) &&
-      !await supportsFixedHandoff(entry.command, entry.cliActorId, run.projectId))
-      throw new PreflightError("CLI_HANDOFF_UNAVAILABLE", {kind:"task",id:run.taskId,revisionId:run.taskRevisionId});
+    const queueHandoff = !!parseQueueHandoff(run.input);
+    if ((queueHandoff || !!proposal?.acceptanceMode) &&
+      !await supportsMaterialCli(entry.command, entry.cliActorId, run.projectId,
+        { fixedHandoff: queueHandoff, ordinarySubmit: !!proposal?.acceptanceMode }))
+      throw new PreflightError(proposal?.acceptanceMode ? "CLI_SUBMISSION_UNAVAILABLE" : "CLI_HANDOFF_UNAVAILABLE",
+        {kind:"task",id:run.taskId,revisionId:run.taskRevisionId});
     return {command: entry.command, actorId: entry.cliActorId};
   },
   roleContextForRun: async (session,run) => {
@@ -458,6 +473,22 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
+const ordinarySealPump = new OrdinaryRunSealPump({
+  canWrite: lease.canWrite,
+  listProjects: () => ordinarySubmissions.listUnsettledProjects(),
+  listUnsettled: (projectId, limit, after) => ordinarySubmissions.listUnsettled(projectId, limit, after),
+  seal: (projectId, runId) => createOrdinaryRunSealer({
+    readSubmission: (p, r) => ordinarySubmissions.readSubmission(p, r),
+    updateSubmission: (next, expected) => ordinarySubmissions.updateSubmission(next, expected),
+    readRun: (p, r) => ordinarySubmissions.readRun(p, r),
+    readDeliveryOperation: s => ordinarySubmissions.readDeliveryOperation(s),
+    readDelivery: (p, d) => ordinarySubmissions.readDelivery(p, d),
+    resolveSubmittedActor: async (p, actorId) => (await currentIdentity()).find(actor => actor.actorId === actorId &&
+      actor.projectIds.includes(p) && actor.permissions.includes("read") && actor.permissions.includes("write")) ?? null,
+    workflow: ordinarySealWorkflow, sealer: { actorId: "system:ordinary-run-sealer", projectIds: [projectId],
+      permissions: ["read", "write", "review"] }, now: clock.now, canWrite: lease.canWrite,
+  })(projectId, runId),
+});
 const deliveryStore = new PgOutboxDeliveryStore(pool);
 const feishu = integrations.feishu;
 const hasFeishuGrant = (projectId: string, actorId: string) => !!feishu?.enabled && feishu.grants.some(g => g.projectId === projectId && g.actorId === actorId && g.scope === "project");
@@ -489,7 +520,7 @@ if (runner) {
   try { await runner.start(); }
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
-const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
+const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   sessionWork: new SessionObservationService({ uow }),
   allocationRelations: new AllocationRelationsService({ uow }),
@@ -572,7 +603,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite,
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { messagePump?.stop(); residentQueue.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
+  try { messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.
@@ -582,5 +613,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); residentQueue.start(); messagePump?.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

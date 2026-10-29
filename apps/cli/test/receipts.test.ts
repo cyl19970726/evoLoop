@@ -7,6 +7,7 @@ import test from "node:test";
 import { canonicalJson } from "@evoloop/core";
 import { ApiClient, CliApiError } from "../src/client.js";
 import { dispatchMutation, reconcileReceipt, retryReceipt, ReceiptError, ReceiptStore, type Intent, type VerifiedActor } from "../src/receipts.js";
+import { prepareRequest } from "../src/requests.js";
 
 const apiUrl = "http://127.0.0.1:55337";
 const token = "private-fixture-token";
@@ -37,6 +38,57 @@ const pendingError = (error: unknown): boolean => {
   assert.equal(error.code, "RESULT_UNCONFIRMED");
   return true;
 };
+
+const ordinaryIntent = (): Intent => prepareRequest("ordinary.submit", projectId, {
+  projectId, operationId: randomUUID(), submissionId: randomUUID(), runId: randomUUID(),
+  taskId: randomUUID(), sessionId: randomUUID(), taskRevisionId: randomUUID(),
+  runInputHash: "a".repeat(64), deliveryOperationId: randomUUID(),
+  deliveryIntent: { artifactRef: "doc/revision", artifactRevision: "r1", contentHash: "b".repeat(64),
+    technicalResult: "passed", technicalEvidence: "checks passed", reason: "ready" },
+});
+
+test("lost ordinary submission reply reconciles only the original signed intent", async t => {
+  const store = await temporaryStore(t), intent = ordinaryIntent(), actor = verifiedActor("ordinary-worker");
+  let posts = 0;
+  const body = intent.body as Record<string, unknown>;
+  const submitted = { projectId, id: body.submissionId, runId: body.runId, taskId: body.taskId,
+    sessionId: body.sessionId, taskRevisionId: body.taskRevisionId, runInputHash: body.runInputHash,
+    operationId: body.operationId, deliveryOperationId: body.deliveryOperationId,
+    deliveryIntent: body.deliveryIntent, submittedBy: actor.actorId, state: "submitted",
+    commandHash: createHash("sha256").update(canonicalJson({actorId:actor.actorId,command:body})).digest("hex") };
+  const transport = client(async (_url, init) => {
+    if (init?.method === "POST") { posts++; throw new Error("response lost after insert"); }
+    return response({status:"recorded",operationId:intent.operationId,submission:submitted});
+  });
+  await assert.rejects(() => dispatchMutation(transport, store, apiUrl, token, intent, () => {}, actor), pendingError);
+  assert.equal((await reconcileReceipt(transport, store, apiUrl, token, intent.id, actor)).state, "confirmed");
+  assert.equal(posts, 1);
+});
+
+test("ordinary readback with another signer remains unknown", async t => {
+  const store = await temporaryStore(t), intent = ordinaryIntent(), actor = verifiedActor("ordinary-worker");
+  await store.prepare(apiUrl, token, intent, actor);
+  const body = intent.body as Record<string, unknown>;
+  const transport = client(async () => response({status:"recorded",operationId:intent.operationId,
+    submission:{...body,id:body.submissionId,submittedBy:"another-worker",commandHash:"0".repeat(64)}}));
+  await assert.rejects(() => reconcileReceipt(transport, store, apiUrl, token, intent.id, actor), pendingError);
+  assert.equal((await store.get(intent.id)).state,"pending");
+});
+
+test("ordinary 404 recovery replays the identical saved request once", async t => {
+  const store = await temporaryStore(t), intent = ordinaryIntent(), actor = verifiedActor("ordinary-worker");
+  await store.prepare(apiUrl, token, intent, actor);
+  const methods: string[] = [];
+  const transport = client(async (_url, init) => {
+    methods.push(init!.method!);
+    if (init?.method === "GET") return response({code:"OPERATION_NOT_FOUND"},404);
+    assert.deepEqual(JSON.parse(String(init?.body)),intent.body);
+    return response({status:"recorded",operationId:intent.operationId});
+  });
+  const done = await retryReceipt(transport, store, apiUrl, token, intent.id, () => {}, actor);
+  assert.equal(done.state,"confirmed");
+  assert.deepEqual(methods,["GET","POST"]);
+});
 
 test("lost successful POST response keeps its local ID and reconciles by the distinct backend operation ID", async t => {
   const store = await temporaryStore(t), intent = coreIntent();

@@ -10,7 +10,8 @@
     "./roles": "./dist/roles.js",
     "./delivery": "./dist/delivery.js",
     "./references": "./dist/references.js",
-    "./orchestration": "./dist/orchestration.js"
+    "./orchestration": "./dist/orchestration.js",
+    "./ordinary-run-submission": "./dist/ordinary-run-submission.js"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",

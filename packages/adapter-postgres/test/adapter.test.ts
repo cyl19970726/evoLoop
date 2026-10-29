@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
-import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
+import { RuntimeWorkflowService, WorkflowService, canonicalJson } from "@evoloop/core";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import type { BasisSet, Document, DocumentRevision, Operation, Project, Task, TaskRevision } from "@evoloop/contracts";
 
@@ -120,26 +120,18 @@ test("ordinary submission attribution requires the frozen terminal Run version",
   await uow.transaction(p.id,tx=>tx.appendRuntimeEvent({projectId:p.id,id:randomUUID(),runId,sessionId,
     kind:"run.status",detail:`completed; completedAtUtc=${now}`,nativeTurnId:`turn-${runId}`,
     cursor:null,itemsDigest:terminalDigest,actorId:actor,createdAt:now}));
-  // 041 is owned by the ordinary submission PR. The 040-only test database supplies
-  // its queried columns; once 041 lands this exercises its real table and guards.
-  const exists=await pool.query("SELECT to_regclass('ordinary_run_submission') AS relation");
-  const temporaryTable=!exists.rows[0]?.relation;
-  if(temporaryTable)assert.equal(await uow.read(p.id,r=>r.getSignedRunSubmitter!(runId,item.head.id,
-    item.revision.id,actor,deliveryOperationId,1,intent)),null,"040-only deployment has no ordinary signer");
-  if(temporaryTable)await pool.query(`CREATE TABLE ordinary_run_submission (
-    project_id uuid,submission_id uuid,run_id uuid,task_id uuid,session_id uuid,task_revision_id uuid,
-    run_input_hash text,operation_id uuid,command_hash text,delivery_operation_id uuid,delivery_intent jsonb,
-    submitted_by text,state text,version integer,expected_task_version integer,terminal_run_version integer,
-    sealed_by text,created_at_utc timestamptz,updated_at_utc timestamptz)`);
-  try{
-    await pool.query(`INSERT INTO ordinary_run_submission(project_id,submission_id,run_id,task_id,session_id,
+  const deliveryCommand={type:"delivery.record",projectId:p.id,operationId:deliveryOperationId,
+    taskId:item.head.id,runId,expectedVersion:1,...intent};
+  const deliveryCommandHash=sha(canonicalJson({actorId:actor,command:deliveryCommand}));
+  await pool.query(`INSERT INTO ordinary_run_submission(project_id,submission_id,run_id,task_id,session_id,
       task_revision_id,run_input_hash,operation_id,command_hash,delivery_operation_id,delivery_intent,
       submitted_by,state,version,created_at_utc,updated_at_utc)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'submitted',1,now(),now())`,
       [p.id,randomUUID(),runId,item.head.id,sessionId,item.revision.id,sha("fixed"),operationId,sha("command"),
         deliveryOperationId,JSON.stringify(intent),actor]);
     await pool.query(`UPDATE ordinary_run_submission SET state='sealing',version=2,expected_task_version=1,
-      terminal_run_version=3,sealed_by='coordinator',updated_at_utc=now() WHERE project_id=$1 AND run_id=$2`,[p.id,runId]);
+      terminal_run_version=3,sealed_by='coordinator',delivery_command_hash=$3,updated_at_utc=now()
+      WHERE project_id=$1 AND run_id=$2`,[p.id,runId,deliveryCommandHash]);
     const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID}});
     const reviewer={actorId:"runtime-reviewer",projectIds:[p.id],permissions:["read","review"] as ("read"|"review")[]};
     const terminalEvents=await uow.read(p.id,r=>r.listRuntimeEvents(runId));
@@ -154,8 +146,7 @@ test("ordinary submission attribution requires the frozen terminal Run version",
     assert.equal(await signer(),actor);
     const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},hasher:{hash:sha}});
     const signerPrincipal={actorId:actor,projectIds:[p.id],permissions:["read","write","review"] as ("read"|"write"|"review")[]};
-    const saved=await workflow.execute(signerPrincipal,{type:"delivery.record",projectId:p.id,operationId:deliveryOperationId,
-      taskId:item.head.id,runId,expectedVersion:1,...intent});
+    const saved=await workflow.execute(signerPrincipal,deliveryCommand as Parameters<typeof workflow.execute>[1]);
     assert.equal(saved.status,"applied");
     const deliveryId=saved.status==="applied"?saved.revisionId!:"";
     assert.equal((await uow.read(p.id,r=>r.getDelivery(deliveryId)))?.sourceRunVersion,3);
@@ -175,9 +166,6 @@ test("ordinary submission attribution requires the frozen terminal Run version",
       taskId:item.head.id,expectedVersion:2,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Old Run",reason:"Close"});
     assert.equal(close.status==="rejected"?close.code:null,"DELIVERY_RUN_CHANGED");
     assert.equal((await uow.read(p.id,r=>r.getDelivery(deliveryId)))?.technicalResult,"passed","old Delivery remains historical evidence");
-  }finally{
-    if(temporaryTable)await pool.query("DROP TABLE ordinary_run_submission");
-  }
 });
 
 test("session close intent and verification survive PostgreSQL readback without removing history", async () => {
