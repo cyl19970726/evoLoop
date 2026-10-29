@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  appendLeaderWorkPage, leaderProjectionMatchesTask, loadLeaderDocumentsForIds, visibleLeaderDocuments,
+  appendLeaderWorkPage, leaderProjectionMatchesTask, leaderWorkItemPresentation, loadLeaderDocumentsForIds,
+  visibleLeaderDocuments,
 } from "../src/workflow/leaderWorkLoad.ts";
+import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
 const document = (id: string): LeaderWorkDocument => ({
   kind: "document", documentId: id, version: 1, title: id, documentKind: "report", status: "published",
@@ -90,4 +92,36 @@ test("late Leader reads cannot cross Task identity, version or revision", () => 
   assert.equal(leaderProjectionMatchesTask({
     taskId: "task-two", version: 3, currentRevisionId: "revision-two",
   }, current), false);
+});
+
+test("Leader overview maps historical cognition to readable source labels", () => {
+  const taskId = "30000005-0000-4000-8000-000000000005";
+  const item = {
+    kind: "task", taskId, version: 3, currentRevisionId: `revision-${taskId}`,
+    workChangeSequence: 9, title: "Cognition: business result event 25deb2bf-f765-4258-b836-41b2d8502539",
+    taskKind: "research", taskState: "in_progress", phase: "awaiting_delivery",
+    nextAction: "核对 Run 终态与本人提交；缺交付时保留缺口，不猜结果",
+    responsible: { kind: "role", id: "cognition-role", label: "Role cognition" },
+    assignment: null, latestRun: null, delivery: null, pendingImpactCount: 0, queueHold: null,
+    goal: null, stage: null, plan: null, dependencies: [], dependencyVersion: 0, review: null,
+    dates: { createdAt: "2026-10-29T00:00:00Z", businessChangedAt: "2026-10-29T00:00:00Z",
+      startedAt: "2026-10-29T00:00:00Z", completedAt: null, observedAt: "2026-10-29T00:00:00Z" },
+    actionKey: `task:${taskId}:v3:awaiting_delivery:9`,
+  } satisfies LeaderWorkTask;
+  const status: WorkTaskStatus = {
+    taskId, cognition: true, dispatchId: "dispatch", dispatchState: "accepted", outcome: "delivered",
+    runId: "run", runState: "completed", unsettledRunState: null, loopState: "active",
+    goalOutcome: "完成真实闭环验收", stageDeliverable: null, sourceKind: "worker.outcome",
+    sourceTaskId: null, sourceTaskTitle: null, decisionKind: null, decisionReason: null,
+    useRequired: true, deliveryId: null, technicalResult: null, observationResult: null,
+    observerKind: null, hasClosure: false, readyForAcceptance: false,
+  };
+  const presentation = leaderWorkItemPresentation(item, status);
+  assert.equal(presentation.title, "业务结果反馈 · 完成真实闭环验收");
+  assert.equal(presentation.responsibility, "历史判断记录 · 原任务责任见原任务");
+  assert.doesNotMatch(`${presentation.title} ${presentation.responsibility}`, /Cognition:|Role cognition|25deb2bf/);
+  assert.deepEqual(leaderWorkItemPresentation({...item, title:"普通业务任务",
+    responsible:{kind:"role",id:"role-1",label:"Role role-1"}}, {
+    ...status,cognition:false
+  }, "交付负责人"), {title:"普通业务任务",responsibility:"负责 交付负责人"});
 });

@@ -1,6 +1,7 @@
 import type {
   LeaderWorkDocument, LeaderWorkPage, LeaderWorkPhase, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
+import { cognitionSummary, type WorkTaskStatus } from "./workStatusPresentation.js";
 
 export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
   unknown: "结果未知", rework: "待返工", blocked: "受阻", awaiting_delivery: "待结果交付",
@@ -11,6 +12,21 @@ export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
 export interface LeaderDocumentLoad {
   items: Map<string, LeaderWorkDocument>;
   complete: boolean;
+}
+
+export function leaderWorkItemPresentation(
+  item: LeaderWorkTask, status?: WorkTaskStatus, resolvedRoleTitle?: string,
+): { title: string; responsibility: string } {
+  if (status?.cognition)
+    return {
+      title: cognitionSummary(status).title,
+      responsibility: "历史判断记录 · 原任务责任见原任务",
+    };
+  const roleTitle = item.responsible.kind === "role" && item.responsible.id ? resolvedRoleTitle?.trim() : null;
+  return {
+    title: item.title,
+    responsibility: roleTitle ? `负责 ${roleTitle}` : item.responsible.label,
+  };
 }
 
 export function appendLeaderWorkPage<T extends { taskId: string }>(

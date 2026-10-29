@@ -22,6 +22,9 @@ test("cognition label follows formal source and a terminal signed decision, not 
   assert.equal(cognitionSummary({...base,runState:"completed"}).phase,"运行已结束 · 缺署名结果");
   assert.equal(cognitionSummary({...base,runState:"unknown"}).phase,"运行或派发结果未知");
   assert.equal(cognitionSummary({...base,dispatchState:"unknown"}).phase,"运行或派发结果未知");
+  assert.match(cognitionSummary({...base,sourceKind:"worker.outcome",
+    sourceTaskTitle:"Cognition: business result event 25deb2bf-f765-4258-b836-41b2d8502539",
+    goalOutcome:"完成真实闭环验收"}).title,/业务结果反馈 · 完成真实闭环验收/);
 });
 
 test("business acceptance hint requires the exact current delivery and declared-consumer use fact",()=>{
