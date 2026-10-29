@@ -34,12 +34,12 @@ function fixture(initial: OrdinaryRunSubmissionRecord | null = submission()) {
     readSubmission: async () => record,
     updateSubmission: async (next, expected) => { if (!record || record.version !== expected) return false; record = next; return true; },
     readRun: async () => currentRun,
+    readDeliveryOperation: async () => operation,
     resolveSubmittedActor: async () => principal,
     sealer, now: () => "2026-10-29T01:00:00Z", canWrite: () => writable,
     readDelivery: async () => delivery,
     workflow: {
       getTask: async () => { onTaskRead?.(); return { task: { projectId, id: taskId, version: taskVersion, currentRevisionId: taskRevisionId, state: "in_progress" }, deliveries: manual } as any; },
-      getOperation: async () => operation,
       execute: async (who, command) => {
         calls.push({ actorId: who.actorId, command });
         if (executeMode === "missing") throw new Error("no response");
@@ -116,6 +116,22 @@ test("lost response and unknown recovery use only the original operation", async
   assert.equal(f.record?.state, "unknown"); f.setMode("lost");
   assert.equal((await f.seal(projectId, runId)).status, "sealed");
   assert.deepEqual(f.calls.map(c => c.command.operationId), [id, id]);
+});
+
+test("a committed Delivery is recovered after the original signer loses current authority", async () => {
+  const first = fixture(); first.setMode("lost");
+  assert.equal((await first.seal(projectId, runId)).status, "sealed");
+  const pending = { ...first.record!, state: "unknown" as const, deliveryId: null,
+    version: first.record!.version + 1 };
+  const recovered = fixture(pending);
+  recovered.setOperation(first.operation);
+  recovered.setDelivery({ projectId, id: first.record!.deliveryId!, taskId, taskRevisionId: randomUUID(), runId,
+    ...intent, actorId: actor.actorId, submittedByActorId: actor.actorId,
+    sourceRunVersion: run.version, createdAt: run.updatedAt });
+  recovered.setActor(null);
+  assert.equal((await recovered.seal(projectId, runId)).status, "sealed");
+  assert.equal(recovered.record?.deliveryId, first.record?.deliveryId);
+  assert.equal(recovered.calls.length, 0, "revocation cannot trigger a replacement Delivery");
 });
 
 test("unknown recovery refuses a changed Task and terminal Run version", async () => {

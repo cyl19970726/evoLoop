@@ -13,9 +13,11 @@ export interface OrdinaryRunSealerDependencies {
   readSubmission(projectId: string, runId: string): Promise<OrdinaryRunSubmissionRecord | null>;
   updateSubmission(next: OrdinaryRunSubmissionRecord, expectedVersion: number): Promise<boolean>;
   readRun(projectId: string, runId: string): Promise<RuntimeRunRecord | null>;
+  /** Internal read of this submission's reserved operation; it does not grant public operation access. */
+  readDeliveryOperation(submission: OrdinaryRunSubmissionRecord): Promise<Operation | null>;
   /** Resolve current authority, including revocation, for the original signer only. */
   resolveSubmittedActor(projectId: string, actorId: string): Promise<Principal | null>;
-  workflow: Pick<WorkflowService, "getTask" | "getOperation" | "execute">;
+  workflow: Pick<WorkflowService, "getTask" | "execute">;
   readDelivery(projectId: string, deliveryId: string): Promise<Delivery | null>;
   sealer: Principal;
   now(): string;
@@ -73,11 +75,6 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
     if (s.state === "rejected") return { status: "rejected", reason: s.reason ?? "WORKFLOW_REJECTED" };
     if (run.state !== "completed" && s.deliveryIntent.technicalResult !== "failed")
       return blocked(s, "FAILED_RUN_CANNOT_PASS_TECHNICAL_RESULT");
-    const actor = await deps.resolveSubmittedActor(s.projectId, s.submittedBy);
-    if (!actor || actor.actorId !== s.submittedBy || !actor.projectIds.includes(s.projectId) ||
-      !actor.permissions.includes("read") || !actor.permissions.includes("write"))
-      return blocked(s, "SUBMITTED_ACTOR_UNAVAILABLE");
-
     if (s.state === "submitted" || (s.state === "blocked" && s.expectedTaskVersion === null)) {
       const detail = await deps.workflow.getTask(deps.sealer, s.projectId, s.taskId);
       if (detail.task.projectId !== s.projectId || detail.task.currentRevisionId !== s.taskRevisionId ||
@@ -97,7 +94,7 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
     if (s.deliveryCommandHash !== hash(s.submittedBy, command))
       return blocked(s, "DELIVERY_COMMAND_MISMATCH");
     let operation: Operation | null;
-    try { operation = await deps.workflow.getOperation(actor, s.projectId, s.deliveryOperationId); }
+    try { operation = await deps.readDeliveryOperation(s); }
     catch { return { status: "unknown", reason: "DELIVERY_OPERATION_UNCONFIRMED" }; }
     if (!operation) {
       if (s.terminalRunVersion !== null && s.terminalRunVersion !== run.version)
@@ -114,10 +111,14 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
       if (!currentRun || currentRun.version !== s.terminalRunVersion ||
         (s.deliveryIntent.technicalResult === "passed" && currentRun.state !== "completed"))
         return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
+      const actor = await deps.resolveSubmittedActor(s.projectId, s.submittedBy);
+      if (!actor || actor.actorId !== s.submittedBy || !actor.projectIds.includes(s.projectId) ||
+        !actor.permissions.includes("read") || !actor.permissions.includes("write"))
+        return blocked(s, "SUBMITTED_ACTOR_UNAVAILABLE");
       fence();
       try { await deps.workflow.execute(actor, command); }
       catch { /* A lost response can follow a committed transaction. */ }
-      try { operation = await deps.workflow.getOperation(actor, s.projectId, s.deliveryOperationId); }
+      try { operation = await deps.readDeliveryOperation(s); }
       catch { operation = null; }
     }
     if (!operation) {

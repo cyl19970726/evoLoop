@@ -24,7 +24,7 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
-import { supportsFixedHandoff } from "./runtime/material-cli-capability.js";
+import { supportsFixedHandoff, supportsMaterialCli } from "./runtime/material-cli-capability.js";
 import { PreflightError } from "./runtime/preflight-report.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { NativeInputBridge } from "./runtime/native-input.js";
@@ -58,7 +58,7 @@ import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
-import { OrdinaryRunSubmissionService } from "./ordinary-run-submission/service.js";
+import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
@@ -119,9 +119,10 @@ const uow = new PostgresUnitOfWork(pool, {
 });
 const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
+const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
 const service = new WorkflowService({
   uow, clock, ids,
-  hasher: { hash: value => createHash("sha256").update(value, "utf8").digest("hex") },
+  hasher,
   recoveryAuthority: staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
   collaborationAuthority: {
@@ -146,7 +147,8 @@ const service = new WorkflowService({
     },
   },
 });
-const ordinarySubmissions = new OrdinaryRunSubmissionService(pool, uow);
+const ordinarySubmissions = new OrdinaryRunSubmissionService(pool, uow, lease.canWrite);
+const ordinarySealWorkflow = new WorkflowService({uow:leaseCheckedUnitOfWork(uow, lease.canWrite),clock,ids,hasher});
 const trustedRuntime = new RuntimeWorkflowService({ uow, clock, ids });
 const configuredBlobRoot = process.env.EVOLOOP_BLOB_ROOT;
 if (configuredBlobRoot && !isAbsolute(configuredBlobRoot)) throw new Error("EVOLOOP_BLOB_ROOT must be an absolute external data directory.");
@@ -364,9 +366,12 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       if (paths[1] && !(await stat(paths[1])).isFile()) return null;
     }
     catch { return null; }
-    if (parseQueueHandoff(run.input) &&
-      !await supportsFixedHandoff(entry.command, entry.cliActorId, run.projectId))
-      throw new PreflightError("CLI_HANDOFF_UNAVAILABLE", {kind:"task",id:run.taskId,revisionId:run.taskRevisionId});
+    const queueHandoff = !!parseQueueHandoff(run.input);
+    if ((queueHandoff || !!proposal?.acceptanceMode) &&
+      !await supportsMaterialCli(entry.command, entry.cliActorId, run.projectId,
+        { fixedHandoff: queueHandoff, ordinarySubmit: !!proposal?.acceptanceMode }))
+      throw new PreflightError(proposal?.acceptanceMode ? "CLI_SUBMISSION_UNAVAILABLE" : "CLI_HANDOFF_UNAVAILABLE",
+        {kind:"task",id:run.taskId,revisionId:run.taskRevisionId});
     return {command: entry.command, actorId: entry.cliActorId};
   },
   roleContextForRun: async (session,run) => {
@@ -476,10 +481,11 @@ const ordinarySealPump = new OrdinaryRunSealPump({
     readSubmission: (p, r) => ordinarySubmissions.readSubmission(p, r),
     updateSubmission: (next, expected) => ordinarySubmissions.updateSubmission(next, expected),
     readRun: (p, r) => ordinarySubmissions.readRun(p, r),
+    readDeliveryOperation: s => ordinarySubmissions.readDeliveryOperation(s),
     readDelivery: (p, d) => ordinarySubmissions.readDelivery(p, d),
     resolveSubmittedActor: async (p, actorId) => (await currentIdentity()).find(actor => actor.actorId === actorId &&
       actor.projectIds.includes(p) && actor.permissions.includes("read") && actor.permissions.includes("write")) ?? null,
-    workflow: service, sealer: { actorId: "system:ordinary-run-sealer", projectIds: [projectId],
+    workflow: ordinarySealWorkflow, sealer: { actorId: "system:ordinary-run-sealer", projectIds: [projectId],
       permissions: ["read", "write", "review"] }, now: clock.now, canWrite: lease.canWrite,
   })(projectId, runId),
 });
