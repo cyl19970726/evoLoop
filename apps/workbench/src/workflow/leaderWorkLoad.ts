@@ -1,6 +1,7 @@
 import type {
   LeaderWorkDocument, LeaderWorkPage, LeaderWorkPhase, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
+import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { cognitionSummary, type WorkTaskStatus } from "./workStatusPresentation.js";
 
 export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
@@ -32,6 +33,12 @@ export async function loadLeaderWorkStatuses(
     }
   }
   return { statuses: [...found.values()], missing: ids.filter(id => !found.has(id)) };
+}
+
+/** Only an explicitly registered profile name counts as a Session display name. */
+export function leaderSessionDisplayName(session: Pick<ObservedSession, "profile">): string | null {
+  const name = session.profile?.displayName?.trim();
+  return name || null;
 }
 
 export function leaderWorkItemPresentation(

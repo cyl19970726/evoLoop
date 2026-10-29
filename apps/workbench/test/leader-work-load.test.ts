@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  appendLeaderWorkPage, leaderProjectionMatchesTask, leaderWorkItemPresentation, loadLeaderDocumentsForIds,
-  loadLeaderWorkStatuses, visibleLeaderDocuments,
+  appendLeaderWorkPage, leaderProjectionMatchesTask, leaderSessionDisplayName, leaderWorkItemPresentation,
+  loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "../src/workflow/leaderWorkLoad.ts";
 import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
 
@@ -76,6 +76,11 @@ test("Leader row statuses are deduplicated and read within the existing 50-item 
   assert.deepEqual(calls.map(batch => batch.length), [50, 1]);
   assert.equal(result.statuses.length, 51);
   assert.deepEqual(result.missing, []);
+});
+
+test("a Role-generated Session title is not treated as a registered display name", () => {
+  assert.equal(leaderSessionDisplayName({ profile: { displayName: "产品文档" } as never }), "产品文档");
+  assert.equal(leaderSessionDisplayName({ profile: null }), null);
 });
 
 test("active Document enrichment never asks the default index for hidden archived rows", () => {

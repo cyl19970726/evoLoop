@@ -13,8 +13,8 @@ import { isRoleOwnerId, readOwnerRole } from "./ownerRole";
 import "./work-status.css";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  appendLeaderWorkPage, leaderPhaseLabel, leaderWorkItemPresentation, loadLeaderDocumentsForIds,
-  loadLeaderWorkStatuses, visibleLeaderDocuments,
+  appendLeaderWorkPage, leaderPhaseLabel, leaderSessionDisplayName, leaderWorkItemPresentation,
+  loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "./leaderWorkLoad";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
@@ -183,7 +183,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
         try {
           const value = await client.snapshot(key, controller.signal);
           if (!value || value.session.key !== key) throw new Error("会话目录未返回该 Session");
-          const title = value.session.title.trim();
+          const title = leaderSessionDisplayName(value.session);
           results[key] = { title: title || null, error: title ? null : "Session 展示名称未登记" };
         } catch (cause) {
           if (!active || controller.signal.aborted) return;
@@ -430,7 +430,9 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatu
         : null;
       const presentation = leaderWorkItemPresentation(item, status,
         item.responsible.kind === "role" ? ownerNames[item.responsible.id ?? ""]?.title : undefined,
-        sessionKey ? sessionNames[sessionKey]?.title ?? undefined : undefined);
+        sessionKey && sessionNames[sessionKey]
+          ? sessionNames[sessionKey]!.title ?? "未登记展示名称"
+          : undefined);
       return <li key={item.taskId}>
       <span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span>
       <div><a href={href(projectId,"task",item.taskId)}>{presentation.title}</a><p>{item.nextAction}</p>

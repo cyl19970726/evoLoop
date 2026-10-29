@@ -100,7 +100,8 @@ test("Leader overview hides empty review counts and maps cognition history to re
         };
         else if (decodeURIComponent(url.pathname) === `${root}/session-work/${ownedSessionKey}`) {
           sessionSnapshotCalls.push(ownedSessionKey);
-          value = { session: { key: ownedSessionKey, title: "产品文档", target: { kind: "owned", sessionId } } };
+          value = { session: { key: ownedSessionKey, title: "Role cognition fallback",
+            target: { kind: "owned", sessionId }, profile: { displayName: "产品文档" } } };
         }
         res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
       }
@@ -130,7 +131,7 @@ test("Leader overview hides empty review counts and maps cognition history to re
     await overview.getByText("受管 Session · 产品文档").waitFor();
     await overview.getByRole("link", { name: "打开 Session" }).waitFor();
     const text = await overview.innerText();
-    assert.doesNotMatch(text, /Cognition:|Role cognition|25deb2bf/);
+    assert.doesNotMatch(text, /Cognition:|Role cognition|25deb2bf|Role cognition fallback/);
     assert.match(text, /待结果交付/);
     assert.match(text, new RegExp(sessionId.slice(0, 8)));
     await page.waitForFunction(async () =>
