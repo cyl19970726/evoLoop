@@ -34,6 +34,7 @@ test("preparation reports a real readiness snapshot only to the project reviewer
     assert.equal(response.json().readyForTasks,false);
     assert.equal(response.json().roleRevisionId,revisionId);
     assert.equal(response.json().session,null);
+    assert.ok(response.json().missing.includes("model_selection_required"));
   } finally {await app.close();}
 });
 

@@ -12,8 +12,8 @@ const specificationSchema=z.strictObject({
   authorizationScope:z.string().min(1).optional(),model:z.string().min(1).optional(),
   displayName:z.string().trim().min(1).max(240).optional(),purpose:z.string().trim().max(4000).optional(),
 }).superRefine((value,ctx)=>{
-  if(value.mode==="create"&&(!value.cwd||!value.authorizationScope||!value.displayName))
-    ctx.addIssue({code:"custom",message:"Create needs cwd, authorizationScope and displayName"});
+  if(value.mode==="create"&&(!value.cwd||!value.authorizationScope||!value.displayName||!value.model))
+    ctx.addIssue({code:"custom",message:"Create needs cwd, authorizationScope, displayName and an exact model slug from models --project"});
 });
 export type SessionPreparationSpec=z.infer<typeof specificationSchema>;
 

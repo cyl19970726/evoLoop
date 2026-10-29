@@ -25,7 +25,7 @@ const credentials = [
 const headers = { authorization: `Bearer ${token}` };
 const command = { type: "runtime.session.reserve", projectId, operationId, sessionId,
   roleId: grant.roleId, authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox,
-  approvalPolicy: "never" };
+  approvalPolicy: "never", model: "gpt-6" };
 
 test("runtime protocol version defaults to the reviewed 0.164 schema and preserves explicit legacy configuration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "evoloop-runtime-version-"));
@@ -90,9 +90,9 @@ test("runtime config grants are exact and reviewer-only reservation does not cal
   const directory = await mkdtemp(join(tmpdir(), "evoloop-runtime-config-"));
   try {
     const file = join(directory, "integration.json");
-    await writeFile(file, JSON.stringify({ runtime: { enabled: true, grants: [grant] } }));
+    await writeFile(file, JSON.stringify({ runtime: { enabled: true, grants: [{...grant,model:"gpt-6"}] } }));
     const config = await loadIntegrations(file);
-    assert.equal(config.hasRuntimeGrant(grant), true);
+    assert.equal(config.hasRuntimeGrant({...grant,model:"gpt-6"}), true);
     assert.equal(config.hasRuntimeGrant({ ...grant, sandbox: "workspace-write" }), false);
     assert.equal(config.hasRuntimeGrant({ ...grant, actorId: "writer" }), false);
     assert.deepEqual(config.allowedRuntimeCwds(projectId), [cwd]);

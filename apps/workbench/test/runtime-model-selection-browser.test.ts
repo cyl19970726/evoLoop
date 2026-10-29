@@ -67,7 +67,7 @@ test("Session creation requires a catalog model authorized by the selected grant
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByText("创建授权范围内的新会话").click();
   const grant = page.getByLabel("已配置的完整权限授权");
-  const model = page.getByLabel("精确模型");
+  const model = page.locator("label").filter({ hasText: /^精确模型/ }).locator("select");
   const create = page.getByRole("button", { name: "登记并创建会话" });
   assert.equal(await create.count(), 0);
   await grant.selectOption("0");
@@ -83,18 +83,13 @@ test("Session creation requires a catalog model authorized by the selected grant
   assert.deepEqual(await model.locator("option").allTextContents(), ["请选择模型", "gpt-6-luna"]);
   assert.equal(await create.count(), 0);
   await grant.selectOption("2");
-  const defaultModel = page.getByLabel("授权默认模型");
-  assert.deepEqual(await defaultModel.locator("option").allTextContents(), ["请选择模型", "使用授权默认模型"]);
-  await defaultModel.selectOption("__grant_default_model__");
-  const secondResponse=page.waitForResponse(response=>response.url().endsWith("/api/commands")&&response.request().method()==="POST");
-  await create.click();
-  await secondResponse;
-  assert.equal(commands.at(-1)?.authorizationScope, "default");
-  assert.equal(Object.hasOwn(commands.at(-1)!, "model"), false);
+  await page.getByText("此环境尚未配置精确模型授权", { exact: false }).waitFor();
+  assert.equal(await model.count(), 0);
+  assert.equal(await create.count(), 0);
   await grant.selectOption("3");
   await page.getByText("此授权与当前模型目录没有交集").waitFor();
   assert.equal(await create.count(), 0);
-  assert.equal(commands.length, 2);
+  assert.equal(commands.length, 1);
 
   for (const [next, failureText] of [
     [{ status: "empty", models: [] }, "模型目录为空"],
@@ -109,5 +104,5 @@ test("Session creation requires a catalog model authorized by the selected grant
   await page.getByRole("button", { name: "读取运行状态" }).click();
   await page.getByText("模型目录读取失败", { exact: false }).waitFor();
   assert.equal(await create.count(), 0);
-  assert.equal(commands.length, 2);
+  assert.equal(commands.length, 1);
 });

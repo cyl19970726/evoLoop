@@ -166,6 +166,8 @@ export async function buildServer(options: {
       }
       if (command.type === "runtime.session.reserve") {
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
+        if (!dynamic && !command.model)
+          throw new DomainError("MODEL_SELECTION_REQUIRED","新建会话必须指定此环境明确授权的精确模型 slug。先用 models --project 查询；若无可选模型，请在 runtime.grants 的 model 或 models 中配置授权。");
         const sameEnvironment=callerGrants(command.projectId,principal.actorId).filter(g=>g.roleId===command.roleId&&
           g.authorizationScope===command.authorizationScope&&g.cwd===command.cwd&&g.sandbox===command.sandbox&&
           (g.approvalPolicy??(g.sandbox==="danger-full-access"?"never":"on-request"))===command.approvalPolicy);
@@ -176,10 +178,9 @@ export async function buildServer(options: {
           roleId: command.roleId, authorizationScope: command.authorizationScope, cwd: command.cwd,
           sandbox: command.sandbox, model: command.model ?? null, approvalPolicy: command.approvalPolicy }) ||
           !await options.allowedRuntimeCwd?.(command.projectId, command.cwd)) {
-          if (!await options.authorizeDynamicSession?.(principal, command))
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
         }
-        if(!dynamic)await requireActiveModel(command.model??null);
+        if(!dynamic)await requireActiveModel(command.model!);
       }
       // Closing is a reviewer request; the runner archives under the original Session grant.
       if (command.type === "runtime.run.reserve") {
@@ -248,6 +249,7 @@ export async function buildServer(options: {
       executionProfile.revision.model===session.model;
     const recoveryReady=!!recovery&&!recovery.partial&&recovery.gate?.phase==="open";
     const missing=[...(!config.runtimeAvailable?["runtime_unavailable"]:[]),
+      ...(!session&&!selectedModel?["model_selection_required"]:[]),
       ...(!config.grantReady?[modelAuthorized?"runtime_grant":"model_not_authorized"]:[]),...(!config.cwdReady?["cwd"]:[]),
       ...(!session&&modelCatalog.status==="unavailable"?["model_catalog_unavailable"]:[]),
       ...(!session&&modelCatalog.status==="empty"?["model_catalog_empty"]:[]),

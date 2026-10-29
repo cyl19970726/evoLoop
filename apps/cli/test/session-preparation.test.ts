@@ -10,13 +10,13 @@ import { prepareSession } from "../src/session-preparation.js";
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
 const [projectId,sessionId,roleId,operationId]=[1,2,3,4].map(id);
 const spec={projectId,sessionId,roleId,operationId,mode:"create",cwd:"/private/project",
-  authorizationScope:"project",displayName:"功能开发",purpose:"持续承接已分派任务"};
+  authorizationScope:"project",model:"gpt-6-sol",displayName:"功能开发",purpose:"持续承接已分派任务"};
 const actor={actorId:"lead",projectIds:[projectId]};
 const config={runtimeAvailable:true,grantReady:true,cwdReady:true,
   materialCli:{actorId:"recipient",command:"/private/cli",ready:true},roleActorId:"recipient",
   skills:[{path:".agents/skills/evoloop-workflow/SKILL.md",commit:"a".repeat(40),contentHash:"b".repeat(64),readSubcommand:"get /fixed"}]};
 const snapshot=(session:Record<string,unknown>|null,profile:Record<string,unknown>|null=null,bound=false)=>({
-  projectId,sessionId,roleId,roleVersion:2,session,profile,bound,config,
+  projectId,sessionId,roleId,roleVersion:2,session:session?{model:spec.model,...session}:null,profile,bound,config,
   missing:[...(!profile&&session?.state==="ready"?["display_profile"]:[]),...(!bound&&session?.state==="ready"?["role_binding"]:[])],
   readyForTasks:!!session&&session.state==="ready"&&!!profile&&bound});
 
@@ -26,7 +26,7 @@ test("preparation reserves once, waits for native binding, then names and binds 
     let view=snapshot(null),posts:Record<string,unknown>[]=[];
     const api={get:async()=>view,post:async(_path:string,body:unknown)=>{
       const command=body as Record<string,unknown>;posts.push(command);
-      if(command.type==="runtime.session.reserve")view=snapshot({state:"reserved",operationId,roleId,actorId:"lead"});
+      if(command.type==="runtime.session.reserve")view=snapshot({state:"reserved",operationId,roleId,actorId:"lead",model:spec.model});
       if(command.type==="session.profile.set")view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,authorizationScope:spec.authorizationScope},
         {version:1,displayName:spec.displayName,purpose:spec.purpose});
       if(command.type==="role.bindSession")view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,authorizationScope:spec.authorizationScope},
@@ -37,7 +37,7 @@ test("preparation reserves once, waits for native binding, then names and binds 
     const first=await prepareSession(spec,api,store,"http://localhost:4318","private-token",actor,diagnostic);
     assert.equal(first.status,"waiting_for_native_thread");
     assert.deepEqual(posts.map(value=>value.type),["runtime.session.reserve"]);
-    view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,authorizationScope:spec.authorizationScope});
+    view=snapshot({state:"ready",operationId,roleId,actorId:"lead",cwd:spec.cwd,authorizationScope:spec.authorizationScope,model:spec.model});
     const second=await prepareSession(spec,api,store,"http://localhost:4318","private-token",actor,diagnostic);
     assert.equal(second.status,"ready");
     assert.deepEqual(posts.map(value=>value.type),["runtime.session.reserve","session.profile.set","role.bindSession"]);
@@ -45,6 +45,17 @@ test("preparation reserves once, waits for native binding, then names and binds 
     assert.equal(third.status,"ready");
     assert.equal(posts.length,3,"reuse does not reserve another Session or assign a Task");
   } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test("new CLI preparation requires an exact model before freezing or making a request",async()=>{
+  const dir=await mkdtemp(join(tmpdir(),"evoloop-prepare-no-model-"));
+  try{
+    let requests=0;
+    const api={get:async()=>{requests++;return snapshot(null);},post:async()=>{requests++;return {};}} as ApiClient;
+    await assert.rejects(prepareSession({...spec,model:undefined},api,new ReceiptStore(dir),
+      "http://localhost:4318","private-token",actor,()=>{}),/exact model slug/);
+    assert.equal(requests,0);
+  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
 test("an unknown reserve keeps its original receipt and blocks another native start",async()=>{
