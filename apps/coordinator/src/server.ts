@@ -148,6 +148,17 @@ export async function buildServer(options: {
   app.get("/api/session", async request => ({ principal: who(request.principal), capabilities: currentCapabilities(request.principal) }));
   app.post("/api/commands", async (request, reply) => {
     const command = commandSchema.parse(request.body);
+    if (command.type === "runtime.session.reserve" && !command.model) {
+      const principal = who(request.principal);
+      if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review"))
+        throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
+      // An already recorded legacy intent must reach core's actor/hash guarded idempotency path.
+      // A missing operation remains a new request and goes through the exact-model requirement below.
+      if (await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        const result = await options.service.execute(principal, command);
+        return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
+      }
+    }
     if (command.type === "session.input.reply") {
       const principal = who(request.principal);
       // Exact same-ID recovery still goes through execute's actor/hash journal check, even after RPC cleanup.

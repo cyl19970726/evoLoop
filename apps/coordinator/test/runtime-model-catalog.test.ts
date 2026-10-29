@@ -24,7 +24,8 @@ test("model catalog and reservation apply the same exact authorization and activ
   let calls=0;
   let active=["gpt-6","deepseek/deepseek-flash","deepseek/deepseek-v4-pro","kimi-code-cn/k3.1-pro"];
   let state:"available"|"empty"|"unavailable"="available";
-  const service={getProject:async()=>({id:projectId}),execute:async()=>{calls++;return {status:"applied",version:1};},
+  const service={getProject:async()=>({id:projectId}),getOperation:async()=>null,
+    execute:async()=>{calls++;return {status:"applied",version:1};},
     getRuntimeSession:async()=>({id:sessionId,projectId,actorId:"reviewer",roleId:grant.roleId,
       authorizationScope:grant.authorizationScope,cwd:grant.cwd,sandbox:grant.sandbox,
       approvalPolicy:grant.approvalPolicy,model:"deepseek/deepseek-flash"}),
@@ -119,7 +120,8 @@ test("a legacy grant without exact models cannot create a new Session even when 
   let calls=0;
   const legacy={...grant,model:undefined,models:undefined};
   const app=await buildServer({
-    service:{getProject:async()=>({id:projectId}),execute:async()=>{calls++;return {status:"applied",version:1};},
+    service:{getProject:async()=>({id:projectId}),getOperation:async()=>null,
+      execute:async()=>{calls++;return {status:"applied",version:1};},
       listRoles:async()=>({items:[],nextCursor:null}),listRoleRevisions:async()=>[],listRoleReviews:async()=>[],
       listRoleHandoffs:async()=>[],listRoleSessionBindings:async()=>[],listSchedules:async()=>[],
       listScheduleRevisions:async()=>[],listScheduleOccurrences:async()=>[]} as unknown as WorkflowService,

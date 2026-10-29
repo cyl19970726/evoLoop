@@ -259,6 +259,11 @@ export async function retryReceipt(client: ApiClient, store: ReceiptStore, apiUr
   // replay of this exact ID/actor/body safe even if the first request is still finishing.
   const latest = await store.get(id);
   if (latest.state !== "pending") return latest;
+  if (receipt.kind === "runtime.session.reserve" && business.success &&
+    business.data.type === "runtime.session.reserve" && !business.data.model)
+    throw new ReceiptError("RESULT_UNCONFIRMED",
+      "The legacy reservation has no confirmed server operation. Keep its original ID and body; a project reviewer must inspect the original operation and Session before deciding recovery.",
+      {receiptId:id,operationId:receipt.operationId,state:"pending",recovery:receipt.recovery,nextAction:"review_original_operation_and_session"});
   diagnostic({ receiptId: id, operationId: receipt.operationId, action: "retry_same_core_intent" });
   await submitReceipt(client, store, receipt, true);
   return store.get(id);
