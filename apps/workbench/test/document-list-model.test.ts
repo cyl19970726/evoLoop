@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document } from "@evoloop/contracts";
 import type { LeaderWorkDocument } from "@evoloop/contracts/work-index";
-import { documentLifecycleMatches, mergeDocumentPage, validDocumentPage } from "../src/documents/documentListModel.ts";
+import { documentLifecycleMatches, mergeDocumentPage, readDocumentRange, validDocumentPage } from "../src/documents/documentListModel.ts";
 
 const document: Document = { projectId: "project-a", id: "document-a", title: "原件", version: 2,
   currentRevisionId: "revision-2", adoptedRevisionId: "revision-1", kind: "report", status: "published" };
@@ -29,4 +29,23 @@ test("lifecycle text is shown only for the exact Document version and publicatio
   assert.equal(documentLifecycleMatches(document, { ...lifecycle, version: 3 }), false);
   assert.equal(documentLifecycleMatches(document, { ...lifecycle, adoptedRevisionId: "revision-2" }), false);
   assert.equal(documentLifecycleMatches(document, { ...lifecycle, documentId: "document-b" }), false);
+});
+
+test("refresh restores manually loaded pages before publishing a replacement and rejects a failed range", async () => {
+  const first = Array.from({length:50}, (_, i) => ({...document,id:`first-${i}`}));
+  const second = Array.from({length:50}, (_, i) => ({...document,id:`second-${i}`}));
+  const cursors: (string | undefined)[] = [];
+  const refreshed = await readDocumentRange(async cursor => {
+    cursors.push(cursor);
+    return cursor ? {items:second,nextCursor:"third"} : {items:first,nextCursor:"second"};
+  }, "project-a", 100);
+  assert.deepEqual(cursors,[undefined,"second"]);
+  assert.equal(refreshed.page.items.length,100);
+  assert.equal(refreshed.page.items[99]?.id,"second-49");
+  assert.equal(refreshed.page.nextCursor,"third");
+  assert.equal(refreshed.pages,2);
+  await assert.rejects(readDocumentRange(async cursor => {
+    if (cursor) throw new Error("后页不可读");
+    return {items:first,nextCursor:"second"};
+  },"project-a",100),/后页不可读/);
 });

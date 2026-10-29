@@ -6,7 +6,7 @@ import { Alert, ShortId, date, href } from "../ui/shared";
 import { ActionForm, option, type MutationContext } from "../workflow/ActionForm";
 import { loadLeaderDocumentsForIds, visibleLeaderDocuments } from "../workflow/leaderWorkLoad";
 import { UploadDocument } from "./UploadDocument";
-import { documentLifecycleMatches, mergeDocumentPage, validDocumentPage } from "./documentListModel";
+import { documentLifecycleMatches, mergeDocumentPage, readDocumentRange, validDocumentPage } from "./documentListModel";
 import "./document.css";
 
 const kinds = { issue: "问题", spec: "规范", discussion: "讨论", report: "报告", task: "任务正文" } as const;
@@ -43,8 +43,7 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
   const cursors = useRef(new Set<string>());
   const pending = useRef<Promise<boolean> | null>(null);
   const pageCount = useRef(0);
-  const restoreCount = useRef(prior?.page.items.length ?? 0);
-  const restoreScroll = useRef(prior?.scroll ?? 0);
+  const restoreScroll = useRef<number | null>(prior?.scroll ?? null);
   const scopeRef = useRef(scope);
   const filterScope = useRef(scope);
   if (scopeRef.current !== scope) {
@@ -52,8 +51,7 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
     currentPage.current = empty;
     cursors.current = new Set();
     pageCount.current = 0;
-    restoreCount.current = 0;
-    restoreScroll.current = 0;
+    restoreScroll.current = null;
   }
   const shownPage = pageState.scope === scope && pageState.page.items.every(item => item.projectId === projectId) ? pageState.page : empty;
   const lifecycle = lifecycleStateData.scope === scope ? lifecycleStateData.values : {};
@@ -75,27 +73,24 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
     setLoading(true); setBusy(false); setError(""); setSearchError("");
     setLifecycleStateData(previous => previous.scope === scope ? previous : { scope, values: {} });
     setLifecycleState("loading"); setLifecycleError("");
-    void api(token).documents(projectId).then(result => {
-      validDocumentPage(result, projectId);
+    const previousCount = currentPage.current.items.length;
+    void readDocumentRange(cursor => {
+      if (!active || generation !== epoch.current) throw new Error("列表读取范围已变化");
+      return api(token).documents(projectId, cursor);
+    }, projectId, previousCount).then(result => {
       if (!active || generation !== epoch.current) return;
-      currentPage.current = result; pageCount.current = 1; setPageState({ scope, page: result }); setObservedAt(new Date()); setLoading(false);
+      currentPage.current = result.page; pageCount.current = result.pages; cursors.current = result.cursors;
+      setPageState({ scope, page: result.page }); setObservedAt(new Date()); setLoading(false);
     }).catch(cause => { if (active && generation === epoch.current) { setError(readProblem(cause)); setLoading(false); } });
     return () => { active = false; };
   }, [token, projectId, refresh, reread]);
 
   useEffect(() => {
-    if (loading || error || !restoreCount.current) return;
-    let active = true;
-    const restore = async () => {
-      try {
-        while (active && currentPage.current.nextCursor && currentPage.current.items.length < restoreCount.current)
-          if (!await more()) break;
-        if (active) requestAnimationFrame(() => window.scrollTo(0, restoreScroll.current));
-      } catch (cause) { if (active) setError(readProblem(cause)); }
-      finally { restoreCount.current = 0; }
-    };
-    void restore();
-    return () => { active = false; };
+    if (loading || error || restoreScroll.current === null) return;
+    const position = restoreScroll.current;
+    restoreScroll.current = null;
+    const frame = requestAnimationFrame(() => window.scrollTo(0, position));
+    return () => cancelAnimationFrame(frame);
   }, [loading, error, scope]);
 
   useEffect(() => {
