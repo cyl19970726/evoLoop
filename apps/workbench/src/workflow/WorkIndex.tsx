@@ -12,7 +12,7 @@ import { isRoleOwnerId, readOwnerRole } from "./ownerRole";
 import "./work-status.css";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  appendLeaderWorkPage, leaderPhaseLabel, loadLeaderDocumentsForIds, visibleLeaderDocuments,
+  appendLeaderWorkPage, leaderPhaseLabel, leaderWorkItemPresentation, loadLeaderDocumentsForIds, visibleLeaderDocuments,
 } from "./leaderWorkLoad";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
@@ -278,7 +278,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       {view === "documents" ? <Button onClick={() => setCreate(!create)} aria-expanded={create}><Plus size={16} />保存文档</Button> : <a className="button-link" href={href(projectId, "create-task")}><Plus size={16} />创建任务</a>}
     </div>
     {view === "work" && leaderWork && <LeaderWorkOverview page={leaderWork} projectId={projectId}
-      ownerNames={resolvedOwners} busy={leaderWorkBusy} onMore={() => void moreLeaderWork()} />}
+      ownerNames={resolvedOwners} statuses={statuses} busy={leaderWorkBusy} onMore={() => void moreLeaderWork()} />}
     {leaderWorkError && <p className="work-list-read-status" role="status">{leaderWorkError}</p>}
     {view !== "documents" && <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")} aria-current={view === "work" ? "page" : undefined}>任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current={view === "inbox" ? "page" : undefined}>依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>}
     {view === "documents" && <nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")} aria-current="page">过程文档</a><a href={href(projectId, "knowledge")}>知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav>}
@@ -317,9 +317,9 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   </div>;
 }
 
-function LeaderWorkOverview({ page, projectId, ownerNames, busy, onMore }: {
+function LeaderWorkOverview({ page, projectId, ownerNames, statuses, busy, onMore }: {
   page: LeaderWorkPage<LeaderWorkTask>; projectId: string; ownerNames: Record<string, OwnerName>;
-  busy: boolean; onMore: () => void;
+  statuses: Record<string, WorkTaskStatus>; busy: boolean; onMore: () => void;
 }) {
   const counts = page.counts;
   const visible = [...page.items].sort((a, b) => leaderPhaseOrder.indexOf(a.phase as typeof leaderPhaseOrder[number]) -
@@ -328,15 +328,18 @@ function LeaderWorkOverview({ page, projectId, ownerNames, busy, onMore }: {
     <header><div><p className="eyebrow">Leader 对账</p><h2 id="leader-work-title">现在需要处理什么</h2></div><p>{page.observedAt ? `读于 ${new Date(page.observedAt).toLocaleString("zh-CN")}` : "尚未读回"} · 变更序号 {page.changeSequence}</p></header>
     <div className="leader-work-phases">{leaderPhaseOrder.filter(phase => counts[phase]).map(phase =>
       <span key={phase} className={`leader-phase phase-${phase}`}>{leaderPhaseLabel[phase]} <strong>{counts[phase]}</strong></span>)}</div>
-    {(counts.review_deferred || counts.review_acknowledged) && <div className="leader-work-phases" aria-label="Leader 处理决定">
+    {(!!counts.review_deferred || !!counts.review_acknowledged) && <div className="leader-work-phases" aria-label="Leader 处理决定">
       {counts.review_deferred ? <span className="leader-phase phase-unassigned">已暂缓 <strong>{counts.review_deferred}</strong></span> : null}
       {counts.review_acknowledged ? <span className="leader-phase phase-ready">已核对 <strong>{counts.review_acknowledged}</strong></span> : null}
     </div>}
-    {visible.length ? <ol className="leader-work-list">{visible.map(item => <li key={item.taskId}>
+    {visible.length ? <ol className="leader-work-list">{visible.map(item => {
+      const status = statuses[item.taskId];
+      const presentation = leaderWorkItemPresentation(item, status,
+        item.responsible.kind === "role" ? ownerNames[item.responsible.id ?? ""]?.title : undefined);
+      return <li key={item.taskId}>
       <span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span>
-      <div><a href={href(projectId,"task",item.taskId)}>{item.title}</a><p>{item.nextAction}</p>
-        <small>{item.responsible.kind === "role" && ownerNames[item.responsible.id ?? ""]?.title
-          ? `负责 ${ownerNames[item.responsible.id!]!.title}` : item.responsible.label}{item.plan?.priority?` · P${item.plan.priority}`:""}
+      <div><a href={href(projectId,"task",item.taskId)}>{presentation.title}</a><p>{item.nextAction}</p>
+        <small>{presentation.responsibility}{item.plan?.priority?` · P${item.plan.priority}`:""}
           {item.dependencies.length?` · ${item.dependencies.length} 项依赖`:""}
           {item.plan?.dueAt?` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}`:" · 截止未设置"}</small>
         <small>创建 {new Date(item.dates.createdAt).toLocaleString("zh-CN")} · 业务变化 {new Date(item.dates.businessChangedAt).toLocaleString("zh-CN")}
@@ -347,7 +350,8 @@ function LeaderWorkOverview({ page, projectId, ownerNames, busy, onMore }: {
         {item.review && <small className="leader-review-note">Leader {item.review.decision === "deferred" ? "已暂缓" : "已核对"}：
           {item.review.reason} · {new Date(item.review.at).toLocaleString("zh-CN")}</small>}</div>
       <span className="leader-action-key" title={item.actionKey}>任务 v{item.version}</span>
-    </li>)}</ol> : <p className="empty">当前没有未关闭工作。</p>}
+    </li>;
+    })}</ol> : <p className="empty">当前没有未关闭工作。</p>}
     <footer>按当前 Task 版本、assignment、Run、Delivery、使用观察、依据复核和依赖派生；运行结束不等于验收。
       {page.partial && " 服务端只返回了部分工作，结果不完整。"}
       {page.nextCursor && <button type="button" className="quiet" disabled={busy} onClick={onMore}>

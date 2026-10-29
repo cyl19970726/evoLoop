@@ -20,11 +20,18 @@ const outcomeNames: Record<string, string> = {
   waiting: "等待", failed: "处理失败", no_action: "无后续动作", delivered: "有正式交付",
 };
 const terminalRuns = new Set(["completed", "failed", "interrupted"]);
+const internalCognitionTitle = /^Cognition:\s*(?:business result event|worker\.outcome|loop\.enrolled|observation\.record|dispatch\.gap)(?:\s|$)/i;
+
+function readableCognitionSubject(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  return text && !internalCognitionTitle.test(text) ? text : null;
+}
 
 export function cognitionSummary(status: WorkTaskStatus) {
   const source = sourceNames[status.sourceKind ?? ""] ?? "来源待核对";
-  const subject = status.sourceTaskTitle ? `${status.sourceTaskTitle}（源任务现名称）` :
-    status.goalOutcome ?? status.stageDeliverable ?? "当前工作";
+  const sourceTaskTitle = readableCognitionSubject(status.sourceTaskTitle);
+  const subject = sourceTaskTitle ? `${sourceTaskTitle}（源任务现名称）` :
+    readableCognitionSubject(status.goalOutcome) ?? readableCognitionSubject(status.stageDeliverable) ?? "当前工作";
   const title = `${source} · ${subject}`;
   if (status.runState === "unknown" || status.dispatchState === "unknown")
     return {title,phase:"运行或派发结果未知",next:"先按原派发和运行记录核对，不推定已结束"};
