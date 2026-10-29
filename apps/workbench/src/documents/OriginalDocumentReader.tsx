@@ -94,24 +94,30 @@ function download(name: string, data: Blob): void {
 export function OriginalDocumentReader({ token, projectId, revisionId, documentId }: {
   token: string; projectId: string; revisionId: string; documentId: string;
 }) {
-  const [original, setOriginal] = useState<Original | null>(null);
+  const [storedOriginal, setOriginal] = useState<Original | null>(null);
+  const original = storedOriginal?.revision.projectId === projectId && storedOriginal.revision.documentId === documentId && storedOriginal.revision.id === revisionId ? storedOriginal : null;
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
-  const [preview, setPreview] = useState("");
+  const [prepared, setPrepared] = useState<{ revisionId: string; hash: string; html: string } | null>(null);
+  const preview = original && prepared?.revisionId === original.revision.id && prepared.hash === original.revision.contentHash ? prepared.html : null;
   const [assetPreview, setAssetPreview] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setOriginal(null); setAssetPreview(null); setError("");
     request<Original>(token, base(projectId, documentId, revisionId), 30000)
-      .then(result => { if (active) setOriginal(result); })
+      .then(result => {
+        if (result.revision.projectId !== projectId || result.revision.documentId !== documentId || result.revision.id !== revisionId)
+          throw new Error("原件响应与所选项目、文档及固定修订不符。");
+        if (active) setOriginal(result);
+      })
       .catch(cause => { if (active) setError(errorText(cause)); });
     return () => { active = false; };
   }, [token, projectId, documentId, revisionId, refresh]);
   useEffect(() => {
-    if (original?.status !== "available" || original.revision.format !== "html") { setPreview(""); return; }
+    if (original?.status !== "available" || original.revision.format !== "html") { setPrepared(null); return; }
     try {
       const rendered = staticHtml(original);
-      setPreview(rendered.html);
+      setPrepared({ revisionId: original.revision.id, hash: original.revision.contentHash, html: rendered.html });
       return () => rendered.urls.forEach(URL.revokeObjectURL);
     } catch { setError("配套资源无法安全构造预览。"); return; }
   }, [original]);
@@ -127,8 +133,8 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
     <p className="muted">正在阅读固定修订：<code>{original.revision.id}</code></p>
     <p className="muted">SHA-256：<code>{original.revision.contentHash}</code></p>
     {original.revision.format === "html" ? <><p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
-      <iframe title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
-        style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /></>
+      {preview ? <iframe key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
+        style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>
     {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => <li key={asset.path}>
