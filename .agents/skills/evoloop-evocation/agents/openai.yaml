@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evo · 组织复盘"
+  short_description: "复盘真实协作与用户体验，推动角色方法、工具和组织改进并跟踪实际效果"
+  default_prompt: "使用 $evoloop-evocation，续读 Leader 和相关 Session，结合独立 User 亲用，完成本轮复盘并推动、跟踪相称的改进。"
