@@ -2,6 +2,7 @@ import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
 import { ordinaryRunSubmissionSchema, type OrdinaryRunSubmissionCommand,
   type OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { DomainError } from "@evoloop/contracts/ports";
+import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import type { ContentHasher } from "@evoloop/contracts/ports";
 import { canonicalJson } from "./index.js";
 
@@ -12,6 +13,7 @@ export interface OrdinaryRunSubmissionStore {
   hasWorkflowOperation(operationId: string): Promise<boolean>;
   getRun(runId: string): Promise<RuntimeRunRecord | null>;
   getFixedRecipient(runId: string): Promise<string | null>;
+  getDocumentRevisionHash(documentId: string, revisionId: string): Promise<string | null>;
   hasManagedDispatch(runId: string): Promise<boolean>;
   insert(record: OrdinaryRunSubmissionRecord): Promise<void>;
 }
@@ -56,11 +58,27 @@ export async function submitOrdinaryRun(
   const recipient = await store.getFixedRecipient(run.id);
   if (!recipient || recipient !== principal.actorId)
     throw new DomainError("FORBIDDEN", "Only the fixed recipient of this Run may submit its result");
+  let artifact: ReturnType<typeof parseArtifactReference>;
+  try { artifact = parseArtifactReference(command.deliveryIntent.artifactRef,
+    command.deliveryIntent.artifactRevision, command.projectId); }
+  catch (error) {
+    if (error instanceof ArtifactReferenceError) throw new DomainError(error.code, error.message);
+    throw error;
+  }
+  if (artifact.kind === 'document') {
+    const actualHash = await store.getDocumentRevisionHash(artifact.documentId, artifact.revisionId);
+    if (!actualHash) throw new DomainError('ARTIFACT_DOCUMENT_NOT_FOUND',
+      'Read the exact Document revision in this project before submitting its fixed route');
+    if (actualHash.toLowerCase() !== command.deliveryIntent.contentHash.toLowerCase())
+      throw new DomainError('ARTIFACT_HASH_MISMATCH',
+        'contentHash must equal the saved Document revision SHA-256; read that revision and retry');
+  }
   const record: OrdinaryRunSubmissionRecord = {
     projectId: command.projectId, id: command.submissionId, runId: run.id,
     taskId: run.taskId, sessionId: run.sessionId, taskRevisionId: run.taskRevisionId,
     runInputHash: run.inputHash, operationId: command.operationId, commandHash,
-    deliveryOperationId: command.deliveryOperationId, deliveryCommandHash: null, deliveryIntent: command.deliveryIntent,
+    deliveryOperationId: command.deliveryOperationId, deliveryCommandHash: null,
+    deliveryIntent: { ...command.deliveryIntent, artifactRef: artifact.artifactRef },
     submittedBy: principal.actorId, state: "submitted", version: 1,
     expectedTaskVersion: null, terminalRunVersion: null, sealedBy: null,
     deliveryId: null, reason: null, createdAtUtc: nowUtc, updatedAtUtc: nowUtc,

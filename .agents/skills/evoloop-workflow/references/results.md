@@ -4,6 +4,8 @@
 
 对每项关键判断分开写：**观察到的原件/动作**、**基于它的推断**、**尚未验证的范围**。标明实际执行者、Task/Run 固定输入、产物 Document 修订/hash 或 Git commit、技术检查与失败、人工介入。下载/hash 只证明取得字节；原生输出截断时不能声称模型看完。读者打开固定链接后应能核对所用版本。原始会话、凭据和私有材料留受控目录，不放公开 Git。
 
+提交普通 Run 的 Document 报告时，先读回保存的固定修订与 hash。`artifactRef` 用单一 `#/p/PROJECT_UUID/documents/DOCUMENT_UUID?revision=REVISION_UUID`（或 `document:DOCUMENT_UUID@REVISION_UUID` 由新版 CLI 规范化），`artifactRevision` 只填该修订 UUID，`contentHash` 只填对应 SHA-256。PR 与 Git 线索放报告或 `technicalEvidence`；外部网页只填一个 URL 与单个修订标识。不要交 `document:UUID`、把多个 URL 塞入一个引用，或在修订字段拼说明。提交前的拒绝应按错误读取原件后修正，不能用另一 UUID 猜测版本。
+
 工程交付按实际阶段给 PR/head、检查、独立 review、merge、运行环境与消费者使用；未发生的步骤明确待办。讨论报告给来源、分歧、建议和下一次能区分判断的证据。Delivery 与使用分开：只写已真实发生的接收、阅读、采用或失败，不代消费者签观察。若有新问题，先看是否属于本 Task 的修复/返工；独立新工作才交 Lead 排序。
 
 例如一次真实报告同时记录“设计 HTML 和图片已被消费”与“多次额外读取、旧工作区 skill 和输出截断”。结论只覆盖该次原件消费；整体流程负担仍待评价。后续修复也不能抹去首次观察。

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
+import { parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
 import type { OrdinaryRunSubmissionCommand, OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { submitOrdinaryRun, type OrdinaryRunSubmissionStore } from "../src/ordinary-run-submission.js";
@@ -16,13 +17,14 @@ const command = (): OrdinaryRunSubmissionCommand => ({
   submissionId: "77777777-7777-4777-8777-777777777777",
   runId, taskId, sessionId, taskRevisionId: revisionId, runInputHash: "a".repeat(64),
   deliveryOperationId: "88888888-8888-4888-8888-888888888888",
-  deliveryIntent: { artifactRef: "doc/revision", artifactRevision: "r1", contentHash: "b".repeat(64),
+  deliveryIntent: { artifactRef: "https://example.test/report", artifactRevision: "r1", contentHash: "b".repeat(64),
     technicalResult: "passed", technicalEvidence: "checks passed", reason: "result" },
 });
 function fixture(state = "running") {
   const records = new Map<string, OrdinaryRunSubmissionRecord>();
   let recipient = "worker";
   let managed = false;
+  const documents = new Map<string,string>();
   const workflowOperations = new Set<string>();
   const run = { id: runId, projectId, taskId, sessionId, taskRevisionId: revisionId,
     inputHash: "a".repeat(64), state } as RuntimeRunRecord;
@@ -32,10 +34,11 @@ function fixture(state = "running") {
     hasWorkflowOperation: async id => workflowOperations.has(id),
     getRun: async () => run,
     getFixedRecipient: async () => recipient,
+    getDocumentRevisionHash: async (documentId, revisionId) => documents.get(`${documentId}@${revisionId}`) ?? null,
     hasManagedDispatch: async () => managed,
     insert: async item => { records.set(item.runId, item); },
   };
-  return { store, records, run, workflowOperations, setRecipient: (value: string) => { recipient = value; },
+  return { store, records, run, documents, workflowOperations, setRecipient: (value: string) => { recipient = value; },
     setManaged: (value: boolean) => { managed = value; } };
 }
 const now = "2026-10-29T00:00:00.000Z";
@@ -80,4 +83,48 @@ test("a prior workflow operation cannot be frozen as the future Delivery operati
   f.workflowOperations.add(command().deliveryOperationId);
   await assert.rejects(submit(f.store, actor("worker"), command()), { code: "OPERATION_REUSED" });
   assert.equal(f.records.size, 0);
+});
+
+test("fixed Document shorthand normalizes only after project revision and hash readback", async () => {
+  const f=fixture(), docId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", docRevision="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const input=command();input.deliveryIntent.artifactRef=`document:${docId}@${docRevision}`;
+  input.deliveryIntent.artifactRevision=docRevision;
+  await assert.rejects(submit(f.store,actor("worker"),input),{code:"ARTIFACT_DOCUMENT_NOT_FOUND"});
+  f.documents.set(`${docId}@${docRevision}`,"c".repeat(64));
+  await assert.rejects(submit(f.store,actor("worker"),input),{code:"ARTIFACT_HASH_MISMATCH"});
+  f.documents.set(`${docId}@${docRevision}`,"b".repeat(64));
+  const saved=await submit(f.store,actor("worker"),input);
+  assert.equal(saved.deliveryIntent.artifactRef,`#/p/${projectId}/documents/${docId}?revision=${docRevision}`);
+  assert.equal(saved.deliveryIntent.artifactRevision,docRevision);
+  assert.equal(f.records.size,1);
+});
+
+test("ambiguous Document refs and fixed version conflicts fail before saving an intent", async () => {
+  const docId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", docRevision="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  for(const [ref,revision,code] of [
+    [`document:${docId}`,docRevision,"ARTIFACT_DOCUMENT_REVISION_REQUIRED"],
+    [`document:${docId}@${docRevision}; PR https://example.test/pull/1`,docRevision,"ARTIFACT_REF_AMBIGUOUS"],
+    [`#/p/99999999-9999-4999-8999-999999999999/documents/${docId}?revision=${docRevision}`,docRevision,"ARTIFACT_PROJECT_MISMATCH"],
+    [`#/p/${projectId}/documents/${docId}?revision=${docRevision}`,revisionId,"ARTIFACT_REVISION_MISMATCH"],
+    ["https://example.test/report", "git abc; other", "ARTIFACT_REVISION_INVALID"],
+    ["repo://one&git://two", "commit1", "ARTIFACT_REF_AMBIGUOUS"],
+    ["https://example.test/report,https://other.test/pull/1", "v1", "ARTIFACT_REF_AMBIGUOUS"],
+  ]) {
+    const f=fixture(),input=command();input.deliveryIntent.artifactRef=ref;input.deliveryIntent.artifactRevision=revision;
+    await assert.rejects(submit(f.store,actor("worker"),input),{code});
+    assert.equal(f.records.size,0);
+  }
+});
+
+test("one external URL may contain ordinary URL punctuation",async()=>{
+  for(const ref of ["https://example.test/report;a=b","https://example.test/report,part2"]){
+    const f=fixture(),input=command();input.deliveryIntent.artifactRef=ref;
+    assert.equal((await submit(f.store,actor("worker"),input)).deliveryIntent.artifactRef,ref);
+  }
+});
+
+test("worker compatibility references still reject compound locations", () => {
+  for (const ref of ["artifact:one&two", "one&two", "fixture:one?other=two"])
+    assert.throws(() => parseArtifactReference(ref,"v1",projectId,false),
+      { code: "ARTIFACT_REF_INVALID" });
 });
