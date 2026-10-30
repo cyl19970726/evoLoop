@@ -18,15 +18,30 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1180);
   const [open, setOpen] = useState(false);
   const navigationFromMenu = useRef(false);
+  const widthRef = useRef(window.innerWidth);
+  const manualCollapse = useRef(false);
   useEffect(() => {
-    const collapseNarrowRail = () => { if (window.innerWidth < 1180) setCollapsed(true); };
-    window.addEventListener("resize", collapseNarrowRail);
-    return () => window.removeEventListener("resize", collapseNarrowRail);
+    const syncLayout = () => {
+      const next = window.innerWidth;
+      const crossedBreakpoint = (widthRef.current < 1180) !== (next < 1180);
+      if (crossedBreakpoint) manualCollapse.current = false;
+      if (!manualCollapse.current) setCollapsed(next < 1180);
+      widthRef.current = next;
+    };
+    window.addEventListener("resize", syncLayout);
+    return () => window.removeEventListener("resize", syncLayout);
   }, []);
   const closeAfterNavigation = () => {
     navigationFromMenu.current = open;
     setOpen(false);
-    if (window.innerWidth < 1180) setCollapsed(true);
+    if (window.innerWidth < 1180) {
+      manualCollapse.current = false;
+      setCollapsed(true);
+    }
+  };
+  const toggleSidebar = () => {
+    manualCollapse.current = true;
+    setCollapsed(value => !value);
   };
   const changeMenu = (next: boolean) => {
     if (next) navigationFromMenu.current = false;
@@ -69,7 +84,7 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
     <aside className="project-sidebar" aria-label="项目导航">{sidebar}</aside>
     <div className="workspace-body">{import.meta.env.DEV && <div className="development-preview" role="status">{window.location.port === "5181" ? "开发测试预览 · 模拟数据 · 尚未发布" : "开发预览 · 连接现有数据 · 尚未发布"}</div>}<header className="workspace-header"><div className="workspace-heading">
       <Sheet open={open} onOpenChange={changeMenu}><SheetTrigger asChild><Button variant="ghost" size="icon" className="mobile-menu" aria-label="打开项目导航"><Menu size={19} /></Button></SheetTrigger><SheetContent side="left" className="mobile-navigation" onCloseAutoFocus={closeFocus}><SheetHeader><SheetTitle>项目导航</SheetTitle><SheetDescription>选择功能或 Session，查看当前工作。</SheetDescription></SheetHeader><nav aria-label="移动项目导航"><div className="mobile-modules">{link("work", "工作", BriefcaseBusiness)}{link("knowledge", "知识", BookOpen)}{link("overview", "总览", Home)}</div>{sidebar}</nav></SheetContent></Sheet>
-      <button className="sidebar-toggle quiet" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "展开项目导航" : "收起项目导航"} aria-expanded={!collapsed}>{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</button><span>工作台 <span className="breadcrumb-divider">/</span> <strong>{route.section === "runtime" && route.session ? "会话" : sectionNames[route.section]}</strong></span></div>
-      <div className="workspace-account"><time className="workspace-date"><CalendarDays size={15} aria-hidden="true" />{workspaceDate}</time><a href={href(projectId, "operations")} className="receipt-link" aria-label={`待核对操作 ${receiptCount} 项`}><TriangleAlert size={16} aria-hidden="true" /><span>{receiptCount ? `${receiptCount} 项待核对` : "操作回执"}</span></a><span className="actor-name" title={actor}>{actor}</span><button className="quiet" onClick={logout}>退出</button></div></header><main id="workspace-main" tabIndex={-1}>{children}</main></div>
+      <button className="sidebar-toggle quiet" onClick={toggleSidebar} aria-label={collapsed ? "展开项目导航" : "收起项目导航"} aria-expanded={!collapsed}>{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</button><span>工作台 <span className="breadcrumb-divider">/</span> <strong>{route.section === "runtime" && route.session ? "会话" : sectionNames[route.section]}</strong></span></div>
+      <div className="workspace-account"><time className="workspace-date"><CalendarDays size={15} aria-hidden="true" />{workspaceDate}</time>{receiptCount > 0 && <a href={href(projectId, "operations")} className="receipt-link" aria-label={`待核对操作 ${receiptCount} 项`}><TriangleAlert size={16} aria-hidden="true" /><span>{receiptCount} 项待核对</span></a>}<Users size={16} aria-hidden="true" /><span className="actor-name" title={actor}>{actor}</span><button className="quiet" onClick={logout}>退出</button></div></header><main id="workspace-main" tabIndex={-1}>{children}</main></div>
   </div>;
 }

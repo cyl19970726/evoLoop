@@ -2,31 +2,49 @@
 
 Date: 2026-10-30
 
-Selected target: generated direction 1, `并排阅读`
-Target image: `/Users/hhh0x/.codex/generated_images/01a186ad-4758-7fa2-8af2-a6f6d4e71261/exec-87fdadbc-0017-47cd-abb3-0fb14c5d3413.png`
+Selected target: supplied task workspace reference
+Target image: `.local/frontend-reader-redesign/reference-task-layout.png`
 
-The selected image and the latest rendered prototype were inspected at the same 1440 x 1024 viewport with the failed Session task selected. The implementation preserves the target's two light navigation rails, quiet list surface, blue selected row, and docked right reader. The real workbench retains live task, responsibility, document, delivery, permission, and recovery states rather than copying the mock's illustrative counts.
+The reference and the latest implementation were compared with the failed Session task selected. The final layout follows the reference's wide two-rail shell, three-column task table, and full-width detail area below the list.
+
+## Implemented target
+
+- The outer rail is fluid from 76 to 84 px and the project rail from 272 to 300 px.
+- The project rail shows three real current Sessions, a full-Session link, and no always-visible secondary status labels.
+- Task scope is switched by the `全部工作 / 我的承接` tab row, with search, state, and secondary filters aligned in one control row.
+- The task table uses three content columns while the reader is open: work, progress, and concrete responsibility.
+- The selected-task reader occupies the full width below the table, with next step on the left and fixed delivery plus outcomes on the right.
+- The Task detail and document reader retain their complete content and real links rather than hiding them behind the compact table.
+- The document index and full reader, overview, schedule, knowledge, team, operations, repository, and settings all share the same shell and layout rhythm.
 
 ## Captured states
 
-- Task list with the real failed Session task selected at 1440 x 1024: `.local/frontend-reader-redesign/work-1440-final.jpg`
+- Task page at 1440 x 1024: `.local/frontend-reader-redesign/work-1440-final.jpg`
+- Task page at 1920 x 1080: `.local/frontend-reader-redesign/work-1920-final.jpg`
+- Task page at 871 x 1213: `.local/frontend-reader-redesign/work-871-reference-match.jpg`
+- Task page at 390 x 844: `.local/frontend-reader-redesign/work-390-reference-match.jpg`
 - Task detail at 1440 x 1024: `.local/frontend-reader-redesign/task-detail-1440.jpg`
-- Process document index at 1440 x 1024: `.local/frontend-reader-redesign/documents-1440-final.jpg`
-- Full document reading page at 1440 x 1024: `.local/frontend-reader-redesign/document-1440-final.jpg`
-- Task list reading adaptation at 871 x 1213: `.local/frontend-reader-redesign/work-871.jpg`
-- Overview, schedule, knowledge, and team entry surfaces at 1440 x 1024 were inspected for shared shell consistency.
-- Task detail and document reading were inspected at 390 x 844. Both rendered without horizontal document overflow.
+- Process document index and reader at 1440 x 1024: `.local/frontend-reader-redesign/documents-1440-final.jpg`, `.local/frontend-reader-redesign/document-1440-final.jpg`
+- Process document index and reader at 390 x 844: `.local/frontend-reader-redesign/documents-390-final.jpg`, `.local/frontend-reader-redesign/document-390-final.jpg`
+- Overview, schedule, knowledge, team, operations, repository, and settings captures use `*-1440-final.jpg`.
+
+## Responsive verification
+
+- 390 px: no horizontal overflow; task rows become stacked semantic blocks and document side metadata follows the article.
+- 871 px: the project rail automatically collapses to zero width and remains reachable from the header.
+- 1171 px: the project rail remains collapsed and manually expandable.
+- 1181 px: the project rail automatically expands.
+- 1920 px and 2560 px: both rails expand, content fills the available workspace, and the document width equals the viewport width.
+- Resizing from 871 px to 1920 px restores the project rail without a reload.
 
 ## Review
 
 - P0: none.
 - P1: none.
 - P2: none.
-- The first pass exposed a sticky document-header overlap and an inner-rail state that did not follow viewport resizing. Both were fixed before the final capture.
-- A second density review removed the redundant Task entry column while the reader was open, moved its result link under the work title, condensed Session metadata to one supporting line, and increased spacing in the Task reader and document evidence rail.
-- The development-only preview banner and real empty/unavailable service states are not part of the selected visual mock; they remain as explicit runtime truth.
-- Long real-world Chinese task titles, role identifiers, and recovery evidence wrap within their intended reading columns.
-- No green or teal status styling is visible in the implemented work, document, detail, overview, schedule, knowledge, or team surfaces.
+- The earlier side-reader implementation diverged from the supplied reference and was replaced with the table-plus-below-reader layout.
+- Real task titles, responsibility states, fixed revisions, technical checks, and use observations remain visible and correctly separated.
+- No green or teal status styling is visible.
 - Browser console reported no error or warning entries during the final route checks.
 
 final result: passed

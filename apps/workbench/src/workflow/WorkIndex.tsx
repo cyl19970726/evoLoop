@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Document, Impact, Page, Task } from "@evoloop/contracts";
-import { Plus, Search, RefreshCw, UserRound, ChevronRight } from "lucide-react";
+import { ChevronRight, CirclePlay, Clock3, Plus, RefreshCw, Search, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { ApiError, api, errorText } from "../api";
 import { sessionClient } from "../sessions/client";
 import { ActionForm, option, type MutationContext } from "./ActionForm";
@@ -14,7 +14,6 @@ import "./work-status.css";
 import "./task-experience.css";
 import { assignmentSessionKey, assignmentStatusLabel, executionSummary, isClosedTask, isMyCurrentWork, matchingProjection, taskListRoute, taskListView } from "./taskExperience";
 import { useTaskProjections } from "./useTaskProjections";
-import { TaskCurrentWork } from "./TaskCurrentWork";
 import { TaskPreview } from "./TaskPreview";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
@@ -60,7 +59,6 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [filter, setFilter] = useState(() => view === "work" ? taskListView(window.location.hash).filter : "open");
   const [kindFilter, setKindFilter] = useState(() => view === "work" ? taskListView(window.location.hash).kind : "all");
   const [scope, setScope] = useState(() => taskListView(window.location.hash).scope);
-  const [myTask, setMyTask] = useState("");
   const [selectedTask, setSelectedTask] = useState(() => taskListView(window.location.hash).selected);
   const [documentStatus, setDocumentStatus] = useState("active");
   const [create, setCreate] = useState(false);
@@ -382,27 +380,28 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const classificationUnavailable = Boolean(statusProblem) && !Object.keys(statuses).length;
   const {primary:primaryTasks,cognition:cognitionTasks,unknown:unknownTasks,primaryKind}=visibleWorkGroups(visibleTasks,statuses,classificationUnavailable);
   const title = view === "documents" ? "过程文档" : view === "inbox" ? "待判断与复核" : "任务";
-  return <div className="content work-index">
+  const footerSummary = view === "work"
+    ? `当前页匹配 ${visibleTasks.length} 项 · 已载入 ${tasks.items.length} 项`
+    : view === "documents"
+      ? `已载入 ${documents.items.length} 项 · 当前匹配 ${visibleDocuments.length} 项`
+      : `已载入 ${tasks.items.length} 项 · 当前匹配 ${visibleTasks.length} 项`;
+  return <div className={`content work-index${view === "work" ? " task-index-view" : ""}`}>
     <div className="page-title-row"><div><h1>{title}</h1><p className="lede">{view === "documents" ? "按类型阅读完整正文、固定修订与发布状态。" : view === "inbox" ? "阅读待办任务与依据变化，按当前状态决定下一步。" : "阅读任务正文、验收、固定依据与最新结果。"}</p></div>
       {view === "documents" ? <Button onClick={() => setCreate(!create)} aria-expanded={create}><Plus size={16} />保存文档</Button> : <a className="button-link" href={href(projectId, "create-task")}><Plus size={16} />创建任务</a>}
     </div>
     <div className={`task-list-layout${view === "work" && selectedTask ? " has-selection" : ""}`}><div className="task-list-main">
-    {view === "work" && <section className="my-current-work" aria-label="我的当前承接">
-      <header><UserRound size={18} aria-hidden="true" /><h2>我的当前承接</h2><span>{context.principal.actorId}</span>{myWork.length > 1 && <select aria-label="选择当前身份的承接任务" value={myWork.some(item => item.taskId === myTask) ? myTask : myWork[0]?.taskId} onChange={e => setMyTask(e.target.value)}>{myWork.map(item => <option key={item.taskId} value={item.taskId}>{item.title}</option>)}</select>}</header>
-      {myWork.length ? myWork.filter(item => item.taskId === (myWork.some(work => work.taskId === myTask) ? myTask : myWork[0]?.taskId)).map(item => <div className="my-work-row" key={item.taskId}>
-        <button className="my-work-title" onClick={() => setSelectedTask(item.taskId)}>{item.title}<small>任务 · v{item.version}</small><small>下一步：{item.nextAction}</small></button>
-        <TaskCurrentWork item={item} token={token} projectId={projectId} actorId={context.principal.actorId} returnTo={listRoute} compact />
-        <a aria-label={`打开任务：${item.title}`} href={`${href(projectId, "task", item.taskId)}?list=${encodeURIComponent(listRoute)}`}><ChevronRight size={18} /></a>
-      </div>) : <p role="status">{!leaderWork ? (leaderWorkError ? "当前承接读取失败，请重新读取列表。" : "正在读取当前身份的分派…") : projections.complete ? "当前身份没有已分派或已接受的未完成任务。" : "已读范围内尚未发现当前身份的承接；继续核对项目工作。"}</p>}
-
-      {(!projections.complete || projections.error) && <small className="current-work-coverage">当前承接仅覆盖已读工作（最多自动读取 500 项）。{projections.error || (leaderWorkError ? "工作索引读取失败，可刷新重读。" : "尚未确认完整覆盖。")}</small>}
+    {view === "work" && <section className="work-view-controls" aria-label="任务列表筛选">
+      <nav className="work-scope-tabs" role="tablist" aria-label="任务范围">
+        <button type="button" role="tab" aria-selected={scope === "all"} className={scope === "all" ? "selected" : ""} onClick={() => setScope("all")}>全部工作 <span>{projectionTasks.length}</span></button>
+        <button type="button" role="tab" aria-selected={scope === "mine"} className={scope === "mine" ? "selected" : ""} onClick={() => setScope("mine")}>我的承接 <span>{myWork.length}</span></button>
+      </nav>
+      <div className="work-quick-tools">
+        <label className="search-field"><Search size={16} aria-hidden="true" /><input aria-label="搜索任务（分页读取，范围见下方）" placeholder="搜索任务标题或承接方…" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <select aria-label="任务状态筛选" value={filter} onChange={e => setFilter(e.target.value)}><option value="open">未完成任务</option><option value="all">全部状态</option>{Object.entries(states).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+        <details className="work-more-filters"><summary aria-label="更多筛选"><SlidersHorizontal size={16} aria-hidden="true" /></summary><select aria-label="任务类型筛选" value={kindFilter} onChange={e => setKindFilter(e.target.value)}><option value="all">全部类型</option>{Object.entries(taskKinds).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></details>
+        <button className="quiet" aria-label="重新读取列表" onClick={context.onChanged}><RefreshCw size={16} /></button>
+      </div>
     </section>}
-    {view === "work" && leaderWork && <details className="leader-work-disclosure"><summary>查看全项目 Leader 对账 <span>按项目全部未关闭工作核对</span></summary><LeaderWorkOverview page={leaderWork} projectId={projectId}
-      ownerNames={resolvedOwners} statuses={statuses} leaderStatuses={leaderStatuses}
-      sessionNames={leaderSessionNames} sourceReading={leaderStatusReading || leaderSessionReading}
-      sourceProblem={leaderStatusError || leaderSessionError} busy={leaderWorkBusy}
-      onMore={() => void moreLeaderWork()} /></details>}
-    {leaderWorkError && <p className="work-list-read-status" role="status">{leaderWorkError}</p>}
     {view === "inbox" && <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")} >任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current="page">依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>}
     {view === "documents" && <nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")} aria-current="page">过程文档</a><a href={href(projectId, "knowledge")}>知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav>}
     {view === "documents" && leaderDocumentCoverage === "partial" &&
@@ -411,12 +410,11 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     {view === "inbox" && <section className="panel impact-summary"><div className="panel-head"><h2>依据变化</h2><span>{pending.length} 项待复核</span></div>{!pending.length ? <p className="empty">当前没有待复核的依据变化。</p> : <ul className="impact-list">{pending.map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>{tasks.items.find(t => t.id === i.taskId)?.title ?? `任务 ${i.taskId.slice(0, 8)}`}</strong><span>固定 <ShortId value={i.fromRevisionId} /> / 新采纳 <ShortId value={i.toRevisionId} /></span><span>查看影响</span></a></li>)}</ul>}</section>}
     <section className="list-surface" aria-label={title} aria-busy={loading}>
       <p className="work-list-read-status">{loading ? "正在核对当前列表…" : observedAt ? `列表读于 ${observedAt.toLocaleString("zh-CN")}；返回窗口时自动重读，也可手动刷新。` : "列表尚未读回。"}</p>
-      <div className="list-toolbar">{view === "work" && <select aria-label="任务归属筛选" value={scope} onChange={e => setScope(e.target.value)}><option value="all">全部任务</option><option value="mine">我的当前承接</option></select>}<label className="search-field"><Search size={16} aria-hidden="true" /><input aria-label={view === "documents" ? "搜索全部文档" : "搜索任务（分页读取，范围见下方）"} placeholder={view === "documents" ? "查找文档…" : "搜索任务标题或编号…"} value={query} onChange={e => setQuery(e.target.value)} /></label>
-        {view === "work" && <select aria-label="任务状态筛选" value={filter} onChange={e => setFilter(e.target.value)}><option value="open">未完成任务</option><option value="all">全部状态</option>{Object.entries(states).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}
+      {view !== "work" && <div className="list-toolbar"><label className="search-field"><Search size={16} aria-hidden="true" /><input aria-label={view === "documents" ? "搜索全部文档" : "搜索任务（分页读取，范围见下方）"} placeholder={view === "documents" ? "查找文档…" : "搜索任务标题或编号…"} value={query} onChange={e => setQuery(e.target.value)} /></label>
         <select aria-label={view === "documents" ? "文档类型筛选" : "任务类型筛选"} value={kindFilter} onChange={e => setKindFilter(e.target.value)}><option value="all">全部类型</option>{Object.entries(view === "documents" ? documentKinds : taskKinds).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
         {view === "documents" && <select aria-label="文档状态筛选" value={documentStatus} onChange={e => setDocumentStatus(e.target.value)}><option value="active">未归档</option>{Object.entries(documentStatuses).map(([key, label]) => <option key={key} value={key}>{label}</option>)}<option value="all">全部状态</option></select>}
         <button className="quiet" aria-label="重新读取列表" onClick={context.onChanged}><RefreshCw size={16} /></button>
-      </div>
+      </div>}
       {loading && <p className="list-message" role="status">正在读取{title}…</p>}
       {error && <div className="list-message"><Alert kind="error">读取失败：{error}</Alert><button onClick={context.onChanged}>重试读取</button></div>}
       {searching && <p className="list-message" role="status">正在搜索后续页面；结果尚未完整。</p>}
@@ -434,9 +432,16 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
         {cognitionTasks.length > 0 && <details className="work-status-group"><summary>判断与接续记录 · {cognitionTasks.length} 项已载入</summary><p>由正式认知派发关联的任务；原任务与历史记录均可打开。这里的本轮结果不改写任务状态。</p><TaskListTable tasks={cognitionTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} {...(view === "work" ? listProps : {})} /></details>}
       </> : <TaskListTable tasks={visibleTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} />}
       {!searching && !searchError && !(view === "documents" ? visibleDocuments : visibleTasks).length && <div className="list-empty"><FileEmpty /><h2>{query || filter !== "open" || kindFilter !== "all" || view === "documents" && documentStatus !== "active" ? "没有匹配项" : view === "inbox" ? "没有待办任务" : `还没有${title}`}</h2><p>可以清除筛选，或创建一项有明确正文与验收条件的工作。</p><button onClick={() => { setQuery(""); setFilter("open"); setKindFilter("all"); setDocumentStatus("active"); setScope("all"); }}>清除筛选</button></div>}
-      <div className="list-footer"><span>已载入 {view === "documents" ? documents.items.length : tasks.items.length} 项 · 当前匹配 {view === "documents" ? visibleDocuments.length : visibleTasks.length} 项{view === "work" && (primaryKind === "unclassified" ? `（分类未读回 ${primaryTasks.length}）` : `（业务 ${primaryTasks.length} · 判断 ${cognitionTasks.length} · 待核 ${unknownTasks.length}）`)}</span>{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy || searching} onClick={() => void more()}>{busy || searching ? "加载中…" : "加载更多"}</button>}</div></>}
-    </section></div>{view === "work" && selectedTask && <TaskPreview token={token} projectId={projectId} id={selectedTask}
+      <div className="list-footer"><span>{footerSummary}</span><div className="list-footer-actions">{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy || searching} onClick={() => void more()}>{busy || searching ? "加载中…" : "加载更多"}</button>}{view === "work" && observedAt && <small>读取于 {observedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small>}</div></div></>}
+    </section>
+    </div>{view === "work" && selectedTask && <TaskPreview token={token} projectId={projectId} id={selectedTask}
       item={projections.items[selectedTask]} actorId={context.principal.actorId} returnTo={listRoute} onClose={() => setSelectedTask("")} />}</div>
+    {view === "work" && leaderWork && <details className="leader-work-disclosure"><summary>查看全项目 Leader 对账 <span>按项目全部未关闭工作核对</span></summary><LeaderWorkOverview page={leaderWork} projectId={projectId}
+      ownerNames={resolvedOwners} statuses={statuses} leaderStatuses={leaderStatuses}
+      sessionNames={leaderSessionNames} sourceReading={leaderStatusReading || leaderSessionReading}
+      sourceProblem={leaderStatusError || leaderSessionError} busy={leaderWorkBusy}
+      onMore={() => void moreLeaderWork()} /></details>}
+    {leaderWorkError && <p className="work-list-read-status" role="status">{leaderWorkError}</p>}
     {view === "work" && <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")} aria-current="page">任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} >依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>}
     {view === "work" && <><p className="work-guidance">需要推进或调整工作时，先与已有 Agent 沟通；由 Agent 执行变更后，在这里回读核对。</p><div className="context-links"><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "discussions")}>阅读负责人讨论材料</a><a href={href(projectId, "documents")}>阅读过程文档</a><a href={href(projectId, "inbox")}>依据复核{pending.length ? `（${pending.length}）` : ""}</a></div></>}
   </div>;
@@ -508,6 +513,10 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
     const status=statuses[t.id], cognition=status?.cognition ? cognitionSummary(status) : null;
     const projection = matchingProjection(t, projections[t.id]);
     const nextAction = cognition?.next ?? projection?.nextAction ?? (status && businessNextStep(t,status)) ?? taskNextStep(t.state,t.legacyDecision);
+    const phaseLabel = cognition?.phase ?? (projection && t.state !== "done" && t.state !== "cancelled" ? leaderPhaseLabel[projection.phase] : states[t.state]);
+    const PhaseIcon = projection?.phase === "ready" ? CirclePlay
+      : projection?.phase === "rework" || projection?.phase === "blocked" || projection?.phase === "awaiting_delivery" ? TriangleAlert
+        : Clock3;
     const sessionKey = projection && assignmentSessionKey(projection);
     const taskLink = `${href(projectId, "task", t.id)}${returnTo ? `?list=${encodeURIComponent(returnTo)}` : ""}`;
     const sessionLink = sessionKey ? `${href(projectId, "runtime")}?session=${encodeURIComponent(sessionKey)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
@@ -518,7 +527,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
         {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}
         <span className="task-list-inline-next">{nextAction}</span>
         {selected && projection?.delivery && <a className="task-inline-result" href={`${taskLink}${returnTo ? "&" : "?"}tab=delivery`}>查看固定成果与使用 →</a>}</td>
-      <td className="task-list-state"><span className="mobile-field-label">当前状态</span><span className={`pill task-state-${t.state}`}>{cognition?.phase ?? (projection && t.state !== "done" && t.state !== "cancelled" ? leaderPhaseLabel[projection.phase] : states[t.state])}</span>
+      <td className="task-list-state"><span className="mobile-field-label">当前状态</span><span className={`task-state-display task-state-${t.state} phase-${projection?.phase ?? "unknown"}`}><PhaseIcon size={15} aria-hidden="true" />{phaseLabel}</span>
         {(cognition || projection && !["done", "cancelled"].includes(t.state) && leaderPhaseLabel[projection.phase] !== states[t.state]) && <small>任务 · {states[t.state]}</small>}</td>
       <td className="task-list-owner"><span className="mobile-field-label">{isClosedTask(t.state) ? "历史承接" : "具体承接"}</span>{sessionLink ? <><a href={sessionLink}>{sessionNames[sessionKey!]?.title ?? `Session ${projection!.assignment!.targetId.slice(0, 8)}`}</a><small>{assignmentStatusLabel(projection!)}</small></> : <><span className="task-list-owner-identity">{ownerNames[t.owner]?.title ? <a href={href(projectId, "roles")}>{ownerNames[t.owner]!.title}</a> : <code>{t.owner}</code>}{ownerNames[t.owner]?.title && <code title={t.owner}>{t.owner.slice(0, 8)}</code>}{ownerNames[t.owner]?.error && <small>{ownerNames[t.owner]!.error}</small>}</span><small>{["done", "cancelled"].includes(t.state) ? "无当前分派 · 历史见任务" : projection ? "待具体承接" : "承接尚未读回"}</small></>}</td>
       <td className="task-list-next"><span className="mobile-field-label">下一步</span>
