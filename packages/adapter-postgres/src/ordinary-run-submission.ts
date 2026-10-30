@@ -46,6 +46,12 @@ export class PgOrdinaryRunSubmissionStore {
     return new PgRuntimeStore(this.client,this.projectId).getRuntimeRun(runId);
   }
 
+  async getDocumentRevisionHash(documentId: string, revisionId: string): Promise<string | null> {
+    const r=await this.client.query(`SELECT content_hash FROM document_revision
+      WHERE project_id=$1 AND document_id=$2 AND revision_id=$3`,[this.projectId,documentId,revisionId]);
+    return r.rows[0]?.content_hash??null;
+  }
+
   async hasManagedDispatch(runId: string): Promise<boolean> {
     const r=await this.client.query(`SELECT 1 FROM orchestration_dispatch d
       WHERE d.project_id=$1 AND d.data->>'runtimeRunId'=$2 LIMIT 1`,[this.projectId,runId]);

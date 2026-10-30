@@ -11,6 +11,8 @@ const fixture = resolve(import.meta.dirname, "fixture.mjs");
 const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", model:"gpt-6-sol", sandbox: "danger-full-access", approvalPolicy: "never" };
 const fullSpec:RuntimeSessionSpec={...spec};
 const restoreSpec: RuntimeSessionSpec = { ...spec };
+const supportedVersions = ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1", "codex-cli 0.166.0-alpha.5.1"] as const;
+const modernVersions = supportedVersions.slice(1);
 // Whole-repository parallel tests can delay fake-child startup. Keep each test's
 // short request deadline for the deliberately lost native operation.
 const testAdapter = (options: CodexAppServerOptions): CodexAppServerAdapter =>
@@ -20,10 +22,10 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
   await adapter.open(); return adapter;
 };
 
-test("native naming changes only the exact owned Thread and verifies its readback", async t => {
+for (const expectedVersion of modernVersions) test(`${expectedVersion} native naming changes only the exact owned Thread and verifies its readback`, async t => {
   for (const mode of ["name-sync", "name-sync-lost", "name-sync-reject"]) await t.test(mode, async () => {
     const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, mode],
-      expectedVersion: "codex-cli 0.164.0-alpha.11.1", requestTimeoutMs: 100,
+      expectedVersion, requestTimeoutMs: 100,
       verifyBinding: async () => true });
     t.after(() => adapter.close());
     await adapter.open();
@@ -43,8 +45,11 @@ test("native naming changes only the exact owned Thread and verifies its readbac
   });
 });
 
-test("only the two reviewed CLI protocol versions can be selected", () => {
+test("only the three reviewed CLI protocol versions can be selected", () => {
+  for (const expectedVersion of supportedVersions)
+    assert.doesNotThrow(() => testAdapter({ expectedVersion }));
   assert.throws(() => testAdapter({ expectedVersion: "codex-cli 0.165.0" }), /unsupported Codex CLI protocol version/);
+  assert.throws(() => testAdapter({ expectedVersion: "codex-cli 0.166.0" }), /unsupported Codex CLI protocol version/);
   assert.throws(() => testAdapter({ expectedVersion: "0.164.0-alpha.11.1" }), /unsupported Codex CLI protocol version/);
 });
 
@@ -71,7 +76,7 @@ test('transport EOF does not prove child exit and close waits for the actual rec
   assert.equal(adapter.hasProcessHandle(),true);
 });
 
-for(const expectedVersion of ['codex-cli 0.154.0','codex-cli 0.164.0-alpha.11.1'] as const){
+for(const expectedVersion of supportedVersions){
   test(`${expectedVersion} creates and runs the exact full native policy`,async t=>{
     const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-normal'],expectedVersion});
     t.after(()=>adapter.close());await adapter.open();
@@ -83,18 +88,20 @@ for(const expectedVersion of ['codex-cli 0.154.0','codex-cli 0.164.0-alpha.11.1'
   });
 }
 
-test('same full Thread can receive an ordinary Turn with its native tools intact',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-normal'],
-    expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
-  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
-  await assert.rejects(()=>adapter.startConversationTurn(binding,'too early','message-op'),RuntimeProtocolError);
-  const admission=await adapter.qualifyConversationThread(binding);
-  assert.equal(admission.available,true,admission.reason);
-  assert.match(admission.fingerprint??'',/^[a-f0-9]{64}$/);
-  assert.equal((await adapter.startConversationTurn(binding,'ordinary message','message-op')).id,'turn-1');
-  await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
-  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
-});
+for(const expectedVersion of modernVersions){
+  test(`${expectedVersion} full Thread can receive an ordinary Turn`,async t=>{
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-normal'],
+      expectedVersion});
+    t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+    await assert.rejects(()=>adapter.startConversationTurn(binding,'too early','message-op'),RuntimeProtocolError);
+    const admission=await adapter.qualifyConversationThread(binding);
+    assert.equal(admission.available,true,admission.reason);
+    assert.match(admission.fingerprint??'',/^[a-f0-9]{64}$/);
+    assert.equal((await adapter.startConversationTurn(binding,'ordinary message','message-op')).id,'turn-1');
+    await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
+    assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+  });
+}
 
 test('full conversation Turn retains current trusted dynamic tool callback',async t=>{
   let bridgeCalls=0;
@@ -247,29 +254,41 @@ test('lost full business start cannot replay the same operation in the adapter',
   assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
 });
 
-test("version mismatch and changed standard or experimental schema stop before App Server startup", async t => {
+for (const expectedVersion of modernVersions) test(`${expectedVersion} changed standard or experimental schema stops before App Server startup`, async t => {
   const directory=await mkdtemp(join(tmpdir(),"evoloop-protocol-fingerprint-"));
   t.after(()=>rm(directory,{recursive:true,force:true}));
   const executable=join(directory,"fake-codex");
   await writeFile(executable,`#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\\n' 'codex-cli 0.164.0-alpha.11.1'; exit 0; fi
+if [ "$1" = "--version" ]; then printf '%s\\n' '${expectedVersion}'; exit 0; fi
 if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ]; then
   while [ "$#" -gt 0 ]; do if [ "$1" = "--out" ]; then shift; mkdir -p "$1"; printf '{}' > "$1/codex_app_server_protocol.v2.schemas.json"; exit 0; fi; shift; done
 fi
 printf 'app-server-started' > '${join(directory,"started")}'
 exit 1
 `,{mode:0o700});
-  const wrongVersion=testAdapter({executable,expectedVersion:"codex-cli 0.154.0"});
-  await assert.rejects(()=>wrongVersion.open(),/CLI version mismatch/);
   for(const experimental of [false,true]){
-    const adapter=testAdapter({executable,expectedVersion:"codex-cli 0.164.0-alpha.11.1",
+    const adapter=testAdapter({executable,expectedVersion,
       ...(experimental?{dynamicTools:async()=>[],callDynamicTool:async()=>({contentItems:[],success:false})}:{})});
     await assert.rejects(()=>adapter.open(),/schema changed/);
   }
   await assert.rejects(()=>import("node:fs/promises").then(fs=>fs.stat(join(directory,"started"))),{code:"ENOENT"});
 });
 
-for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1"]) {
+test("the installed CLI version must exactly match the selected pinned protocol", async t => {
+  const directory=await mkdtemp(join(tmpdir(),"evoloop-protocol-version-"));
+  t.after(()=>rm(directory,{recursive:true,force:true}));
+  const executable=join(directory,"fake-codex");
+  await writeFile(executable,`#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\\n' 'codex-cli 0.164.0-alpha.11.1'; exit 0; fi
+printf 'unexpected' > '${join(directory,"started")}'
+exit 1
+`,{mode:0o700});
+  const adapter=testAdapter({executable,expectedVersion:"codex-cli 0.166.0-alpha.5.1"});
+  await assert.rejects(()=>adapter.open(),/CLI version mismatch/);
+  await assert.rejects(()=>import("node:fs/promises").then(fs=>fs.stat(join(directory,"started"))),{code:"ENOENT"});
+});
+
+for (const expectedVersion of supportedVersions) {
   test(`${expectedVersion} answers current time only for an owned Thread when its schema supports it`, async t => {
     const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, "protocol-0164"],
       expectedVersion, requestTimeoutMs: 500 });
@@ -285,12 +304,12 @@ for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.
     await adapter.startTurn(binding, "business", "business-op");
     await settled;
     const own = replies.get(850)!;
-    if (expectedVersion === "codex-cli 0.164.0-alpha.11.1") {
+    if (expectedVersion !== "codex-cli 0.154.0") {
       assert.equal(Number.isSafeInteger((own.result as Record<string, unknown>).currentTimeAt), true);
       assert.ok(Math.abs((own.result as {currentTimeAt:number}).currentTimeAt - Math.floor(Date.now()/1000)) < 5);
     } else assert.equal((own.error as {code:number}).code, -32601);
-    assert.equal((replies.get(851)!.error as {code:number}).code, expectedVersion.endsWith("0.154.0") ? -32601 : -32000);
-    assert.equal((replies.get(852)!.error as {code:number}).code, expectedVersion.endsWith("0.154.0") ? -32601 : -32000);
+    assert.equal((replies.get(851)!.error as {code:number}).code, expectedVersion === "codex-cli 0.154.0" ? -32601 : -32000);
+    assert.equal((replies.get(852)!.error as {code:number}).code, expectedVersion === "codex-cli 0.154.0" ? -32601 : -32000);
     assert.equal((replies.get(853)!.error as {code:number}).code, -32601);
   });
 
@@ -608,7 +627,7 @@ test("resuming a persisted Session reapplies its exact native profile", async t 
   await assert.rejects(() => adapter.resume(binding, { ...profile, approvalPolicy: "untrusted" }), RuntimeProtocolError);
 });
 
-for (const expectedVersion of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1"]) {
+for (const expectedVersion of supportedVersions) {
 test(`${expectedVersion} approved execution profile revision changes only the owned Thread and freezes the next Turn model`, async t => {
   const priorRevisionId = "00000000-0000-4000-8000-000000000101";
   const revisionId = "00000000-0000-4000-8000-000000000102";
@@ -705,21 +724,23 @@ test('bounded message history starts with the newest native Turn even after one 
   assert.equal((await adapter.listTurns(binding,first.nextCursor)).data[0]?.id,'older-100');
 });
 
-test('pinned 0.164 requests Turn metadata without loading Items',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'history-newest-0164'],
-    expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true});
-  t.after(()=>adapter.close());await adapter.open();
-  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
-    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-    owner:'evoloop-codex-app-server'};
-  await adapter.registerBinding(binding);
-  assert.equal((await adapter.listTurns(binding)).data[0]?.id,'turn-1');
-});
+for (const expectedVersion of modernVersions) {
+  test(`${expectedVersion} requests Turn metadata without loading Items`,async t=>{
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'history-newest-0164'],
+      expectedVersion,verifyBinding:async()=>true});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,
+      owner:'evoloop-codex-app-server'};
+    await adapter.registerBinding(binding);
+    assert.equal((await adapter.listTurns(binding)).data[0]?.id,'turn-1');
+  });
+}
 
-for (const mode of ['turn-cursor-missing', 'turn-cursor-empty', 'turn-cursor-number']) {
-  test(`pinned 0.164 rejects ${mode} rather than reporting exhausted Turn history`, async t => {
+for (const expectedVersion of modernVersions) for (const mode of ['turn-cursor-missing', 'turn-cursor-empty', 'turn-cursor-number']) {
+  test(`${expectedVersion} rejects ${mode} rather than reporting exhausted Turn history`, async t => {
     const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
-      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true});
+      expectedVersion,verifyBinding:async()=>true});
     t.after(()=>adapter.close());await adapter.open();
     const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
       nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,authorizationScope:spec.authorizationScope,

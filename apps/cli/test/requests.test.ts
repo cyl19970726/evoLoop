@@ -27,7 +27,7 @@ test("ordinary result intent keeps its original operation and has a direct readb
   const body = { projectId: project, operationId: operation, submissionId: receipt,
     runId: target, taskId: revision, sessionId: target, taskRevisionId: revision,
     runInputHash: sha, deliveryOperationId: revision,
-    deliveryIntent: { artifactRef: "doc/revision", artifactRevision: "r1", contentHash: sha,
+    deliveryIntent: { artifactRef: "https://example.test/report", artifactRevision: "r1", contentHash: sha,
       technicalResult: "passed", technicalEvidence: "build passed", reason: "ready" } };
   const request = prepareRequest("ordinary.submit", project, body);
   assert.equal(request.path, `/api/projects/${project}/ordinary-runs/submissions`);
@@ -36,8 +36,17 @@ test("ordinary result intent keeps its original operation and has a direct readb
   assert.throws(() => prepareRequest("ordinary.submit", project, { ...body, projectId: other }), /differs/);
   assert.throws(() => prepareRequest("ordinary.submit", project, { ...body, runInputHash: "bad" }), /runInputHash/);
   const spaced = prepareRequest("ordinary.submit", project, { ...body,
-    deliveryIntent: { ...body.deliveryIntent, artifactRef: "  doc/revision  " } });
-  assert.equal((spaced.body as typeof body).deliveryIntent.artifactRef, "doc/revision");
+    deliveryIntent: { ...body.deliveryIntent, artifactRef: "  https://example.test/report  " } });
+  assert.equal((spaced.body as typeof body).deliveryIntent.artifactRef, "https://example.test/report");
+  const documentId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", documentRevision="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const fixed=prepareRequest("ordinary.submit",project,{...body,deliveryIntent:{...body.deliveryIntent,
+    artifactRef:`document:${documentId}@${documentRevision}`,artifactRevision:documentRevision}});
+  assert.equal((fixed.body as typeof body).deliveryIntent.artifactRef,
+    `#/p/${project}/documents/${documentId}?revision=${documentRevision}`);
+  assert.throws(()=>prepareRequest("ordinary.submit",project,{...body,deliveryIntent:{...body.deliveryIntent,
+    artifactRef:`document:${documentId}`}}),/ARTIFACT_DOCUMENT_REVISION_REQUIRED/);
+  assert.throws(()=>prepareRequest("ordinary.submit",project,{...body,deliveryIntent:{...body.deliveryIntent,
+    artifactRef:"https://example.test/report; PR https://example.test/other"}}),/ARTIFACT_REF_AMBIGUOUS/);
 });
 
 test("request schema exposes exact enums and nested required fields from shared contracts", () => {

@@ -27,14 +27,22 @@ const command = { type: "runtime.session.reserve", projectId, operationId, sessi
   roleId: grant.roleId, authorizationScope: grant.authorizationScope, cwd, sandbox: grant.sandbox,
   approvalPolicy: "never", model: "gpt-6" };
 
-test("runtime protocol version defaults to the reviewed 0.164 schema and preserves explicit legacy configuration", async () => {
+test("runtime protocol version defaults to the reviewed 0.166 schema and preserves explicit reviewed configuration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "evoloop-runtime-version-"));
   const file = join(directory, "integrations.json");
   try {
     await writeFile(file, JSON.stringify({runtime:{enabled:true,grants:[]}}));
-    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.164.0-alpha.11.1");
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.166.0-alpha.5.1");
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.154.0",grants:[]}}));
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.154.0");
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.164.0-alpha.11.1",grants:[]}}));
     assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.164.0-alpha.11.1");
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.166.0-alpha.5.1",grants:[]}}));
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.166.0-alpha.5.1");
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.166.0-alpha.5.1",nativeUserInput:true,grants:[]}}));
+    assert.equal((await loadIntegrations(file)).runtime?.nativeUserInput, true);
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.154.0",nativeUserInput:true,grants:[]}}));
+    await assert.rejects(loadIntegrations(file), /Invalid integration configuration/);
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.165.0",grants:[]}}));
     await assert.rejects(loadIntegrations(file), /Invalid integration configuration/);
   } finally { await rm(directory,{recursive:true,force:true}); }

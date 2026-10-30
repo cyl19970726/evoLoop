@@ -14,6 +14,7 @@ import type {
   TaskRevision,
 } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
+import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { currentRetentions } from "./runtime/basis.js";
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
@@ -374,11 +375,31 @@ export async function applyWorkflow({
           throw new DomainError("DELIVERY_ORIGIN_UNVERIFIED", "new acceptance requires the signed Run submitter");
         sourceRunVersion = run.version;
       }
+      // Keep signed bytes for exact sealing, including older file references.
+      // Internal project routes remain verifiable even if signed before this validator.
+      const signedIntent = !!c.runId && !!submittedByActorId;
+      const internalRef = /^document:/i.test(c.artifactRef) || /#\/p\//i.test(c.artifactRef);
+      let artifact: ReturnType<typeof parseArtifactReference> | null = null;
+      if (!signedIntent || internalRef) {
+        try { artifact = parseArtifactReference(c.artifactRef,c.artifactRevision,c.projectId,false); }
+        catch (error) {
+          if (error instanceof ArtifactReferenceError) throw new DomainError(error.code,error.message);
+          throw error;
+        }
+        if (artifact.kind === 'document') {
+          const original = await tx.getDocumentRevision(artifact.documentId,artifact.revisionId);
+          if (!original || original.projectId !== c.projectId)
+            throw new DomainError('ARTIFACT_DOCUMENT_NOT_FOUND','Read the exact Document revision in this project before Delivery');
+          if (original.contentHash.toLowerCase() !== c.contentHash.toLowerCase())
+            throw new DomainError('ARTIFACT_HASH_MISMATCH','contentHash must equal the saved Document revision SHA-256');
+        }
+      }
       const revision = await newTaskRevision(tx, task, actorId, now, nextId, "in_progress", c.reason);
       const delivery: Delivery = { projectId: c.projectId, id: nextId(), taskId: task.id,
         taskRevisionId: revision.id, runId: c.runId ?? null, sourceRunVersion,
         submittedByActorId,
-        artifactRef: c.artifactRef, artifactRevision: c.artifactRevision,
+        artifactRef: signedIntent ? c.artifactRef : artifact?.artifactRef ?? c.artifactRef,
+        artifactRevision: c.artifactRevision,
         contentHash: c.contentHash, technicalResult: c.technicalResult,
         technicalEvidence: c.technicalEvidence, reason: c.reason, actorId, createdAt: now };
       await tx.insertDelivery(delivery);

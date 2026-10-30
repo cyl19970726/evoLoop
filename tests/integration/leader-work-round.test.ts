@@ -14,6 +14,8 @@ import { buildServer } from "../../apps/coordinator/src/server.js";
 import { createLeaderWorkIndexReader } from "../../apps/coordinator/src/work-management/work-index.js";
 import { OrdinaryRunSubmissionService } from "../../apps/coordinator/src/ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "../../apps/coordinator/src/ordinary-run-submission/seal.js";
+import { prepareRequest } from "../../apps/cli/src/requests.js";
+import { deliveryTarget } from "../../apps/workbench/src/workflow/deliveryPresentation.js";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(database).pathname))
@@ -277,9 +279,14 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
   await trusted.beginDispatch(projectId, prerequisiteRunId);
   await trusted.bindTurn(projectId, prerequisiteRunId, { id: `turn-${prerequisiteRunId}` },
     { kind: "startReply", operationId: runBefore.operationId });
+  const reportId=randomUUID(), reportBody='Fixed leader round artifact';
+  const report=await workflow.execute(lead,{type:'document.create',projectId,operationId:randomUUID(),
+    documentId:reportId,title:'Fixed leader round artifact',body:reportBody,kind:'report'});
+  assert.equal(report.status,'applied',JSON.stringify(report));
+  const reportRevision=report.revisionId!;
   const deliveryOperationId = randomUUID(), deliveryIntent = {
-    artifactRef: "fixture://leader-round-artifact", artifactRevision: "fixed-v1",
-    contentHash: hash("leader-round-artifact"), technicalResult: "passed" as const,
+    artifactRef: `document:${reportId}@${reportRevision}`, artifactRevision: reportRevision,
+    contentHash: hash(reportBody), technicalResult: "passed" as const,
     technicalEvidence: "Independent checks passed", reason: "Signed ordinary result",
   };
   const submission = {
@@ -287,11 +294,25 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     runId: prerequisiteRunId, taskId: prerequisiteTaskId, sessionId,
     taskRevisionId: runBefore.taskRevisionId, runInputHash: runBefore.inputHash, deliveryIntent,
   };
+  const missingRevision=await app.inject({method:'POST',url:`/api/projects/${projectId}/ordinary-runs/submissions`,
+    headers:{authorization:`Bearer ${workerToken}`},payload:{...submission,deliveryIntent:{...deliveryIntent,artifactRef:`document:${reportId}`}}});
+  assert.equal(missingRevision.statusCode,409,missingRevision.body);
+  assert.equal(missingRevision.json().code,'ARTIFACT_DOCUMENT_REVISION_REQUIRED');
+  const wrongHash=await app.inject({method:'POST',url:`/api/projects/${projectId}/ordinary-runs/submissions`,
+    headers:{authorization:`Bearer ${workerToken}`},payload:{...submission,deliveryIntent:{...deliveryIntent,contentHash:'a'.repeat(64)}}});
+  assert.equal(wrongHash.statusCode,409,wrongHash.body);
+  assert.equal(wrongHash.json().code,'ARTIFACT_HASH_MISMATCH');
   const signed = await app.inject({
     method: "POST", url: `/api/projects/${projectId}/ordinary-runs/submissions`,
-    headers: { authorization: `Bearer ${workerToken}` }, payload: submission,
+    headers: { authorization: `Bearer ${workerToken}` },
+    payload: prepareRequest('ordinary.submit',projectId,submission).body,
   });
   assert.equal(signed.statusCode, 200, signed.body);
+  const saved=await app.inject({method:'GET',url:`/api/projects/${projectId}/ordinary-runs/operations/${submission.operationId}`,
+    headers:{authorization:`Bearer ${workerToken}`}});
+  assert.equal(saved.statusCode,200,saved.body);
+  assert.equal(saved.json().submission.deliveryIntent.artifactRef,
+    `#/p/${projectId}/documents/${reportId}?revision=${reportRevision}`);
   await trusted.recordTurn(projectId, prerequisiteRunId, `turn-${prerequisiteRunId}`, "completed", "Fixed result completed");
   const sealed = await createOrdinaryRunSealer({
     readSubmission: (p, r) => ordinary.readSubmission(p, r),
@@ -306,6 +327,12 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
   })(projectId, prerequisiteRunId);
   assert.equal(sealed.status, "sealed", JSON.stringify(sealed));
   const deliveryId = sealed.deliveryId;
+  const delivered=(await workflow.getTask(lead,projectId,prerequisiteTaskId)).deliveries?.find(d=>d.id===deliveryId);
+  assert.equal(delivered?.artifactRef,`#/p/${projectId}/documents/${reportId}?revision=${reportRevision}`);
+  assert.equal(delivered?.artifactRevision,reportRevision);
+  assert.equal(delivered?.contentHash,hash(reportBody));
+  assert.deepEqual(deliveryTarget(delivered!,projectId),{kind:'document',documentId:reportId,
+    revisionId:reportRevision,href:`#/p/${projectId}/documents/${reportId}?revision=${reportRevision}`});
 
   const used = await command(consumerToken, {
     projectId, operationId: randomUUID(), type: "observation.record", taskId: prerequisiteTaskId,

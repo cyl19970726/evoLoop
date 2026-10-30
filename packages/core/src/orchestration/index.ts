@@ -2,6 +2,7 @@ import type { Operation, OutboxEvent, Principal } from "@evoloop/contracts";
 import { applyRole, RoleRuleError } from "../roles/index.js";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
+import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import type { OrchestrationCommand, OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationResult, OrchestrationRunFact, OrchestrationSourceFact, OrchestrationStore, OrchestrationSubmission, OrchestrationTaskFact, OrchestrationTransaction, OrchestrationWorkerDecision, StudyMaterialDeclaration, StudyMaterialItem } from "@evoloop/contracts/orchestration";
 
 export class OrchestrationError extends Error {
@@ -911,7 +912,20 @@ export class OrchestrationService {
       const run = await tx.getRunFact(command.runId);
       if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId || run.taskRevisionId !== command.taskRevisionId || run.inputHash !== command.runInputHash) return fail("RUN_MISMATCH", "submission fixed input must match bound Run");
       if (!["requested", "dispatching", "running"].includes(run.state)) return fail("RUN_NOT_ACTIVE", "first worker submission must be recorded before the Run becomes terminal or unknown");
-      const submission: OrchestrationSubmission = { projectId: command.projectId, id: command.submissionId, version: 1, dispatchId: dispatch.id, runId: run.id, taskId: dispatch.taskId, taskRevisionId: run.taskRevisionId, runInputHash: run.inputHash, deliveryOperationId: command.deliveryOperationId, deliveryIntent: command.deliveryIntent, agentObservation: command.agentObservation, evidenceRefs: command.evidenceRefs, state: "submitted", submittedBy: principal.actorId, sealedBy: null, expectedTaskVersion: null, sealToken: null, deliveryId: null, reason: null, createdAtUtc: now, updatedAtUtc: now };
+      let artifact: ReturnType<typeof parseArtifactReference>;
+      try { artifact = parseArtifactReference(command.deliveryIntent.artifactRef,
+        command.deliveryIntent.artifactRevision,command.projectId,false); }
+      catch (error) {
+        if (error instanceof ArtifactReferenceError) return fail(error.code,error.message);
+        throw error;
+      }
+      if (artifact.kind === 'document') {
+        const original = await tx.getDocumentRevisionFact(artifact.documentId,artifact.revisionId);
+        if (!original) return fail('ARTIFACT_DOCUMENT_NOT_FOUND','Read the exact Document revision in this project before submitting');
+        if (original.contentHash.toLowerCase() !== command.deliveryIntent.contentHash.toLowerCase())
+          return fail('ARTIFACT_HASH_MISMATCH','contentHash must equal the saved Document revision SHA-256');
+      }
+      const submission: OrchestrationSubmission = { projectId: command.projectId, id: command.submissionId, version: 1, dispatchId: dispatch.id, runId: run.id, taskId: dispatch.taskId, taskRevisionId: run.taskRevisionId, runInputHash: run.inputHash, deliveryOperationId: command.deliveryOperationId, deliveryIntent: {...command.deliveryIntent,artifactRef:artifact.artifactRef}, agentObservation: command.agentObservation, evidenceRefs: command.evidenceRefs, state: "submitted", submittedBy: principal.actorId, sealedBy: null, expectedTaskVersion: null, sealToken: null, deliveryId: null, reason: null, createdAtUtc: now, updatedAtUtc: now };
       await tx.insertSubmission(submission); await event(loop.id, "submission", submission.id, "worker.submitted", { runId: run.id, taskRevisionId: run.taskRevisionId, deliveryOperationId: submission.deliveryOperationId, evidenceRefs: submission.evidenceRefs });
       return result("submission", submission.id, 1);
     }
