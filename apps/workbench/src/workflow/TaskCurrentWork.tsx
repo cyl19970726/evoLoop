@@ -8,8 +8,8 @@ import { href } from "../ui/shared";
 import { assignmentSessionKey, assignmentStatusLabel, executionSummary, isClosedTask } from "./taskExperience";
 import { leaderPhaseLabel } from "./leaderWorkLoad";
 
-export function TaskCurrentWork({ item, token, projectId, actorId, returnTo, compact = false }: {
-  item: LeaderWorkTask; token: string; projectId: string; actorId: string; returnTo: string; compact?: boolean;
+export function TaskCurrentWork({ item, token, projectId, actorId, returnTo, compact = false, showDelivery = true }: {
+  item: LeaderWorkTask; token: string; projectId: string; actorId: string; returnTo: string; compact?: boolean; showDelivery?: boolean;
 }) {
   const historical = isClosedTask(item.taskState);
   const assignedKey = assignmentSessionKey(item);
@@ -50,8 +50,8 @@ export function TaskCurrentWork({ item, token, projectId, actorId, returnTo, com
       <div><dt>{historical ? "历史承接 Session" : "承接 Session"}</dt><dd>{sessionHref ? <a href={sessionHref}>{name} <ArrowUpRight size={13} aria-hidden="true" /></a> : ["done", "cancelled"].includes(item.taskState) ? "无当前分派" : "待具体承接"}
         <small>{assignedKey ? assignmentStatusLabel(item) : verifiedRunner ? (historical ? "由历史 Run 确认" : "由本任务当前 Run 确认") : assignmentStatusLabel(item)}{item.assignment?.recipientActorId ? ` · ${item.assignment.recipientActorId}` : ""}</small></dd></div>
       <div><dt>{historical ? "执行记录（历史）" : "执行"}</dt><dd>{executionSummary(item)}{!compact && observed && <small>Session 现状 · {observed.runtimeState ?? "外部状态未知"}（{historical ? "不代表此任务仍运行" : "与 Run 分开记录"}）</small>}</dd></div>
-      <div><dt>{item.taskState === "done" ? "关闭所据交付" : "当前交付"}</dt><dd>{item.delivery ? `技术检查${item.delivery.technicalResult === "passed" ? "通过" : "失败"}` : "尚无交付"}
-        <small>{item.delivery?.observationResult ? `${item.delivery.observationKind === "human" ? "真人" : "Agent"} · ${item.delivery.observationResult === "used" ? "已使用" : item.delivery.observationResult === "failed" ? "使用失败" : "未使用"}` : "尚无本次使用观察"}</small></dd></div>
+      {showDelivery && <div><dt>{item.taskState === "done" ? "关闭所据交付" : "当前交付"}</dt><dd>{item.delivery ? `技术检查${item.delivery.technicalResult === "passed" ? "通过" : "失败"}` : "尚无交付"}
+        <small>{item.delivery?.observationResult ? `${item.delivery.observationKind === "human" ? "真人" : "Agent"} · ${item.delivery.observationResult === "used" ? "已使用" : item.delivery.observationResult === "failed" ? "使用失败" : "未使用"}` : "尚无本次使用观察"}</small></dd></div>}
     </dl>
     {!compact && <><p className="current-work-next"><strong>下一步</strong>{item.nextAction}</p>
       {verifiedRunner && verifiedRunner.sessionKey !== key && <p className="current-work-runner">{historical ? "历史 Run 实际运行于 " : "当前 Run 实际运行于 "}<a href={`${href(projectId, "runtime")}?session=${encodeURIComponent(verifiedRunner.sessionKey)}&tab=overview`}>{verifiedRunner.name}</a>；与分派目标分别记录。</p>}

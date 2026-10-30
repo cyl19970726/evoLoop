@@ -37,7 +37,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
         ? {items:[task("30000009-0000-4000-8000-000000000009",offPageRole,"跨页任务")],nextCursor:null}
         : {items:[task(taskId,currentOwner,"澄清分工页待办"),task("30000006-0000-4000-8000-000000000006","acceptance-owner","逻辑责任者"),task("30000007-0000-4000-8000-000000000007",unknown,"未知职责")],nextCursor:"next"};
       else if (url.pathname === `${p}/impacts`) value=[];
-      else if (url.pathname === `${p}/orchestration/work-status`) value={items:[]};
+      else if (url.pathname === `${p}/orchestration/work-status`) value={items:(url.searchParams.get("taskIds")??"").split(",").filter(Boolean).map(taskId=>({taskId,cognition:false,hasClosure:false,readyForAcceptance:false}))};
       else if (url.pathname === `${p}/work-management/index`) value={items:[{kind:"task",taskId,version:1,
         currentRevisionId:taskId,workChangeSequence:4,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",
         nextAction:"核对当前版本后按既有 assignment/queue 规则安排执行",
@@ -83,10 +83,15 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.includes("acceptance-owner"),false);
   assert.equal(initialReads.includes(offPageRole),false);
+  await page.getByRole("button",{name:"关闭任务摘要"}).click();
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("跨页任务");
   await page.getByRole("row").filter({hasText:"跨页任务"}).getByRole("link",{name:"跨页职责"}).waitFor();
-  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("");
+  assert.equal(await page.locator(".task-selection").count(),0,"closing the reader stays closed after filtering");
+  await page.getByRole("button",{name:"跨页任务",exact:true}).click();
+  await page.locator(".task-selection").waitFor({state:"visible"});
+  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("澄清分工页待办");
   await row.getByRole("link",{name:"开发流程与规范负责人"}).waitFor();
+  assert.match(await page.locator(".task-selection-top").innerText(),/不在当前筛选结果中/);
   assert.equal(await page.locator(".task-list-table").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await fetch(`${base}/__fixture/hold`);
   await page.getByRole("button",{name:"重新读取列表"}).click();
@@ -108,5 +113,14 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   if (process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
   assert.equal(await row.locator(".task-list-owner").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  await page.setViewportSize({width:1171,height:635});
+  await page.evaluate(()=>scrollTo(0,0));
+  await page.locator(".workbench-layout.sidebar-collapsed").waitFor();
+  const collapsedBody=await page.locator(".workspace-body").boundingBox();
+  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>900,"collapsed navigation must keep the workspace beside the rail");
+  await page.setViewportSize({width:1920,height:1080});
+  await page.locator(".workbench-layout:not(.sidebar-collapsed)").waitFor();
+  const wideBody=await page.locator(".workspace-body").boundingBox();
+  assert.ok(wideBody && wideBody.y<70 && wideBody.width>1400);
   if (process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT,fullPage:false});
 });

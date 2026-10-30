@@ -10,8 +10,8 @@ import { DeliveryArtifact, useDeliveryNames } from "./DeliveryPanel";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 
 const empty: NonNullable<TaskDetail["deliveries"]> = [];
-export function TaskPreview({ token, projectId, id, item, actorId, returnTo, onClose }: {
-  token: string; projectId: string; id: string; item?: LeaderWorkTask; actorId: string; returnTo: string; onClose: () => void;
+export function TaskPreview({ token, projectId, id, item, actorId, returnTo, onClose, outsideFilter = false }: {
+  token: string; projectId: string; id: string; item?: LeaderWorkTask; actorId: string; returnTo: string; onClose: () => void; outsideFilter?: boolean;
 }) {
   const [read, setRead] = useState<{ projectId: string; taskId: string; detail: TaskDetail | null; problem: string } | null>(null);
   const selectedRead = read?.projectId === projectId && read.taskId === id ? read : null;
@@ -31,7 +31,7 @@ export function TaskPreview({ token, projectId, id, item, actorId, returnTo, onC
   const projection = detail ? matchingProjection(detail.task, item) : undefined;
   const fullHref = `${href(projectId, "task", id)}?list=${encodeURIComponent(returnTo)}`;
   return <aside className="task-selection" aria-label="所选任务摘要">
-    <div className="task-selection-top"><span>当前所选{detail ? ` · 任务 v${detail.task.version}` : ""}</span><button className="quiet" aria-label="关闭任务摘要" onClick={onClose}><X size={17} /></button></div>
+    <div className="task-selection-top"><span>{outsideFilter ? "保留所选任务 · 不在当前筛选结果中" : "当前所选"}{detail ? ` · 任务 v${detail.task.version}` : ""}</span><button className="quiet" aria-label="关闭任务摘要" onClick={onClose}><X size={17} /></button></div>
     {problem ? <p role="alert">摘要读取失败：{problem}。<a href={fullHref}>打开任务重读</a></p> : !detail ? <p role="status">正在读取任务摘要…</p> : <>
       <header className="task-selection-header">
         <h2>{detail.task.title}</h2>
@@ -39,7 +39,7 @@ export function TaskPreview({ token, projectId, id, item, actorId, returnTo, onC
       </header>
       <div className="task-selection-body">
         <div className="task-selection-primary">
-          {projection ? <TaskCurrentWork item={projection} token={token} projectId={projectId} actorId={actorId} returnTo={returnTo} /> : <p>当前工作安排尚未读回；请打开完整任务核对。</p>}
+          {projection ? <TaskCurrentWork item={projection} token={token} projectId={projectId} actorId={actorId} returnTo={returnTo} showDelivery={false} /> : <p>当前工作安排尚未读回；请打开完整任务核对。</p>}
           <details className="task-reader-acceptance"><summary>完成条件</summary><p>{detail.task.acceptance}</p></details>
           <a className="task-reader-basis" href={`${fullHref}&tab=basis`}>来源与修订 →</a>
         </div>

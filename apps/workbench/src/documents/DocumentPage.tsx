@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { DocumentOutline } from "./DocumentOutline";
+import { useEffect, useRef, useState } from "react";
 import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
 import { ApiError, api, errorText } from "../api";
 import { Alert, ShortId, date, documentReturnHref, href, readRoute } from "../ui/shared";
@@ -14,6 +15,7 @@ const relationLabel = { content: "任务正文", link: "已关联", basis: "当�
 const readProblem = (cause: unknown): string => cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
   ? "当前身份无权读取该文档" : errorText(cause);
 export function DocumentPage({ token, projectId, id, selectedRevision, context, refresh }: { token: string; projectId: string; id: string; selectedRevision?: string; context: MutationContext; refresh: number }) {
+  const outlineBody = useRef<HTMLElement | null>(null);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [revision, setRevision] = useState<DocumentRevision | null>(null);
   const [loadedScope, setLoadedScope] = useState("");
@@ -99,9 +101,8 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     {loading && <Alert>正在核对当前修订；保存与采纳暂不可用。</Alert>}
     {error && <Alert kind="error">当前文档回读未完成：{error}。页首保留上次读回内容，不能视为当前状态；草稿仍留在本页。</Alert>}
     <header className="document-reading-header">
-      <div className="eyebrow">{detail.document.kind ? kindLabel[detail.document.kind] : "过程文档"} · {statusLabel[detail.document.status]}</div>
       <h1>{detail.document.title}</h1>
-      <p className="doc-reading-version">正在阅读 <strong>{revision.id === detail.current.id ? "当前版" : "固定历史版"}</strong> <ShortId value={revision.id} /> · {date(revision.createdAt)}{detail.document.primaryTaskId && <> · <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a></>}</p>
+      <p className="doc-reading-version"><span>{statusLabel[detail.document.status]}</span><span>{detail.document.kind ? kindLabel[detail.document.kind] : "过程文档"}</span><strong>阅读{revision.id === detail.current.id ? "当前固定版" : "固定历史版"} <ShortId value={revision.id} /></strong><time>{date(revision.createdAt)}</time>{detail.document.primaryTaskId && <a href={href(projectId, "task", detail.document.primaryTaskId)}>查看所属任务 →</a>}</p>
       {taskOwned && <Alert>这是任务主文档。此处只阅读固定修订；请从{detail.document.primaryTaskId
         ? <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a> : "所属任务页"}修改正文。</Alert>}
       {revision.id !== detail.current.id && <Alert>所读为固定历史版。当前版已更新；请核对任务实际采用的修订。</Alert>}
@@ -112,22 +113,24 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
         {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
       </div>
     </header>
+    {revision.format === "markdown" && <details className="document-outline-mobile"><summary>文档目录</summary><DocumentOutline body={outlineBody} revision={revision.id} compact /></details>}
     <div className="document-read-layout">
-      <article className="document-read-main">
+      <article className="document-read-main" ref={outlineBody}>
         <section className="doc-primary-body" aria-label="文档完整正文">
-          {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
+          {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={detail.document.title} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
             : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} />}
         </section>
       </article>
       <aside className="document-read-aside" aria-label="文档版本、来源与关联">
+        {revision.format === "markdown" && <div className="document-outline-desktop"><DocumentOutline body={outlineBody} revision={revision.id} /></div>}
         <details className="doc-reading-details" open><summary>版本、原件与来源</summary>
           <div className="doc-version-status" aria-label="文档修订状态">
             <span><strong>正在阅读</strong> <ShortId value={revision.id} /><small>{date(revision.createdAt)}</small></span>
             <span><strong>当前版</strong> <a href={href(projectId, "document", id, detail.current.id)}><ShortId value={detail.current.id} /></a><small>{date(detail.current.createdAt)}</small></span>
             <span><strong>已发布版</strong> {detail.adopted ? <><a href={href(projectId, "document", id, detail.adopted.id)}><ShortId value={detail.adopted.id} /></a><small>{date(detail.adopted.createdAt)}</small></> : "尚未发布"}</span>
           </div>
-          <p>原件 {revision.format} · 作者 {revision.author}<br />修订理由 {revision.reason}</p>
-          <p>内容 SHA-256 <code>{revision.contentHash}</code></p>
+          <p>原件格式 {revision.format}<br />作者 {revision.author}<br />修订理由 {revision.reason}</p>
+          <details className="doc-integrity"><summary>完整标识与哈希</summary><p>所读修订 <code>{revision.id}</code></p><p>内容 SHA-256 <code>{revision.contentHash}</code></p></details>
           {detail.document.origin && <DocumentOrigin token={token} projectId={projectId} documentId={id} revisionId={revision.id}
             refreshKey={`${refresh}:${readVersion}`} origin={detail.document.origin} />}
         </details>
