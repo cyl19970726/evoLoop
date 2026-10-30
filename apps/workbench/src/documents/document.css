@@ -9,3 +9,6 @@
 .document-index .page-title-row>button{white-space:nowrap;flex-shrink:0}.doc-table-hint{display:none}.document-index .table-wrap:focus-visible{outline:2px solid #416bd2;outline-offset:2px}@media(max-width:680px){.doc-table-hint{display:block;margin:0;padding:0 14px 12px;color:#69768e;font-size:11px;line-height:1.6}}
 
 .organization-reviews .page-title-row h2{font-size:24px;margin:0 0 8px}.organization-reviews .table-wrap{max-width:100%;overflow:auto;contain:paint}.organization-reviews table{width:100%;min-width:650px}.organization-reviews td{vertical-align:top;padding:18px}.organization-reviews td:first-child{width:38%}.organization-reviews td span,.organization-reviews td small{display:block}.organization-reviews .list-toolbar{flex-wrap:wrap}.doc-review-period{color:#73819b;font-size:13px;line-height:1.9}
+
+.document-reading-page .document-read-layout.organization-review-reading{grid-template-columns:minmax(0,1fr)}
+.organization-review-reading>.document-read-aside{position:static;top:auto}

@@ -137,10 +137,10 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
     <p role="alert">资源不可用或未通过校验（{original.reason}）。请检查存储与登记状态。</p>
     <button onClick={() => setRefresh(v => v + 1)}>重新核对</button></section>;
   const mime = original.revision.mediaType;
-  return <section className="panel reading"><div className="panel-head"><h2>{readingMode ? "完整报告" : "固定修订原件"}</h2>
+  return <section className="panel reading doc-original-reader"><div className="panel-head"><h2>{readingMode ? "完整报告" : "完整原件"}</h2>
     <button onClick={() => download(original.revision.originalName,
       new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
-    {!readingMode && <><p className="muted">正在阅读固定修订：<code>{original.revision.id}</code></p><p className="muted">SHA-256：<code>{original.revision.contentHash}</code></p></>}
+    <details className="doc-original-integrity"><summary>原件标识与校验</summary><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></details>
     {original.revision.format === "html" ? <>{!readingMode && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
       {preview ? <iframe key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
         style={{ width: "100%", minHeight: readingMode ? "75vh" : 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>

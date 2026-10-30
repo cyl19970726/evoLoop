@@ -86,8 +86,10 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   await page.goto(`${base}/#/p/${projectId}/schedules`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.getByText("旧日程创建的任务 已停止 · v5").click();
-  await page.getByRole("button", { name: "阅读修订与发生记录" }).click();
+  const scheduleRow = page.locator(".schedule-table tbody tr").filter({ hasText: "旧日程创建的任务" });
+  await scheduleRow.getByRole("button", { name: "旧日程创建的任务" }).click();
+  assert.equal(await scheduleRow.getByRole("button", { name: "旧日程创建的任务" }).getAttribute("aria-current"), "true");
+  await page.locator(".schedule-definition[open]").waitFor();
   await page.getByRole("link", { name: "阅读此任务" }).click();
   assert.equal(new URL(page.url()).hash, `#/p/${projectId}/tasks/${taskId}`);
   await page.getByRole("heading", { name: "旧日程创建的任务" }).waitFor({ timeout: 5000 }).catch(async () => {
