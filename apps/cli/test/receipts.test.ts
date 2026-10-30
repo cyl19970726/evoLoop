@@ -51,7 +51,7 @@ const ordinaryIntent = (): Intent => prepareRequest("ordinary.submit", projectId
   projectId, operationId: randomUUID(), submissionId: randomUUID(), runId: randomUUID(),
   taskId: randomUUID(), sessionId: randomUUID(), taskRevisionId: randomUUID(),
   runInputHash: "a".repeat(64), deliveryOperationId: randomUUID(),
-  deliveryIntent: { artifactRef: "doc/revision", artifactRevision: "r1", contentHash: "b".repeat(64),
+  deliveryIntent: { artifactRef: "https://example.test/report", artifactRevision: "r1", contentHash: "b".repeat(64),
     technicalResult: "passed", technicalEvidence: "checks passed", reason: "ready" },
 });
 

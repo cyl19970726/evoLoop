@@ -93,6 +93,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 先用本 Run 配置的 CLI `session` 核身份，读取固定输入和产物原件。`request schema ordinary.submit` 给出精确正文：`projectId`、原 `operationId`、独立 `submissionId`、`runId`、`taskId`、`sessionId`、`taskRevisionId`、`runInputHash`、预留的 `deliveryOperationId`，以及 `deliveryIntent` 中产物引用、修订、内容 hash、`technicalResult`、检查证据和原因。在 Run 仍有效时用 `request ordinary.submit --project UUID --file PRIVATE_JSON` 署名提交；服务从该 Run 的固定接收者校验作者，不能用请求字段指定作者，队列预留者或 Session 创建者也不能代签。旧 direct Run 若没有固定 assignment／recipient 事实，本路径明确拒绝首次提交；须由有权者核旧产物并按旧合同登记，后续新 Run 再固定接收者，不能从可变的 Session actor 猜作者。`failed`／`interrupted` 的部分成果若提交，技术结果须为 `failed`。
 
+产物只填一个位置。项目 Document 可填 `document:DOCUMENT_UUID@REVISION_UUID`，CLI 会规范化为 `#/p/PROJECT_UUID/documents/DOCUMENT_UUID?revision=REVISION_UUID`；也可直接填该固定工作台路由或本机工作台完整 URL。`artifactRevision` 单填同一个修订 UUID，`contentHash` 填回读该修订的 SHA-256。服务在普通与受管 worker 提交事务内核项目、确切修订与 hash，拒绝缺版本、错项目、错修订及错 hash。外部 PR／网页填单个 http(s) URL，修订单填 commit／标签等单个标识；不会联网证明外部内容。既有 `repo:`／`git:` 文件引用可追溯但工作台未必能直接打开，要求收件人点击时应改用固定网页链接。PR、Git 说明和其他位置写进 `technicalEvidence`，不要把多个位置拼进 `artifactRef` 或在 `artifactRevision` 拼说明。旧 Delivery 和已经签署、尚待封存的旧意图保留原值，不由新规则猜测或回写。
+
 请求结果未知时保留私有 receipt 和原 JSON，用 `receipts show`／`receipts reconcile` 核原 operation；只有原意图满足 CLI 重试条件时才用 `receipts retry`，不换 ID、作者或正文。提交确认只证明意图保存。执行者在本轮回读 submission 与固定报告后结束 Turn，不等待或轮询自己的 Run 终态。封存器与 Lead 在终态后用 `get /api/projects/PROJECT_UUID/ordinary-runs/RUN_UUID/submission` 读取其状态，再核 `deliveryOperationId` 与 Task Delivery；执行者下次接续时也可读回。`sealed` 须匹配同一 Run、提交作者、产物和结果。`blocked`、`unknown`、`rejected` 或无提交时记录原因并交给责任者恢复，不让 Lead 代写或据聊天末句补造结果。封存者与提交作者分别留痕；Delivery 不代消费者签使用，也不自动关闭 Task。
 
 ## 观察会话、具体接手与普通消息

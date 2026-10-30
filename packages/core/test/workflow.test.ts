@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import type {
   BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, Impact, Operation,
-  OutboxEvent, Principal, Project, Task, TaskDocumentLink, TaskRevision,
+  OutboxEvent, Principal, Project, RuntimeRunRecord, Task, TaskDocumentLink, TaskRevision,
   Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure,
   DiscussionRecord, DiscussionEvent,
 } from "@evoloop/contracts";
@@ -61,6 +61,8 @@ type State = {
 };
 
 class MemoryUow implements UnitOfWork {
+  runtimeRun: RuntimeRunRecord | null = null;
+  signedRunSubmitter: string | null = null;
   state: State = {
     project: null, documents: {}, documentRevisions: {}, documentDecisions: [], tasks: {},
     taskRevisions: {}, bases: {}, links: [], impacts: {}, basisDecisions: [], operations: {}, outbox: [],
@@ -73,8 +75,8 @@ class MemoryUow implements UnitOfWork {
     const reader = (): Reader => ({
       getRuntimeSession: async () => null,
       listRuntimeSessions: async () => [],
-      getRuntimeRun: async () => null,
-      listRuntimeRuns: async () => [],
+      getRuntimeRun: async id => this.runtimeRun?.id === id ? this.runtimeRun : null,
+      listRuntimeRuns: async taskId => this.runtimeRun?.taskId === taskId ? [this.runtimeRun] : [],
       listRuntimeEvents: async () => [],
       listRuntimeSessionEvents: async () => [],
       getDiscussion: async id => state.discussions[id] ?? null,
@@ -211,6 +213,7 @@ class MemoryUow implements UnitOfWork {
       insertTaskProposal: async item => { state.proposals.push(item); },
       insertTaskJudgement: async item => { state.judgements.push(item); },
       insertDelivery: async item => { state.deliveries.push(item); },
+      getSignedRunSubmitter: async () => this.signedRunSubmitter,
       insertObservation: async item => { state.observations.push(item); },
       insertTaskClosure: async item => { state.closures.push(item); },
       savepoint: async (work) => {
@@ -425,6 +428,51 @@ test("reopen invalidates an earlier delivery before the same Task can close agai
     taskId: taskA, expectedVersion: 6, deliveryId: oldDeliveryId,
     acceptanceResult: "met", acceptanceEvidence: "Old evidence", reason: "Attempt" });
   assert.equal(stale.status === "rejected" ? stale.code : null, "STALE_DELIVERY");
+});
+
+test("an older signed Run intent can seal its original file reference", async () => {
+  const f = fixture();
+  await seedTwoTasks(f);
+  const detail = await f.service.getTask(principal, projectId, taskA);
+  const runId = "00000000-0000-4000-8000-000000009001";
+  f.uow.runtimeRun = { id: runId, projectId, taskId: taskA, taskRevisionId: detail.revision.id,
+    state: "completed", version: 3 } as RuntimeRunRecord;
+  f.uow.signedRunSubmitter = "prior-worker";
+  const ref = "file:///tmp/older-report.md";
+  const result = await f.service.execute(principal, { type: "delivery.record", projectId,
+    operationId: f.operation(), taskId: taskA, runId, expectedVersion: detail.task.version,
+    artifactRef: ref, artifactRevision: "older-commit", contentHash: "a".repeat(64),
+    technicalResult: "passed", technicalEvidence: "Original signed evidence", reason: "Seal prior intent" });
+  assert.equal(result.status, "applied", JSON.stringify(result));
+  assert.equal(f.uow.state.deliveries.at(-1)?.artifactRef, ref);
+  assert.equal(f.uow.state.deliveries.at(-1)?.submittedByActorId, "prior-worker");
+});
+
+test("an older signed Document intent still checks project and exact saved hash", async () => {
+  const f = fixture();
+  await seedTwoTasks(f);
+  const detail = await f.service.getTask(principal, projectId, taskA);
+  const revisionId = (await f.service.getDocument(principal, projectId, documentId)).current.id;
+  const runId = "00000000-0000-4000-8000-000000009002";
+  f.uow.runtimeRun = { id: runId, projectId, taskId: taskA, taskRevisionId: detail.revision.id,
+    state: "completed", version: 3 } as RuntimeRunRecord;
+  f.uow.signedRunSubmitter = "prior-worker";
+  const base = { type: "delivery.record" as const, projectId, taskId: taskA, runId,
+    expectedVersion: detail.task.version, artifactRevision: revisionId,
+    technicalResult: "passed" as const, technicalEvidence: "Older signed report", reason: "Seal" };
+  const wrongProject = await f.service.execute(principal, { ...base, operationId: f.operation(),
+    artifactRef: `#/p/99999999-9999-4999-8999-999999999999/documents/${documentId}?revision=${revisionId}`,
+    contentHash: createHash("sha256").update("r1").digest("hex") });
+  assert.equal(wrongProject.status === "rejected" ? wrongProject.code : null, "ARTIFACT_PROJECT_MISMATCH");
+  const ref = `document:${documentId}@${revisionId}`;
+  const wrongHash = await f.service.execute(principal, { ...base, operationId: f.operation(),
+    artifactRef: ref, contentHash: "a".repeat(64) });
+  assert.equal(wrongHash.status === "rejected" ? wrongHash.code : null, "ARTIFACT_HASH_MISMATCH");
+  assert.equal(f.uow.state.deliveries.length, 0);
+  const valid = await f.service.execute(principal, { ...base, operationId: f.operation(),
+    artifactRef: ref, contentHash: createHash("sha256").update("r1").digest("hex") });
+  assert.equal(valid.status, "applied", JSON.stringify(valid));
+  assert.equal(f.uow.state.deliveries.at(-1)?.artifactRef, ref);
 });
 
 test("new Task defaults to independent use; a registrar cannot make the submitter an independent consumer", async () => {

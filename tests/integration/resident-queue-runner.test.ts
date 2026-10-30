@@ -279,7 +279,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
         {token:leadToken,actorId:controller.actorId,projectIds:[projectId],permissions:['read','write','review']}]});
     const intent={projectId,operationId:randomUUID(),submissionId:randomUUID(),deliveryOperationId:randomUUID(),
       runId:runBefore.id,taskId,sessionId,taskRevisionId:runBefore.taskRevisionId,runInputHash:runBefore.inputHash,
-      deliveryIntent:{artifactRef:'fixture:ordinary-artifact',artifactRevision:'fixed-v1',contentHash:hash('ordinary-artifact'),
+      deliveryIntent:{artifactRef:'repo://ordinary-artifact',artifactRevision:'fixed-v1',contentHash:hash('ordinary-artifact'),
         technicalResult:'passed',technicalEvidence:'Fixed artifact inspected',reason:'Business Session result'}};
     ordinaryIntent=intent;
     fake.onStart=async()=>{
