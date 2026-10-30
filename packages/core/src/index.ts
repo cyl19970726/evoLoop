@@ -783,6 +783,15 @@ export class WorkflowService {
   getResidentQueueStopDecision(principal: Principal, projectId: string, claimId: string) {
     return this.read(principal,projectId,reader=>reader.queue?.getResidentQueueStopDecision(claimId)??Promise.resolve(null));
   }
+  getResidentQueueAttemptHistory(principal: Principal, projectId: string, id: string) {
+    return this.read(principal,projectId,async reader=>{
+      const queue=required(await reader.queue?.getResidentQueue(id)??null,'Queue');
+      return Promise.all(queue.entries.map(async entry=>({entryId:entry.id,claimId:entry.claimId,
+        claim:entry.claimId?await reader.queue!.getResidentQueueClaim(entry.claimId):null,
+        stopDecision:entry.claimId?await reader.queue!.getResidentQueueStopDecision(entry.claimId):null,
+        attempts:entry.claimId?await reader.queue!.listResidentQueueAttempts(entry.claimId):[]})));
+    });
+  }
   listDiscussions(principal: Principal, projectId: string, limit = 50, cursor?: string,
     kind?: import("@evoloop/contracts").DiscussionRecord['kind']): Promise<Page<import("@evoloop/contracts").DiscussionRecord>> {
     return this.read(principal, projectId, reader => reader.listDiscussions(pageLimit(limit), cursor, kind));

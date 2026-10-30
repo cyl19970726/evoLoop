@@ -308,6 +308,10 @@ test('cancelled failed Task stops its exact claim without accepting work or eras
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM resident_queue_stop_decision WHERE project_id=$1 AND claim_id=$2',[projectId,claim])).rows[0].n,1);
   const stopRead=await workflow.getResidentQueueStopDecision(lead,projectId,claim);
   assert.equal(stopRead?.reason,base.reason);assert.equal(stopRead?.nextResponsibility,base.nextResponsibility);
+  const history=await workflow.getResidentQueueAttemptHistory(lead,projectId,qid);
+  assert.equal(history[0]?.claim?.releaseKind,'stopped');
+  assert.equal(history[0]?.stopDecision?.decisionId,stopRead?.decisionId);
+  assert.equal(history[0]?.attempts.at(-1)?.runId,runId);
   const reviewed=(await workflow.getSessionRecovery(lead,projectId,sid)).gate!;
   await apply({type:'runtime.session.recovery.resume',sessionId:sid,expectedVersion:reviewed.version,expectedCauseId:reviewed.causeId,resumeMessageId:reviewed.resumeMessageId,evidenceRef:'fixture://reviewed-stop',reason:'Original failed attempt retained and cancelled Task has separate responsibility'});
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sid)).gate!.phase,'open');
