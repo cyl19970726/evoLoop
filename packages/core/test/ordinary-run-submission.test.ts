@@ -117,7 +117,9 @@ test("ambiguous Document refs and fixed version conflicts fail before saving an 
 });
 
 test("one external URL may contain ordinary URL punctuation",async()=>{
-  for(const ref of ["https://example.test/report;a=b","https://example.test/report,part2"]){
+  for(const ref of ["https://example.test/report;a=b","https://example.test/report,part2",
+    "https://web.archive.org/web/20261030/https://example.com/report",
+    "https://example.test/redirect?url=https://other.test/report"]){
     const f=fixture(),input=command();input.deliveryIntent.artifactRef=ref;
     assert.equal((await submit(f.store,actor("worker"),input)).deliveryIntent.artifactRef,ref);
   }

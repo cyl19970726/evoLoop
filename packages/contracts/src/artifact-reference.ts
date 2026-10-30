@@ -16,7 +16,7 @@ export type ArtifactReference =
 
 export function parseArtifactReference(ref: string, revision: string, projectId: string, strict = true): ArtifactReference {
   const value = ref.trim(), fixed = revision.trim();
-  if (!value || /\s/.test(value) || /https?:\/\/.*https?:\/\//i.test(value) ||
+  if (!value || /\s/.test(value) || /[,;|]https?:\/\//i.test(value) ||
     (!/^https?:\/\//i.test(value) && /[;,|<>]/.test(value)))
     throw new ArtifactReferenceError('ARTIFACT_REF_AMBIGUOUS',
     'Use one artifactRef only; put PR, commit and other locations in technicalEvidence');
