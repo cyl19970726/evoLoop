@@ -34,7 +34,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
   // Current Task writes include domain_id. Add nullable seed-only columns, then remove
   // them before the historical migration so 023..026 still upgrade the real old schema.
-  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
+  await pool.query("ALTER TABLE task ADD COLUMN domain_id uuid; ALTER TABLE task_revision ADD COLUMN domain_id uuid; ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text; ALTER TABLE document_revision ADD COLUMN organization_review jsonb");
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   let frozenNow:string|null=null;
@@ -120,7 +120,8 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
     error=>Boolean(error && typeof error==="object" && "code" in error && error.code==="MIGRATION_REQUIRED"),
     "the new Division closure reader requires 023 before it can evaluate a handoff");
   assert.equal((await pool.query("SELECT count(*)::int n FROM task_revision WHERE project_id=$1",[pid])).rows[0].n>0,true);
-  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
+  await pool.query("ALTER TABLE task_revision DROP COLUMN domain_id; ALTER TABLE task DROP COLUMN domain_id; ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id; ALTER TABLE document_revision DROP COLUMN organization_review");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1 AND table_name='document_revision' AND column_name='organization_review'",[schema])).rows[0].n,0,"seed-only review column is absent before historical upgrade");
   assert.equal((await pool.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1
     AND table_name IN ('task','task_revision') AND column_name='domain_id'`,[schema])).rows[0].n,0,
     "the pre-migration schema must have no domain columns");

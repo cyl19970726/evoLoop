@@ -46,7 +46,7 @@ const legacyTables = ["project", "process_document", "document_revision", "docum
 async function legacySnapshot(): Promise<Record<string, unknown[]>> {
   const result: Record<string, unknown[]> = {};
   for (const table of legacyTables) {
-    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'":"to_jsonb(t)"}-'native_environment_epoch'-'observed_model'-'observed_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
+    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'":(table==='document_revision'?"to_jsonb(t)-'organization_review'":"to_jsonb(t)")}-'native_environment_epoch'-'observed_model'-'observed_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
     result[table] = rows.rows.map(row => row.row).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   }
   return result;
@@ -242,6 +242,9 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
   const headBefore034=(await client.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence;
   await migrate(url!,schema);
   assert.deepEqual(await legacySnapshot(),before034,'upgrade may add nullable observation fields but must preserve all old columns');
+  const legacyReviewMetadata=(await client.query("SELECT count(*)::int AS total,count(*) FILTER (WHERE organization_review IS NOT NULL)::int AS invented FROM document_revision WHERE project_id=$1",[projectId])).rows[0];
+  assert.ok(legacyReviewMetadata.total>0);
+  assert.equal(legacyReviewMetadata.invented,0,"045 must not invent observation metadata for old Documents");
   const legacyModelObservation=(await client.query(`SELECT count(*)::int AS total,
     count(*) FILTER (WHERE observed_model IS NOT NULL OR observed_provider IS NOT NULL)::int AS invented
     FROM runtime_session WHERE project_id=$1`,[projectId])).rows[0];
