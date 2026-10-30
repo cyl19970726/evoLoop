@@ -97,7 +97,7 @@ export function TeamWorkspace({ context, refresh }: { context: MutationContext; 
   return <div className="content team-workspace">
     <div className="page-title-row"><div><h1>团队分工</h1><p className="lede">看清职责、实际会话与当前承接。</p></div><div className="team-entry-actions"><a className="button-link" href={href(context.projectId, "collaboration")}>协作回执</a></div></div>
     <nav className="team-tabs" aria-label="团队分工栏目">
-      {([ ["members", "团队 Session"], ["reviews", "组织复盘"], ["roles", "职责档案"], ["execution", "受管执行"], ["discussions", "分工讨论"] ] as const).map(([key, label]) =>
+      {([ ["members", "当前团队"], ["reviews", "组织复盘"], ["roles", "职责档案"], ["execution", "受管执行"], ["discussions", "分工讨论"] ] as const).map(([key, label]) =>
         <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => changeTab(key)}>{label}</button>)}
     </nav>
     {tab === "members" && <>
