@@ -391,9 +391,9 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     </div>
     <div className={`task-list-layout${view === "work" && selectedTask ? " has-selection" : ""}`}><div className="task-list-main">
     {view === "work" && <section className="work-view-controls" aria-label="任务列表筛选">
-      <nav className="work-scope-tabs" role="tablist" aria-label="任务范围">
-        <button type="button" role="tab" aria-selected={scope === "all"} className={scope === "all" ? "selected" : ""} onClick={() => setScope("all")}>全部工作 <span>{projectionTasks.length}</span></button>
-        <button type="button" role="tab" aria-selected={scope === "mine"} className={scope === "mine" ? "selected" : ""} onClick={() => setScope("mine")}>我的承接 <span>{myWork.length}</span></button>
+      <nav className="work-scope-tabs" aria-label="任务范围">
+        <button type="button" aria-pressed={scope === "all"} className={scope === "all" ? "selected" : ""} onClick={() => setScope("all")}>全部工作 <span>{projectionTasks.length}</span></button>
+        <button type="button" aria-pressed={scope === "mine"} className={scope === "mine" ? "selected" : ""} onClick={() => setScope("mine")}>我的承接 <span>{myWork.length}</span></button>
       </nav>
       <div className="work-quick-tools">
         <label className="search-field"><Search size={16} aria-hidden="true" /><input aria-label="搜索任务（分页读取，范围见下方）" placeholder="搜索任务标题或承接方…" value={query} onChange={e => setQuery(e.target.value)} /></label>
