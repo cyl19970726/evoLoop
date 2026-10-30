@@ -3,7 +3,7 @@ import type { RuntimeBinding, RuntimePage, RuntimeTurn } from "@evoloop/contract
 export type TurnLookup = { status: "found"; turn: RuntimeTurn } |
   { status: "partial"; nextTurnCursor: string } | { status: "not_found" };
 
-/** Native 0.164 has paged Turn metadata, but no by-ID metadata read. */
+/** Pinned modern protocols have paged Turn metadata, but no by-ID metadata read. */
 export async function lookupKnownTurn(
   list: (binding: RuntimeBinding, cursor?: string) => Promise<RuntimePage<RuntimeTurn>>,
   binding: RuntimeBinding, turnId: string, initialCursor?: string, maxPages = 2,
