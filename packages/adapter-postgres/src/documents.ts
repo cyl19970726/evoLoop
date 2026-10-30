@@ -10,6 +10,7 @@ const revision = (row: any): DocumentPayloadRevision => ({
   payloadRef: row.payload_ref, contentHash: row.content_hash, entrypoint: row.entrypoint,
   assetsManifest: row.assets_manifest as DocumentAsset[], author: row.author, reason: row.reason,
   createdAt: new Date(row.created_at).toISOString(),
+  ...(row.organization_review ? { organizationReview: row.organization_review } : {}),
 });
 
 /** Compose into an existing scoped PgReader/PgTransaction; it never owns a connection. */
@@ -49,11 +50,11 @@ export class PgDocumentPayloadStore implements DocumentPayloadReader {
     if (value.projectId !== this.projectId) throw new Error("project scope mismatch");
     await this.client.query(`INSERT INTO document_revision
       (project_id,document_id,revision_id,body,format,content_hash,author,created_at,previous_revision_id,reason,
-       media_type,original_name,payload_ref,entrypoint,assets_manifest)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+       media_type,original_name,payload_ref,entrypoint,assets_manifest,organization_review)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb)`,
       [this.projectId,value.documentId,value.id,value.body,value.format,value.contentHash,value.author,
         value.createdAt,value.previousRevisionId,value.reason,value.mediaType,value.originalName,value.payloadRef,
-        value.entrypoint,JSON.stringify(value.assetsManifest)]);
+        value.entrypoint,JSON.stringify(value.assetsManifest),value.organizationReview ? JSON.stringify(value.organizationReview) : null]);
   }
   async registerDocumentBlob(value: RegisteredDocumentBlob): Promise<void> {
     if (value.projectId !== this.projectId) throw new Error("project scope mismatch");

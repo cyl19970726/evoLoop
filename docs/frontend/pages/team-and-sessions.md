@@ -24,6 +24,28 @@ Session 详情以身份和配置事实、当前工作、活动与对话／任务
 
 进入分工研究先看持续负担、返工和User Session体验，比较改方法、补同职责容量、临时专项和新持续职责。试行给首项工作、指标、成本、回看和退出，改进仍使用同一Task/Document。撤回须看未完工作接续；新聊天、绑定Role或内部自评不自动算试行有效。
 
+## 组织复盘：同一类Document的阅读入口
+
+团队Session列表回答现在谁负责什么；组织复盘列表回答各轮有哪些完整复盘可读。Evo依据方向、Leader与业务轨迹、独立User体验完成判断和改进工作，再把报告及图资源经CLI保存为 `organization_review` Document。报告按事实自由组织，图工具不固定。
+
+页面仅按Document类型列出标题、观察期间和提交／修订时间；点击后进入同一份Document的普通完整原件阅读器，并能返回列表。文档库也能找到该documentId；无需右侧摘要、固定报告栏目或另一份复盘正文。
+
+```mermaid
+flowchart TD
+  I[方向、真实工作与User体验] --> E[Evo复盘与判断]
+  S[Evo skill] -.指导.-> E
+  E --> A[授权内推动Task、方法与分工改进]
+  A --> W[后续真实工作与效果回看]
+  W --> I
+  E --> R[本轮完整报告与图资源]
+  R --> C[CLI保存]
+  C --> D[Document：组织复盘类型]
+  D --> L[组织复盘列表：按类型筛选]
+  L --> V[同一Document完整原件阅读]
+```
+
+观察期间与提交时刻分别呈现。下一轮默认接上轮观察截止点；首轮或专项明确选择范围。旧正文和观察元数据随固定修订保留，之后事实由下一轮承接。提交、读到和改进有效分别核对；报告保存不会自动采纳建议或创建任务。
+
 ## 运行、消息与观察的阅读边界
 
 普通消息与业务 Run 共用同一 Session、Thread、adapter 和 full/never/联网执行配置；消息不切换专用进程、工具集或只读资格门。共享 Session 忙碌时，展示原消息仍在排队及具体原因；sender/receiver grant 与 `maxTurns` 预算继续说明身份和成本。`ordinaryExecution` 在原生 Thread start/resume 明确回执 full/never 前保持 `unverified`／`unknown`；`thread/read` 没有权限字段不能推断已 active 或回执丢失。消息回复、处理结果和业务对象权限分别表达。GUI 阅读桥仍按 Run 的 reader、路由和证据范围限制业务对象访问；OS full access 不移除 Task/Document 授权边界，也不改变 Document iframe sandbox。后台控制原语完成不自动代表当前服务已启用，当前执行能力沿 Session snapshot 的实际回执读取。

@@ -1,3 +1,4 @@
+import { reviewMetadata, validatePreviousReview } from "./organization-review.js";
 import type { BlobPayload, BlobStore } from "@evoloop/contracts/sources";
 import { documentPayloadCommandSchema } from "@evoloop/contracts/process-documents";
 import type { DocumentPayloadCommand, DocumentPayloadRevision, DocumentPayloadTransaction, DocumentPayloadUnitOfWork, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
@@ -163,6 +164,14 @@ async function applyDocumentPayload(
   if (current?.status === "archived") throw new DomainError("DOCUMENT_ARCHIVED", "Restore the document before revision");
   if (current && current.version !== command.expectedVersion)
     throw new DomainError("VERSION_CONFLICT", "Document changed since it was read", current.version);
+  const kind = command.kind ?? current?.kind ?? null;
+  if (current && command.kind !== undefined && command.kind !== current.kind &&
+      !(command.kind === "organization_review" && (current.kind === "report" || current.kind === null)))
+    throw new DomainError("INVALID_DOCUMENT_KIND", "Only an existing report can be classified as an organization review");
+  const previous = current ? await tx.getDocumentPayloadRevision(current.id, current.currentRevisionId) : null;
+  const organizationReview = reviewMetadata(kind, command.organizationReview, previous?.organizationReview);
+  await validatePreviousReview(organizationReview, command.projectId, command.documentId,
+    id => tx.getDocument(id), (id, revision) => tx.getDocumentPayloadRevision(id, revision));
   const source = command.source;
   const revision: DocumentPayloadRevision = {
     projectId: command.projectId, documentId: command.documentId, id: command.revisionId,
@@ -173,13 +182,14 @@ async function applyDocumentPayload(
     entrypoint: source.storage === "blob" ? source.entrypoint : null,
     assetsManifest: source.storage === "blob" ? source.assets : [],
     author: command.author, reason: command.reason, createdAt: now,
+    ...(organizationReview ? { organizationReview } : {}),
   };
   if (!current) await tx.insertDocument({ projectId: command.projectId, id: command.documentId,
     title: command.title!, version: 1, currentRevisionId: command.revisionId, adoptedRevisionId: null,
-    kind: command.kind ?? null, status: "draft" });
+    kind, status: "draft" });
   await tx.insertDocumentPayloadRevision(revision);
   for (const blob of registrations) await tx.registerDocumentBlob(blob);
-  if (current) await tx.updateDocument({ ...current, version: current.version + 1, currentRevisionId: command.revisionId }, current.version);
+  if (current) await tx.updateDocument({ ...current, kind, version: current.version + 1, currentRevisionId: command.revisionId }, current.version);
   return { status: "applied", operationId: command.operationId, entityId: command.documentId,
     revisionId: command.revisionId, version: current ? current.version + 1 : 1 };
 }

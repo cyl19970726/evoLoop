@@ -8,7 +8,7 @@ import { ActionForm, type MutationContext } from "../workflow/ActionForm";
 import { UploadDocument } from "./UploadDocument";
 import { DocumentOrigin } from "./DocumentOrigin";
 import "./document.css";
-const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告" } as const;
+const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘" } as const;
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
 const relationLabel = { content: "任务正文", link: "已关联", basis: "当前固定依据" } as const;
 const readProblem = (cause: unknown): string => cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
@@ -108,11 +108,13 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
       {detail.adopted && revision.id !== detail.adopted.id && <a className="button-link" href={href(projectId, "document", id, detail.adopted.id)}>阅读已发布版</a>}
       {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
     </div>
+    {revision.organizationReview && <p className="doc-review-period">观察期间：{new Date(revision.organizationReview.observedFrom).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} 至 {new Date(revision.organizationReview.observedTo).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} · {revision.organizationReview.timeZone}
+      {revision.organizationReview.previous && <> · <a href={href(projectId, "document", revision.organizationReview.previous.documentId, revision.organizationReview.previous.revisionId)}>上一轮复盘</a></>}</p>}
     <section className="doc-primary-body" aria-label="文档完整正文">
       {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
-        : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} />}
+        : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} readingMode={detail.document.kind === "organization_review"} />}
     </section>
-    <details className="doc-reading-details" open><summary>版本、原件与来源</summary>
+    <details className="doc-reading-details" open={detail.document.kind !== "organization_review"}><summary>版本、原件与来源</summary>
       <div className="doc-version-status" aria-label="文档修订状态">
         <span><strong>正在阅读</strong> <ShortId value={revision.id} /><small>{date(revision.createdAt)}</small></span>
         <span><strong>当前版</strong> <a href={href(projectId, "document", id, detail.current.id)}><ShortId value={detail.current.id} /></a><small>{date(detail.current.createdAt)}</small></span>

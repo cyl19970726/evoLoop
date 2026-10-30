@@ -1,3 +1,4 @@
+import { reviewMetadata, validatePreviousReview } from "./documents/organization-review.js";
 import { commandSchema } from "@evoloop/contracts";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
@@ -216,7 +217,7 @@ export class WorkflowService {
       case "document.create": {
         if (await tx.getDocument(command.documentId)) throw new DomainError("ALREADY_EXISTS", "Document already exists");
         if (command.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task documents are created through task.create");
-        if (command.origin && command.kind !== "issue" && command.kind !== "report")
+        if (command.origin && command.kind !== "issue" && command.kind !== "report" && command.kind !== "organization_review")
           throw new DomainError("INVALID_ORIGIN", "Only issue and report documents may cite a Task or Run origin");
         requireBody(command.body);
         let origin: Document["origin"] = null;
@@ -234,6 +235,9 @@ export class WorkflowService {
             throw new DomainError("ORIGIN_MISMATCH", "Fixed origin Task revision is unavailable");
           origin = { taskId: task.id, runId: command.origin.runId ?? null, taskRevisionId };
         }
+        const organizationReview = reviewMetadata(command.kind ?? null, command.organizationReview);
+        await validatePreviousReview(organizationReview, command.projectId, command.documentId,
+          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision));
         const revisionId = this.deps.ids.next();
         const document: Document = {
           projectId: command.projectId, id: command.documentId, title: command.title,
@@ -245,6 +249,7 @@ export class WorkflowService {
           format: "markdown", mediaType: "text/markdown", originalName: `${document.id}.md`, payloadRef: null,
           entrypoint: null, assetsManifest: [], contentHash: this.deps.hasher.hash(command.body), author: actorId,
           createdAt: now, previousRevisionId: null, reason: "Initial draft",
+          ...(organizationReview ? { organizationReview } : {}),
         };
         await tx.insertDocument(document);
         await tx.insertDocumentRevision(revision);
@@ -258,12 +263,16 @@ export class WorkflowService {
         const previous = required(await tx.getDocumentRevision(document.id, document.currentRevisionId), "Document revision");
         if (previous.format !== "markdown") throw new DomainError("FORMAT_CHANGE_REQUIRES_PAYLOAD", "HTML revisions require the payload workflow");
         requireBody(command.body);
+        const organizationReview = reviewMetadata(document.kind, command.organizationReview, previous.organizationReview);
+        await validatePreviousReview(organizationReview, command.projectId, document.id,
+          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision));
         const revisionId = this.deps.ids.next();
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
           format: "markdown", mediaType: "text/markdown", originalName: `${document.id}.md`, payloadRef: null,
           entrypoint: null, assetsManifest: [], contentHash: this.deps.hasher.hash(command.body), author: actorId,
           createdAt: now, previousRevisionId: document.currentRevisionId, reason: command.reason,
+          ...(organizationReview ? { organizationReview } : {}),
         };
         await tx.insertDocumentRevision(revision);
         await tx.updateDocument({ ...document, version: document.version + 1, currentRevisionId: revisionId }, document.version);
@@ -890,8 +899,8 @@ export class WorkflowService {
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {
     return this.read(principal, projectId, (reader) => reader.listTasks(pageLimit(limit), cursor));
   }
-  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Document>> {
-    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor));
+  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>> {
+    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind));
   }
   listDocumentTaskReferences(principal: Principal, projectId: string, documentId: string, limit?: number, cursor?: string): Promise<Page<DocumentTaskReference>> {
     return this.read(principal, projectId, async reader => {

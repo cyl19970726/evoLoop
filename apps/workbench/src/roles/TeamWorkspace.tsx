@@ -1,3 +1,4 @@
+import { OrganizationReviewList } from "../documents/OrganizationReviewList";
 import { useEffect, useRef, useState } from "react";
 import type { ObservedSession, SessionDirectory } from "@evoloop/contracts/session-observation";
 import { errorText } from "../api";
@@ -10,9 +11,10 @@ import { DiscussionPanel } from "../discussions/DiscussionPanel";
 import { RolesPanel } from "./RolesPanel";
 import "./team-workspace.css";
 
-type TeamTab = "members" | "roles" | "execution" | "discussions";
+type TeamTab = "members" | "reviews" | "roles" | "execution" | "discussions";
 const memberLabel = { current: "当前团队", historical: "历史会话", unclassified: "待归类" } as const;
 function requestedTab(): TeamTab {
+  if (window.location.hash.split("?")[0].endsWith("/reviews")) return "reviews";
   if (window.location.hash.split("?")[0].endsWith("/discussions")) return "discussions";
   const value = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("view");
   return value === "roles" || value === "execution" || value === "discussions" ? value : "members";
@@ -75,11 +77,11 @@ export function TeamWorkspace({ context, refresh }: { context: MutationContext; 
     finally { if (epoch.current === current) setMoreBusy(false); }
   }
   const visible = items.filter(item => item.membership === "current");
-  const changeTab = (value: TeamTab) => { setTab(value); window.location.hash = value === "discussions" ? href(context.projectId, "discussions") : `${href(context.projectId, "runtime")}?view=${value}`; };
+  const changeTab = (value: TeamTab) => { setTab(value); window.location.hash = value === "reviews" ? href(context.projectId, "reviews") : value === "discussions" ? href(context.projectId, "discussions") : `${href(context.projectId, "runtime")}?view=${value}`; };
   return <div className="content team-workspace">
     <div className="page-title-row"><div><h1>团队分工</h1><p className="lede">看清职责、实际会话与当前承接，再决定是否调整分工。</p></div><div className="team-entry-actions"><a className="button-link" href={href(context.projectId, "collaboration")}>协作回执</a></div></div>
     <nav className="team-tabs" aria-label="团队分工栏目">
-      {([ ["members", "成员与职责"], ["roles", "职责档案"], ["execution", "受管执行"], ["discussions", "分工讨论"] ] as const).map(([key, label]) =>
+      {([ ["members", "团队 Session"], ["reviews", "组织复盘"], ["roles", "职责档案"], ["execution", "受管执行"], ["discussions", "分工讨论"] ] as const).map(([key, label]) =>
         <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => changeTab(key)}>{label}</button>)}
     </nav>
     {tab === "members" && <>
@@ -100,6 +102,7 @@ export function TeamWorkspace({ context, refresh }: { context: MutationContext; 
       </section>
       <p className="team-help">职责的建立、试行与退出有独立记录；<a href={`${href(context.projectId, "runtime")}?view=roles`}>查看职责档案</a>。分工讨论不会自动创建新职责。</p>
     </>}
+    {tab === "reviews" && <OrganizationReviewList context={context} refresh={refresh} />}
     {tab === "roles" && <RolesPanel context={context} refresh={refresh} />}
     {tab === "execution" && <RuntimePanel context={context} refresh={refresh} />}
     {tab === "discussions" && <DiscussionPanel context={context} refresh={refresh} />}

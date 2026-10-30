@@ -8,7 +8,7 @@
 
 Evo自己写成一份完整的HTML或Markdown报告。图片可以来自ImageGen，图可以来自archify、Mermaid或其他合适工具。HTML可以自带布局、样式与图；需要的图片、脚本或其他资源随报告保留。视觉效果图指导页面表现，报告内容和图应反映本轮真实工作。
 
-当前Session列表提供实时团队入口；组织复盘列表收录历次报告，点击后打开这份原件。报告正文由Evo编写，页面负责保存后的阅读。
+当前Session列表提供实时团队入口；每轮复盘是一份类型为 organization_review 的 Document。组织复盘仅按该类型列出文档，点击后进入通用 Document 阅读器；文档库和组织复盘引用同一 documentId，没有右侧固定预览。报告正文由Evo自由编写，页面负责原件阅读。
 
 ## 时段与历史
 
@@ -26,7 +26,7 @@ node .agents/skills/evoloop-evocation/scripts/review-cli.mjs submit /path/report
 
 后续周期可省略from，程序沿上一份报告的观察截止点接续；to仍是本次观察截止时刻。CLI_CONFIG只给正常项目CLI的argv、projectId和可选timeZone，认证沿原CLI，不把令牌写入报告或网页。
 
-脚本复用现有Document和原件导入能力，保存整份报告及assets资源，并记录列表所需的少量标题、时段与上轮信息；提交者和保存时刻来自服务。Evo不需要把自由正文拆成一套数据库字段，也不用为了保存报告制造Task、Discussion或Role。
+脚本复用原生 Document 创建／原件导入，设置 kind=organization_review；观察时段和上一轮固定引用存入 DocumentRevision.organizationReview，标题、作者、时间和版本沿用 Document。报告原件字节不插入分类注释或协议头，列表无需下载并解释正文。Evo不需要把自由正文拆成一套数据库字段，也不用为了保存报告制造Task、Discussion或Role。
 
 返回固定报告地址、修订和回执后，从组织复盘列表打开原件，实际检查正文、图、资源与来源链接。页面能显示、图能读到，才完成这次报告交付。提交不等于建议已采纳，也不证明方法已经有效。
 
@@ -35,7 +35,11 @@ node .agents/skills/evoloop-evocation/scripts/review-cli.mjs list PROJECT_ID CLI
 node .agents/skills/evoloop-evocation/scripts/review-cli.mjs status /path/report.html CLI_CONFIG.json RECEIPT_DIR
 ```
 
-未知结果沿原回执查询，不换操作号重发。当前这是项目内增强脚本；原生业务CLI与操作恢复仍遵守[evoloop-workflow](../../evoloop-workflow/SKILL.md)。独立预览已接项目真实存储，原工作台页面接入另行处理。
+修订同一报告时，先读取该 Document 的版本，再加 --document DOCUMENT_ID --version OBSERVED_VERSION 和明确理由；新一轮仍创建新 Document。早期普通 report 文档可在同一 ID 上明确归类为组织复盘，旧修订保留。
+
+HTML及其assets走既有资源存储；Markdown使用现有正文／Mermaid阅读能力。上传后实际打开确认图可读，需要外置图片时可选择完整HTML报告。图工具自由，最终产物遵循普通Document阅读器的真实能力。
+
+未知结果沿原回执查询，不换操作号重发。当前这是项目内增强脚本；原生业务CLI与操作恢复仍遵守[evoloop-workflow](../../evoloop-workflow/SKILL.md)。当前服务与正常项目CLI需支持 organizationReviewDocuments 和 organization_review 类型；缺少能力时明确停止，不退回正文标记分类。
 
 ## 从历史避免两类误判
 

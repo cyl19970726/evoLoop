@@ -2,7 +2,7 @@
 export function isProjectRoute(value: string | null, projectId: string): value is string {
   if (!value?.startsWith(`#/p/${projectId}/`)) return false;
   const path = value.split("?")[0].slice(`#/p/${projectId}/`.length);
-  return /^(work|inbox|documents|journey|discussions|runtime|schedules|roles|knowledge|repository|operations|collaboration|evaluations(?:\/[0-9a-f-]{36})?|tasks\/[0-9a-f-]{36})$/i.test(path);
+  return /^(work|inbox|documents|journey|discussions|reviews|runtime|schedules|roles|knowledge|repository|operations|collaboration|evaluations(?:\/[0-9a-f-]{36})?|tasks\/[0-9a-f-]{36})$/i.test(path);
 }
 
 /** Preserve the source page in this tab without accepting a foreign or self-referential hash. */
