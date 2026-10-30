@@ -3,6 +3,7 @@ import type { KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapa
   KnowledgeRevision, KnowledgeSummary, PublishResult } from "@evoloop/contracts/knowledge";
 import { errorText, isUnconfirmed } from "../api";
 import { MarkdownBody } from "../ui/MarkdownBody";
+import { href } from "../ui/shared";
 import { knowledgeReturnHref } from "../ui/returnRoute";
 import { Notice, type MutationContext } from "../workflow/ActionForm";
 import { knowledgeClient, type SourceDocument } from "./client";
@@ -357,7 +358,9 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         {canWrite && <button onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</button>}
         <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
     </div>
-    <section className={`knowledge-read-state${availability.fullRead ? "" : " limited"}`} aria-label="知识服务与读取范围"><strong>{availability.title}</strong><p>{availability.detail}</p><small>{listingReading ? "正在重新核对…" : observedAt ? `${capabilities ? "读于" : "上次完整读取"} ${new Date(observedAt).toLocaleString("zh-CN")}${overviewError ? " · 本次未核实" : ""}` : "尚未完整读回"}</small><details><summary>{capabilities ? "服务与索引证据" : "上次能力证据（当前未核实）"}</summary><p>后端报告版本：{(capabilities ?? lastCapabilities)?.backendVersion ?? "未报告"} · 固定修订读取：{(capabilities ?? lastCapabilities)?.fixedRevisionRead ?? "未核"} · 语义索引：未验证。列表与图只覆盖已登记的关系，不能推断来源完整或认识正确。</p></details></section>
+    <section className={`knowledge-read-state${availability.fullRead ? "" : " limited"}`} aria-label="知识服务与读取范围"><strong>{availability.title}</strong><p>{availability.detail}</p><small>{listingReading ? "正在重新核对…" : observedAt ? `${capabilities ? "读于" : "上次完整读取"} ${new Date(observedAt).toLocaleString("zh-CN", { timeZone: "Asia/Taipei" })} · 台北${overviewError ? " · 本次未核实" : ""}` : "尚未完整读回"}</small><details><summary>{capabilities ? "服务与索引证据" : "上次能力证据（当前未核实）"}</summary><p>后端报告版本：{(capabilities ?? lastCapabilities)?.backendVersion ?? "未报告"} · 固定修订读取：{(capabilities ?? lastCapabilities)?.fixedRevisionRead ?? "未核"} · 语义索引：未验证。列表与图只覆盖已登记的关系，不能推断来源完整或认识正确。</p></details></section>
+    <div className="knowledge-list-layout">
+    {!availability.fullRead && <aside className="knowledge-available-actions" aria-label="此时仍可做什么"><h2>此时仍可做什么</h2><ol><li><strong>核对固定引用</strong><span>打开下方已登记的引用，确认范围与现有结论；正文和来源仍待读取。</span></li><li><strong>查看候选记录</strong><span>核查待审的候选来源，保留有价值的补充信息。</span></li><li><strong>服务恢复后重新读取</strong><span>回读正文与来源，再判断当前认识。</span></li></ol><a href={href(context.projectId, "documents")}>去过程文档核对固定原件 →</a></aside>}
     {overviewError && <Notice error>本次知识能力与列表未完整读回：{overviewError}。保留上次记录，当前能力待重新核对。</Notice>}
     {error && view !== "invalid" && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
     {view === "invalid" && <section className="knowledge-invalid-route"><Notice error>{routeError || "此知识链接路径或参数不受支持。请从知识列表重新打开固定版本。"}</Notice>
@@ -373,6 +376,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
       {pageCursor && <button onClick={async () => { try { const next = await client.pages(pageCursor); setPages(previous => [...previous, ...next.items]); setPageCursor(next.nextCursor); } catch (cause) { setError(errorText(cause)); } }}>加载更多知识</button>}
     </section>}
 
+    </div>
     {view === "read" && <div className="knowledge-reader">
       <div className="knowledge-reader-main">{returnHref && <a className="knowledge-back" href={returnHref}>← 返回来源</a>}
         <button className="knowledge-back" onClick={showList}>返回知识列表</button>

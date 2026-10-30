@@ -158,8 +158,8 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
     {error && <Alert kind="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Alert>}
     {current?.failedNames ? <Alert>有 {current.failedNames} 个名称未读回；仅显示登记 ID，并保留原任务与承载入口。</Alert> : null}
     <ProjectContext token={token} projectId={projectId} refresh={refresh + reread} active={active} />
-    <div className="context-links"><a href={href(projectId, "work")}>全部任务</a><a href={href(projectId, "runtime")}>分工与承载</a><a href={href(projectId, "inbox")}>待判断与复核</a></div>
-    <section className="panel"><h2>当前业务任务</h2>
+
+    <section className="panel overview-current-work"><div className="overview-current-head"><h2>当前工作</h2><a href={href(projectId, "work")}>全部工作 →</a></div>
       {groups?.primary.length ? <ul>{groups.primary.slice(0,4).map(task => <ActiveTaskItem key={task.id} task={task} snapshot={current!} projectId={projectId} />)}</ul>
         : current && !stale && !current.taskScan.truncated ? <p className="empty">已读任务中没有可确认的进行中业务任务；判断接续与未分类记录见下方。</p>
           : current?.taskScan.truncated ? <p>已读范围内未见进行中的任务；后续任务尚未读到，不能判断项目为空。</p>
@@ -167,6 +167,7 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
       {current?.statusError && <p className="muted">工作分类暂不可读：{current.statusError}；上方保留已读任务，请到原任务核对。</p>}
       {current && <p className="muted">已读 {current.taskScan.pages} 页，见到 {current.taskScan.total} 项进行中。{current.taskScan.truncated ? "后续任务尚未读完。" : ""} <a href={href(projectId, "work")}>查看全部任务</a></p>}
     </section>
+    <div className="context-links overview-context-links"><a href={href(projectId, "runtime")}>分工与承载</a><a href={href(projectId, "inbox")}>待判断与复核</a></div>
     <details className="panel overview-queue-details"><summary>队列与承接明细{selection ? ` · ${selection.total.held} 条暂停或待核记录` : ""}</summary><p className="muted">队列占用、下一顺位和历史待核记录；当前任务进度仍以原任务为准。</p>
     <section className="panel"><h2>待处理</h2>
       {selection?.held.length ? <ul>{selection.held.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="held" />)}</ul> : selection?.total.held === 0 && !stale ? <p className="empty">已读队列中没有暂停项。</p> : <p>暂停事项待读回。</p>}

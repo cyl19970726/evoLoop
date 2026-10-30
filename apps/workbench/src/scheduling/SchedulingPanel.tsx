@@ -7,10 +7,10 @@ import { MarkdownBody } from "../ui/MarkdownBody";
 import { orchestrationClient } from "../orchestration/client";
 import { managedTargetProblem, scheduleTemplate, suspendSchedule } from "./managedTarget";
 
-import { scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView, utcInstant } from "./presentation";
+import { scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView } from "./presentation";
 import "./scheduling.css";
 
-const stamp = utcInstant;
+const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Taipei", hour12: false }) + " · 台北";
 const stateLabel = { active: "已启用", paused: "已暂停", stopped: "已停止" } as const;
 const grantKey = (grant: Pick<SchedulingGrant,"scopeId"|"roleId">) => JSON.stringify([grant.scopeId,grant.roleId]);
 function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition, fresh = true): Field[] {
@@ -64,7 +64,10 @@ function fromValues(values: Record<string, string>, context: MutationContext, gr
     authorization: { scopeId: grant?.scopeId ?? old!.scopeId, roleId: grant?.roleId ?? old!.roleId, authorizedBy: context.principal.actorId,
       expiresAtUtc: values.expiresAtUtc ? new Date(values.expiresAtUtc).toISOString() : null }, reason: values.reason };
 }
-const ruleText = scheduleRuleLabel;
+const ruleText = (rule: ScheduleRule, timezone?: string): string => rule.kind === "once"
+  ? `仅一次 · ${stamp(rule.atUtc)}`
+  : rule.kind === "interval" ? `从 ${stamp(rule.anchorUtc)} 起，每 ${rule.everyMinutes} 分钟`
+    : scheduleRuleLabel(rule, timezone);
 interface ScheduleSnapshot { scope: string; readKey: string; schedules: ScheduleDefinition[]; status: SchedulingStatus; observedAt: string }
 
 export function SchedulingPanel({ context, refresh }: { context: MutationContext; refresh: number }) {
@@ -75,9 +78,12 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   const { value, loading, error, fresh } = scheduleReadView(snapshot, scope, readKey, readState);
   const schedules = value?.schedules ?? [];
   const status = value?.status ?? null;
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
+  const [lastResults, setLastResults] = useState<Record<string, string>>({});
+  const selectedSchedule = schedules.find(item => item.id === selectedScheduleId) ?? schedules[0];
   const formContext = { ...context, blocked: context.blocked || !fresh };
   useEffect(() => {
-    let active = true; setReadState({ readKey, loading: true, error: "" });
+    let active = true; setReadState({ readKey, loading: true, error: "" }); setLastResults({});
     const client = schedulingClient(context.token, context.projectId);
     Promise.all([client.list(),client.status()])
       .then(([items,nextStatus]) => {
@@ -93,7 +99,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
     return () => { active = false; };
   }, [context.token, context.projectId, context.principal.actorId, refresh, scope, readKey]);
   return <div className="journey-board schedule-page">
-    <section className="panel"><div className="panel-head"><h2>检查安排</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
+    <section className="panel"><div className="panel-head"><div><h2>检查安排</h2><p>先看检查目的与下次规则，再核对上次产生的工作。</p></div><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
       <p>日程只按授权范围创建待办任务；生成后仍需在任务详情核对责任、计划、依赖、开始与执行。</p>
       <p className="schedule-read-scope" role="status">{value ? `本项目日程与当前身份授权读于 ${stamp(value.observedAt)}；已读 ${schedules.length} 项。${fresh ? "" : "以下保留上次读回，授权与后续触发待核对。"}`
         : loading ? "正在读取本项目日程与当前身份授权…" : "本项目日程与当前身份授权尚未读回。"}</p>
@@ -105,7 +111,8 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
       </Notice>}
       {fresh && status && status.grants.length === 0 && <p className="schedule-permission" role="status">当前身份没有日程创建或恢复授权；已有安排可阅读，已撤权定义仍可暂停或停止。</p>}
       {!loading && !error && schedules.length === 0 && <p className="empty">还没有日程。这里不会自行启动定时任务。</p>}
-      {schedules.map(schedule => <ScheduleCard key={`${schedule.id}:${schedule.version}`} definition={schedule} context={formContext} grants={status?.grants ?? []} fresh={fresh} />)}
+      {schedules.length > 0 && <div className="schedule-table-wrap"><table className="schedule-table"><thead><tr><th>检查安排</th><th>当前状态</th><th>时间与范围</th><th>上次结果</th></tr></thead><tbody>{schedules.map(schedule => <tr key={schedule.id} className={selectedSchedule?.id === schedule.id ? "selected" : ""}><td data-label="检查安排"><button type="button" aria-current={selectedSchedule?.id === schedule.id ? "true" : undefined} onClick={() => setSelectedScheduleId(schedule.id)}>{schedule.revision.template.title}</button><small>{schedule.revision.template.content.split("\n").find(Boolean)?.slice(0, 90) || "检查目的见完整材料"}</small></td><td data-label="当前状态">{stateLabel[schedule.state]}</td><td data-label="时间与范围">{ruleText(schedule.revision.rule, schedule.revision.timezone)}<small>{schedule.revision.timezone} · 责任 {schedule.revision.template.owner}</small></td><td data-label="上次结果">{lastResults[`${schedule.id}:${schedule.version}`] ?? "尚未读回"}</td></tr>)}</tbody></table></div>}
+      {selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} fresh={fresh} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
     </section>
     <section className="panel"><details className="workflow-detail" open={schedules.length === 0}><summary>创建有限日程</summary>
       <Notice>支持一次、固定间隔、每天当地时间；暂不支持任意 cron 表达式。授权范围和到期时间需与协调器实际许可一致。</Notice>
@@ -115,7 +122,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   </div>;
 }
 
-function ScheduleCard({ definition, context, grants, fresh }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; fresh: boolean }) {
+function ScheduleCard({ definition, context, grants, fresh, onResult }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; fresh: boolean; onResult(result: string): void }) {
   const historyScope = JSON.stringify([context.token, context.projectId, definition.id, definition.version]);
   const [historySnapshot, setHistorySnapshot] = useState<{ scope: string; revisions: ScheduleRevision[]; occurrences: Occurrence[] } | null>(null);
   const history = historySnapshot?.scope === historyScope ? historySnapshot : null;
@@ -147,25 +154,27 @@ function ScheduleCard({ definition, context, grants, fresh }: { definition: Sche
       const client = schedulingClient(context.token, context.projectId);
       const [revisions, occurrences] = await Promise.all([client.revisions(definition.id), client.occurrences(definition.id)]);
       if (revisions.some(item => item.projectId !== context.projectId || item.scheduleId !== definition.id) || occurrences.some(item => item.projectId !== context.projectId || item.scheduleId !== definition.id)) throw new Error("日程历史与当前对象不符");
-      if (historyEpoch.current === epoch) { setHistorySnapshot({ scope: historyScope, revisions, occurrences }); setHistoryReadAt(new Date().toISOString()); }
+      if (historyEpoch.current === epoch) { const latest = latestOccurrence(occurrences); setHistorySnapshot({ scope: historyScope, revisions, occurrences }); setHistoryReadAt(new Date().toISOString()); onResult(latest ? occurrenceLabel(latest) : "尚无发生记录"); }
     } catch (cause) { if (historyEpoch.current === epoch) setError(errorText(cause)); } finally { if (historyEpoch.current === epoch) setBusy(false); }
   }
   useEffect(() => { historyEpoch.current++; setHistorySnapshot(null); setHistoryReadAt(null); setBusy(false); setError(""); return () => { historyEpoch.current++; }; }, [historyScope]);
   const revision = definition.revision;
   const last = history ? latestOccurrence(history.occurrences) : null;
   const editContext = { ...context, draftScope: `schedule:${definition.id}`, draftBaseline: `${definition.version}:${definition.currentRevisionId}` };
-  return <details className="workflow-detail schedule-definition" onToggle={event => { if (event.currentTarget.open && !history && !busy) void readHistory(); }}><summary>{revision.template.title} <span className="pill">{stateLabel[definition.state]} · v{definition.version}</span><small className="schedule-summary-rule">{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · ${revision.timezone}`} · 责任 {revision.template.owner}</small><small className="schedule-summary-result">{history ? `上次已读结果：${last ? occurrenceLabel(last) : "尚无发生记录"} · 读于 ${historyReadAt ? stamp(historyReadAt) : "未记录"}` : busy ? "正在核对上次发生记录…" : "上次结果尚未读回，展开核对"}</small></summary>
+  return <details className="workflow-detail schedule-definition" open onToggle={event => { if (event.currentTarget.open && !history && !busy) void readHistory(); }}><summary>{revision.template.title} <span className="pill">{stateLabel[definition.state]} · v{definition.version}</span><small className="schedule-summary-rule">{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · ${revision.timezone}`} · 责任 {revision.template.owner}</small><small className="schedule-summary-result">{history ? `上次已读结果：${last ? occurrenceLabel(last) : "尚无发生记录"} · 读于 ${historyReadAt ? stamp(historyReadAt) : "未记录"}` : busy ? "正在核对上次发生记录…" : "上次结果尚未读回，展开核对"}</small></summary>
     {!fresh && <p className="schedule-stale-note" role="status">这是上次读回的定义；当前规则与授权正在核对或读取失败。保存、暂停和恢复暂不可用。</p>}
-    <section className="schedule-current" aria-label="当前规则与上次检查"><div><span>后续触发</span><strong>{definition.state === "active" ? "按已登记规则检查，实际执行仍需协调器与授权" : definition.state === "paused" ? "已暂停后续检查" : "已停止后续检查"}</strong></div><div><span>上次已读结果</span><strong>{last ? occurrenceLabel(last) : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</strong>{last && <small>观察于 {stamp(last.observedAtUtc)} · {last.reason}</small>}{last?.taskId && <a href={`#/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(last.taskId)}`}>查看生成的任务 →</a>}</div></section>
+    <div className="schedule-detail-columns"><section className="schedule-basic"><h3>基本信息</h3><dl><div><dt>检查目的</dt><dd>{revision.template.title}</dd></div><div><dt>负责范围</dt><dd>{revision.template.owner}</dd></div><div><dt>时间与时区</dt><dd>{ruleText(revision.rule, revision.timezone)} · {revision.timezone}</dd></div><div><dt>当前状态</dt><dd>{stateLabel[definition.state]}</dd></div></dl></section>
+    <section className="schedule-current" aria-label="当前规则与上次检查"><h3>触发与任务</h3><div><span>后续触发</span><strong>{definition.state === "active" ? "按已登记规则检查，实际执行仍需协调器与授权" : definition.state === "paused" ? "已暂停后续检查" : "已停止后续检查"}</strong></div><div><span>上次已读结果</span><strong>{last ? occurrenceLabel(last) : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</strong>{last && <small>观察于 {stamp(last.observedAtUtc)} · {last.reason}</small>}{last?.taskId && <a href={`#/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(last.taskId)}`}>查看生成的任务 →</a>}</div></section>
+    </div>
     <p className="schedule-scope">暂停/停止只影响未来触发，已经生成的Task、在途Run与Session各有自己的状态。</p>
-    <dl><div><dt>规则</dt><dd>{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · 日程定义时区 ${revision.timezone}`}</dd></div>
+    <details className="schedule-rule-source"><summary>规则、授权与触发材料</summary><dl><div><dt>规则</dt><dd>{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · 日程定义时区 ${revision.timezone}`}</dd></div>
       <div><dt>错过</dt><dd>{revision.misfire.kind === "bounded" ? `最多补做 ${revision.misfire.maxCatchUp} 次` : revision.misfire.kind === "latest" ? "只取最近一次" : "跳过"}</dd></div>
       <div><dt>重叠</dt><dd>{revision.overlap === "queue" ? "排队" : "跳过"}</dd></div>
       <div><dt>触发材料</dt><dd><details className="schedule-material"><summary>阅读触发时使用的完整任务材料</summary><MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /><p>验收：{revision.template.acceptance}；责任者：{revision.template.owner}；{revision.template.managedTarget ? "受管判断合同" : revision.template.acceptanceMode === "human_required" ? "本人验收" : "独立 Agent 验收"}{revision.template.consumer ? ` · ${revision.template.consumer}` : ""}</p></details></dd></div>
       <div><dt>授权</dt><dd>{revision.authorization.scopeId} · 职责 {revision.authorization.roleId} · 授权人 {revision.authorization.authorizedBy} · 到期 {revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"}</dd></div>
       {target && <div><dt>受管目标</dt><dd>{targetRead.state === "verified" ? `阶段产物：${targetRead.stageName} · 工作链 ${target.loopId.slice(0,8)}（${({active:"可运行",paused:"已暂停",stopped:"已停止"} as Record<string,string>)[targetRead.loopState ?? ""] ?? "状态未核"}）` : targetRead.state === "checking" ? "正在核对绑定的工作链与阶段…" : "绑定暂不可核对"}
         <details><summary>核对固定目标标识</summary><p>Loop <code>{target.loopId}</code> · Stage <code>{target.stageId}</code>{targetRead.goalId && <> · Goal <code>{targetRead.goalId}</code></>}</p></details></dd></div>}
-      <div><dt>规则核对水位</dt><dd>{stamp(definition.watermarkUtc)}</dd></div></dl>
+      <div><dt>规则核对水位</dt><dd>{stamp(definition.watermarkUtc)}</dd></div></dl></details>
     {target && targetRead.state === "invalid" && <Notice error>{targetRead.reason}。不能保存普通修订或恢复运行；可在下方保持原定义暂停或停止。</Notice>}
     {definition.state !== "stopped" && <details className="workflow-detail"><summary>修订规则、暂停或恢复</summary>
       <Notice>修订以当前版本为基线；已排队的旧修订时刻仍需单独核对，不会悄悄改写。</Notice>

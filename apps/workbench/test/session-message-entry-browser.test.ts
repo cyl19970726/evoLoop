@@ -96,7 +96,9 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   assert.equal(await page.getByText("保存能力：当前可保存待处理消息").count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count() > 0, true);
   assert.equal(await page.getByLabel("消息内容").getAttribute("placeholder"), "写消息给当前 Session…");
-  assert.ok((await page.getByLabel("消息内容").boundingBox())!.height < 55, "the empty composer stays compact");
+  const composerBox = (await page.getByLabel("消息内容").boundingBox())!;
+  assert.ok(composerBox.height >= 96 && composerBox.height <= 180, "the desktop side composer has a readable multiline input");
+  assert.equal(await page.locator(".session-composer-host").evaluate(element => getComputedStyle(element).position), "static", "composer must not obscure the activity feed");
   assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /配置变化后请点上方“重新读取”/);
   await fetch(`${base}/__fixture/update`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
