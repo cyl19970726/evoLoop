@@ -20,8 +20,14 @@ const PINNED_PROTOCOLS = {
     standard: "8fe0d6335768743b8388dfdbe95fef85303524093e2dffc301704555e73e718f",
     experimental: "3b9df7cbe5659538e7162e1f8fdadcad42badc08bfeac2fe617ede44ca057b12",
   },
+  "codex-cli 0.166.0-alpha.5.1": {
+    standard: "3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d",
+    experimental: "ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541",
+  },
 } as const;
 type PinnedProtocolVersion = keyof typeof PINNED_PROTOCOLS;
+const supportsModernProtocol = (version: PinnedProtocolVersion): boolean =>
+  version !== "codex-cli 0.154.0";
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
 // The App Server and its probes must not inherit coordinator credentials or Node execution flags.
@@ -126,7 +132,7 @@ export interface CodexAppServerOptions {
   initializationTimeoutMs?: number;
   dynamicToolTimeoutMs?: number;
   clientVersion?: string;
-  /** Enable pinned 0.164 native request_user_input on this child only; never writes user configuration. */
+  /** Enable pinned modern native request_user_input on this child only; never writes user configuration. */
   nativeUserInput?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
@@ -242,11 +248,11 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.environment = childEnvironment(options.environment ?? process.env);
     const expectedVersion = options.expectedVersion ?? "codex-cli 0.154.0";
     if (!(expectedVersion in PINNED_PROTOCOLS)) throw new RuntimeProtocolError("unsupported Codex CLI protocol version");
+    this.expectedVersion = expectedVersion as PinnedProtocolVersion;
     if(options.nativeUserInput!==undefined&&typeof options.nativeUserInput!=='boolean')
       throw new RuntimeProtocolError('nativeUserInput must be boolean');
-    if(options.nativeUserInput&&expectedVersion!=='codex-cli 0.164.0-alpha.11.1')
-      throw new RuntimeProtocolError('nativeUserInput requires pinned Codex CLI 0.164');
-    this.expectedVersion = expectedVersion as PinnedProtocolVersion;
+    if(options.nativeUserInput&&!supportsModernProtocol(this.expectedVersion))
+      throw new RuntimeProtocolError('nativeUserInput requires a pinned modern Codex CLI protocol');
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
@@ -361,7 +367,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(this.ownedProcess?.pid&&this.ownedProcess.exitCode===null&&this.ownedProcess.signalCode===null)
       throw new RuntimeProtocolError('previous App Server process has not exited');
     this.experimental=!!(this.options.dynamicTools&&this.options.callDynamicTool)||
-      (this.expectedVersion==='codex-cli 0.164.0-alpha.11.1'&&this.nativeInputListeners.size>0);
+      (supportsModernProtocol(this.expectedVersion)&&this.nativeInputListeners.size>0);
     if (!this.options.spawnArgs) {
       const version = await this.probeVersion();
       if (version !== this.expectedVersion) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${this.expectedVersion}, got ${version}`);
@@ -525,7 +531,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       (params?.turnId!=null&&!boundedText(params.turnId,1024))){
       unsupported('Native input identity is unavailable');return;
     }
-    const supportedProtocol=this.expectedVersion==='codex-cli 0.164.0-alpha.11.1'&&this.experimental;
+    const supportedProtocol=supportsModernProtocol(this.expectedVersion)&&this.experimental;
     const observer=this.nativeInputListeners.size>0;
     const questions=isTool?nativeInputQuestions(params?.questions):null;
     const secret=isTool&&Array.isArray(params?.questions)&&params.questions.some(value=>object(value)?.isSecret===true);
@@ -581,7 +587,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         creating ? { projectId: creating.projectId, sessionId: creating.sessionId } : {}),
       ...(nonempty(threadId) ? { threadId } : {}), ...(nonempty(params?.turnId) ? { turnId: params.turnId } : {}) };
     if (message.method === "currentTime/read") {
-      if (this.expectedVersion !== "codex-cli 0.164.0-alpha.11.1") {
+      if (!supportsModernProtocol(this.expectedVersion)) {
         this.send({ id, error: { code: -32601, message: "Unsupported server request" } }); return;
       }
       if (!binding || params?.threadId !== binding.nativeThreadId) {
@@ -863,7 +869,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.owned(binding);
     const unavailable=(reason:string)=>{this.conversationQualifications.delete(binding.nativeThreadId);
       return {available:false,reason,fingerprint:null};};
-    if(this.expectedVersion!=='codex-cli 0.164.0-alpha.11.1')return unavailable('Full conversation readback requires pinned 0.164 protocol');
+    if(!supportsModernProtocol(this.expectedVersion))return unavailable('Full conversation readback requires a pinned modern protocol');
     if(!binding.resumeProfile||!fullProfile(binding.resumeProfile)||
       this.profileTransitionThreads.has(binding.nativeThreadId))
       return unavailable('Owned Session has no active full execution profile');
@@ -941,8 +947,8 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async setThreadName(binding: RuntimeBinding, name: string): Promise<void> {
     this.owned(binding);
-    if (this.expectedVersion !== "codex-cli 0.164.0-alpha.11.1")
-      throw new RuntimeProtocolError("native Thread naming requires pinned 0.164 protocol");
+    if (!supportsModernProtocol(this.expectedVersion))
+      throw new RuntimeProtocolError("native Thread naming requires a pinned modern protocol");
     if (!name.trim() || name.length > 240) throw new RuntimeProtocolError("invalid native Thread name");
     // The response is empty by protocol. The coordinator verifies with thread/read.
     await this.request("thread/name/set", { threadId: binding.nativeThreadId, name });
@@ -980,13 +986,13 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
-    // Metadata-only listing is supported by pinned 0.164; 0.154 has no itemsView.
+    // Metadata-only listing is supported by the pinned modern protocols; 0.154 has no itemsView.
     const result = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 100,
-      sortDirection:'desc', ...(this.expectedVersion === "codex-cli 0.164.0-alpha.11.1" ? { itemsView: "notLoaded" } : {}),
+      sortDirection:'desc', ...(supportsModernProtocol(this.expectedVersion) ? { itemsView: "notLoaded" } : {}),
       ...(cursor ? { cursor } : {}) }));
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
-    if (this.expectedVersion === "codex-cli 0.164.0-alpha.11.1" &&
+    if (supportsModernProtocol(this.expectedVersion) &&
         result?.nextCursor !== null && !nonempty(result?.nextCursor))
       throw new RuntimeProtocolError("invalid turns continuation cursor");
     return { data: turns as RuntimeTurn[], nextCursor: nonempty(result?.nextCursor) ? result.nextCursor : null };
