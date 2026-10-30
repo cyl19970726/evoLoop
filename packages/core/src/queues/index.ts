@@ -104,10 +104,6 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
       return fail('RUN_UNSETTLED','Latest Run must be a known failed or interrupted result');
     const task=await reader.getTask(entry.taskId);
     if(task?.state!=='cancelled')return fail('TASK_NOT_CANCELLED','Task must be explicitly cancelled before its claim is stopped');
-    if(!ctx.recovery)return fail('RECOVERY_UNAVAILABLE','Session recovery persistence is unavailable');
-    const gate=await ctx.recovery.lockRecoveryGate(entry.sessionId);
-    if(gate.version!==c.expectedGateVersion||gate.phase!=='blocked'||gate.claimId!==c.claimId||gate.causeKind!=='run'||gate.causeId!==c.sourceRunId)
-      return fail('RECOVERY_SOURCE_CHANGED','Recovery gate must identify the exact failed claim');
     const ok=await tx.stopResidentQueueClaim(c.claimId,c.decisionId,principal.actorId,c.expectedEntryVersion,c.expectedRunVersion,c.expectedGateVersion,c.sourceRunId,c.reason,c.nextResponsibility);
     if(!ok)return fail('STOP_CONFLICT','Claim, Task, Run or Session changed before stop');
     return result(queue,c.claimId);

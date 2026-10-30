@@ -53,6 +53,8 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     const p=params(request.params),who=principal(request);
     const queue=await service.getResidentQueue(who,p.projectId,p.id!);
     return Promise.all(queue.entries.map(async entry=>({entryId:entry.id,claimId:entry.claimId,
+      claim:entry.claimId?await service.getResidentQueueClaim(who,p.projectId,entry.claimId):null,
+      stopDecision:entry.claimId?await service.getResidentQueueStopDecision(who,p.projectId,entry.claimId):null,
       attempts:entry.claimId?await service.listResidentQueueAttempts(who,p.projectId,entry.claimId):[]})));
   });
   app.get("/api/projects/:projectId/schedules/:id/revisions", request => { const p = params(request.params); return service.listScheduleRevisions(principal(request), p.projectId, p.id!); });

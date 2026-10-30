@@ -287,6 +287,11 @@ test('cancelled failed Task stops its exact claim without accepting work or eras
   assert.equal(staleRun.status,'rejected','Run version CAS rejects stale source');
   const staleEntry=await workflow.execute(lead,{projectId,operationId:randomUUID(),...base,expectedEntryVersion:entry.version+1} as any);
   assert.equal(staleEntry.status,'rejected','entry version CAS rejects stale claim');
+  const successor={...lead,actorId:'successor-lead'};
+  await apply({type:'queue.reorder',queueId:qid,expectedVersion:1,entryIds:[],reason:'Transfer queue control'},successor);
+  const formerController=await workflow.execute(lead,{projectId,operationId:randomUUID(),...base} as any);
+  assert.equal(formerController.status,'rejected','former controller cannot stop after queue ownership changes');
+  await apply({type:'queue.reorder',queueId:qid,expectedVersion:2,entryIds:[],reason:'Return queue control'});
   const stop={projectId,operationId:randomUUID(),...base};
   const rival={...stop,operationId:randomUUID(),decisionId:randomUUID()};
   const [stopped,competing]=await Promise.all([workflow.execute(lead,stop as any),workflow.execute(lead,rival as any)]);
@@ -301,6 +306,8 @@ test('cancelled failed Task stops its exact claim without accepting work or eras
   assert.equal((await workflow.getTask(lead,projectId,taskId)).task.state,'cancelled');
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sid)).gate!.phase,'blocked','original failure still needs an explicit recovery decision');
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM resident_queue_stop_decision WHERE project_id=$1 AND claim_id=$2',[projectId,claim])).rows[0].n,1);
+  const stopRead=await workflow.getResidentQueueStopDecision(lead,projectId,claim);
+  assert.equal(stopRead?.reason,base.reason);assert.equal(stopRead?.nextResponsibility,base.nextResponsibility);
   const reviewed=(await workflow.getSessionRecovery(lead,projectId,sid)).gate!;
   await apply({type:'runtime.session.recovery.resume',sessionId:sid,expectedVersion:reviewed.version,expectedCauseId:reviewed.causeId,resumeMessageId:reviewed.resumeMessageId,evidenceRef:'fixture://reviewed-stop',reason:'Original failed attempt retained and cancelled Task has separate responsibility'});
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sid)).gate!.phase,'open');

@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import type { ResidentQueue,ResidentQueueEntry,QueueClaim,QueueAttempt,QueueHoldCode } from '../../contracts/src/queues.js';
+import type { ResidentQueue,ResidentQueueEntry,QueueClaim,QueueAttempt,QueueHoldCode,QueueStopDecision } from '../../contracts/src/queues.js';
 import { DomainError } from '@evoloop/contracts/ports';
 
 /** Use the caller's transaction; existing reserve and Loop must call assertQueueVacant under the same task/Session locks. */
@@ -35,6 +35,12 @@ export class PgResidentQueue {
   async listHeld(id:string):Promise<ResidentQueueEntry[]>{const r=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND hold_code IS NOT NULL ORDER BY position',[this.projectId,id]);return r.rows.map(entryOf);}
   async listReconcile():Promise<{claim:QueueClaim;attempts:QueueAttempt[]}[]>{const r=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND released_at IS NULL ORDER BY claimed_at,claim_id',[this.projectId]);return Promise.all(r.rows.map(async x=>({claim:claimOf(x),attempts:await this.listResidentQueueAttempts(x.claim_id)})));}
   async getResidentQueueClaim(id:string):Promise<QueueClaim|null>{const r=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2',[this.projectId,id]);return r.rows[0]?claimOf(r.rows[0]):null;}
+  async getResidentQueueStopDecision(claimId:string):Promise<QueueStopDecision|null>{
+    const r=await this.client.query('SELECT * FROM resident_queue_stop_decision WHERE project_id=$1 AND claim_id=$2',[this.projectId,claimId]);
+    const x=r.rows[0];return x?{projectId:this.projectId,decisionId:x.decision_id,claimId:x.claim_id,sourceRunId:x.source_run_id,
+      expectedEntryVersion:x.expected_entry_version,expectedRunVersion:x.expected_run_version,expectedGateVersion:x.expected_gate_version,
+      actorId:x.actor_id,reason:x.reason,nextResponsibility:x.next_responsibility,createdAt:iso(x.created_at)!}:null;
+  }
   async listResidentQueueAttempts(id:string):Promise<QueueAttempt[]>{const r=await this.client.query('SELECT a.*,r.task_revision_id AS actual_run_task_revision_id FROM resident_queue_attempt a LEFT JOIN runtime_run r ON r.project_id=a.project_id AND r.run_id=a.run_id WHERE a.project_id=$1 AND a.claim_id=$2 ORDER BY a.sequence',[this.projectId,id]);return r.rows.map(attemptOf);}
   async countResidentQueueAttempts(queueId:string):Promise<number>{const r=await this.client.query('SELECT count(*)::int AS used FROM resident_queue_attempt a JOIN resident_queue_claim c ON c.project_id=a.project_id AND c.claim_id=a.claim_id WHERE c.project_id=$1 AND c.queue_id=$2',[this.projectId,queueId]);return r.rows[0].used;}
   async createResidentQueue(q:ResidentQueue):Promise<void>{
@@ -225,8 +231,10 @@ export class PgResidentQueue {
   }
   async stopResidentQueueClaim(claimId:string,decisionId:string,actor:string,expectedEntryVersion:number,expectedRunVersion:number,expectedGateVersion:number,sourceRunId:string,reason:string,nextResponsibility:string):Promise<boolean>{
     if(!reason.trim()||!nextResponsibility.trim()||!await this.lead(this.client,this.projectId,actor))throw new Error('QUEUE_AUTHORIZATION');
-    const key=await this.client.query('SELECT session_id FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2',[this.projectId,claimId]);
+    const key=await this.client.query('SELECT queue_id,session_id FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2',[this.projectId,claimId]);
     if(!key.rows[0])return false;
+    const controller=await this.client.query('SELECT actor_id FROM resident_queue WHERE project_id=$1 AND queue_id=$2 FOR UPDATE',[this.projectId,key.rows[0].queue_id]);
+    if(controller.rows[0]?.actor_id!==actor)return false;
     await this.client.query('SELECT session_recovery_slot_lock($1,$2)',[this.projectId,key.rows[0].session_id]);
     const gate=await this.client.query('SELECT phase,version,claim_id,cause_kind,cause_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,key.rows[0].session_id]);
     const g=gate.rows[0];if(!g||g.phase!=='blocked'||g.version!==expectedGateVersion||g.claim_id!==claimId||g.cause_kind!=='run'||g.cause_id!==sourceRunId)return false;

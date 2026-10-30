@@ -33,6 +33,7 @@ export type QueueReleaseRule='accepted'|'bounded_decision';
 export interface ResidentQueueEntry {projectId:string;queueId:string;id:string;taskId:string;taskRevisionId:string;sourceInputJson:string;sessionId:string;roleId:string;position:number;dependsOn:string[];consumerId:string;useRequired:boolean;releaseRule:QueueReleaseRule;state:QueueEntryState;holdCode:QueueHoldCode|null;holdReason:string|null;claimId:string|null;version:number}
 export interface ResidentQueue {projectId:string;id:string;version:number;adoptedVersion:number|null;maxRuns:number;reason:string;actorId:string;entries:ResidentQueueEntry[]}
 export interface QueueClaim {projectId:string;queueId:string;entryId:string;claimId:string;taskId:string;sessionId:string;roleId:string;releasedAt:string|null;releaseKind:'accepted'|'bounded'|'stopped'|null}
+export interface QueueStopDecision {projectId:string;decisionId:string;claimId:string;sourceRunId:string;expectedEntryVersion:number;expectedRunVersion:number;expectedGateVersion:number;actorId:string;reason:string;nextResponsibility:string;createdAt:string}
 export interface QueueAttempt {projectId:string;claimId:string;sequence:number;runId:string;operationId:string;taskRevisionId:string;actualRunTaskRevisionId:string|null;reservedAt:string}
 export interface QueueSourceFacts {currentTaskRevisionId:string|null;taskState:'todo'|'in_progress'|'done'|'cancelled'|'other';sessionReady:boolean;nativeThreadId:string|null;bindingCurrent:boolean;grantCurrent:boolean;conflictingRun:boolean;currentInputJson:string|null}
 export interface QueueReleaseEvidence {currentTaskRevisionId:string;currentInputJson:string;taskState:'done'|'in_progress';deliveryId:string|null;deliveryCurrent:boolean;deliveryPassed:boolean;observationId:string|null;observationConsumerId:string|null;observationUsed:boolean;closureId:string|null;closureCurrent:boolean;boundedDecisionId:string|null;boundedDecisionActorId:string|null;boundedDecisionReason:string|null;nextResponsibility:string|null}
@@ -43,6 +44,7 @@ export interface QueueReader {
   listResidentQueueAttempts(claimId:string):Promise<QueueAttempt[]>;
   countResidentQueueAttempts(queueId:string):Promise<number>;
   getResidentQueueClaim(claimId:string):Promise<QueueClaim|null>;
+  getResidentQueueStopDecision(claimId:string):Promise<QueueStopDecision|null>;
   exactQueueGrant(roleId:string,sessionId:string,taskId:string):Promise<boolean>;
   queueBindingCurrent(roleId:string,sessionId:string):Promise<boolean>;
 }
