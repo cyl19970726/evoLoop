@@ -96,7 +96,7 @@ export function api(token: string, timeoutMs = 15000) {
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),
     discussionEvents: (p: string, id: string) => call<DiscussionEvent[]>(`${projectPath(p)}/discussions/${key(id)}/events`),
-    documents: (p: string, cursor?: string) => call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    documents: (p: string, cursor?: string, kind?: Document["kind"], signal?: AbortSignal) => call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`, { signal }),
     document: (p: string, id: string) => call<DocumentDetail>(`${projectPath(p)}/documents/${key(id)}`),
     documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
       `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),

@@ -49,9 +49,15 @@ function staticHtml(original: AvailableOriginal): { html: string; urls: string[]
   const registered = new Map<string, string>();
   const assets = new Map(original.assets.map(asset=>[asset.path,asset]));
   for (const asset of original.assets) registered.set(asset.path, `data:${asset.mediaType};base64,${asset.base64}`);
-  const rewrite = (value: string) => registered.get(resolveAsset(value, original.revision.entrypoint) ?? "") ?? "";
+  const inlineImage = (value: string): string | null => {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.exec(value.trim().replace(/^['"]|['"]$/g, ""));
+    if (!match) return null;
+    const image = imagePreview(match[1]!, match[2]!);
+    return image ? `data:${image.mediaType};base64,${match[2]}` : null;
+  };
+  const rewrite = (value: string) => inlineImage(value) ?? registered.get(resolveAsset(value, original.revision.entrypoint) ?? "") ?? "";
   const css = (value: string, relativeTo = original.revision.entrypoint) => value.replace(/url\(\s*([^)]*)\s*\)/gi, (_match, address: string) => {
-    const url = registered.get(resolveAsset(address, relativeTo) ?? "");
+    const url = inlineImage(address) ?? registered.get(resolveAsset(address, relativeTo) ?? "");
     return url ? `url("${url}")` : "url(about:blank)";
   }).replace(/@import\b[^;]*;?/gi, "");
   const cssBases = new Map<Element,string | null>();
@@ -72,7 +78,9 @@ function staticHtml(original: AvailableOriginal): { html: string; urls: string[]
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
       if (name.startsWith("on") || name === "srcdoc" || name === "integrity") element.removeAttribute(attribute.name);
-      else if (["src", "href", "poster", "xlink:href"].includes(name)) {
+      else if (name === "href" && attribute.value.startsWith("#")) {
+        element.setAttribute("href", `about:srcdoc${attribute.value}`);
+      } else if (["src", "href", "poster", "xlink:href"].includes(name)) {
         const url = rewrite(attribute.value);
         if (url) element.setAttribute(attribute.name, url);
         else element.removeAttribute(attribute.name);
@@ -92,8 +100,8 @@ function download(name: string, data: Blob): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function OriginalDocumentReader({ token, projectId, revisionId, documentId }: {
-  token: string; projectId: string; revisionId: string; documentId: string;
+export function OriginalDocumentReader({ token, projectId, revisionId, documentId, readingMode = false }: {
+  token: string; projectId: string; revisionId: string; documentId: string; readingMode?: boolean;
 }) {
   const [storedOriginal, setOriginal] = useState<Original | null>(null);
   const original = storedOriginal?.revision.projectId === projectId && storedOriginal.revision.documentId === documentId && storedOriginal.revision.id === revisionId ? storedOriginal : null;
@@ -129,13 +137,13 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
     <p role="alert">资源不可用或未通过校验（{original.reason}）。请检查存储与登记状态。</p>
     <button onClick={() => setRefresh(v => v + 1)}>重新核对</button></section>;
   const mime = original.revision.mediaType;
-  return <section className="panel reading doc-original-reader"><div className="panel-head"><h2>完整原件</h2>
+  return <section className="panel reading doc-original-reader"><div className="panel-head"><h2>{readingMode ? "完整报告" : "完整原件"}</h2>
     <button onClick={() => download(original.revision.originalName,
       new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
     <details className="doc-original-integrity"><summary>原件标识与校验</summary><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></details>
-    {original.revision.format === "html" ? <><p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
+    {original.revision.format === "html" ? <>{!readingMode && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
       {preview ? <iframe key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
-        style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
+        style={{ width: "100%", minHeight: readingMode ? "75vh" : 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>
     {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}>

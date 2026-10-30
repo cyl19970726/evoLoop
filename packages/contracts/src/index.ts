@@ -1,3 +1,5 @@
+import { organizationReviewSchema, type OrganizationReview } from "./organization-review.js";
+export { organizationReviewSchema, type OrganizationReview } from "./organization-review.js";
 import { z } from "zod";
 import { workflowCommands } from "./workflow.js";
 import { runtimeCommands } from "./runtime.js";
@@ -32,13 +34,13 @@ export const documentBasisSchema = z.strictObject({ documentId: idSchema, revisi
 export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
 export const taskKindSchema = z.enum(["implementation", "research", "validation"]);
-export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report"]);
+export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report", "organization_review"]);
 export const documentOriginSchema = z.strictObject({ taskId: idSchema, runId: idSchema.optional() });
 // Only the implemented command surface is exported; a missing integration is not a no-op command.
 export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("project.create"), title }),
-  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional(), origin: documentOriginSchema.optional() }),
-  z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text }),
+  z.strictObject({ ...common, type: z.literal("document.create"), documentId: idSchema, title, body: z.string().min(1).max(65536), kind: documentKindSchema.nullable().optional(), organizationReview: organizationReviewSchema.optional(), origin: documentOriginSchema.optional() }),
+  z.strictObject({ ...common, type: z.literal("document.revise"), documentId: idSchema, expectedVersion: version, body: z.string().min(1).max(65536), reason: text, organizationReview: organizationReviewSchema.optional() }),
   z.strictObject({ ...common, type: z.literal("document.adopt"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.archive"), documentId: idSchema, expectedVersion: version, reason: text }),
@@ -73,15 +75,19 @@ export interface Document {
   projectId: string; id: string; title: string; version: number;
   currentRevisionId: string; adoptedRevisionId: string | null; kind: DocumentKind | null; status: DocumentStatus;
   primaryTaskId?: string | null;
+  organizationReview?: OrganizationReview;
+  createdAt?: string;
+  updatedAt?: string;
   origin?: { taskId: string; runId: string | null; taskRevisionId: string } | null;
 }
-export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report";
+export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report" | "organization_review";
 export type DocumentStatus = "draft" | "published" | "archived";
 export interface DocumentRevision {
   projectId: string; documentId: string; id: string; body: string | null; format: "markdown" | "html";
   mediaType: "text/markdown" | "text/html"; originalName: string; payloadRef: string | null;
   entrypoint: string | null; assetsManifest: import("./process-documents.js").DocumentAsset[];
   contentHash: string; author: string; createdAt: string; previousRevisionId: string | null; reason: string;
+  organizationReview?: OrganizationReview;
 }
 export interface DocumentDecision {
   projectId: string; id: string; documentId: string; revisionId: string;

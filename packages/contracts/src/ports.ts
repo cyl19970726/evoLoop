@@ -68,7 +68,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getDocumentRevision(documentId: string, revisionId: string): Promise<DocumentRevision | null>;
   /** Whether this fixed revision was ever published by an immutable adoption decision. */
   hasDocumentAdoption(documentId: string, revisionId: string): Promise<boolean>;
-  listDocuments(limit: number, cursor?: string): Promise<Page<Document>>;
+  listDocuments(limit: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>>;
   getTask(id: string): Promise<Task | null>;
   getTaskRevision(taskId: string, revisionId: string): Promise<TaskRevision | null>;
   listTaskRevisions(taskId: string): Promise<TaskRevision[]>;

@@ -3,7 +3,7 @@ import type { DocumentRevision } from "@evoloop/contracts";
 import { OriginalDocumentReader } from "../documents/OriginalDocumentReader";
 import { MarkdownBody } from "./MarkdownBody";
 import { isProjectRoute } from "./returnRoute";
-export type Section = "overview" | "work" | "create-task" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings";
+export type Section = "overview" | "work" | "create-task" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
 
 
@@ -20,7 +20,7 @@ export function readRoute(): Route {
   if (section === "tasks" && parts[3]) return { projectId: parts[1], section: "task", id: parts[3], revision };
   if (section === "documents" && parts[3]) return { projectId: parts[1], section: "document", id: parts[3], revision };
   if (section === "evaluations") return { projectId: parts[1], section: "evaluations", id: parts[3], revision };
-  if (["work", "knowledge", "documents", "inbox", "journey", "discussions", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(section === "runtime" ? { session } : {}) };
+  if (["work", "knowledge", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(section === "runtime" ? { session } : {}) };
   return { projectId: parts[1], section: "overview" };
 }
 

@@ -55,7 +55,7 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   const migrations=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
   await runner({databaseUrl:url,dir:migrations,migrationsTable:"pgmigrations",schema,
     createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:34,log:()=>{}});
-  await pool.query("ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text");
+  await pool.query("ALTER TABLE task_proposal ADD COLUMN acceptance_mode text; ALTER TABLE delivery ADD COLUMN submitted_by_actor_id text; ALTER TABLE document_revision ADD COLUMN organization_review jsonb");
   t.after(async () => {
     await pool.end();
     const cleanup = new pg.Client({ connectionString: url });
@@ -123,7 +123,8 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   const eligible=await historicalUncertainRun("read-only","eligible");
   const writable=await historicalUncertainRun("workspace-write","workspace-write");
   const knownTurn=await historicalUncertainRun("read-only","known-turn",true);
-  await pool.query("ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id");
+  await pool.query("ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id; ALTER TABLE document_revision DROP COLUMN organization_review");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1 AND table_name='document_revision' AND column_name='organization_review'",[schema])).rows[0].n,0,"seed-only review column is absent before historical upgrade");
   await migrate(url,schema);
   assert.equal((await workflow.getRuntimeRun(owner,projectId,eligible.runId)).executionProfile?.sandbox,"read-only");
   const beforeRunEvents = await workflow.listRuntimeEvents(owner, projectId, eligible.runId);

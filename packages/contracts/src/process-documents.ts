@@ -1,3 +1,4 @@
+import { organizationReviewSchema, type OrganizationReview } from "./organization-review.js";
 import { z } from "zod";
 import type { BlobPayload } from "./sources.js";
 import type { Document, DocumentDecision, Operation, OutboxEvent } from "./index.js";
@@ -17,12 +18,12 @@ const source = z.discriminatedUnion("storage", [
 ]);
 export const documentPayloadCommandSchema = z.strictObject({
   ...common, mode: z.enum(["create", "revise"]), title: z.string().trim().min(1).max(240).optional(),
-  expectedVersion: z.number().int().positive().optional(), kind: z.enum(["task", "issue", "spec", "discussion", "report"]).nullable().optional(), source,
+  expectedVersion: z.number().int().positive().optional(), kind: z.enum(["task", "issue", "spec", "discussion", "report", "organization_review"]).nullable().optional(), organizationReview: organizationReviewSchema.optional(), source,
 }).superRefine((command, ctx) => {
   if (command.format === "markdown" && command.mediaType !== "text/markdown" || command.format === "html" && command.mediaType !== "text/html")
     ctx.addIssue({ code: "custom", message: "format and media type disagree", path: ["mediaType"] });
   if (command.mode === "create" && (!command.title || command.expectedVersion !== undefined) ||
-      command.mode === "revise" && (command.expectedVersion === undefined || command.kind !== undefined))
+      command.mode === "revise" && (command.expectedVersion === undefined || (command.kind !== undefined && command.kind !== "organization_review")))
     ctx.addIssue({ code: "custom", message: "create requires title; revise requires expectedVersion", path: ["mode"] });
   if (command.kind === "task") ctx.addIssue({ code: "custom", message: "Task primary documents are created through task.create", path: ["kind"] });
 });
@@ -38,6 +39,7 @@ export interface DocumentPayloadRevision {
   body: string | null; payloadRef: string | null; contentHash: string;
   entrypoint: string | null; assetsManifest: DocumentAsset[];
   author: string; reason: string; createdAt: string;
+  organizationReview?: OrganizationReview;
 }
 export interface RegisteredDocumentBlob extends BlobPayload {
   documentId: string; revisionId: string; role: "main" | "asset"; relativePath: string | null;

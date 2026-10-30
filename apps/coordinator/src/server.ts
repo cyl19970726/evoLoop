@@ -1,7 +1,7 @@
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
-import { commandSchema, capabilities, idSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
+import { commandSchema, capabilities, idSchema, documentKindSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
@@ -140,7 +140,7 @@ export async function buildServer(options: {
   const callerSchedulingGrants = (projectId: string, actorId: string) =>
     (options.schedulingGrants?.(projectId, actorId) ?? []).filter(g => g.projectId === projectId && g.actorId === actorId);
   const currentCapabilities = (principal: Principal | null = null) => ({ ...capabilities,
-    ...(options.sourceConfiguration?.(principal) ?? {}), goalWorkflow: true, html: !!options.documents,
+    ...(options.sourceConfiguration?.(principal) ?? {}), goalWorkflow: true, organizationReviewDocuments: true, html: !!options.documents,
     documentOriginals: !!options.documents, knowledge: !!options.knowledge, runtime: options.runtime?.status().available ?? false,
     sourceConfiguration: options.sourceConfiguration?.(principal) ?? {git: false, wiki: false},
   });
@@ -515,7 +515,8 @@ export async function buildServer(options: {
   for (const entity of ["documents", "tasks"] as const) {
     app.get(`/api/projects/:projectId/${entity}`, async request => {
       const p = params(request.params); const q = pageSchema.parse(request.query);
-      return entity === "documents" ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor) : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
+      const kind = entity === "documents" ? z.object({ kind: documentKindSchema.optional() }).parse(request.query).kind : undefined;
+      return entity === "documents" ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, kind) : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
     });
     app.get(`/api/projects/:projectId/${entity}/:id`, async request => {
       const p = params(request.params);

@@ -9,7 +9,7 @@ import { UploadDocument } from "./UploadDocument";
 import { documentLifecycleMatches, mergeDocumentPage, readDocumentRange, validDocumentPage } from "./documentListModel";
 import "./document.css";
 
-const kinds = { issue: "问题", spec: "规范", discussion: "讨论", report: "报告", task: "任务正文" } as const;
+const kinds = { issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘", task: "任务正文" } as const;
 const statuses = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
 const empty: Page<Document> = { items: [], nextCursor: null };
 const automaticPageLimit = 10;
@@ -76,14 +76,14 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
     const previousCount = currentPage.current.items.length;
     void readDocumentRange(cursor => {
       if (!active || generation !== epoch.current) throw new Error("列表读取范围已变化");
-      return api(token).documents(projectId, cursor);
+      return api(token).documents(projectId, cursor, kind === "all" ? undefined : kind as Document["kind"]);
     }, projectId, previousCount).then(result => {
       if (!active || generation !== epoch.current) return;
       currentPage.current = result.page; pageCount.current = result.pages; cursors.current = result.cursors;
       setPageState({ scope, page: result.page }); setObservedAt(new Date()); setLoading(false);
     }).catch(cause => { if (active && generation === epoch.current) { setError(readProblem(cause)); setLoading(false); } });
     return () => { active = false; };
-  }, [token, projectId, refresh, reread]);
+  }, [token, projectId, refresh, reread, kind]);
 
   useEffect(() => {
     if (loading || error || restoreScroll.current === null) return;
@@ -104,7 +104,7 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
     const cursor = currentPage.current.nextCursor;
     if (!cursor) return Promise.resolve(false);
     const generation = epoch.current;
-    const request = api(token).documents(projectId, cursor).then(result => {
+    const request = api(token).documents(projectId, cursor, kind === "all" ? undefined : kind as Document["kind"]).then(result => {
       if (generation !== epoch.current || currentPage.current.nextCursor !== cursor) return false;
       validDocumentPage(result, projectId, cursor);
       if (result.nextCursor && cursors.current.has(result.nextCursor)) throw new Error("文档分页游标重复，无法确认后续结果");
@@ -167,7 +167,7 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
     <div className="page-title-row"><div><h1>过程文档</h1><p className="lede">从固定原件读工作依据，核对版本与关联任务。</p></div>
       {canWrite && <button type="button" onClick={() => setCreate(value => !value)} aria-expanded={create}>保存文档</button>}</div>
     <nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")} aria-current="page">过程文档</a><a href={href(projectId, "knowledge")}>知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav>
-    {create && <div className="panel"><h2>保存过程文档</h2><ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" }, { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kinds).filter(([key]) => key !== "task").map(([key, label]) => option(key, label)) }, { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]} build={values => ({ type: "document.create", documentId: crypto.randomUUID(), title: values.title, body: values.body, kind: values.kind || null })} /><UploadDocument context={context} /></div>}
+    {create && <div className="panel"><h2>保存过程文档</h2><ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" }, { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kinds).filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) }, { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]} build={values => ({ type: "document.create", documentId: crypto.randomUUID(), title: values.title, body: values.body, kind: values.kind || null })} /><UploadDocument context={context} /></div>}
     <section className="list-surface" aria-label="过程文档" aria-busy={loading}>
       <div className="list-toolbar"><label className="search-field"><input aria-label="搜索文档" placeholder="搜索标题或文档 ID…" value={query} onChange={event => setQuery(event.target.value)} /></label>
         <select aria-label="文档类型筛选" value={kind} onChange={event => setKind(event.target.value)}><option value="all">全部类型</option>{Object.entries(kinds).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
