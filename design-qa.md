@@ -23,6 +23,7 @@ The selected image and the latest rendered prototype were inspected at the same 
 - P1: none.
 - P2: none.
 - The first pass exposed a sticky document-header overlap and an inner-rail state that did not follow viewport resizing. Both were fixed before the final capture.
+- A second density review removed the redundant Task entry column while the reader was open, moved its result link under the work title, condensed Session metadata to one supporting line, and increased spacing in the Task reader and document evidence rail.
 - The development-only preview banner and real empty/unavailable service states are not part of the selected visual mock; they remain as explicit runtime truth.
 - Long real-world Chinese task titles, role identifiers, and recovery evidence wrap within their intended reading columns.
 - No green or teal status styling is visible in the implemented work, document, detail, overview, schedule, knowledge, or team surfaces.

@@ -28,8 +28,9 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const visibleCurrent = search || currentExpanded ? current.items : current.items.slice(0, 2);
   function item(session: ObservedSession) {
     const task = session.currentTask;
+    const roles = session.roles.map(role => role.title).join(" · ");
     return <a key={session.key} href={sessionHref(projectId, session.key)} className={`session-nav-item ${selectedId === session.key ? "selected" : ""}`} aria-current={selectedId === session.key ? "page" : undefined} onClick={onNavigate}>
-      <UserRound size={15} aria-hidden="true" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong><small>{task ? task.title : session.roles.map(role => role.title).join(" · ") || "职责未确认"}</small><small>{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
+      <UserRound size={15} aria-hidden="true" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong><small>{roles || task?.title || "职责未确认"} · {session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {
