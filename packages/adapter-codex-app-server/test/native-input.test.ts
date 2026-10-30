@@ -12,12 +12,13 @@ const fixture=resolve(import.meta.dirname,'native-input-fixture.mjs');
 const spec:RuntimeSessionSpec={actorId:'owner',sessionId:'session-1',roleId:'role-1',projectId:'project-1',
   cwd:'/tmp/evoloop-fixture',authorizationScope:'task:fixture',model:'gpt-6-sol',
   sandbox:'danger-full-access',approvalPolicy:'never'};
+const modernVersions=['codex-cli 0.164.0-alpha.11.1','codex-cli 0.166.0-alpha.5.1'] as const;
 const pending=<T>(subscribe:(resolve:(value:T)=>void)=>void):Promise<T>=>
   new Promise((resolveValue,reject)=>{
     const timer=setTimeout(()=>reject(new Error('fixture event timeout')),2_000);
     subscribe(value=>{clearTimeout(timer);resolveValue(value);});
   });
-async function opened(mode:string,version='codex-cli 0.164.0-alpha.11.1',observe=true){
+async function opened(mode:string,version='codex-cli 0.166.0-alpha.5.1',observe=true){
   const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
     expectedVersion:version,initializationTimeoutMs:5_000,requestTimeoutMs:500});
   const events:NativeInputEvent[]=[];
@@ -29,12 +30,14 @@ async function opened(mode:string,version='codex-cli 0.164.0-alpha.11.1',observe
 const requests=(events:NativeInputEvent[])=>events.filter(event=>event.type==='requested').map(event=>event.request);
 const closed=(events:NativeInputEvent[])=>events.filter(event=>event.type==='closed');
 
-test('native input launch flag is scoped to the owned 0.164 App Server child',()=>{
-  const normal=new CodexAppServerAdapter({expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
-  const enabled=new CodexAppServerAdapter({expectedVersion:'codex-cli 0.164.0-alpha.11.1',nativeUserInput:true});
+test('native input launch flag is scoped to modern owned App Server children',()=>{
   const args=(adapter:CodexAppServerAdapter)=>(adapter as unknown as {appServerArguments():string[]}).appServerArguments();
-  assert.deepEqual(args(normal),['app-server','--stdio']);
-  assert.deepEqual(args(enabled),['-c','features.default_mode_request_user_input=true','app-server','--stdio']);
+  for(const expectedVersion of modernVersions){
+    const normal=new CodexAppServerAdapter({expectedVersion});
+    const enabled=new CodexAppServerAdapter({expectedVersion,nativeUserInput:true});
+    assert.deepEqual(args(normal),['app-server','--stdio']);
+    assert.deepEqual(args(enabled),['-c','features.default_mode_request_user_input=true','app-server','--stdio']);
+  }
   assert.throws(()=>new CodexAppServerAdapter({expectedVersion:'codex-cli 0.154.0',nativeUserInput:true}),RuntimeProtocolError);
 });
 async function trigger(adapter:CodexAppServerAdapter,binding:RuntimeBinding,events:NativeInputEvent[],count=1){
@@ -246,14 +249,14 @@ test('invalid answer shapes leave request pending for a valid explicit answer',a
   await replies;
 });
 
-test('input observer chooses pinned experimental schema during fake version probe',async t=>{
+test('input observer chooses pinned 0.166 experimental schema during fake version probe',async t=>{
   const directory=await mkdtemp(join(tmpdir(),'evoloop-native-input-probe-'));
   t.after(()=>rm(directory,{recursive:true,force:true}));
   const executable=join(directory,'fake-codex');
   const argsFile=join(directory,'args');
-  await writeFile(executable,`#!/bin/sh\nif [ "$1" = "--version" ]; then printf '%s\\n' 'codex-cli 0.164.0-alpha.11.1'; exit 0; fi\nprintf '%s\\n' "$@" > '${argsFile}'\nwhile [ "$#" -gt 0 ]; do if [ "$1" = "--out" ]; then shift; printf '{}' > "$1/codex_app_server_protocol.v2.schemas.json"; exit 0; fi; shift; done\nexit 1\n`,{mode:0o700});
+  await writeFile(executable,`#!/bin/sh\nif [ "$1" = "--version" ]; then printf '%s\\n' 'codex-cli 0.166.0-alpha.5.1'; exit 0; fi\nprintf '%s\\n' "$@" > '${argsFile}'\nwhile [ "$#" -gt 0 ]; do if [ "$1" = "--out" ]; then shift; printf '{}' > "$1/codex_app_server_protocol.v2.schemas.json"; exit 0; fi; shift; done\nexit 1\n`,{mode:0o700});
   // This asserts schema selection, not subprocess scheduling latency under the parallel suite.
-  const adapter=new CodexAppServerAdapter({executable,expectedVersion:'codex-cli 0.164.0-alpha.11.1',requestTimeoutMs:5000});
+  const adapter=new CodexAppServerAdapter({executable,expectedVersion:'codex-cli 0.166.0-alpha.5.1',requestTimeoutMs:5000});
   adapter.onNativeInput(()=>undefined);
   await assert.rejects(()=>adapter.open(),/schema changed/);
   assert.match(await readFile(argsFile,'utf8'),/--experimental/);

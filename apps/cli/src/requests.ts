@@ -3,6 +3,7 @@ import { documentImportSchema } from "@evoloop/contracts/process-documents";
 import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowledgeReviewInputSchema } from "@evoloop/contracts/knowledge";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
+import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { Intent, Recovery } from "./receipts.js";
 
@@ -257,7 +258,18 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
     }
   }
   // The receipt and write must carry the same normalized bytes for safe same-ID recovery.
-  const savedBody = name === "ordinary.submit" ? ordinaryRunSubmissionSchema.parse(body) : bodyInput;
+  let savedBody: unknown = bodyInput;
+  if (name === "ordinary.submit") {
+    const parsed = ordinaryRunSubmissionSchema.parse(body);
+    try {
+      const artifact = parseArtifactReference(parsed.deliveryIntent.artifactRef,
+        parsed.deliveryIntent.artifactRevision, projectId);
+      savedBody = { ...parsed, deliveryIntent: { ...parsed.deliveryIntent, artifactRef: artifact.artifactRef } };
+    } catch (error) {
+      if (error instanceof ArtifactReferenceError) throw new RequestInputError(`${error.code}: ${error.message}`);
+      throw error;
+    }
+  }
   return { projectId, id: receiptId,
     operationId: name === "knowledge.reconcile" ? id : serverOperationId,
     ...(["work.plan.set", "work.dependencies.set", "work.review.set"].includes(name) ? { method: "PUT" as const } : {}),

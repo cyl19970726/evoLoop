@@ -49,11 +49,9 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
   app.get("/api/projects/:projectId/schedules", request => service.listSchedules(principal(request), params(request.params).projectId));
   app.get("/api/projects/:projectId/resident-queues", request => service.listResidentQueues(principal(request),params(request.params).projectId));
   app.get("/api/projects/:projectId/resident-queues/:id", request => {const p=params(request.params);return service.getResidentQueue(principal(request),p.projectId,p.id!);});
-  app.get("/api/projects/:projectId/resident-queues/:id/attempts", async request => {
-    const p=params(request.params),who=principal(request);
-    const queue=await service.getResidentQueue(who,p.projectId,p.id!);
-    return Promise.all(queue.entries.map(async entry=>({entryId:entry.id,claimId:entry.claimId,
-      attempts:entry.claimId?await service.listResidentQueueAttempts(who,p.projectId,entry.claimId):[]})));
+  app.get("/api/projects/:projectId/resident-queues/:id/attempts", request => {
+    const p=params(request.params);
+    return service.getResidentQueueAttemptHistory(principal(request),p.projectId,p.id!);
   });
   app.get("/api/projects/:projectId/schedules/:id/revisions", request => { const p = params(request.params); return service.listScheduleRevisions(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/schedules/:id/occurrences", request => { const p = params(request.params); return service.listScheduleOccurrences(principal(request), p.projectId, p.id!); });

@@ -23,6 +23,7 @@
     "./evaluation": "./dist/evaluation.js",
     "./orchestration": "./dist/orchestration.js",
     "./ordinary-run-submission": "./dist/ordinary-run-submission.js",
+    "./artifact-reference": "./dist/artifact-reference.js",
     "./division": "./dist/division.js",
     "./session-work": "./dist/session-work.js",
     "./session-observation": "./dist/session-observation.js",

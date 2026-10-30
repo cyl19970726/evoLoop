@@ -105,10 +105,10 @@ const integrationSchema = z.strictObject({
       paths:z.array(z.string().regex(/^\.agents\/skills\/[A-Za-z0-9_-]+\/SKILL\.md$/)).min(1).max(12)}))
       .max(200).refine(values=>new Set(values.map(value=>`${value.projectId}:${value.roleId}`)).size===values.length,
         "Role skill sources must be unique per project and Role").default([]),
-    /** Fixed 0.164 experimental Default-mode input, scoped to this owned child only. */
+    /** Fixed modern experimental Default-mode input, scoped to this owned child only. */
     nativeUserInput: z.boolean().default(false),
-    /** Exact locally reviewed App Server protocol; new configurations use the reviewed 0.164 interface. */
-    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1"]).default("0.164.0-alpha.11.1"),
+    /** Exact locally reviewed App Server protocol; new configurations use the reviewed 0.166 interface. */
+    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1", "0.166.0-alpha.5.1"]).default("0.166.0-alpha.5.1"),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
     browserRead: z.strictObject({scopePath:absolute,playwrightModulePath:absolute}).optional(),
     delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>
@@ -116,8 +116,9 @@ const integrationSchema = z.strictObject({
     grants: z.array(grant).max(200).refine(values => new Set(values.map(value => JSON.stringify([
       value.projectId, value.actorId, value.roleId, value.authorizationScope, value.cwd, value.sandbox,
     ]))).size === values.length, "Runtime authorization profiles must be unique"),
-  }).refine(value => !value.nativeUserInput || value.protocolVersion === "0.164.0-alpha.11.1",
-    "Native user input requires the reviewed 0.164 protocol").optional(),
+  }).refine(value => !value.nativeUserInput ||
+    value.protocolVersion === "0.164.0-alpha.11.1" || value.protocolVersion === "0.166.0-alpha.5.1",
+  "Native user input requires a reviewed modern protocol").optional(),
   orchestration: z.strictObject({
     enabled: z.boolean(), controllerActorId: z.string().min(1).max(100), workerRoot: absolute,
     credentialTtlMs: z.number().int().min(60000).max(86400000).default(3600000),

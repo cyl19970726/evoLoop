@@ -291,13 +291,16 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await workerCommand(businessWrapper,{type:"worker.submit",submissionId:businessSubmissionId,
     dispatchId:childDispatch.entityId,runId:businessRunId,taskRevisionId:businessRun.revisionId,
     runInputHash:hash(businessInput),deliveryOperationId:randomUUID(),
-    deliveryIntent:{artifactRef:`#/p/${projectId}/documents/${businessReportId}?revision=${businessReportRevisionId}`,
+    deliveryIntent:{artifactRef:`document:${businessReportId}@${businessReportRevisionId}`,
       artifactRevision:businessReportRevisionId,contentHash:hash(businessReportBody),technicalResult:"failed",
       technicalEvidence:"Fixture report was written through worker CLI",reason:"Fixed report delivered"},
     agentObservation:"Fixture report recorded; no native execution",evidenceRefs:[]})).entityId,businessSubmissionId);
   const businessTerminal=await runtime.rejectDispatch(projectId,businessRunId,"Fixture terminal; no native Turn");
   const businessSealed=await sealer((await orchestration.getDispatch(owner,projectId,childDispatch.entityId))!,businessTerminal);
   assert.equal(businessSealed.status,"sealed",JSON.stringify(businessSealed));
+  const normalizedBusinessDelivery=(await workflow.getTask(owner,projectId,childTaskId)).deliveries?.find(d=>d.id===businessSealed.deliveryId);
+  assert.equal(normalizedBusinessDelivery?.artifactRef,
+    `#/p/${projectId}/documents/${businessReportId}?revision=${businessReportRevisionId}`);
   await orchestrate({type:"worker.outcome",dispatchId:childDispatch.entityId,outcome:"delivered",
     deliveryId:businessSealed.deliveryId,decisionId:null,evidenceRef:"fixture:business-report",reason:"Signed report sealed"});
   const observationLoopId=randomUUID(),observationTaskId=randomUUID();
@@ -522,10 +525,14 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await issue({type:"task.start",taskId:childTaskId,expectedVersion:childBeforeRestart.version,
     basis:[{documentId:newGoalLinkId,revisionId:newGoalLink.revisionId}],reason:"Start current new Goal scope"});
   const childBeforeMismatch=(await workflow.getTask(owner,projectId,childTaskId)).task;
-  await issue({type:"delivery.record",taskId:childTaskId,expectedVersion:childBeforeMismatch.version,
+  const rejectedMismatch=await workflow.execute(owner,{type:"delivery.record",projectId,operationId:randomUUID(),
+    taskId:childTaskId,expectedVersion:childBeforeMismatch.version,
     artifactRef:`#/p/${projectId}/documents/${mismatchedId}?revision=${mismatchedDocument.revisionId}`,
     artifactRevision:mismatchedDocument.revisionId,contentHash:hash("wrong bytes"),technicalResult:"passed",
     technicalEvidence:"Isolated negative fixture",reason:"Incorrect hash must not authorize read"});
+  assert.equal(rejectedMismatch.status,'rejected');
+  assert.equal(rejectedMismatch.code,'ARTIFACT_HASH_MISMATCH');
+  assert.equal((await workflow.getTask(owner,projectId,childTaskId)).task.version,childBeforeMismatch.version);
   assert.equal((await cli(continuationWorker.wrapperPath,["original",mismatchedId,"--revision",mismatchedDocument.revisionId!],1)).error?.code,
     "FORBIDDEN");
   // A separate accepted Run records a signed decision instead of a submission.

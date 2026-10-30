@@ -110,7 +110,7 @@ npm run --silent cli -- list tasks --project "$PROJECT_ID"
 
 命令需稳定的 `operationId`、`projectId`；修改已有对象还需读入的 `expectedVersion`。同一 ID、身份和内容返回原回执；不同内容复用 ID 被拒绝。结果未知时先查 `/api/projects/PROJECT_ID/operations/OPERATION_ID`；404 只表示当次未查到，不能证明外部动作没发生。未知 Turn 必须按已有原生 thread 和 operation 标记对账，不能换 ID 盲目重派。工作台临时恢复索引在当前标签页 `sessionStorage`，不存令牌或正文；关闭标签页可能失去索引，重要操作应另存 ID。
 
-历史受控 `gpt-6-astra` owned Turn 使用 **codex-cli 0.154.0**，曾完成并在重启后读回答复；该记录保留为当时实测。当前 App Server 默认协议改为 **0.164.0-alpha.11.1**。0.154 的历史模型实跑不证明新 full/never 配置已在 Lead 的真实 Session 使用。较早终态误判修复及原事件追加记录仍是既有事实；Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
+历史受控 `gpt-6-astra` owned Turn 使用 **codex-cli 0.154.0**，曾完成并在重启后读回答复；该记录保留为当时实测。当前 App Server 默认协议为 **0.166.0-alpha.5.1**，并保留显式选择 `0.164.0-alpha.11.1` 与 `0.154.0` 的兼容。0.154 的历史模型实跑不证明新 full/never 配置已在 Lead 的真实 Session 使用。较早终态误判修复及原事件追加记录仍是既有事实；Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
 
 App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
 
@@ -218,7 +218,7 @@ git diff --check
 
 ## 原生文字与选项提问
 
-固定 0.164 的 `runtime.nativeUserInput` 默认 `false`。仅在独立运行环境验证后，配置为 `true` 可让本 coordinator 拥有的 App Server 子进程以 `-c features.default_mode_request_user_input=true` 启动；该开关不写用户全局配置、不将任务切到 Plan，也不改变 full/never 或业务授权。0.154 不支持且启动前拒绝该组合。依赖的原生特性仍在开发中，升级须重新核 schema 和可达性。
+现代固定协议的 `runtime.nativeUserInput` 默认 `false`。仅在独立运行环境验证后，配置为 `true` 可让本 coordinator 拥有的 App Server 子进程以 `-c features.default_mode_request_user_input=true` 启动；该开关不写用户全局配置、不将任务切到 Plan，也不改变 full/never 或业务授权。0.154 不支持且启动前拒绝该组合。当前 0.164/0.166 共用已核协议分支；每次升级仍须重新核 schema 和可达性。
 
 Default 下请求为非阻塞且仅 root Agent 可调用；子 Agent 与通用 MCP／认证／secret 表单不在本片支持范围。回复使用真实认证者的 `session.input.reply`，原连接失效不重播。原生工具实际发起、回复进入同一 Turn、CLI 接线与工作台亲用应分别留证；仅假进程测试通过不能证明当前业务环境可用。持久记录需要迁移 `037_native_user_input`，迁移不从历史 Session 推断问题或答复。
 
