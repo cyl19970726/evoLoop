@@ -45,7 +45,7 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
   const c=parsed.data;
   if(!principal.actorId||!principal.projectIds.includes(c.projectId)||!principal.permissions.includes('review'))return fail('FORBIDDEN','project review permission required');
   if(!await tx.queueControllerCurrent(principal.actorId))return fail('QUEUE_AUTHORIZATION','current queue controller authority required');
-  const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.hold','queue.unhold','queue.extendBudget','queue.retryFailed','queue.continue'];
+  const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.stop','queue.hold','queue.unhold','queue.extendBudget','queue.retryFailed','queue.continue'];
   if(leadOnly.includes(c.type)&&!principal.permissions.includes('write'))return fail('FORBIDDEN','Lead write permission required');
   const result=(queue:ResidentQueue|null,claimId:string|null=null,runId:string|null=null,hold:QueueHoldCode|null=null):QueueResult=>({queueId:c.queueId,version:queue?.version??0,claimId,runId,held:hold});
   if(c.type==='queue.create'){
@@ -92,6 +92,26 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
   }
   if(c.type==='queue.adopt'){if(queue.version!==c.expectedVersion)return fail('VERSION_CONFLICT','queue revision changed');await tx.adoptResidentQueue(c.queueId,c.expectedVersion,principal.actorId);return result(queue);}
   const entry=queue.entries.find(x=>x.id===c.entryId);if(!entry)return fail('NOT_FOUND','entry missing');
+  if(c.type==='queue.stop'){
+    if(principal.actorId!==queue.actorId||principal.actorId.startsWith('worker-'))return fail('QUEUE_ACTOR_MISMATCH','Only the registered controller may stop its claim');
+    if(entry.state!=='claimed'||entry.claimId!==c.claimId||entry.version!==c.expectedEntryVersion)return fail('CLAIM_MISMATCH','Original active claim or entry version changed');
+    const claim=await tx.getResidentQueueClaim(c.claimId);
+    if(!claim||claim.releasedAt||claim.queueId!==queue.id||claim.entryId!==entry.id||claim.sessionId!==entry.sessionId)return fail('CLAIM_MISMATCH','Original claim changed');
+    const attempts=await tx.listResidentQueueAttempts(c.claimId);
+    if(attempts.at(-1)?.runId!==c.sourceRunId)return fail('RUN_SOURCE_MISMATCH','Only the latest claim attempt may be stopped');
+    const source=await reader.getRuntimeRun(c.sourceRunId);
+    if(!source||!['failed','interrupted'].includes(source.state)||source.version!==c.expectedRunVersion||source.taskId!==entry.taskId||source.sessionId!==entry.sessionId)
+      return fail('RUN_UNSETTLED','Latest Run must be a known failed or interrupted result');
+    const task=await reader.getTask(entry.taskId);
+    if(task?.state!=='cancelled')return fail('TASK_NOT_CANCELLED','Task must be explicitly cancelled before its claim is stopped');
+    if(!ctx.recovery)return fail('RECOVERY_UNAVAILABLE','Session recovery persistence is unavailable');
+    const gate=await ctx.recovery.lockRecoveryGate(entry.sessionId);
+    if(gate.version!==c.expectedGateVersion||gate.phase!=='blocked'||gate.claimId!==c.claimId||gate.causeKind!=='run'||gate.causeId!==c.sourceRunId)
+      return fail('RECOVERY_SOURCE_CHANGED','Recovery gate must identify the exact failed claim');
+    const ok=await tx.stopResidentQueueClaim(c.claimId,c.decisionId,principal.actorId,c.expectedEntryVersion,c.expectedRunVersion,c.expectedGateVersion,c.sourceRunId,c.reason,c.nextResponsibility);
+    if(!ok)return fail('STOP_CONFLICT','Claim, Task, Run or Session changed before stop');
+    return result(queue,c.claimId);
+  }
   if(c.type==='queue.retryFailed'){
     if(principal.actorId!==queue.actorId||principal.actorId.startsWith('worker-'))return fail('QUEUE_ACTOR_MISMATCH','Only the registered controller may choose a failed retry');
     if(queue.version!==c.expectedVersion||queue.adoptedVersion!==queue.version)return fail('QUEUE_NOT_ADOPTED','Read and adopt the current queue before retry');

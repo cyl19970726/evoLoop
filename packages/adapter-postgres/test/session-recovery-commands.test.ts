@@ -252,3 +252,67 @@ for(const messageOutcome of ['completed','failed'] as const)test(`bounded releas
   assert.equal((await workflow.getSessionRecovery(lead,projectId,sid)).decisions.filter(d=>d.kind==='resume'&&d.causeId===(messageOutcome==='failed'?mid:activationGate.causeId)).length,2,'a new gate version permits a second explicit review of the same historical cause');
   assert.equal((await workflow.getTask(lead,projectId,taskId)).task.state,'in_progress');
 });
+
+test('cancelled failed Task stops its exact claim without accepting work or erasing recovery',async()=>{
+  const sid=randomUUID(),taskId=randomUUID(),qid=randomUUID(),eid=randomUUID(),claim=randomUUID(),runId=randomUUID(),op=randomUUID();
+  await apply({type:'task.create',taskId,title:'Stop known failed task',content:'Original failed work',acceptance:'Independent consumer use',owner:roleId,consumer:'lead',useRequired:true});
+  await apply({type:'task.start',taskId,expectedVersion:1,reason:'Fix original input'});
+  await apply({type:'runtime.session.reserve',sessionId:sid,roleId,cwd:'/tmp/recovery-command-test',authorizationScope:'project',model:'original-model',sandbox:'danger-full-access',approvalPolicy:'never'},business);
+  const creating=await native.beginSessionCreate(projectId,sid);
+  await native.bindSession(projectId,sid,{owner:'evoloop-codex-app-server',projectId,sessionId:sid,roleId,cwd:creating.cwd,authorizationScope:creating.authorizationScope,nativeThreadId:`stop-thread-${sid}`,nativeSessionId:`stop-session-${sid}`,
+    resumeProfile:{actorId:creating.actorId,model:creating.model,sandbox:creating.sandbox,approvalPolicy:creating.approvalPolicy,executionProfileRevisionId:creating.executionProfile!.revision.revisionId}});
+  await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
+    VALUES($1,$2,$3,$4,$5,'lead','stop fixture',now())`,[projectId,randomUUID(),roleId,sid,roleRevision]);
+  const task=(await workflow.getTask(lead,projectId,taskId)).task;
+  await apply({type:'task.assignment.set',taskId,expectedTaskVersion:task.version,expectedVersion:0,target:{kind:'owned',sessionId:sid},recipientActorId:'worker',reason:'Assign original work'});
+  await apply({type:'task.assignment.acknowledge',taskId,expectedTaskVersion:task.version,expectedVersion:1,evidence:'Read fixed source',sourceRef:'fixture://stop-original'},business);
+  await apply({type:'queue.create',queueId:qid,maxRuns:2,reason:'Original failed work',entries:[{id:eid,taskId,taskRevisionId:task.currentRevisionId,sessionId:sid,roleId,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'}]});
+  await apply({type:'queue.adopt',queueId:qid,expectedVersion:1});
+  await apply({type:'queue.claim',queueId:qid,entryId:eid,claimId:claim,runId,operationId:op,runOperationId:op,expectedVersion:1});
+  await native.beginDispatch(projectId,runId);
+  await native.bindTurn(projectId,runId,{id:`stop-failure-${sid}`},{kind:'startReply',operationId:op});
+  await native.recordTurn(projectId,runId,`stop-failure-${sid}`,'failed','Known fixture failure');
+  const failed=await workflow.getRuntimeRun(lead,projectId,runId);
+  const gate=(await workflow.getSessionRecovery(lead,projectId,sid)).gate!;
+  const entry=(await workflow.getResidentQueue(lead,projectId,qid)).entries[0]!;
+  const base={type:'queue.stop',queueId:qid,entryId:eid,claimId:claim,sourceRunId:runId,expectedRunVersion:failed.version,expectedGateVersion:gate.version,expectedEntryVersion:entry.version,
+    decisionId:randomUUID(),reason:'User cancelled after known failure',nextResponsibility:'Lead records unfinished work separately'};
+  const rejected=await workflow.execute(lead,{projectId,operationId:randomUUID(),...base} as any);
+  assert.equal(rejected.status,'rejected','stop requires an explicit Task cancellation');
+  const beforeCancel=(await workflow.getTask(lead,projectId,taskId)).task;
+  await apply({type:'task.cancel',taskId,expectedVersion:beforeCancel.version,reason:'User cancelled the failed work'});
+  const stale=await workflow.execute(lead,{projectId,operationId:randomUUID(),...base,expectedGateVersion:gate.version+1} as any);
+  assert.equal(stale.status,'rejected','gate CAS rejects stale authority');
+  const staleRun=await workflow.execute(lead,{projectId,operationId:randomUUID(),...base,expectedRunVersion:failed.version+1} as any);
+  assert.equal(staleRun.status,'rejected','Run version CAS rejects stale source');
+  const staleEntry=await workflow.execute(lead,{projectId,operationId:randomUUID(),...base,expectedEntryVersion:entry.version+1} as any);
+  assert.equal(staleEntry.status,'rejected','entry version CAS rejects stale claim');
+  const stop={projectId,operationId:randomUUID(),...base};
+  const rival={...stop,operationId:randomUUID(),decisionId:randomUUID()};
+  const [stopped,competing]=await Promise.all([workflow.execute(lead,stop as any),workflow.execute(lead,rival as any)]);
+  assert.equal([stopped,competing].filter(x=>x.status==='applied').length,1,'concurrent stop decisions release once');
+  const winner=stopped.status==='applied'?stop:rival,accepted=stopped.status==='applied'?stopped:competing;
+  assert.deepEqual(await workflow.execute(lead,winner as any),accepted,'same operation replays without duplicate release');
+  const duplicate=await workflow.execute(lead,{...stop,operationId:randomUUID(),decisionId:randomUUID()} as any);
+  assert.equal(duplicate.status,'rejected','another stop cannot release the same claim');
+  const saved=await uow.read(projectId,tx=>tx.queue!.getResidentQueueClaim(claim));
+  assert.equal(saved!.releaseKind,'stopped');assert.ok(saved!.releasedAt);
+  assert.equal((await workflow.getRuntimeRun(lead,projectId,runId)).state,'failed');
+  assert.equal((await workflow.getTask(lead,projectId,taskId)).task.state,'cancelled');
+  assert.equal((await workflow.getSessionRecovery(lead,projectId,sid)).gate!.phase,'blocked','original failure still needs an explicit recovery decision');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM resident_queue_stop_decision WHERE project_id=$1 AND claim_id=$2',[projectId,claim])).rows[0].n,1);
+  const reviewed=(await workflow.getSessionRecovery(lead,projectId,sid)).gate!;
+  await apply({type:'runtime.session.recovery.resume',sessionId:sid,expectedVersion:reviewed.version,expectedCauseId:reviewed.causeId,resumeMessageId:reviewed.resumeMessageId,evidenceRef:'fixture://reviewed-stop',reason:'Original failed attempt retained and cancelled Task has separate responsibility'});
+  assert.equal((await workflow.getSessionRecovery(lead,projectId,sid)).gate!.phase,'open');
+  await uow.transaction(projectId,tx=>tx.queue!.assertQueueSessionVacant(sid));
+  const nextTask=randomUUID(),nextQueue=randomUUID(),nextEntry=randomUUID(),nextRun=randomUUID(),nextOperation=randomUUID();
+  await apply({type:'task.create',taskId:nextTask,title:'Independent next work',content:'New fixed work after stop',acceptance:'Independent use',owner:roleId,consumer:'lead',useRequired:true});
+  await apply({type:'task.start',taskId:nextTask,expectedVersion:1,reason:'Fix next input'});
+  const next=(await workflow.getTask(lead,projectId,nextTask)).task;
+  await apply({type:'task.assignment.set',taskId:nextTask,expectedTaskVersion:next.version,expectedVersion:0,target:{kind:'owned',sessionId:sid},recipientActorId:'worker',reason:'Assign next work'});
+  await apply({type:'task.assignment.acknowledge',taskId:nextTask,expectedTaskVersion:next.version,expectedVersion:1,evidence:'Read next fixed source',sourceRef:'fixture://after-stop'},business);
+  await apply({type:'queue.create',queueId:nextQueue,maxRuns:1,reason:'Independent next work after stop',entries:[{id:nextEntry,taskId:nextTask,taskRevisionId:next.currentRevisionId,sessionId:sid,roleId,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'}]});
+  await apply({type:'queue.adopt',queueId:nextQueue,expectedVersion:1});
+  const reclaimed=await apply({type:'queue.claim',queueId:nextQueue,entryId:nextEntry,claimId:randomUUID(),runId:nextRun,operationId:nextOperation,runOperationId:nextOperation,expectedVersion:1});
+  assert.equal(reclaimed.queue.runId,nextRun,'the same Session can carry an independent new Task');
+});

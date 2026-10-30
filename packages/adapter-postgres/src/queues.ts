@@ -223,4 +223,33 @@ export class PgResidentQueue {
     await this.client.query("UPDATE resident_queue_claim SET release_kind='bounded',released_at=now(),bounded_decision_id=$3 WHERE project_id=$1 AND claim_id=$2",[this.projectId,claimId,decisionId]);
     await this.client.query("UPDATE resident_queue_entry SET state='released',version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3",[this.projectId,e.queueId,e.id]);return true;
   }
+  async stopResidentQueueClaim(claimId:string,decisionId:string,actor:string,expectedEntryVersion:number,expectedRunVersion:number,expectedGateVersion:number,sourceRunId:string,reason:string,nextResponsibility:string):Promise<boolean>{
+    if(!reason.trim()||!nextResponsibility.trim()||!await this.lead(this.client,this.projectId,actor))throw new Error('QUEUE_AUTHORIZATION');
+    const key=await this.client.query('SELECT session_id FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2',[this.projectId,claimId]);
+    if(!key.rows[0])return false;
+    await this.client.query('SELECT session_recovery_slot_lock($1,$2)',[this.projectId,key.rows[0].session_id]);
+    const gate=await this.client.query('SELECT phase,version,claim_id,cause_kind,cause_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,key.rows[0].session_id]);
+    const g=gate.rows[0];if(!g||g.phase!=='blocked'||g.version!==expectedGateVersion||g.claim_id!==claimId||g.cause_kind!=='run'||g.cause_id!==sourceRunId)return false;
+    const cr=await this.client.query('SELECT * FROM resident_queue_claim WHERE project_id=$1 AND claim_id=$2 FOR UPDATE',[this.projectId,claimId]);
+    const c=cr.rows[0];if(!c||c.released_at||c.session_id!==key.rows[0].session_id)return false;
+    const er=await this.client.query('SELECT * FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3 FOR UPDATE',[this.projectId,c.queue_id,c.entry_id]);
+    const e=er.rows[0];if(!e||e.state!=='claimed'||e.claim_id!==claimId||e.version!==expectedEntryVersion)return false;
+    const last=(await this.listResidentQueueAttempts(claimId)).at(-1);if(last?.runId!==sourceRunId)return false;
+    const run=await this.client.query('SELECT state,version,task_id,session_id FROM runtime_run WHERE project_id=$1 AND run_id=$2 FOR UPDATE',[this.projectId,sourceRunId]);
+    const r=run.rows[0];if(!r||!['failed','interrupted'].includes(r.state)||r.version!==expectedRunVersion||r.task_id!==c.task_id||r.session_id!==c.session_id)return false;
+    const task=await this.client.query('SELECT state FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE',[this.projectId,c.task_id]);
+    if(task.rows[0]?.state!=='cancelled')return false;
+    const active=await this.client.query(`SELECT 1 FROM runtime_run WHERE project_id=$1 AND (task_id=$2 OR session_id=$3)
+      AND state IN ('requested','dispatching','running','unknown') LIMIT 1`,[this.projectId,c.task_id,c.session_id]);
+    if(active.rows[0])return false;
+    const messages=await this.client.query(`SELECT 1 FROM session_message_processing WHERE project_id=$1 AND session_id=$2
+      AND state IN ('dispatching','running','unknown') LIMIT 1`,[this.projectId,c.session_id]);
+    if(messages.rows[0])return false;
+    await this.client.query(`INSERT INTO resident_queue_stop_decision(project_id,decision_id,claim_id,source_run_id,expected_entry_version,
+      expected_run_version,expected_gate_version,actor_id,reason,next_responsibility) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [this.projectId,decisionId,claimId,sourceRunId,expectedEntryVersion,expectedRunVersion,expectedGateVersion,actor,reason,nextResponsibility]);
+    await this.client.query("UPDATE resident_queue_claim SET release_kind='stopped',released_at=now(),stop_decision_id=$3 WHERE project_id=$1 AND claim_id=$2",[this.projectId,claimId,decisionId]);
+    await this.client.query("UPDATE resident_queue_entry SET state='released',version=version+1,updated_at=now() WHERE project_id=$1 AND queue_id=$2 AND entry_id=$3",[this.projectId,c.queue_id,c.entry_id]);
+    return true;
+  }
 }
