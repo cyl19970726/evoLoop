@@ -347,6 +347,11 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const pending = impacts.filter(i => i.state === "pending");
   const visibleTasks = projectionTasks.filter(t => (scope !== "mine" || !!projections.items[t.id] && isMyCurrentWork(projections.items[t.id]!, context.principal.actorId)))
     .sort((a, b) => ({ in_progress: 0, todo: 1, done: 2, cancelled: 3 })[a.state] - ({ in_progress: 0, todo: 1, done: 2, cancelled: 3 })[b.state]);
+  const visibleTaskSignature = visibleTasks.map(task => task.id).join(",");
+  useEffect(() => {
+    if (view !== "work" || selectedTask || !visibleTasks.length) return;
+    setSelectedTask(myWork[0]?.taskId ?? visibleTasks[0].id);
+  }, [view, selectedTask, visibleTaskSignature, myWork[0]?.taskId]);
   const ownerIds = [...new Set(visibleTasks.map(task => task.owner).filter(isRoleOwnerId))];
   const ownerSignature = ownerIds.join(",");
   const ownerScope = `${token}\0${projectId}\0${refresh}\0${recheck}\0${view}\0${ownerSignature}`;
@@ -499,9 +504,10 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
   projectId: string; pending: Impact[]; ownerNames: Record<string, OwnerName>;
   projections?: Record<string, LeaderWorkTask>; sessionNames?: Record<string, LeaderSessionName>; actorId?: string;
   returnTo?: string; selected?: string; onSelect?: (id: string) => void }) {
-  return <div className="table-wrap"><table className="task-list-table"><thead><tr><th>任务</th><th>进展</th><th>具体承接</th><th>下一步或结果</th><th><span className="sr-only">查看</span></th></tr></thead><tbody>{tasks.map(t => {
+  return <div className="table-wrap"><table className="task-list-table"><thead><tr><th>工作</th><th>进展</th><th>具体承接</th><th>下一入口</th><th><span className="sr-only">查看</span></th></tr></thead><tbody>{tasks.map(t => {
     const status=statuses[t.id], cognition=status?.cognition ? cognitionSummary(status) : null;
     const projection = matchingProjection(t, projections[t.id]);
+    const nextAction = cognition?.next ?? projection?.nextAction ?? (status && businessNextStep(t,status)) ?? taskNextStep(t.state,t.legacyDecision);
     const sessionKey = projection && assignmentSessionKey(projection);
     const taskLink = `${href(projectId, "task", t.id)}${returnTo ? `?list=${encodeURIComponent(returnTo)}` : ""}`;
     const sessionLink = sessionKey ? `${href(projectId, "runtime")}?session=${encodeURIComponent(sessionKey)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
@@ -509,13 +515,13 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
       <td className="task-list-title">{onSelect ? <button className="task-row-select" aria-pressed={selected === t.id} onClick={() => onSelect(t.id)}>{cognition?.title ?? t.title}</button> : <a href={taskLink}>{cognition?.title ?? t.title}</a>}<small>v{t.version}{t.kind ? ` · ${taskKinds[t.kind]}` : ""}</small>
         <small>{pending.some(i => i.taskId===t.id) && <span className="impact-marker">依据待复核 · </span>}
           {cognition && <>判断接续记录 · <a href={href(projectId,"task",t.id)}>查看来源</a></>}</small>
-        {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}</td>
+        {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}
+        <span className="task-list-inline-next">{nextAction}</span></td>
       <td className="task-list-state"><span className="mobile-field-label">当前状态</span><span className={`pill task-state-${t.state}`}>{cognition?.phase ?? (projection && t.state !== "done" && t.state !== "cancelled" ? leaderPhaseLabel[projection.phase] : states[t.state])}</span>
         {(cognition || projection && !["done", "cancelled"].includes(t.state) && leaderPhaseLabel[projection.phase] !== states[t.state]) && <small>任务 · {states[t.state]}</small>}</td>
       <td className="task-list-owner"><span className="mobile-field-label">{isClosedTask(t.state) ? "历史承接" : "具体承接"}</span>{sessionLink ? <><a href={sessionLink}>{sessionNames[sessionKey!]?.title ?? `Session ${projection!.assignment!.targetId.slice(0, 8)}`}</a><small>{assignmentStatusLabel(projection!)}</small></> : <><span className="task-list-owner-identity">{ownerNames[t.owner]?.title ? <a href={href(projectId, "roles")}>{ownerNames[t.owner]!.title}</a> : <code>{t.owner}</code>}{ownerNames[t.owner]?.title && <code title={t.owner}>{t.owner.slice(0, 8)}</code>}{ownerNames[t.owner]?.error && <small>{ownerNames[t.owner]!.error}</small>}</span><small>{["done", "cancelled"].includes(t.state) ? "无当前分派 · 历史见任务" : projection ? "待具体承接" : "承接尚未读回"}</small></>}</td>
       <td className="task-list-next"><span className="mobile-field-label">下一步</span>
         {t.legacyDecision && <strong className="task-list-legacy">{legacyDecisionLabel(t.legacyDecision)}</strong>}
-        {cognition?.next ?? projection?.nextAction ?? (status && businessNextStep(t,status)) ?? taskNextStep(t.state,t.legacyDecision)}
         {projection?.delivery && <a className="task-row-result" href={`${taskLink}${returnTo ? "&" : "?"}tab=delivery`}>查看固定成果与使用 →</a>}
         {projection?.latestRun && t.state !== "done" && <small>{executionSummary(projection)}</small>}
         {cognition && <details className="task-list-legacy-reason"><summary>来源与决定理由</summary>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, UserRound } from "lucide-react";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../ui/shared";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet";
@@ -14,6 +14,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const [search, setSearch] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [listOpen, setListOpen] = useState(true);
+  const [currentExpanded, setCurrentExpanded] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [retries, setRetries] = useState<Record<DirectoryMembership, number>>({ current: 0, historical: 0, unclassified: 0 });
   useEffect(() => { const timer = window.setTimeout(() => setSearch(query.trim()), 250); return () => window.clearTimeout(timer); }, [query]);
@@ -23,10 +24,12 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyEnabled);
   const totals = current.page?.totals;
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
+  const totalSessions = totals ? totals.current + totals.historical + totals.unclassified : 0;
+  const visibleCurrent = search || currentExpanded ? current.items : current.items.slice(0, 2);
   function item(session: ObservedSession) {
     const task = session.currentTask;
     return <a key={session.key} href={sessionHref(projectId, session.key)} className={`session-nav-item ${selectedId === session.key ? "selected" : ""}`} aria-current={selectedId === session.key ? "page" : undefined} onClick={onNavigate}>
-      <strong title={session.title}>{session.title}</strong><small>{task ? task.title : session.roles.map(role => role.title).join(" · ") || "职责未确认"}</small><small>{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small>
+      <UserRound size={15} aria-hidden="true" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong><small>{task ? task.title : session.roles.map(role => role.title).join(" · ") || "职责未确认"}</small><small>{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {
@@ -37,7 +40,8 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
     {listOpen && <><label className="session-nav-search"><Search size={15} aria-hidden="true" /><input aria-label="搜索 Session 姓名或职责" placeholder="搜索姓名或职责…" value={query} onChange={event => setQuery(event.target.value)} /></label>
     {current.error && groupError("current", current.error)}
     {current.loading && !current.page && <p className="session-nav-muted">正在读取 Session…</p>}
-    <div className="session-nav-group"><span>当前团队 {totals && `· ${totals.current}`}</span>{current.items.map(item)}{current.page && current.items.length === 0 && <p className="session-nav-muted">没有匹配的当前团队 Session。</p>}
+    <div className="session-nav-group"><span>当前团队 {totals && `· ${totals.current}`}</span>{visibleCurrent.map(item)}{current.page && current.items.length === 0 && <p className="session-nav-muted">没有匹配的当前团队 Session。</p>}
+      {!search && current.items.length > 2 && <button className="session-nav-all" type="button" onClick={() => setCurrentExpanded(value => !value)} aria-expanded={currentExpanded}>{currentExpanded ? "收起当前团队" : `查看全部会话 · ${totalSessions}`}</button>}
       {current.hasMore && <button className="session-nav-more" type="button" disabled={current.moreBusy || current.loading} onClick={() => void current.more()}>{current.moreBusy || current.loading ? "加载中…" : "加载更多当前成员"}</button>}</div>
     {(historicalCount > 0 || historyOpen) && <div className="session-nav-group"><button type="button" className="session-nav-history" onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}>{historyOpen ? "▾" : "▸"} 历史与待归类 {totals && `· ${historicalCount}`}</button>
       {historyOpen && <>
