@@ -69,7 +69,6 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
         {unclassified.hasMore && <button className="session-nav-more" type="button" disabled={unclassified.moreBusy || unclassified.loading} onClick={() => void unclassified.more()}>{unclassified.moreBusy || unclassified.loading ? "加载中…" : "加载更多待归类 Session"}</button>}
       </>}
     </div>
-    <a className="session-nav-directory-link" href={href(projectId, "sessions")} onClick={onNavigate}>打开完整目录 <span>→</span></a>
     <Sheet open={connectOpen} onOpenChange={setConnectOpen}><SheetContent side="left" className="session-connect-sheet"><SheetHeader><SheetTitle>连接或建立 Session</SheetTitle><SheetDescription>同一职责可以有多个承接会话。登记不表示已发送消息或启动执行。</SheetDescription></SheetHeader><div className="session-connect-options"><article><h3>连接已有会话</h3><p>登记原会话引用，核实打开、读取和人工接单能力。</p><a href={`${href(projectId, "runtime")}?view=roles`} onClick={() => { setConnectOpen(false); onNavigate(); }}>查看职责档案并连接</a></article><article><h3>建立受管会话</h3><p>使用项目授权预留，之后核实运行状态。</p><a href={`${href(projectId, "runtime")}?view=execution`} onClick={() => { setConnectOpen(false); onNavigate(); }}>打开受管执行入口</a></article></div></SheetContent></Sheet>
   </section>;
 }

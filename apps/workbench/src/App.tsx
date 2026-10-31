@@ -28,7 +28,6 @@ import { CreateTaskPage } from "./workflow/CreateTaskPage";
 import { ProjectSummary } from "./overview/ProjectSummary";
 import { ProjectSettings } from "./settings/ProjectSettings";
 import { SessionWorkspace, clearSessionSnapshots } from "./sessions/SessionWorkspace";
-import { SessionsDirectoryPage } from "./sessions/SessionsDirectoryPage";
 function useRoute(): Route {
   const [route, setRoute] = useState(readRoute);
   useEffect(() => {
@@ -351,7 +350,13 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       <details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} />
-      : <SessionsDirectoryPage context={context} refresh={refresh} />;
+      : <div className="content sessions-empty-state">
+          <div className="sessions-empty-card">
+            <h1 tabIndex={-1}>Sessions</h1>
+            <p className="lede">从左侧目录选择一个 Session，查看当前任务、消息和工具活动。</p>
+            <p className="muted">目录支持搜索、业务/System 分组、历史与待归类。</p>
+          </div>
+        </div>;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     const components = { reviews: <TeamWorkspace context={context} refresh={refresh} />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : r.session ? <RuntimePanel context={context} refresh={refresh} targetSessionId={r.session} /> : <TeamWorkspace context={context} refresh={refresh} />, schedules: <SchedulingPanel context={context} refresh={refresh} />, roles: <RolesPanel context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
