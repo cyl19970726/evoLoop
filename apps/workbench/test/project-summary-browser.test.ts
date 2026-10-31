@@ -52,6 +52,8 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
       if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[a,b],permissions:["read"]},capabilities:{}};
       else if (url.pathname === base) value={id:projectId,title:projectId === a ? "项目甲" : "项目乙",createdAt:stamp};
       else if (url.pathname === `${base}/impacts`) value=[];
+      else if (url.pathname === `${base}/stages`) value=[];
+      else if (url.pathname === `${base}/work-management/index`) value={items:[],nextCursor:null,total:0,counts:{},changeSequence:0,observedAt:stamp,partial:false};
       else if (url.pathname === `${base}/resident-queues`) {
         reads++;
         if (projectId === b && holdB) await new Promise<void>(resolve => { releaseB = resolve; });
@@ -100,12 +102,13 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.locator("#workspace-main:focus").waitFor();
-  await page.getByText(/摘要读取失败：队列暂不可读/).waitFor();
+  await page.getByText(/摘要读取失败：队列暂不可读/).waitFor({timeout:5000}).catch(async()=>assert.fail(`First overview read: ${await page.locator("body").innerText()} ${errors.join(" | ")}`));
   assert.match(await page.locator("body").innerText(),/尚未读回项目摘要/);
   assert.equal(await page.getByText("已读队列范围内没有确认的领取占用。").count(),0);
   await fetch(`${base}/__fixture/mode?value=normal`);
   await page.getByRole("button",{name:"重新读取"}).click();
-  await page.locator(".overview-queue-details > summary").click();
+  if (!(await page.locator(".overview-queue-details").evaluate(element=>(element as HTMLDetailsElement).open)))
+    await page.locator(".overview-queue-details > summary").click();
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   await page.getByRole("link",{name:"下一任务"}).waitFor();
   await page.getByText(/等待消费者使用与验收/).first().waitFor();
@@ -148,7 +151,7 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await fetch(`${base}/__fixture/mode?value=released`);
   await fetch(`${base}/__fixture/task-mode?value=active`);
   await page.getByRole("button",{name:"重新读取"}).click();
-  const activeSection=page.getByRole("heading",{name:"当前业务任务"}).locator("..");
+  const activeSection=page.locator(".overview-current-work");
   await activeSection.getByRole("link",{name:"P1a 持续改进"}).waitFor();
   assert.equal(await activeSection.getByRole("link",{name:"P1a 持续改进"}).getAttribute("href"),`#/p/${a}/tasks/${outside}`);
   assert.match(await activeSection.innerText(),/负责人 开发职责/);
@@ -186,25 +189,26 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByText(/正在读取项目摘要/).waitFor();
   await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/overview`;},a);
   await fetch(`${base}/__fixture/release-b`);
-  await page.getByRole("link",{name:"当前任务"}).waitFor();
+  if (!(await page.locator(".overview-queue-details").evaluate(element=>(element as HTMLDetailsElement).open)))
+    await page.locator(".overview-queue-details > summary").click();
+  await page.getByRole("link",{name:"当前任务"}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Project A after B: ${await page.locator("body").innerText()} Errors ${errors.join(" | ")}`));
   assert.equal(await page.getByRole("link",{name:"乙项目任务"}).count(),0);
-  const observeMenuClose = async () => page.getByRole("dialog").evaluate(dialog => {
-    const trigger = document.querySelector('button[aria-label="打开项目导航"]')!;
+  const observeMenuClose = async () => page.evaluate(`(() => {
+    if (window.__menuFocusObserver) document.removeEventListener("focusin", window.__menuFocusObserver, true);
     document.documentElement.dataset.menuTriggerRestore = "no";
-    document.documentElement.dataset.menuCloseComplete = "pending";
-    const record = () => { document.documentElement.dataset.menuTriggerRestore = "yes"; };
-    trigger.addEventListener("focusin", record);
-    // Observe the actual close lifecycle, not a transient main:focus match.
-    dialog.addEventListener("focusScope.autoFocusOnUnmount", () => queueMicrotask(() => {
-      trigger.removeEventListener("focusin", record);
-      document.documentElement.dataset.menuCloseComplete = "done";
-    }), { once: true });
-  });
+    window.__menuFocusObserver = function(event) {
+      if (event.target === document.querySelector('button[aria-label="打开项目导航"]'))
+        document.documentElement.dataset.menuTriggerRestore = "yes";
+    };
+    document.addEventListener("focusin", window.__menuFocusObserver, true);
+  })()`);
   await page.getByLabel("打开项目导航", {exact:true}).click();
   await observeMenuClose();
   await page.getByRole("link", {name:"文档与知识",exact:true}).press("Enter");
   await page.getByRole("heading", {name:"过程文档",exact:true}).waitFor();
-  await page.waitForFunction(() => document.documentElement.dataset.menuCloseComplete === "done");
+  await page.getByRole("dialog").waitFor({state:"hidden"});
+  await page.locator("#workspace-main:focus").waitFor();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   assert.equal(await page.evaluate(() => document.documentElement.dataset.menuTriggerRestore), "no");
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
   await page.keyboard.press("Tab");
@@ -213,7 +217,9 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByLabel("打开项目导航", {exact:true}).click();
   await observeMenuClose();
   await page.getByRole("link", {name:"文档与知识",exact:true}).press("Enter");
-  await page.waitForFunction(() => document.documentElement.dataset.menuCloseComplete === "done");
+  await page.getByRole("dialog").waitFor({state:"hidden"});
+  await page.locator("#workspace-main:focus").waitFor();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   assert.equal(await page.evaluate(() => document.documentElement.dataset.menuTriggerRestore), "no");
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
   await page.keyboard.press("Tab");

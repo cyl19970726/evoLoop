@@ -33,6 +33,7 @@ test("seven template states appear in runtime and Roles with truthful refresh an
       const root = `/api/projects/${projectId}`;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "模板项目", createdAt: stamp };
+      else if (url.pathname === `${root}/session-work`) value = { items: [], nextCursor: null, totals: { current: 0, historical: 0, unclassified: 0 }, metadata: { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] } };
       else if (url.pathname === `${root}/runtime`) value = { available: true, error: null, allowedCwds: [], grants: [] };
       else if ([`${root}/runtime/sessions`, `${root}/runtime/runs`, `${root}/resident-queues`].includes(url.pathname)) value = [];
       else if (url.pathname === `${root}/orchestration/status`) value = { state: "active", running: false, busy: false, faults: [], lastError: null };
@@ -53,8 +54,8 @@ test("seven template states appear in runtime and Roles with truthful refresh an
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${base}/#/p/${projectId}/runtime`);
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.stack ?? error.message));
+  await page.goto(`${base}/#/p/${projectId}/runtime?view=execution`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const summary = page.locator(".role-template-summary:visible");

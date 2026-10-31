@@ -34,6 +34,7 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
         ? { items: [task(secondId, "第二页任务")], nextCursor: null }
         : { items: firstIds.map((id, index) => task(id, `首屏任务 ${index + 1}`)), nextCursor: "second" };
       else if (url.pathname === `${root}/impacts`) value = [];
+      else if (url.pathname === `${root}/work-management/index`) value = {items:[],nextCursor:null,total:0,counts:{},changeSequence:0,observedAt:stamp,partial:false};
       else if (url.pathname === `${root}/session-work`) value = { items: [], nextCursor: null, observationCursor: "0",
         metadata: { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] },
         totals: { current: 0, historical: 0, unclassified: 0 },
@@ -62,8 +63,8 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const warning = page.locator(".work-status-warning");
-  await warning.waitFor();
-  await warning.getByRole("button", { name: "重试读取工作进度" }).click();
+  await warning.waitFor({timeout:5000}).catch(async()=>assert.fail(`First status read: ${await page.locator("body").innerText()}`));
+  await warning.getByRole("button", { name: "重试读取工作进度" }).click({timeout:5000}).catch(async()=>assert.fail(`Retry button: ${await page.locator("body").innerText()}`));
   let pending = false;
   for (let tries = 0; tries < 100 && !pending; tries++) {
     pending = await (await fetch(`${base}/__fixture/retry-pending`)).text() === "true";

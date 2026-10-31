@@ -328,7 +328,9 @@ test("built WorkIndex and JourneyBoard read every listed Task through the guarde
   const firstDocumentPage=`${base}/documents?limit=50`;
   const secondDocumentPage=`${firstDocumentPage}&cursor=${taskAt(5050)}`;
   const status=(items:ReturnType<typeof task>[])=>`${base}/orchestration/work-status?taskIds=${items.map(item=>item.id).join(",")}`;
-  const workHash=`#/p/${projectId}/work`,journeyHash=`#/p/${projectId}/journey`;
+  // The task list persists its initial preview selection in the URL. Pin that
+  // exact route so the read-only browser keeps its original navigation boundary.
+  const workHash=`#/p/${projectId}/work?selected=${firstTasks[0].id}`,journeyHash=`#/p/${projectId}/journey`;
   const token="built-app-reader-token-sentinel-0123456789";
   const observed:string[]=[];
   const server=createServer(async(request,response)=>{

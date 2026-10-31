@@ -78,11 +78,12 @@ test("late recovery from an older snapshot cannot overwrite failure or a newer r
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "恢复竞态会话" }).waitFor();
+  await page.locator(".session-information > summary").click();
   await waitCount("recoveryReads", 1); // Old recovery GET is still held.
 
   await page.evaluate('document.dispatchEvent(new Event("visibilitychange"));');
   await waitCount("snapshotReads", 2);
-  const recoveryOverview = page.locator(".session-recovery-overview");
+  const recoveryOverview = page.locator(".session-information .session-recovery-overview");
   await recoveryOverview.getByText("请先重新读取当前会话。").waitFor();
   await fetch(`${base}/__fixture/release?number=1`);
   await page.waitForTimeout(100);
