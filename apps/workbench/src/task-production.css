@@ -773,9 +773,9 @@
 
 .task-page .task-overview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(320px, 27vw, 430px);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
   align-items: start;
-  gap: 42px;
+  gap: 32px;
 }
 
 .task-page .task-narrative,
@@ -985,6 +985,13 @@
     padding: 26px 0 0;
     border-top: 1px solid var(--border);
     border-left: 0;
+  }
+}
+
+@media (min-width: 1101px) and (max-width: 1400px) {
+  .task-page .task-overview-grid {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 28px;
   }
 }
 

@@ -12,6 +12,7 @@ Implementation evidence:
 - Detail, 1487 x 1058 CSS pixels, density 1: `.local/task-production/implementation-task-detail-final.jpg`
 - List, 1440 x 1024: `.local/task-production/implementation-task-list-1440x1024.jpg`
 - Detail, 1440 x 1024: `.local/task-production/implementation-task-detail-1440x1024.jpg`
+- Detail width correction, 1440 x 1024: `.local/task-production/implementation-task-detail-width-fix-1440x1024.jpg`
 - List, 1171 x 635: `.local/task-production/implementation-task-list-1171x635.jpg`
 - Detail, 1171 x 635: `.local/task-production/implementation-task-detail-1171x635.jpg`
 - List, 871 x 768: `.local/task-production/implementation-task-list-871x768.jpg`
@@ -34,7 +35,7 @@ The reference and implementation captures are both 1487 x 1058 pixels at density
 No actionable P0, P1, or P2 visual findings remain.
 
 - Fonts and typography: the implementation keeps the product's system Chinese sans-serif stack, 16 px body text, 14 px secondary facts, clear list/detail hierarchy, and does not fall back to Latin-first typography. Long Task goals are limited to the first authored sentence and clamped in the summary.
-- Spacing and layout rhythm: the list title, top controls, table header, six-column scroll surface, and persistent right summary align with the reference's proportions. At 1171, measured columns are `695.703px + 351.297px`; at 1440 they are `586px + 432px`. At 871 and 390, the summary follows the table in DOM order.
+- Spacing and layout rhythm: the list title, top controls, table header, six-column scroll surface, and persistent right summary align with the reference's proportions. The list grid is `695.703px + 351.297px` at 1171. The detail narrative is wider than the evidence rail: `686px + 300px` at 1440 and `550px + 280px` at 1280, with page overflow false. At 871 and 390, the detail evidence rail follows the narrative in DOM order.
 - Colors and tokens: blue/white surfaces, neutral text, restrained warm alerts, and gray rules follow the reference and the product's no-green rule.
 - Icons and assets: the screen uses the product-owned wordmark and existing Lucide icon family. The reference contains no illustration, photo, product image, or custom icon asset requiring generation.
 - Copy and content: labels use real Task, assignment, completion, Delivery, and observation facts. No fabricated event time or fake result is shown.
@@ -64,6 +65,9 @@ The remaining differences are expected:
    Fix: compact one-row desktop control grid with a stacked fallback below 1350 px.
 6. P2: Horizontal table scrolling lost Task identity.
    Fix: keep the first column sticky on desktop, while returning the table to stacked cards and disabling sticky positioning below 760 px.
+7. P1: Independent review found the 1440 Task narrative was only about 587 px wide and fell to about 470 px at 1280 because the evidence track used viewport-relative `27vw`.
+   Fix: measure the evidence rail from the content grid with a 300 px desktop cap, 280 px at 1280, and a 32 px or 28 px gutter instead of viewport width.
+   Recheck: 1440 narrative measured 686 px with a 300 px evidence rail; 1280 measured 550 px with a 280 px rail; both retained the two left rails and reported no page overflow.
 
 ## Additional page check
 
