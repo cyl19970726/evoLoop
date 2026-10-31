@@ -256,31 +256,6 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       () => { if (pendingPage.current[kind] === request) delete pendingPage.current[kind]; });
     return request;
   }
-  // Search through later server pages before presenting a complete result.
-  useEffect(() => {
-    if (loading || !query.trim()) { setSearching(false); setSearchError(""); return; }
-    const kind = view === "documents" ? "documents" : "tasks";
-    if (!pages.current[kind].nextCursor) { setSearching(false); setSearchError(""); return; }
-    let active = true;
-    const readEpoch = epoch.current;
-    setSearching(true); setSearchError("");
-    const timer = window.setTimeout(async () => {
-      try {
-        const seen = new Set<string>();
-        while (active && readEpoch === epoch.current && pages.current[kind].nextCursor) {
-          const source = pages.current[kind];
-          if (pageCount.current[kind] >= searchPageLimit || source.items.length + 50 > searchItemLimit)
-            throw new Error(`自动搜索已达 ${searchPageLimit} 页或 ${searchItemLimit} 项上限；结果未完整。可继续手动加载，或缩小范围。`);
-          const cursor = source.nextCursor!;
-          if (seen.has(cursor)) throw new Error("分页游标重复，无法确认搜索完整性");
-          seen.add(cursor);
-          if (!await nextPage(kind)) return;
-        }
-        if (active) setSearching(false);
-      } catch (cause) { if (active) { setSearching(false); setSearchError(errorText(cause)); } }
-    }, 180);
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [token, projectId, refresh, recheck, view, query, loading, tasks.nextCursor, documents.nextCursor]);
   async function more() {
     if (busy) return; setBusy(true); const readEpoch = epoch.current;
     try {
@@ -380,6 +355,38 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const resolvedOwners = ownerNames.scope === ownerScope ? ownerNames.values : {};
   const classificationUnavailable = Boolean(statusProblem) && !Object.keys(statuses).length;
   const {primary:primaryTasks,cognition:cognitionTasks,unknown:unknownTasks,primaryKind}=visibleWorkGroups(visibleTasks,statuses,classificationUnavailable);
+  const awaitingAssignments = view === "work" && scope === "mine" && !projections.complete && !projections.error;
+  const needsFilteredPage = view === "work" && !visibleTasks.length && !awaitingAssignments;
+  // Continue an empty filtered Task page; typed searches still scan all bounded pages.
+  useEffect(() => {
+    if (loading || error || (!query.trim() && !needsFilteredPage)) { setSearching(false); setSearchError(""); return; }
+    const kind = view === "documents" ? "documents" : "tasks";
+    if (!pages.current[kind].nextCursor) { setSearching(false); setSearchError(""); return; }
+    let active = true;
+    const readEpoch = epoch.current;
+    setSearching(true); setSearchError("");
+    const timer = window.setTimeout(async () => {
+      try {
+        await pendingPage.current[kind];
+        if (!active || readEpoch !== epoch.current) return;
+        const seen = new Set<string>();
+        while (active && readEpoch === epoch.current && pages.current[kind].nextCursor) {
+          const source = pages.current[kind];
+          if (pageCount.current[kind] >= searchPageLimit || source.items.length + 50 > searchItemLimit)
+            throw new Error(`自动搜索已达 ${searchPageLimit} 页或 ${searchItemLimit} 项上限；结果未完整。可继续手动加载，或缩小范围。`);
+          const cursor = source.nextCursor!;
+          if (seen.has(cursor)) throw new Error("分页游标重复，无法确认搜索完整性");
+          seen.add(cursor);
+          if (!await nextPage(kind)) return;
+          // Let the next render recheck filters before reading another page.
+          if (!query.trim()) break;
+        }
+        if (active) setSearching(false);
+      } catch (cause) { if (active) { setSearching(false); setSearchError(errorText(cause)); } }
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [token, projectId, refresh, recheck, view, query, filter, kindFilter, scope, loading, error, needsFilteredPage, tasks.nextCursor, documents.nextCursor]);
+  const fillingFilteredPage = needsFilteredPage && !!tasks.nextCursor && !query.trim() && !searchError && !error;
   const title = view === "documents" ? "过程文档" : view === "inbox" ? "待判断与复核" : "任务";
   const footerSummary = view === "work"
     ? `当前页匹配 ${visibleTasks.length} 项 · 已载入 ${tasks.items.length} 项`
@@ -418,7 +425,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       </div>}
       {loading && <p className="list-message" role="status">正在读取{title}…</p>}
       {error && <div className="list-message"><Alert kind="error">读取失败：{error}</Alert><button onClick={context.onChanged}>重试读取</button></div>}
-      {searching && <p className="list-message" role="status">正在搜索后续页面；结果尚未完整。</p>}
+      {awaitingAssignments && <p className="list-message" role="status">我的承接信息尚未读全，当前结果不完整。</p>}
+      {(searching || fillingFilteredPage) && <p className="list-message" role="status">{query.trim() ? "正在搜索后续页面；结果尚未完整。" : "正在读取后续页面中的匹配任务…"}</p>}
       {searchError && <div className="list-message"><Alert kind="error">搜索未完成：{searchError}。当前结果只覆盖已载入项目。</Alert></div>}
       {!loading && !error && <>{view === "documents" ? <div className="table-wrap"><table><thead><tr><th>文档名称</th><th>类型</th><th>状态</th><th>修订与时间</th><th>用途与下一动作</th></tr></thead><tbody>{visibleDocuments.map(d => {
         const lifecycle=leaderDocuments[d.id];
@@ -432,7 +440,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
         {unknownTasks.length > 0 && <section className="work-status-section work-status-group" aria-label="来源与状态待核对"><h2>来源与状态待核对 <span>{unknownTasks.length} 项已载入</span></h2><p>状态投影未读全，暂不把这些任务归为业务或系统记录。</p><TaskListTable tasks={unknownTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} {...(view === "work" ? listProps : {})} /></section>}
         {cognitionTasks.length > 0 && <details className="work-status-group"><summary>判断与接续记录 · {cognitionTasks.length} 项已载入</summary><p>由正式认知派发关联的任务；原任务与历史记录均可打开。这里的本轮结果不改写任务状态。</p><TaskListTable tasks={cognitionTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} {...(view === "work" ? listProps : {})} /></details>}
       </> : <TaskListTable tasks={visibleTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} />}
-      {!searching && !searchError && !(view === "documents" ? visibleDocuments : visibleTasks).length && <div className="list-empty"><FileEmpty /><h2>{view === "work" && tasks.nextCursor ? "已载入范围内没有匹配任务" : query || filter !== "open" || kindFilter !== "all" || view === "documents" && documentStatus !== "active" ? "没有匹配项" : view === "inbox" ? "没有待办任务" : `还没有${title}`}</h2><p>{view === "work" && tasks.nextCursor ? "仍有后续页面，可继续载入或搜索全部已读取范围。" : "可以清除筛选，或创建一项有明确正文与验收条件的工作。"}</p><button onClick={() => { setQuery(""); setFilter("open"); setKindFilter("all"); setDocumentStatus("active"); setScope("all"); }}>清除筛选</button></div>}
+      {!searching && !fillingFilteredPage && !awaitingAssignments && !searchError && !(view === "documents" ? visibleDocuments : visibleTasks).length && <div className="list-empty"><FileEmpty /><h2>{view === "work" && tasks.nextCursor ? "已载入范围内没有匹配任务" : view === "work" && tasks.items.length || query || filter !== "open" || kindFilter !== "all" || view === "documents" && documentStatus !== "active" ? "没有匹配项" : view === "inbox" ? "没有待办任务" : `还没有${title}`}</h2><p>{view === "work" && tasks.nextCursor ? "仍有后续页面，可继续载入或搜索全部已读取范围。" : view === "work" && tasks.items.length ? "可以调整筛选，查看其他状态的工作。" : "可以清除筛选，或创建一项有明确正文与验收条件的工作。"}</p><button onClick={() => { setQuery(""); setFilter("open"); setKindFilter("all"); setDocumentStatus("active"); setScope("all"); }}>清除筛选</button></div>}
       <div className="list-footer"><span>{footerSummary}</span><div className="list-footer-actions">{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy || searching} onClick={() => void more()}>{busy || searching ? "加载中…" : "加载更多"}</button>}{view === "work" && observedAt && <small>读取于 {observedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small>}</div></div></>}
     </section>
     </div>{view === "work" && selectedTask && <TaskPreview token={token} projectId={projectId} id={selectedTask}

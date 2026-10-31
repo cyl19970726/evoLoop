@@ -30,6 +30,7 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
         title: `可读任务 ${index + 1}`, content: "正文", contentDocumentId: id, contentRevisionId: id,
         kind: "implementation", acceptance: "确认", owner: "reader", state: "todo", createdAt: stamp })), nextCursor: null }; }
       else if (url.pathname === `${root}/impacts`) value = [];
+      else if (url.pathname === `${root}/work-management/index`) value = {items:[],nextCursor:null,total:0,counts:{},changeSequence:0,observedAt:stamp,partial:false};
       else if (url.pathname === `${root}/session-work`) value = { items: [], nextCursor: null, observationCursor: "0",
         metadata: { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] },
         totals: { current: 0, historical: 0, unclassified: 0 },
@@ -55,8 +56,8 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const warning = page.locator(".work-status-warning");
-  await warning.getByText("工作进度暂时无法读取，已加载任务仍可查看。").waitFor();
-  await page.getByRole("link", { name: "可读任务 1", exact: true }).waitFor();
+  await warning.getByText("工作进度暂时无法读取，已加载任务仍可查看。").waitFor({timeout:5000}).catch(async()=>assert.fail(`First status read: ${await page.locator("body").innerText()}`));
+  await page.getByRole("button", { name: "可读任务 1", exact: true }).waitFor();
   assert.equal(await page.getByText(diagnostic).isVisible(), false);
   assert.equal(await warning.evaluate(element => element.getBoundingClientRect().height < 150), true);
   await warning.getByText("查看诊断信息").click();
@@ -72,5 +73,5 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
   await warning.getByRole("button", { name: "重试读取工作进度" }).click();
   await warning.waitFor({ state: "detached" });
   assert.equal(await (await fetch(`${base}/__fixture/task-reads`)).text(), readsBeforeRetry);
-  await page.getByRole("link", { name: "可读任务 1", exact: true }).waitFor();
+  await page.getByRole("button", { name: "可读任务 1", exact: true }).waitFor();
 });

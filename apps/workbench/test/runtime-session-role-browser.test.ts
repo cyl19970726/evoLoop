@@ -34,6 +34,7 @@ test("runtime Session cards preserve Role history, full grants, and activation s
   const {chromium} = (await import(pathToFileURL(modulePath!).href)).default;
   let fail=false, hold=false, held=0, hideGrants=false, release:(()=>void)|null=null;
   let reservedCommand:Record<string,unknown>|null=null;
+  let createdSession:typeof sessions[number]|null=null;
   const reads:string[]=[];
   const server=createServer(async (req,res)=>{
     const url=new URL(req.url,"http://127.0.0.1");
@@ -49,11 +50,13 @@ test("runtime Session cards preserve Role history, full grants, and activation s
       else if (url.pathname==="/api/commands" && req.method==="POST") {
         let body="";for await(const chunk of req)body+=String(chunk);
         reservedCommand=JSON.parse(body) as Record<string,unknown>;
+        if(reservedCommand.type==="runtime.session.reserve") createdSession={...sessions[0]!,id:String(reservedCommand.sessionId),state:"reserved",model:String(reservedCommand.model),executionProfile:undefined};
         value={status:"applied",operationId:reservedCommand.operationId,entityId:reservedCommand.sessionId,version:1};
       }
       else if (url.pathname===p) value={id:projectId,title:"夹具项目",createdAt:"2026-10-25T00:00:00.000Z"};
       else if (url.pathname===`${p}/runtime`) value={available:true,error:null,allowedCwds:[],grants:hideGrants?[]:grants};
-      else if (url.pathname===`${p}/runtime/sessions`) value=sessions;
+      else if (url.pathname===`${p}/runtime/models`) value={status:"available",models:["gpt-6-sol"]};
+      else if (url.pathname===`${p}/runtime/sessions`) value=createdSession ? [...sessions,createdSession] : sessions;
       else if (url.pathname===`${p}/runtime/runs`) value=[];
       else if (url.pathname===`${p}/resident-queues`) value=[];
       else if (url.pathname===`${p}/orchestration/status`) value={state:"active",running:false,busy:false,faults:[],lastError:null};
@@ -93,11 +96,14 @@ test("runtime Session cards preserve Role history, full grants, and activation s
   const grantOptions=await page.getByLabel("已配置的完整权限授权").locator("option").allTextContents();
   assert.equal(grantOptions.some(text=>text.includes("旧授权")),false);
   assert.equal(grantOptions.some(text=>text.includes("gpt-6-sol")),true);
-  await page.locator(".command-disclosure > summary").filter({hasText:"登记并创建会话"}).click();
   const fullGrantValue=await page.getByLabel("已配置的完整权限授权").locator("option").filter({hasText:"gpt-6-sol"}).getAttribute("value");
   await page.getByLabel("已配置的完整权限授权").selectOption(fullGrantValue!);
+  await page.getByLabel("精确模型").selectOption("gpt-6-sol");
+  const saved = page.waitForResponse(response => response.url().endsWith("/api/commands") && response.request().method() === "POST");
   await page.getByRole("button",{name:"登记并创建会话"}).click();
-  await page.getByText("已保存，正在读取持久记录。").waitFor();
+  assert.equal((await saved).status(),200);
+  assert.ok(reservedCommand?.sessionId,"reservation must be persisted under the command Session ID");
+  await page.locator(`#runtime-session-${reservedCommand!.sessionId}`).waitFor();
   assert.equal(reservedCommand?.sandbox,"danger-full-access");
   assert.equal(reservedCommand?.approvalPolicy,"never");
   assert.equal(reservedCommand?.model,"gpt-6-sol");

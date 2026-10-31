@@ -337,12 +337,12 @@ test("resident observation keeps acceptance, host authority and task replies dis
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-role-count`)).text(),"2");
   const missingSession = "20000003-0000-4000-8000-000000000003";
-  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?session=${missingSession}`);
+  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?view=execution&session=${missingSession}`);
   await pageBrowser.getByText(/当前项目未读到目标 Session/).waitFor();
   await fetch(`${base}/__fixture/release-held-role`);
   await pageBrowser.waitForTimeout(100);
-  assert.equal(await pageBrowser.locator(".resident-queues").count(),0);
-  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?session=${sessionId}`);
+  assert.equal(await pageBrowser.locator(".resident-queues:visible").count(),0);
+  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?view=execution&session=${sessionId}`);
   await queueItems.nth(0).getByText(/承接职责 已更新的承接职责/).waitFor();
   await fetch(`${base}/__fixture/deep-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();

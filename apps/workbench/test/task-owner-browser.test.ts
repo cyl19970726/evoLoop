@@ -44,7 +44,15 @@ test("Task owner resolves one real Role and only verified bound Session links at
           contentRevisionId:id,kind:"implementation",acceptance:"已核对",owner,state:"in_progress",createdAt:stamp};
         value = {task,revision:{...task,id,taskId:id,actorId:"reader",reason:"夹具",createdAt:stamp},basis:null,links:[],impacts:[],decisions:[],deliveries:[],observations:[],closures:[]};
       }
-      else if (url.pathname === `${p}/roles`) { roleListReads++; value = page; }
+      else if (url.pathname === `${p}/roles`) {
+        roleListReads++;
+        // Other page areas may read this list. Its stale entry must never stand in
+        // for the Task owner's exact Role read, especially when that read fails.
+        value = {items:[{projectId,id:roleId,version:1,currentRevisionId:roleId,state:"active",
+          proposal:{title:"过期列表职责"},proposedBy:"reader",createdAtUtc:stamp,
+          trialStartedAtUtc:stamp,reviewAtUtc:stamp,mergeTargetRoleId:null}],nextCursor:null};
+      }
+      else if (url.pathname.startsWith(`${p}/work-management/tasks/`)) { status=404; value={message:"Leader 投影未登记"}; }
       else if (url.pathname === `${p}/roles/${roleId}`) {
         roleReads++;
         if (holdNextRole) { holdNextRole = false; heldRoles++; await new Promise<void>(resolve=>{releaseHeldRole=resolve;}); }
@@ -89,12 +97,13 @@ test("Task owner resolves one real Role and only verified bound Session links at
   await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
+  await pageBrowser.locator(".task-provenance > summary").click();
   await pageBrowser.locator(".task-role-history > summary").click();
-  const owner=pageBrowser.locator(`[data-page-key="task:${taskId}::"] .task-owner-meta`);
+  const owner=pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-owner-meta`);
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Role label missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
   });
-  await owner.getByRole("link",{name:/已登记 Session 20000006（就绪）/}).waitFor();
+  await owner.getByRole("link",{name:/已登记 Session 20000006（就绪）/}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Bound Session missing: ${await owner.innerText()} ${pageErrors.join(" | ")}`));
   assert.match(await owner.innerText(),/职责绑定不表示此任务正在该会话运行/);
   assert.match(await owner.innerText(),/部分绑定记录未能核对/);
   assert.equal(await owner.getByRole("link",{name:/20000007/}).count(),0);
@@ -102,7 +111,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
   assert.equal(await pageBrowser.locator(".task-page-header").evaluate(element=>element.scrollWidth<=element.clientWidth),true);
   if (process.env.EVOLOOP_TASK_OWNER_SCREENSHOT)
     await pageBrowser.locator(".task-page-header").screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
-  assert.equal(await (await fetch(`${base}/__fixture/reads`)).json().then(value=>value.roleListReads),0);
+  assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");
   await fetch(`${base}/__fixture/foreign-session`);
   await owner.getByRole("link",{name:/已登记 Session 20000006/}).click();
   const focus=pageBrowser.getByRole("region",{name:"目标 Session"});
@@ -129,6 +138,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
   assert.equal(await focus.getByText(/开发流程职责/).count(),0);
   await fetch(`${base}/__fixture/hold-role`);
   await pageBrowser.evaluate(({projectId,sessionId})=>{location.hash=`#/p/${projectId}/runtime?session=${sessionId}`;},{projectId,sessionId});
+  await pageBrowser.getByRole("button",{name:"读取运行状态"}).click();
   for(let attempt=0;attempt<20 && await (await fetch(`${base}/__fixture/held-role-count`)).text()!=="1";attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-role-count`)).text(),"1");
@@ -143,13 +153,19 @@ test("Task owner resolves one real Role and only verified bound Session links at
   await focus.getByText(/当前项目未读到目标 Session/).waitFor();
   assert.equal(await focus.getByText(/开发流程职责/).count(),0);
   await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`#/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
+  await owner.getByRole("link",{name:"开发流程职责"}).waitFor();
+  const exactReadsBeforeFailure = (await (await fetch(`${base}/__fixture/reads`)).json()).roleReads as number;
   await fetch(`${base}/__fixture/fail-role`);
   await pageBrowser.getByRole("button",{name:"重新读取当前任务"}).click();
   await owner.getByText(/职责暂不可核对：职责暂不可读/).waitFor();
-  assert.equal(await owner.getByRole("link",{name:"开发流程职责"}).count(),0);
+  assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads > exactReadsBeforeFailure,
+    "Task reread must request the exact Role even when a Role list is available");
+  assert.equal(await owner.getByRole("link").count(),0,"failed exact Role read must not fall back to a stale list entry or its Session links");
+  assert.doesNotMatch(await owner.innerText(),/过期列表职责/);
   await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`#/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
-  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"] .task-role-history > summary`).click();
-  const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"] .task-owner-meta`);
+  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-provenance > summary`).click();
+  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-role-history > summary`).click();
+  const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-owner-meta`);
   await unknown.getByText(/未找到已登记职责/).waitFor();
   assert.match(await unknown.innerText(),new RegExp(unknownOwner));
 });

@@ -69,7 +69,7 @@ test("late history from session A cannot enter session B and B can load while A 
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionA)}`);
+  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionA)}&filter=all`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "会话甲" }).waitFor();
@@ -77,7 +77,7 @@ test("late history from session A cannot enter session B and B can load while A 
   for (let i = 0; i < 30 && await (await fetch(`${base}/__fixture/held`)).text() !== "true"; i++)
     await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(await (await fetch(`${base}/__fixture/held`)).text(), "true");
-  await page.evaluate(([project, key]) => { window.location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, sessionB]);
+  await page.evaluate(([project, key]) => { window.location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}&filter=all`; }, [projectId, sessionB]);
   await page.getByRole("heading", { name: "会话乙" }).waitFor({ timeout: 3000 });
   const loadB = page.getByRole("button", { name: "读取活动历史" });
   await loadB.waitFor({ timeout: 3000 });

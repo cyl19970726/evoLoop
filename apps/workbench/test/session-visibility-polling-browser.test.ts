@@ -86,7 +86,7 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(ownedKey)}`);
+  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(ownedKey)}&filter=all`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "受管测试会话" }).waitFor();
@@ -124,7 +124,7 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
   assert.equal(afterUpdate.ownedSnapshot > beforeUpdate.ownedSnapshot, true, "owned Session sees a new snapshot without a change entry");
 
   const beforeExternal = await readCounts();
-  await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, externalKey]);
+  await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}&filter=all`; }, [projectId, externalKey]);
   await page.getByRole("heading", { name: "外部测试会话" }).waitFor();
   const externalStart = await readCounts();
   assert.equal(externalStart.recovery, beforeExternal.recovery, "external initial read never requests recovery");

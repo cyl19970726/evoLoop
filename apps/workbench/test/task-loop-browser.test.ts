@@ -78,6 +78,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
         else value = {items:[{taskId:url.searchParams.get("taskIds"),dispatchId:"new-dispatch",runId:url.searchParams.get("taskIds") === otherTaskId ? otherRunId : runId,
           runState:url.searchParams.get("taskIds") === otherTaskId ? "running" : workRunState}]};
       }
+      else if (url.pathname.startsWith(`${p}/work-management/tasks/`)) { status=404; value={message:"Leader 投影未登记"}; }
       else if (url.pathname === `${p}/orchestration/loops/${oldId}`) value = loop(oldId,"stopped");
       else if (url.pathname === `${p}/orchestration/loops/${newId}`) value = loop(newId,"active");
       else if (url.pathname === `${p}/goals/${goalId}`) value = {id:goalId,outcome:long};
@@ -100,8 +101,8 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}?revision=${taskId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
-  const historicalRun = pageBrowser.locator(`[data-page-key="task:${taskId}:${taskId}:"] #runtime-run-${taskId}-${runId}`);
-  await historicalRun.waitFor({state:"attached"});
+  const historicalPage = pageBrowser.locator(`[data-page-key="task:${taskId}:${taskId}::"]`);
+  await historicalPage.getByRole("heading",{name:"固定历史任务修订"}).waitFor();
   await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=runtime`; },{projectId,taskId});
   await pageBrowser.getByRole("tab",{name:"运行与关联"}).waitFor();
   const panel = pageBrowser.getByRole("region",{name:"自动循环观察"});
@@ -131,16 +132,16 @@ test("built Task page selects the current Loop, preserves manual history and fit
   assert.match(await panel.locator(".orch-loop-head h3").innerText(),/11111111/);
   await fetch(`${base}/__fixture/status-ready`,{method:"POST"});
   await pageBrowser.evaluate(({projectId,otherTaskId}) => { location.hash = `#/p/${projectId}/tasks/${otherTaskId}?tab=runtime`; },{projectId,otherTaskId});
-  const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}::"]`).getByRole("region",{name:"自动循环观察"});
+  const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"]`).getByRole("region",{name:"自动循环观察"});
   await nextPanel.getByText(/当前运行 44444444 关联循环 22222222/).waitFor();
   assert.match(await nextPanel.locator(".orch-loop-head h3").innerText(),/22222222/);
   assert.equal(await (await fetch(`${base}/__fixture/exact-run-reads`)).text(),"0", "hidden Delivery tab must not prefetch historical Runs");
   await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
-  const currentTaskPage = pageBrowser.locator(`[data-page-key="task:${taskId}::"]`);
+  const currentTaskPage = pageBrowser.locator(`[data-page-key="task:${taskId}:::"]`);
   const currentRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}`);
   const currentOpenRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}[open]`);
   const runTitleClearsHeader = ({taskId,runId}:{taskId:string;runId:string}) => {
-    const run=document.querySelector(`[data-page-key="task:${taskId}::"] #runtime-run-${taskId}-${runId}`);
+    const run=document.querySelector(`[data-page-key="task:${taskId}:::"] #runtime-run-${taskId}-${runId}`);
     const title=run?.querySelector(":scope > summary");
     const header=document.querySelector(".workspace-header");
     if (!title || !header) return false;
@@ -152,9 +153,10 @@ test("built Task page selects the current Loop, preserves manual history and fit
   assert.equal(await exactRunLink.getAttribute("href"),`#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
   assert.equal(await currentTaskPage.getByRole("link",{name:"查看对应 Session →"}).getAttribute("href"),
     `#/p/${projectId}/runtime?session=${encodeURIComponent(`owned:${taskId}`)}`);
-  await exactRunLink.click();
+  await exactRunLink.focus();
+  await exactRunLink.press("Enter");
   await currentOpenRun.waitFor();
-  assert.equal(await historicalRun.evaluate(el => el.getClientRects().length),0,"historical Task page stays mounted but hidden");
+  assert.equal(await historicalPage.evaluate(el => el.getClientRects().length),0,"historical Task page stays mounted but hidden");
   await currentRun.getByText(/exact version two/).waitFor();
   await pageBrowser.waitForFunction(runTitleClearsHeader,{taskId,runId});
   await pageBrowser.evaluate(() => window.scrollTo(0,0));

@@ -84,7 +84,8 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "进度测试会话" }).waitFor();
-  const card = page.locator(".native-progress-card");
+  await page.locator(".session-information > summary").click();
+  const card = page.locator(".native-progress-card:visible");
   await card.getByText("运行中", { exact: true }).waitFor();
   await card.getByText("Tool call · 进行中").first().waitFor();
   await card.getByText("1/2 步已完成").waitFor();
@@ -105,12 +106,12 @@ test("native progress keeps source, freshness and cumulative usage separate from
   }
 
   await fetch(`${base}/__fixture/set?mode=waiting`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("等待回答").waitFor();
   assert.equal(await page.locator(".native-question-card").count(), 1, "question remains above progress");
 
   await fetch(`${base}/__fixture/set?mode=recentTool`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.locator(".native-progress-facts small").filter({ hasText: "最近工具活动" }).waitFor();
   assert.equal(await card.locator(".native-progress-facts small").filter({ hasText: "当前工具" }).count(), 0,
     "a completed item is not presented as the current tool while the Turn continues");
@@ -118,7 +119,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   for (const [terminal, label] of [["completed", "Turn 已结束"], ["failed", "Turn 执行失败"], ["interrupted", "Turn 已中断"]] as const) {
     // Only the Turn ended: the fixture deliberately never supplies item/completed or a completed plan step.
     await fetch(`${base}/__fixture/set?mode=${terminal}`);
-    await page.getByRole("button", { name: "重新读取" }).click();
+    await page.getByRole("button", { name: "重新读取", exact: true }).click();
     await card.getByText(label, { exact: true }).waitFor();
     await card.getByText("Tool call · Turn 结束时结果未确认", { exact: true }).first().waitFor({ timeout: 2000 });
     assert.equal(await card.locator(".native-progress-facts small").filter({ hasText: "当前工具" }).count(), 0);
@@ -132,7 +133,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
 
   // Native Turn completion and native request cleanup are distinct notifications and may arrive apart.
   await fetch(`${base}/__fixture/set?mode=completedWaiting`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("Turn 已结束", { exact: true }).waitFor({ timeout: 2000 });
   assert.equal(await card.getByText("等待回答", { exact: true }).count(), 0,
     "a pending cleanup notification cannot hide the observed terminal Turn");
@@ -140,7 +141,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
     "the UI must not invent a native request resolution merely because its Turn ended");
 
   await fetch(`${base}/__fixture/set?mode=stale`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("观察待核对").waitFor();
   await card.getByText("不能代表当前仍在执行", { exact: false }).waitFor();
   assert.equal(await card.getByText("运行中", { exact: true }).count(), 0, "stale in-progress Turn is never shown as live");
@@ -151,20 +152,20 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await card.getByText("当时进行中，当前待核对 · 整理结果").waitFor();
 
   await fetch(`${base}/__fixture/set?mode=notLoaded`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("原生会话尚未加载").waitFor();
   await card.getByText("输入 未提供 · 输出 未提供 · 总计 未提供", { exact: false }).waitFor();
 
   await fetch(`${base}/__fixture/set?mode=foreign`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await page.getByText("原生进度身份或新鲜度无法核实", { exact: false }).waitFor();
   assert.equal(await card.count(), 0, "foreign Session observation cannot appear");
 
   await fetch(`${base}/__fixture/set?mode=live`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("运行中", { exact: true }).waitFor();
   await fetch(`${base}/__fixture/set?mode=fail`);
-  await page.getByRole("button", { name: "重新读取" }).click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("观察待核对").waitFor();
   assert.equal(await card.getByText("运行中", { exact: true }).count(), 0, "failed reread cannot present cached activity as current");
 });

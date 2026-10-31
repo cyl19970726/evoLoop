@@ -59,12 +59,12 @@ test("completed assignments remain historical while active stale assignments sti
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}&tab=responsibilities`);
+  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}&tab=queue`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "终态分派测试会话" }).waitFor();
-  const items = page.locator(".session-workspace-section li");
-  await page.getByText("任务 1").waitFor();
+  const items = page.locator(".session-task-summary p").filter({ has: page.locator('a') });
+  await items.nth(0).getByRole("link", { name: "任务 1" }).waitFor();
   assert.match(await items.nth(0).innerText(), /任务已完成 · 历史分派（曾直接确认接手）/);
   assert.doesNotMatch(await items.nth(0).innerText(), /需重新确认/);
   assert.match(await items.nth(1).innerText(), /任务修订已变化，需重新确认/);
