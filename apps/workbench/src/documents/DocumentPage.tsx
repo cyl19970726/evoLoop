@@ -12,8 +12,13 @@ import "./document.css";
 const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘" } as const;
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
 const relationLabel = { content: "任务正文", link: "已关联", basis: "当前固定依据" } as const;
+const docAsideCollapsedStorageKey = "evoloop.doc-reading-aside-collapsed";
 const readProblem = (cause: unknown): string => cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
   ? "当前身份无权读取该文档" : errorText(cause);
+function readStoredAsideCollapsed(): boolean {
+  try { return localStorage.getItem(docAsideCollapsedStorageKey) === "1"; }
+  catch { return false; }
+}
 export function DocumentPage({ token, projectId, id, selectedRevision, context, refresh }: { token: string; projectId: string; id: string; selectedRevision?: string; context: MutationContext; refresh: number }) {
   const outlineBody = useRef<HTMLElement | null>(null);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
@@ -30,6 +35,13 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
   const [relatedLoading, setRelatedLoading] = useState(true);
   const [relatedError, setRelatedError] = useState("");
   const [relatedPartial, setRelatedPartial] = useState(false);
+  const [asideCollapsed, setAsideCollapsed] = useState(readStoredAsideCollapsed);
+  const toggleAside = () => {
+    const next = !asideCollapsed;
+    setAsideCollapsed(next);
+    try { localStorage.setItem(docAsideCollapsedStorageKey, next ? "1" : "0"); }
+    catch { /* storage may be unavailable; collapse still works for this view */ }
+  };
   const scope = JSON.stringify([token, projectId, id, selectedRevision ?? null]);
   const taskScope = JSON.stringify([token, projectId, id]);
   useEffect(() => { setUploadBaselineVersion(null); setUploadGeneration(0); }, [token, projectId, id]);
@@ -116,13 +128,17 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     {revision.organizationReview && <p className="doc-review-period">观察期间：{new Date(revision.organizationReview.observedFrom).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} 至 {new Date(revision.organizationReview.observedTo).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} · {revision.organizationReview.timeZone}
       {revision.organizationReview.previous && <> · <a href={href(projectId, "document", revision.organizationReview.previous.documentId, revision.organizationReview.previous.revisionId)}>上一轮复盘</a></>}</p>}
     {revision.format === "markdown" && <details className="document-outline-mobile"><summary>文档目录</summary><DocumentOutline body={outlineBody} revision={revision.id} compact /></details>}
-    <div className={`document-read-layout${detail.document.kind === "organization_review" ? " organization-review-reading" : ""}`}>
+    <div className={`document-read-layout${detail.document.kind === "organization_review" ? " organization-review-reading" : ""}${asideCollapsed ? " aside-collapsed" : ""}`}>
       <article className="document-read-main" ref={outlineBody}>
         <section className="doc-primary-body" aria-label="文档完整正文">
           {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={detail.document.title} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
             : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} readingMode={detail.document.kind === "organization_review"} />}
         </section>
       </article>
+      {detail.document.kind !== "organization_review" &&
+        <button type="button" className="doc-aside-toggle" aria-expanded={!asideCollapsed}
+          aria-label={asideCollapsed ? "展开版本、来源与关联" : "收起版本、来源与关联"}
+          onClick={toggleAside}>{asideCollapsed ? "›" : "‹"}</button>}
       <aside className="document-read-aside" aria-label="文档版本、来源与关联">
         {revision.format === "markdown" && <div className="document-outline-desktop"><DocumentOutline body={outlineBody} revision={revision.id} /></div>}
         <details className="doc-reading-details" open={detail.document.kind !== "organization_review"}><summary>版本、原件与来源</summary>

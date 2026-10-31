@@ -55,6 +55,13 @@
 .workbench-layout .doc-reading-version > * + * { border-left: 1px solid #cbd5e6; padding-left: 14px; }
 .workbench-layout .document-reading-header .notice { font-size: 15px; line-height: 1.6; }
 .workbench-layout .document-read-layout { grid-template-columns: minmax(0, 1fr) minmax(270px, 340px); gap: clamp(28px, 3vw, 46px); }
+/* HTML 原件优先占宽：来源栏收窄且可收起；组织复盘保持通栏，不收起。 */
+.workbench-layout .document-read-layout:has(.doc-original-reader) { grid-template-columns: minmax(0, 1fr) clamp(240px, 22vw, 300px); gap: clamp(20px, 2vw, 32px); }
+.workbench-layout .document-read-layout.aside-collapsed { grid-template-columns: minmax(0, 1fr); }
+.workbench-layout .document-read-layout.aside-collapsed .document-read-aside { display: none; }
+.workbench-layout .doc-aside-toggle { justify-self: end; width: 28px; min-width: 0; height: 28px; min-height: 28px; padding: 0; margin: 0 0 12px; border: 1px solid #d5ddeb; border-radius: 6px; background: #fff; color: #3f5c8f; font-size: 17px; line-height: 1; cursor: pointer; }
+.workbench-layout .doc-aside-toggle:hover { background: #eef3fb; color: #1b59d6; }
+.workbench-layout .document-read-layout.aside-collapsed .doc-aside-toggle { justify-self: end; }
 .workbench-layout .document-read-main,
 .workbench-layout .document-read-aside { min-width: 0; }
 .workbench-layout .doc-primary-body,
@@ -150,7 +157,8 @@
 .workbench-layout .doc-original-reader .panel-head { align-items: center; margin-bottom: 16px; }
 .workbench-layout .doc-original-reader .panel-head h2 { font-size: 20px; }
 .workbench-layout .doc-original-reader .doc-original-integrity { margin: 0 0 18px; font-size: 14px; color: #607291; }
-.workbench-layout .doc-original-reader iframe { max-width: 100%; }
+/* 固定原件保持 100% 实际宽度，不缩放；宽内容在 iframe 内部横向滚动。 */
+.workbench-layout .doc-original-reader iframe { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }
 .workbench-layout .document-index .list-footer .doc-index-read { display: block; margin-top: 5px; padding: 0; border: 0; background: transparent; color: #607291; font-size: 14px; }
 .workbench-layout .document-index td details summary,
 .workbench-layout .document-index td details code { font-size: 14px; }
