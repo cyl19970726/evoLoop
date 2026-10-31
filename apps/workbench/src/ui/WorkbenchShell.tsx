@@ -13,11 +13,7 @@ const workFunctions = [
   { section: "schedules", title: "日程", Icon: CalendarDays },
   { section: "runtime", title: "团队分工", Icon: Users },
 ] as const;
-const sessionFunctions = [
-  { section: "documents", title: "文档与知识", Icon: BookOpen },
-  { section: "schedules", title: "日程", Icon: CalendarDays },
-  { section: "runtime", title: "团队分工", Icon: Users },
-] as const;
+const sessionFunctions = [] as const;
 type Module = "work" | "sessions";
 
 export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token, logout, children }: { route: Route; projectTitle: string; actor: string; receiptCount: number; token: string; logout(): void; children: ReactNode }) {

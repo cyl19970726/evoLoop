@@ -3,6 +3,7 @@
 .project-functions a{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:6px;color:#59647b;font-size:13px}
 .project-functions a:hover,.project-functions a.selected{background:#e9effe;color:#315fd1;text-decoration:none}
 .session-navigation{min-height:0;flex:1;min-width:0;overflow-y:auto;overscroll-behavior:contain}
+.session-navigation{max-width:320px}
 .session-nav-fold{border:0;background:transparent;color:#50627f;font-size:12px;font-weight:650;padding:3px;text-align:left}
 .session-nav-head{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;color:#50627f;font-size:12px}
 .session-nav-head button{min-height:26px;padding:2px}
@@ -43,6 +44,11 @@
 .session-nav-reason{color:#9b6728!important;white-space:normal!important}
 .session-nav-directory-link{display:flex;justify-content:space-between;align-items:center;padding:10px 7px;margin:2px 0 6px;border-top:1px solid #e2e7ef;color:#2457c5;font-size:12px;font-weight:600}
 .session-nav-directory-link:hover{text-decoration:none;color:#163d96}
+.sessions-empty-state{display:flex;align-items:center;justify-content:center;min-height:60vh}
+.sessions-empty-card{text-align:center;max-width:480px;padding:48px 32px}
+.sessions-empty-card h1{font-size:32px;margin:0 0 12px;color:#14264a}
+.sessions-empty-card .lede{font-size:15px;color:#596b89;margin:0 0 8px}
+.sessions-empty-card .muted{font-size:13px;color:#8490a4;margin:0}
 
 .sessions-directory-page{max-width:1420px;padding-bottom:72px}
 .sessions-directory-header{display:flex;justify-content:space-between;align-items:flex-start;gap:28px;padding-bottom:24px}
