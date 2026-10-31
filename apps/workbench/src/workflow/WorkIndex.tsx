@@ -522,7 +522,7 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatu
       <span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span>
       <div><a href={href(projectId,"task",item.taskId)}>{presentation.title}</a><p>{item.nextAction}</p>
         <small>{presentation.responsibility}
-          {sessionKey && item.responsible.id && <> · <a href={`${href(projectId,"runtime")}?session=${encodeURIComponent(sessionKey)}&tab=overview`}>打开 Session</a> · <ShortId value={item.responsible.id} /></>}
+          {sessionKey && item.responsible.id && <> · <a href={`${href(projectId,"sessions")}?session=${encodeURIComponent(sessionKey)}&tab=overview`}>打开 Session</a> · <ShortId value={item.responsible.id} /></>}
           {item.plan?.priority?` · P${item.plan.priority}`:""}
           {item.dependencies.length?` · ${item.dependencies.length} 项依赖`:""}
           {item.plan?.dueAt?` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}`:" · 截止未设置"}</small>
@@ -583,7 +583,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
           : Clock3;
       const sessionKey = projection && assignmentSessionKey(projection);
       const taskLink = `${href(projectId, "task", t.id)}${returnTo ? `?list=${encodeURIComponent(returnTo)}` : ""}`;
-      const sessionLink = sessionKey ? `${href(projectId, "runtime")}?session=${encodeURIComponent(sessionKey)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
+      const sessionLink = sessionKey ? `${href(projectId, "sessions")}?session=${encodeURIComponent(sessionKey)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
       const progress = latestProgressPresentation(projection);
       const ownerName = ownerNames[t.owner]?.title;
       const ownerUnavailable = ownerNames[t.owner]?.error;

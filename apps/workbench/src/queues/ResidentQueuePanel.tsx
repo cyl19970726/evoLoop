@@ -173,7 +173,7 @@ function QueueCard({ context, token, projectId, queue, refresh, listReadVersion,
         const current = entries.find(entry => entry.state === "claimed");
         const next = entries.find(entry => entry.state === "queued");
         return <div className="resident-queue-session" key={sessionId}>
-          <h4>原 Session <a href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>{short(sessionId)}</a> <small>{session ? `· ${sessionStateLabel[session.state] ?? session.state}` : "· 会话状态未在此视图读到"}</small></h4>
+          <h4>原 Session <a href={`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`}>{short(sessionId)}</a> <small>{session ? `· ${sessionStateLabel[session.state] ?? session.state}` : "· 会话状态未在此视图读到"}</small></h4>
           <p className="resident-queue-id">Session ID <code>{sessionId}</code></p>
           <p>当前占用：{current ? <>{taskName(current.taskId)} <code>{short(current.taskId)}</code></> : "无已确认占用项"}；后续顺位：{next ? <>{taskName(next.taskId)} <code>{short(next.taskId)}</code>（不代表可启动）</> : "无"}</p>
           <ol>{entries.map(entry => {

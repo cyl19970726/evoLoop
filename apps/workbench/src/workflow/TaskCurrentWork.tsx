@@ -43,7 +43,7 @@ export function TaskCurrentWork({ item, token, projectId, actorId, returnTo, com
   }, [token, projectId, key, item.workChangeSequence]);
   const observed = session?.key === key ? session.value : null;
   const name = observed?.profile?.displayName?.trim() || observed?.title || "名称待核对";
-  const sessionHref = key ? `${href(projectId, "runtime")}?session=${encodeURIComponent(key)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo)}` : null;
+  const sessionHref = key ? `${href(projectId, "sessions")}?session=${encodeURIComponent(key)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo)}` : null;
   return <section className={`task-current-work${compact ? " compact" : ""}`} aria-label={historical ? "本任务的历史承接与执行" : "本任务的承接与执行"}>
     <div className="current-work-heading"><UserRound size={18} aria-hidden="true" /><h2>{historical ? "历史承接与执行" : "具体承接"}</h2><span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span></div>
     <dl className="current-work-facts">
@@ -54,7 +54,7 @@ export function TaskCurrentWork({ item, token, projectId, actorId, returnTo, com
         <small>{item.delivery?.observationResult ? `${item.delivery.observationKind === "human" ? "真人" : "Agent"} · ${item.delivery.observationResult === "used" ? "已使用" : item.delivery.observationResult === "failed" ? "使用失败" : "未使用"}` : "尚无本次使用观察"}</small></dd></div>}
     </dl>
     {!compact && <><p className="current-work-next"><strong>下一步</strong>{item.nextAction}</p>
-      {verifiedRunner && verifiedRunner.sessionKey !== key && <p className="current-work-runner">{historical ? "历史 Run 实际运行于 " : "当前 Run 实际运行于 "}<a href={`${href(projectId, "runtime")}?session=${encodeURIComponent(verifiedRunner.sessionKey)}&tab=overview`}>{verifiedRunner.name}</a>；与分派目标分别记录。</p>}
+      {verifiedRunner && verifiedRunner.sessionKey !== key && <p className="current-work-runner">{historical ? "历史 Run 实际运行于 " : "当前 Run 实际运行于 "}<a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(verifiedRunner.sessionKey)}&tab=overview`}>{verifiedRunner.name}</a>；与分派目标分别记录。</p>}
       {item.latestRun && <a href={`${href(projectId, "task", item.taskId)}?tab=runtime&run=${encodeURIComponent(item.latestRun.runId)}`}>{historical ? "查看历史 Run 与来源 →" : "查看当前 Run 与来源 →"}</a>}
       {item.queueHold && <p className="task-attention">{historical ? "历史队列记录：" : "队列暂不派发："}{item.queueHold}</p>}
       <details className="current-work-source"><summary>承接与状态的证据</summary><p>来自当前 Task 工作投影；分派不代表执行，Session 就绪不代表 Run 正在运行。</p>

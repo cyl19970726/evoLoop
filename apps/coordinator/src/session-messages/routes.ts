@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Principal } from "@evoloop/contracts";
+import type { SessionMessageProcessing } from "@evoloop/contracts/session-messages";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
@@ -31,13 +32,20 @@ export function registerSessionMessageRoutes(app: FastifyInstance, deps: {
         position = z.uuid().parse(parsed.position);
       } catch { throw new DomainError("INVALID_CURSOR", "消息读取位置与当前身份、项目或会话不符。"); }
     }
-    const page = await deps.messages.list(projectId, snapshot.session.target, q.limit, position);
-    const items: Array<typeof page.items[number] & { contentTruncated: boolean }> = [];
+    const page = typeof deps.messages.conversation === "function"
+      ? await deps.messages.conversation(projectId, snapshot.session.target, q.limit, position)
+      : await deps.messages.list(projectId, snapshot.session.target, q.limit, position);
+    const items: Array<typeof page.items[number] & { contentTruncated: boolean; responseTruncated: boolean }> = [];
     let bytes = 2048;
     for (const item of page.items) {
+      const processing = (item as typeof item & { processing?: SessionMessageProcessing | null }).processing ?? null;
+      const response = processing?.response ?? null;
       const preview = { ...item, content: item.content.slice(0, 600), contentTruncated: item.content.length > 600,
         blockedReason: item.blockedReason?.slice(0, 600) ?? null,
-        readReceipt: item.readReceipt ? { ...item.readReceipt, evidence: item.readReceipt.evidence.slice(0, 600) } : null };
+        readReceipt: item.readReceipt ? { ...item.readReceipt, evidence: item.readReceipt.evidence.slice(0, 600) } : null,
+        ...(processing ? { processing: { ...processing,
+          response: response?.slice(0, 1200) ?? null, failure: processing.failure?.slice(0, 600) ?? null } } : {}),
+        responseTruncated: !!response && response.length > 1200 };
       const size = Buffer.byteLength(JSON.stringify(preview));
       if (bytes + size > 256 * 1024) break;
       items.push(preview); bytes += size;
@@ -45,8 +53,8 @@ export function registerSessionMessageRoutes(app: FastifyInstance, deps: {
     const more = page.nextCursor !== null || items.length < page.items.length;
     return { items, nextCursor: more && items.length ? Buffer.from(JSON.stringify({ v: 1, scope, position: items.at(-1)!.id })).toString("base64url") : null,
       metadata: { generatedAt: new Date().toISOString(), sourceObservedAt: items[0]?.updatedAt ?? null,
-        partial: items.some(x => x.contentTruncated) || more,
-        limitations: ["列表正文、阻塞说明和收阅证据为最多600字预览，完整记录从消息详情读取。", "重复外部接入按规范收件人读取；旧别名下消息保留原消息入口。"] } };
+        partial: items.some(x => x.contentTruncated || x.responseTruncated) || more,
+        limitations: ["列表正文、阻塞说明和收阅证据为最多600字预览，回复为最多1200字预览；完整记录从消息详情读取。", "重复外部接入按规范收件人读取；旧别名下消息保留原消息入口。"] } };
   });
   app.get("/api/projects/:projectId/session-messages/:id", async request => {
     const { projectId, id } = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);

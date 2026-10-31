@@ -84,7 +84,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "进度测试会话" }).waitFor();
-  await page.locator(".session-information > summary").click();
+  await page.locator(".session-information:visible > summary").click();
   const card = page.locator(".native-progress-card:visible");
   await card.getByText("运行中", { exact: true }).waitFor();
   await card.getByText("Tool call · 进行中").first().waitFor();

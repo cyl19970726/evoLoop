@@ -83,7 +83,7 @@ function ThreadCard({ record, events, projectId }: { record: DiscussionRecord; e
   return <details className="task-collaboration-thread">
     <summary>{record.question || "任务协作"} · {openQuestions.length ? `${openQuestions.length} 个问题待答` : "无已读到的待答问题"} · v{record.version}</summary>
     <p>固定任务修订 <a href={href(projectId, "task", record.task!.id, record.task!.revisionId)}>{short(record.task!.revisionId)}</a>
-      {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原 Session <a href={`${href(projectId, "runtime")}?session=${key(context.sessionId)}`}>{short(context.sessionId)}</a> · <a href={`${href(projectId, "task", record.task!.id)}?tab=runtime&run=${key(context.runId)}`}>Run {short(context.runId)}</a></>}</p>
+      {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原 Session <a href={`${href(projectId, "sessions")}?session=${key(`owned:${context.sessionId}`)}`}>{short(context.sessionId)}</a> · <a href={`${href(projectId, "task", record.task!.id)}?tab=runtime&run=${key(context.runId)}`}>Run {short(context.runId)}</a></>}</p>
     {events.length === 0 && <p>频道已有记录，但尚无协作消息或回执。</p>}
     <ol>{events.filter(event => event.collaborationPayload).map(event => <li key={event.id} id={`collaboration-event-${event.id}`}>
       <EventContent event={event} events={events} projectId={projectId} />

@@ -43,7 +43,7 @@ export function AllocationTraceCard({ trace, projectId, names }: { trace: Alloca
       </small>}
     </> : <>
       <strong>{sessionName ?? "Session 名称暂不可读"} 曾接手 {taskName ?? "名称暂不可读的任务"}</strong>
-      <p><a href={`#/p/${encodeURIComponent(projectId)}/runtime?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`}>打开该 Session</a>
+      <p><a href={`#/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`}>打开该 Session</a>
         {relation.assignment.target.kind === "external" ? " · 外部连接" : " · 项目受管"} · {assignmentStatus[relation.assignmentStatus]}</p>
       <p>对应 <a href={`#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(relation.task.id)}?revision=${encodeURIComponent(relation.task.revisionId)}`}>任务固定修订</a> · {status[relation.taskRevisionStatus]}</p>
       <small>{relation.assignment.method === "direct" ? "指定执行者本人确认" : "负责人观察到接手"} · {date(relation.assignment.acceptedAt)} · 分派 v{relation.assignment.version}</small>

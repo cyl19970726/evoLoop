@@ -24,11 +24,18 @@ test("message reads bind cursors to identity and recipient and enforce a UTF-8 b
     context: null, replyToMessageId: null, state: "queued", version: 1, blockedReason: "界".repeat(4000),
     readReceipt: { actorId: "receiver", evidence: "界".repeat(4000), at: new Date(0).toISOString() },
     createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }));
+  const processing = { projectId, id: id(3), messageId: messages[0]!.id, sessionId: id(2), operationId: id(4),
+    state: "completed", nativeTurnId: "turn-1", response: "回".repeat(3000), failure: null, version: 2,
+    startedAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
   let reads = 0;
   registerSessionMessageRoutes(app, {
     workflow: { getProject: async (p: Principal, id: string) => { if (!p.projectIds.includes(id)) throw new DomainError("FORBIDDEN", "Wrong project"); } } as unknown as WorkflowService,
     observation: { snapshot: async () => ({ session: { key, target: { kind: "owned", sessionId: id(2) } } }) } as unknown as SessionObservationService,
-    messages: { list: async () => { reads++; return { items: messages, nextCursor: null }; }, detail: async () => ({ message: messages[0], processing: null }) } as unknown as SessionMessageService,
+    messages: {
+      conversation: async () => { reads++; return { items: messages.map((message, index) => ({ ...message, processing: index === 0 ? processing : null })), nextCursor: null }; },
+      list: async () => ({ items: messages, nextCursor: null }),
+      detail: async () => ({ message: messages[0], processing: null }),
+    } as unknown as SessionMessageService,
   });
   try {
     const url = `/api/projects/${projectId}/session-work/${encodeURIComponent(key)}/messages?limit=50`;
@@ -38,6 +45,8 @@ test("message reads bind cursors to identity and recipient and enforce a UTF-8 b
     const body = first.json();
     assert.ok(body.items.length > 0 && body.items.length < 50);
     assert.equal(body.items[0].contentTruncated, true);
+    assert.equal(body.items[0].processing.response.length, 1200);
+    assert.equal(body.items[0].responseTruncated, true);
     const parsed = JSON.parse(Buffer.from(body.nextCursor, "base64url").toString());
     assert.equal(parsed.position, body.items.at(-1).id);
     const crossIdentity = await app.inject({ url: `${url}&cursor=${encodeURIComponent(body.nextCursor)}`, headers: { authorization: "reader-b" } });

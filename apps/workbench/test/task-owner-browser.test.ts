@@ -91,7 +91,8 @@ test("Task owner resolves one real Role and only verified bound Session links at
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve)); t.after(()=>server.close());
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const browser=await chromium.launch({headless:true}); t.after(()=>browser.close());
+  const browser=await chromium.launch({headless:true,...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
+    ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH}:{})}); t.after(()=>browser.close());
   const pageBrowser=await browser.newPage({viewport:{width:390,height:844}});
   const pageErrors:string[]=[]; pageBrowser.on("pageerror",error=>pageErrors.push(error.stack ?? error.message));
   await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}`);
@@ -118,46 +119,9 @@ test("Task owner resolves one real Role and only verified bound Session links at
   if (process.env.EVOLOOP_TASK_OWNER_SCREENSHOT)
     await pageBrowser.locator(".task-page-header").screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
   assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");
-  await fetch(`${base}/__fixture/foreign-session`);
-  await owner.getByRole("link",{name:/已登记 Session 20000006/}).click();
-  const focus=pageBrowser.getByRole("region",{name:"目标 Session"});
-  await focus.getByText(/开发流程职责 20000002 · 就绪 · Session 20000006/).waitFor({timeout:5000}).catch(async()=>{
-    assert.fail(`target session missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
-  });
-  await focus.locator(`#runtime-session-${sessionId}[open]`).waitFor();
-  await focus.getByText(`稳定会话 ID${sessionId}`).waitFor();
-  await focus.getByText(/队列 20000008/).waitFor();
-  await focus.getByText(/第 1 项 · 已领取／占用/).waitFor();
-  await pageBrowser.getByRole("group",{name:"选择循环"}).getByRole("button").nth(8).waitFor();
-  const queueBox=await focus.locator(".resident-queues").boundingBox();
-  assert.ok(queueBox && queueBox.y >= 0 && queueBox.y < 844,`target queue outside first viewport: ${JSON.stringify(queueBox)}`);
-  assert.equal(await focus.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
-  if (process.env.EVOLOOP_SESSION_FOCUS_SCREENSHOT)
-    await pageBrowser.screenshot({path:process.env.EVOLOOP_SESSION_FOCUS_SCREENSHOT,fullPage:false});
-  await pageBrowser.setViewportSize({width:1280,height:900});
-  const desktopQueue=await focus.locator(".resident-queues").boundingBox();
-  assert.ok(desktopQueue && desktopQueue.y >= 0 && desktopQueue.y < 900,`target queue outside desktop first viewport: ${JSON.stringify(desktopQueue)}`);
-  if (process.env.EVOLOOP_SESSION_FOCUS_DESKTOP_SCREENSHOT)
-    await pageBrowser.screenshot({path:process.env.EVOLOOP_SESSION_FOCUS_DESKTOP_SCREENSHOT,fullPage:false});
-  await pageBrowser.evaluate(({projectId,mismatchedSessionId})=>{location.hash=`#/p/${projectId}/runtime?session=${mismatchedSessionId}`;},{projectId,mismatchedSessionId});
-  await focus.getByText(/Session 20000007/).first().waitFor();
-  assert.equal(await focus.getByText(/开发流程职责/).count(),0);
-  await fetch(`${base}/__fixture/hold-role`);
-  await pageBrowser.evaluate(({projectId,sessionId})=>{location.hash=`#/p/${projectId}/runtime?session=${sessionId}`;},{projectId,sessionId});
-  await pageBrowser.getByRole("button",{name:"读取运行状态"}).click();
-  for(let attempt=0;attempt<20 && await (await fetch(`${base}/__fixture/held-role-count`)).text()!=="1";attempt++)
-    await new Promise(resolve=>setTimeout(resolve,25));
-  assert.equal(await (await fetch(`${base}/__fixture/held-role-count`)).text(),"1");
-  await pageBrowser.evaluate(({projectId,mismatchedSessionId})=>{location.hash=`#/p/${projectId}/runtime?session=${mismatchedSessionId}`;},{projectId,mismatchedSessionId});
-  await focus.getByText(/Session 20000007/).first().waitFor();
-  await fetch(`${base}/__fixture/release-held-role`);
-  await pageBrowser.waitForTimeout(100);
-  assert.equal(await focus.getByText(/开发流程职责/).count(),0);
-  await pageBrowser.evaluate(({projectId})=>{location.hash=`#/p/${projectId}/runtime?session=invalid`;},{projectId});
-  await focus.getByText(/Session ID 无效/).waitFor();
-  await pageBrowser.evaluate(({projectId})=>{location.hash=`#/p/${projectId}/runtime?session=20000009-0000-4000-8000-000000000009`;},{projectId});
-  await focus.getByText(/当前项目未读到目标 Session/).waitFor();
-  assert.equal(await focus.getByText(/开发流程职责/).count(),0);
+  assert.equal(await owner.getByRole("link",{name:/已登记 Session 20000006/}).getAttribute("href"),
+    `#/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
+    "the verified owned Session opens through the sole Sessions directory route");
   await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`#/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor();
   const exactReadsBeforeFailure = (await (await fetch(`${base}/__fixture/reads`)).json()).roleReads as number;

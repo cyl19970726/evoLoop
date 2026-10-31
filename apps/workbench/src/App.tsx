@@ -28,6 +28,7 @@ import { CreateTaskPage } from "./workflow/CreateTaskPage";
 import { ProjectSummary } from "./overview/ProjectSummary";
 import { ProjectSettings } from "./settings/ProjectSettings";
 import { SessionWorkspace, clearSessionSnapshots } from "./sessions/SessionWorkspace";
+import { SessionsDirectoryPage } from "./sessions/SessionsDirectoryPage";
 function useRoute(): Route {
   const [route, setRoute] = useState(readRoute);
   useEffect(() => {
@@ -348,6 +349,9 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
         <a href="https://github.com/cyl19970726/evoLoop/blob/main/docs/decisions.md" target="_blank" rel="noreferrer"><FileText /><span><strong>当前决定</strong><small>核对已采纳的选择与被取代的依据。</small></span><ChevronRight /></a></div></section></div>
       <aside className="repository-reading-note"><h2>阅读提示</h2><p>这里打开仓库现行文档。任务实际采用哪版，请回任务查看固定 commit。</p><a href={href(projectId,"documents")}>查看过程文档 →</a></aside></div>
       <details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
+    if (r.section === "sessions") return r.session
+      ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} />
+      : <SessionsDirectoryPage context={context} refresh={refresh} />;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     const components = { reviews: <TeamWorkspace context={context} refresh={refresh} />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : r.session ? <RuntimePanel context={context} refresh={refresh} targetSessionId={r.session} /> : <TeamWorkspace context={context} refresh={refresh} />, schedules: <SchedulingPanel context={context} refresh={refresh} />, roles: <RolesPanel context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };

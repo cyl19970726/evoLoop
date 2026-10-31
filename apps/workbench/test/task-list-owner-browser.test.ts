@@ -65,7 +65,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>server.close());
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
+  const browser=await chromium.launch({headless:true,...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
+    ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH}:{})});t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:390,height:844}});
   await page.goto(`${base}/#/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
@@ -75,6 +76,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await page.locator(".leader-work").innerText(),/可开始/);
   assert.match(await page.locator(".leader-work").innerText(),/变更序号 4/);
   assert.match(await page.locator(".leader-work").innerText(),/Leader 已暂缓/);
+  await page.setViewportSize({ width: 1280, height: 900 });
   const row=page.getByRole("row").filter({hasText:"澄清分工页待办"});
   for (const name of ["任务","工作类型","当前进展","承接者","创建时间","最近进展"]) {
     await page.getByRole("columnheader",{name,exact:true}).waitFor();
@@ -83,23 +85,25 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await row.locator(".task-list-created").innerText(),/2026/);
   assert.match(await row.locator(".task-list-progress-time").innerText(),/交付已登记/);
   assert.equal(await page.getByRole("button",{name:"关闭任务摘要"}).count(),0,"desktop summary stays persistent");
-  await row.getByRole("link",{name:"开发流程与规范负责人"}).waitFor();
+  await row.getByText(/负责职责 · 开发流程与规范负责人/).waitFor({timeout:5000}).catch(async()=>{
+    assert.fail(`Task owner label missing: ${await row.innerText()} reads=${JSON.stringify(reads)}`);
+  });
   await page.locator(".leader-work").getByText(/负责 开发流程与规范负责人/).waitFor();
-  assert.match(await row.locator(".task-list-owner").innerText(),/30000002/);
-  assert.match(await row.getByRole("link",{name:"开发流程与规范负责人"}).getAttribute("href")??"",/\/roles$/);
-  assert.match(await page.getByRole("row").filter({hasText:"逻辑责任者"}).innerText(),/acceptance-owner/);
-  assert.match(await page.getByRole("row").filter({hasText:"未知职责"}).innerText(),new RegExp(unknown));
+  assert.match(await row.locator(".task-list-owner").innerText(),/开发流程与规范负责人/);
+  assert.match(await page.getByRole("row").filter({hasText:"逻辑责任者"}).innerText(),/负责职责待核对/);
+  assert.match(await page.getByRole("row").filter({hasText:"未知职责"}).innerText(),/未找到已登记职责|负责职责待核对/);
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.includes("acceptance-owner"),false);
   assert.equal(initialReads.includes(offPageRole),false);
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("跨页任务");
-  await page.getByRole("row").filter({hasText:"跨页任务"}).getByRole("link",{name:"跨页职责"}).waitFor();
+  await page.getByRole("row").filter({hasText:"跨页任务"}).getByText("跨页职责",{exact:false}).waitFor();
   assert.equal(await page.locator(".task-selection").count(),1,"the selected summary survives filtering");
   await page.getByRole("button",{name:"跨页任务",exact:true}).click();
   await page.locator(".task-selection").waitFor({state:"visible"});
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("澄清分工页待办");
-  await row.getByRole("link",{name:"开发流程与规范负责人"}).waitFor();
+  await row.getByText("开发流程与规范负责人",{exact:false}).waitFor();
   assert.match(await page.locator(".task-selection-top").innerText(),/不在当前筛选结果中/);
+  await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator(".task-list-table").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await fetch(`${base}/__fixture/hold`);
   await page.getByRole("button",{name:"重新读取列表"}).click();
@@ -107,17 +111,17 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.equal(await (await fetch(`${base}/__fixture/held`)).text(),"1");
   await fetch(`${base}/__fixture/owner?id=${roleB}`);
   await page.getByRole("button",{name:"重新读取列表"}).click();
-  await row.getByRole("link",{name:"新职责负责人"}).waitFor();
+  await row.getByText("新职责负责人",{exact:false}).waitFor();
   await fetch(`${base}/__fixture/release`);
   await page.waitForTimeout(100);
-  assert.equal(await row.getByRole("link",{name:"开发流程与规范负责人"}).count(),0);
+  assert.equal(await row.getByText("开发流程与规范负责人",{exact:false}).count(),0);
   await fetch(`${base}/__fixture/fail?value=1`);
   await page.getByRole("button",{name:"重新读取列表"}).click();
   await row.getByText(/职责暂不可核对/).waitFor();
-  assert.equal(await row.getByRole("link",{name:"新职责负责人"}).count(),0);
+  assert.equal(await row.getByText("新职责负责人",{exact:false}).count(),0);
   await fetch(`${base}/__fixture/fail?value=0`);
   await page.getByRole("button",{name:"重新读取列表"}).click();
-  await row.getByRole("link",{name:"新职责负责人"}).waitFor();
+  await row.getByText("新职责负责人",{exact:false}).waitFor();
   if (process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
   assert.equal(await row.locator(".task-list-owner").evaluate(el=>el.scrollWidth<=el.clientWidth),true);

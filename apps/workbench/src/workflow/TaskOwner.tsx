@@ -60,7 +60,7 @@ export function TaskOwner({ token, projectId, owner, readKey, onResolved }: {
       {reading && <small> · 正在核对职责与会话…</small>}
       {roleError && <small> · {roleError}</small>}</span>
     {role && <span className="task-owner-sessions">
-      {sessions.map(item => <a key={item.id} href={`${href(projectId, "runtime")}?session=${encodeURIComponent(item.id)}`}>已登记 Session {item.id.slice(0, 8)}（{sessionState[item.state]}）</a>)}
+      {sessions.map(item => <a key={item.id} href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${item.id}`)}`}>已登记 Session {item.id.slice(0, 8)}（{sessionState[item.state]}）</a>)}
       {sessionNote && <small>{sessionNote}</small>}
       {sessions.length > 0 && <small>职责绑定不表示此任务正在该会话运行。</small>}
     </span>}

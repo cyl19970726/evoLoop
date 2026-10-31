@@ -93,9 +93,10 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭自动回复的会话" }).waitFor();
   assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /未启用.*不会启动此会话/);
+  await page.getByText("消息处理规则", { exact: true }).first().click();
   assert.equal(await page.getByText("保存能力：当前可保存待处理消息").count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count() > 0, true);
-  assert.equal(await page.getByLabel("消息内容").getAttribute("placeholder"), "写消息给当前 Session…");
+  assert.equal(await page.getByLabel("消息内容").getAttribute("placeholder"), "给当前 Session 发消息…");
   const composerBox = (await page.getByLabel("消息内容").boundingBox())!;
   assert.ok(composerBox.height >= 96 && composerBox.height <= 180, "the desktop side composer has a readable multiline input");
   assert.equal(await page.locator(".session-composer-host").evaluate(element => getComputedStyle(element).position), "static", "composer must not obscure the activity feed");
@@ -107,11 +108,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   await page.getByRole("button", { name: "保存待处理", exact: true }).click();
   await page.getByText(/消息列表暂不可读取：列表暂不可读/).waitFor();
   assert.equal(await page.getByText("没有已保存的普通消息。", { exact: true }).count(), 0);
-  for (let i = 0; i < 30 && await (await fetch(`${base}/__fixture/detail-held`)).text() !== "true"; i++)
-    await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal(await (await fetch(`${base}/__fixture/detail-held`)).text(), "true");
-  await fetch(`${base}/__fixture/release-detail`);
-  await page.getByRole("heading", { name: "消息详情 · 待派发" }).waitFor();
+  assert.equal(detailHeld, false, "saving the new conversation turn does not force open a stale detail panel");
   assert.equal(await page.getByText(/消息列表暂不可读取：列表暂不可读/).count(), 1);
   assert.equal(await page.getByText("没有已保存的普通消息。", { exact: true }).count(), 0);
 
@@ -124,7 +121,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.manual]);
   await page.getByRole("heading", { name: "外部会话" }).waitFor();
-  assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /需人工转交.*需人工转交原会话/);
+  assert.match(await page.getByRole("status").filter({ hasText: "外部会话" }).innerText(), /保存后仍需人工转交.*送达与已读分别记录/);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count() > 0, true);
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
