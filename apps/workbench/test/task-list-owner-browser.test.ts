@@ -49,6 +49,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
           reason:"Wait for the prerequisite",operationId:"30000031-0000-4000-8000-000000000031",
           reviewedChangeSequence:3,at:stamp},
         dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},
+        latestProgress:{sequence:4,entityKind:"delivery",entityId:"30000032-0000-4000-8000-000000000032",
+          eventName:"交付已登记",changedAt:stamp},
         actionKey:`task:${taskId}:v1:ready:4`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
       else if (url.pathname.startsWith(`${p}/roles/`)) {
         const id=url.pathname.slice(`${p}/roles/`.length);reads.push(id);
@@ -74,6 +76,13 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await page.locator(".leader-work").innerText(),/变更序号 4/);
   assert.match(await page.locator(".leader-work").innerText(),/Leader 已暂缓/);
   const row=page.getByRole("row").filter({hasText:"澄清分工页待办"});
+  for (const name of ["任务","工作类型","当前进展","承接者","创建时间","最近进展"]) {
+    await page.getByRole("columnheader",{name,exact:true}).waitFor();
+  }
+  assert.match(await row.locator(".task-list-kind").innerText(),/实施/);
+  assert.match(await row.locator(".task-list-created").innerText(),/2026/);
+  assert.match(await row.locator(".task-list-progress-time").innerText(),/交付已登记/);
+  assert.equal(await page.getByRole("button",{name:"关闭任务摘要"}).count(),0,"desktop summary stays persistent");
   await row.getByRole("link",{name:"开发流程与规范负责人"}).waitFor();
   await page.locator(".leader-work").getByText(/负责 开发流程与规范负责人/).waitFor();
   assert.match(await row.locator(".task-list-owner").innerText(),/30000002/);
@@ -83,10 +92,9 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.includes("acceptance-owner"),false);
   assert.equal(initialReads.includes(offPageRole),false);
-  await page.getByRole("button",{name:"关闭任务摘要"}).click();
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("跨页任务");
   await page.getByRole("row").filter({hasText:"跨页任务"}).getByRole("link",{name:"跨页职责"}).waitFor();
-  assert.equal(await page.locator(".task-selection").count(),0,"closing the reader stays closed after filtering");
+  assert.equal(await page.locator(".task-selection").count(),1,"the selected summary survives filtering");
   await page.getByRole("button",{name:"跨页任务",exact:true}).click();
   await page.locator(".task-selection").waitFor({state:"visible"});
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("澄清分工页待办");
@@ -113,11 +121,23 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   if (process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
   assert.equal(await row.locator(".task-list-owner").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await page.locator(".task-table-scroll").evaluate(el=>el.scrollWidth>el.clientWidth),true,
+    "six-column task table scrolls independently");
+  const mainBox=await page.locator(".task-list-main").boundingBox();
+  const summaryBox=await page.locator(".task-summary").boundingBox();
+  assert.ok(mainBox && summaryBox && summaryBox.x>mainBox.x,"desktop summary stays to the right");
+  await page.locator(".task-column-settings > summary").click();
+  await page.getByLabel("固定成果",{exact:true}).check();
+  await page.getByRole("columnheader",{name:"固定成果",exact:true}).waitFor();
   await page.setViewportSize({width:1171,height:635});
   await page.evaluate(()=>scrollTo(0,0));
   await page.locator(".workbench-layout.sidebar-collapsed").waitFor();
   const collapsedBody=await page.locator(".workspace-body").boundingBox();
   assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>900,"collapsed navigation must keep the workspace beside the rail");
+  const collapsedSummary=await page.locator(".task-summary").boundingBox();
+  const collapsedMain=await page.locator(".task-list-main").boundingBox();
+  assert.ok(collapsedMain && collapsedSummary && collapsedSummary.x>collapsedMain.x,
+    "1171px keeps the task summary beside the table");
   await page.setViewportSize({width:1920,height:1080});
   await page.locator(".workbench-layout:not(.sidebar-collapsed)").waitFor();
   const wideBody=await page.locator(".workspace-body").boundingBox();
