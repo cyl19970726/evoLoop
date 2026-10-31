@@ -118,6 +118,8 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       observation.observer_kind AS observation_kind,observation.created_at AS observation_created_at,
       pending_impact.pending_impact_count,queue_gate.hold_code AS queue_hold,
       work_change_latest.work_change_sequence,
+      latest_change.sequence AS latest_change_sequence,latest_change.entity_kind AS latest_change_kind,
+      latest_change.entity_id AS latest_change_entity_id,latest_change.changed_at AS latest_change_at,
       dependency_head.version AS dependency_version,
       plan.version AS plan_version,plan.planned_start_at,plan.due_at,plan.priority,plan.actor_id AS plan_actor_id,
       plan.updated_at AS plan_updated_at,
@@ -193,6 +195,10 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
           WHERE d.project_id=t.project_id AND d.task_id=t.task_id
             AND c.entity_kind IN ('task','closure','queue')),0)
       )::bigint AS work_change_sequence) work_change_latest ON true
+    LEFT JOIN LATERAL (SELECT c.sequence,c.entity_kind,c.entity_id,c.changed_at
+      FROM leader_work_change c
+      WHERE c.project_id=t.project_id AND c.task_id=t.task_id
+      ORDER BY c.sequence DESC LIMIT 1) latest_change ON true
     LEFT JOIN task_dependency_head dependency_head
       ON dependency_head.project_id=t.project_id AND dependency_head.task_id=t.task_id
     LEFT JOIN task_work_plan plan ON plan.project_id=t.project_id AND plan.task_id=t.task_id
@@ -278,6 +284,27 @@ function taskResponsibility(row: QueryResultRow, phase: LeaderWorkPhase): Leader
   return { kind: "unknown", id: null, label: "责任者未登记" };
 }
 
+function latestProgressEventName(row: QueryResultRow): string {
+  switch (row.latest_change_kind as LeaderWorkChange["entityKind"] | undefined) {
+    case "task": return "任务内容或状态更新";
+    case "document": return "关联文档事件更新";
+    case "assignment":
+      return row.assignment_state === "accepted" ? "承接已接受"
+        : row.assignment_state === "released" ? "承接已释放" : "任务已分派";
+    case "delivery": return "交付已登记";
+    case "observation": return "使用观察已登记";
+    case "closure": return "任务已关闭";
+    case "run": return "运行状态已更新";
+    case "impact": return "依据影响已更新";
+    case "queue": return "队列状态已更新";
+    case "plan": return "工作计划已更新";
+    case "dependency": return "任务依赖已更新";
+    case "review":
+      return row.review_decision === "acknowledged" ? "负责人已核对" : "负责人已暂缓";
+    default: return "业务事件已更新";
+  }
+}
+
 export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): LeaderWorkTask {
   const phase = taskPhase(row);
   const assignment = row.assignment_state ? {
@@ -317,6 +344,13 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     dates: {
       createdAt: iso(row.created_at), businessChangedAt: iso(row.business_changed_at),
       startedAt: optionalIso(row.started_at), completedAt: optionalIso(row.completed_at), observedAt,
+    },
+    latestProgress: row.latest_change_sequence === null || row.latest_change_sequence === undefined ? null : {
+      sequence: int(row.latest_change_sequence),
+      entityKind: row.latest_change_kind,
+      entityId: row.latest_change_entity_id,
+      eventName: latestProgressEventName(row),
+      changedAt: iso(row.latest_change_at),
     },
     actionKey: `task:${row.task_id}:v${int(row.version)}:${phase}:${int(row.work_change_sequence ?? 0)}`,
   };

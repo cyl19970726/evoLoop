@@ -1,3 +1,108 @@
+# Task workspace image-to-code QA
+
+Source design:
+
+- Fixed Document `37455fe9-91ca-4659-8740-37151ebc54f6@e43a052c-c6e2-42d8-b300-4e49126b0566`
+- List reference: `.local/task-production/reference-task-list.png`
+- Detail reference: `.local/task-production/reference-task-detail.png`
+
+Implementation evidence:
+
+- List, 1487 x 1058 CSS pixels, density 1: `.local/task-production/implementation-task-list-final.jpg`
+- Detail, 1487 x 1058 CSS pixels, density 1: `.local/task-production/implementation-task-detail-final.jpg`
+- List, 1440 x 1024: `.local/task-production/implementation-task-list-1440x1024.jpg`
+- Detail, 1440 x 1024: `.local/task-production/implementation-task-detail-1440x1024.jpg`
+- Detail width correction, 1440 x 1024: `.local/task-production/implementation-task-detail-width-fix-1440x1024.jpg`
+- List, 1171 x 635: `.local/task-production/implementation-task-list-1171x635.jpg`
+- Detail, 1171 x 635: `.local/task-production/implementation-task-detail-1171x635.jpg`
+- List, 871 x 768: `.local/task-production/implementation-task-list-871x768.jpg`
+- Detail, 871 x 768: `.local/task-production/implementation-task-detail-871x768.jpg`
+- List, 390 x 844: `.local/task-production/implementation-task-list-390x844.jpg`
+- Detail, 390 x 844: `.local/task-production/implementation-task-detail-390x844.jpg`
+- Combined list comparison: `.local/task-production/comparison-task-list-final-1487x1058.png`
+- Combined detail comparison: `.local/task-production/comparison-task-detail-final-1487x1058.png`
+
+The reference and implementation captures are both 1487 x 1058 pixels at density 1. The combined images place both sources in one comparison input and add only a 54 px label strip; neither panel was otherwise cropped or rescaled.
+
+## States
+
+- Task list: default six columns, no optional columns, unfinished-work filter, selected pending frontend-acceptance Task, table at its left scroll position.
+- Task detail: current fixed Task revision, Overview tab, two visible completion conditions, remaining conditions collapsed, full body open, light evidence rail visible.
+- Additional checks: optional “固定成果” column, row A/B switching, independent horizontal scrolling, full Task navigation, return preserving `scrollLeft=649`, 1171 side-by-side layout, 871 sequential layout, and 390 card layout.
+
+## Fidelity result
+
+No actionable P0, P1, or P2 visual findings remain.
+
+- Fonts and typography: the implementation keeps the product's system Chinese sans-serif stack, 16 px body text, 14 px secondary facts, clear list/detail hierarchy, and does not fall back to Latin-first typography. Long Task goals are limited to the first authored sentence and clamped in the summary.
+- Spacing and layout rhythm: the list title, top controls, table header, six-column scroll surface, and persistent right summary align with the reference's proportions. The list grid is `695.703px + 351.297px` at 1171. The detail narrative is wider than the evidence rail: `686px + 300px` at 1440 and `550px + 280px` at 1280, with page overflow false. At 871 and 390, the detail evidence rail follows the narrative in DOM order.
+- Colors and tokens: blue/white surfaces, neutral text, restrained warm alerts, and gray rules follow the reference and the product's no-green rule.
+- Icons and assets: the screen uses the product-owned wordmark and existing Lucide icon family. The reference contains no illustration, photo, product image, or custom icon asset requiring generation.
+- Copy and content: labels use real Task, assignment, completion, Delivery, and observation facts. No fabricated event time or fake result is shown.
+- Accessibility and responsiveness: column headers are semantic, row selection and open-detail are separate controls, the table region is focusable, controls are labeled, and page overflow was false at 390, 871, 1171, 1440, 1920, and 2560 CSS px.
+
+The remaining differences are expected:
+
+- The reference uses illustrative task names, counts, dates, and four rows. The implementation shows the real two unfinished Tasks and the real `candidate-consumer` session, so matching text is impossible and undesirable.
+- The fixed design requires six columns even though the reference image compresses some responsibility text into the row. The implementation preserves all six columns and scrolls the table independently; the first Task column remains sticky while reading later columns.
+- The reference depiction includes green check styling. The project's authoritative no-green constraint uses blue and neutral check text instead.
+- The currently running 55431 service is release `285510cda6`, before this branch's `latestProgress` projection. The live screen therefore correctly shows `未记录 / 没有可归属的真实业务事件`; the current adapter was separately exercised against PostgreSQL and returned direct `dependency`, `task`, and `delivery` events without substituting `businessChangedAt`.
+
+## Comparison history
+
+1. P1: The legacy `max-width:1200px` rule moved the summary into column one and reversed the intended table/reader order at 1171.
+   Fix: assigned explicit grid rows and columns and added higher-specificity responsive overrides.
+   Recheck: 1171 measured `695.703px + 351.297px`, summary to the right, page overflow false.
+2. P1: At 1171 x 635, 871 x 768, and 390 x 844, the Task body began below the first viewport.
+   Fix: two visible conditions on desktop, one on mobile; secondary acceptance notes moved behind disclosure; compact short-height spacing.
+   Recheck: body begins at 606 px / 635 px, 706 px / 768 px, and 765 px / 844 px respectively.
+3. P2: The old table column rules hid column four and collapsed later columns to a few pixels, producing a 489 px row.
+   Fix: explicit `<colgroup>`, table minimum width, semantic six-column headers, and overrides for legacy selectors.
+   Recheck: six headers are present, the final desktop row is about 105 px high, and only the table scrolls horizontally.
+4. P2: The summary initially repeated nearly the whole Task body, including internal UUID text.
+   Fix: use the first real sentence, clamp to three lines, and prefer the stage goal when available.
+5. P2: Desktop controls wrapped unevenly and pushed the table down.
+   Fix: compact one-row desktop control grid with a stacked fallback below 1350 px.
+6. P2: Horizontal table scrolling lost Task identity.
+   Fix: keep the first column sticky on desktop, while returning the table to stacked cards and disabling sticky positioning below 760 px.
+7. P1: Independent review found the 1440 Task narrative was only about 587 px wide and fell to about 470 px at 1280 because the evidence track used viewport-relative `27vw`.
+   Fix: measure the evidence rail from the content grid with a 300 px desktop cap, 280 px at 1280, and a 32 px or 28 px gutter instead of viewport width.
+   Recheck: 1440 narrative measured 686 px with a 300 px evidence rail; 1280 measured 550 px with a 280 px rail; both retained the two left rails and reported no page overflow.
+
+## Additional page check
+
+The shared Document list and full Document reader were opened after the Task changes at 1487 and 390 CSS px. Both retained their existing layout, loaded 50 list rows, exposed a full reading body and evidence aside, and reported no page-level overflow or browser console errors. This change does not restyle those pages.
+
+## Test evidence
+
+- `npm run typecheck`: passed.
+- `npm run test:unit` with PostgreSQL: 889 tests, 853 passed, 36 skipped, 0 failed.
+- `packages/adapter-postgres/test/work-index.test.ts` with PostgreSQL: 14 passed, including direct latest-progress event and not-renamed-`businessChangedAt` assertions.
+- `npm run test:docs`: 42 passed.
+- `npm run docs:build`: 67 pages built.
+- `npm run build --workspace @evoloop/workbench`: passed.
+- In-app browser console: no errors after final navigation and interaction checks.
+
+## Implementation checklist
+
+- [x] Six default columns and separate column settings.
+- [x] Independently scrolling table with sticky Task identity.
+- [x] Persistent right summary at 1171 and wider desktop sizes.
+- [x] Selection-only summary update and explicit full-detail entry.
+- [x] Article-first detail layout with body and completion conditions in the first viewport.
+- [x] Real creation time and event-backed latest progress with honest fallback.
+- [x] Preserve PR167 pagination behavior.
+- [x] Verify 390, 871, 1171, 1440, 1920, and 2560 widths.
+- [x] Verify Document list and reader remain usable.
+
+## Follow-up polish
+
+- Once this branch's backend is deployed, capture the populated “最近进展” column against the same real sample and replace the current “未记录” fallback screenshot.
+
+final result: passed
+
+---
+
 # Workbench design QA — completed reading layouts
 
 Date: 2026-10-31 (Asia/Taipei). Replaces the earlier c2 visual self-check; the earlier report remains in Git history. This is implementation/visual QA, not human aesthetic acceptance or production deployment.

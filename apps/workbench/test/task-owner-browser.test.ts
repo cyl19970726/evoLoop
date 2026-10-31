@@ -109,6 +109,12 @@ test("Task owner resolves one real Role and only verified bound Session links at
   assert.equal(await owner.getByRole("link",{name:/20000007/}).count(),0);
   assert.equal(await owner.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
   assert.equal(await pageBrowser.locator(".task-page-header").evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+  await pageBrowser.setViewportSize({width:1440,height:1024});
+  const narrativeWidth=(await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-narrative`).boundingBox())?.width ?? 0;
+  const evidenceWidth=(await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-evidence-rail`).boundingBox())?.width ?? 0;
+  assert.ok(narrativeWidth>=640,`1440 Task narrative is too narrow: ${narrativeWidth}px`);
+  assert.ok(evidenceWidth<=300.5,`1440 Task evidence rail exceeds its content cap: ${evidenceWidth}px`);
+  await pageBrowser.setViewportSize({width:390,height:844});
   if (process.env.EVOLOOP_TASK_OWNER_SCREENSHOT)
     await pageBrowser.locator(".task-page-header").screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
   assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");

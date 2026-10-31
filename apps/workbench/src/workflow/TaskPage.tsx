@@ -10,7 +10,7 @@ import { TaskAssignmentPanel } from "../sessions/TaskAssignmentPanel";
 import { ReferencePanel } from "../references/ReferencePanel";
 import { TaskWorkflow } from "./TaskWorkflow";
 import { TaskOwner } from "./TaskOwner";
-import { taskStateLabel, taskKindLabel } from "./TaskWorkflow";
+import { taskStateLabel } from "./TaskWorkflow";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { DeliveryArtifact, DeliveryObservation, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
@@ -18,11 +18,11 @@ import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash } from "../orchestration/navigation";
 import { LeaderTaskFacts } from "./LeaderTaskFacts";
-import { leaderProjectionMatchesTask } from "./leaderWorkLoad";
+import { leaderPhaseLabel, leaderProjectionMatchesTask } from "./leaderWorkLoad";
 import "./task-page.css";
 import "./task-experience.css";
-import { TaskCurrentWork } from "./TaskCurrentWork";
 import { currentDelivery } from "./taskExperience";
+import { taskGoal, taskType } from "./taskWorkspacePresentation";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
 const taskTabs: { id: TaskTab; label: string }[] = [
@@ -284,6 +284,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const deliveries = detail.deliveries ?? [];
   const latest = currentDelivery(detail);
   const acceptance = acceptancePoints(detail.task.acceptance);
+  const visibleAcceptance = acceptance?.slice(0, 2) ?? [];
+  const remainingAcceptance = acceptance?.slice(2) ?? [];
+  const mobileAcceptance = acceptance?.slice(0, 1) ?? [];
+  const mobileRemainingAcceptance = acceptance?.slice(1) ?? [];
   const latestObservations = latest ? observationsForDelivery(detail.observations ?? [], latest.id) : [];
   const instanceId = selectedRevision ?? "current";
   const tabId = (value: TaskTab) => `task-tab-${projectId}-${id}-${instanceId}-${value}`;
@@ -297,19 +301,37 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       setTab(value);
     }
   }
+  const goal = taskGoal(leaderTask, detail.task);
+  const progressLabel = leaderTask ? leaderPhaseLabel[leaderTask.phase] : taskStateLabel[detail.task.state];
+  const responsibilityLabel = !leaderTask ? "职责尚未读回"
+    : leaderTask.responsible.kind === "role"
+      ? responsibleName ? `负责职责：${responsibleName}` : "负责职责待核对"
+      : leaderTask.responsible.label;
+  const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的 Agent 使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
   return <div className="content task-page">
-    {sessionReturn && <a className="back" href={sessionReturn}>← 返回【{sessionReturnTitle}】</a>}
-    <a className="back" href={listReturnRef.current ?? taskListHref(projectId)}>← 返回任务列表</a>
-    <div className="task-read-status"><span>{reading ? "正在核对当前任务…" : observedAt ? `当前任务读于 ${date(observedAt.toISOString())}` : "当前任务尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前任务</button></div>
+    <div className="task-detail-toolbar">
+      <div className="task-detail-backlinks">
+        {sessionReturn && <a className="back" href={sessionReturn}>← 返回【{sessionReturnTitle}】</a>}
+        <a className="back" href={listReturnRef.current ?? taskListHref(projectId)}>← 返回任务列表</a>
+      </div>
+      <div className="task-read-status"><span>{reading ? "正在核对当前任务…" : observedAt ? `当前任务读于 ${date(observedAt.toISOString())}` : "当前任务尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前任务</button></div>
+    </div>
     {selectedRevision && <Alert>正在查看固定历史任务修订 <ShortId value={selectedRevision} />。下方页首是当前任务摘要；历史面板单独列出当时状态与依据。<a href={href(projectId, "task", id)}>返回当前任务</a></Alert>}
-    <header className="task-page-header">
+    <header className="task-page-header task-detail-header">
+      <div className="task-detail-heading">
+        <div className="eyebrow">任务 · v{detail.task.version}</div>
+        <h1>{detail.task.title}</h1>
+        <p className="task-goal-summary">{goal}</p>
+        <div className="task-header">
+          <span className="pill">{taskStateLabel[detail.task.state]}</span>
+          <span className="pill subtle">{taskType(detail.task.kind)}</span>
+          <span>当前进展：{progressLabel}</span>
+          <span>{responsibilityLabel}</span>
+        </div>
+      </div>
       {!selectedRevision && <button className="primary task-header-result" onClick={() => selectTab("delivery")}>查看固定成果</button>}
-      <div className="eyebrow">任务 · v{detail.task.version}</div><h1>{detail.task.title}</h1>
-      <p className="task-goal-summary">{leaderTask?.goal?.outcome ?? detail.task.content.split("\n").find(line => line.trim() && !line.startsWith("#"))?.slice(0, 240) ?? "目标见任务正文"}</p>
-      <div className="task-header"><span className="pill">{taskStateLabel[detail.task.state]}</span>{detail.task.kind && <span className="pill subtle">{taskKindLabel[detail.task.kind]}</span>}<span>负责职责：{responsibleName ?? detail.task.owner}</span></div>
     </header>
-    {leaderTask && <TaskCurrentWork item={leaderTask} token={token} projectId={projectId} actorId={context.principal.actorId} returnTo={window.location.hash} />}
-    {!leaderTask && !leaderTaskError && <p className="task-fineprint" role="status">正在核对本任务的具体承接与当前运行…</p>}
+    {!leaderTask && !leaderTaskError && <p className="task-fineprint" role="status">正在核对本任务当前的进展与具体责任…</p>}
     {leaderTaskError && <Alert kind="error">{leaderTaskError}</Alert>}
     {detail.task.legacyDecision && <Alert><strong>{legacyDecisionLabel(detail.task.legacyDecision)}</strong>。当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。<br />旧判断理由：{detail.task.legacyDecision.reason} <button type="button" className="quiet" onClick={() => selectTab("history")}>查看历史时间线 →</button></Alert>}
     {error && <Alert kind="error">当前任务回读失败：{error}。页首保留上次读回内容，不能视为当前状态；编辑草稿仍留在本页。</Alert>}
@@ -319,13 +341,33 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     <section role="tabpanel" id={panelId("overview")} aria-labelledby={tabId("overview")} hidden={tab !== "overview"}>
       <div className="task-overview-grid">
         <div className="task-narrative">
-        <section className="panel task-focus task-acceptance"><h2>完成条件</h2>{acceptance ? <ol className="task-acceptance-points">{acceptance.map((point,index) => <li key={index}>{point}</li>)}</ol> : <p>{detail.task.acceptance}</p>}<p className="task-fineprint">{detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的 Agent 使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}{detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。</p></section>
-        <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><details className="task-body-disclosure" open><summary>完整任务正文</summary><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} /></details><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
+        <section className="panel task-focus task-acceptance"><h2>完成条件</h2>
+          {acceptance ? <>
+            <div className="task-acceptance-desktop"><ol className="task-acceptance-points">{visibleAcceptance.map((point,index) => <li key={index}>{point}</li>)}</ol>
+              {remainingAcceptance.length > 0 && <details className="task-acceptance-more"><summary>其余 {remainingAcceptance.length} 条完成条件</summary><ol className="task-acceptance-points" start={3}>{remainingAcceptance.map((point,index) => <li key={index}>{point}</li>)}</ol></details>}
+            </div>
+            <div className="task-acceptance-mobile"><ol className="task-acceptance-points">{mobileAcceptance.map((point,index) => <li key={index}>{point}</li>)}</ol>
+              {mobileRemainingAcceptance.length > 0 && <details className="task-acceptance-more"><summary>其余 {mobileRemainingAcceptance.length} 条完成条件</summary><ol className="task-acceptance-points" start={2}>{mobileRemainingAcceptance.map((point,index) => <li key={index}>{point}</li>)}</ol></details>}
+            </div>
+          </> : <p>{detail.task.acceptance}</p>}
+          <p className="task-fineprint task-acceptance-note">{acceptanceNote}</p>
+          <details className="task-acceptance-contract-mobile"><summary>验收记录方式</summary><p className="task-fineprint">{acceptanceNote}</p></details>
+        </section>
+        <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} /><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
         </div>
         <aside className="task-evidence-rail" aria-label="交付、依据与关联">
-        <section className="panel task-focus task-delivery-summary"><div className="panel-head"><h2>最新交付与使用</h2><button type="button" className="quiet" onClick={() => selectTab("delivery")}>查看完整记录 →</button></div>
-          {!latest ? <p className="empty">当前修订尚无交付；执行状态不能代替交付。{deliveries.length > 0 && "历史交付仍可在完整记录中查看，不沿用为本次成果。"}</p> : <><DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /><p><strong>技术检查：{latest.technicalResult === "passed" ? "通过" : "失败"}</strong> · 登记于 {date(latest.createdAt)}</p><p className="task-use-summary"><strong>使用观察：</strong>{latestObservations.length ? latestObservations.map(o => `${observerKindLabel[o.observerKind]} · ${observationResultLabel[o.result]}`).join("；") : "尚无本次交付的使用记录"}</p><EvidenceText label="技术检查证据" value={latest.technicalEvidence} />
-            <div className="task-use-evidence"><strong>本次交付的使用观察</strong>{latestObservations.length ? latestObservations.map(observation => <DeliveryObservation key={observation.id} observation={observation} />) : <p>尚无本次交付的使用观察；旧交付的使用记录不沿用。</p>}</div></>}
+        <section className="panel task-focus task-detail-result"><div className="panel-head"><h2>当前结果</h2><button type="button" className="quiet" onClick={() => selectTab("delivery")}>查看完整记录 →</button></div>
+          <dl className="task-result-facts">
+            <div><dt>主进展</dt><dd>{progressLabel}</dd></div>
+            <div><dt>下一责任</dt><dd>{leaderTask?.nextAction ?? "打开运行关联核对当前工作安排"}<small>{responsibilityLabel}</small></dd></div>
+            <div><dt>固定成果</dt><dd>{latest ? <DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /> : <span>{deliveries.length ? "当前修订尚无交付；历史交付不沿用" : "当前修订尚无交付"}</span>}</dd></div>
+            <div><dt>技术检查</dt><dd>{latest ? <><strong>{latest.technicalResult === "passed" ? "通过" : "失败"}</strong><small>登记于 {date(latest.createdAt)}</small></> : "尚无当前交付"}</dd></div>
+            <div><dt>实际使用范围</dt><dd>{latestObservations.length
+              ? latestObservations.map(observation => <span key={observation.id}>{observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]} · {observation.observer}</span>)
+              : "尚无本次交付的使用观察；旧记录不沿用"}</dd></div>
+          </dl>
+          {latest && <><EvidenceText label="技术检查证据" value={latest.technicalEvidence} />
+            <div className="task-use-evidence"><strong>本次交付的使用观察</strong>{latestObservations.length ? latestObservations.map(observation => <DeliveryObservation key={observation.id} observation={observation} />) : <p>尚无本次交付的使用观察。</p>}</div></>}
         </section>
         <section className="panel task-focus"><div className="panel-head"><h2>当前固定依据</h2><button type="button" className="quiet" onClick={() => selectTab("basis")}>查看依据与变化 →</button></div><Basis basis={detail.basis} projectId={projectId} documents={basisDocuments} />{basisError && <Alert kind="error">文档现采纳版本暂不可读：{basisError}；任务固定修订仍可打开。</Alert>}{pending.length > 0 && <p className="task-attention">{pending.length} 项上游变化待复核；固定依据尚未随文档自动改变。</p>}</section>
         <section className="panel task-focus"><h2>关联过程文档</h2>{detail.links.length ? <ul className="basis-list task-basis-list">{detail.links.map(link => <li key={link.id}><a href={href(projectId, "document", link.documentId)}>{basisDocuments[link.documentId]?.document.title ?? `文档 ${link.documentId.slice(0, 8)}`} →</a></li>)}</ul> : <p className="empty">此任务没有另行关联的过程文档。</p>}{basisError && <Alert kind="error">部分关联文档名称暂不可读，仍可按链接打开：{basisError}</Alert>}</section>
