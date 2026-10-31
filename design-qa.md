@@ -107,6 +107,8 @@ final result: passed
 
 Date: 2026-10-31 (Asia/Taipei). This section covers the approved Sessions directory, detail and conversation redesign. It is visual and technical evidence, not the Lead's independent acceptance.
 
+Implementation PR: [#170](https://github.com/cyl19970726/evoLoop/pull/170), branch `codex/sessions-workspace`.
+
 ## Comparison target and evidence
 
 - Source visual truth: fixed Design Document `e6b83216-6140-4aa4-8b84-d8030fb4ebcb@be4202db-6d91-4f24-bc00-43ab391e10a8`, image `/Users/hhh0x/.codex/worktrees/task-production-experience/evoLoop/.local/sessions-redesign-20261031/design-be4202db/assets/session-message-workspace.png`, `1487×1058` RGB.
