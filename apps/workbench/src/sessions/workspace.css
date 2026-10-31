@@ -191,7 +191,7 @@
 
 /* 活动与对话为主工作容器：页首固定、消息内部滚动、输入区固定底部。 */
 @media(min-width:851px){
-  .session-workspace{display:flex;flex-direction:column;min-height:calc(100dvh - 120px)}
+  .session-workspace{display:flex;flex-direction:column;height:calc(100dvh - 120px);overflow:hidden}
   .session-workspace .session-detail-header,.session-workspace .session-context-band,.session-workspace .session-workspace-tabs{flex-shrink:0}
   .session-workspace .session-conversation{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:0;padding:18px 20px 0;border-top:0;border-radius:0 0 5px 5px}
   .session-workspace .session-conversation .session-conversation-scroll{flex:1;min-height:0;max-height:none;overflow-y:auto}
