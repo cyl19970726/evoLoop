@@ -110,7 +110,7 @@ function QueueItem({ item, snapshot, projectId, kind }: { item: SummaryItem; sna
   const role = snapshot.roles[entry.roleId];
   const roleName = role?.proposal.title || `职责 ${short(entry.roleId)}`;
   const taskLink = href(projectId, "task", entry.taskId);
-  const sessionLink = `${href(projectId, "runtime")}?session=${encodeURIComponent(entry.sessionId)}`;
+  const sessionLink = `${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${entry.sessionId}`)}`;
   const reason = entry.holdCode ? holdLabels[entry.holdCode] : "队列已暂停，原因待核对";
   return <li>
     <a href={taskLink}>{taskName}</a> · <a href={href(projectId, "roles")}>{roleName}</a> · <a href={sessionLink}>Session {short(entry.sessionId)}</a>

@@ -78,7 +78,7 @@ test("late recovery from an older snapshot cannot overwrite failure or a newer r
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "恢复竞态会话" }).waitFor();
-  await page.locator(".session-information > summary").click();
+  await page.locator(".session-information:visible > summary").click();
   await waitCount("recoveryReads", 1); // Old recovery GET is still held.
 
   await page.evaluate('document.dispatchEvent(new Event("visibilitychange"));');

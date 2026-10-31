@@ -106,6 +106,18 @@ export class SessionMessageService {
   async list(projectId:string,target:SessionMessageRecord['target'],limit:number,cursor?:string){
     return this.deps.uow.read(projectId,async r=>r.sessionMessages?.listSessionMessages(target,limit,cursor)??{items:[],nextCursor:null});
   }
+  /** A single-snapshot conversation page keeps each saved message beside its own processing record. */
+  async conversation(projectId:string,target:SessionMessageRecord['target'],limit:number,cursor?:string){
+    return this.deps.uow.read(projectId,async r=>{
+      const store=r.sessionMessages;
+      const page=await store?.listSessionMessages(target,limit,cursor)??{items:[],nextCursor:null};
+      const processing=store?.listSessionMessageProcessing
+        ? await store.listSessionMessageProcessing(page.items.map(item=>item.id))
+        : await Promise.all(page.items.map(async item=>await store?.getSessionMessageProcessing(item.id)??null));
+      const byMessage=new Map(processing.filter((item):item is SessionMessageProcessing=>!!item).map(item=>[item.messageId,item]));
+      return{...page,items:page.items.map(message=>({...message,processing:byMessage.get(message.id)??null}))};
+    });
+  }
   async pending(projectId:string,limit=30,offset=0){return this.deps.uow.read(projectId,async r=>r.sessionMessages?.listPendingSessionMessages(limit,offset)??[]);}
   async processing(projectId:string,messageId:string){return this.deps.uow.read(projectId,async r=>r.sessionMessages?.getSessionMessageProcessing(messageId)??null);}
   async session(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>required(await r.getRuntimeSession(sessionId),'Session'));}

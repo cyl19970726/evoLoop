@@ -7,6 +7,11 @@ import type { SessionRecoveryView } from "./recoveryPresentation";
 import { request, requestNullable } from "../api";
 
 const part = encodeURIComponent;
+export type SessionConversationItem = SessionMessageRecord & {
+  contentTruncated?: boolean;
+  responseTruncated?: boolean;
+  processing?: SessionMessageProcessing | null;
+};
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== "") params.set(key, String(value));
@@ -30,7 +35,7 @@ export function sessionClient(token: string, projectId: string) {
     assignmentHistory: (taskId: string, cursor?: string, signal?: AbortSignal) =>
       get<SessionAssignmentPage<TaskSessionAssignment>>(`${base}/tasks/${part(taskId)}/assignment/history?${query({ limit: 50, cursor })}`, signal),
     messages: (key: string, cursor?: string, signal?: AbortSignal) =>
-      get<{ items: SessionMessageRecord[]; nextCursor: string | null; metadata: ObservationMetadata }>(`${base}/session-work/${part(key)}/messages?${query({ limit: 50, cursor })}`, signal),
+      get<{ items: SessionConversationItem[]; nextCursor: string | null; metadata: ObservationMetadata }>(`${base}/session-work/${part(key)}/messages?${query({ limit: 50, cursor })}`, signal),
     message: (id: string, signal?: AbortSignal) => get<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null; metadata: ObservationMetadata }>(`${base}/session-messages/${part(id)}`, signal),
     trace: (runId: string, cursor?: string, signal?: AbortSignal) =>
       get<RuntimeWorkTrace>(`${base}/runtime/runs/${part(runId)}/trace?${query({ cursor })}`, signal),

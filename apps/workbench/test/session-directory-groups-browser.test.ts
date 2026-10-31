@@ -57,14 +57,20 @@ test("retrying one Session category preserves another category's loaded pages", 
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
+    ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await page.goto(`${base}/#/p/${projectId}/operations`);
+  await page.goto(`${base}/#/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const sidebar = page.locator(".project-sidebar .session-navigation");
   await sidebar.locator(".session-nav-history").click();
   await sidebar.locator(".session-nav-error").waitFor();
+  const mainHistory = page.locator(".sessions-directory-history");
+  await mainHistory.locator("> summary").click();
+  await mainHistory.getByText(/待归类 Session 暂不可读取/).waitFor();
+  assert.equal(await mainHistory.getByText("没有待归类的 Session。", { exact: true }).count(), 0,
+    "a failed history read is not presented as a normal empty catalog");
   await sidebar.getByRole("button", { name: "加载更多历史 Session" }).click();
   await sidebar.locator(".session-nav-item").filter({ hasText: "历史会话 37" }).waitFor();
   assert.equal(await sidebar.locator(".session-nav-group").nth(1).locator(".session-nav-item").count(), 37);

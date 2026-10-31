@@ -90,6 +90,7 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "受管测试会话" }).waitFor();
+  await page.locator(".session-project-activity > summary").click();
   for (let i = 0; i < 30 && (await readCounts()).recovery === 0; i++) await page.waitForTimeout(50);
   assert.equal((await readCounts()).recovery > 0, true, "owned initial read requests recovery");
 

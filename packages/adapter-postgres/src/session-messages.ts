@@ -66,6 +66,13 @@ export class PgSessionMessages implements SessionMessageTransaction {
     const r=await this.client.query('SELECT * FROM session_message_processing WHERE project_id=$1 AND message_id=$2',[this.projectId,messageId]);
     return r.rows[0]?processing(r.rows[0]):null;
   }
+  async listSessionMessageProcessing(messageIds:string[]):Promise<SessionMessageProcessing[]>{
+    const ids=[...new Set(messageIds)];
+    if(!ids.length)return[];
+    const r=await this.client.query('SELECT * FROM session_message_processing WHERE project_id=$1 AND message_id=ANY($2::uuid[]) ORDER BY started_at,processing_id',
+      [this.projectId,ids]);
+    return r.rows.map(processing);
+  }
   async countSessionMessageTurns(sessionId:string,senderActorId:string):Promise<number>{
     const r=await this.client.query(`SELECT count(*)::integer AS count FROM session_message_processing p
       JOIN session_message m ON m.project_id=p.project_id AND m.message_id=p.message_id

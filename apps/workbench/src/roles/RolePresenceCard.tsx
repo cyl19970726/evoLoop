@@ -80,7 +80,7 @@ export function RolePresenceCard({ token, projectId, roleId, roleState, refresh 
       {!loading && !error && currentRead && hosts.length === 0 && domains.length === 0 && <p>尚无已登记宿主或业务领域。</p>}
       {hosts.map(host => <article className="role-presence-item" key={host.id}>
         <strong>{host.host.kind === "owned" ? "自有受管 Session" : host.host.provider === "codex-desktop" ? "外部 Codex Desktop 宿主" : "外部宿主（类型未支持）"} · {host.state === "verified" ? "已核实" : host.state === "revoked" ? "已撤权" : "仅登记"}</strong>
-        {host.host.kind === "owned" ? <p className="break-anywhere">{currentRead && <><a href={`${href(projectId, "runtime")}?session=${key(host.host.sessionId)}`}>打开 Session 与原线程历史</a> · </>}<code>{host.host.sessionId}</code>{!currentRead && " · 上次读回，暂不可作为当前入口"}</p>
+        {host.host.kind === "owned" ? <p className="break-anywhere">{currentRead && <><a href={`${href(projectId, "sessions")}?session=${key(`owned:${host.host.sessionId}`)}`}>打开 Session 与原线程历史</a> · </>}<code>{host.host.sessionId}</code>{!currentRead && " · 上次读回，暂不可作为当前入口"}</p>
           : <ExternalHostEntry key={`${host.id}:${host.version}:${host.host.ref}`} host={host} roleState={roleState} currentRead={currentRead} />}
         <p>声称能力：{host.claimedCapabilities.map(capability => capabilityLabel[capability]).join("、") || "未声明"}</p>
         <p>已核能力：{host.state === "verified" ? host.verifiedCapabilities.map(capability => capabilityLabel[capability]).join("、") || "无" : "未核实"}</p>

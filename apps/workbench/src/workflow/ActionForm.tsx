@@ -35,12 +35,13 @@ export function readableDraft(title: string, fields: Field[], values: Record<str
 
 /** Shared command submission preserves the draft and persists the operation ID before any write. */
 export function ActionForm({ context, title, fields, build, validateCommand, sendCommand, review = false,
-  requiredPermissions, onApplied, initiallyOpen = false, embedded = false }: {
+  requiredPermissions, onApplied, initiallyOpen = false, embedded = false, submitOnModEnter = false }: {
   context: MutationContext; title: string; fields: Field[]; review?: boolean; initiallyOpen?: boolean; embedded?: boolean;
   build(values: Record<string, string>): Record<string, unknown>; onApplied?: (result: { entityId: string; revisionId?: string }) => void;
   validateCommand?: (command: Record<string, unknown>) => void;
   sendCommand?: (command: SubmittableCommand) => Promise<CommandResult>;
   requiredPermissions?: Permission[];
+  submitOnModEnter?: boolean;
 }) {
   const initial = () => Object.fromEntries(fields.map(f => [f.name, f.value ?? (f.kind === "multi" ? "[]" : "")]));
   const draftKey = context.draftScope ? `${context.principal.actorId}:${context.projectId}:${context.draftScope}:${title}` : null;
@@ -119,7 +120,13 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
         </select> : <input name={field.name} autoComplete="off" required={!field.optional} value={values[field.name]} onChange={e => updateValue(field.name, e.target.value)} />}
       {field.hint && <small>{field.hint}</small>}
     </label>;
-  const form = <form className="workflow-form" data-dirty={dirty ? "true" : undefined} onSubmit={submit}>
+  const form = <form className="workflow-form" data-dirty={dirty ? "true" : undefined} onSubmit={submit}
+    onKeyDown={submitOnModEnter ? event => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !busy) {
+        event.preventDefault();
+        event.currentTarget.requestSubmit();
+      }
+    } : undefined}>
     {fields.filter(field => !field.advanced).map(renderField)}
     {fields.some(field => field.advanced) && <details className="workflow-detail"><summary>高级选项</summary>{fields.filter(field => field.advanced).map(renderField)}</details>}
     {!allowed && <Notice>当前身份没有{review ? "审阅" : "写入"}权限。</Notice>}

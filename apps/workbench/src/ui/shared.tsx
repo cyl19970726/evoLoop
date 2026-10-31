@@ -3,7 +3,7 @@ import type { DocumentRevision } from "@evoloop/contracts";
 import { OriginalDocumentReader } from "../documents/OriginalDocumentReader";
 import { MarkdownBody } from "./MarkdownBody";
 import { isProjectRoute } from "./returnRoute";
-export type Section = "overview" | "work" | "create-task" | "knowledge" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings";
+export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
 
 
@@ -15,12 +15,15 @@ export function readRoute(): Route {
   const section = parts[2];
   const action = new URLSearchParams(search).get("action") || undefined;
   const revision = new URLSearchParams(search).get("revision") || undefined;
-  const session = new URLSearchParams(search).get("session") || undefined;
+  const requestedSession = new URLSearchParams(search).get("session") || undefined;
+  const session = section === "sessions" && requestedSession && !requestedSession.includes(":")
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedSession)
+    ? `owned:${requestedSession}` : requestedSession;
   if (section === "tasks" && parts[3] === "new") return { projectId: parts[1], section: "create-task" };
   if (section === "tasks" && parts[3]) return { projectId: parts[1], section: "task", id: parts[3], revision };
   if (section === "documents" && parts[3]) return { projectId: parts[1], section: "document", id: parts[3], revision };
   if (section === "evaluations") return { projectId: parts[1], section: "evaluations", id: parts[3], revision };
-  if (["work", "knowledge", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(section === "runtime" ? { session } : {}) };
+  if (["work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(["sessions", "runtime"].includes(section ?? "") ? { session } : {}) };
   return { projectId: parts[1], section: "overview" };
 }
 

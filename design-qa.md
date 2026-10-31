@@ -1,4 +1,4 @@
-# Task workspace image-to-code QA
+# Task workspace image-to-code QA (historical)
 
 Source design:
 
@@ -103,7 +103,104 @@ final result: passed
 
 ---
 
-# Workbench design QA — completed reading layouts
+# Sessions workspace image-to-code QA (current)
+
+Date: 2026-10-31 (Asia/Taipei). This section covers the approved Sessions directory, detail and conversation redesign. It is visual and technical evidence, not the Lead's independent acceptance.
+
+## Comparison target and evidence
+
+- Source visual truth: fixed Design Document `e6b83216-6140-4aa4-8b84-d8030fb4ebcb@be4202db-6d91-4f24-bc00-43ab391e10a8`, image `/Users/hhh0x/.codex/worktrees/task-production-experience/evoLoop/.local/sessions-redesign-20261031/design-be4202db/assets/session-message-workspace.png`, `1487×1058` RGB.
+- Normalized source: `.local/sessions-redesign-20261031/compare-top.png` and `compare-conversation.png` resize the source to `1440×1024` before placing it beside the implementation in one image.
+- Implementation: production build served locally at `http://127.0.0.1:55444`, connected by a local read-through proxy to the real coordinator API. CSS viewport `1440×1024`, device pixel ratio 1.
+- External Session full view: `.local/sessions-redesign-20261031/screenshots/final-session-detail-1440-v8.jpg`.
+- Combined structural comparison: `.local/sessions-redesign-20261031/source-vs-implementation.png`; focused top comparison: `compare-top.png`; focused conversation comparison: `compare-conversation.png`.
+- Managed conversation comparison: `.local/sessions-redesign-20261031/source-vs-managed-implementation.png`, using `.local/sessions-redesign-20261031/screenshots/final-managed-session-tools-1440-v5.jpg`.
+- Directory states: `.local/sessions-redesign-20261031/screenshots/final-directory-1440-v5.jpg` and `final-directory-390-v3.jpg`.
+- Responsive implementation captures: `final-session-detail-1171-exact.jpg`, `final-session-detail-871-v3.jpg`, and `final-session-detail-390-v3.jpg`.
+
+The source and implementation represent different data states. The source uses illustrative Agent messages and a short example reply. The implementation uses the real external frontend Session and its stored manual-handoff message; the managed comparison uses the real Session Experience messages, original Thread replies and two observed tool items. Layout structure is compared; record values and text length are not treated as visual defects.
+
+## States
+
+- External Session: `功能开发 · 前端文档与工作台`, activity/conversation tab, manual handoff semantics, current Task visible, one stored external message, input visible.
+- Managed Session: `功能开发 · Session 体验`, idle after two ordinary-message turns, completed response plus failed read-only tool attempt, tool summary visible and composer visible.
+- Directory: current business/System/unclassified groups, compact sidebar group disclosure and complete main catalog.
+- Responsive checks: `1440×1024`, `1171×900`, `871×1171`, and `390×844`; every measured page had `scrollWidth === innerWidth`.
+
+## Fidelity result
+
+No actionable P0, P1, or P2 visual findings remain.
+
+- Fonts and typography: system Chinese sans-serif stack; title hierarchy, body and secondary-fact sizes remain readable. Markdown replies preserve headings, lists, code and links. Long identifiers and permission values wrap without expanding the page.
+- Spacing and layout rhythm: shared two-rail shell, title, current-Task card, compact Agent band, tab row, conversation, tool summary and composer now follow the approved structure. At 1440 the context band is about 139 px high, tabs begin around 342 px, and the conversation composer begins around 741 px. At 871 the project rail collapses and content uses the available width; at 390 the structure becomes one column with a 324 px message column.
+- Colors and tokens: white/blue surfaces, navy typography, neutral rules, and warm failure/attention states; no green is introduced.
+- Assets/icons: source contains only application UI, text and standard icons. No raster illustration required generation. The implementation reuses the product's existing Lucide icon family and `eL` wordmark.
+- Copy/content: real Task, Session, actor, message, processing, tool and recovery facts remain distinct. External Sessions explicitly show unsynchronized realtime state. Saving, processing, replying, reading and manual handoff are not merged.
+
+## Findings and fixes
+
+1. P1: Agent values initially wrapped one character per line because the global `dl>div` rule applied a two-column grid inside the narrow Agent card.
+   Fix: reset each Agent field to a one-column grid and keep the three first-screen fields on one row.
+   Recheck: the field labels and values render horizontally at 1440 and 871; dynamic permission values wrap as whole tokens.
+2. P1: The first implementation pushed the conversation and composer below the fold because a redundant four-item fact band consumed a full row.
+   Fix: remove the duplicate band, move assignment/queue/result facts into the Task and queue tab, compact the Agent band, and constrain the activity viewport.
+   Recheck: at 1440 the composer begins around 741 px and remains fully visible in the 1024 px viewport.
+3. P1: After sending a message, the old implementation opened a stale message-detail panel and left the actual reply hidden while processing advanced.
+   Fix: keep the conversation in view after saving, preserve processing records across polls, and fetch missing terminal processing records only as a compatibility fallback.
+   Recheck: the actual managed response and two-item failed tool summary are visible without opening raw project events.
+4. P2: The sidebar rendered all current Sessions inside the shared navigation, pushing System Sessions and the full-directory entry below the fold.
+   Fix: show a compact overview of two business, two System and one unclassified Session; always retain the selected Session; expose the complete searchable catalog through the dedicated Sessions page.
+   Recheck: both formal classes and the complete-directory entry are visible at 1440 without reducing the conversation column.
+5. P2: Re-polling could re-enable “load earlier messages” after the final history page had already been exhausted.
+   Fix: preserve the expanded-history state across polls; only initialize the cursor before the user starts loading older messages.
+   Recheck: the cursor remains exhausted until the user explicitly starts a new history read.
+6. P2: The full directory rendered empty history/unclassified messages when those reads had actually failed.
+   Fix: distinguish loading, error and empty states per group and provide an inline retry without replacing unread data with a normal empty state.
+   Recheck: sidebar category retry passes, and the full directory no longer reports failed reads as empty results.
+
+Remaining P3 polish:
+
+- The source uses illustrative records; exact row count, text stops and bubble height necessarily differ with real project data.
+- The source uses a small role bullet and a compact information icon in its activity banner; the implementation uses the product's existing icon and text conventions.
+- A managed Session with a failed tool correctly expands the failure by default, while the source example shows a successfully collapsed tool summary.
+
+## Interaction and runtime evidence
+
+- Full directory and search were exercised against the real API; menu navigation at 390 lists Work and Sessions first, then project functions and the unique Session catalog.
+- Session → Task → return preserved the canonical Sessions route, activity tab and filter.
+- Ordinary managed-message turn 1:
+  - message `bc672cbe-0ef4-4b2f-8e19-83a88fdeb93f`, state `replied`;
+  - processing `156bf0db-16ba-4c81-bdf3-43597954412f`, native Turn `01a19210-0d01-7242-89a8-8a000736e661`;
+  - original Thread response: `Sessions 普通消息测试已收到。`
+- Ordinary managed-message turn 2:
+  - message `8b06bb25-cd52-464c-a9a2-60776a491311`, state `replied`;
+  - processing `481b7bae-aca8-4588-bac6-31f3937fce9b`, native Turn `01a19211-2be9-70d0-b1b6-e5540c8e2d99`;
+  - two tool activities observed, one failed and one completed;
+  - final response truthfully reports that `docs/frontend/README.md` could not be read from that Session's cwd.
+- Ordinary managed-message turn 3:
+  - message `0ff0149b-b4a3-4f8b-8ef9-4a4c05406057`, state `replied`;
+  - processing `c90fa24d-7dc8-40de-9990-79566a9204d4`, native Turn `01a1924f-439e-7820-a5c5-85a9e61201b3`;
+  - one read-only tool completed;
+  - final response rendered from Markdown as `文档导航`.
+- The managed Session was verified before sending: `ready`, `busy:false`, active `gpt-6-sol`, `danger-full-access`, `never`, open recovery gate, zero prior messages, configured budget 12, three Turns used.
+- External Session remained manual-only. No automatic delivery, native model/tool activity or read receipt was inferred.
+- Browser console: no error or warning entries on the final external and managed Session checks.
+
+## Test evidence
+
+- `npm run typecheck`: passed.
+- `npm run docs:check`: passed, 67 published pages and 16 assets.
+- `npm run test:unit`: 891 tests, 854 passed, 37 opt-in/integration tests skipped, 0 failed.
+- Session browser regressions: 12 passed, 0 failed, including directory pagination/retry, close recovery, history switching, native input, native progress, recovery races, polling, message entry and the new Sessions redesign journey.
+- Task browser regressions: 3 passed, 0 failed, preserving PR167/168 Task list, detail, owner and Session-link behavior.
+- Schedule → Run → Session browser regression: passed with the canonical Sessions path.
+- `npm run build`: passed. Vite reports only its existing module-directive and large-chunk warnings.
+
+final result: passed
+
+---
+
+# Workbench design QA — completed reading layouts (historical)
 
 Date: 2026-10-31 (Asia/Taipei). Replaces the earlier c2 visual self-check; the earlier report remains in Git history. This is implementation/visual QA, not human aesthetic acceptance or production deployment.
 
@@ -149,3 +246,5 @@ Date: 2026-10-31 (Asia/Taipei). Replaces the earlier c2 visual self-check; the e
 P3 follow-up: exact illustrative row counts, copy length and icon variants differ; these are documented data/library differences. Future surfaces/states still need their own evidence when changed.
 
 final result: passed
+
+The current delivery is the Sessions workspace section above; this trailing historical section is retained so earlier Task and reading-layout evidence is not lost.

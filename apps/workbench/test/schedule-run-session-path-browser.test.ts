@@ -103,16 +103,16 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   await card.locator(":scope > summary").waitFor();
   await card.locator(":scope > summary").click();
   const exact = card.getByRole("link", { name: "查看此 Run 登记的 Session 工作区" });
-  assert.equal(await exact.getAttribute("href"), `#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
+  assert.equal(await exact.getAttribute("href"), `#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   assert.match(await card.innerText(), /Run 的状态不代表任务验收或当前接手/);
   const sessionCard = page.locator(".runtime-session-card").filter({ hasText: sessionId });
   await sessionCard.locator(":scope > summary").click();
   assert.equal(await sessionCard.getByRole("link", { name: "查看此 Session 工作区" }).getAttribute("href"),
-    `#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
+    `#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   await exact.click();
   await page.getByRole("heading", { name: "历史 Session 77500006" }).waitFor();
-  assert.match(await page.locator(".session-workspace-head").innerText(), /历史/);
-  assert.equal(new URL(page.url()).hash, `#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
+  assert.match(await page.locator(".session-detail-header").innerText(), /历史/);
+  assert.equal(new URL(page.url()).hash, `#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   assert.ok(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(sessionKey)}`));
   assert.equal(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(`owned:${otherSessionId}`)}`), false);
   assert.equal(errors.length, 0, errors.join(" | "));

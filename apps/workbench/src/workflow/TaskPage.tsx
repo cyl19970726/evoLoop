@@ -145,7 +145,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const routeQuery = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
   const proposedReturn = routeQuery.get("return");
   const sessionReturn = active && routeQuery.get("actor") === context.principal.actorId
-    && proposedReturn?.startsWith(`${href(projectId, "runtime")}?`)
+    && (proposedReturn?.startsWith(`${href(projectId, "sessions")}?`) || proposedReturn?.startsWith(`${href(projectId, "runtime")}?`))
     && new URLSearchParams(proposedReturn.split("?")[1] ?? "").get("session")?.match(/^(owned|external):[0-9a-f-]{36}$/i)
     ? proposedReturn : null;
   const sessionReturnTitle = routeQuery.get("returnTitle")?.slice(0, 80).trim() || "Session";
