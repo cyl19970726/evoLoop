@@ -85,6 +85,10 @@ test("leader work index exposes plan, dependency, current version and a stable b
   assert.equal(first.items[0]!.dependencies[0]!.acceptanceSatisfied, false);
   assert.equal(first.items[0]!.plan?.priority, 2);
   assert.equal(first.items[0]!.dates.businessChangedAt, now);
+  assert.equal(first.items[0]!.dates.createdAt, now);
+  assert.equal(first.items[0]!.latestProgress?.entityKind, "dependency");
+  assert.equal(first.items[0]!.latestProgress?.eventName, "任务依赖已更新");
+  assert.ok(first.items[0]!.latestProgress?.changedAt);
   assert.ok(first.nextCursor);
 
   const second = await readLeaderWorkTasks(pool, fixture.project.id,
@@ -96,6 +100,8 @@ test("leader work index exposes plan, dependency, current version and a stable b
   assert.equal(exact?.taskId, fixture.prerequisite.head.id);
   assert.equal(exact?.phase, "ready");
   assert.equal(exact?.dependencyVersion, 0);
+  assert.equal(exact?.latestProgress?.entityKind, "task");
+  assert.equal(exact?.latestProgress?.eventName, "任务内容或状态更新");
   const beyond=Buffer.from(JSON.stringify({version:1,view:"tasks",projectId:fixture.project.id,
     includeClosed:false,sequence:first.changeSequence,offset:999}),
     "utf8").toString("base64url");
@@ -563,6 +569,22 @@ test("a newer completed Run waits for its own Delivery instead of reviving an ol
     delivery_id: "new-delivery", delivery_result: "passed", delivery_created_at: "2026-10-28T02:05:00.000Z",
     observation_result: "failed" } as never, now);
   assert.equal(observedFailure.phase, "rework");
+});
+
+test("latest progress is a direct business event rather than a renamed Task revision time", () => {
+  const row = {
+    task_id: "task", version: 4, current_revision_id: "revision", title: "Delivered work",
+    kind: "implementation", owner: "owner", state: "in_progress",
+    created_at: "2026-10-28T00:00:00.000Z", business_changed_at: "2026-10-28T00:01:00.000Z",
+    latest_change_sequence: "41", latest_change_kind: "delivery", latest_change_entity_id: "delivery",
+    latest_change_at: "2026-10-28T02:05:00.000Z", pending_impact_count: 0,
+    dependency_facts: [], plan_version: null, has_closure: false,
+  };
+  const value = leaderWorkTaskFromRow(row as never, now);
+  assert.equal(value.latestProgress?.sequence, 41);
+  assert.equal(value.latestProgress?.eventName, "交付已登记");
+  assert.equal(value.latestProgress?.changedAt, "2026-10-28T02:05:00.000Z");
+  assert.notEqual(value.latestProgress?.changedAt, value.dates.businessChangedAt);
 });
 
 test("a failed Run from an earlier Task revision does not mark the new revision as current work", async () => {

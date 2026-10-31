@@ -131,6 +131,14 @@ export interface LeaderWorkTask {
     completedAt: string | null;
     observedAt: string;
   };
+  /** Latest directly attributable business event. Never a rename of businessChangedAt. */
+  latestProgress?: {
+    sequence: number;
+    entityKind: LeaderWorkChange["entityKind"];
+    entityId: string;
+    eventName: string;
+    changedAt: string;
+  } | null;
   /** Stable identity for a reviewed action on this exact observed Task version. */
   actionKey: string;
 }

@@ -7,5 +7,6 @@ import "./editorial.css";
 import "./reading-pages.css";
 import "./team-pages.css";
 import "./completion.css";
+import "./task-production.css";
 
 createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
