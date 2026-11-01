@@ -261,14 +261,19 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       if (!activeDialog) return;
       const focusables = Array.from(activeDialog.querySelectorAll<HTMLElement>(
         'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex]:not([tabindex="-1"])'))
-        .filter(element => element.getClientRects().length > 0);
+        .filter(element => {
+          if (!element.getClientRects().length) return false;
+          const closed = element.closest("details:not([open])");
+          return !closed || element.tagName === "SUMMARY" && element.parentElement === closed;
+        });
       if (!focusables.length) return;
-      const first = focusables[0]!;
-      const last = focusables[focusables.length - 1]!;
       const active = document.activeElement;
-      if (!activeDialog.contains(active)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); return; }
-      if (event.shiftKey && active === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
+      const index = focusables.indexOf(active as HTMLElement);
+      event.preventDefault();
+      const next = index === -1
+        ? event.shiftKey ? focusables[focusables.length - 1]! : focusables[0]!
+        : focusables[(index + (event.shiftKey ? -1 : 1) + focusables.length) % focusables.length]!;
+      next.focus();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => {
