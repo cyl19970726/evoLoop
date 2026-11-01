@@ -226,7 +226,10 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   const working = latestProcessed(messages);
   const ordered = [...messages].reverse();
   useEffect(() => {
-    if (selected) detailCloseRef.current?.focus();
+    if (selected) {
+      const timer = setTimeout(() => detailCloseRef.current?.focus(), 0);
+      return () => clearTimeout(timer);
+    }
   }, [selected]);
   useEffect(() => {
     const node = conversationScroll.current;
