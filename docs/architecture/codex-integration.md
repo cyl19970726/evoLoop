@@ -115,6 +115,32 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能累加；`last` 保留原生提供的范围，不能用自行计算的相邻快照差值冒充。cached input 已包含在 input，reasoning output 已包含在 output；不再相加。缺失指标为未知，配置模型不当作实际逐 Turn 用模，没有原生费用时不推测货币成本。Session snapshot 与 CLI 读取相同当前投影和时间；5 秒前端查询与 runner 周期内合并不是实时推送或延迟保证。变化游标只触发刷新，进度刷新不刷进业务活动历史，也不增加 `runtime_record_event` 或修改 Run／Task 终态。
 
+### Session 工作区的历史与实时读取
+
+当前“处理中”只能由现有 owner 在确切 Thread 上观察到的 Turn 启动通知证明，读取历史中的 `running` 或全局连接 ready 均不能替代。`activeTurnId` 随匹配终态、断连和连接代次重置清除；已知终态不能被迟到的启动通知重新打开。
+
+工作区用一个只读模型连接原生持久历史、现有 owner 连接的公开活动和 PostgreSQL 消息；它不新增聊天数据库，也不接管执行。`RuntimePort.readWorkspaceHistory` 返回有稳定键的消息、工具、公开计划和来源范围，`onWorkspaceUpdate` 更新同一 Item。协调层负责项目/Session/Thread 授权、发送者核对、独立分页和有限实时覆盖；CLI `work timeline` 与工作台读取同一服务，前端不解析 provider 原始事件。
+
+```mermaid
+flowchart LR
+  H[原生持久 Turn / Item] --> A[薄适配器：公开类型与顺序]
+  O[现有 owner 连接] --> A
+  A --> R[Session 时间线读取模型]
+  P[PG 消息、处理记录与 Run 来源] --> R
+  R --> C[共同 API / CLI]
+  C --> U[消息、公开进展、工具与回复]
+```
+
+标准读取使用 `thread/read` 核绑定，再从 `thread/items/list` 续读，Turn 元数据单独有界读取：普通 Thread 页保留最近一页；精确 Turn 最多续读 10 页、每页 100 项，超出范围仍保留未知和 limitation，不把较早 Turn 当作不存在。经实际能力核实的 legacy store 可回退完整 Turn；不支持的 store、归档差异和未读完范围须明示。实验 `thread/timeline/list`、`thread/items/read` 还需要明确启用、实际协商和对应 store/wire 验证，不能因本机 schema 含方法或其他工具已使用实验协议就自动采用。只读入口不调用 resume/start，也不因历史暂不可见而判断原 writer 已停止。
+
+每个 entry 保留 kind、Turn/Item、原生时间与观察时间、完整性和新鲜度。没有 Item ID 的边界/计划也有稳定键；顺序锚点保留原生 ordinal 或 Item 键，以及读取投影/连接代次。该代次和服务内更新位置不承诺原生通知重放。原生顺序优先；native history 与 PG 消息分别续读、分别耗尽，不能按观察时间把两者整体重排。
+
+一个 native Turn 至多关联一个正式 Run 或普通消息处理；该关联说明业务归属，不能证明其中任意输入的发送者。仅当输入的 `clientId` 精确匹配派发 operation ID，或有明确协议 marker/已核 Item 绑定，且能核实唯一 Item，才用 PG 原消息替换派发封套。分页、单条详情和实时覆盖复用同一证明；完整已终结 Turn 有多个匹配时全部保持未关联，PG 原消息仍独立可读，不能以当前页或首次看到的 Item 选择正本。证明有界，超预算明确未知；Item 枚举完整性与正文预览截断分别表达。缺键的老输入保持未关联；不会按文本、Task 标题、时间接近或同 Turn 猜身份。Run actor 是发起者，公开 Agent 回复的作者仍是当前 Session。排队、人工转交和未绑定消息继续保留真实署名与状态；迟绑定按稳定来源键去重。
+
+普通项目读取返回公开文本和结构化工具摘要；内部 reasoning 不进入流。命令名称、搜索/读取/列文件动作优先用原生解析字段，路径限制在项目范围；参数、stdout、补丁及其他原始工具证据另核 read+review 或确切 worker Run 资格。公共长回复可按 Item 续读，不因此取得原始工具权限。权限拒绝、来源不可用和正文截断分别表达。
+
+实时覆盖只消费原 owner 的已核范围事件，不额外 resume 一个观察者。缓冲有界并带代次/更新位置；断连、进程重启或溢出要求重新校准持久历史。全局 App Server ready 不能证明某 Thread 有实时订阅；独立只读历史连接不宣称 live。external/Desktop 保留人工接入与实际已同步范围。此读取模型不改变下文的恢复 gate、首次终态观察或未知结果规则。
+
 ## 状态与恢复规则
 
 受管 Session 的展示名由项目侧版本化 `session.profile.set` 拥有。协调器只在 ready 且有精确 owned Thread 绑定时，将最新 profile 名称与原生 `thread/read` 的 `name` 比较；不同才用已固定的现代协议 `thread/name/set` 写到该 Thread，再读回核对。命名不启动 Turn；外部链接和已关闭 Session 不参与。每个 profile 修订在一条原生连接上最多尝试一次，拒绝或结果未知留在 runner 的名称同步故障中；新修订或重连先读回再恢复，不靠空 RPC 回执宣称 Desktop 可见。业务保存成功、原生读回一致、Desktop 实际按名找到同一 Thread 是三个不同证据。

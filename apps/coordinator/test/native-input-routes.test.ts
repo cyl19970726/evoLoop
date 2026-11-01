@@ -11,15 +11,21 @@ import { buildServer } from "../src/server.js";
 
 test("native questions use authenticated project reads and live reply checks before journaling", async () => {
   const projectId = randomUUID(), sessionId = randomUUID(), inputRequestId = randomUUID(), token = "n".repeat(40);
+  const readerToken="r".repeat(40),rawDiff="PRIVATE_NATIVE_DIFF_MARKER_7204";
+  const storedObservation={projectId,sessionId,freshness:"stale",staleReason:"disconnected",
+    diff:{turnId:"exact-turn",text:rawDiff,truncated:false,observedAt:"2026-10-27T01:00:00.000Z"},
+    usage:{turnId:"exact-turn",observedAt:"2026-10-27T01:00:00.000Z",total:{
+      inputTokens:100,cachedInputTokens:80,outputTokens:20,reasoningOutputTokens:5,totalTokens:120},last:null}};
   let allowed = true, writes = 0, viewReads = 0, journalled = false, liveChecks = 0;
   const identity = (p: Principal, project: string) => {
-    assert.equal(p.actorId, "human");
+    assert.ok(p.actorId==="human"||p.actorId==="reader");
     if (!p.projectIds.includes(project)) throw new DomainError("FORBIDDEN", "Wrong project");
   };
   const session = { key: `owned:${sessionId}`, target: { kind: "owned", sessionId }, capabilities: {} };
   const unknownResource = { value: null, unit: "unknown", source: null, scope: "session", observedAt: null,
     interval: null, unavailableReason: "没有证据" };
-  const app = await buildServer({ credentials: [{ token, actorId: "human", projectIds: [projectId], permissions: ["read", "write", "review"] }],
+  const app = await buildServer({ credentials: [{ token, actorId: "human", projectIds: [projectId], permissions: ["read", "write", "review"] },
+    {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]}],
     service: {
       listRoleRevisions: async () => [], listRoleReviews: async () => [],
       listRoleHandoffs: async () => [], listRoleSessionBindings: async () => [],
@@ -41,9 +47,7 @@ test("native questions use authenticated project reads and live reply checks bef
       views: async () => { viewReads++; return [{ id: inputRequestId, canReply: allowed }]; },
       one: async () => ({ id: inputRequestId, canReply: allowed }),
     } as unknown as NativeInputBridge,
-    nativeObservation: { get: async () => ({ projectId, sessionId, freshness: "stale", staleReason: "disconnected",
-      usage: { turnId: "exact-turn", observedAt: "2026-10-27T01:00:00.000Z", total: {
-        inputTokens: 100, cachedInputTokens: 80, outputTokens: 20, reasoningOutputTokens: 5, totalTokens: 120 }, last: null } }) } as unknown as NativeObservationBridge,
+    nativeObservation: { get: async () => storedObservation } as unknown as NativeObservationBridge,
   });
   const headers = { authorization: `Bearer ${token}` };
   const payload = { type: "session.input.reply", projectId, operationId: randomUUID(), inputRequestId,
@@ -74,6 +78,19 @@ test("native questions use authenticated project reads and live reply checks bef
     assert.equal(snapshot.json().resources.cost.value, null); assert.equal(snapshot.json().resources.actualModel.value, null);
     const observation = await app.inject({ headers, url: `${path}/runtime/sessions/${sessionId}/observation` });
     assert.equal(observation.json().usage.total.totalTokens, 120);
+    for(const url of [`${path}/session-work/${encodeURIComponent(session.key)}`,
+      `${path}/runtime/sessions/${sessionId}/observation`]){
+      const readerResponse=await app.inject({headers:{authorization:`Bearer ${readerToken}`},url});
+      assert.equal(readerResponse.statusCode,200);
+      assert.equal(readerResponse.body.includes(rawDiff),false,"ordinary read never returns raw native diff");
+      const readerView=url.includes("/observation")?readerResponse.json():readerResponse.json().nativeObservation;
+      assert.equal(readerView.diff.text,"");assert.equal(readerView.diff.contentProtected,true);
+      const reviewerResponse=await app.inject({headers,url});
+      assert.equal(reviewerResponse.statusCode,200);
+      const reviewerView=url.includes("/observation")?reviewerResponse.json():reviewerResponse.json().nativeObservation;
+      assert.equal(reviewerView.diff.text,rawDiff);
+    }
+    assert.equal(storedObservation.diff.text,rawDiff,"public projection cannot alter the internal observation");
     assert.equal((await app.inject({ headers, url: `${path}/runtime/sessions/${sessionId}/inputs` })).statusCode, 200);
     assert.equal((await app.inject({ headers, url: `${path}/session-inputs/${inputRequestId}` })).statusCode, 200);
     assert.equal((await app.inject({ headers, url: `/api/projects/${randomUUID()}/session-inputs/${inputRequestId}` })).statusCode, 403);

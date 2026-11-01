@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelineMessage, timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -65,6 +66,11 @@ test("Session message entry distinguishes saving, execution and manual handoff",
         value = { status: "applied", operationId: command.operationId, entityId: command.messageId, version: 1 };
       }
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
+      else if (url.pathname.endsWith("/timeline")) {
+        const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length, -"/timeline".length));
+        if (postedMessage && key === keys.disabled) { status = 503; value = { message: "活动暂不可读" }; }
+        else value = timelinePage(key, { title: key === keys.disabled ? "关闭自动回复的会话" : key === keys.legacy ? "旧版只读会话" : key === keys.revoked ? "已撤销外部会话" : "外部会话" });
+      } else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname.endsWith("/messages")) {
         if (postedMessage && url.pathname.includes(encodeURIComponent(keys.disabled))) { status = 503; value = { message: "列表暂不可读" }; }
         else value = { items: [], nextCursor: null, metadata };
@@ -72,7 +78,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
         detailHeld = true; await new Promise<void>(resolve => { releaseDetail = resolve; });
         value = { message: postedMessage, processing: null, metadata };
       }
-      else if (url.pathname.startsWith(`${root}/session-work/`) && !url.pathname.endsWith("/changes"))
+      else if (url.pathname.startsWith(`${root}/session-work/`) && !url.pathname.endsWith("/changes") && !url.pathname.includes("/timeline/"))
         value = snapshot(decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length)), disabledReason);
       else if (url.pathname.includes("/recovery") || url.pathname.includes("/hosts/")) { status = 404; value = { message: "测试中不可用" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
@@ -92,42 +98,53 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭自动回复的会话" }).waitFor();
-  assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /未启用.*不会启动此会话/);
-  await page.getByText("消息处理规则", { exact: true }).first().click();
-  assert.equal(await page.getByText("保存能力：当前可保存待处理消息").count(), 1);
+  const readingScope = page.locator(".workspace-reading-scope");
+  await readingScope.locator("summary").click();
+  assert.match(await readingScope.innerText(), /自动处理：未启用.*不会启动此会话/);
+  assert.equal(await readingScope.getByText("消息先保存到原 Session 的待处理队列", { exact: false }).count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count() > 0, true);
   assert.equal(await page.getByLabel("消息内容").getAttribute("placeholder"), "给当前 Session 发消息…");
-  const composerBox = (await page.getByLabel("消息内容").boundingBox())!;
-  assert.ok(composerBox.height >= 96 && composerBox.height <= 180, "the desktop side composer has a readable multiline input");
-  assert.equal(await page.locator(".session-composer-host").evaluate(element => getComputedStyle(element).position), "static", "composer must not obscure the activity feed");
-  assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /配置变化后请点上方“重新读取”/);
+  const composer = page.getByLabel("消息内容");
+  const composerBox = (await composer.boundingBox())!;
+  assert.ok(composerBox.height >= 40 && composerBox.height <= 120, "the integrated composer is visible at its compact initial height");
+  await composer.fill("第一行\n第二行\n第三行\n第四行");
+  assert.ok((await composer.boundingBox())!.height > composerBox.height, "the composer grows to show multiline drafts");
+  await composer.fill("");
+  assert.equal(await page.locator(".session-composer-host").evaluate(element => getComputedStyle(element).position), "relative", "desktop composer stays in document flow below the activity feed");
   await fetch(`${base}/__fixture/update`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await page.getByRole("status").filter({ hasText: "本次重读确认" }).waitFor();
+  await readingScope.getByText(/本次重读确认/).waitFor();
+  assert.match(await readingScope.innerText(), /执行状态读于 .*配置变化后请点上方“重新读取”/,
+    "the observed execution capability explains when its persisted snapshot can go stale");
   await page.getByLabel("消息内容").fill("保存后的消息详情");
   await page.getByRole("button", { name: "保存待处理", exact: true }).click();
-  await page.getByText(/消息列表暂不可读取：列表暂不可读/).waitFor();
-  assert.equal(await page.getByText("没有已保存的普通消息。", { exact: true }).count(), 0);
+  await page.getByText(/活动暂不可读取：活动暂不可读/).waitFor();
+  const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
+  assert.equal(await timeline.locator("[data-workspace-entry]").count(), 0, "a failed reread does not invent a persisted conversation entry");
   assert.equal(detailHeld, false, "saving the new conversation turn does not force open a stale detail panel");
-  assert.equal(await page.getByText(/消息列表暂不可读取：列表暂不可读/).count(), 1);
-  assert.equal(await page.getByText("没有已保存的普通消息。", { exact: true }).count(), 0);
+  assert.equal(await page.getByText(/活动暂不可读取：活动暂不可读/).count(), 1);
+  assert.equal(await timeline.locator("[data-workspace-entry]").count(), 0);
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.legacy]);
   await page.getByRole("heading", { name: "旧版只读会话" }).waitFor();
   assert.equal(await page.getByText("保存后的消息详情", { exact: true }).count(), 0);
-  assert.match(await page.getByRole("status").filter({ hasText: "自动处理" }).innerText(), /暂不可核实.*不能预期自动回复/);
+  if (await readingScope.locator("summary").count()) {
+    if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
+  }
+  assert.match(await readingScope.innerText(), /暂不可核实.*不能预期自动回复/);
   assert.equal(await page.getByText("当前身份只有读取权限。").count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count(), 0);
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.manual]);
   await page.getByRole("heading", { name: "外部会话" }).waitFor();
-  assert.match(await page.getByRole("status").filter({ hasText: "外部会话" }).innerText(), /保存后仍需人工转交.*送达与已读分别记录/);
+  if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
+  assert.match(await readingScope.innerText(), /需人工转交.*不代表原会话已收到或阅读/);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count() > 0, true);
 
   await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
   await page.getByRole("heading", { name: "已撤销外部会话" }).waitFor();
-  await page.getByText("消息处理规则").click();
-  assert.match(await page.locator(".session-workspace-section").filter({ hasText: "对话" }).first().innerText(), /不能向当前外部会话保存或转交消息/);
+  if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
+  assert.match(await readingScope.innerText(), /不能向当前外部会话保存或转交消息/);
   assert.equal(await page.getByText("外部连接已撤销。", { exact: true }).count(), 1);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count(), 0);
 });
@@ -158,6 +175,10 @@ test("the authenticated receiver can record a read while its exact message Turn 
       if (url.pathname === "/api/session") value = { principal: { actorId: "receiver", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(keys.disabled)}`) value = snapshot(keys.disabled, "测试中不派发消息");
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(keys.disabled)}/timeline`) value = timelinePage(keys.disabled, {
+        title: "关闭自动回复的会话", pending: [timelineMessage(messageId, "Original running message", { state: mode === "queued" ? "pending" : "running", turnId: "original-turn" })],
+      });
+      else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname.endsWith("/messages")) value = { items: [message()], nextCursor: null, metadata };
       else if (url.pathname === `${root}/session-messages/${messageId}`) value = { message: message(), processing: processing(), metadata };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
@@ -181,16 +202,16 @@ test("the authenticated receiver can record a read while its exact message Turn 
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭自动回复的会话" }).waitFor();
-  const detail = page.locator(".session-message-detail");
+  const detail = page.locator(".workspace-inspector");
   for (const state of ["queued", "dispatching", "unknown", "otherActor", "otherSession"] as const) {
     await fetch(`${base}/__fixture/set?mode=${state}`);
-    await page.getByRole("button", { name: /Original running message/ }).click();
+    await page.getByRole("button", { name: "消息详情" }).click();
     await detail.waitFor();
     assert.equal(await detail.getByText("记录本人已读原消息", { exact: true }).count(), 0, `${state} cannot sign a read`);
-    await detail.getByRole("button", { name: "关闭", exact: true }).click();
+    await detail.getByRole("button", { name: "关闭活动详情" }).click();
   }
   await fetch(`${base}/__fixture/set?mode=running`);
-  await page.getByRole("button", { name: /Original running message/ }).click();
+  await page.getByRole("button", { name: "消息详情" }).click();
   const form = detail.locator(".command-disclosure").filter({ hasText: "记录本人已读原消息" });
   await form.waitFor({ timeout: 2000 });
   await form.locator("summary").click();

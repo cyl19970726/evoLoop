@@ -4,8 +4,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { CodexAppServerAdapter, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type CodexAppServerOptions } from "../src/index.js";
+
 import { mapWorkItem } from "../src/work-trace.js";
 import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runtime";
+
+test("native thread read permission failure keeps permission category without exposing its message", () => {
+  const error = new RuntimeServerError("thread/read", 7, -32000, "thread/read permission denied at /private/credential");
+  assert.equal(error.category, "permission_denied");
+  assert.equal(error.message.includes("/private/credential"), false);
+});
 
 const fixture = resolve(import.meta.dirname, "fixture.mjs");
 const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", model:"gpt-6-sol", sandbox: "danger-full-access", approvalPolicy: "never" };

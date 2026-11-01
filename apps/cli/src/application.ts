@@ -15,7 +15,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind", "hash", "asset-hash"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind", "hash", "asset-hash"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -74,6 +74,9 @@ const help = {
     "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
     "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
+    "work timeline KEY --project UUID [--source both|native|messages --limit 1..50 --cursor NATIVE_CURSOR --messages-cursor MESSAGES_CURSOR]",
+    "work item KEY ITEM_ID --project UUID --turn-id TURN_ID (selected public message or authorized tool detail)",
+    "work updates KEY --project UUID [--after LIVE_CURSOR] [--wait-ms 0..10000] (default 0; follow resetRequired)",
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
     "work leader --project UUID [--documents] [--closed] [--limit 1..100 --cursor CURSOR]",
     "work leader changes --project UUID [--cursor CURSOR --limit 1..100] (monotonic Task/Document change feed)",

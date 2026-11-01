@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const playwrightModule = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -19,6 +20,18 @@ const goalId = "00000000-0000-4000-8000-000000000006";
 const stageId = "00000000-0000-4000-8000-000000000007";
 const createdAt = "2026-10-25T00:00:00.000Z";
 const page = (items: unknown[]) => ({ items, nextCursor: null });
+const cachedSessionKey = `owned:${taskId}`;
+const sessionMetadata = { generatedAt: createdAt, sourceObservedAt: createdAt, partial: false, limitations: [] };
+const cachedSession = { key: cachedSessionKey, target: { kind: "owned", sessionId: taskId }, aliases: [], title: "布局回归 Session",
+  profile: null, kind: "owned", roles: [], membership: "current", membershipReason: "fixture", runtimeState: "ready", busy: false,
+  currentTask: null, latestBusinessRun: null, lastProgressAt: null,
+  capabilities: { observe: { available: false, reason: "fixture" }, send: { available: true, reason: null, mode: "owned-conversation" },
+    open: { available: false, reason: "fixture", ref: null }, interrupt: { available: false, reason: "fixture" }, close: { available: false, reason: "fixture" } },
+  source: { kind: "session", id: taskId, revision: null, evidence: "project-record", href: "" }, metadata: sessionMetadata };
+const cachedSessionResources = Object.fromEntries(["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"]
+  .map(key => [key, { value: null, unit: "", source: null, scope: "session", observedAt: null, interval: null, unavailableReason: "未记录" }]));
+const cachedSessionSnapshot = { session: cachedSession, observationCursor: "0", currentWork: null, assignments: [], roleTasks: [],
+  queue: [], results: [], questions: [], activity: [], resources: cachedSessionResources, metadata: sessionMetadata };
 const long = "夹具范围说明".repeat(24);
 const task = { projectId, id:taskId, version:8, currentRevisionId:taskId, title:"同一任务续跑", content:"任务正文", contentDocumentId:taskId,
   contentRevisionId:taskId, kind:"validation", acceptance:"有证据", owner:"owner", state:"in_progress" };
@@ -55,6 +68,13 @@ test("built Task page selects the current Loop, preserves manual history and fit
         }] : [],observations:[],closures:[]};
       }
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
+      else if (url.pathname === `${p}/session-work`) value = {items:[cachedSession],nextCursor:null,observationCursor:"0",metadata:sessionMetadata,
+        totals:{current:1,historical:0,unclassified:0},attention:{unansweredQuestions:0,pendingMessages:0,pendingAcceptance:null,unclassifiedSessions:0}};
+      else if (url.pathname === `${p}/session-work/changes`) value = {items:[],nextCursor:"0",hasMore:false,resetRequired:false,metadata:sessionMetadata};
+      else if (url.pathname === `${p}/session-work/${encodeURIComponent(cachedSessionKey)}`) value = cachedSessionSnapshot;
+      else if (url.pathname === `${p}/session-work/${encodeURIComponent(cachedSessionKey)}/timeline`)
+        value = timelinePage(cachedSessionKey, { title: cachedSession.title, cursor: "0" });
+      else if (url.pathname.endsWith("/timeline/updates")) value = {cursor:"0",resetRequired:false,entries:[],turns:[],freshness:"live",limitations:[]};
       else if (url.pathname === `${p}/tasks/${taskId}/revisions/${taskId}`) value = {
         revision:{...task,taskId,id:taskId,actorId:"owner",reason:"固定历史夹具",createdAt},basis:null,
       };
@@ -96,13 +116,48 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const base = `http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const browser = await chromium.launch({headless:true,...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH} : {})}); t.after(() => browser.close());
+  const baselinePage = await browser.newPage({viewport:{width:1280,height:720}});
+  await baselinePage.goto(`${base}/#/p/${projectId}/tasks/${taskId}?revision=${taskId}`);
+  await baselinePage.getByLabel("访问令牌").fill("fixture-token");
+  await baselinePage.getByRole("button",{name:"进入",exact:true}).click();
+  await baselinePage.getByRole("heading",{name:"固定历史任务修订"}).waitFor();
+  const taskShellBaseline = await baselinePage.locator(".workbench-layout").evaluate(element => ({
+    active: element.getAttribute("data-session-reader"),
+    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+    columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
+  }));
+  assert.equal(taskShellBaseline.active, "false", "a fresh Task page uses the standard shell");
   const pageBrowser = await browser.newPage({viewport:{width:1280,height:720}});
+  const pageErrors: string[] = [];
+  pageBrowser.on("pageerror", error => pageErrors.push(error.stack ?? error.message));
   await pageBrowser.clock.install();
-  await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}?revision=${taskId}`);
+  await pageBrowser.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(cachedSessionKey)}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
+  await pageBrowser.getByRole("heading",{name:"布局回归 Session"}).waitFor({timeout:5000}).catch(async () => {
+    assert.fail(`selected Session fixture did not render: route=${pageBrowser.url()}, errors=${pageErrors.join(" | ")}, body=${(await pageBrowser.locator("body").innerText()).slice(0,900)}`);
+  });
+  const readShell = async (target = pageBrowser) => target.locator(".workbench-layout").evaluate(element => ({
+    active: element.getAttribute("data-session-reader"),
+    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+    columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
+  }));
+  const sessionShell = await readShell();
+  assert.equal(sessionShell.active, "true", "a selected Session activates its reader layout");
+  assert.equal(sessionShell.header, "48px", "a selected Session uses its compact header");
+  assert.deepEqual(sessionShell.columns, ["88px", "256px"], "a selected Session uses its reader navigation grid");
+  const assertDefaultTaskShell = async () => {
+    const viewport = pageBrowser.viewportSize();
+    if (viewport) await baselinePage.setViewportSize(viewport);
+    const baseline = await readShell(baselinePage);
+    const shell = await readShell();
+    assert.deepEqual(shell, baseline,
+      `Task routes restore the fresh Task shell after a Session visit (initial=${JSON.stringify(taskShellBaseline)}, viewportBaseline=${JSON.stringify(baseline)}, current=${JSON.stringify(shell)})`);
+  };
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?revision=${taskId}`; },{projectId,taskId});
   const historicalPage = pageBrowser.locator(`[data-page-key="task:${taskId}:${taskId}::"]`);
   await historicalPage.getByRole("heading",{name:"固定历史任务修订"}).waitFor();
+  await assertDefaultTaskShell();
   await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=runtime`; },{projectId,taskId});
   await pageBrowser.getByRole("tab",{name:"运行与关联"}).waitFor();
   const panel = pageBrowser.getByRole("region",{name:"自动循环观察"});
@@ -134,10 +189,12 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await pageBrowser.evaluate(({projectId,otherTaskId}) => { location.hash = `#/p/${projectId}/tasks/${otherTaskId}?tab=runtime`; },{projectId,otherTaskId});
   const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"]`).getByRole("region",{name:"自动循环观察"});
   await nextPanel.getByText(/当前运行 44444444 关联循环 22222222/).waitFor();
+  await assertDefaultTaskShell();
   assert.match(await nextPanel.locator(".orch-loop-head h3").innerText(),/22222222/);
   assert.equal(await (await fetch(`${base}/__fixture/exact-run-reads`)).text(),"0", "hidden Delivery tab must not prefetch historical Runs");
   await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
   const currentTaskPage = pageBrowser.locator(`[data-page-key="task:${taskId}:::"]`);
+  await assertDefaultTaskShell();
   const currentRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}`);
   const currentOpenRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}[open]`);
   const runTitleClearsHeader = ({taskId,runId}:{taskId:string;runId:string}) => {

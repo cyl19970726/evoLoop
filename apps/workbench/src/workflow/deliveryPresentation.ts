@@ -1,5 +1,6 @@
 import type { Document, DocumentRevision } from "@evoloop/contracts";
 import { safeArtifactHref } from "../api.ts";
+import { isProjectRoute } from "../ui/returnRoute.ts";
 
 export interface DeliveryArtifactInput {
   artifactRef: string;
@@ -18,13 +19,15 @@ const knowledgeRoute = new RegExp(`^#/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid
 const evaluationRoute = new RegExp(`^#/p/([^/?#]+)/evaluations/${uuid}\\?revision=(${uuid})$`, "i");
 
 /** Only a fixed document route in the current project may be given a fetched title. */
-export function deliveryTarget(input: DeliveryArtifactInput, projectId: string): DeliveryTarget {
+export function deliveryTarget(input: DeliveryArtifactInput, projectId: string, sourceContext?: string): DeliveryTarget {
   const safe = safeArtifactHref(input.artifactRef, projectId);
   const match = safe && documentRoute.exec(safe);
   if (match) {
     if (decodeURIComponent(match[1]!) !== projectId || match[3]!.toLowerCase() !== input.artifactRevision.toLowerCase())
       return { kind: "fallback", label: "链接与交付固定修订不一致", href: null };
-    return { kind: "document", documentId: match[2]!, revisionId: match[3]!, href: safe! };
+    const targetHref = sourceContext && isProjectRoute(sourceContext, projectId)
+      ? `${safe}&${new URLSearchParams({ return: sourceContext })}` : safe!;
+    return { kind: "document", documentId: match[2]!, revisionId: match[3]!, href: targetHref };
   }
   if (safe) {
     const knowledge = knowledgeRoute.exec(safe);

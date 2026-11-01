@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -55,7 +56,9 @@ test("late recovery from an older snapshot cannot overwrite failure or a newer r
         snapshotReads++;
         if (snapshotReads === 2) { status = 503; value = { message: "较新快照失败" }; }
         else value = { ...snapshot, metadata: { ...metadata, generatedAt: new Date(Date.parse(stamp) + snapshotReads * 1000).toISOString() } };
-      } else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
+      } else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) value = timelinePage(sessionKey, { title: "恢复竞态会话" });
+      else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
+      else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
@@ -78,7 +81,7 @@ test("late recovery from an older snapshot cannot overwrite failure or a newer r
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "恢复竞态会话" }).waitFor();
-  await page.locator(".session-information:visible > summary").click();
+  await page.getByRole("button", { name: "会话详情" }).click();
   await waitCount("recoveryReads", 1); // Old recovery GET is still held.
 
   await page.evaluate('document.dispatchEvent(new Event("visibilitychange"));');

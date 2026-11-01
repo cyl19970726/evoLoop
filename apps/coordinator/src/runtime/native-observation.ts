@@ -4,7 +4,16 @@ import { NativeObservationService, reduceNativeObservation } from "@evoloop/core
 
 type ObservableRuntime = RuntimePort & { onDisconnect(listener: (reason: string) => void): () => void };
 type Entry = { value: NativeObservationRecord; sequence: number; dirty: boolean };
-export type NativeObservationView = Omit<NativeObservationRecord, "connectionId">;
+export type NativeObservationView = Omit<NativeObservationRecord, "connectionId" | "diff"> & {
+  diff: (NonNullable<NativeObservationRecord["diff"]> & { contentProtected?: boolean }) | null;
+};
+/** HTTP read projection only; the bridge and durable record keep their original content. */
+export function publicNativeObservationView(view: NativeObservationView | null,
+  allowRawReview: boolean): NativeObservationView | null {
+  if (!view || !view.diff || allowRawReview) return view;
+  return { ...view, diff: { ...view.diff, text: "",
+    contentProtected: view.diff.contentProtected === true || view.diff.text.length > 0 } };
+}
 const keyOf = (projectId: string, sessionId: string) => `${projectId}:${sessionId}`;
 
 /** Current-state coalescing inside the existing runner; no native history mirror or independent timer. */

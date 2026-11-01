@@ -6,9 +6,13 @@ import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import type { WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
+import type { UnitOfWork } from "@evoloop/contracts/ports";
+import type { SessionObservationService } from "@evoloop/core/session-observation";
 import { RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeRunner } from "../src/runtime/runner.js";
+import { SessionTimelineService } from "../src/session-timeline/index.js";
 import { currentSessionGrant } from "../src/orchestration/dynamic-admission.js";
 import { loopIntentId } from "../src/orchestration/runner.js";
 
@@ -803,6 +807,57 @@ test("transport disconnect closes admission; explicit recovery reconciles unknow
     assert.equal(recoveries, 2);
     assert.equal(instances.reduce((total, item) => total + item.starts, 0), 0);
   } finally { await runner.stop(); }
+});
+
+test("workspace listeners follow the owned adapter across explicit recovery",async()=>{
+  class WorkspaceRuntime extends FakeRuntime {
+    workspaceListeners=new Set<(event:WorkspaceRuntimeUpdate)=>void>();
+    onWorkspaceUpdate(listener:(event:WorkspaceRuntimeUpdate)=>void){this.workspaceListeners.add(listener);
+      return()=>this.workspaceListeners.delete(listener)}
+    emitWorkspace(event:WorkspaceRuntimeUpdate){for(const listener of this.workspaceListeners)listener(event)}
+  }
+  const instances:WorkspaceRuntime[]=[];
+  const principal:Principal={actorId,projectIds:[projectId],permissions:['read','write','review']};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],listRuntimeRuns:async()=>[],
+    getRuntimeSession:async()=>session} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>{const runtime=new WorkspaceRuntime();instances.push(runtime);
+    return runtime as unknown as RuntimePort&WorkspaceRuntime},workflow,trusted,principals:[principal],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  const uow={read:async(_project:string,fn:(reader:unknown)=>Promise<unknown>)=>fn({
+    getRuntimeSession:async()=>session,nativeInputs:{findSources:async()=>new Map()}})} as unknown as UnitOfWork;
+  const observation={snapshot:async()=>({session:{key:`owned:${session.id}`,
+    target:{kind:'owned',sessionId:session.id},title:'Fixture Session'}})} as unknown as SessionObservationService;
+  const timeline=new SessionTimelineService({uow,observation,runner});
+  const seen:string[]=[];const unsubscribe=runner.onWorkspaceUpdate(event=>seen.push(event.turnId??''));
+  const reasons:string[]=[];const unsubscribeDisconnect=runner.onWorkspaceDisconnect(reason=>reasons.push(reason));
+  const event=(turnId:string):WorkspaceRuntimeUpdate=>({projectId,sessionId:session.id,
+    threadId:session.nativeThreadId!,turnId,observedAt:new Date().toISOString(),kind:'turn',
+    turn:{id:turnId,state:'running',startedAt:null,completedAt:null,origin:null}});
+  const read=()=>timeline.updates(principal,projectId,`owned:${session.id}`);
+  try{
+    await runner.start();
+    const first=instances[0]!;first.emitWorkspace(event('turn-a'));
+    const live=await read();assert.equal(live.freshness,'live');assert.deepEqual(seen,['turn-a']);
+    first.disconnect('child exited');
+    assert.deepEqual(reasons,['child exited']);
+    await runner.recover();
+    assert.equal(reasons.length,2,'replacement resets the existing timeline subscription');
+    const second=instances[1]!;
+    const cold=await timeline.updates(principal,projectId,`owned:${session.id}`,live.cursor);
+    assert.notEqual(cold.freshness,'live');assert.equal(cold.resetRequired,true);
+    first.emitWorkspace(event('late-a'));assert.deepEqual(seen,['turn-a']);
+    second.emitWorkspace(event('turn-b'));
+    assert.deepEqual(seen,['turn-a','turn-b']);
+    const resumed=await read();assert.equal(resumed.freshness,'live');
+    assert.ok(resumed.turns.some(turn=>turn.id==='turn-b'));
+    unsubscribe();second.emitWorkspace(event('turn-c'));
+    assert.deepEqual(seen,['turn-a','turn-b']);
+    assert.ok((await read()).turns.some(turn=>turn.id==='turn-c'));
+    unsubscribeDisconnect();second.disconnect('second child exited');
+    assert.equal(reasons.length,2,'unsubscribed disconnect listener receives no later child event');
+    assert.equal(instances.reduce((total,runtime)=>total+runtime.starts,0),0);
+  }finally{unsubscribe();unsubscribeDisconnect();timeline.close();await runner.stop()}
 });
 
 test("creating-session approval receipt labels native identity unverified", async () => {

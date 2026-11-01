@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -52,6 +53,10 @@ test("late history from session A cannot enter session B and B can load while A 
         if (key === sessionA) { held = true; await new Promise<void>(resolve => { release = resolve; }); }
         value = { items: [activity(key)], nextCursor: null, metadata };
       } else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
+      else if (url.pathname.endsWith("/timeline")) {
+        const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length, -"/timeline".length));
+        value = timelinePage(key, { title: key === sessionA ? "会话甲" : "会话乙" });
+      } else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname.startsWith(`${root}/session-work/`) && !url.pathname.endsWith("/changes")) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length));
         value = snapshot(key);
@@ -73,6 +78,7 @@ test("late history from session A cannot enter session B and B can load while A 
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "会话甲" }).waitFor();
+  await page.getByRole("button", { name: "会话详情" }).click();
   await page.locator(".session-project-activity > summary").click();
   await page.getByRole("button", { name: "读取活动历史" }).click();
   for (let i = 0; i < 30 && await (await fetch(`${base}/__fixture/held`)).text() !== "true"; i++)
@@ -80,6 +86,7 @@ test("late history from session A cannot enter session B and B can load while A 
   assert.equal(await (await fetch(`${base}/__fixture/held`)).text(), "true");
   await page.evaluate(([project, key]) => { window.location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}&filter=all`; }, [projectId, sessionB]);
   await page.getByRole("heading", { name: "会话乙" }).waitFor({ timeout: 3000 });
+  await page.getByRole("button", { name: "会话详情" }).click();
   const activityB = page.locator(".session-project-activity:visible");
   if (await activityB.getAttribute("open") === null) await activityB.locator("> summary").click();
   const loadB = page.getByRole("button", { name: "读取活动历史" });

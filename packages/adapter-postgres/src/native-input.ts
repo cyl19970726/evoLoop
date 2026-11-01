@@ -50,6 +50,28 @@ export class PgNativeInputs implements NativeInputTransaction {
       taskId:row.task_id,taskRevisionId:row.task_revision_id}:{kind:'message',messageId:row.id,processingId:row.processing_id,
       operationId:row.operation_id,actorId:row.actor_id};
   }
+  async findSources(projectId:string,sessionId:string,turnIds:string[]):Promise<Map<string,NativeInputSource>>{
+    this.assert(projectId);
+    const ids=[...new Set(turnIds)];
+    if(ids.length>100)throw new RangeError('turn source page exceeds 100');
+    const result=new Map<string,NativeInputSource>();
+    if(!ids.length)return result;
+    const r=await this.client.query(`SELECT native_turn_id AS turn_id,'run' AS kind,run_id AS id,
+        operation_id,actor_id,task_id,task_revision_id,NULL::uuid AS processing_id
+      FROM runtime_run WHERE project_id=$1 AND session_id=$2 AND native_turn_id=ANY($3::text[])
+      UNION ALL
+      SELECT p.native_turn_id AS turn_id,'message' AS kind,m.message_id AS id,p.operation_id,
+        m.sender_actor_id AS actor_id,NULL::uuid AS task_id,NULL::uuid AS task_revision_id,p.processing_id
+      FROM session_message_processing p JOIN session_message m ON m.project_id=p.project_id AND m.message_id=p.message_id
+      WHERE p.project_id=$1 AND p.session_id=$2 AND p.native_turn_id=ANY($3::text[]) LIMIT 101`,[projectId,sessionId,ids]);
+    for(const row of r.rows){
+      if(result.has(row.turn_id))throw new DomainError('INPUT_SOURCE_AMBIGUOUS','Native Turn has multiple business sources');
+      result.set(row.turn_id,row.kind==='run'?{kind:'run',runId:row.id,operationId:row.operation_id,
+        actorId:row.actor_id,taskId:row.task_id,taskRevisionId:row.task_revision_id}:{kind:'message',
+        messageId:row.id,processingId:row.processing_id,operationId:row.operation_id,actorId:row.actor_id});
+    }
+    return result;
+  }
   async insert(v:NativeInputRecord):Promise<void>{
     this.assert(v.projectId);await this.client.query(`INSERT INTO session_native_input_request(project_id,input_request_id,session_id,connection_id,
       native_request_id,thread_id,turn_id,item_id,method,questions,is_blocking,supported,unavailable_reason,observed_at,

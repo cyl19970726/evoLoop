@@ -40,6 +40,13 @@ export class PgSessionMessages implements SessionMessageTransaction {
     const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.message_id=$2`,[this.projectId,id]);
     return r.rows[0]?message(r.rows[0]):null;
   }
+  async getSessionMessages(ids:string[]):Promise<SessionMessageRecord[]>{
+    const unique=[...new Set(ids)];
+    if(unique.length>100)throw new RangeError('message source page exceeds 100');
+    if(!unique.length)return[];
+    const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.message_id=ANY($2::uuid[])`,[this.projectId,unique]);
+    return r.rows.map(message);
+  }
   async listSessionMessages(target:SessionTarget,limit:number,cursor?:string):Promise<{items:SessionMessageRecord[];nextCursor:string|null}>{
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new RangeError('message limit must be 1..100');
     const key=target.kind==='owned'?'session_id':'link_id'; const value=target.kind==='owned'?target.sessionId:target.linkId;

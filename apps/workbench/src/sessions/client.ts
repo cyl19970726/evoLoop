@@ -3,6 +3,7 @@ import type { SessionProfileRecord, TaskSessionAssignment, SessionAssignmentPage
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { ObservationMetadata } from "@evoloop/contracts/session-work";
 import type { RuntimeWorkTrace } from "@evoloop/contracts/runtime";
+import type { SessionTimelinePage, WorkspaceEntry, WorkspaceLiveRead } from "@evoloop/contracts/session-timeline";
 import type { SessionRecoveryView } from "./recoveryPresentation";
 import { request, requestNullable } from "../api";
 
@@ -36,6 +37,12 @@ export function sessionClient(token: string, projectId: string) {
       get<SessionAssignmentPage<TaskSessionAssignment>>(`${base}/tasks/${part(taskId)}/assignment/history?${query({ limit: 50, cursor })}`, signal),
     messages: (key: string, cursor?: string, signal?: AbortSignal) =>
       get<{ items: SessionConversationItem[]; nextCursor: string | null; metadata: ObservationMetadata }>(`${base}/session-work/${part(key)}/messages?${query({ limit: 50, cursor })}`, signal),
+    timeline: (key: string, options: { cursor?: string; messagesCursor?: string; limit?: number; source?: "native" | "messages" | "both" } = {}, signal?: AbortSignal) =>
+      get<SessionTimelinePage>(`${base}/session-work/${part(key)}/timeline?${query({ limit: 25, ...options })}`, signal),
+    timelineItem: (key: string, turnId: string, itemId: string, signal?: AbortSignal) =>
+      get<WorkspaceEntry>(`${base}/session-work/${part(key)}/timeline/items/${part(itemId)}?${query({ turnId })}`, signal),
+    timelineUpdates: (key: string, after?: string, signal?: AbortSignal) =>
+      request<WorkspaceLiveRead>(token, `${base}/session-work/${part(key)}/timeline/updates?${query({ after })}`, 25000, { signal }),
     message: (id: string, signal?: AbortSignal) => get<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null; metadata: ObservationMetadata }>(`${base}/session-messages/${part(id)}`, signal),
     trace: (runId: string, cursor?: string, signal?: AbortSignal) =>
       get<RuntimeWorkTrace>(`${base}/runtime/runs/${part(runId)}/trace?${query({ cursor })}`, signal),

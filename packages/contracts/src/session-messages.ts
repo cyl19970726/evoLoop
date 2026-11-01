@@ -40,6 +40,7 @@ export interface SessionMessageDispatchGrant {
 }
 export interface SessionMessageReader {
   getSessionMessage(id: string): Promise<SessionMessageRecord | null>;
+  getSessionMessages?(ids: string[]): Promise<SessionMessageRecord[]>;
   listSessionMessages(target: SessionTarget, limit: number, cursor?: string): Promise<{ items: SessionMessageRecord[]; nextCursor: string | null }>;
   /** Optional batch read used to build a conversation page without N+1 requests. */
   listSessionMessageProcessing?(messageIds: string[]): Promise<SessionMessageProcessing[]>;

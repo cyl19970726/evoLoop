@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -22,7 +23,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-  let mode: "live" | "waiting" | "recentTool" | "stale" | "notLoaded" | "foreign" | "fail" |
+  let mode: "live" | "waiting" | "recentTool" | "stale" | "notLoaded" | "protected" | "foreign" | "fail" |
     "completed" | "failed" | "interrupted" | "completedWaiting" = "live";
   const observation = () => ({ projectId, sessionId: mode === "foreign" ? "other-session" : sessionId,
     threadId: "thread-1", version: 3, observedAt: stamp, lastEventAt: stamp,
@@ -37,7 +38,9 @@ test("native progress keeps source, freshness and cumulative usage separate from
       status: mode === "recentTool" ? "completed" : "inProgress", summary: "", truncated: false }],
     plan: mode === "notLoaded" ? null : { turnId: "turn-1", steps: [{ step: "读取资料", status: "completed" },
       { step: "整理结果", status: "inProgress" }], explanation: null, truncated: false, observedAt: stamp },
-    diff: mode === "notLoaded" ? null : { turnId: "turn-1", text: "src/example.ts +1", truncated: true, observedAt: stamp },
+    diff: mode === "notLoaded" ? null : mode === "protected"
+      ? { turnId: "turn-1", text: "", contentProtected: true, truncated: true, observedAt: stamp }
+      : { turnId: "turn-1", text: "src/example.ts +1", truncated: true, observedAt: stamp },
     usage: mode === "notLoaded" ? null : { turnId: "turn-1", total: { inputTokens: 100, cachedInputTokens: 40,
       outputTokens: 50, reasoningOutputTokens: 20, totalTokens: 150 },
       last: { inputTokens: 20, cachedInputTokens: 5, outputTokens: 10, reasoningOutputTokens: 3, totalTokens: 30 },
@@ -57,7 +60,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/set") { const next = url.searchParams.get("mode");
-      if (next === "live" || next === "waiting" || next === "recentTool" || next === "stale" || next === "notLoaded" || next === "foreign" || next === "fail" ||
+      if (next === "live" || next === "waiting" || next === "recentTool" || next === "stale" || next === "notLoaded" || next === "protected" || next === "foreign" || next === "fail" ||
         next === "completed" || next === "failed" || next === "interrupted" || next === "completedWaiting") mode = next;
       res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
@@ -68,6 +71,8 @@ test("native progress keeps source, freshness and cumulative usage separate from
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) {
         if (mode === "fail") { status = 503; value = { message: "进度读取失败" }; } else value = snapshot();
       } else if (url.pathname.endsWith("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) value = timelinePage(sessionKey, { title: "进度测试会话" });
+      else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
@@ -84,7 +89,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "进度测试会话" }).waitFor();
-  await page.locator(".session-information:visible > summary").click();
+  await page.getByRole("button", { name: "会话详情" }).click();
   const card = page.locator(".native-progress-card:visible");
   await card.getByText("运行中", { exact: true }).waitFor();
   await card.getByText("Tool call · 进行中").first().waitFor();
@@ -155,6 +160,12 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await card.getByText("原生会话尚未加载").waitFor();
   await card.getByText("输入 未提供 · 输出 未提供 · 总计 未提供", { exact: false }).waitFor();
+
+  await fetch(`${base}/__fixture/set?mode=protected`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await card.getByText("已观察到变更；内容需在受权原生历史核对").waitFor();
+  assert.equal(await card.getByText("src/example.ts +1", { exact: false }).count(), 0,
+    "the protected diff flag preserves the change notice without requiring or exposing diff text");
 
   await fetch(`${base}/__fixture/set?mode=foreign`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();

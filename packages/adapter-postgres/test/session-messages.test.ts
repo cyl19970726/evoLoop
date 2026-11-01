@@ -76,6 +76,9 @@ test('queued owned message blocks close until cancellation; a rejected close rep
   if(blocked.status==='rejected')assert.equal(blocked.code,'SESSION_BUSY');
   assert.equal((await workflow.getRuntimeSession(reviewer,projectId,targetSessionId)).state,'ready');
   assert.equal((await service.get(projectId,messageId)).state,'queued');
+  const batch=await uow.read(projectId,r=>r.sessionMessages!.getSessionMessages!([messageId,randomUUID()]));
+  assert.equal(batch.length,1);
+  assert.equal(batch[0]?.senderActorId,'sender');
   const cancelled=await workflow.execute(sender,{type:'session.message.cancel',projectId,
     operationId:randomUUID(),messageId,expectedVersion:1,reason:'Withdraw pending message'});
   assert.equal(cancelled.status,'applied');
