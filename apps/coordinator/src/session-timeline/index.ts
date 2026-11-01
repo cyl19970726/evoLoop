@@ -105,9 +105,21 @@ const safeEntry=(entry:WorkspaceEntry,allowDetail:boolean):WorkspaceEntry=>{
   return {...entry,origin:null,body:entry.kind==='plan'?bounded(entry.body):'',label:bounded(entry.label,120),
     truncated:entry.truncated||entry.kind==='plan'&&entry.body.length>16000};
 };
-const bufferEntry=(entry:WorkspaceEntry):WorkspaceEntry=>entry.kind==='message'&&entry.role==='input'
-  ? {...entry,body:'',origin:null,author:{kind:'native',id:null,label:'原生输入'},truncated:false}
-  : safeEntry(entry,false);
+const publicEntry=(entry:WorkspaceEntry,principal:Principal):WorkspaceEntry=>{
+  const projected=safeEntry(entry,false);
+  if(entry.kind!=='tool'||projected.kind!=='tool')return projected;
+  const authorized=principal.permissions.includes('read')&&principal.permissions.includes('review');
+  return {...projected,detailAvailable:authorized&&entry.detailAvailable,
+    detailReason:authorized?entry.detailReason:toolDetailDenied};
+};
+const bufferEntry=(entry:WorkspaceEntry):WorkspaceEntry=>{
+  if(entry.kind==='message'&&entry.role==='input')
+    return {...entry,body:'',origin:null,author:{kind:'native',id:null,label:'原生输入'},truncated:false};
+  const projected=safeEntry(entry,false);
+  // The shared buffer has no reader identity. Keep source availability, never the original payload.
+  return entry.kind==='tool'&&projected.kind==='tool'
+    ? {...projected,detailAvailable:entry.detailAvailable,detailReason:entry.detailReason}:projected;
+};
 const liveKey=(p:string,s:string,t:string)=>`${p}:${s}:${t}`;
 
 /** Project reads and exact owned binding checks occur on every request; the buffer grants no authority. */
@@ -266,7 +278,7 @@ export class SessionTimelineService {
         return this.projectInput(raw,source,source?.kind==='message'?associations.messages.get(source.messageId):undefined,
           raw.turnId?bindings.get(raw.turnId):undefined);
       }
-      return {...raw,origin,...(raw.kind==='message'&&raw.role==='assistant'?{
+      return {...publicEntry(raw,principal),origin,...(raw.kind==='message'&&raw.role==='assistant'?{
         author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})};
     });
     return {...live,entries,turns:live.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)})),
@@ -341,10 +353,8 @@ export class SessionTimelineService {
           if(projected.kind==='message'&&source?.kind==='message')displayed.add(source.messageId);
           return [projected];
         }
-        const entry=safeEntry(raw,false);
-        return [{...entry,...(entry.kind==='tool'?{detailAvailable:principal.permissions.includes('review')&&raw.kind==='tool'&&raw.detailAvailable,
-          detailReason:principal.permissions.includes('review')&&raw.kind==='tool'?raw.detailReason:
-            toolDetailDenied}:{}),
+        const entry=publicEntry(raw,principal);
+        return [{...entry,
           origin,...(entry.kind==='message'&&entry.role==='assistant'?{
             author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})}];
       });
