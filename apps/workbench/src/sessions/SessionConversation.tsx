@@ -119,7 +119,6 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   const detailTriggerRef = useRef<HTMLElement | null>(null);
   const detailCloseRef = useRef<HTMLButtonElement | null>(null);
   const detailFocusId = useRef<string | null>(null);
-  const detailDialogRef = useRef<HTMLElement | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -237,49 +236,11 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   }, [selected]);
   useEffect(() => {
     if (!selected) return;
-    const dialog = detailDialogRef.current;
-    const main = document.getElementById("workspace-main");
-    const isolated: HTMLElement[] = [];
-    if (dialog && main) {
-      let node: HTMLElement | null = dialog;
-      while (node && node !== main) {
-        const parent: HTMLElement | null = node.parentElement;
-        if (!parent) break;
-        for (const sibling of Array.from(parent.children) as HTMLElement[]) {
-          if (sibling !== node && !sibling.hasAttribute("inert") && !sibling.contains(dialog)) {
-            sibling.setAttribute("inert", "");
-            isolated.push(sibling);
-          }
-        }
-        node = parent;
-      }
-    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeDetail(); return; }
-      if (event.key !== "Tab") return;
-      const activeDialog = detailDialogRef.current;
-      if (!activeDialog) return;
-      const focusables = Array.from(activeDialog.querySelectorAll<HTMLElement>(
-        'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex]:not([tabindex="-1"])'))
-        .filter(element => {
-          if (!element.getClientRects().length) return false;
-          const closed = element.closest("details:not([open])");
-          return !closed || element.tagName === "SUMMARY" && element.parentElement === closed;
-        });
-      if (!focusables.length) return;
-      const active = document.activeElement;
-      const index = focusables.indexOf(active as HTMLElement);
-      event.preventDefault();
-      const next = index === -1
-        ? event.shiftKey ? focusables[focusables.length - 1]! : focusables[0]!
-        : focusables[(index + (event.shiftKey ? -1 : 1) + focusables.length) % focusables.length]!;
-      next.focus();
     };
     window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      for (const element of isolated) element.removeAttribute("inert");
-    };
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [selected]);
   useEffect(() => {
     const node = conversationScroll.current;
@@ -330,8 +291,8 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       </section>;
       })()}
     </div>
-    {selected && <section ref={detailDialogRef} className="session-message-detail" role="dialog" aria-modal="true" aria-label={`消息详情 · ${messageStateLabel[selected.message.state]}`}>
-      <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" ref={detailCloseRef} onClick={closeDetail}>关闭</button></div>
+    {selected && <section className="session-message-detail" role="region" aria-labelledby="session-message-detail-title">
+      <div className="panel-head"><h3 id="session-message-detail-title">消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" ref={detailCloseRef} onClick={closeDetail}>关闭</button></div>
       <p className="muted">发送 {date(selected.message.createdAt)} · 更新 {date(selected.message.updatedAt)} · 来源 {selected.message.senderActorId}</p>
       <MarkdownBody source={selected.message.content} identity={`message-detail-${selected.message.id}`} projectId={context.projectId} />
       {selected.processing?.response && <><h4>原会话回复</h4><MarkdownBody source={selected.processing.response} identity={`message-response-${selected.processing.id}`} projectId={context.projectId} /></>}
