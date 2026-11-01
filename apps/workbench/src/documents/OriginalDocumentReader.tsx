@@ -100,8 +100,8 @@ function download(name: string, data: Blob): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function OriginalDocumentReader({ token, projectId, revisionId, documentId, readingMode = false }: {
-  token: string; projectId: string; revisionId: string; documentId: string; readingMode?: boolean;
+export function OriginalDocumentReader({ token, projectId, revisionId, documentId, readingMode = false, continuous = false }: {
+  token: string; projectId: string; revisionId: string; documentId: string; readingMode?: boolean; continuous?: boolean;
 }) {
   const [storedOriginal, setOriginal] = useState<Original | null>(null);
   const original = storedOriginal?.revision.projectId === projectId && storedOriginal.revision.documentId === documentId && storedOriginal.revision.id === revisionId ? storedOriginal : null;
@@ -137,16 +137,9 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
     <p role="alert">资源不可用或未通过校验（{original.reason}）。请检查存储与登记状态。</p>
     <button onClick={() => setRefresh(v => v + 1)}>重新核对</button></section>;
   const mime = original.revision.mediaType;
-  return <section className="panel reading doc-original-reader"><div className="panel-head"><h2>{readingMode ? "完整报告" : "完整原件"}</h2>
-    <button onClick={() => download(original.revision.originalName,
-      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
-    <details className="doc-original-integrity"><summary>原件标识与校验</summary><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></details>
-    {original.revision.format === "html" ? <>{!readingMode && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
-      {preview ? <iframe key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
-        style={{ width: "100%", minHeight: readingMode ? "75vh" : 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
-      : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
-    <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>
-    {original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}>
+  const integrity = <><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></>;
+  const raw = <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>;
+  const assets = original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}>
       <span className="break-anywhere">{asset.path}<small>{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
       <span className="actions"><button onClick={() => { setAssetError(null); setAssetPreview(value => value === asset.path ? null : asset.path); }}
         aria-expanded={assetPreview === asset.path}> {assetPreview === asset.path ? "收起预览" : "预览"}</button>
@@ -157,6 +150,18 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
           : asset.mediaType === "text/css" ? <pre>{new TextDecoder().decode(bytes(asset.base64))}</pre>
           : <p>{assetError === asset.path ? "图片未能解码，请下载原件核对。" : "此资源格式暂不支持页面预览，可下载原件查看。"}</p>}
       </div>}
-    </li>; })}</ul></div>}
+    </li>; })}</ul></div>;
+  return <section className={`panel reading doc-original-reader${continuous ? " doc-html-continuous" : ""}`}><div className="panel-head"><h2>{readingMode ? "完整报告" : continuous ? "完整报告" : "完整原件"}</h2>
+    <button onClick={() => download(original.revision.originalName,
+      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
+    {!continuous && <details className="doc-original-integrity"><summary>原件标识与校验</summary>{integrity}</details>}
+    {original.revision.format === "html" ? <>{!readingMode && !continuous && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
+      {preview ? <iframe className="doc-html-frame" key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
+        style={{ width: "100%", minHeight: continuous ? undefined : readingMode ? "75vh" : 420, border: "1px solid #d8dfec", borderRadius: continuous ? 0 : 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
+      : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
+    {continuous ? <details className="doc-continuous-secondary">
+      <summary>原件信息、HTML 原文与配套资源{original.assets.length > 0 ? ` · ${original.assets.length} 项` : ""}</summary>
+      <div className="doc-continuous-secondary-body"><div className="doc-original-integrity">{integrity}</div>{raw}{assets}</div>
+    </details> : <>{raw}{assets}</>}
   </section>;
 }
