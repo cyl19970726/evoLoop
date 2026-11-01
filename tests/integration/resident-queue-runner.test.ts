@@ -119,8 +119,11 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
       content:'Wait until the original claim is accepted',acceptance:'Original Task is complete',owner:roleId});
     await apply({type:'task.start',projectId,operationId:randomUUID(),taskId:followingTaskId,expectedVersion:1,reason:'Seal dependent Task'});
   }
-  await apply({type:'runtime.session.reserve',projectId,operationId:randomUUID(),sessionId,roleId,
-    cwd:'/tmp/evoloop-queue-runner-test',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
+  const registrar:Principal={...controller,actorId:'session-registrar'};
+  const reservedSession=await workflow.execute(scenario==='normal'?registrar:controller,
+    {type:'runtime.session.reserve',projectId,operationId:randomUUID(),sessionId,roleId,
+      cwd:'/tmp/evoloop-queue-runner-test',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
+  assert.equal(reservedSession.status,'applied',JSON.stringify(reservedSession));
   await trusted.beginSessionCreate(projectId,sessionId);
   const nativeThreadId=`thread-${sessionId}`;
   await trusted.bindSession(projectId,sessionId,{owner:'evoloop-codex-app-server',projectId,sessionId,roleId,
@@ -129,6 +132,9 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
     VALUES($1,$2,$3,$4,$5,$6,'owned',now())`,
   [projectId,randomUUID(),roleId,sessionId,roleRevisionId,controller.actorId]);
   const task=(await workflow.getTask(controller,projectId,taskId)).task;
+  if(scenario==='normal')await apply({type:'task.assignment.set',projectId,operationId:randomUUID(),
+    taskId,expectedTaskVersion:task.version,expectedVersion:0,target:{kind:'owned',sessionId},
+    recipientActorId:businessActor,reason:'Lead fixed the receiving Session before queue dispatch'});
   await apply({type:'queue.create',projectId,operationId:randomUUID(),queueId,maxRuns:rework?4:1,
     reason:'One bounded smoke Run',entries:[{id:entryId,taskId,taskRevisionId:task.currentRevisionId,
       sessionId,roleId,dependsOn:[],consumerId:controller.actorId,useRequired:true,releaseRule:'accepted'},
@@ -149,7 +155,47 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
   assert.equal(runBefore.state,'requested');
   assert.equal(runBefore.operationId,attempt.operationId);
   assert.equal(runBefore.sessionId,sessionId);
-  assert.equal(runBefore.actorId,controller.actorId);
+  assert.equal(runBefore.actorId,scenario==='normal'?registrar.actorId:controller.actorId);
+  if(scenario==='normal'){
+    const dispatched=(await workflow.getTask(controller,projectId,taskId)).task;
+    assert.equal(dispatched.version,task.version+1);
+    assert.equal(runBefore.taskRevisionId,dispatched.currentRevisionId);
+    const pending=await uow.read(projectId,reader=>reader.sessionAssignments!.getTaskSessionAssignment(taskId));
+    assert.equal(pending?.state,'assigned');
+    assert.equal(pending?.ack,null);
+    assert.equal(pending?.taskRevisionId,dispatched.currentRevisionId,
+      'the existing workspace acknowledgement action stays available after dispatch');
+    assert.equal(pending?.actorId,controller.actorId,'assignment history attributes the queue claimant');
+    const recipient:Principal={actorId:businessActor,projectIds:[projectId],permissions:['read','write']};
+    const ack={type:'task.assignment.acknowledge' as const,projectId,operationId:randomUUID(),
+      taskId,expectedTaskVersion:dispatched.version,expectedVersion:pending!.version,
+      evidence:'Recipient read the same fixed Task after queue dispatch'};
+    const wrongActor=await workflow.execute(controller,{...ack,operationId:randomUUID()});
+    assert.equal(wrongActor.status==='rejected'?wrongActor.code:null,'RECIPIENT_MISMATCH');
+    const receipt=await workflow.execute(recipient,ack);
+    assert.equal(receipt.status,'applied',JSON.stringify(receipt));
+    assert.deepEqual(await workflow.execute(recipient,ack),receipt,'the original operation replays idempotently');
+    const accepted=await uow.read(projectId,reader=>reader.sessionAssignments!.getTaskSessionAssignment(taskId));
+    assert.equal(accepted?.taskRevisionId,runBefore.taskRevisionId);
+    assert.equal(accepted?.ack?.actorId,businessActor);
+    const history=await uow.read(projectId,reader=>reader.sessionAssignments!.listTaskSessionAssignmentHistory(taskId,10));
+    assert.equal(history.items.find(item=>item.version===1)?.taskRevisionId,task.currentRevisionId);
+    assert.equal(history.items.find(item=>item.version===2)?.ack,null);
+    const changedTaskId=randomUUID();
+    await apply({type:'task.create',projectId,operationId:randomUUID(),taskId:changedTaskId,
+      title:'Changed assignment source',content:'Original requirement',acceptance:'Original criterion',owner:roleId});
+    await apply({type:'task.assignment.set',projectId,operationId:randomUUID(),taskId:changedTaskId,
+      expectedTaskVersion:1,expectedVersion:0,target:{kind:'owned',sessionId},
+      recipientActorId:businessActor,reason:'Assign before a real requirement change'});
+    await apply({type:'task.update',projectId,operationId:randomUUID(),taskId:changedTaskId,
+      expectedVersion:1,title:'Changed assignment source',content:'Revised requirement',
+      acceptance:'Original criterion',owner:roleId,reason:'User changed the actual requirement'});
+    const changedAck=await workflow.execute(recipient,{...ack,operationId:randomUUID(),
+      taskId:changedTaskId,expectedTaskVersion:2,expectedVersion:1});
+    assert.equal(changedAck.status==='rejected'?changedAck.code:null,'BASELINE_CHANGED');
+    assert.equal((await uow.read(projectId,reader=>reader.sessionAssignments!
+      .getTaskSessionAssignment(changedTaskId)))?.state,'assigned');
+  }
   assert.deepEqual(await uow.read(projectId,reader=>reader.getClaimedQueueAcceptanceForTask!(taskId)),
     {consumerId:controller.actorId,runId:attempt.runId});
   assert.equal(await uow.read(projectId,reader=>reader.getClaimedQueueAcceptanceForTask!(randomUUID())),null);
@@ -299,7 +345,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
     };
   }
   const makeRunner=()=>new RuntimeRunner({runtimeFactory:()=>fake as unknown as RuntimePort & FakeManagedRuntime,
-    workflow,trusted,principals:[controller],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,
+    workflow,trusted,principals:[controller,registrar],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,
     cliEntryForRun:async()=>({command:'/private/fixture-cli',actorId:businessActor})});
   const runner=makeRunner();
   try{
@@ -308,7 +354,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
     const nativeStart=fake.starts[0]!;
     assert.equal(nativeStart.binding.sessionId,sessionId);
     assert.equal(nativeStart.binding.nativeThreadId,nativeThreadId);
-    assert.equal(nativeStart.binding.resumeProfile?.actorId,controller.actorId);
+    assert.equal(nativeStart.binding.resumeProfile?.actorId,scenario==='normal'?registrar.actorId:controller.actorId);
     assert.equal(nativeStart.operationId,attempt.operationId);
     assert.match(nativeStart.input,new RegExp(`^\\[evoloop-run-operation:${attempt.operationId}\\]`));
     assert.match(nativeStart.input,/# 任务：Build fixed artifact/);

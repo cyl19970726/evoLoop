@@ -154,7 +154,7 @@ test('official Task and Run lifecycle releases A only after current consumer acc
     assert.equal(ordinary.status,'rejected');if(ordinary.status==='rejected')assert.equal(ordinary.code,'QUEUE_OCCUPIED');
     await uow.transaction(p,async tx=>{const reserved=await reserveRuntime({tx,principal,now:new Date().toISOString(),nextId:randomUUID,hash,
       command:{type:'runtime.run.reserve',projectId:p,operationId:runOperationId,runId,taskId:taskA,sessionId:session,expectedVersion:task.version,input:'Execute fixed Task A'},
-      queueClaim:{claimId,runId,operationId:runOperationId,taskId:taskA,sessionId:session}});
+      queueClaim:{claimId,runId,operationId:runOperationId,taskId:taskA,sessionId:session,actorId:principal.actorId}});
       await tx.insertOperation({projectId:p,id:runOperationId,actorId:'lead',commandHash:hash('queue fixture'),
         commandType:'queue.claim',result:reserved.result,createdAt:new Date().toISOString()});});
     await runtime.beginDispatch(p,runId);const stored=(await uow.read(p,r=>r.getRuntimeRun(runId)))!;
