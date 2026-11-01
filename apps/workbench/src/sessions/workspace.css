@@ -194,6 +194,7 @@
   .session-workspace{display:flex;flex-direction:column;height:calc(100dvh - 120px);overflow:hidden}
   .session-workspace .session-detail-header,.session-workspace .session-context-band,.session-workspace .session-workspace-tabs{flex-shrink:0}
   .session-workspace .session-conversation{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:0;padding:18px 20px 0;border-top:0;border-radius:0 0 5px 5px}
+  .session-workspace .session-conversation{overflow:hidden}
   .session-workspace .session-conversation .session-conversation-scroll{flex:1;min-height:0;max-height:none;overflow-y:auto}
   .session-workspace .session-conversation .session-composer-host{flex-shrink:0;position:static;margin:0;padding:10px 0 0;border-top:1px solid #e2e7ef}
   .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:64px;max-height:180px}
