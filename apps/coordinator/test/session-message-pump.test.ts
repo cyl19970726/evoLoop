@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import type { RuntimeSessionRecord } from '@evoloop/contracts';
+import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import type { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
@@ -16,6 +17,9 @@ const session=(id:string):RuntimeSessionRecord=>({projectId,id,roleId:'role',cwd
 const message=(id:string,sessionId:string,state:'unknown'|'processing'|'queued'):SessionMessageRecord=>({projectId,id,operationId:randomUUID(),
   target:{kind:'owned',sessionId},senderActorId:'sender',content:'Hello',context:null,replyToMessageId:null,state,
   version:2,blockedReason:null,readReceipt:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+type ObservedTurn=Pick<NativeObservationRecord,'threadId'|'freshness'|'status'|'currentTurn'|'observedAt'>;
+const observedTurn=(sessionId:string):ObservedTurn=>({threadId:`thread-${sessionId}`,freshness:'live',status:'active',
+  observedAt:'2026-11-01T13:05:50.000Z',currentTurn:{id:'turn-exact',status:'inProgress',source:null,startedAt:1}});
 
 test('bounded rotating pending pages eventually visit over ten thousand unresolved Sessions',async()=>{
   const messages=Array.from({length:10080},()=>message(randomUUID(),randomUUID(),'unknown'));
@@ -87,12 +91,12 @@ test('an exact live bound Turn prevents a transient history miss and settles whe
     settle:async(_project:string,_message:string,_turn:unknown,response:string)=>{settled++;assert.equal(response,'Done');}
   } as unknown as SessionMessageService;
   const runtime={isReady:()=>true,registerBinding:async()=>{},
+    inspect:async()=>({thread:{status:{type:'active'}}}),
     listTurns:async()=>({data:history,nextCursor:null}),
     listItems:async()=>({data:[{id:'answer',type:'agentMessage',phase:'final_answer',text:'Done'}],nextCursor:null})};
   const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},
-    nativeTurn:()=>({threadId:`thread-${target}`,freshness:'live',
-      currentTurn:{id:'turn-exact',status:'inProgress',source:null,startedAt:1}})});
+    nativeTurn:()=>observedTurn(target),now:()=>Date.parse('2030-01-01T00:00:00.000Z')});
   await pump.tick();
   assert.deepEqual([unknown,settled],[0,0]);
   history=[{id:'turn-exact',status:'completed',completedAtUtc:new Date().toISOString()}];
@@ -102,7 +106,7 @@ test('an exact live bound Turn prevents a transient history miss and settles whe
 
 for(const scenario of [
   {name:'no current observation',observed:null},
-  {name:'stale observation',observed:{threadId:'different',freshness:'stale' as const}},
+  {name:'stale observation',observed:'stale'},
   {name:'different Turn',observed:{threadId:'same',freshness:'live' as const}},
   {name:'same Turn with unknown status',observed:{threadId:'same',freshness:'live' as const}}
 ]){
@@ -114,12 +118,12 @@ for(const scenario of [
       processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}),
       markUnknown:async()=>{unknown++;}
     } as unknown as SessionMessageService;
-    const runtime={isReady:()=>true,registerBinding:async()=>{},
+    const runtime={isReady:()=>true,registerBinding:async()=>{},inspect:async()=>({thread:{status:{type:'active'}}}),
       listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
-    let observed:null|{threadId:string;freshness:'live'|'stale';currentTurn?:{id:string;status:string}}=
-      scenario.observed as never;
-    if(scenario.name==='different Turn')observed={threadId:`thread-${target}`,freshness:'live',currentTurn:{id:'turn-other',status:'inProgress'}};
-    if(scenario.name==='same Turn with unknown status')observed={threadId:`thread-${target}`,freshness:'live',currentTurn:{id:'turn-exact',status:'unknown'}};
+    let observed:ObservedTurn|null=scenario.observed==='stale'?{...observedTurn(target),freshness:'stale'}:
+      scenario.observed===null?null:observedTurn(target);
+    if(scenario.name==='different Turn')observed={...observedTurn(target),currentTurn:{...observedTurn(target).currentTurn!,id:'turn-other'}};
+    if(scenario.name==='same Turn with unknown status')observed={...observedTurn(target),currentTurn:{...observedTurn(target).currentTurn!,status:'unknown'}};
     const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
       canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},nativeTurn:()=>observed});
     await pump.tick();
@@ -143,6 +147,44 @@ test('an unbound dispatching message cannot use another live Turn as proof',asyn
       currentTurn:{id:'turn-other',status:'inProgress',source:null,startedAt:1}})});
   await pump.tick();
   assert.equal(unknown,1);
+});
+
+test('a thread systemError or idle state stops the live-history deferral',async()=>{
+  for(const threadStatus of ['systemError','idle']){
+    const target=randomUUID(),m=message(randomUUID(),target,'processing');
+    let unknown=0;
+    const service={pending:async()=>[m],session:async()=>session(target),
+      processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}),
+      markUnknown:async()=>{unknown++;}} as unknown as SessionMessageService;
+    const runtime={isReady:()=>true,registerBinding:async()=>{},
+      inspect:async()=>({thread:{status:{type:threadStatus}}}),
+      listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+    const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+      canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},nativeTurn:()=>observedTurn(target)});
+    await pump.tick();
+    assert.equal(unknown,1,threadStatus);
+  }
+});
+
+test('terminal observations defer only for a bounded history visibility window',async()=>{
+  for(const status of ['completed','failed','interrupted'] as const){
+    const target=randomUUID(),m=message(randomUUID(),target,'processing');
+    let unknown=0,now=Date.parse('2026-11-01T13:05:50.000Z')+10_000;
+    const service={pending:async()=>[m],session:async()=>session(target),
+      processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}),
+      markUnknown:async()=>{unknown++;}} as unknown as SessionMessageService;
+    const runtime={isReady:()=>true,registerBinding:async()=>{},
+      inspect:async()=>({thread:{status:{type:status==='completed'?'idle':'active'}}}),
+      listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+    const evidence={...observedTurn(target),currentTurn:{...observedTurn(target).currentTurn!,status}};
+    const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+      canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},nativeTurn:()=>evidence,now:()=>now});
+    await pump.tick();
+    assert.equal(unknown,0,status);
+    now+=21_000;
+    await pump.tick();
+    assert.equal(unknown,1,status);
+  }
 });
 
 test('admission denial stops scheduling and native qualification before any processing',async()=>{

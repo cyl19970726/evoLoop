@@ -8,11 +8,13 @@ import { RuntimeProtocolError, RuntimeUnknownError } from '@evoloop/adapter-code
 import { bindingOf, finalMessages } from '../runtime/runner.js';
 
 type MessageRuntime={isReady():boolean;registerBinding(binding:RuntimeBinding):Promise<void>;
+  inspect?(binding:RuntimeBinding):Promise<unknown>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   listTurns(binding:RuntimeBinding,cursor?:string):Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding:RuntimeBinding,turnId:string,cursor?:string):Promise<RuntimePage<unknown>>};
 const marker=(operationId:string)=>`[evoloop-message-operation:${operationId}]`;
+const TERMINAL_HISTORY_GRACE_MS=30_000;
 const object=(v:unknown):Record<string,unknown>|null=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:null;
 const textOf=(v:unknown):string=>{const x=object(v);if(typeof x?.text==='string')return x.text;
   return Array.isArray(x?.content)?x.content.map(p=>object(p)?.text).filter(p=>typeof p==='string').join('\n'):'';};
@@ -26,7 +28,8 @@ async function collect<T>(load:(cursor?:string)=>Promise<RuntimePage<T>>,maxPage
 export interface SessionMessagePumpDeps {
   service:SessionMessageService;runtime():MessageRuntime;projects():Promise<string[]>;
   /** Current in-process native notification state for one exact Session, if available. */
-  nativeTurn?(projectId:string,sessionId:string):Pick<NativeObservationRecord,'threadId'|'freshness'|'currentTurn'>|null;
+  nativeTurn?(projectId:string,sessionId:string):Pick<NativeObservationRecord,'threadId'|'freshness'|'status'|'currentTurn'|'observedAt'>|null;
+  now?():number;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
   canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
@@ -121,13 +124,27 @@ export class SessionMessagePump {
     let turn=first.data.find(t=>t.id===nativeTurnId);
     if(!turn&&first.nextCursor)turn=(await runtime.listTurns(binding,first.nextCursor)).data.find(t=>t.id===nativeTurnId);
     if(!turn){
-      const observed=this.deps.nativeTurn?.(message.projectId,session.id);
-      if(nativeTurnId&&observed?.freshness==='live'&&observed.threadId===binding.nativeThreadId&&
-        observed.currentTurn?.id===nativeTurnId&&observed.currentTurn.status!=='unknown')return;
+      if(nativeTurnId&&await this.mayDeferMissingBoundTurn(message.projectId,session.id,binding,nativeTurnId))return;
       await this.deps.service.markUnknown(message.projectId,message.id,'Bound native Turn is not currently readable');return;
     }
     if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status))return;
     const items=await collect(cursor=>runtime.listItems(binding,turn.id,cursor),10);
     await this.deps.service.settle(message.projectId,message.id,turn,finalMessages(items).join('\n\n')||null);
+  }
+  private async mayDeferMissingBoundTurn(projectId:string,sessionId:string,binding:RuntimeBinding,nativeTurnId:string):Promise<boolean>{
+    const observed=this.deps.nativeTurn?.(projectId,sessionId);
+    if(observed?.freshness!=='live'||observed.threadId!==binding.nativeThreadId||
+      observed.currentTurn?.id!==nativeTurnId||observed.status==='systemError')return false;
+    try{
+      const inspected=object(await this.deps.runtime().inspect?.(binding));
+      const threadStatus=String(object(object(inspected?.thread)?.status)?.type??'');
+      if(threadStatus==='systemError'||threadStatus==='notLoaded')return false;
+      if(observed.currentTurn.status==='inProgress')
+        return (observed.status===null||observed.status==='active')&&threadStatus==='active';
+      if(!['completed','failed','interrupted'].includes(observed.currentTurn.status))return false;
+      const observedAt=Date.parse(observed.observedAt);
+      return Number.isFinite(observedAt)&&
+        (this.deps.now?.()??Date.now())-observedAt<=TERMINAL_HISTORY_GRACE_MS;
+    }catch{return false;}
   }
 }
