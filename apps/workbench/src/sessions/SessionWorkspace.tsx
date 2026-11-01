@@ -76,6 +76,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [open, setOpen] = useState<string[]>(() => viewFromHash(sessionKey).open);
   const [informationOpen, setInformationOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [contextCollapsed, setContextCollapsed] = useState(() => window.innerHeight < 1000);
   const [error, setError] = useState("");
   const [confirmedRead, setConfirmedRead] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -284,16 +285,25 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     </header>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     {closeOpen && <div id="session-close-panel"><SessionClosePanel context={context} snapshot={current} currentRead={active && !loading && !error && confirmedRead === readKey} onReadAgain={() => setReadAgain(value => value + 1)} /></div>}
-    <div className="session-context-band">
-      <section className="session-current-work"><div>
-        <small>{work ? "当前任务" : activeBusy ? "当前活动" : idleResult ? "最近已读关联交付 · 当前任务未确认" : "当前状态"}</small>
-        <strong>{work ? <a href={taskHref(work.id)}>{work.title}</a> : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
-          : idleResult ? <a href={taskHref(idleResult.taskId)}>{idleResult.taskTitle || "任务标题未提供"}</a> : idleSummary}</strong>
-        <span>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
-          : idleResult ? `技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)} · 交付 ${date(idleResult.submittedAt)}${idleResult.latestUse ? ` · 使用观察 ${date(idleResult.latestUse.createdAt)}` : ""}${current.metadata.partial ? " · 来源仅展示已读范围" : ""}`
-            : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
-      </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
-      <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>思考强度</dt><dd>未同步</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>}</section>
+    <div className={`session-context-band ${contextCollapsed ? "collapsed" : ""}`}>
+      <button type="button" className="session-context-toggle" aria-expanded={!contextCollapsed} onClick={() => setContextCollapsed(value => !value)}>
+        <span>{contextCollapsed ? "▸" : "▾"}</span>
+        <small>{work ? "当前任务" : activeBusy ? "当前活动" : idleResult ? "最近已读关联交付" : "当前状态"}</small>
+        <strong>{work ? work.title : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
+          : idleResult ? (idleResult.taskTitle || "任务标题未提供") : idleSummary}</strong>
+        {session.kind === "owned" ? <span className="session-context-kind">受管</span> : <span className="session-context-kind">外部</span>}
+      </button>
+      {!contextCollapsed && <div className="session-context-detail">
+        <section className="session-current-work"><div>
+          <small>{work ? "当前任务" : activeBusy ? "当前活动" : idleResult ? "最近已读关联交付 · 当前任务未确认" : "当前状态"}</small>
+          <strong>{work ? <a href={taskHref(work.id)}>{work.title}</a> : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
+            : idleResult ? <a href={taskHref(idleResult.taskId)}>{idleResult.taskTitle || "任务标题未提供"}</a> : idleSummary}</strong>
+          <span>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
+            : idleResult ? `技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)} · 交付 ${date(idleResult.submittedAt)}${idleResult.latestUse ? ` · 使用观察 ${date(idleResult.latestUse.createdAt)}` : ""}${current.metadata.partial ? " · 来源仅展示已读范围" : ""}`
+              : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
+        </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
+        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>思考强度</dt><dd>未同步</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>}</section>
+      </div>}
     </div>
     {failedRun && <p className="session-run-attention" role="status">最近运行{failedRun.state === "failed" ? "失败" : failedRun.state === "interrupted" ? "已中断" : "结果未知"}；{recentRunHref ? <>请先<a href={recentRunHref}>核对原 Run</a>和当前任务，再决定下一步。</> : "原 Run 缺少可核对的 Task 关联，暂不能直达；请重新读取会话并核对任务运行记录。"}</p>}
     {(session.runtimeState === "unknown" || session.runtimeState === "closed" || recoveryRead.status === "failed") && session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={`${href(context.projectId, "runtime")}?view=execution`} />}

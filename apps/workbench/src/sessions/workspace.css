@@ -89,7 +89,6 @@
 .session-workspace .session-workspace-actions{align-items:center;flex-wrap:nowrap;margin-top:5px}
 .session-workspace .session-workspace-actions button{min-height:40px;padding:8px 13px;border:1px solid #d7e0ed;border-radius:5px;background:#fff;color:#344b72;font-size:13px}
 .session-workspace .session-workspace-actions button:first-child{color:#2457c5;border-color:#b8c9eb}
-.session-workspace .session-context-band{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(310px,1fr);gap:12px;align-items:stretch;margin-bottom:10px}
 .session-workspace .session-current-work{align-items:flex-start;margin:0;padding:18px 20px;border-color:#d7e2f4;border-radius:5px;background:#f5f8ff}
 .session-workspace .session-current-work small{font-size:11px;color:#667892}
 .session-workspace .session-current-work strong{font-size:18px;line-height:1.45}
@@ -188,6 +187,19 @@
 .session-support h2{font-size:15px;margin:0 0 8px;color:#22385f}
 .session-support p,.session-support li{font-size:12px}
 .session-workspace>.session-workspace-freshness{margin-top:10px;color:#8490a3;font-size:11px}
+
+/* 页首紧凑横带：可折叠，把高度让给活动。 */
+.session-context-band{border:1px solid #dfe5ee;border-radius:6px;background:#fff;overflow:hidden}
+.session-context-toggle{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;border:0;background:none;cursor:pointer;text-align:left;font-size:13px;color:#33496d}
+.session-context-toggle:hover{background:#f6f9ff}
+.session-context-toggle>span:first-child{font-size:10px;color:#8490a3;width:12px}
+.session-context-toggle>small{color:#7b879b;font-size:11px;flex-shrink:0}
+.session-context-toggle>strong{flex:1;min-width:0;font-size:13px;color:#22385f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-context-kind{padding:2px 6px;border-radius:3px;background:#f0f3f8;color:#60728f;font-size:10px;flex-shrink:0}
+.session-context-band.collapsed .session-context-toggle{border-bottom:0}
+.session-context-detail{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;border-top:1px solid #e5eaf1}
+.session-context-detail>section{padding:14px 16px;border-top:0}
+.session-context-detail>section+section{border-left:1px solid #e5eaf1}
 
 /* 活动与对话为主工作容器：页首固定、消息内部滚动、输入区固定底部。 */
 @media(min-width:851px){
