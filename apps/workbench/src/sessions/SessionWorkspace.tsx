@@ -19,6 +19,7 @@ import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
 import { SessionConversation } from "./SessionConversation";
+import { BusinessRunReply } from "./BusinessRunReply";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results";
@@ -271,6 +272,15 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const currentAssignment = current.assignments.find(item => item.task.id === work?.id && !item.stale && item.assignment.state !== "released");
   const recentResult = latestSessionResult(current.results);
   const recentRunHref = session.latestBusinessRun ? observedRunTaskLink(session.latestBusinessRun, taskHref) : null;
+  const latestBusinessRun = session.latestBusinessRun;
+  const businessRunTaskTitle = latestBusinessRun?.taskId
+    ? (work?.id === latestBusinessRun.taskId ? work.title
+      : current.roleTasks.find(item => item.id === latestBusinessRun.taskId)?.title
+      ?? current.queue.find(item => item.taskId === latestBusinessRun.taskId)?.taskTitle
+      ?? current.assignments.find(item => item.task.id === latestBusinessRun.taskId)?.task.title
+      ?? null)
+    : null;
+  const businessRunIsCurrent = !!latestBusinessRun?.taskId && work?.id === latestBusinessRun.taskId;
   const failedRun = session.latestBusinessRun && ["failed", "interrupted", "unknown"].includes(session.latestBusinessRun.state)
     ? session.latestBusinessRun : null;
   const executionProfile = recoveryRead.status === "ready" ? recoveryRead.view.executionProfile : null;
@@ -323,6 +333,13 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     </details>
     {tab === "activity" && <>
       {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} taskHref={taskHref} section="questions" />}
+      {session.kind === "owned" && latestBusinessRun?.taskId && <BusinessRunReply
+        key={`${session.key}:${latestBusinessRun.id}:${latestBusinessRun.updatedAt}`}
+        token={context.token} projectId={context.projectId}
+        run={latestBusinessRun}
+        taskTitle={businessRunTaskTitle}
+        taskHref={latestBusinessRun.taskId ? taskHref(latestBusinessRun.taskId) : null}
+        current={businessRunIsCurrent} />}
       {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} onApplied={() => setReadAgain(value => value + 1)}>
       </SessionConversation>}
       <details className="session-project-activity"><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}
