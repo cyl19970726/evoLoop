@@ -24,9 +24,103 @@ test('standard pages span 21 turns and over 100 items without skipping source ID
     throw new Error(method);
   });
   const ids:string[]=[];let cursor:string|null=null;let pages=0;
-  do{const page=await reader.read(binding,{limit:50,...(cursor?{cursor}:{})});ids.push(...page.entries.map(e=>e.nativeItemId!));cursor=page.nextCursor;pages++;assert.equal(page.method,'items');}while(cursor);
+  do{const page=await reader.read(binding,{limit:50,...(cursor?{cursor}:{})});ids.push(...page.entries.map(e=>e.nativeItemId!));cursor=page.nextCursor;pages++;assert.equal(page.method,'items');assert.equal(page.itemEnumerationComplete,cursor===null);}while(cursor);
   assert.equal(ids.length,141);assert.equal(new Set(ids).size,141);assert.equal(reads,pages);assert.ok(pages>=3);
   await assert.rejects(()=>reader.read({...binding,sessionId:'other'},{cursor:'bogus'}),/invalid cursor/);
+});
+
+test('complete Item enumeration is independent of a long public reply preview',async()=>{
+  const operationId='11111111-1111-1111-1111-111111111111';
+  const reader=fake(method=>{
+    if(method==='thread/read')return meta();
+    if(method==='thread/items/list')return {data:[
+      wrap('turn',{id:'answer',type:'agentMessage',phase:'final_answer',text:'x'.repeat(5000)}),
+      wrap('turn',{id:'input',type:'userMessage',content:[{type:'text',text:`[evoloop-message-operation:${operationId}]\nprivate envelope`}]}),
+    ],nextCursor:null};
+    if(method==='thread/turns/list')return {data:[{id:'turn',status:'completed',startedAt:1,completedAt:2}],nextCursor:null};
+    assert.fail(method);
+  });
+  const page=await reader.read(binding,{turnId:'turn'});
+  assert.equal(page.partial,true);
+  assert.equal(page.itemEnumerationComplete,true);
+  assert.equal(page.nextCursor,null);
+  assert.deepEqual(page.limitations,[]);
+  assert.equal(page.turns[0]?.state,'completed');
+  const [input,answer]=page.entries;
+  if(input?.kind!=='message'||answer?.kind!=='message')assert.fail('expected input and reply');
+  assert.deepEqual(input.inputReference,{kind:'operation-marker',source:'message',operationId});
+  assert.equal(input.body,'');
+  assert.equal(answer.body.length,4096);
+  assert.equal(answer.truncated,true);
+});
+
+test('exact Turn metadata follows standard cursors beyond the newest 100 within a 1000 Turn bound',async t=>{
+  for(const target of [100,999,1000])await t.test(`Turn at offset ${target}`,async()=>{
+    const metadata=Array.from({length:1001},(_,i)=>({id:`turn-${i}`,status:'completed',startedAt:1,completedAt:2}));
+    const cursors:Array<string|null>=[];
+    const reader=fake((method,p)=>{
+      if(method==='thread/read')return meta();
+      if(method==='thread/items/list'){
+        assert.equal(p.turnId,`turn-${target}`);
+        return {data:[wrap(p.turnId,{id:'input',type:'userMessage',clientId:'operation',content:[]})],nextCursor:null};
+      }
+      if(method==='thread/turns/list'){
+        assert.deepEqual({limit:p.limit,sortDirection:p.sortDirection,itemsView:p.itemsView},{limit:100,sortDirection:'desc',itemsView:'notLoaded'});
+        cursors.push(p.cursor??null);
+        const offset=p.cursor?Number(p.cursor):0;
+        return {data:metadata.slice(offset,offset+p.limit),nextCursor:offset+p.limit<metadata.length?String(offset+p.limit):null};
+      }
+      assert.fail(method);
+    });
+    const page=await reader.read(binding,{turnId:`turn-${target}`});
+    assert.equal(cursors.length,Math.min(Math.floor(target/100)+1,10));
+    assert.deepEqual(cursors,[null,...Array.from({length:cursors.length-1},(_,i)=>String((i+1)*100))]);
+    assert.equal(page.nextCursor,null);
+    assert.equal(page.itemEnumerationComplete,true);
+    if(target<1000){
+      assert.equal(page.partial,false);
+      assert.deepEqual(page.limitations,[]);
+      assert.equal(page.turns.length,1);
+      assert.equal(page.turns[0]?.id,`turn-${target}`);
+      assert.equal(page.turns[0]?.state,'completed');
+      assert.equal(page.turns[0]?.completedAt,'1970-01-01T00:00:02.000Z');
+    }else{
+      assert.deepEqual(page.turns,[]);
+      assert.equal(page.partial,true);
+      assert.match(page.limitations.join(' '),/10 pages.*100/);
+    }
+  });
+});
+
+test('ordinary Thread pages keep one metadata page and metadata cursor or storage failures propagate',async()=>{
+  let metadataReads=0;
+  const reader=fake(method=>{
+    if(method==='thread/read')return meta();
+    if(method==='thread/items/list')return {data:[wrap('old',msg('answer'))],nextCursor:null};
+    if(method==='thread/turns/list'){
+      metadataReads++;
+      return {data:Array.from({length:100},(_,i)=>({id:`recent-${i}`,status:'completed'})),nextCursor:'older'};
+    }
+    assert.fail(method);
+  });
+  const page=await reader.read(binding);
+  assert.equal(metadataReads,1);
+  assert.equal(page.itemEnumerationComplete,true);
+  assert.equal(page.partial,true);
+  assert.deepEqual(page.turns,[]);
+  assert.match(page.limitations.join(' '),/bounded page/);
+  for(const failure of ['cursor','storage']){
+    const broken=fake((method,p)=>{
+      if(method==='thread/read')return meta();
+      if(method==='thread/items/list')return {data:[wrap('old',msg('answer'))],nextCursor:null};
+      if(method==='thread/turns/list'){
+        if(failure==='storage')throw new Error('metadata storage rejected');
+        return {data:[{id:'recent',status:'completed'}],nextCursor:p.cursor??'repeat'};
+      }
+      assert.fail(method);
+    });
+    await assert.rejects(()=>broken.read(binding,{turnId:'old'}),failure==='cursor'?/invalid turns metadata cursor/:/metadata storage rejected/);
+  }
 });
 
 test('timeline accepts pinned boundary snake fields and camel wire uncertainty with strict identity',async()=>{
@@ -40,6 +134,7 @@ test('timeline accepts pinned boundary snake fields and camel wire uncertainty w
   assert.deepEqual(result.entries[0]?.order,{kind:'timeline-position',key:'native:thread:turn-1:m',position:1,generation:null});
   assert.deepEqual(result.turns[0]?.order,{kind:'turn-boundary',key:'boundary:thread:turn-1:start',position:1,generation:null});
   assert.equal(result.turns[1]?.completedAt,'2023-11-14T22:13:21.000Z');
+  assert.equal(result.itemEnumerationComplete,true);
   page.data[1]={type:'item',position:2,turnId:'wrong',item:msg('m','partial_answer')} as any;
   assert.equal((await reader.read(binding)).entries[0]?.turnId,'wrong');
   page.data[1]={type:'item',position:2,turnId:'',item:msg('m','partial_answer')} as any;
@@ -53,7 +148,8 @@ test('experimental unsupported store falls to standard; permission and malformed
     if(method==='thread/items/list')return {data:[wrap('turn',msg('m'))],nextCursor:null};
     if(method==='thread/turns/list')return {data:[{id:'turn',status:'completed',items:[]}],nextCursor:null};
     assert.fail(method);},true);
-  assert.equal((await make(-32601).read(binding)).method,'items');
+  const fallback=await make(-32601).read(binding);
+  assert.equal(fallback.method,'items');assert.equal(fallback.itemEnumerationComplete,true);
   assert.deepEqual(methods.slice(0,3),['thread/read','thread/timeline/list','thread/items/list']);
   await assert.rejects(()=>make(-32600).read(binding),/rejected/);
   await assert.rejects(()=>make(-32601).read(binding,{cursor:'invalid'}),/invalid cursor/);
@@ -67,7 +163,7 @@ test('legacy full-turn fallback verifies full view and continues a 121 item turn
     if(method==='thread/turns/list')return {data:[turn],nextCursor:null};assert.fail(method);});
   let cursor:string|null=null;let ids:string[]=[];const pages:string[][]=[];
   do{const p=await reader.read(binding,{limit:50,...(cursor?{cursor}:{})});assert.equal(p.method,'turns-full');
-    const pageIds=p.entries.map(x=>x.nativeItemId!);pages.push(pageIds);ids=[...pageIds,...ids];cursor=p.nextCursor;}while(cursor);
+    const pageIds=p.entries.map(x=>x.nativeItemId!);pages.push(pageIds);ids=[...pageIds,...ids];cursor=p.nextCursor;assert.equal(p.itemEnumerationComplete,cursor===null);}while(cursor);
   assert.deepEqual(pages.map(page=>[page[0],page.at(-1)]),[['m-71','m-120'],['m-21','m-70'],['m-0','m-20']]);
   assert.deepEqual(ids,Array.from({length:121},(_,i)=>`m-${i}`));
   assert.equal(calls.filter(x=>x==='thread/items/list').length,1);
@@ -261,8 +357,35 @@ test('unknown kind remains visible and missing timestamps remain null',async()=>
     data:[{id:'turn',status:'newStatus',items:[]}],nextCursor:null}:assert.fail(method));
   const page=await reader.read(binding);
   assert.deepEqual(page.unsupportedKinds,['futureKind']);assert.equal(page.partial,true);
+  assert.equal(page.itemEnumerationComplete,false);
   assert.equal(page.entries[0]?.occurredAt,null);assert.equal(page.turns[0]?.state,'unknown');
   assert.equal(JSON.stringify(page).includes('SECRET'),false);
+});
+
+test('source omissions and a bounded selective scan never claim complete Item enumeration',async()=>{
+  const realtime=fake(method=>method==='thread/read'?meta():method==='thread/timeline/list'?{
+    data:[{type:'realtime',position:1}],nextCursor:null}:assert.fail(method),true);
+  const timeline=await realtime.read(binding);
+  assert.equal(timeline.nextCursor,null);
+  assert.equal(timeline.itemEnumerationComplete,false);
+  assert.equal(timeline.partial,true);
+  assert.deepEqual(timeline.unsupportedKinds,['realtime']);
+  let scans=0;
+  const selected=fake((method,p)=>{
+    if(method==='thread/read')return meta();
+    if(method==='thread/items/list'){
+      scans++;
+      assert.equal(p.limit,100);
+      return {data:[wrap('turn',msg(`other-${scans}`))],nextCursor:String(scans)};
+    }
+    assert.fail(method);
+  });
+  const absent=await selected.read(binding,{turnId:'turn',itemId:'missing'});
+  assert.equal(scans,10);
+  assert.equal(absent.itemEnumerationComplete,false);
+  assert.equal(absent.partial,true);
+  assert.equal(absent.nextCursor,null);
+  assert.deepEqual(absent.limitations,['selected item beyond bounded scan']);
 });
 
 test('repeating native cursor and empty continuation are rejected',async()=>{

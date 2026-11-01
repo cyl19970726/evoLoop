@@ -128,6 +128,56 @@ function inputProofHarness(kind:'message'|'run',options:{unique?:boolean;unsettl
   return {...h,a,b,turnId,proofReads:()=>proofReads};
 }
 
+function enumerationProofHarness(complete:boolean|undefined,partial:boolean,body='Public answer'){
+  const h=inputProofHarness('message',{unique:true});
+  const answer={...agent('preview-answer',h.turnId),body:body.slice(0,4096),truncated:body.length>4096};
+  h.runner.workspaceHistory=async(_principal,_project,_session,query)=>({
+    entries:query.itemId?[h.a,answer].filter(e=>e.nativeItemId===query.itemId):[h.a,answer],
+    turns:[{id:h.turnId,state:'completed',startedAt:now,completedAt:now,origin:null}],nextCursor:null,
+    observedAt:now,historyMode:'paginated',method:'items',partial,limitations:[],unsupportedKinds:[],
+    ...(complete===undefined?{}:{itemEnumerationComplete:complete}),
+  });
+  return h;
+}
+
+test('a 5000 character assistant preview does not invalidate complete Item enumeration',async()=>{
+  const h=enumerationProofHarness(true,true,'x'.repeat(5000));
+  try{
+    const page=await h.service.page(reader,project,key,{limit:25});
+    assert.equal(page.partial,true,'public text preview is still visibly partial');
+    assert.equal(page.entries[1]?.truncated,true);
+    assert.equal(page.entries[1]?.kind==='message'&&page.entries[1].body.length,4096);
+    assert.equal(page.entries[0]?.id,`message:${id(10)}`);
+    assert.equal(page.entries[0]?.nativeItemId,'proof-a');
+    assert.equal((await h.service.item(reader,project,key,h.turnId,'proof-a')).id,`message:${id(10)}`);
+    h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
+    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.id,`message:${id(10)}`);
+  }finally{h.service.close()}
+});
+
+test('explicitly incomplete Item enumeration cannot bind an input even when partial is false',async()=>{
+  const h=enumerationProofHarness(false,false);
+  try{
+    const page=await h.service.page(reader,project,key,{limit:25});
+    assert.equal(page.entries[0]?.kind,'notice');
+    assert.equal(page.pending[0]?.id,`message:${id(10)}`);
+    assert.equal((await h.service.item(reader,project,key,h.turnId,'proof-a')).kind,'notice');
+    h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
+    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.kind,'notice');
+  }finally{h.service.close()}
+});
+
+test('legacy pages without enumeration evidence conservatively retain the partial fallback',async()=>{
+  for(const partial of [true,false]){
+    const h=enumerationProofHarness(undefined,partial);
+    try{
+      const page=await h.service.page(reader,project,key,{limit:25});
+      assert.equal(page.entries[0]?.kind,partial?'notice':'message');
+      assert.equal(page.entries[0]?.author.id,partial?null:'human-a');
+    }finally{h.service.close()}
+  }
+});
+
 for(const kind of ['message','run'] as const)test(`${kind} duplicate exact inputs stay unassociated across pages, fresh reads, detail and live`,async()=>{
   const h=inputProofHarness(kind);
   try{

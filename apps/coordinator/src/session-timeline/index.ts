@@ -466,7 +466,7 @@ export class SessionTimelineService {
         if(itemId&&itemId!==entry.nativeItemId)return {itemId:null,ambiguous:true};
         itemId=entry.nativeItemId;
       }
-      if(!page.nextCursor)return page.partial?unverified:{itemId,ambiguous:false};
+      if(!page.nextCursor)return (page.itemEnumerationComplete??!page.partial)?{itemId,ambiguous:false}:unverified;
       if(!page.entries.length||seen.has(page.nextCursor))return unverified;
       seen.add(page.nextCursor);cursor=page.nextCursor;
     }

@@ -80,6 +80,8 @@ export interface NativeWorkspacePage {
   historyMode: 'legacy' | 'paginated' | 'unknown';
   method: 'timeline' | 'items' | 'turns-full';
   partial: boolean;
+  /** Complete Item enumeration, independent of public text preview truncation. */
+  itemEnumerationComplete?: boolean;
   limitations: string[];
   unsupportedKinds: string[];
 }

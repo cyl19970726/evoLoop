@@ -6,6 +6,8 @@ import { mapWorkspaceItem, mapWorkspaceTurn } from './workspace-map.js';
 type Rpc=(method:string,params:unknown)=>Promise<unknown>;
 const obj=(v:unknown):Record<string,any>|null=>v!==null&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,any>:null;
 const str=(v:unknown):string|null=>typeof v==='string'&&v.length>0?v:null;
+const TURN_METADATA_PAGE_SIZE=100;
+const EXACT_TURN_METADATA_MAX_PAGES=10;
 type Cursor={v:1;scope:string;mode:'timeline'|'items'|'legacy';native:string|null;offset?:number};
 export class WorkspaceHistoryReader{
   private readonly salt=randomUUID();
@@ -25,9 +27,11 @@ export class WorkspaceHistoryReader{
   private encode(binding:RuntimeBinding,options:NativeWorkspaceReadOptions,c:Omit<Cursor,'v'|'scope'>):string{
     return Buffer.from(JSON.stringify({v:1,scope:this.scope(binding,c.mode,options),...c})).toString('base64url');
   }
-  private page(data:WorkspaceEntry[],turns:WorkspaceTurn[],nextCursor:string|null,observedAt:string,historyMode:NativeWorkspacePage['historyMode'],method:NativeWorkspacePage['method'],limitations:string[]=[]):NativeWorkspacePage{
+  private page(data:WorkspaceEntry[],turns:WorkspaceTurn[],nextCursor:string|null,observedAt:string,historyMode:NativeWorkspacePage['historyMode'],method:NativeWorkspacePage['method'],limitations:string[]=[],enumerationAvailable=limitations.length===0):NativeWorkspacePage{
     const unsupportedKinds=[...new Set(data.filter(e=>e.kind==='notice'&&e.label==='Unsupported native item').map(e=>e.nativeKind!).filter(Boolean))];
-    return {entries:data,turns,nextCursor,observedAt,historyMode,method,partial:!!nextCursor||limitations.length>0||unsupportedKinds.length>0||data.some(e=>e.truncated),limitations,unsupportedKinds};
+    return {entries:data,turns,nextCursor,observedAt,historyMode,method,
+      itemEnumerationComplete:!nextCursor&&enumerationAvailable&&unsupportedKinds.length===0,
+      partial:!!nextCursor||limitations.length>0||unsupportedKinds.length>0||data.some(e=>e.truncated),limitations,unsupportedKinds};
   }
   private entries(raw:unknown[],binding:RuntimeBinding,observedAt:string,expectedTurn?:string,detail=false,fullPublic=false):WorkspaceEntry[]{
     const mapped:WorkspaceEntry[]=[];
@@ -113,19 +117,42 @@ export class WorkspaceHistoryReader{
     if(!Array.isArray(result.data)||result.data.length>limit||result.nextCursor!==null&&!str(result.nextCursor)||
       result.nextCursor!=null&&(result.nextCursor===cursor?.native||result.data.length===0))throw new Error('workspace history: invalid items page');
     const entries=this.entries(result.data,binding,observedAt,options.turnId).reverse();
-    const ids=[...new Set(result.data.map(x=>str(obj(x)?.turnId)).filter((x):x is string=>!!x))];
-    // Turn state comes from a bounded metadata page. Turns outside that page remain unknown; no synthetic status.
-    let turns:WorkspaceTurn[]=[];
-    if(ids.length){const metadata=obj(await this.rpc('thread/turns/list',{threadId:binding.nativeThreadId,limit:100,sortDirection:'desc',itemsView:'notLoaded'}));
-      if(!metadata||!Array.isArray(metadata.data))throw new Error('workspace history: invalid turns metadata');
-      const parsed=metadata.data.map(mapWorkspaceTurn);
-      if(parsed.some(x=>!x))throw new Error('workspace history: invalid turns metadata');
-      turns=parsed.filter((x):x is WorkspaceTurn=>!!x&&ids.includes(x.id));
-      for(const turn of turns)turn.order={kind:'turn-boundary',key:`boundary:${binding.nativeThreadId}:${turn.id}:metadata`,position:null,generation:null};
-    }
+    const ids=options.turnId?[options.turnId]:[...new Set(result.data.map(x=>str(obj(x)?.turnId)).filter((x):x is string=>!!x))];
+    const {turns,limitations}=await this.turnMetadata(binding,ids,!!options.turnId);
     const next=str(result.nextCursor);
-    const limitations=ids.some(id=>!turns.some(t=>t.id===id))?['turn metadata outside bounded page']:[];
-    return this.page(entries,turns,next?this.encode(binding,options,{mode:'items',native:next}):null,observedAt,historyMode,'items',limitations);
+    // Missing Turn metadata does not imply missing Items; callers must still verify the Turn's terminal state.
+    return this.page(entries,turns,next?this.encode(binding,options,{mode:'items',native:next}):null,observedAt,historyMode,'items',limitations,true);
+  }
+  private async turnMetadata(binding:RuntimeBinding,ids:string[],exact:boolean):Promise<{turns:WorkspaceTurn[];limitations:string[]}>{
+    const missing=new Set(ids),turns:WorkspaceTurn[]=[];
+    if(!missing.size)return {turns,limitations:[]};
+    // Exact Turn reads may inspect at most 10 × 100 metadata records. Ordinary Thread pages stay at one page.
+    const maxPages=exact?EXACT_TURN_METADATA_MAX_PAGES:1;
+    let cursor:string|null=null;
+    const seen=new Set<string>();
+    for(let page=0;page<maxPages;page++){
+      const metadata=obj(await this.rpc('thread/turns/list',{threadId:binding.nativeThreadId,limit:TURN_METADATA_PAGE_SIZE,
+        sortDirection:'desc',itemsView:'notLoaded',cursor}));
+      if(!metadata||!Array.isArray(metadata.data)||metadata.data.length>TURN_METADATA_PAGE_SIZE||
+        metadata.nextCursor!==null&&!str(metadata.nextCursor))throw new Error('workspace history: invalid turns metadata');
+      const next=str(metadata.nextCursor);
+      if(next&&(next===cursor||seen.has(next)||metadata.data.length===0))throw new Error('workspace history: invalid turns metadata cursor');
+      const parsed:WorkspaceTurn[]=metadata.data.map((value:unknown)=>{
+        const turn=mapWorkspaceTurn(value);if(!turn)throw new Error('workspace history: invalid turns metadata');
+        return turn;
+      });
+      if(new Set(parsed.map(turn=>turn.id)).size!==parsed.length)throw new Error('workspace history: invalid turns metadata');
+      for(const turn of parsed)if(missing.delete(turn.id)){
+        turn.order={kind:'turn-boundary',key:`boundary:${binding.nativeThreadId}:${turn.id}:metadata`,position:null,generation:null};
+        turns.push(turn);
+      }
+      if(!missing.size)return {turns,limitations:[]};
+      if(!next)return {turns,limitations:['turn metadata unavailable for requested items']};
+      seen.add(next);cursor=next;
+    }
+    return {turns,limitations:[exact?
+      `turn metadata outside bounded scan (${EXACT_TURN_METADATA_MAX_PAGES} pages, ${TURN_METADATA_PAGE_SIZE} turns each)`:
+      `turn metadata outside bounded page (${TURN_METADATA_PAGE_SIZE} turns)`]};
   }
   private async legacy(binding:RuntimeBinding,options:NativeWorkspaceReadOptions,cursor:Cursor|null,observedAt:string,historyMode:NativeWorkspacePage['historyMode'],limit:number):Promise<NativeWorkspacePage>{
     if(historyMode!=='legacy')throw new Error('workspace history: full-turn fallback requires legacy history');
