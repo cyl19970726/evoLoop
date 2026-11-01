@@ -197,13 +197,12 @@
   .session-workspace .session-conversation .session-conversation-scroll{flex:1;min-height:0;max-height:none;overflow-y:auto}
   .session-workspace .session-conversation .session-composer-host{flex-shrink:0;position:static;margin:0;padding:10px 0 0;border-top:1px solid #e2e7ef}
   .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:64px;max-height:180px}
-  .session-workspace .session-conversation .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0}
-  .session-workspace .session-conversation .session-project-activity .session-information{margin-top:0;border-top:1px solid #e5eaf1;padding-top:12px}
-  .session-workspace .session-conversation .session-project-activity .session-information>summary{padding:13px 16px}
-  .session-workspace .session-conversation .session-project-activity .session-information .session-support-grid{margin:14px 16px}
-  .session-workspace .session-conversation .session-project-activity .session-information>section{margin:14px 16px}
-  /* 短视口时项目活动默认收起，给消息阅读留更多空间。 */
-  .session-workspace .session-conversation .session-project-activity:not([open]){height:auto}
+  .session-workspace .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0;max-height:200px;overflow-y:auto}
+  .session-workspace .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0}
+  .session-workspace .session-project-activity .session-information{margin-top:0;border-top:1px solid #e5eaf1;padding-top:12px}
+  .session-workspace .session-project-activity .session-information>summary{padding:13px 16px}
+  .session-workspace .session-project-activity .session-information .session-support-grid{margin:14px 16px}
+  .session-workspace .session-project-activity .session-information>section{margin:14px 16px}
   /* 短视口（<1000px 高）时进一步压缩 composer，保证消息阅读高度。 */
   @media(max-height:1000px){
     .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:44px;max-height:120px}
