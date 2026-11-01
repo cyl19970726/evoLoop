@@ -237,24 +237,44 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   }, [selected]);
   useEffect(() => {
     if (!selected) return;
+    const dialog = detailDialogRef.current;
+    const main = document.getElementById("workspace-main");
+    const isolated: HTMLElement[] = [];
+    if (dialog && main) {
+      let node: HTMLElement | null = dialog;
+      while (node && node !== main) {
+        const parent: HTMLElement | null = node.parentElement;
+        if (!parent) break;
+        for (const sibling of Array.from(parent.children) as HTMLElement[]) {
+          if (sibling !== node && !sibling.hasAttribute("inert") && !sibling.contains(dialog)) {
+            sibling.setAttribute("inert", "");
+            isolated.push(sibling);
+          }
+        }
+        node = parent;
+      }
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeDetail(); return; }
       if (event.key !== "Tab") return;
-      const dialog = detailDialogRef.current;
-      if (!dialog) return;
-      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(
+      const activeDialog = detailDialogRef.current;
+      if (!activeDialog) return;
+      const focusables = Array.from(activeDialog.querySelectorAll<HTMLElement>(
         'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex]:not([tabindex="-1"])'))
         .filter(element => element.getClientRects().length > 0);
       if (!focusables.length) return;
       const first = focusables[0]!;
       const last = focusables[focusables.length - 1]!;
       const active = document.activeElement;
-      if (!dialog.contains(active)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); return; }
+      if (!activeDialog.contains(active)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); return; }
       if (event.shiftKey && active === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
     };
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      for (const element of isolated) element.removeAttribute("inert");
+    };
   }, [selected]);
   useEffect(() => {
     const node = conversationScroll.current;
