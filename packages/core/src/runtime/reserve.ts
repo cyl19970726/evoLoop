@@ -5,6 +5,7 @@ import { validateDispatchBasis } from "./basis.js";
 import { requireAssignedSession } from "../session-assignments/dispatch.js";
 import { canonicalEvaluationJson, nextAttemptOrdinal, taskSignature } from "../evaluation/index.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
+import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
 
 type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
@@ -16,7 +17,7 @@ export interface ReserveContext {
   nextId(): string;
   hash(value: string): string;
   /** Internal claim from the same journalled transaction. Never accepted from a public command. */
-  queueClaim?: {claimId:string;runId:string;operationId:string;taskId:string;sessionId:string};
+  queueClaim?: {claimId:string;runId:string;operationId:string;taskId:string;sessionId:string;actorId:string};
 }
 const required = <T>(value: T | null, name: string): T => {
   if (value === null) throw new DomainError("NOT_FOUND", `${name} not found`);
@@ -197,6 +198,23 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
       actualTaskRevisionId: revisionId, attemptId: attemptId! }, evaluationPacket: null } : {}),
   };
   await tx.insertRuntimeRun(run);
+  // Keep an unacknowledged owned assignment actionable in the existing Session workspace.
+  // Only the same Session and identical fixed business input may follow this dispatch freeze;
+  // the previous assignment revision remains in history and no receipt is inferred.
+  const assignment = await tx.sessionAssignments?.getTaskSessionAssignment(task.id);
+  let assignmentEffect: Effect | null = null;
+  if (assignment?.state === "assigned" && assignment.taskRevisionId === previous.id &&
+    assignment.target.kind === "owned" && assignment.target.sessionId === session.id) {
+    const before = canonicalTaskInputJson(await taskInputSignature(tx, task, previous.id));
+    const after = canonicalTaskInputJson(await taskInputSignature(tx, task, revision.id));
+    if (before === after) {
+      const nextAssignment = { ...assignment, taskRevisionId: revision.id,
+        version: assignment.version + 1, actorId: queueClaim?.actorId ?? principal.actorId,
+        reason: "Runtime dispatch reserved with unchanged Task input", updatedAt: now };
+      await tx.sessionAssignments!.saveTaskSessionAssignment(nextAssignment, assignment.version);
+      assignmentEffect = { kind: "task.assignment.set", entityId: task.id, version: nextAssignment.version };
+    }
+  }
   if (command.evaluation) {
     const attempts = await tx.listEvaluationAttempts(command.evaluation.evaluationId, command.evaluation.revisionId);
     await tx.insertEvaluationAttempt({ projectId: command.projectId, id: attemptId!,
@@ -209,6 +227,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   await tx.appendRuntimeEvent(event(command.projectId, nextId(), run.id, session.id, "run.requested", "Run reserved; no external turn started", null, principal.actorId, now));
   return { result: applied(command.operationId, run.id, 1, revision.id), effects: [
     { kind: "task", entityId: task.id, version: task.version + 1 },
+    ...(assignmentEffect ? [assignmentEffect] : []),
     { kind: "runtime.run.requested", entityId: run.id, version: 1 },
   ] };
 }

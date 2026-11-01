@@ -719,7 +719,8 @@ export class WorkflowService {
               const reserved=await reserveRuntime({tx,principal:{...principal,actorId:session.actorId},now,nextId:()=>this.deps.ids.next(),hash:value=>this.deps.hasher.hash(value),
                 command:{type:"runtime.run.reserve",projectId:command.projectId,operationId:command.operationId,
                   runId:command.runId,taskId:entry.taskId,sessionId:entry.sessionId,expectedVersion:task.version,input},
-                queueClaim:{claimId:applied.claimId,runId:command.runId,operationId:command.operationId,taskId:entry.taskId,sessionId:entry.sessionId}});
+                queueClaim:{claimId:applied.claimId,runId:command.runId,operationId:command.operationId,taskId:entry.taskId,sessionId:entry.sessionId,
+                  actorId:principal.actorId}});
               effects.push(...reserved.effects);
               const opened=await applyTaskCollaboration({tx,principal,now,nextId:()=>this.deps.ids.next(),hasher:this.deps.hasher,
                 command:{type:"discussion.openTask",projectId:command.projectId,operationId:command.operationId,
