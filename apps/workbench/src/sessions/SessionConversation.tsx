@@ -104,11 +104,12 @@ function ConversationMessage({ item, context, snapshot, progress, onDetail }: {
   </div>;
 }
 
-export function SessionConversation({ context, snapshot, onApplied, progress }: {
+export function SessionConversation({ context, snapshot, onApplied, progress, children }: {
   context: MutationContext;
   snapshot: SessionSnapshot;
   onApplied(): void;
   progress: NativeProgressView | null;
+  children?: React.ReactNode;
 }) {
   const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
   const messageScope = `${context.token}\0${context.projectId}\0${snapshot.session.key}`;
@@ -248,6 +249,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       {nextCursor && <button type="button" className="session-conversation-older" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : "加载更早消息"}</button>}
       {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} onDetail={id => void detail(id)} />)}
       {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} />}
+      {children}
     </div>
     {selected && <section className="session-message-detail">
       <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" onClick={() => setSelected(null)}>关闭</button></div>
