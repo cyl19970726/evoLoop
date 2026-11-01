@@ -1,0 +1,92 @@
+{
+  "observedAt": "2026-11-01",
+  "captureTool": "ego-browser (ego lite 0.6.1.13)",
+  "source": "local evoLoop workbench at 127.0.0.1:55431; normal UI navigation with existing acceptance-owner read identity",
+  "projectId": "dfb56cce-4ecd-452d-94dc-bf9611babf11",
+  "researchTaskId": "f6db9018-6203-46b7-8d88-3ca840cbec70",
+  "researchTaskObservedVersion": 10,
+  "relatedSessionId": "8e3bf5e4-08f9-4db3-9100-c6718c4ca2c1",
+  "sessionCurrentTaskAtCapture": "908f71c2-d5dc-4ac7-82fe-063dad946f9c",
+  "resultDocumentId": "7049a242-0af3-4840-8db7-7abf4f5b1311",
+  "resultRevisionId": "9b2801d7-1e35-4335-bb56-b2cc4c66252e",
+  "codeBaselineFromPriorServiceRecord": "41084623dfa58faf3005230d3762a7a38b80b9d3",
+  "captureMethod": "Emulation.setDeviceMetricsOverride applied per ego-browser invocation; innerWidth/innerHeight, devicePixelRatio and visualViewport.scale read before each capture; PNG pixel size independently checked",
+  "viewportCssPx": [
+    2880,
+    1772
+  ],
+  "devicePixelRatio": 1,
+  "visualViewportScale": 1,
+  "browserUiZoom": "not independently read; no CSS zoom applied",
+  "referenceImagePixelSize": [
+    3342,
+    2056
+  ],
+  "scope": "One completed research Task; historical Session link now points to a Session running a later documentation Task. Four UI captures plus return navigation, no messages or business writes. PR173 candidate and HTML fix not present; mobile and long-message behavior not tested.",
+  "screenshots": [
+    {
+      "file": "01-task-selection.png",
+      "sha256": "a523501e96729755fd03ca4ae135e194b46ec1ee9e20b584f540f4b56476ab78",
+      "pixelSize": [
+        2880,
+        1772
+      ],
+      "viewportCssPx": [
+        2880,
+        1772
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "capturedAtUtcFromFileMtime": "2026-11-01T07:23:38.774527+00:00",
+      "observation": "从工作列表选中研究Task；四步返回后，搜索、全部状态与所选项仍在；右摘要指向固定成果"
+    },
+    {
+      "file": "02-full-task.png",
+      "sha256": "90316028bc429747b471f1ccc5454fd463cebcd7bb5221e7df456a9929fe6a15",
+      "pixelSize": [
+        2880,
+        1772
+      ],
+      "viewportCssPx": [
+        2880,
+        1772
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "capturedAtUtcFromFileMtime": "2026-11-01T07:20:57.559716+00:00",
+      "observation": "从右摘要打开同一研究Task，完整正文与完成条件进入双左栏外的阅读区"
+    },
+    {
+      "file": "03-session-context.png",
+      "sha256": "ed280c38031a2f3411f78bf6c57502aa4697ef6412388eae978dc5d56f06d8dc",
+      "pixelSize": [
+        2880,
+        1772
+      ],
+      "viewportCssPx": [
+        2880,
+        1772
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "capturedAtUtcFromFileMtime": "2026-11-01T07:21:24.608080+00:00",
+      "observation": "从研究Task历史分派进入确切受管Session；该Session此刻正在执行新的文档Task，不能当作旧Task仍运行"
+    },
+    {
+      "file": "04-html-reading-gap.png",
+      "sha256": "e6a8a981c053992b9e70e32c38953f57fec4074b76f9f2ef9c971d7c9b5e02cf",
+      "pixelSize": [
+        2880,
+        1772
+      ],
+      "viewportCssPx": [
+        2880,
+        1772
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "capturedAtUtcFromFileMtime": "2026-11-01T07:23:10.563577+00:00",
+      "observation": "从原Task交付打开固定报告9b2801d7；iframe实际高420px、宽约1100px，长报告阅读差距未修"
+    }
+  ]
+}
