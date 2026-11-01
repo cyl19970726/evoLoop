@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { timelineAssistant, timelineMessage, timelinePage, timelineTool, timelineStamp } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
-const dist = resolve(import.meta.dirname, "../dist");
+const dist = process.env.EVOLOOP_BROWSER_TEST_DIST ?? resolve(import.meta.dirname, "../dist");
 const projectId = "97000001-0000-4000-8000-000000000001";
 const sessionId = "97000002-0000-4000-8000-000000000002";
 const sessionKey = `owned:${sessionId}`;
@@ -734,3 +734,98 @@ test("a reset survives a busy read, unavailable history and stale pagination res
   assert.doesNotMatch(finalRequests, /native:old-native-after:|messages::old-messages-after/,
     "a delayed pre-reset page cannot overwrite the reset cursors");
 });
+
+test("revocation invalidates a held homepage, inspector and cache until an explicit reread", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
+}, async t => {
+  const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  let holdHomepage = false, homepageHeld = false, denied = false, latestReads = 0;
+  let releaseHomepage: (() => void) | undefined;
+  const homepageGate = new Promise<void>(resolve => { releaseHomepage = resolve; });
+  const protectedTool = timelineTool("revocation-tool", "Command", "公开工具摘要");
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1"), root = `/api/projects/${projectId}`;
+    if (url.pathname.startsWith("/api/")) {
+      let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      else if (url.pathname === root) value = { id: projectId, title: "撤权竞态测试", createdAt: stamp };
+      else if (url.pathname === `${root}/session-work`) value = { items: [snapshotFor(sessionKey).session], nextCursor: null,
+        observationCursor: "0", metadata, totals: { current: 1, historical: 0, unclassified: 0 },
+        attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: 0, unclassifiedSessions: 0 } };
+      else if (url.pathname === `${root}/session-work/changes`) value = { items: [], nextCursor: "0", hasMore: false, resetRequired: false, metadata };
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) value = snapshotFor(sessionKey);
+      else if (url.pathname === `${root}/runtime`) value = { available: false, error: null, allowedCwds: [], grants: [] };
+      else if (url.pathname === `${root}/impacts` || url.pathname === `${root}/runtime/runs` || url.pathname === `${root}/runtime/sessions`) value = [];
+      else if (url.pathname.endsWith("/timeline/updates")) {
+        if (denied) { status = 403; value = { message: "时间线读取权限已撤销" }; }
+        else value = { cursor: "live", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [], activeTurnId: null };
+      } else if (url.pathname.endsWith("/timeline/items/revocation-tool")) value = { ...protectedTool,
+        detail: { input: "PRIVATE_DETAIL_INPUT", output: "PRIVATE_DETAIL_OUTPUT", error: null, resources: [] } };
+      else if (url.pathname.endsWith("/timeline")) {
+        latestReads++;
+        const held = holdHomepage;
+        value = timelinePage(sessionKey, { entries: [timelineAssistant(held ? "stale-a" : "authorized", held ? "STALE_AUTHORIZED_A" : "CURRENT_AUTHORIZED_BODY"), timelineMessage("ordinary-own", "真正的本人普通消息"), timelineMessage("project-dispatch", "项目派发任务：保留固定来源", { turnId: "dispatch-turn", nativeItemId: "dispatch-item", nativeKind: "userMessage", origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader" } }), protectedTool] });
+        if (held) { homepageHeld = true; await homepageGate; }
+      } else if (url.pathname.endsWith("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
+      res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
+    }
+    try {
+      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const body = await readFile(join(dist, file));
+      res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
+    } catch { res.writeHead(404); res.end(); }
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+  t.after(() => browser.close()); t.after(() => releaseHomepage?.());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  await page.getByLabel("访问令牌").fill("fixture-token"); await page.getByRole("button", { name: "进入", exact: true }).click();
+  await page.getByText("CURRENT_AUTHORIZED_BODY", { exact: true }).waitFor();
+  const dispatch = page.getByRole("article", { name: "项目派发的任务输入", exact: true });
+  assert.equal(await dispatch.count(), 1, "a Run input remains project dispatch even when the initiating actor is the current reader");
+  assert.equal(await dispatch.getAttribute("data-turn-id"), "dispatch-turn");
+  assert.equal(await dispatch.locator(".lucide-user-round").count(), 0, "project dispatch does not use the personal chat avatar");
+  assert.match(await dispatch.innerText(), /项目派发 · reader/);
+  assert.ok((await dispatch.getByRole("link", { name: "查看来源任务" }).getAttribute("href"))?.includes(taskId));
+  assert.equal(await page.getByRole("article", { name: "我发出的消息", exact: true }).count(), 1, "only the ordinary saved message is mine");
+  await page.locator(".workspace-tools-toggle").click();
+  await page.getByRole("button", { name: "查看工具详情：Command", exact: true }).click();
+  await page.getByRole("button", { name: "读取原始输入与输出", exact: true }).click();
+  await page.getByText("PRIVATE_DETAIL_OUTPUT", { exact: true }).waitFor();
+  holdHomepage = true;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await assertEventually(() => homepageHeld, "homepage A is in flight before the denial");
+  denied = true;
+  await page.getByText("活动暂不可读取：时间线读取权限已撤销", { exact: false }).waitFor();
+  assert.equal(await page.locator("[data-workspace-entry]").count(), 0);
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith("/timeline") && r.status() === 200);
+  releaseHomepage?.(); await (await response).finished();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.getByText("STALE_AUTHORIZED_A", { exact: true }).count(), 0, "held authorized response must not revive revoked content");
+  assert.equal(await page.locator("[data-workspace-entry]").count(), 0, "entries stay empty after stale success");
+  assert.equal(await page.getByRole("dialog").count(), 0, "the old inspector stays closed");
+  const revokedReads = latestReads;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.evaluate(id => { location.hash = `#/p/${id}/sessions`; }, projectId);
+  await page.locator(".unified-session-timeline").waitFor({ state: "detached" });
+  await page.evaluate(({ id, key }) => { location.hash = `#/p/${id}/sessions?session=${encodeURIComponent(key)}`; }, { id: projectId, key: sessionKey });
+  await page.getByText("活动暂不可读取：时间线读取权限已撤销", { exact: false }).waitFor();
+  assert.equal(latestReads, revokedReads, "remount and visibility cannot refill a revoked cache");
+  assert.equal(await page.locator("[data-workspace-entry]").count(), 0);
+  denied = false; holdHomepage = false;
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.getByText("CURRENT_AUTHORIZED_BODY", { exact: true }).waitFor();
+  assert.equal(await page.getByText("STALE_AUTHORIZED_A", { exact: true }).count(), 0);
+  assert.ok(latestReads > revokedReads, "explicit top-level reread reauthorizes a new request");
+});
+
+async function assertEventually(predicate: () => boolean, message: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.ok(predicate(), message);
+}

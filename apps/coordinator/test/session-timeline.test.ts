@@ -3,7 +3,7 @@ import test from 'node:test';
 import type { Principal, RuntimeSessionRecord } from '@evoloop/contracts';
 import type { NativeInputSource } from '@evoloop/contracts/native-input';
 import type { SessionMessageRecord, SessionMessageProcessing } from '@evoloop/contracts/session-messages';
-import type { NativeWorkspacePage, WorkspaceEntry, WorkspaceRuntimeUpdate } from '@evoloop/contracts/session-timeline';
+import type { NativeWorkspacePage, WorkspaceEntry, WorkspaceMessage, WorkspaceRuntimeUpdate } from '@evoloop/contracts/session-timeline';
 import { DomainError } from '@evoloop/contracts/ports';
 import type { UnitOfWork } from '@evoloop/contracts/ports';
 import type { SessionObservationService } from '@evoloop/core/session-observation';
@@ -14,12 +14,12 @@ const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const project=id(1),sessionId=id(2),key=`owned:${sessionId}`,thread='native-thread',now='2026-11-01T00:00:00.000Z';
 const reader:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
 const reviewer:Principal={...reader,actorId:'reviewer',permissions:['read','review']};
-const nativeInput=(itemId:string,turnId:string,clientId:string|null=null,body='private dispatch credential'):WorkspaceEntry=>({id:`native:${thread}:${turnId}:${itemId}`,
+const nativeInput=(itemId:string,turnId:string,clientId:string|null=null,body='private dispatch credential'):WorkspaceMessage=>({id:`native:${thread}:${turnId}:${itemId}`,
   kind:'message',role:'input',phase:'unknown',body,clientId,state:'completed',
   turnId,nativeItemId:itemId,nativeKind:'userMessage',author:{kind:'native',id:null,label:'Native input'},origin:null,
   occurredAt:null,observedAt:now,freshness:'persisted',truncated:false,
   order:{kind:'native-item',key:`${turnId}:${itemId}`,position:1,generation:'test-history'}});
-const agent=(itemId:string,turnId:string):WorkspaceEntry=>({id:`native:${thread}:${turnId}:${itemId}`,
+const agent=(itemId:string,turnId:string):WorkspaceMessage=>({id:`native:${thread}:${turnId}:${itemId}`,
   kind:'message',role:'assistant',phase:'final_answer',body:'Public answer',clientId:null,state:'completed',
   turnId,nativeItemId:itemId,nativeKind:'agentMessage',author:{kind:'session',id:sessionId,label:'Agent'},origin:null,
   occurredAt:null,observedAt:now,freshness:'persisted',truncated:false});
@@ -74,6 +74,13 @@ function harness(){
           operationId:sourceMessage.operationId}}:{})};
       const duplicate=nativeInput('input-duplicate','turn-message',sourceMessage.operationId);
       const inputs=duplicateInput?[firstInput,duplicate]:[firstInput];
+      if(options.turnId&&!options.itemId){
+        const entries=options.turnId==='turn-message'?[...inputs,nativeInput('input-other','turn-message'),agent('answer-1','turn-message')]:
+          [nativeInput('input-2','turn-run',sourceRun.operationId),tool,agent('answer-2','turn-run')];
+        return {entries,turns:[{id:options.turnId,state:historicalRunning?'running':'completed',startedAt:now,
+          completedAt:historicalRunning?null:now,origin:null}],nextCursor:null,observedAt:now,historyMode:'paginated',
+          method:'items',partial:false,limitations:[],unsupportedKinds:[]} satisfies NativeWorkspacePage;
+      }
       const entries=options.itemId?[tool,...inputs,nativeInput('input-other','turn-message'),agent('answer-1','turn-message')]
         .filter(e=>e.nativeItemId===options.itemId):
         lateBinding?options.cursor?[firstInput]:[{
@@ -99,6 +106,126 @@ function harness(){
     conflictingProof:()=>{conflictingProof=true},duplicateInput:()=>{duplicateInput=true},
     calls:()=>({historyCalls,starts})};
 }
+
+function inputProofHarness(kind:'message'|'run',options:{unique?:boolean;unsettled?:boolean;spill?:boolean}={}){
+  const h=harness(),source=kind==='message'?sourceMessage:sourceRun;
+  const turnId=kind==='message'?'turn-message':'turn-run';
+  const a=nativeInput('proof-a',turnId,source.operationId);
+  const b=nativeInput('proof-b',turnId,options.unique?id(999):source.operationId);
+  const items:WorkspaceEntry[]=options.spill?[...Array.from({length:501},(_,n)=>({...tool,
+    id:`native:${thread}:${turnId}:tool-${n}`,turnId,nativeItemId:`tool-${n}`})),a]:[a,b];
+  let proofReads=0;
+  h.runner.workspaceHistory=async(_principal,_project,_session,query)=>{
+    if(query.turnId&&!query.itemId)proofReads++;
+    const offset=query.cursor?Number(query.cursor):0,limit=query.limit??50;
+    const descending=[...items].reverse();
+    const entries=query.itemId?items.filter(e=>e.nativeItemId===query.itemId):descending.slice(offset,offset+limit).reverse();
+    const nextCursor=!query.itemId&&offset+limit<items.length?String(offset+limit):null;
+    return {entries,turns:[{id:turnId,state:options.unsettled?'running':'completed',startedAt:now,
+      completedAt:options.unsettled?null:now,origin:null}],nextCursor,observedAt:now,historyMode:'paginated',
+      method:'items',partial:!!nextCursor,limitations:[],unsupportedKinds:[]};
+  };
+  return {...h,a,b,turnId,proofReads:()=>proofReads};
+}
+
+for(const kind of ['message','run'] as const)test(`${kind} duplicate exact inputs stay unassociated across pages, fresh reads, detail and live`,async()=>{
+  const h=inputProofHarness(kind);
+  try{
+    const first=await h.service.page(reader,project,key,{limit:1,source:'native'});
+    assert.equal(first.entries[0]?.nativeItemId,'proof-b');
+    assert.equal(first.entries[0]?.kind,'notice');
+    assert.equal(first.entries[0]?.author.id,null);
+    assert.ok(first.nextCursor);
+    const second=await h.service.page(reader,project,key,{limit:1,source:'native',cursor:first.nextCursor});
+    assert.equal(second.entries[0]?.nativeItemId,'proof-a');
+    assert.equal(second.entries[0]?.kind,'notice');
+    assert.equal(second.entries[0]?.origin,null);
+    if(kind==='message')for(const page of [first,second]){
+      assert.equal(page.pending[0]?.id,`message:${id(10)}`);
+      assert.equal(page.pending[0]?.body,'Message 10 from human-a');
+      assert.equal(page.pending[0]?.nativeItemId,null);
+    }
+    const fresh=inputProofHarness(kind);
+    try{
+      const refreshed=await fresh.service.page(reader,project,key,{limit:1,source:'native',cursor:first.nextCursor});
+      assert.deepEqual(refreshed.entries,second.entries,'the older page needs no previously seen Item or process cache');
+    }finally{fresh.service.close()}
+    const freshLive=inputProofHarness(kind);
+    try{
+      freshLive.emit({projectId:project,sessionId,threadId:thread,turnId:freshLive.turnId,observedAt:now,
+        kind:'entry',entry:freshLive.b});
+      const live=await freshLive.service.updates(reader,project,key);
+      assert.equal(live.entries[0]?.id,freshLive.b.id);
+      assert.equal(live.entries[0]?.kind,'notice','live cannot choose an input before either history page was read');
+    }finally{freshLive.service.close()}
+    for(const raw of [h.a,h.b]){
+      const detail=await h.service.item(reader,project,key,h.turnId,raw.nativeItemId!);
+      assert.equal(detail.id,raw.id);assert.equal(detail.kind,'notice');assert.equal(detail.author.id,null);
+      h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:raw});
+      const live=await h.service.updates(reader,project,key);
+      assert.ok(live.entries.every(e=>e.kind==='notice'&&e.author.id===null&&e.origin===null));
+    }
+    assert.equal(h.calls().starts,0);
+  }finally{h.service.close()}
+});
+
+test('one exact input is bound consistently only after a complete settled Turn read',async()=>{
+  const h=inputProofHarness('message',{unique:true});
+  try{
+    const first=await h.service.page(reader,project,key,{limit:1,source:'native'});
+    const second=await h.service.page(reader,project,key,{limit:1,source:'native',cursor:first.nextCursor!});
+    assert.equal(first.entries[0]?.kind,'notice');
+    assert.equal(second.entries[0]?.id,`message:${id(10)}`);
+    assert.equal(second.entries[0]?.nativeItemId,'proof-a');
+    const detail=await h.service.item(reader,project,key,h.turnId,'proof-a');
+    assert.equal(detail.id,second.entries[0]?.id);assert.equal(detail.nativeItemId,'proof-a');
+    h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
+    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.id,detail.id);
+  }finally{h.service.close()}
+});
+
+test('unsettled or bounded incomplete Turn reads never select an input from the visible page',async()=>{
+  for(const options of [{unique:true,unsettled:true},{unique:true,spill:true}]){
+    const h=inputProofHarness('message',options);
+    try{
+      h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
+      const page=await h.service.page(reader,project,key,{limit:1,source:'native'});
+      assert.equal(page.entries[0]?.kind,'notice');
+      assert.equal(page.entries[0]?.author.id,null);
+      assert.equal(page.pending[0]?.id,`message:${id(10)}`);
+      assert.ok(h.proofReads()<=10,'input proof has a fixed request read budget');
+      const detail=await h.service.item(reader,project,key,h.turnId,page.entries[0]!.nativeItemId!);
+      assert.equal(detail.kind,'notice');
+      h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
+      assert.equal((await h.service.updates(reader,project,key)).entries[0]?.kind,'notice');
+    }finally{h.service.close()}
+  }
+});
+
+test('input proof read failure remains unassociated and native permission denial propagates',async()=>{
+  const h=inputProofHarness('message',{unique:true});
+  const history=h.runner.workspaceHistory.bind(h.runner);
+  let forbidden=false;
+  h.runner.workspaceHistory=async(principal,projectId,sessionId,query)=>{
+    if(query.turnId&&!query.itemId)throw new DomainError(forbidden?'FORBIDDEN':'RUNTIME_READ_UNAVAILABLE','proof read unavailable');
+    return history(principal,projectId,sessionId,query);
+  };
+  try{
+    const page=await h.service.page(reader,project,key,{limit:2,source:'native'});
+    assert.ok(page.entries.every(entry=>entry.kind==='notice'));
+    assert.equal(page.pending[0]?.body,'Message 10 from human-a');
+    assert.equal(page.partial,true);
+    assert.ok(page.limitations.length>0);
+    assert.equal((await h.service.item(reader,project,key,h.turnId,'proof-a')).kind,'notice');
+    h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
+    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.kind,'notice');
+    forbidden=true;
+    const denied=(error:unknown)=>error instanceof DomainError&&error.code==='FORBIDDEN';
+    await assert.rejects(h.service.page(reader,project,key,{limit:2,source:'native'}),denied);
+    await assert.rejects(h.service.item(reader,project,key,h.turnId,'proof-a'),denied);
+    await assert.rejects(h.service.updates(reader,project,key),denied);
+  }finally{h.service.close()}
+});
 
 test('exact PG sender replaces native input, Run context hides envelope, and paging advances independently',async()=>{
   const h=harness();
@@ -129,6 +256,8 @@ test('exact PG sender replaces native input, Run context hides envelope, and pag
   const nativeOnly=await h.service.page(reader,project,key,{limit:1,source:'native',cursor:first.nextCursor!});
   assert.equal(nativeOnly.pending.length,0);
   assert.equal(nativeOnly.messagesCursor,null);
+  h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-message',observedAt:now,
+    kind:'entry',entry:nativeInput('input-1','turn-message',sourceMessage.operationId)});
   const readsBeforeMessages=h.calls().historyCalls;
   const messagesOnly=await h.service.page(reader,project,key,{limit:1,source:'messages',messagesCursor:first.messagesCursor!});
   assert.equal(h.calls().historyCalls,readsBeforeMessages,'message continuation never reopens native history');
@@ -251,10 +380,13 @@ test('contradictory client ID and operation marker fail closed on page, detail a
   h.service.close();
 });
 
-test('a second exact native Item stays visible as a stable duplicate notice',async()=>{
+test('ambiguous exact native Items both stay visible as notices while the PG message remains separate',async()=>{
   const h=harness();h.duplicateInput();
   const page=await h.service.page(reader,project,key,{limit:1});
-  assert.equal(page.entries.filter(entry=>entry.id===`message:${id(10)}`).length,1);
+  assert.equal(page.entries.filter(entry=>entry.id===`message:${id(10)}`).length,0);
+  assert.equal(page.entries[0]?.kind,'notice');
+  assert.equal(page.entries[0]?.id,`native:${thread}:turn-message:input-1`);
+  assert.equal(page.pending[0]?.id,`message:${id(10)}`);
   assert.equal(page.entries[1]?.kind,'notice');
   assert.equal(page.entries[1]?.id,`native:${thread}:turn-message:input-duplicate`);
   assert.equal(page.entries[1]?.nativeItemId,'input-duplicate');
@@ -270,7 +402,8 @@ test('a second exact native Item stays visible as a stable duplicate notice',asy
   h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-message',observedAt:now,
     kind:'entry',entry:nativeInput('live-duplicate','turn-message',sourceMessage.operationId)});
   const live=await h.service.updates(reader,project,key);
-  assert.equal(live.entries[0]?.id,`message:${id(10)}`);
+  assert.equal(live.entries[0]?.id,`native:${thread}:turn-message:live-first`);
+  assert.equal(live.entries[0]?.kind,'notice');
   assert.equal(live.entries[1]?.id,`native:${thread}:turn-message:live-duplicate`);
   assert.equal(live.entries[1]?.kind,'notice');
   h.service.close();
@@ -373,7 +506,7 @@ test('only a current scoped start owns active Turn identity across terminal, lat
 test('live native input is attributed only after exact PG source lookup',async()=>{
   const h=harness();
   h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-message',observedAt:now,
-    kind:'entry',entry:nativeInput('live-input','turn-message',sourceMessage.operationId)});
+    kind:'entry',entry:nativeInput('input-1','turn-message',sourceMessage.operationId)});
   const live=await h.service.updates(reader,project,key);
   assert.equal(live.entries[0]?.author.id,'human-a');
   assert.equal((live.entries[0] as {body:string}).body,'Message 10 from human-a');
@@ -390,7 +523,7 @@ test('exact operation marker binds live input; source mismatch remains unknown',
   const h=harness();
   const marker={kind:'operation-marker' as const,source:'message' as const,operationId:sourceMessage.operationId};
   h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-message',observedAt:now,
-    kind:'entry',entry:{...nativeInput('marker-input','turn-message'),inputReference:marker}});
+    kind:'entry',entry:{...nativeInput('input-1','turn-message'),inputReference:marker}});
   const exact=await h.service.updates(reader,project,key);
   assert.equal(exact.entries[0]?.id,`message:${id(10)}`);
   h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-message',observedAt:now,

@@ -28,6 +28,10 @@ type LiveEvent = {seq:number; entry?:WorkspaceEntry; turn?:WorkspaceTurn};
 type LiveState = {generation:string; seq:number; events:LiveEvent[]; entries:Map<string,WorkspaceEntry>;
   turns:Map<string,WorkspaceTurn>; activeTurnId:string|null; terminalTurns:Set<string>;
   stale:boolean; qualified:boolean; resetReason:string|null};
+type InputBinding = {itemId:string|null; ambiguous:boolean};
+type InputRead = {remaining:number; proofs:Map<string,InputBinding>; limitations:Set<string>};
+// Proofs belong to one read request; a display page or the process's first observed Item grants no binding.
+const inputRead=():InputRead=>({remaining:10,proofs:new Map(),limitations:new Set()});
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const encode=(value:unknown)=>Buffer.from(JSON.stringify(value)).toString('base64url');
 const decode=(value:string):Record<string,unknown>=>{
@@ -250,32 +254,23 @@ export class SessionTimelineService {
       throw new DomainError('FORBIDDEN','Session binding changed during live read');
     return live;
   }
-  private async decorateLive(principal:Principal,scope:Scope,live:WorkspaceLiveRead):Promise<WorkspaceLiveRead>{
+  private async decorateLive(principal:Principal,scope:Scope,live:WorkspaceLiveRead,read:InputRead=inputRead()):Promise<WorkspaceLiveRead>{
     if(!scope.sessionId||!live.entries.length&&!live.turns.length)return live;
     const turns=[...new Set([...live.entries.flatMap(e=>e.turnId?[e.turnId]:[]),...live.turns.map(t=>t.id)])];
     const associations=await this.sources(scope.projectId,scope.sessionId,turns);
-    const used=new Set<string>();
+    const bindings=await this.inputBindings(principal,scope,live.entries,associations.found,read);
     const entries=live.entries.map(raw=>{
       const source=raw.turnId?associations.found.get(raw.turnId)??null:null;
       const origin=originOf(source);
       if(raw.kind==='message'&&raw.role==='input'){
-        if(source?.kind==='message'&&exactInput(raw,source)){
-          if(used.has(`message:${source.messageId}`))return nativeInputNotice(raw,'duplicate');
-          const message=associations.messages.get(source.messageId)!;
-          used.add(`message:${message.id}`);
-          return {...messageEntry(message,raw.turnId),nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
-            freshness:raw.freshness,observedAt:raw.observedAt,...(raw.order?{order:raw.order}:{})} as WorkspaceEntry;
-        }
-        if(source?.kind==='run'&&exactInput(raw,source)){
-          if(used.has(`run:${source.runId}`))return nativeInputNotice(raw,'duplicate');
-          used.add(`run:${source.runId}`);return runInput(raw,source);
-        }
-        return nativeInputNotice(raw,inputNoticeReason(raw,source));
+        return this.projectInput(raw,source,source?.kind==='message'?associations.messages.get(source.messageId):undefined,
+          raw.turnId?bindings.get(raw.turnId):undefined);
       }
       return {...raw,origin,...(raw.kind==='message'&&raw.role==='assistant'?{
         author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})};
     });
-    return {...live,entries,turns:live.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)}))};
+    return {...live,entries,turns:live.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)})),
+      limitations:[...live.limitations,...read.limitations]};
   }
   private async sources(projectId:string,sessionId:string,turnIds:string[]){
     return this.deps.uow.read(projectId,async r=>{
@@ -299,7 +294,9 @@ export class SessionTimelineService {
   }
   async page(principal:Principal,projectId:string,key:string,query:Query):Promise<SessionTimelinePage>{
     const scope=await this.scope(principal,projectId,key),limit=Math.max(1,Math.min(50,query.limit));
+    const inputReading=inputRead();
     const readNative=query.source!=='messages',readMessages=query.source!=='native';
+    if(!readNative)inputReading.remaining=0;
     const nativeFence=this.fence(principal,scope,'history',query.turnId,query.itemId);
     const messageFence=this.fence(principal,scope,'messages');
     const nativeCursor=readNative?this.position(query.cursor,nativeFence):undefined;
@@ -322,6 +319,7 @@ export class SessionTimelineService {
     const turnIds=[...new Set([...(native?.turns.map(t=>t.id)??[]),...(native?.entries.flatMap(e=>e.turnId?[e.turnId]:[])??[])])];
     const associations=scope.sessionId?await this.sources(projectId,scope.sessionId,turnIds):
       {found:new Map<string,NativeInputSource>(),messages:new Map<string,SessionMessageRecord>()};
+    const bindings=await this.inputBindings(principal,scope,native?.entries??[],associations.found,inputReading);
     const page=readMessages?await this.deps.uow.read(projectId,async r=>{
       if(!r.sessionMessages)throw new DomainError('CAPABILITY_UNAVAILABLE','Session message storage unavailable');
       const messages=await r.sessionMessages.listSessionMessages(scope.target,limit,messagesCursor);
@@ -331,26 +329,17 @@ export class SessionTimelineService {
     }):{messages:{items:[] as SessionMessageRecord[],nextCursor:null},processing:[] as SessionMessageProcessing[]};
     const processing=new Map(page.processing.map(p=>[p.messageId,p]));
     const displayed=new Set<string>();
-    const displayedRuns=new Set<string>();
     let entries:WorkspaceEntry[]=[],turns:WorkspaceTurn[]=[];
     if(native){
       entries=native.entries.flatMap((raw):WorkspaceEntry[]=>{
         const source=raw.turnId?associations.found.get(raw.turnId)??null:null;
         const origin=originOf(source);
         if(raw.kind==='message'&&raw.role==='input'){
-          if(source?.kind==='message'&&exactInput(raw,source)){
-            if(displayed.has(source.messageId))return [nativeInputNotice(raw,'duplicate')];
-            const m=associations.messages.get(source.messageId);
-            if(!m||m.target.kind!=='owned'||m.target.sessionId!==scope.sessionId)
-              throw new DomainError('INPUT_SOURCE_INVALID','Native message source does not match the Session');
-            displayed.add(m.id);return [{...messageEntry(m,raw.turnId),nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
-              occurredAt:raw.occurredAt??m.createdAt,...(raw.order?{order:raw.order}:{})}];
-          }
-          if(source?.kind==='run'&&exactInput(raw,source)){
-            if(displayedRuns.has(source.runId))return [nativeInputNotice(raw,'duplicate')];
-            displayedRuns.add(source.runId);return [runInput(raw,source)];
-          }
-          return [nativeInputNotice(raw,inputNoticeReason(raw,source))];
+          const projected=this.projectInput(raw,source,
+            source?.kind==='message'?associations.messages.get(source.messageId):undefined,
+            raw.turnId?bindings.get(raw.turnId):undefined);
+          if(projected.kind==='message'&&source?.kind==='message')displayed.add(source.messageId);
+          return [projected];
         }
         const entry=safeEntry(raw,false);
         return [{...entry,...(entry.kind==='tool'?{detailAvailable:principal.permissions.includes('review')&&raw.kind==='tool'&&raw.detailAvailable,
@@ -369,7 +358,7 @@ export class SessionTimelineService {
         author:{kind:'session',id:scope.sessionId,label:scope.title},occurredAt:p.updatedAt,
         truncated:p.response.length>16000});
     }
-    const live=await this.decorateLive(principal,scope,this.liveRead(principal,scope));
+    const live=await this.decorateLive(principal,scope,this.liveRead(principal,scope),inputReading);
     const pendingById=new Map<string,WorkspaceMessage>();
     for(const m of page.messages.items)if(!displayed.has(m.id))
       pendingById.set(m.id,messageEntry(m,processing.get(m.id)?.nativeTurnId??null));
@@ -387,8 +376,9 @@ export class SessionTimelineService {
       nextCursor:readNative?this.token(native?.nextCursor??null,nativeFence):null,
       messagesCursor:readMessages?this.token(page.messages.nextCursor,messageFence):null,
       observedAt:native?.observedAt??now,partial:(readNative&&(!native||native.partial||!!native.nextCursor))||
-        (readMessages&&!!page.messages.nextCursor),
-      limitations:[...limitations,...(native?.limitations??[]),...(scope.target.kind==='external'?['Manual handoff records do not prove native delivery or reading']:[])],
+        (readMessages&&!!page.messages.nextCursor)||(readNative&&inputReading.limitations.size>0),
+      limitations:[...limitations,...(native?.limitations??[]),...(readNative?[...inputReading.limitations]:[]),
+        ...(scope.target.kind==='external'?['Manual handoff records do not prove native delivery or reading']:[])],
       unsupportedKinds:native?.unsupportedKinds??[],live,
       capabilities:{history:!readNative?!!scope.threadId&&!!this.deps.runner?.nativeAdapter().readWorkspaceHistory&&
           this.historyAvailability.get(historyKey!)!==false:!!native,
@@ -408,41 +398,78 @@ export class SessionTimelineService {
     const native=await this.deps.runner.workspaceHistory(principal,projectId,scope.sessionId,{turnId,itemId,limit:1,detail});
     const raw=native.entries.find(e=>e.turnId===turnId&&e.nativeItemId===itemId);
     if(!raw)throw new DomainError('NOT_FOUND','Native Item was not found in the exact Turn');
-    const canonical=source&&exactInput(raw,source)
-      ? await this.canonicalInputId(principal,scope,turnId,source):null;
+    const binding=source&&exactInput(raw,source)
+      ? await this.inputBinding(principal,scope,turnId,source,inputRead()):undefined;
     const current=await this.scope(principal,projectId,key);
     if(current.threadId!==scope.threadId||current.nativeSessionId!==scope.nativeSessionId)
       throw new DomainError('FORBIDDEN','Session binding changed during Item read');
     if(raw.kind==='tool'&&!detail)throw new DomainError('FORBIDDEN','Original tool detail requires project review access');
     if(raw.kind==='message'&&raw.role==='assistant')return {...raw,origin:originOf(source),
       author:{kind:'session',id:scope.sessionId,label:scope.title}};
-    if(raw.kind==='message'&&raw.role==='input'&&source&&exactInput(raw,source)&&canonical!==itemId)
-      return nativeInputNotice(raw,canonical?'duplicate':'unassociated');
-    if(raw.kind==='message'&&raw.role==='input'&&source?.kind==='message'&&exactInput(raw,source)){
-      const message=associations.messages.get(source.messageId);
-      if(!message||message.target.kind!=='owned'||message.target.sessionId!==scope.sessionId)
-        throw new DomainError('INPUT_SOURCE_INVALID','Native message source does not match the Session');
-      return {...messageEntry(message,turnId),nativeItemId:itemId,nativeKind:raw.nativeKind,
-        ...(raw.order?{order:raw.order}:{})};
-    }
-    if(raw.kind==='message'&&raw.role==='input'&&source?.kind==='run'&&exactInput(raw,source))
-      return runInput(raw,source);
-    if(raw.kind==='message'&&raw.role==='input')return nativeInputNotice(raw,inputNoticeReason(raw,source));
+    if(raw.kind==='message'&&raw.role==='input')return this.projectInput(raw,source,
+      source?.kind==='message'?associations.messages.get(source.messageId):undefined,binding);
     return {...safeEntry(raw,detail),origin:originOf(source)};
   }
-  private async canonicalInputId(principal:Principal,scope:Scope,turnId:string,source:NativeInputSource):Promise<string|null>{
-    if(!scope.sessionId||!this.deps.runner)return null;
-    let cursor:string|undefined,first:string|null=null;
+  private projectInput(raw:WorkspaceMessage,source:NativeInputSource|null,message:SessionMessageRecord|undefined,
+    binding:InputBinding|undefined):WorkspaceEntry{
+    if(!source||!exactInput(raw,source))return nativeInputNotice(raw,inputNoticeReason(raw,source));
+    if(!binding?.itemId||binding.itemId!==raw.nativeItemId)
+      return nativeInputNotice(raw,binding?.ambiguous||binding?.itemId?'duplicate':'unassociated');
+    if(source.kind==='run')return runInput(raw,source);
+    if(!message||message.id!==source.messageId)
+      throw new DomainError('INPUT_SOURCE_INVALID','Native message source does not match its saved message');
+    return {...messageEntry(message,raw.turnId),nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
+      occurredAt:raw.occurredAt??message.createdAt,observedAt:raw.observedAt,freshness:raw.freshness,
+      ...(raw.order?{order:raw.order}:{})};
+  }
+  private async inputBindings(principal:Principal,scope:Scope,entries:WorkspaceEntry[],
+    sources:ReadonlyMap<string,NativeInputSource>,read:InputRead):Promise<Map<string,InputBinding>>{
+    const bindings=new Map<string,InputBinding>();
+    for(const raw of entries){
+      const source=raw.turnId?sources.get(raw.turnId):undefined;
+      if(raw.turnId&&raw.nativeItemId&&source&&exactInput(raw,source)&&!bindings.has(raw.turnId))
+        bindings.set(raw.turnId,await this.inputBinding(principal,scope,raw.turnId,source,read));
+    }
+    return bindings;
+  }
+  private async inputBinding(principal:Principal,scope:Scope,turnId:string,source:NativeInputSource,
+    read:InputRead):Promise<InputBinding>{
+    const key=JSON.stringify([turnId,source]);
+    const cached=read.proofs.get(key);if(cached)return cached;
+    const proof=await this.proveInputBinding(principal,scope,turnId,source,read);
+    read.proofs.set(key,proof);
+    if(!proof.itemId)read.limitations.add(proof.ambiguous?
+      '同一原生 Turn 有多个精确匹配的输入 Item，无法核实唯一发送者绑定。':
+      '未能在有界的完整已终结 Turn 中核实唯一输入 Item；业务消息仍可独立读取。');
+    return proof;
+  }
+  private async proveInputBinding(principal:Principal,scope:Scope,turnId:string,source:NativeInputSource,
+    read:InputRead):Promise<InputBinding>{
+    const unverified:InputBinding={itemId:null,ambiguous:false};
+    if(!scope.sessionId||!this.deps.runner)return unverified;
+    let cursor:string|undefined,itemId:string|null=null,completedAt:string|null=null;
     const seen=new Set<string>();
-    for(let n=0;n<10;n++){
-      const page=await this.deps.runner.workspaceHistory(principal,scope.projectId,scope.sessionId,
-        {turnId,limit:50,...(cursor?{cursor}:{})});
-      const inPage=page.entries.find(entry=>entry.turnId===turnId&&entry.nativeItemId&&exactInput(entry,source));
-      if(inPage?.nativeItemId)first=inPage.nativeItemId;
-      if(!page.nextCursor)return first;
-      if(seen.has(page.nextCursor))return null;
+    while(read.remaining>0){
+      read.remaining--;
+      let page:NativeWorkspacePage;
+      try{page=await this.deps.runner.workspaceHistory(principal,scope.projectId,scope.sessionId,
+        {turnId,limit:50,...(cursor?{cursor}:{})})}
+      catch(error){if(error instanceof DomainError&&error.code==='FORBIDDEN')throw error;return unverified}
+      // Active or incomplete projections cannot prove a stable unique Item. No timestamp or page-order choice is made.
+      const turns=page.turns.filter(turn=>turn.id===turnId),turn=turns[0];
+      if(turns.length!==1||!turn?.completedAt||!['completed','failed','interrupted'].includes(turn.state)||
+        completedAt!==null&&completedAt!==turn.completedAt||page.entries.length>50||
+        page.entries.some(entry=>entry.turnId!==turnId)||page.limitations.length||page.unsupportedKinds.length)return unverified;
+      completedAt=turn.completedAt;
+      for(const entry of page.entries)if(exactInput(entry,source)){
+        if(!entry.nativeItemId)return unverified;
+        if(itemId&&itemId!==entry.nativeItemId)return {itemId:null,ambiguous:true};
+        itemId=entry.nativeItemId;
+      }
+      if(!page.nextCursor)return page.partial?unverified:{itemId,ambiguous:false};
+      if(!page.entries.length||seen.has(page.nextCursor))return unverified;
       seen.add(page.nextCursor);cursor=page.nextCursor;
     }
-    return null;
+    return unverified;
   }
 }
