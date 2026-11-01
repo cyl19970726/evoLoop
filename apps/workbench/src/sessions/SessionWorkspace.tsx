@@ -87,6 +87,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [readAgain, setReadAgain] = useState(0);
   const [recoveryRead, setRecoveryRead] = useState<RecoveryRead>({ status: "loading" });
   const epoch = useRef(0);
+  const activityDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const pendingActivityScroll = useRef<string | null>(null);
   const historyAbort = useRef<AbortController | null>(null);
   const historyScope = useRef("");
   historyScope.current = `${context.token}\0${scope}\0${active}\0${refresh}\0${readAgain}`;
@@ -205,6 +207,26 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     document.addEventListener("visibilitychange", visible);
     return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, readKey, active, refresh, readAgain, pollInterval]);
+  useEffect(() => {
+    const key = pendingActivityScroll.current;
+    const section = activityDetailsRef.current;
+    if (!active || tab !== "activity" || !key || !section?.open) return;
+    let attempts = 0;
+    let frame = 0;
+    const reveal = () => {
+      const target = [...section.querySelectorAll<HTMLElement>("[data-activity-key]")]
+        .find(item => item.dataset.activityKey === key);
+      if (target) {
+        section.scrollTop = Math.max(0, target.getBoundingClientRect().top - section.getBoundingClientRect().top + section.scrollTop - 8);
+        window.scrollTo({ top: Math.max(0, section.getBoundingClientRect().top + window.scrollY - 72) });
+        pendingActivityScroll.current = null;
+        return;
+      }
+      if (++attempts < 12) frame = window.requestAnimationFrame(reveal);
+    };
+    frame = window.requestAnimationFrame(reveal);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, tab, open, activity]);
   async function moreActivity() {
     if (historyBusy || historyLoaded && !historyCursor) return;
     const requestScope = historyScope.current, requestEpoch = epoch.current;
@@ -274,6 +296,21 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const recentResult = latestSessionResult(current.results);
   const recentRunHref = session.latestBusinessRun ? observedRunTaskLink(session.latestBusinessRun, taskHref) : null;
   const latestBusinessRun = session.latestBusinessRun;
+  const activityHref = latestBusinessRun
+    ? viewUrl("activity", "important", [`run:${latestBusinessRun.id}`])
+    : viewUrl("activity");
+  const openActivityRun = () => {
+    const key = latestBusinessRun ? `run:${latestBusinessRun.id}` : null;
+    const nextOpen = key ? [...open.filter(value => value !== key), key].slice(-10) : open;
+    pendingActivityScroll.current = key;
+    setOpen(nextOpen);
+    if (activityDetailsRef.current) activityDetailsRef.current.open = true;
+    window.history.replaceState(null, "", viewUrl(tab, filter, nextOpen));
+    if (!key) window.requestAnimationFrame(() => {
+      const section = activityDetailsRef.current;
+      if (section) window.scrollTo({ top: Math.max(0, section.getBoundingClientRect().top + window.scrollY - 72) });
+    });
+  };
   const businessRunTaskTitle = latestBusinessRun?.taskId
     ? (work?.id === latestBusinessRun.taskId ? work.title
       : current.roleTasks.find(item => item.id === latestBusinessRun.taskId)?.title
@@ -341,9 +378,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         taskTitle={businessRunTaskTitle}
         taskHref={latestBusinessRun.taskId ? taskHref(latestBusinessRun.taskId) : null}
         current={businessRunIsCurrent} />}
-      {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} onApplied={() => setReadAgain(value => value + 1)}>
+      {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} activityHref={activityHref} onOpenActivity={openActivityRun} onApplied={() => setReadAgain(value => value + 1)}>
       </SessionConversation>}
-      <details className="session-project-activity"><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}
+      <details ref={activityDetailsRef} className="session-project-activity"><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}
       </details>
     </>}
     {tab === "queue" && <section className="session-workspace-section"><div className="session-section-head"><div><h2>任务队列</h2><p className="muted">按已确认的顺序逐项处理；排队不表示已开始运行。</p></div><a href={`${href(context.projectId, "runtime")}?view=execution`}>管理受管队列</a></div><div className="session-queue-glance">{queueAttention && <p><strong>队列占用／顺位</strong><span><a href={taskHref(queueAttention.taskId)}>{queueAttention.taskTitle}</a> · {queueStateLabel(queueAttention.state)}{queueAttention.holdReason && ` · ${queueAttention.holdReason}`}</span></p>}{work && <p><strong>具体分派</strong><span>{currentAssignment ? assignmentLabel(currentAssignment) : "没有可确认的当前修订接受记录"}</span></p>}{recentResult && <p><strong>最近关联交付</strong><span><a href={taskHref(recentResult.taskId)}>{recentResult.taskTitle}</a> · {sessionResultUseLabel(recentResult)} · {date(recentResult.submittedAt)}</span></p>}</div><div className="session-task-summary"><h3>具体承接</h3>{work ? <p><a href={taskHref(work.id)}>{work.title}</a> · {taskProgress(work.state)} · {relationLabel}</p> : <p>当前没有可确认的具体承接。</p>}{current.assignments.filter(item => item.task.id !== work?.id).map(item => <p key={`${item.task.id}:${item.assignment.version}`}><a href={taskHref(item.task.id)}>{item.task.title}</a> · {assignmentLabel(item)}</p>)}</div><h3>排队顺序</h3>{current.queue.length ? <ol className="session-queue-list">{current.queue.map(item => <li key={item.entryId}><span className="session-queue-position" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span><div><strong><a href={taskHref(item.taskId)}>{item.taskTitle}</a></strong><small>{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</small></div></li>)}</ol> : <p className="empty">当前范围没有关联队列条目。</p>}</section>}

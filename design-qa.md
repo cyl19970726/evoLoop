@@ -1,3 +1,43 @@
+# Session activity tool evidence QA (current, PR #173)
+
+Date: 2026-11-01 (Asia/Taipei). This update preserves the approved Session layout and addresses only the tool-evidence gap found in independent QA. It is implementation evidence, not the Lead's independent acceptance.
+
+## Target and state
+
+- Source visual: `/Users/hhh0x/.codex/worktrees/task-production-experience/evoLoop/.local/sessions-redesign-20261031/design-be4202db/assets/session-message-workspace.png`, `1487×1058` RGB. It shows the approved compact tool-summary affordance in its collapsed state.
+- Implementation visual: `.local/session-activity-pr173-tool-source/tool-source-1440.png`, captured at CSS `1440×1024`, device pixel ratio `0.75`, physical `1920×1365`. Both source and implementation were normalized to `1440×1024` before comparison.
+- Full-view combined input: `.local/session-activity-pr173-tool-source/source-vs-implementation.png`.
+- Focused tool-region combined input: `.local/session-activity-pr173-tool-source/source-vs-implementation-tools.png`, because the detail is too small to assess in the full view.
+- State comparison: the source demonstrates the collapsed tool affordance; the implementation is intentionally expanded to test the reported empty-summary state. The surrounding Session hierarchy remains fixed.
+- Real Session: `owned:74a5ee9b-794c-467f-a440-aaceadce3137`, Task `74c75c23-c129-44da-8b57-f1791285af33`, completed Run `bb85c4dc-101c-5349-8ecc-bb4775274460`.
+- Real data boundary: the Run exposed ten `commandExecution` items with `name: "Command"`, `status` and an empty `summary`; `plan` was null. The public activity feed exposed Run status, final reply and source events, while Run trace correctly denied `candidate-consumer` with the project review-permission message.
+
+## Evidence
+
+- Desktop source guidance, CSS `1440×1024`: `.local/session-activity-pr173-tool-source/tool-source-1440.png`.
+- Desktop Run opened from the new entry: `.local/session-activity-pr173-tool-source/run-source-open-1440.png`.
+- Middle-width layout, measured CSS `870×900`: `.local/session-activity-pr173-tool-source/tool-source-870.png`; the source row had `scrollWidth === width` and no page overflow.
+- Phone layout, measured CSS `390×844`: guidance wrapped above the link; measured row width/scroll width `277/277px`, no page overflow, and hit testing resolved the note and link to their own elements.
+
+## Result
+
+- The tool block now states that native observation publicly provides only type and status. It links to `项目活动与来源记录` for the full command, arguments and output, and discloses that this read is protected by project review permission.
+- Activating the entry opens the folded activity area, preserves `open=run:<id>` in the URL, and moves the activity area's internal scroll position to the selected Run. At desktop, the Run row measured 7.5px below the activity viewport edge after selection.
+- No backend contract, trace permission or persisted observation data changed. Internal reasoning remains absent, and a denied trace continues to display an explicit error instead of inferred command text.
+- The existing final-reply card, active-tool auto expansion, public source events and responsive Session composition remain in place.
+- The focused comparison found no actionable P0/P1/P2 drift in typography, spacing rhythm, colors, icon family or copy hierarchy. The source has no expanded empty-summary reference; the implementation's added guidance uses the same 11px meta typography, neutral rule and blue action language as the surrounding tool block.
+
+## Validation
+
+- `npm run build`: passed with the existing Vite module-directive and large-chunk warnings only.
+- `npm run test:unit`: 897 tests, 860 passed, 37 opt-in/integration tests skipped, 0 failed.
+- Opt-in Playwright: Session workspace plus native progress, 2/2 passed. The workspace test covers the new entry, section opening, narrow layout and the preserved conversation flow.
+- Manual in-app browser checks used the real Run above at CSS `1440×1024`, `870×900`, and `390×844`; no page-level horizontal overflow was observed.
+
+final result: passed
+
+---
+
 # Task workspace image-to-code QA (historical)
 
 Source design:

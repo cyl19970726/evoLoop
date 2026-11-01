@@ -166,6 +166,11 @@
 .session-working-observation li,.session-turn-tools li{padding:3px 0;font-size:11px}
 .session-working-observation li span,.session-turn-tools li span{margin-left:7px;color:#77879f}
 .session-working-observation li p,.session-turn-tools li p{margin:3px 0;color:#536784;font-size:11px}
+.session-tool-source{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-top:10px;padding-top:9px;border-top:1px dashed #d7e0ec}
+.session-tool-source p{flex:1 1 320px;margin:0;color:#65768c;font-size:11px;line-height:1.55}
+.session-tool-source a{display:inline-flex;flex:0 0 auto;align-items:center;gap:4px;color:#245ba8;font-size:11px;font-weight:600;text-decoration:none;white-space:nowrap}
+.session-tool-source a:hover{text-decoration:underline}
+.session-tool-source a:focus-visible{outline:2px solid #2d66b5;outline-offset:3px;border-radius:2px}
 .session-workspace .session-message-detail{position:absolute;top:0;left:0;right:0;bottom:0;z-index:6;margin:0;border-radius:0;background:#fff;overflow-y:auto;padding:20px}
 .session-workspace .session-message-detail .panel-head{position:sticky;top:0;background:#fff;padding-bottom:12px;border-bottom:1px solid #e5eaf1;margin-bottom:16px;z-index:1}
 .session-workspace .session-message-detail .markdown-body{font-size:14px}
