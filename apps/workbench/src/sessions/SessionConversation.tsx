@@ -116,6 +116,8 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   currentScope.current = messageScope;
   const [messages, setMessages] = useState<SessionConversationItem[]>([]);
   const [selected, setSelected] = useState<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null } | null>(null);
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
+  const detailCloseRef = useRef<HTMLButtonElement | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -213,11 +215,19 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       const target = value.message.target;
       const targetKey = target.kind === "owned" ? `owned:${target.sessionId}` : `external:${target.linkId}`;
       if (targetKey !== snapshot.session.key) throw new Error("消息详情与所选 Session 不符");
+      detailTriggerRef.current = document.activeElement as HTMLElement;
       setSelected(value); setDetailError("");
     } catch (cause) { if (currentScope.current === scope) setDetailError(errorText(cause)); }
   }
+  function closeDetail() {
+    setSelected(null);
+    detailTriggerRef.current?.focus();
+  }
   const working = latestProcessed(messages);
   const ordered = [...messages].reverse();
+  useEffect(() => {
+    if (selected) detailCloseRef.current?.focus();
+  }, [selected]);
   useEffect(() => {
     const node = conversationScroll.current;
     if (node && keepAtBottom.current) {
@@ -248,9 +258,18 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       {nextCursor && <button type="button" className="session-conversation-older" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : "加载更早消息"}</button>}
       {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} onDetail={id => void detail(id)} />)}
       {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} />}
+      {!working && !messages.length && progress && <section className="session-working-observation" aria-label="当前工作观察">
+        <div className="session-working-head"><span><MessageCircle size={16} aria-hidden="true" />当前工作</span><strong>{progress.turn ? `Turn ${progress.turn.status === "inProgress" ? "进行中" : progress.turn.status === "completed" ? "已结束" : "状态待核对"}` : "处理已保存，等待原生进展"}</strong></div>
+        {progress.items.length > 0 && <details className="session-turn-tools" open={progress.items.some(item => item.status === "failed" || item.status === "inProgress")}>
+          <summary><Wrench size={15} aria-hidden="true" />{progress.items.length} 项工具活动<span>{progress.freshness === "live" ? `观察于 ${date(progress.observedAt)}` : "上次观察"}</span></summary>
+          <ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol>
+        </details>}
+        {progress.items.length === 0 && <p className="muted">暂无可确认的原生工具活动。</p>}
+      </section>}
     </div>
-    {selected && <section className="session-message-detail">
-      <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" onClick={() => setSelected(null)}>关闭</button></div>
+    {selected && <section className="session-message-detail" role="dialog" aria-modal="true" aria-label={`消息详情 · ${messageStateLabel[selected.message.state]}`}
+      onKeyDown={event => { if (event.key === "Escape") closeDetail(); }}>
+      <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" ref={detailCloseRef} onClick={closeDetail}>关闭</button></div>
       <p className="muted">发送 {date(selected.message.createdAt)} · 更新 {date(selected.message.updatedAt)} · 来源 {selected.message.senderActorId}</p>
       <MarkdownBody source={selected.message.content} identity={`message-detail-${selected.message.id}`} projectId={context.projectId} />
       {selected.processing?.response && <><h4>原会话回复</h4><MarkdownBody source={selected.processing.response} identity={`message-response-${selected.processing.id}`} projectId={context.projectId} /></>}

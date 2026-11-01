@@ -214,9 +214,9 @@
   .session-workspace .session-conversation .session-composer-host{flex-shrink:0;position:static;margin:0;padding:10px 0 0;border-top:1px solid #e2e7ef}
   .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:64px;max-height:180px}
   .session-workspace .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0;max-height:200px;overflow-y:auto}
-  /* 短视口时项目活动隐藏，通过"会话详情"次级入口访问。 */
+  /* 短视口时项目活动默认收起，可展开阅读。 */
   @media(max-height:1000px){
-    .session-workspace .session-project-activity{display:none}
+    .session-workspace .session-project-activity{flex-shrink:0;max-height:200px;overflow-y:auto}
   }
   .session-workspace .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0}
   .session-workspace .session-project-activity .session-information{margin-top:0;border-top:1px solid #e5eaf1;padding-top:12px}

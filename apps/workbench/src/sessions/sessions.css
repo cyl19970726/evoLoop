@@ -40,6 +40,7 @@
 .session-nav-status.running{background:#245bd6}
 .session-nav-status.failed{background:#c94a4a}
 .session-nav-status.idle{background:#a8b4c8}
+.session-nav-status.unknown{background:#d0d5dd;border:1px dashed #a8b4c8}
 .session-nav-signal{display:block;font-size:10px;color:#3d5a8f;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-nav-copy{display:grid;gap:2px;min-width:0}
 .session-nav-copy strong{font-size:12px;line-height:1.45;color:#263959;font-weight:650}
