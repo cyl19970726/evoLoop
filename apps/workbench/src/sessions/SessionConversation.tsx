@@ -222,7 +222,8 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   function closeDetail() {
     setSelected(null);
     detailFocusId.current = null;
-    detailTriggerRef.current?.focus();
+    const trigger = detailTriggerRef.current;
+    setTimeout(() => trigger?.focus(), 0);
   }
   const working = latestProcessed(messages);
   const ordered = [...messages].reverse();
