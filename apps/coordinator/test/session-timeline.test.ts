@@ -609,3 +609,47 @@ test('bounded JSON update wait wakes on a native event',async()=>{
   assert.ok(Date.now()-started<450);
   h.service.close();
 });
+
+test('owner live tools retain detail availability for reviewers without inlining originals',async()=>{
+  const h=harness();
+  const failed={...tool,state:'failed' as const,exitCode:1,freshness:'live' as const};
+  h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-run',observedAt:now,kind:'entry',entry:failed});
+  const first=await h.service.page(reviewer,project,key,{limit:1,source:'native'});
+  const page=await h.service.page(reviewer,project,key,{limit:1,source:'native',cursor:first.nextCursor!});
+  const historical=page.entries.find(e=>e.nativeItemId==='tool-1');
+  const live=page.live.entries.find(e=>e.nativeItemId==='tool-1');
+  assert.equal(historical?.kind,'tool');assert.equal(live?.kind,'tool');
+  if(historical?.kind!=='tool'||live?.kind!=='tool')throw new Error('tool projection missing');
+  assert.equal(page.capabilities.originalToolDetail,true);
+  assert.equal(historical.detailAvailable,true);
+  assert.equal(live.detailAvailable,true,'an owner live overlay must not downgrade the same readable historical Item');
+  assert.equal(live.detailReason,null);
+  assert.equal(live.detail,undefined,'review permission enables an on-demand read, not inline originals');
+  const ordinary=await h.service.updates(reader,project,key);
+  const ordinaryTool=ordinary.entries.find(e=>e.nativeItemId==='tool-1');
+  assert.equal(ordinaryTool?.kind,'tool');
+  if(ordinaryTool?.kind!=='tool')throw new Error('ordinary tool missing');
+  assert.equal(ordinaryTool.detailAvailable,false);
+  assert.equal(ordinaryTool.detail,undefined);
+  assert.match(ordinaryTool.detailReason!,/读取与复核权限/);
+  const reviewedAgain=await h.service.updates(reviewer,project,key);
+  const reviewedTool=reviewedAgain.entries.find(e=>e.nativeItemId==='tool-1');
+  assert.equal(reviewedTool?.kind==='tool'&&reviewedTool.detailAvailable,true,'one reader cannot poison capability metadata for another');
+  for(const response of [page,ordinary,reviewedAgain])assert.doesNotMatch(JSON.stringify(response),/private command|private output/);
+  const original=await h.service.item(reviewer,project,key,'turn-run','tool-1');
+  assert.equal(original.kind==='tool'&&original.detail?.output,'private output');
+  await assert.rejects(h.service.item(reader,project,key,'turn-run','tool-1'),e=>e instanceof DomainError&&e.code==='FORBIDDEN');
+  assert.equal(h.calls().starts,0);h.service.close();
+});
+
+test('live projection keeps an unsupported original-detail reason instead of inventing availability',async()=>{
+  const h=harness();
+  h.emit({projectId:project,sessionId,threadId:thread,turnId:'turn-run',observedAt:now,kind:'entry',
+    entry:{...tool,detailAvailable:false,detailReason:'Original detail is unsupported for this native tool kind.'}});
+  const live=await h.service.updates(reviewer,project,key);
+  const item=live.entries[0];assert.equal(item?.kind,'tool');
+  if(item?.kind!=='tool')throw new Error('tool projection missing');
+  assert.equal(item.detailAvailable,false);
+  assert.equal(item.detailReason,'Original detail is unsupported for this native tool kind.');
+  assert.equal(item.detail,undefined);h.service.close();
+});

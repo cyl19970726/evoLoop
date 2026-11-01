@@ -854,6 +854,21 @@ test("workspace listeners follow the owned adapter across explicit recovery",asy
     unsubscribe();second.emitWorkspace(event('turn-c'));
     assert.deepEqual(seen,['turn-a','turn-b']);
     assert.ok((await read()).turns.some(turn=>turn.id==='turn-c'));
+    second.emitWorkspace({projectId,sessionId:session.id,threadId:session.nativeThreadId!,turnId:'turn-c',
+      observedAt:new Date().toISOString(),kind:'entry',entry:{id:'owned-failed-tool',kind:'tool',turnId:'turn-c',
+        nativeItemId:'owned-item',nativeKind:'commandExecution',author:{kind:'native',id:null,label:'Tool'},origin:null,
+        occurredAt:null,observedAt:new Date().toISOString(),freshness:'live',truncated:false,name:'Command',summary:'Read file',
+        state:'failed',durationMs:5,exitCode:1,detailAvailable:true,detailReason:null,
+        detail:{input:'private-owned-input',output:'private-owned-output',error:null,resources:[]}}});
+    const projected=await read(),ownedTool=projected.entries.find(entry=>entry.nativeItemId==='owned-item');
+    assert.equal(ownedTool?.kind==='tool'&&ownedTool.detailAvailable,true,
+      'the real Runner listener path preserves availability for a reviewer after live dispatch');
+    assert.doesNotMatch(JSON.stringify(projected),/private-owned-input|private-owned-output/);
+    const restricted=await timeline.updates({...principal,permissions:['read']},projectId,`owned:${session.id}`);
+    assert.equal(restricted.entries.some(entry=>entry.kind==='tool'&&entry.detailAvailable),false);
+    const reread=await read();
+    assert.equal(reread.entries.some(entry=>entry.kind==='tool'&&entry.detailAvailable),true,
+      'a restricted reader does not alter the owner buffer for the next authorized reader');
     unsubscribeDisconnect();second.disconnect('second child exited');
     assert.equal(reasons.length,2,'unsubscribed disconnect listener receives no later child event');
     assert.equal(instances.reduce((total,runtime)=>total+runtime.starts,0),0);
