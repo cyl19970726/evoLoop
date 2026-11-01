@@ -39,6 +39,7 @@ function setup() {
 test("native events coalesce to one bounded current snapshot and usage is never summed", async () => {
   const f = setup(); await f.bridge.opened();
   f.emit("turn/started", { turn: { id: "A", status: "inProgress", startedAt: 100 } });
+  assert.equal(f.bridge.current(f.projectId, f.sessionId)?.currentTurn?.id, "A");
   const tokenUsage = { total: { inputTokens: 100, cachedInputTokens: 80, outputTokens: 20, reasoningOutputTokens: 5, totalTokens: 120 }, last: { inputTokens: 10, outputTokens: 2, totalTokens: 12 }, modelContextWindow: null };
   f.emit("thread/tokenUsage/updated", { turnId: "A", tokenUsage });
   f.emit("thread/tokenUsage/updated", { turnId: "A", tokenUsage });
@@ -59,6 +60,7 @@ test("disconnect flushes the last bounded facts then exposes them as stale", asy
   f.emit("turn/started", { turn: { id: "A", status: "inProgress", startedAt: 100 } });
   f.emit("turn/diff/updated", { turnId: "A", diff: "observed diff" });
   f.disconnect(); await f.bridge.drain();
+  assert.equal(f.bridge.current(f.projectId, f.sessionId), null);
   assert.equal(f.record?.diff?.text, "observed diff"); assert.equal(f.record?.freshness, "stale");
   const view = await f.bridge.get(f.projectId, f.sessionId);
   assert.equal(view?.freshness, "stale"); assert.equal(view?.staleReason, "connection_unavailable");

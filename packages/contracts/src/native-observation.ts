@@ -22,7 +22,10 @@ export interface NativeObservationRecord {
   freshness: 'live' | 'stale';
   staleReason: string | null;
   status: NativeStatus | null;
-  currentTurn: null | { id: string; status: NativeTurnStatus; source: NativeInputSource | null; /** Native Unix seconds, nullable in .164. */ startedAt: number | null };
+  currentTurn: null | { id: string; status: NativeTurnStatus; source: NativeInputSource | null;
+    /** Native Unix seconds, nullable in .164. */ startedAt: number | null;
+    /** First notification that made this exact Turn terminal; later events never move it. */
+    terminalObservedAt?: string | null };
   items: Array<{ id: string; kind: string; name: string; status: NativeItemStatus; summary: string; truncated: boolean }>;
   plan: null | { turnId: string; steps: Array<{ step: string; status: 'pending' | 'inProgress' | 'completed' }>; explanation: string | null; truncated: boolean; observedAt: string };
   diff: null | { turnId: string; text: string; truncated: boolean; observedAt: string };

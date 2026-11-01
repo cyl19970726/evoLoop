@@ -68,10 +68,10 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
       const startedAt = metric(object(params.turn)?.startedAt);
       // .164 carries native Unix seconds when known. Reject only strictly older starts; equal or null is inconclusive.
       if (next.currentTurn?.startedAt != null && startedAt != null && startedAt < next.currentTurn.startedAt) return null;
-      next.currentTurn = { id: turnId, status: turnStatus(object(params.turn)?.status), source: null, startedAt };
+      next.currentTurn = { id: turnId, status: turnStatus(object(params.turn)?.status), source: null, startedAt, terminalObservedAt: null };
       next.items = []; next.plan = null; next.diff = null; next.usage = null;
     } else if (!next.currentTurn) {
-      next.currentTurn = { id: turnId, status: 'unknown', source: null, startedAt: null };
+      next.currentTurn = { id: turnId, status: 'unknown', source: null, startedAt: null, terminalObservedAt: null };
     } else if (next.currentTurn.id !== turnId) return null;
   }
   switch (event.method) {
@@ -80,7 +80,8 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
       if (next.currentTurn && next.currentTurn.startedAt === null) next.currentTurn.startedAt = metric(object(params.turn)?.startedAt); break;
     case 'turn/completed': {
       const s = turnStatus(object(params.turn)?.status); if (s === 'unknown') return null;
-      next.currentTurn!.status = s; break;
+      next.currentTurn!.status = s;
+      next.currentTurn!.terminalObservedAt ??= event.observedAt; break;
     }
     case 'item/started': case 'item/completed': {
       const item = itemView(params.item, event.method === 'item/completed'); if (!item) return null;

@@ -61,6 +61,18 @@ test('reducer preserves the previous snapshot when a Turn status changes',()=>{
   assert.equal(startedAfterItem.currentTurn?.startedAt,110);
 });
 
+test('terminal history grace is anchored to the first terminal notification for the exact Turn',()=>{
+  let row=reduce(null,'turn/started',started('one'),{observedAt:'2026-10-27T00:00:00.000Z'})!;
+  row=reduce(row,'turn/completed',{threadId:'thread',turn:{id:'one',status:'failed',startedAt:100}},{observedAt:'2026-10-27T00:00:01.000Z'})!;
+  assert.equal(row.currentTurn?.terminalObservedAt,'2026-10-27T00:00:01.000Z');
+  row=reduce(row,'thread/status/changed',{threadId:'thread',status:{type:'idle'}},{observedAt:'2026-10-27T00:01:01.000Z'})!;
+  row=reduce(row,'item/completed',{threadId:'thread',turnId:'one',item:{id:'late',type:'fileChange',status:'completed'}},{observedAt:'2026-10-27T00:01:02.000Z'})!;
+  row=reduce(row,'turn/completed',{threadId:'thread',turn:{id:'one',status:'failed',startedAt:100}},{observedAt:'2026-10-27T00:01:03.000Z'})!;
+  assert.equal(row.currentTurn?.status,'failed');
+  assert.equal(row.currentTurn?.terminalObservedAt,'2026-10-27T00:00:01.000Z');
+  assert.equal(row.observedAt,'2026-10-27T00:01:03.000Z');
+});
+
 test('native startedAt rejects an older late Turn start when both timestamps are known',()=>{
   const current=reduce(null,'turn/started',{threadId:'thread',turn:{id:'new',status:'inProgress',startedAt:200,items:[]}})!;
   assert.equal(reduce(current,'turn/started',{threadId:'thread',turn:{id:'old',status:'inProgress',startedAt:100,items:[]}}),null);
