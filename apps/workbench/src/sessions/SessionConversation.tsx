@@ -119,6 +119,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   const detailTriggerRef = useRef<HTMLElement | null>(null);
   const detailCloseRef = useRef<HTMLButtonElement | null>(null);
   const detailFocusId = useRef<string | null>(null);
+  const detailDialogRef = useRef<HTMLElement | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -235,6 +236,27 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
     }
   }, [selected]);
   useEffect(() => {
+    if (!selected) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeDetail(); return; }
+      if (event.key !== "Tab") return;
+      const dialog = detailDialogRef.current;
+      if (!dialog) return;
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex]:not([tabindex="-1"])'))
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusables.length) return;
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
+      const active = document.activeElement;
+      if (!dialog.contains(active)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); return; }
+      if (event.shiftKey && active === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [selected]);
+  useEffect(() => {
     const node = conversationScroll.current;
     if (node && keepAtBottom.current) {
       ignoreProgrammaticScroll.current = true;
@@ -266,23 +288,24 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} />}
       {!working && !messages.length && progress && (() => {
         const currentRunId = snapshot.session.latestBusinessRun?.id ?? null;
-        const turnMatchesCurrentRun = progress.turn?.source?.kind === "run" && progress.turn.source.id === currentRunId;
+        const turn = progress.turn;
+        const turnMatchesCurrentRun = turn?.source?.kind === "run" && turn.source.id === currentRunId;
         const isCurrent = progress.freshness === "live" && turnMatchesCurrentRun;
-        const isStale = progress.freshness === "stale" || (progress.turn && !turnMatchesCurrentRun);
+        const isStale = progress.freshness === "stale" || (turn !== null && !turnMatchesCurrentRun);
+        const awaitingTurn = progress.freshness === "live" && turn === null;
         return <section className="session-working-observation" aria-label="当前工作观察">
-          <div className="session-working-head"><span><MessageCircle size={16} aria-hidden="true" />当前工作</span><strong>{isCurrent && progress.turn ? `Turn ${progress.turn.status === "inProgress" ? "进行中" : progress.turn.status === "completed" ? "已结束" : "状态待核对"}` : isStale ? "上次观察" : "处理已保存，等待原生进展"}</strong></div>
-          {!isCurrent && <p className="muted">{isStale ? "当前观察与进行中 Run 的关联待核对。" : "暂无可确认的原生工具活动。"}</p>}
+          <div className="session-working-head"><span><MessageCircle size={16} aria-hidden="true" />当前工作</span><strong>{isCurrent && turn ? `Turn ${turn.status === "inProgress" ? "进行中" : turn.status === "completed" ? "已结束" : "状态待核对"}` : isStale ? "上次观察" : "本次运行的原生进展待确认"}</strong></div>
+          {isStale && <p className="muted">当前观察与进行中 Run 的关联待核对；以下工具活动属于上次观察。</p>}
+          {awaitingTurn && <p className="muted">原生观察尚未提供本次运行的 Turn；不据此推断正在执行。</p>}
         {progress.items.length > 0 && <details className="session-turn-tools" open={progress.items.some(item => item.status === "failed" || item.status === "inProgress")}>
-          <summary><Wrench size={15} aria-hidden="true" />{progress.items.length} 项工具活动<span>{progress.freshness === "live" ? `观察于 ${date(progress.observedAt)}` : "上次观察"}</span></summary>
+          <summary><Wrench size={15} aria-hidden="true" />{progress.items.length} 项工具活动<span>{isCurrent ? `观察于 ${date(progress.observedAt)}` : "上次观察"}</span></summary>
           <ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol>
         </details>}
-        {progress.items.length === 0 && <p className="muted">暂无可确认的原生工具活动。</p>}
+        {progress.items.length === 0 && !isStale && !awaitingTurn && <p className="muted">暂无可确认的原生工具活动。</p>}
       </section>;
       })()}
     </div>
-    {selected && <section className="session-message-detail" role="dialog" aria-modal="true" aria-label={`消息详情 · ${messageStateLabel[selected.message.state]}`}
-      onKeyDown={event => { if (event.key === "Escape") closeDetail(); }}
-      onFocus={event => { if (!event.currentTarget.contains(event.target as Node)) detailCloseRef.current?.focus(); }}>
+    {selected && <section ref={detailDialogRef} className="session-message-detail" role="dialog" aria-modal="true" aria-label={`消息详情 · ${messageStateLabel[selected.message.state]}`}>
       <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" ref={detailCloseRef} onClick={closeDetail}>关闭</button></div>
       <p className="muted">发送 {date(selected.message.createdAt)} · 更新 {date(selected.message.updatedAt)} · 来源 {selected.message.senderActorId}</p>
       <MarkdownBody source={selected.message.content} identity={`message-detail-${selected.message.id}`} projectId={context.projectId} />
