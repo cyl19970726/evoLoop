@@ -118,6 +118,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   const [selected, setSelected] = useState<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null } | null>(null);
   const detailTriggerRef = useRef<HTMLElement | null>(null);
   const detailCloseRef = useRef<HTMLButtonElement | null>(null);
+  const detailFocusId = useRef<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -221,12 +222,14 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   }
   function closeDetail() {
     setSelected(null);
+    detailFocusId.current = null;
     detailTriggerRef.current?.focus();
   }
   const working = latestProcessed(messages);
   const ordered = [...messages].reverse();
   useEffect(() => {
-    if (selected) {
+    if (selected && selected.message.id !== detailFocusId.current) {
+      detailFocusId.current = selected.message.id;
       const timer = setTimeout(() => detailCloseRef.current?.focus(), 0);
       return () => clearTimeout(timer);
     }
@@ -251,7 +254,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
     <p role="status" className="session-execution-state">{snapshot.session.kind === "external" ? "外部会话 · 保存后仍需人工转交；保存、送达与已读分别记录。" : `自动处理：${entry.executionLabel}。${entry.executionReason}`}{entry.executionObservedAt && <> · 状态读于 {date(entry.executionObservedAt)}；配置变化后请点上方“重新读取”。</>}</p>
     {detailError && <Alert kind="error">消息详情暂不可读取：{detailError}。</Alert>}
     {listError && <Alert kind="error">消息列表暂不可读取：{listError}。<button onClick={() => setReload(value => value + 1)}>重试列表</button></Alert>}
-    <div ref={conversationScroll} className="session-conversation-scroll" onScroll={event => {
+    <div ref={conversationScroll} className="session-conversation-scroll" inert={!!selected} onScroll={event => {
       if (ignoreProgrammaticScroll.current) return;
       const node = event.currentTarget;
       keepAtBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
@@ -261,17 +264,25 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       {nextCursor && <button type="button" className="session-conversation-older" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : "加载更早消息"}</button>}
       {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} onDetail={id => void detail(id)} />)}
       {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} />}
-      {!working && !messages.length && progress && <section className="session-working-observation" aria-label="当前工作观察">
-        <div className="session-working-head"><span><MessageCircle size={16} aria-hidden="true" />当前工作</span><strong>{progress.turn ? `Turn ${progress.turn.status === "inProgress" ? "进行中" : progress.turn.status === "completed" ? "已结束" : "状态待核对"}` : "处理已保存，等待原生进展"}</strong></div>
+      {!working && !messages.length && progress && (() => {
+        const currentRunId = snapshot.session.latestBusinessRun?.id ?? null;
+        const turnMatchesCurrentRun = progress.turn?.source?.kind === "run" && progress.turn.source.id === currentRunId;
+        const isCurrent = progress.freshness === "live" && turnMatchesCurrentRun;
+        const isStale = progress.freshness === "stale" || (progress.turn && !turnMatchesCurrentRun);
+        return <section className="session-working-observation" aria-label="当前工作观察">
+          <div className="session-working-head"><span><MessageCircle size={16} aria-hidden="true" />当前工作</span><strong>{isCurrent && progress.turn ? `Turn ${progress.turn.status === "inProgress" ? "进行中" : progress.turn.status === "completed" ? "已结束" : "状态待核对"}` : isStale ? "上次观察" : "处理已保存，等待原生进展"}</strong></div>
+          {!isCurrent && <p className="muted">{isStale ? "当前观察与进行中 Run 的关联待核对。" : "暂无可确认的原生工具活动。"}</p>}
         {progress.items.length > 0 && <details className="session-turn-tools" open={progress.items.some(item => item.status === "failed" || item.status === "inProgress")}>
           <summary><Wrench size={15} aria-hidden="true" />{progress.items.length} 项工具活动<span>{progress.freshness === "live" ? `观察于 ${date(progress.observedAt)}` : "上次观察"}</span></summary>
           <ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol>
         </details>}
         {progress.items.length === 0 && <p className="muted">暂无可确认的原生工具活动。</p>}
-      </section>}
+      </section>;
+      })()}
     </div>
     {selected && <section className="session-message-detail" role="dialog" aria-modal="true" aria-label={`消息详情 · ${messageStateLabel[selected.message.state]}`}
-      onKeyDown={event => { if (event.key === "Escape") closeDetail(); }}>
+      onKeyDown={event => { if (event.key === "Escape") closeDetail(); }}
+      onFocus={event => { if (!event.currentTarget.contains(event.target as Node)) detailCloseRef.current?.focus(); }}>
       <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" ref={detailCloseRef} onClick={closeDetail}>关闭</button></div>
       <p className="muted">发送 {date(selected.message.createdAt)} · 更新 {date(selected.message.updatedAt)} · 来源 {selected.message.senderActorId}</p>
       <MarkdownBody source={selected.message.content} identity={`message-detail-${selected.message.id}`} projectId={context.projectId} />
@@ -284,7 +295,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       {selected.message.state === "manual_pending" && <p className="muted">外部消息仍待人工转交，不能据此登记原生会话已读。</p>}
       {selected.message.target.kind === "owned" && !selected.message.readReceipt && !canRecordRead && <p className="muted">本人已读仅由配置的实际收件人登记；发送者和会话创建者不能代签。</p>}
     </section>}
-    <div className="session-composer-host">
+    <div className="session-composer-host" inert={!!selected}>
       {!entry.canSave ? <Alert>{entry.sendReason || "当前不可保存消息。"}</Alert> : <>
         {snapshot.currentWork && <p className="session-composer-context">引用当前工作：<a href={`#/p/${context.projectId}/tasks/${snapshot.currentWork.id}`}>{snapshot.currentWork.title}</a></p>}
         <ActionForm embedded submitOnModEnter context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={entry.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea", placeholder: snapshot.session.kind === "external" ? "写给当前外部 Session，保存后人工转交…" : "给当前 Session 发消息…", autoGrow: true }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content, ...(snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) })} onApplied={() => { if (currentScope.current !== messageScope) return; setReload(value => value + 1); onApplied(); }} />
