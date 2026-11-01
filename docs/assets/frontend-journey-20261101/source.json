@@ -22,6 +22,10 @@
     3342,
     2056
   ],
+  "referenceViewportCssPx": null,
+  "referenceDpr": null,
+  "referenceBrowserZoom": null,
+  "referenceMeasurementNote": "The user reference dimensions are output image pixels only; its CSS viewport, DPR and browser zoom were not measured. Similar aspect ratio does not establish matching browser conditions.",
   "scope": "One completed research Task; historical Session link now points to a Session running a later documentation Task. Four UI captures plus return navigation, no messages or business writes. PR173 candidate and HTML fix not present; mobile and long-message behavior not tested.",
   "screenshots": [
     {

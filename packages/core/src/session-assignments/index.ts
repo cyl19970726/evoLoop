@@ -1,7 +1,8 @@
-import type { AppliedResult, Principal } from "@evoloop/contracts";
+import type { AppliedResult, Principal, Task } from "@evoloop/contracts";
 import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { SessionAssignmentCommand, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
+import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
 
 type AssignmentTx = Transaction & { sessionAssignments?: SessionAssignmentTransaction };
 export interface SessionAssignmentContext {
@@ -27,6 +28,28 @@ async function targetRole(tx: Transaction, projectId: string, target: SessionTar
 }
 function result(command: SessionAssignmentCommand, entityId: string, version: number): AppliedResult {
   return { status: "applied", operationId: command.operationId, entityId, version };
+}
+/** A dispatch freezes a new revision without changing the assigned business input. */
+async function acknowledgedRevision(tx: Transaction, task: Task,
+  assignment: TaskSessionAssignment, direct: boolean): Promise<string> {
+  if (task.currentRevisionId === assignment.taskRevisionId) return assignment.taskRevisionId;
+  const changed = () => fail("BASELINE_CHANGED", "Task revision changed; make a new assignment", task.version);
+  if (!direct || assignment.target.kind !== "owned") return changed();
+  const sessionId = assignment.target.sessionId;
+  const original = await tx.getTaskRevision(task.id, assignment.taskRevisionId);
+  const current = await tx.getTaskRevision(task.id, task.currentRevisionId);
+  if (!original || !current || original.projectId !== task.projectId || current.projectId !== task.projectId ||
+    original.taskId !== task.id || current.taskId !== task.id ||
+    current.version !== original.version + 1 || current.version !== task.version ||
+    current.reason !== "Runtime dispatch reserved") return changed();
+  const runs = await tx.listRuntimeRuns(task.id);
+  if (!runs.some(run => run.projectId === task.projectId && run.taskId === task.id &&
+    run.taskRevisionId === current.id && run.sessionId === sessionId &&
+    run.basisSetId === current.basisSetId)) return changed();
+  const before = canonicalTaskInputJson(await taskInputSignature(tx, task, original.id));
+  const after = canonicalTaskInputJson(await taskInputSignature(tx, task, current.id));
+  if (before !== after) return changed();
+  return current.id;
 }
 /** The WorkflowService owns operation-journal idempotence and transaction boundaries. */
 export async function applySessionAssignment({ tx, command, principal, now }: SessionAssignmentContext): Promise<AppliedResult> {
@@ -74,8 +97,6 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
     await store.saveTaskSessionAssignment(record, previous.version);
     return result(command, task.id, record.version);
   }
-  if (task.currentRevisionId !== previous.taskRevisionId)
-    fail("BASELINE_CHANGED", "Task revision changed; make a new assignment", task.version);
   if (previous.state === "accepted") fail("ALREADY_ACCEPTED", "Assignment acceptance already recorded");
   if (command.type === "task.assignment.acknowledge") {
     if (!previous.recipientActorId || previous.recipientActorId !== principal.actorId)
@@ -84,7 +105,8 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   } else if (!principal.permissions.includes("review")) {
     fail("FORBIDDEN", "Observed acceptance requires review authority");
   }
-  const record: TaskSessionAssignment = { ...previous, version: previous.version + 1, state: "accepted",
+  const taskRevisionId = await acknowledgedRevision(tx, task, previous, command.type === "task.assignment.acknowledge");
+  const record: TaskSessionAssignment = { ...previous, version: previous.version + 1, taskRevisionId, state: "accepted",
     ack: { method: command.type === "task.assignment.acknowledge" ? "direct" : "lead-observed",
       actorId: command.type === "task.assignment.acknowledge" ? principal.actorId : null,
       observerActorId: principal.actorId, evidence: command.evidence, sourceRef: command.sourceRef ?? null, at: now },

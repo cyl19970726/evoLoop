@@ -159,6 +159,27 @@
 .workbench-layout .doc-original-reader .doc-original-integrity { margin: 0 0 18px; font-size: 14px; color: #607291; }
 /* 固定原件保持 100% 实际宽度，不缩放；宽内容在 iframe 内部横向滚动。 */
 .workbench-layout .doc-original-reader iframe { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }
+/* HTML 完整主阅读：页头紧凑，正文占满剩余高度并在 iframe 内连续阅读。 */
+.workbench-layout .content.html-continuous-reading { display: flex; flex-direction: column; height: calc(100dvh - 120px); min-height: 560px; padding-bottom: 0; overflow: hidden; }
+.html-continuous-reading .document-reading-toolbar,
+.html-continuous-reading .document-reading-header { flex-shrink: 0; }
+.html-continuous-reading .document-reading-header { margin-bottom: 12px; }
+.html-continuous-reading .doc-version-actions { margin: 8px 0 10px; }
+.html-continuous-reading .document-read-layout { flex: 1; min-height: 0; margin-bottom: 12px; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+.html-continuous-reading .document-read-main,
+.html-continuous-reading .doc-primary-body { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; max-width: none; }
+.html-continuous-reading .doc-original-reader.doc-html-continuous { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; padding: 14px 16px; border-radius: 6px; }
+.html-continuous-reading .doc-html-continuous .panel-head { flex-shrink: 0; margin-bottom: 10px; }
+.html-continuous-reading .doc-html-frame { flex: 1; min-height: 260px; height: auto; background: #fff; }
+.html-continuous-reading .doc-continuous-secondary { flex-shrink: 0; margin-top: 10px; border: 1px solid #dfe5ee; border-radius: 5px; background: #fff; }
+.html-continuous-reading .doc-continuous-secondary > summary { padding: 10px 14px; cursor: pointer; color: #354b79; font-size: 14px; font-weight: 600; }
+.html-continuous-reading .doc-continuous-secondary-body { max-height: 42vh; overflow: auto; border-top: 1px solid #e5eaf1; padding: 12px 14px; }
+.html-continuous-reading .doc-continuous-secondary-body > .doc-original-integrity { margin-bottom: 10px; font-size: 14px; color: #607291; }
+@media (max-width: 1180px) {
+  .workbench-layout .content.html-continuous-reading { height: auto; min-height: 0; overflow: visible; padding-bottom: 24px; }
+  .html-continuous-reading .doc-html-frame { min-height: 70vh; }
+  .html-continuous-reading .doc-continuous-secondary-body { max-height: none; }
+}
 .workbench-layout .document-index .list-footer .doc-index-read { display: block; margin-top: 5px; padding: 0; border: 0; background: transparent; color: #607291; font-size: 14px; }
 .workbench-layout .document-index td details summary,
 .workbench-layout .document-index td details code { font-size: 14px; }

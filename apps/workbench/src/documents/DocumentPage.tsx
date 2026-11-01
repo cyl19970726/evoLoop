@@ -97,6 +97,11 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     })().catch(cause => { if (active) { setRelatedLoading(false); setRelatedError(readProblem(cause)); } });
     return () => { active = false; controller.abort(); };
   }, [token, projectId, id, refresh, readVersion]);
+  useEffect(() => {
+    if (revision?.format !== "html" || detail?.document.kind === "organization_review") return;
+    try { if (localStorage.getItem(docAsideCollapsedStorageKey) === null) setAsideCollapsed(true); }
+    catch { /* storage unavailable; keep current view */ }
+  }, [revision?.format, detail?.document.kind, revision?.documentId]);
   if (!detail || !revision || loadedScope !== scope || detail.document.projectId !== projectId || detail.document.id !== id || revision.projectId !== projectId || revision.documentId !== id || selectedRevision && revision.id !== selectedRevision) {
     return <div className="content"><a className="back" href={documentReturnHref(projectId)}>← 返回来源</a><p>{loading ? "正在读取文档…" : "当前文档尚未读回。"}</p>{error && <Alert kind="error">{error}</Alert>}</div>;
   }
@@ -105,7 +110,8 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
   const uploadStale = uploadBaselineVersion !== null && uploadBaselineVersion !== detail.document.version;
   const taskOwned = detail.document.kind === "task";
   const archived = detail.document.status === "archived";
-  return <div className="content reading document-reading-page">
+  const continuousHtml = revision.format === "html" && detail.document.kind !== "organization_review";
+  return <div className={`content reading document-reading-page${continuousHtml ? " html-continuous-reading" : ""}`}>
     <div className="document-reading-toolbar">
       <div className="document-reading-backlinks"><a className="back doc-back" href={documentReturnHref(projectId)}>← 返回来源</a><a className="doc-list-link" href={href(projectId, "documents")}>全部文档</a></div>
       <div className="doc-read-status"><span>{loading ? "正在核对当前文档…" : observedAt ? `当前文档读于 ${observedAt.toLocaleString("zh-CN")}` : "当前文档尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前文档</button></div>
@@ -132,7 +138,7 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
       <article className="document-read-main" ref={outlineBody}>
         <section className="doc-primary-body" aria-label="文档完整正文">
           {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={detail.document.title} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
-            : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} readingMode={detail.document.kind === "organization_review"} />}
+            : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} readingMode={detail.document.kind === "organization_review"} continuous={continuousHtml} />}
         </section>
       </article>
       {detail.document.kind !== "organization_review" &&
