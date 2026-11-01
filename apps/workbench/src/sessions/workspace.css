@@ -238,6 +238,12 @@
   .session-workspace .session-detail-header{gap:18px}
   .session-queue-glance{grid-template-columns:1fr}
 }
+/* 极短桌面：释放固定工作区高度，至少保留 220px 消息阅读区。 */
+@media(min-width:851px) and (max-height:700px){
+  .session-workspace{height:auto;overflow:visible}
+  .session-workspace .session-conversation{flex:none;height:auto}
+  .session-workspace .session-conversation .session-conversation-scroll{flex:none;height:220px;min-height:220px;max-height:220px;overflow-y:auto}
+}
 @media(max-width:850px){
   .session-workspace .session-detail-header{display:block}
   .session-workspace .session-workspace-actions{margin-top:14px;flex-wrap:wrap}
