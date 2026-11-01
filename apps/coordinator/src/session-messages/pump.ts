@@ -28,7 +28,7 @@ async function collect<T>(load:(cursor?:string)=>Promise<RuntimePage<T>>,maxPage
 export interface SessionMessagePumpDeps {
   service:SessionMessageService;runtime():MessageRuntime;projects():Promise<string[]>;
   /** Current in-process native notification state for one exact Session, if available. */
-  nativeTurn?(projectId:string,sessionId:string):Pick<NativeObservationRecord,'threadId'|'freshness'|'status'|'currentTurn'|'observedAt'>|null;
+  nativeTurn?(projectId:string,sessionId:string):Pick<NativeObservationRecord,'threadId'|'freshness'|'status'|'currentTurn'>|null;
   now?():number;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
@@ -142,7 +142,7 @@ export class SessionMessagePump {
       if(observed.currentTurn.status==='inProgress')
         return (observed.status===null||observed.status==='active')&&threadStatus==='active';
       if(!['completed','failed','interrupted'].includes(observed.currentTurn.status))return false;
-      const observedAt=Date.parse(observed.observedAt);
+      const observedAt=Date.parse(observed.currentTurn.terminalObservedAt??'');
       return Number.isFinite(observedAt)&&
         (this.deps.now?.()??Date.now())-observedAt<=TERMINAL_HISTORY_GRACE_MS;
     }catch{return false;}

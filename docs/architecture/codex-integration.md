@@ -169,7 +169,7 @@ Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能�
 
 `capabilities.send` 表示可保存对话，采用 `owned-conversation` 标识 owned 会话；`capabilities.ordinaryExecution` 是当前配置准入观察，条件通过仍为 `unverified`，不保证下一次回复。每次消息先持久记录原操作，再以同一 full/never profile 正常 `thread/resume` 原 Thread，核精确权限回执后启动 Turn；这也覆盖服务重启后的 `notLoaded` Thread，不增加消息专用进程。`thread/read` 没有权限字段，不能替代权限修订的 full/never 确认；消息 Turn 完成、配置 active 与业务 Task 验收各自记录。权限变更回执丢失或不完整时保留 unknown，并沿原操作核对。
 
-已绑定普通消息 Turn 若暂时未出现在 `thread/turns/list`，协调器可读取当前连接的 NativeObservation。只有 Thread 与 Turn 精确一致、连接 live、当前 `thread/read` 不是 `systemError`／`notLoaded` 时才有资格暂缓：`inProgress` 还须当前 Thread 为 `active`，不按静默时长推定失败，避免误伤长思考；`completed`／`failed`／`interrupted` 只获得 30 秒的历史可见宽限，以覆盖已观察到的原样本约 30 秒传播延迟，超时仍记 unknown。暂缓只等待同一 Turn 的历史或终态，不开放 gate、不启动下一条消息，也不代替最终 Item 回读。观测缺失、过期、Thread/Turn 不符、状态 `unknown` 或 Thread `idle`／`systemError` 时仍按原停止规则处理；固定等待或重发都不能替代这项身份证据。
+已绑定普通消息 Turn 若暂时未出现在 `thread/turns/list`，协调器可读取当前连接的 NativeObservation。只有 Thread 与 Turn 精确一致、连接 live、当前 `thread/read` 不是 `systemError`／`notLoaded` 时才有资格暂缓：`inProgress` 还须当前 Thread 为 `active`，不按静默时长推定失败，避免误伤长思考；`completed`／`failed`／`interrupted` 只获得 30 秒的历史可见宽限，并以该 boundTurn 首次终态通知的固定时间锚定，后续 Thread/status、Item、usage 或重复终态事件都不能延长期限。暂缓只等待同一 Turn 的历史或终态，不开放 gate、不启动下一条消息，也不代替最终 Item 回读。观测缺失、过期、Thread/Turn 不符、状态 `unknown` 或 Thread `idle`／`systemError` 时仍按原停止规则处理；固定等待或重发都不能替代这项身份证据。
 
 迁移 035 及更早存下的 Session、Run 与 profile 快照保持历史原值，不依赖冷切迁移或启动时重写。迁移 036 退役旧 cold 启动围栏，保留 035 控制行和原 epoch 不变；新建 Session 统一 full/never。不能把旧 readonly/workspace profile 重新解释成新权限。普通消息与业务共享这套新 Session 默认。GUI 阅读桥仍可按单个 Run 使用精确只读 reader、路由与证据范围；这只是业务对象读取范围，不能视为 OS sandbox，也不改变 Document iframe sandbox。
 

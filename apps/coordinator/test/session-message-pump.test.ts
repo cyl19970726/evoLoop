@@ -19,7 +19,8 @@ const message=(id:string,sessionId:string,state:'unknown'|'processing'|'queued')
   version:2,blockedReason:null,readReceipt:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
 type ObservedTurn=Pick<NativeObservationRecord,'threadId'|'freshness'|'status'|'currentTurn'|'observedAt'>;
 const observedTurn=(sessionId:string):ObservedTurn=>({threadId:`thread-${sessionId}`,freshness:'live',status:'active',
-  observedAt:'2026-11-01T13:05:50.000Z',currentTurn:{id:'turn-exact',status:'inProgress',source:null,startedAt:1}});
+  observedAt:'2026-11-01T13:05:50.000Z',currentTurn:{id:'turn-exact',status:'inProgress',source:null,startedAt:1,
+    terminalObservedAt:null}});
 
 test('bounded rotating pending pages eventually visit over ten thousand unresolved Sessions',async()=>{
   const messages=Array.from({length:10080},()=>message(randomUUID(),randomUUID(),'unknown'));
@@ -169,19 +170,23 @@ test('a thread systemError or idle state stops the live-history deferral',async(
 test('terminal observations defer only for a bounded history visibility window',async()=>{
   for(const status of ['completed','failed','interrupted'] as const){
     const target=randomUUID(),m=message(randomUUID(),target,'processing');
-    let unknown=0,now=Date.parse('2026-11-01T13:05:50.000Z')+10_000;
+    const terminalAt=Date.parse('2026-11-01T13:05:50.000Z');
+    let unknown=0,now=terminalAt+10_000,projectionObservedAt=terminalAt+10_000;
     const service={pending:async()=>[m],session:async()=>session(target),
       processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}),
       markUnknown:async()=>{unknown++;}} as unknown as SessionMessageService;
     const runtime={isReady:()=>true,registerBinding:async()=>{},
       inspect:async()=>({thread:{status:{type:status==='completed'?'idle':'active'}}}),
       listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
-    const evidence={...observedTurn(target),currentTurn:{...observedTurn(target).currentTurn!,status}};
+    const evidence={...observedTurn(target),currentTurn:{...observedTurn(target).currentTurn!,status,
+      terminalObservedAt:new Date(terminalAt).toISOString()}};
     const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
-      canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},nativeTurn:()=>evidence,now:()=>now});
+      canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},
+      nativeTurn:()=>({...evidence,observedAt:new Date(projectionObservedAt).toISOString()}),now:()=>now});
     await pump.tick();
     assert.equal(unknown,0,status);
-    now+=21_000;
+    now=terminalAt+60_000;
+    projectionObservedAt=terminalAt+60_000;
     await pump.tick();
     assert.equal(unknown,1,status);
   }
