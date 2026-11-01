@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ListFilter, Plus, Search, UserRound } from "lucide-react";
+import { ListFilter, Plus, Search } from "lucide-react";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../ui/shared";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet";
@@ -27,8 +27,10 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
   function item(session: ObservedSession) {
     const roles = session.roles.map(role => role.title).join(" · ");
+    const taskSignal = session.currentTask ? session.currentTask.title : null;
+    const stateClass = session.busy === true ? "running" : session.runtimeState === "failed" ? "failed" : session.busy === false && session.runtimeState === "ready" ? "idle" : "unknown";
     return <a key={session.key} href={sessionHref(projectId, session.key)} className={`session-nav-item ${selectedId === session.key ? "selected" : ""}`} aria-current={selectedId === session.key ? "page" : undefined} onClick={onNavigate}>
-      <UserRound size={15} aria-hidden="true" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong>{roles && <small className="session-nav-meta">{roles}</small>}{!roles && <small className="session-nav-reason">{sessionClassReason(session)}</small>}<small className="session-nav-state">{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
+      <span className={`session-nav-status ${stateClass}`} aria-hidden="true" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong>{taskSignal && <small className="session-nav-signal">{taskSignal}</small>}{roles && <small className="session-nav-meta">{roles}</small>}{!roles && <small className="session-nav-reason">{sessionClassReason(session)}</small>}<small className="session-nav-state">{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {

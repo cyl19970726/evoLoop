@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CircleAlert, MessageCircle, Wrench } from "lucide-react";
+import { ArrowUpRight, CircleAlert, MessageCircle, Wrench } from "lucide-react";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import { errorText } from "../api";
@@ -41,19 +41,34 @@ function mergeConversation(previous: SessionConversationItem[], incoming: Sessio
   return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 300);
 }
 
-function ToolSummary({ progress, processing }: { progress: NativeProgressView | null; processing: SessionMessageProcessing | null }) {
+function ToolEvidenceFooter({ href, sourceKind, onOpenActivity }: { href: string; sourceKind: "run" | "message" | null; onOpenActivity(): void }) {
+  const note = sourceKind === "run"
+    ? "工具观察只公开类型与状态。完整命令、参数和输出需在“项目活动与来源记录”中展开本次运行，并受项目复核权限保护。"
+    : sourceKind === "message"
+      ? "工具观察只公开类型与状态。此 Turn 来自普通消息处理；项目活动可核对原消息与回复，但没有对应的 Run 执行轨迹入口。"
+      : "工具观察只公开类型与状态；当前没有可归属的 Run 或消息来源。";
+  const linkLabel = sourceKind === "run" ? "在项目活动中核对完整轨迹"
+    : sourceKind === "message" ? "在项目活动中核对消息来源"
+      : "打开项目活动与来源记录";
+  return <div className="session-tool-source">
+    <p>{note}</p>
+    <a href={href} onClick={event => { event.preventDefault(); onOpenActivity(); }}>{linkLabel} <ArrowUpRight size={13} aria-hidden="true" /></a>
+  </div>;
+}
+
+function ToolSummary({ progress, processing, activityHref, activitySourceKind, onOpenActivity }: { progress: NativeProgressView | null; processing: SessionMessageProcessing | null; activityHref: string; activitySourceKind: "run" | "message" | null; onOpenActivity(): void }) {
   const matching = progress?.turn && processing?.nativeTurnId === progress.turn.id ? progress : null;
   const items = matching?.items ?? [];
   if (!matching) return null;
   const unfinished = items.filter(item => item.status === "failed" || item.status === "inProgress");
   return <details className="session-turn-tools" open={unfinished.length > 0}>
     <summary><Wrench size={15} aria-hidden="true" />{items.length ? `${items.length} 项工具活动` : "当前没有可核对的工具活动"}<span>{matching.freshness === "live" ? `观察于 ${date(matching.observedAt)}` : "上次观察"}</span></summary>
-    {items.length > 0 && <ol>{items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol>}
+    {items.length > 0 && <><ol>{items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol><ToolEvidenceFooter href={activityHref} sourceKind={activitySourceKind} onOpenActivity={onOpenActivity} /></>}
     {!items.length && <p>{matching.freshness === "live" ? "原生来源暂未提供工具活动。" : `上次观察已过期${matching.staleReason ? `：${matching.staleReason}` : ""}。`}</p>}
   </details>;
 }
 
-function WorkingObservation({ item, snapshot, progress, projectId }: { item: SessionConversationItem; snapshot: SessionSnapshot; progress: NativeProgressView | null; projectId: string }) {
+function WorkingObservation({ item, snapshot, progress, projectId, activityHref, activitySourceKind, onOpenActivity }: { item: SessionConversationItem; snapshot: SessionSnapshot; progress: NativeProgressView | null; projectId: string; activityHref: string; activitySourceKind: "run" | "message" | null; onOpenActivity(): void }) {
   const processing = item.processing ?? null;
   const live = progress?.freshness === "live";
   const turnMatches = !!processing?.nativeTurnId && progress?.turn?.id === processing.nativeTurnId;
@@ -70,16 +85,19 @@ function WorkingObservation({ item, snapshot, progress, projectId }: { item: Ses
       <div><dt>最近工具</dt><dd>{latestTools.at(-1) ? `${latestTools.at(-1)!.name} · ${latestTools.at(-1)!.status}` : "暂无可确认的工具活动"}</dd></div>
       <div><dt>观察来源</dt><dd>{observed ? `${date(observed.observedAt)} · ${observed.freshness === "live" ? "当前原生观察" : "上次记录"}` : "尚无当前原生进度；不会推断思考过程"}</dd></div>
     </dl>
-    {latestTools.length > 0 && <details><summary>展开 {observed?.items.length ?? latestTools.length} 项工具活动</summary><ol>{(observed?.items ?? latestTools).map(tool => <li key={tool.id}><strong>{tool.name}</strong><span>{tool.status}</span>{tool.summary && <p>{tool.summary}</p>}</li>)}</ol></details>}
+    {latestTools.length > 0 && <details><summary>展开 {observed?.items.length ?? latestTools.length} 项工具活动</summary><ol>{(observed?.items ?? latestTools).map(tool => <li key={tool.id}><strong>{tool.name}</strong><span>{tool.status}</span>{tool.summary && <p>{tool.summary}</p>}</li>)}</ol><ToolEvidenceFooter href={activityHref} sourceKind={activitySourceKind} onOpenActivity={onOpenActivity} /></details>}
     {important.length > 0 && <details><summary>查看最近项目进展</summary><ul>{important.map(activity => <li key={activity.id}>{activity.summary}<small>{date(activity.occurredAt ?? activity.recordedAt)}</small></li>)}</ul></details>}
   </section>;
 }
 
-function ConversationMessage({ item, context, snapshot, progress, onDetail }: {
+function ConversationMessage({ item, context, snapshot, progress, activityHref, activitySourceKind, onOpenActivity, onDetail }: {
   item: SessionConversationItem;
   context: MutationContext;
   snapshot: SessionSnapshot;
   progress: NativeProgressView | null;
+  activityHref: string;
+  activitySourceKind: "run" | "message" | null;
+  onOpenActivity(): void;
   onDetail(id: string): void;
 }) {
   const mine = item.senderActorId === context.principal.actorId;
@@ -96,7 +114,7 @@ function ConversationMessage({ item, context, snapshot, progress, onDetail }: {
       <div className="session-chat-byline"><strong>{snapshot.session.title}</strong><time>{date(processing.updatedAt)}</time><span>{processing.state === "completed" ? "原 Thread 回复" : processing.state === "failed" ? "处理失败" : "处理记录"}</span></div>
       {processing.response && <MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} />}
       {item.responseTruncated && <p className="session-chat-truncated">回复较长，当前只显示安全预览。<button type="button" onClick={() => onDetail(item.id)}>读取完整回复</button></p>}
-      <ToolSummary progress={progress} processing={processing} />
+      <ToolSummary progress={progress} processing={processing} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={onOpenActivity} />
     </div>}
     {processing?.failure && <p className="session-chat-failure" role="alert"><CircleAlert size={15} aria-hidden="true" />处理失败：{processing.failure}</p>}
     {item.blockedReason && <p className="session-chat-status">{item.blockedReason}</p>}
@@ -104,11 +122,14 @@ function ConversationMessage({ item, context, snapshot, progress, onDetail }: {
   </div>;
 }
 
-export function SessionConversation({ context, snapshot, onApplied, progress }: {
+export function SessionConversation({ context, snapshot, onApplied, progress, activityHref, activitySourceKind, onOpenActivity }: {
   context: MutationContext;
   snapshot: SessionSnapshot;
   onApplied(): void;
   progress: NativeProgressView | null;
+  activityHref: string;
+  activitySourceKind: "run" | "message" | null;
+  onOpenActivity(): void;
 }) {
   const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
   const messageScope = `${context.token}\0${context.projectId}\0${snapshot.session.key}`;
@@ -116,6 +137,9 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
   currentScope.current = messageScope;
   const [messages, setMessages] = useState<SessionConversationItem[]>([]);
   const [selected, setSelected] = useState<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null } | null>(null);
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
+  const detailCloseRef = useRef<HTMLButtonElement | null>(null);
+  const detailFocusId = useRef<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -216,8 +240,29 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       setSelected(value); setDetailError("");
     } catch (cause) { if (currentScope.current === scope) setDetailError(errorText(cause)); }
   }
+  function closeDetail() {
+    setSelected(null);
+    detailFocusId.current = null;
+    const trigger = detailTriggerRef.current;
+    setTimeout(() => trigger?.focus(), 0);
+  }
   const working = latestProcessed(messages);
   const ordered = [...messages].reverse();
+  useEffect(() => {
+    if (selected && selected.message.id !== detailFocusId.current) {
+      detailFocusId.current = selected.message.id;
+      const timer = setTimeout(() => detailCloseRef.current?.focus(), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [selected]);
+  useEffect(() => {
+    if (!selected) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeDetail(); return; }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [selected]);
   useEffect(() => {
     const node = conversationScroll.current;
     if (node && keepAtBottom.current) {
@@ -238,19 +283,38 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
     <p role="status" className="session-execution-state">{snapshot.session.kind === "external" ? "外部会话 · 保存后仍需人工转交；保存、送达与已读分别记录。" : `自动处理：${entry.executionLabel}。${entry.executionReason}`}{entry.executionObservedAt && <> · 状态读于 {date(entry.executionObservedAt)}；配置变化后请点上方“重新读取”。</>}</p>
     {detailError && <Alert kind="error">消息详情暂不可读取：{detailError}。</Alert>}
     {listError && <Alert kind="error">消息列表暂不可读取：{listError}。<button onClick={() => setReload(value => value + 1)}>重试列表</button></Alert>}
-    <div ref={conversationScroll} className="session-conversation-scroll" onScroll={event => {
+    <div ref={conversationScroll} className="session-conversation-scroll" inert={!!selected} onScroll={event => {
       if (ignoreProgrammaticScroll.current) return;
       const node = event.currentTarget;
       keepAtBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
     }}>
       {loading && !messages.length && <p className="session-conversation-empty">正在读取对话…</p>}
-      {!loading && !listError && !messages.length && <div className="session-conversation-empty"><MessageCircle size={24} aria-hidden="true" /><strong>还没有已保存的消息</strong><span>在下方写下要沟通的内容。保存、送达、处理与回复分别以真实记录为准。</span></div>}
+      {!loading && !listError && !messages.length && !progress && <div className="session-conversation-empty"><MessageCircle size={24} aria-hidden="true" /><strong>还没有已保存的消息</strong><span>在下方写下要沟通的内容。保存、送达、处理与回复分别以真实记录为准。</span></div>}
       {nextCursor && <button type="button" className="session-conversation-older" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : "加载更早消息"}</button>}
-      {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} onDetail={id => void detail(id)} />)}
-      {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} />}
+      {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={onOpenActivity} onDetail={id => { detailTriggerRef.current = document.activeElement as HTMLElement; void detail(id); }} />)}
+      {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={onOpenActivity} />}
+      {!working && !messages.length && progress && (() => {
+        const currentRunId = snapshot.session.latestBusinessRun?.id ?? null;
+        const turn = progress.turn;
+        const turnMatchesCurrentRun = turn?.source?.kind === "run" && turn.source.id === currentRunId;
+        const isCurrent = progress.freshness === "live" && turnMatchesCurrentRun;
+        const isStale = progress.freshness === "stale" || (turn !== null && !turnMatchesCurrentRun);
+        const awaitingTurn = progress.freshness === "live" && turn === null;
+        return <section className="session-working-observation" aria-label="当前工作观察">
+          <div className="session-working-head"><span><MessageCircle size={16} aria-hidden="true" />当前工作</span><strong>{isCurrent && turn ? `Turn ${turn.status === "inProgress" ? "进行中" : turn.status === "completed" ? "已结束" : "状态待核对"}` : isStale ? "上次观察" : "本次运行的原生进展待确认"}</strong></div>
+          {isStale && <p className="muted">当前观察与进行中 Run 的关联待核对；以下工具活动属于上次观察。</p>}
+          {awaitingTurn && <p className="muted">原生观察尚未提供本次运行的 Turn；不据此推断正在执行。</p>}
+        {progress.items.length > 0 && <details className="session-turn-tools" open={progress.items.some(item => item.status === "failed" || item.status === "inProgress")}>
+          <summary><Wrench size={15} aria-hidden="true" />{progress.items.length} 项工具活动<span>{isCurrent ? `观察于 ${date(progress.observedAt)}` : "上次观察"}</span></summary>
+          <ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol>
+          <ToolEvidenceFooter href={activityHref} sourceKind={activitySourceKind} onOpenActivity={onOpenActivity} />
+        </details>}
+        {progress.items.length === 0 && !isStale && !awaitingTurn && <p className="muted">暂无可确认的原生工具活动。</p>}
+      </section>;
+      })()}
     </div>
-    {selected && <section className="session-message-detail">
-      <div className="panel-head"><h3>消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" onClick={() => setSelected(null)}>关闭</button></div>
+    {selected && <section className="session-message-detail" role="region" aria-labelledby="session-message-detail-title">
+      <div className="panel-head"><h3 id="session-message-detail-title">消息详情 · {messageStateLabel[selected.message.state]}</h3><button type="button" ref={detailCloseRef} onClick={closeDetail}>关闭</button></div>
       <p className="muted">发送 {date(selected.message.createdAt)} · 更新 {date(selected.message.updatedAt)} · 来源 {selected.message.senderActorId}</p>
       <MarkdownBody source={selected.message.content} identity={`message-detail-${selected.message.id}`} projectId={context.projectId} />
       {selected.processing?.response && <><h4>原会话回复</h4><MarkdownBody source={selected.processing.response} identity={`message-response-${selected.processing.id}`} projectId={context.projectId} /></>}
@@ -262,7 +326,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       {selected.message.state === "manual_pending" && <p className="muted">外部消息仍待人工转交，不能据此登记原生会话已读。</p>}
       {selected.message.target.kind === "owned" && !selected.message.readReceipt && !canRecordRead && <p className="muted">本人已读仅由配置的实际收件人登记；发送者和会话创建者不能代签。</p>}
     </section>}
-    <div className="session-composer-host">
+    <div className="session-composer-host" inert={!!selected}>
       {!entry.canSave ? <Alert>{entry.sendReason || "当前不可保存消息。"}</Alert> : <>
         {snapshot.currentWork && <p className="session-composer-context">引用当前工作：<a href={`#/p/${context.projectId}/tasks/${snapshot.currentWork.id}`}>{snapshot.currentWork.title}</a></p>}
         <ActionForm embedded submitOnModEnter context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={entry.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea", placeholder: snapshot.session.kind === "external" ? "写给当前外部 Session，保存后人工转交…" : "给当前 Session 发消息…", autoGrow: true }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content, ...(snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) })} onApplied={() => { if (currentScope.current !== messageScope) return; setReload(value => value + 1); onApplied(); }} />
