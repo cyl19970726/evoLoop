@@ -1,21 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errorText } from "../api";
 import { Alert, date, href } from "../ui/shared";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { runtimeClient, type NativeResult } from "../runtime/client";
+import { acceptRunReplyForScope, businessRunStateText, runReplyScope, terminalRunStates, type BusinessRun } from "./businessRunReplyModel";
 import "./workspace.css";
-
-type BusinessRun = { id: string; taskId: string | null; state: string; updatedAt: string };
-const terminalStates = new Set(["completed", "failed", "interrupted"]);
-const stateText = (state: string) => ({
-  completed: "已完成",
-  failed: "失败",
-  interrupted: "已中断",
-  running: "进行中",
-  dispatching: "启动中",
-  requested: "待启动",
-  unknown: "结果待核对",
-} as Record<string, string>)[state] ?? "状态待核对";
 
 function preview(text: string): string {
   const plain = text
@@ -29,31 +18,34 @@ function preview(text: string): string {
   return plain.length > 420 ? `${plain.slice(0, 420)}…` : plain;
 }
 
-export function BusinessRunReply({ token, projectId, run, taskTitle, taskHref, current }: {
-  token: string; projectId: string; run: BusinessRun; taskTitle: string | null; taskHref: string | null; current: boolean;
+export function BusinessRunReply({ token, projectId, sessionKey, run, taskTitle, taskHref, current }: {
+  token: string; projectId: string; sessionKey: string; run: BusinessRun; taskTitle: string | null; taskHref: string | null; current: boolean;
 }) {
   const [result, setResult] = useState<NativeResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const terminal = terminalStates.has(run.state);
+  const terminal = terminalRunStates.has(run.state);
+  const scopeRef = useRef(runReplyScope(sessionKey, run.id));
+  scopeRef.current = runReplyScope(sessionKey, run.id);
   useEffect(() => {
     if (!terminal) { setResult(null); setError(""); setLoading(false); return; }
     let active = true;
     setResult(null); setError(""); setLoading(true);
+    const requestScope = runReplyScope(sessionKey, run.id);
     runtimeClient(token, projectId).result(run.id)
-      .then(value => { if (active) setResult(value); })
+      .then(value => { const accepted = acceptRunReplyForScope(requestScope, scopeRef.current, value); if (active && accepted) setResult(accepted); })
       .catch(cause => { if (active) setError(errorText(cause)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [token, projectId, run.id, run.state, terminal]);
+  }, [token, projectId, sessionKey, run.id, run.state, terminal]);
   const title = current ? "本次工作回复" : "最近业务工作回复";
   return <section className="business-run-reply" aria-label={title}>
     <header className="business-run-head">
       <div><p className="business-run-kicker">{title}</p>
         <h2>{taskTitle ? <a href={taskHref ?? href(projectId, "task", run.taskId ?? "")}>{taskTitle}</a> : "任务标题未提供"}</h2>
-        <p className="business-run-context">Run <code>{run.id.slice(0, 8)}</code> · {stateText(run.state)} · {date(run.updatedAt)}</p>
+        <p className="business-run-context">Run <code>{run.id.slice(0, 8)}</code> · {businessRunStateText(run.state)} · {date(run.updatedAt)}</p>
       </div>
-      <span className={`business-run-state ${terminal ? "terminal" : "active"}`}>{stateText(run.state)}</span>
+      <span className={`business-run-state ${terminal ? "terminal" : "active"}`}>{businessRunStateText(run.state)}</span>
     </header>
     {!terminal && <p className="business-run-note">本次业务工作仍在进行，公开最终答复尚未生成。当前工具进展见下方“当前工作”。</p>}
     {terminal && loading && <p className="business-run-note" role="status">正在读取本次 Run 的公开最终答复…</p>}

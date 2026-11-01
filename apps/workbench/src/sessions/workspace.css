@@ -273,6 +273,8 @@
   .session-conversation-head{display:block}
   .session-message-rules{max-width:none;margin-top:8px}
   .session-conversation-scroll{max-height:none;overflow:visible;padding-inline:0}
+  .session-workspace .session-message-detail{position:static;height:auto;margin:14px 0 0;border-radius:5px;padding:14px;overflow:visible}
+  .session-workspace .session-message-detail .panel-head{position:static}
   .session-chat-message{width:92%}
   .session-support-grid{grid-template-columns:1fr}
 }

@@ -20,6 +20,7 @@ import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
 import { SessionConversation } from "./SessionConversation";
 import { BusinessRunReply } from "./BusinessRunReply";
+import { businessRunReplyEligible } from "./businessRunReplyModel";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results";
@@ -333,9 +334,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     </details>
     {tab === "activity" && <>
       {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} taskHref={taskHref} section="questions" />}
-      {session.kind === "owned" && latestBusinessRun?.taskId && <BusinessRunReply
+      {businessRunReplyEligible(session.kind, latestBusinessRun) && latestBusinessRun && <BusinessRunReply
         key={`${session.key}:${latestBusinessRun.id}:${latestBusinessRun.updatedAt}`}
-        token={context.token} projectId={context.projectId}
+        token={context.token} projectId={context.projectId} sessionKey={session.key}
         run={latestBusinessRun}
         taskTitle={businessRunTaskTitle}
         taskHref={latestBusinessRun.taskId ? taskHref(latestBusinessRun.taskId) : null}
