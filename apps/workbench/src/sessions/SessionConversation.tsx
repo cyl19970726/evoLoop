@@ -41,26 +41,34 @@ function mergeConversation(previous: SessionConversationItem[], incoming: Sessio
   return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 300);
 }
 
-function ToolEvidenceFooter({ href, onOpenActivity }: { href: string; onOpenActivity(): void }) {
+function ToolEvidenceFooter({ href, sourceKind, onOpenActivity }: { href: string; sourceKind: "run" | "message" | null; onOpenActivity(): void }) {
+  const note = sourceKind === "run"
+    ? "工具观察只公开类型与状态。完整命令、参数和输出需在“项目活动与来源记录”中展开本次运行，并受项目复核权限保护。"
+    : sourceKind === "message"
+      ? "工具观察只公开类型与状态。此 Turn 来自普通消息处理；项目活动可核对原消息与回复，但没有对应的 Run 执行轨迹入口。"
+      : "工具观察只公开类型与状态；当前没有可归属的 Run 或消息来源。";
+  const linkLabel = sourceKind === "run" ? "在项目活动中核对完整轨迹"
+    : sourceKind === "message" ? "在项目活动中核对消息来源"
+      : "打开项目活动与来源记录";
   return <div className="session-tool-source">
-    <p>工具观察只公开类型与状态。完整命令、参数和输出需在“项目活动与来源记录”中展开本次运行，并受项目复核权限保护。</p>
-    <a href={href} onClick={event => { event.preventDefault(); onOpenActivity(); }}>在项目活动中核对完整轨迹 <ArrowUpRight size={13} aria-hidden="true" /></a>
+    <p>{note}</p>
+    <a href={href} onClick={event => { event.preventDefault(); onOpenActivity(); }}>{linkLabel} <ArrowUpRight size={13} aria-hidden="true" /></a>
   </div>;
 }
 
-function ToolSummary({ progress, processing, activityHref, onOpenActivity }: { progress: NativeProgressView | null; processing: SessionMessageProcessing | null; activityHref: string; onOpenActivity(): void }) {
+function ToolSummary({ progress, processing, activityHref, activitySourceKind, onOpenActivity }: { progress: NativeProgressView | null; processing: SessionMessageProcessing | null; activityHref: string; activitySourceKind: "run" | "message" | null; onOpenActivity(): void }) {
   const matching = progress?.turn && processing?.nativeTurnId === progress.turn.id ? progress : null;
   const items = matching?.items ?? [];
   if (!matching) return null;
   const unfinished = items.filter(item => item.status === "failed" || item.status === "inProgress");
   return <details className="session-turn-tools" open={unfinished.length > 0}>
     <summary><Wrench size={15} aria-hidden="true" />{items.length ? `${items.length} 项工具活动` : "当前没有可核对的工具活动"}<span>{matching.freshness === "live" ? `观察于 ${date(matching.observedAt)}` : "上次观察"}</span></summary>
-    {items.length > 0 && <><ol>{items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol><ToolEvidenceFooter href={activityHref} onOpenActivity={onOpenActivity} /></>}
+    {items.length > 0 && <><ol>{items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol><ToolEvidenceFooter href={activityHref} sourceKind={activitySourceKind} onOpenActivity={onOpenActivity} /></>}
     {!items.length && <p>{matching.freshness === "live" ? "原生来源暂未提供工具活动。" : `上次观察已过期${matching.staleReason ? `：${matching.staleReason}` : ""}。`}</p>}
   </details>;
 }
 
-function WorkingObservation({ item, snapshot, progress, projectId, activityHref, onOpenActivity }: { item: SessionConversationItem; snapshot: SessionSnapshot; progress: NativeProgressView | null; projectId: string; activityHref: string; onOpenActivity(): void }) {
+function WorkingObservation({ item, snapshot, progress, projectId, activityHref, activitySourceKind, onOpenActivity }: { item: SessionConversationItem; snapshot: SessionSnapshot; progress: NativeProgressView | null; projectId: string; activityHref: string; activitySourceKind: "run" | "message" | null; onOpenActivity(): void }) {
   const processing = item.processing ?? null;
   const live = progress?.freshness === "live";
   const turnMatches = !!processing?.nativeTurnId && progress?.turn?.id === processing.nativeTurnId;
@@ -77,17 +85,18 @@ function WorkingObservation({ item, snapshot, progress, projectId, activityHref,
       <div><dt>最近工具</dt><dd>{latestTools.at(-1) ? `${latestTools.at(-1)!.name} · ${latestTools.at(-1)!.status}` : "暂无可确认的工具活动"}</dd></div>
       <div><dt>观察来源</dt><dd>{observed ? `${date(observed.observedAt)} · ${observed.freshness === "live" ? "当前原生观察" : "上次记录"}` : "尚无当前原生进度；不会推断思考过程"}</dd></div>
     </dl>
-    {latestTools.length > 0 && <details><summary>展开 {observed?.items.length ?? latestTools.length} 项工具活动</summary><ol>{(observed?.items ?? latestTools).map(tool => <li key={tool.id}><strong>{tool.name}</strong><span>{tool.status}</span>{tool.summary && <p>{tool.summary}</p>}</li>)}</ol><ToolEvidenceFooter href={activityHref} onOpenActivity={onOpenActivity} /></details>}
+    {latestTools.length > 0 && <details><summary>展开 {observed?.items.length ?? latestTools.length} 项工具活动</summary><ol>{(observed?.items ?? latestTools).map(tool => <li key={tool.id}><strong>{tool.name}</strong><span>{tool.status}</span>{tool.summary && <p>{tool.summary}</p>}</li>)}</ol><ToolEvidenceFooter href={activityHref} sourceKind={activitySourceKind} onOpenActivity={onOpenActivity} /></details>}
     {important.length > 0 && <details><summary>查看最近项目进展</summary><ul>{important.map(activity => <li key={activity.id}>{activity.summary}<small>{date(activity.occurredAt ?? activity.recordedAt)}</small></li>)}</ul></details>}
   </section>;
 }
 
-function ConversationMessage({ item, context, snapshot, progress, activityHref, onOpenActivity, onDetail }: {
+function ConversationMessage({ item, context, snapshot, progress, activityHref, activitySourceKind, onOpenActivity, onDetail }: {
   item: SessionConversationItem;
   context: MutationContext;
   snapshot: SessionSnapshot;
   progress: NativeProgressView | null;
   activityHref: string;
+  activitySourceKind: "run" | "message" | null;
   onOpenActivity(): void;
   onDetail(id: string): void;
 }) {
@@ -105,7 +114,7 @@ function ConversationMessage({ item, context, snapshot, progress, activityHref, 
       <div className="session-chat-byline"><strong>{snapshot.session.title}</strong><time>{date(processing.updatedAt)}</time><span>{processing.state === "completed" ? "原 Thread 回复" : processing.state === "failed" ? "处理失败" : "处理记录"}</span></div>
       {processing.response && <MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} />}
       {item.responseTruncated && <p className="session-chat-truncated">回复较长，当前只显示安全预览。<button type="button" onClick={() => onDetail(item.id)}>读取完整回复</button></p>}
-      <ToolSummary progress={progress} processing={processing} activityHref={activityHref} onOpenActivity={onOpenActivity} />
+      <ToolSummary progress={progress} processing={processing} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={onOpenActivity} />
     </div>}
     {processing?.failure && <p className="session-chat-failure" role="alert"><CircleAlert size={15} aria-hidden="true" />处理失败：{processing.failure}</p>}
     {item.blockedReason && <p className="session-chat-status">{item.blockedReason}</p>}
@@ -113,12 +122,13 @@ function ConversationMessage({ item, context, snapshot, progress, activityHref, 
   </div>;
 }
 
-export function SessionConversation({ context, snapshot, onApplied, progress, activityHref, onOpenActivity }: {
+export function SessionConversation({ context, snapshot, onApplied, progress, activityHref, activitySourceKind, onOpenActivity }: {
   context: MutationContext;
   snapshot: SessionSnapshot;
   onApplied(): void;
   progress: NativeProgressView | null;
   activityHref: string;
+  activitySourceKind: "run" | "message" | null;
   onOpenActivity(): void;
 }) {
   const entry = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
@@ -281,8 +291,8 @@ export function SessionConversation({ context, snapshot, onApplied, progress, ac
       {loading && !messages.length && <p className="session-conversation-empty">正在读取对话…</p>}
       {!loading && !listError && !messages.length && !progress && <div className="session-conversation-empty"><MessageCircle size={24} aria-hidden="true" /><strong>还没有已保存的消息</strong><span>在下方写下要沟通的内容。保存、送达、处理与回复分别以真实记录为准。</span></div>}
       {nextCursor && <button type="button" className="session-conversation-older" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : "加载更早消息"}</button>}
-      {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} activityHref={activityHref} onOpenActivity={onOpenActivity} onDetail={id => { detailTriggerRef.current = document.activeElement as HTMLElement; void detail(id); }} />)}
-      {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} activityHref={activityHref} onOpenActivity={onOpenActivity} />}
+      {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={onOpenActivity} onDetail={id => { detailTriggerRef.current = document.activeElement as HTMLElement; void detail(id); }} />)}
+      {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={onOpenActivity} />}
       {!working && !messages.length && progress && (() => {
         const currentRunId = snapshot.session.latestBusinessRun?.id ?? null;
         const turn = progress.turn;
@@ -297,7 +307,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress, ac
         {progress.items.length > 0 && <details className="session-turn-tools" open={progress.items.some(item => item.status === "failed" || item.status === "inProgress")}>
           <summary><Wrench size={15} aria-hidden="true" />{progress.items.length} 项工具活动<span>{isCurrent ? `观察于 ${date(progress.observedAt)}` : "上次观察"}</span></summary>
           <ol>{progress.items.map(item => <li key={item.id}><strong>{item.name}</strong><span>{item.status === "completed" ? "已结束" : item.status === "failed" ? "失败" : item.status === "declined" ? "已拒绝" : "当时进行中，当前待核对"}</span>{item.summary && <p>{item.summary}</p>}{item.truncated && <small>原生内容已截断。</small>}</li>)}</ol>
-          <ToolEvidenceFooter href={activityHref} onOpenActivity={onOpenActivity} />
+          <ToolEvidenceFooter href={activityHref} sourceKind={activitySourceKind} onOpenActivity={onOpenActivity} />
         </details>}
         {progress.items.length === 0 && !isStale && !awaitingTurn && <p className="muted">暂无可确认的原生工具活动。</p>}
       </section>;

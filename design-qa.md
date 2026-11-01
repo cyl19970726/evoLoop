@@ -26,12 +26,22 @@ Date: 2026-11-01 (Asia/Taipei). This update preserves the approved Session layou
 - No backend contract, trace permission or persisted observation data changed. Internal reasoning remains absent, and a denied trace continues to display an explicit error instead of inferred command text.
 - The existing final-reply card, active-tool auto expansion, public source events and responsive Session composition remain in place.
 - The focused comparison found no actionable P0/P1/P2 drift in typography, spacing rhythm, colors, icon family or copy hierarchy. The source has no expanded empty-summary reference; the implementation's added guidance uses the same 11px meta typography, neutral rule and blue action language as the surrounding tool block.
+- Source identity now comes from the observed Turn, not the latest business Run: Run sources target `run:<id>` and say “完整轨迹”; message sources target `message:<id>` and explicitly say there is no Run trace for that Turn.
+- A saved `open=<source>` URL initializes the activity section in the open state. Returning from another Session tab restores the same section and internal Run position instead of leaving the selected source hidden.
+
+## QA correction history
+
+1. P2: A preserved `open=run:<id>` URL could leave the folded activity section closed after initial navigation or tab return.
+   Fix: make the section open state explicit, restore it from `open`, and restart the saved source positioning when returning to the activity tab.
+2. P2: The source action always used `latestBusinessRun`, which could select an unrelated Run for a message-sourced native Turn.
+   Fix: derive `run:<id>` or `message:<id>` from `progress.turn.source` and use source-specific wording.
+   Recheck: the browser fixture now verifies a `message:<id>` destination, initial deep-link opening, tab-return restoration, and the preserved Run sample still targets `run:bb85c4dc…`.
 
 ## Validation
 
 - `npm run build`: passed with the existing Vite module-directive and large-chunk warnings only.
 - `npm run test:unit`: 897 tests, 860 passed, 37 opt-in/integration tests skipped, 0 failed.
-- Opt-in Playwright: Session workspace plus native progress, 2/2 passed. The workspace test covers the new entry, section opening, narrow layout and the preserved conversation flow.
+- Opt-in Playwright: Session workspace plus native progress, 2/2 passed. The workspace test covers source-specific wording, exact `message:<id>` targeting, initial deep-link opening, tab-return restoration, narrow layout and the preserved conversation flow.
 - Manual in-app browser checks used the real Run above at CSS `1440×1024`, `870×900`, and `390×844`; no page-level horizontal overflow was observed.
 
 final result: passed

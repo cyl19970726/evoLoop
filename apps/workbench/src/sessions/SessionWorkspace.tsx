@@ -76,6 +76,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [tab, setTab] = useState<Tab>(() => tabFromHash(sessionKey));
   const [filter, setFilter] = useState<ActivityFilter>(() => viewFromHash(sessionKey).filter);
   const [open, setOpen] = useState<string[]>(() => viewFromHash(sessionKey).open);
+  const [activitySectionOpen, setActivitySectionOpen] = useState(() => viewFromHash(sessionKey).open.length > 0);
   const [informationOpen, setInformationOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerHeight < 1000);
@@ -97,7 +98,17 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const readKey = `${context.token}\0${context.projectId}\0${sessionKey}`;
   const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.kind !== "owned" && snapshot.session.busy === false ? 15000 : 5000;
   useEffect(() => {
-    const sync = () => { if (active) { setTab(tabFromHash(sessionKey)); const view = viewFromHash(sessionKey); setFilter(view.filter); setOpen(view.open); } };
+    const sync = () => {
+      if (!active) return;
+      setTab(tabFromHash(sessionKey));
+      const view = viewFromHash(sessionKey);
+      setFilter(view.filter);
+      setOpen(view.open);
+      if (view.open.length) {
+        setActivitySectionOpen(true);
+        pendingActivityScroll.current = view.open.at(-1) ?? null;
+      }
+    };
     sync(); window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
   }, [sessionKey, active]);
@@ -208,9 +219,14 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, readKey, active, refresh, readAgain, pollInterval]);
   useEffect(() => {
+    if (!active || tab !== "activity" || !open.length) return;
+    setActivitySectionOpen(true);
+    pendingActivityScroll.current = open.at(-1) ?? null;
+  }, [active, tab, sessionKey]);
+  useEffect(() => {
     const key = pendingActivityScroll.current;
     const section = activityDetailsRef.current;
-    if (!active || tab !== "activity" || !key || !section?.open) return;
+    if (!active || tab !== "activity" || !key || !activitySectionOpen || !section?.open) return;
     let attempts = 0;
     let frame = 0;
     const reveal = () => {
@@ -226,7 +242,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     };
     frame = window.requestAnimationFrame(reveal);
     return () => window.cancelAnimationFrame(frame);
-  }, [active, tab, open, activity]);
+  }, [active, tab, activitySectionOpen, open, activity]);
   async function moreActivity() {
     if (historyBusy || historyLoaded && !historyCursor) return;
     const requestScope = historyScope.current, requestEpoch = epoch.current;
@@ -296,17 +312,17 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const recentResult = latestSessionResult(current.results);
   const recentRunHref = session.latestBusinessRun ? observedRunTaskLink(session.latestBusinessRun, taskHref) : null;
   const latestBusinessRun = session.latestBusinessRun;
-  const activityHref = latestBusinessRun
-    ? viewUrl("activity", "important", [`run:${latestBusinessRun.id}`])
-    : viewUrl("activity");
-  const openActivityRun = () => {
-    const key = latestBusinessRun ? `run:${latestBusinessRun.id}` : null;
-    const nextOpen = key ? [...open.filter(value => value !== key), key].slice(-10) : open;
-    pendingActivityScroll.current = key;
+  const activitySource = observation.progress?.turn?.source ?? null;
+  const activitySourceKey = activitySource ? `${activitySource.kind}:${activitySource.id}` : null;
+  const activitySourceKind = activitySource?.kind ?? null;
+  const activityHref = viewUrl("activity", "important", activitySourceKey ? [activitySourceKey] : []);
+  const openActivityTarget = () => {
+    const nextOpen = activitySourceKey ? [...open.filter(value => value !== activitySourceKey), activitySourceKey].slice(-10) : open;
+    pendingActivityScroll.current = activitySourceKey;
     setOpen(nextOpen);
-    if (activityDetailsRef.current) activityDetailsRef.current.open = true;
+    setActivitySectionOpen(true);
     window.history.replaceState(null, "", viewUrl(tab, filter, nextOpen));
-    if (!key) window.requestAnimationFrame(() => {
+    if (!activitySourceKey) window.requestAnimationFrame(() => {
       const section = activityDetailsRef.current;
       if (section) window.scrollTo({ top: Math.max(0, section.getBoundingClientRect().top + window.scrollY - 72) });
     });
@@ -378,9 +394,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         taskTitle={businessRunTaskTitle}
         taskHref={latestBusinessRun.taskId ? taskHref(latestBusinessRun.taskId) : null}
         current={businessRunIsCurrent} />}
-      {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} activityHref={activityHref} onOpenActivity={openActivityRun} onApplied={() => setReadAgain(value => value + 1)}>
+      {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={openActivityTarget} onApplied={() => setReadAgain(value => value + 1)}>
       </SessionConversation>}
-      <details ref={activityDetailsRef} className="session-project-activity"><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}
+      <details ref={activityDetailsRef} className="session-project-activity" open={activitySectionOpen} onToggle={event => setActivitySectionOpen(event.currentTarget.open)}><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}
       </details>
     </>}
     {tab === "queue" && <section className="session-workspace-section"><div className="session-section-head"><div><h2>任务队列</h2><p className="muted">按已确认的顺序逐项处理；排队不表示已开始运行。</p></div><a href={`${href(context.projectId, "runtime")}?view=execution`}>管理受管队列</a></div><div className="session-queue-glance">{queueAttention && <p><strong>队列占用／顺位</strong><span><a href={taskHref(queueAttention.taskId)}>{queueAttention.taskTitle}</a> · {queueStateLabel(queueAttention.state)}{queueAttention.holdReason && ` · ${queueAttention.holdReason}`}</span></p>}{work && <p><strong>具体分派</strong><span>{currentAssignment ? assignmentLabel(currentAssignment) : "没有可确认的当前修订接受记录"}</span></p>}{recentResult && <p><strong>最近关联交付</strong><span><a href={taskHref(recentResult.taskId)}>{recentResult.taskTitle}</a> · {sessionResultUseLabel(recentResult)} · {date(recentResult.submittedAt)}</span></p>}</div><div className="session-task-summary"><h3>具体承接</h3>{work ? <p><a href={taskHref(work.id)}>{work.title}</a> · {taskProgress(work.state)} · {relationLabel}</p> : <p>当前没有可确认的具体承接。</p>}{current.assignments.filter(item => item.task.id !== work?.id).map(item => <p key={`${item.task.id}:${item.assignment.version}`}><a href={taskHref(item.task.id)}>{item.task.title}</a> · {assignmentLabel(item)}</p>)}</div><h3>排队顺序</h3>{current.queue.length ? <ol className="session-queue-list">{current.queue.map(item => <li key={item.entryId}><span className="session-queue-position" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span><div><strong><a href={taskHref(item.taskId)}>{item.taskTitle}</a></strong><small>{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</small></div></li>)}</ol> : <p className="empty">当前范围没有关联队列条目。</p>}</section>}
