@@ -107,6 +107,17 @@ export class NativeObservationBridge {
       return { ...view, freshness: "stale", staleReason: "projection_unavailable" };
     return view;
   }
+  /**
+   * Current in-process notification state for an exact Session. This deliberately
+   * does not consult persisted history: callers that must distinguish a bound
+   * in-flight Turn from an actually unknown one need the current connection only.
+   */
+  current(projectId: string, sessionId: string): NativeObservationView | null {
+    const key = keyOf(projectId, sessionId), entry = this.entries.get(key);
+    if (!entry || this.errors.has(key) || entry.value.connectionId !== this.runtime?.nativeInputConnectionId?.()) return null;
+    const { connectionId: _connectionId, ...view } = entry.value;
+    return view;
+  }
   async drain(): Promise<void> { await this.writes; }
   detach(): void { this.unsubscribe?.(); this.disconnect?.(); this.unsubscribe = null; this.disconnect = null; this.runtime = null; }
 }

@@ -77,6 +77,74 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
   await pump.tick();assert.equal(failed,1);assert.equal(unknown,0);
 });
 
+test('an exact live bound Turn prevents a transient history miss and settles when history appears',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'processing');
+  let unknown=0,settled=0,history:[{id:string;status:string;completedAtUtc:string}]|[]=[];
+  const service={
+    pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}),
+    markUnknown:async()=>{unknown++;},
+    settle:async(_project:string,_message:string,_turn:unknown,response:string)=>{settled++;assert.equal(response,'Done');}
+  } as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    listTurns:async()=>({data:history,nextCursor:null}),
+    listItems:async()=>({data:[{id:'answer',type:'agentMessage',phase:'final_answer',text:'Done'}],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},
+    nativeTurn:()=>({threadId:`thread-${target}`,freshness:'live',
+      currentTurn:{id:'turn-exact',status:'inProgress',source:null,startedAt:1}})});
+  await pump.tick();
+  assert.deepEqual([unknown,settled],[0,0]);
+  history=[{id:'turn-exact',status:'completed',completedAtUtc:new Date().toISOString()}];
+  await pump.tick();
+  assert.deepEqual([unknown,settled],[0,1]);
+});
+
+for(const scenario of [
+  {name:'no current observation',observed:null},
+  {name:'stale observation',observed:{threadId:'different',freshness:'stale' as const}},
+  {name:'different Turn',observed:{threadId:'same',freshness:'live' as const}},
+  {name:'same Turn with unknown status',observed:{threadId:'same',freshness:'live' as const}}
+]){
+  test(`${scenario.name} still records unknown when the bound Turn is absent`,async()=>{
+    const target=randomUUID(),m=message(randomUUID(),target,'processing');
+    let unknown=0;
+    const service={
+      pending:async()=>[m],session:async()=>session(target),
+      processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}),
+      markUnknown:async()=>{unknown++;}
+    } as unknown as SessionMessageService;
+    const runtime={isReady:()=>true,registerBinding:async()=>{},
+      listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+    let observed:null|{threadId:string;freshness:'live'|'stale';currentTurn?:{id:string;status:string}}=
+      scenario.observed as never;
+    if(scenario.name==='different Turn')observed={threadId:`thread-${target}`,freshness:'live',currentTurn:{id:'turn-other',status:'inProgress'}};
+    if(scenario.name==='same Turn with unknown status')observed={threadId:`thread-${target}`,freshness:'live',currentTurn:{id:'turn-exact',status:'unknown'}};
+    const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+      canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},nativeTurn:()=>observed});
+    await pump.tick();
+    assert.equal(unknown,1,scenario.name);
+  });
+}
+
+test('an unbound dispatching message cannot use another live Turn as proof',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'processing');
+  let unknown=0;
+  const service={
+    pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>({operationId:randomUUID(),nativeTurnId:null,state:'dispatching'}),
+    markUnknown:async()=>{unknown++;}
+  } as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},
+    nativeTurn:()=>({threadId:`thread-${target}`,freshness:'live',
+      currentTurn:{id:'turn-other',status:'inProgress',source:null,startedAt:1}})});
+  await pump.tick();
+  assert.equal(unknown,1);
+});
+
 test('admission denial stops scheduling and native qualification before any processing',async()=>{
   for(const reason of ['MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED']){
     const target=randomUUID(),m=message(randomUUID(),target,'queued');

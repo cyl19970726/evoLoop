@@ -458,6 +458,7 @@ const messageService = new SessionMessageService({ uow, clock, ids, grantFor: as
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  nativeTurn: (projectId, sessionId) => nativeObservation.current(projectId, sessionId),
   projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   pollIntervalMs: integrations.sessionMessages?.pollIntervalMs ?? 2000,

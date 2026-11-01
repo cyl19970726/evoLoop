@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { RuntimeBinding, RuntimePage, RuntimeTurn } from '@evoloop/contracts/runtime';
+import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
@@ -24,6 +25,8 @@ async function collect<T>(load:(cursor?:string)=>Promise<RuntimePage<T>>,maxPage
 }
 export interface SessionMessagePumpDeps {
   service:SessionMessageService;runtime():MessageRuntime;projects():Promise<string[]>;
+  /** Current in-process native notification state for one exact Session, if available. */
+  nativeTurn?(projectId:string,sessionId:string):Pick<NativeObservationRecord,'threadId'|'freshness'|'currentTurn'>|null;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
   canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
@@ -117,7 +120,12 @@ export class SessionMessagePump {
     }
     let turn=first.data.find(t=>t.id===nativeTurnId);
     if(!turn&&first.nextCursor)turn=(await runtime.listTurns(binding,first.nextCursor)).data.find(t=>t.id===nativeTurnId);
-    if(!turn){await this.deps.service.markUnknown(message.projectId,message.id,'Bound native Turn is not currently readable');return;}
+    if(!turn){
+      const observed=this.deps.nativeTurn?.(message.projectId,session.id);
+      if(nativeTurnId&&observed?.freshness==='live'&&observed.threadId===binding.nativeThreadId&&
+        observed.currentTurn?.id===nativeTurnId&&observed.currentTurn.status!=='unknown')return;
+      await this.deps.service.markUnknown(message.projectId,message.id,'Bound native Turn is not currently readable');return;
+    }
     if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status))return;
     const items=await collect(cursor=>runtime.listItems(binding,turn.id,cursor),10);
     await this.deps.service.settle(message.projectId,message.id,turn,finalMessages(items).join('\n\n')||null);
