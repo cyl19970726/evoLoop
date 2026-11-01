@@ -1,59 +1,50 @@
-# Unified Session workspace — image-to-code QA
+# Unified Session workspace — current image-to-code QA
 
-2026-11-02 · Author visual and interaction QA. This replaces the old PR173 author result; that record remains in Git history and the private iteration archive. This pass does not establish independent consumer use, user aesthetic acceptance, merge or release.
+2026-11-02, Asia/Taipei. **Author candidate QA; independent use and release remain separate.** Original author QA for7821/Dzl and the later independent `failed` observation are retained in Git and fixed process reports. They are not relabelled as a successful old Delivery.
 
-## Comparison evidence and conditions
+## Visual truth and normalized comparison
 
-- Source visual truth: `.local/session-workspace-implementation/reference.png`, the selected 1536×1024 image from the adopted Task basis.
-- Current build: `http://127.0.0.1:55522/?build=Dzl1zQ8x`; browser DOM confirms `/assets/index-Dzl1zQ8x.js`, matching the served index and current production build. A previously open tab retained an older client; it was excluded from the final comparison and replaced with a fresh authorized tab.
-- Implementation screenshot: `.local/session-workspace-implementation/screenshots/final-reference-current.png`, 1536×1024, same light theme, same selected Session, expanded task/Agent context and latest conversation position as the visual target.
-- Full joint comparison: `screenshots/source-vs-final.png`, 3072×1060 including a 36px comparison label. Both 1536×1024 images were placed together without scaling.
-- Focused joint comparison: `screenshots/source-vs-final-context.png`, headings, context values and tabs cropped at the same coordinates. It was inspected separately to assess typography, wrapping, spacing and controls.
+Selected source: `.local/session-workspace-implementation/reference.png`,1536×1024, from the adopted research basis. Current frontend: **Br54UO-c**, JS SHA256 `104715e3c7194176a1557d94ac9f786a5b40a7749573412e23092abe8664283f`. It is byte-identical to the frontend independently used at cfd82ae; later runtime fixes do not change workbench source or JS.
 
-The source contains illustrative conversation copy. The implementation displays the actual stored business history at its latest position, including original public text and failures. It does not seed mock messages, infer unproved senders or replace a historical delivery with the mock's assumed current Task. Content and length differences are evaluated separately from visual hierarchy; a pixel-error score would be misleading.
+Actual current browser image: `.local/session-workspace-implementation/rework-screenshots/reference-current.jpg/png/json`. CSS document1536×1024, DPR0.75, raw2048×1365. Only the measured document boundary at origin was cropped; text was not rescaled. The source and current UI were put together without scaling in `rework-screenshots/source-vs-final.png` (3072×1060 with36px labels). `source-vs-final-context.png` uses the same-coordinate heading/context/tab crops and was inspected separately.
 
-### Density normalization
+State: same light theme, selected owned Session, expanded task/Agent context and latest reading position. Actual current stream645px; latest reply bottom915.42, composer top937.52/bottom1012 in1024px; input empty, no horizontal overflow. The source uses illustrative dialogue; actual stored messages, their lengths, historical delivery state and true actors remain unchanged. No mock messages are inserted to match the picture.
 
-The final IAB reports DPR0.75. A physical override of1152×768 produced a measured CSS document1536×1024. Raw output2048×1365 contains blank canvas outside the actual document; the saved comparison crops only the measured document boundary at origin. It does not downscale text or stretch the layout. Likewise, the2880×1772 capture had3840×2363 raw output; the phone was approximately390.667×844 CSS and521×1125 raw. Root/document bounds were checked before cropping.
+## Findings, fixes and post-fix evidence
 
-Earlier ego-browser normal-window measurements and captures remain in the private evidence archive. Its original TaskSpace was unavailable later; final screenshots use the Product Design IAB with explicit measurements. This is disclosed rather than treating an old ego capture as proof of the final client. Exact1171/871/390 integer viewports are separately covered by the built-app browser suite.
-
-## Findings resolved and comparison history
-
-| Severity / earlier finding | Fix and post-fix evidence |
+| Finding | Outcome |
 | --- | --- |
-| P1: Separate recent-business-reply card and bottom audit break the conversation | Replaced the old components with one typed message/tool stream. Project audit and recovery remain in Session information. Current full comparison shows the continuous reading surface. |
-| P2: Context consumes excessive height and Agent values wrap vertically | Context defaults to a compact expandable strip; expanded values use available-width columns and single-column label/value pairs. Removed87 legacy cross-page Session selectors. Focused current comparison and phone capture show readable values. |
-| P2: Cached hidden Session changed the Task shell | Apply Session layout only to the active canonical route using `data-session-reader`; three cached Task routes retain their normal64px shell and grid. Built-app browser regression passed. |
-| P2: Tall wide view shows substantial blank space while older history exists | Initial wide evidence `screenshots/reviewed-2880.png` was blocked. Added bounded history fill through the existing pagination, at most three rounds per mounted scope, only while following latest. Current `screenshots/final-autofill-2880.png/json` shows four actual messages and adjacent tool groups instead of only the tail's two messages. Reading column1480px; stream1443px; remaining top space169px; composer bottom1760 within1772. Tests verify the budget, filled-pane stop, no paging after scrolling to history and genuinely short exhausted threads. |
-| P2: Growing input or width changes hide history / move the input | Flex viewport layout and internal history scroll; visible-entry anchor recovery; stable composer. Actual phone input40→120px reduced history431.5→351.5px while composer bottom stayed832/844; no overlay. Test text was cleared without sending. |
-| P2: Following latest was lost after wide→phone reflow | New scrollHeight cannot reconstruct the previous bottom position. The observer now retains the reader’s prior follow intention. Earlier failed capture: `screenshots/before-resize-fix-phone.png`; final phone has latest reply bottom686.54, composer top709.17 and no overflow. Final reference/latest is914.67/937.52. Focused browser verifies wide→390→871→2880 plus the separate older-reading case. |
-| P2: Detail dismissal loses keyboard focus | Controlled dialog restores the connected visible trigger. Actual restricted-tool dialog and Escape were tested; built-app regression also passed. |
-| P1: Historical running Turn falsely appears currently processing | Only a scoped current start supplies activeTurnId; matching terminal, disconnect and reset clear it. Known terminal cannot reopen on late start. Empty-but-active stream does not show the initial empty prompt. Coordinator and browser regressions passed. |
-| P1/P2: Late source binding, resets and old pages duplicate or reorder history | Exact aliases, independent source positions, reset/history epochs, aborts and visible-entry anchors. Built-app assertions cover delayed pages, source exhaustion, overlap, Task return and scope/permission changes. |
+| P1: detached recent-business reply and bottom audit break the workspace | One message/public-progress/tool/final stream; audit/configuration/recovery are secondary. Full current comparison preserves the selected hierarchy. |
+| P2: oversized context, vertically wrapped model values, stale cross-page CSS and Task shell leakage | Compact context by default, width-aware expanded values, single Session stylesheet, active-route shell flag. Earlier captures and browser regressions retain the before/fix evidence. |
+| P2: tall window wastes space despite available older history; width reflow loses latest | Bounded earlier-history fill and stored follow/reader-anchor intention. Earlier failure captures remain. Prior independent QA actually used1440,2880,1171short,871 and390 with no page overflow; no layout/style change was made during this rework. |
+| P1: updates403 followed by an in-flight homepage success restores protected content | Authorization epochs invalidate responses and queued state/cache updates; empty denial survives remount; explicit reread is required. Inspector selection and protected children clear. Old-hook build fails the held-A/403/release-A assertion; final fixture passes entries/inspector/cache and explicit reauthorization. |
+| P2: matching inputs on different pages each become canonical | Page/detail/live share bounded uniqueness proof for a completed Turn. Ambiguity/unverifiable history stays unassociated; saved messages remain readable. No first-seen or current-page choice. Cross-page/independent refresh/detail/live tests pass. |
+| P2: body preview truncation and old metadata are mistaken for missing input identity | Item enumeration completeness is separate from preview partial. Exact Turn metadata may page at most10×100; ordinary Thread page stays bounded. Joined Reader/proof tests bind unique inputs with5000-character text and at positions101/1000;1001 remains unknown. Protocol independent re-review passed45/45. |
+| Actual QA failure: fixed Document returns to the directory | Explicit Session/results/filter return context plus canonical sessions route validation. Exact Document/revision retained. Author actual9c5b8756@45c96090 return hash equals original results hash; same consumer independently passed this repaired path at cfd/Br54. |
+| Actual QA failure: Run input initiated by current actor appears as personal chat | Explicit project-dispatch identity/file avatar for origin.kind=run, keeping actor/Task/Run/Turn. Ordinary personal input remains mine. Same-actor fixture and the same consumer's actual two-Run inspection passed. |
 
-## Five fidelity surfaces
+## Required fidelity surfaces
 
-- **Typography:** system sans stack with native CJK fallbacks;15px desktop message text,14px narrow message text and16px mobile textarea. Heading, sender/time, body and secondary source links retain the reference hierarchy. No vertical model-value wrapping or enlarged type to fill a wide window. Long public text and code remain readable; source bodies are preserved rather than rewritten for fit.
-- **Spacing and layout:** two left rails, a single reading column, compact context, tabs, adjacent tool summaries and stable bottom composer. Reading width caps at1480px. Current expanded-context1536 capture has645px of history and composer bottom1012/1024; collapsed phone has430px of history and stream bottom equal to composer top709.17px. No page-level horizontal overflow in actual captures or exact browser checks.
-- **Color/tokens:** white and pale blue/gray surfaces, restrained blue selection/action, red failures, muted completion. Actual primary action computed rgb(21,86,231). No green status treatment. Borders and radii keep the source's quiet outline treatment.
-- **Assets/icons:** retained existing eL product brand and project icon system; library outline icons render tools and actors. No fabricated raster, CSS drawing or inline handcrafted artwork replaces a missing source asset. The reference's illustrative wordmark/avatar initials are not new product branding requirements.
-- **Copy/content:** app labels and primary action remain concise. Actual identities, public phases, failure, unsupported/partial reads and unavailable live connection remain factual. Audit identifiers and originals are secondary. Native input envelopes and reasoning are not inserted as ordinary chat; source Task and public reply remain reachable.
+- **Typography:** native system/CJK sans,15px desktop body,14px narrow body,16px mobile textarea; distinct title/sender/body/source hierarchy. Model values wrap as words, not vertically. No enlarged or shrunken text to fill a viewport.
+- **Spacing/layout:** two rails, one reading surface, compact context, tabs, adjacent tool groups and stable bottom input.1480px maximum reading width; internal history scroll and retained reader position. New semantic labels do not redesign the composition.
+- **Colors:** white/pale blue-gray surfaces, restrained blue actions and selection, muted completion and red failures. No green treatment.
+- **Images/icons:** existing eL brand and outline icon library remain. No custom placeholder artwork, generated avatar or hand-drawn SVG substitutes a source asset. Project dispatch uses an existing file icon to avoid person identity.
+- **Copy/content:** real public messages and source phases remain; unknown/partial/denied is explicit. “Project dispatch” and original actor are distinct from a person writing a chat. Task/Turn and fixed revisions remain reachable; identifiers and raw evidence are secondary.
 
-## Verification and remaining scope
+## Evidence and limits
 
-Full built-app browser batch:17/17 across15 files,0 skipped, before the final three-line follow-on-resize fix. After that fix, the final production build and focused timeline2/2 passed with the new resize assertions; no source edit followed. Other suite paths were unchanged. It covers directory pagination, current/history grouping, native and PG history, exact current-turn liveness, active empty state, three-round fill, shorter/taller/mobile geometry, keyboard/modal focus, drafts/receipts, native questions, recovery and schedule→Run→Session. Runtime versions and reproduction details are recorded in the private `reproenv.json`; final logs contain no disabled assertion or hidden failure. Final actual preview console:0 errors and0 warnings.
+Same independent consumer's first report: `df974347@4bf40335`, old Delivery failed on Document return and dispatch identity while unified reading,12 real messages/tools/long text, several windows, drafts and A/B paths were usable. Second actual-use report: `9c34c42e@376baf3c`, the two UI failures passed on **cfd/Br54**; its four before/after images are preserved. Those reports are not final full-Runner/live or release acceptance.
 
-Actual read-only backend restart:8 native pages,134 unique entries (12messages/122tools across2Turns);10 assistant bodies identical to prior preserved history; public detail200, ordinary original-tool detail403; live=false and activeTurnId=null. A separate real one-Turn isolated test established public input/progress/tool/final persistence and stable identities; it is not a formal live-browser release acceptance.
+Current source: full unit/protocol982 tests (941pass/41opt-in skips/0fail), typecheck and production build passed. Targeted provider22, coordinator80, joined45 and frontend four browser paths passed. Real compiled readback still8pages/134unique entries/12messages/122tools across2Turns, two Run inputs retained and10Agent bodies identical; public Item200, ordinary raw tool403, live=false. Source and compiled evidence do not start another model Turn. Final protocol incremental review found no blocker in its scope.
 
-No actionable P0/P1/P2 remains in this author comparison. P3: avatar initials versus existing outline actor icons and small shared-header rhythm differences can be evaluated during user iteration; they do not change reading order or access. Independent QA must judge the actual experience against the fixed visual and original Task, then Lead controls release and formal-entry retest. Experimental timeline wire and external-Session realtime access remain explicitly unverified.
+Author current full/focused comparison has no actionable P0/P1/P2 visual difference. P3 remains: reference avatar initials and existing product icons differ; small shared-header rhythm differs. The original layout and selected direction are maintained. Complete Runner ownership/live, controlled publication and formal-entry retest remain Lead/original consumer responsibilities on the same open Task.
 
-## Implementation checklist
+## Checklist
 
-- [x] Open source and current rendered build; full and focused joint comparison.
-- [x] Resolve major layout, state, source and responsive findings and recapture.
-- [x] Run browser regressions without opt-in skips; verify actual stored history and read permissions.
-- [x] Preserve raw private evidence outside public Git; publish only the controlled journey screenshot.
-- [ ] Independent consumer use, Lead merge/release and formal-entry retest (handoff responsibilities).
+- [x] Compare source and actual current UI together at matching viewport/state, full and focused.
+- [x] Fix the four reported failures and the two neighboring protocol limits with targeted evidence.
+- [x] Preserve old failed observation and screenshots; distinguish author, independent UI and protocol checks.
+- [x] Confirm frontend JS equality across backend-only commits; keep credentials/raw sessions private.
+- [ ] Controlled full-Runner release and original-consumer formal-entry live retest.
 
 final result: passed
