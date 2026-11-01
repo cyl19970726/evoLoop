@@ -221,6 +221,8 @@
   .session-workspace .session-project-activity .session-information>summary{padding:13px 16px}
   .session-workspace .session-project-activity .session-information .session-support-grid{margin:14px 16px}
   .session-workspace .session-project-activity .session-information>section{margin:14px 16px}
+  /* 未展开时隐藏详情面板，只有页首"会话详情"一个入口。 */
+  .session-workspace .session-information:not([open]){display:none}
   /* 短视口（<1000px 高）时进一步压缩 composer，保证消息阅读高度。 */
   @media(max-height:1000px){
     .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:44px;max-height:120px}
