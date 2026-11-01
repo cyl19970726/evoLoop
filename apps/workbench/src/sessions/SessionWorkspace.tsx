@@ -19,6 +19,8 @@ import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
 import { SessionConversation } from "./SessionConversation";
+import { BusinessRunReply } from "./BusinessRunReply";
+import { businessRunReplyEligible } from "./businessRunReplyModel";
 import "./workspace.css";
 
 type Tab = "activity" | "queue" | "results";
@@ -74,8 +76,10 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [tab, setTab] = useState<Tab>(() => tabFromHash(sessionKey));
   const [filter, setFilter] = useState<ActivityFilter>(() => viewFromHash(sessionKey).filter);
   const [open, setOpen] = useState<string[]>(() => viewFromHash(sessionKey).open);
+  const [activitySectionOpen, setActivitySectionOpen] = useState(() => viewFromHash(sessionKey).open.length > 0);
   const [informationOpen, setInformationOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [contextCollapsed, setContextCollapsed] = useState(() => window.innerHeight < 1000);
   const [error, setError] = useState("");
   const [confirmedRead, setConfirmedRead] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -84,6 +88,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [readAgain, setReadAgain] = useState(0);
   const [recoveryRead, setRecoveryRead] = useState<RecoveryRead>({ status: "loading" });
   const epoch = useRef(0);
+  const activityDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const pendingActivityScroll = useRef<string | null>(null);
   const historyAbort = useRef<AbortController | null>(null);
   const historyScope = useRef("");
   historyScope.current = `${context.token}\0${scope}\0${active}\0${refresh}\0${readAgain}`;
@@ -92,7 +98,17 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const readKey = `${context.token}\0${context.projectId}\0${sessionKey}`;
   const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.kind !== "owned" && snapshot.session.busy === false ? 15000 : 5000;
   useEffect(() => {
-    const sync = () => { if (active) { setTab(tabFromHash(sessionKey)); const view = viewFromHash(sessionKey); setFilter(view.filter); setOpen(view.open); } };
+    const sync = () => {
+      if (!active) return;
+      setTab(tabFromHash(sessionKey));
+      const view = viewFromHash(sessionKey);
+      setFilter(view.filter);
+      setOpen(view.open);
+      if (view.open.length) {
+        setActivitySectionOpen(true);
+        pendingActivityScroll.current = view.open.at(-1) ?? null;
+      }
+    };
     sync(); window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
   }, [sessionKey, active]);
@@ -202,6 +218,31 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     document.addEventListener("visibilitychange", visible);
     return () => { controller.abort(); historyAbort.current?.abort(); epoch.current++; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [context.token, context.projectId, context.principal.actorId, sessionKey, scope, readKey, active, refresh, readAgain, pollInterval]);
+  useEffect(() => {
+    if (!active || tab !== "activity" || !open.length) return;
+    setActivitySectionOpen(true);
+    pendingActivityScroll.current = open.at(-1) ?? null;
+  }, [active, tab, sessionKey]);
+  useEffect(() => {
+    const key = pendingActivityScroll.current;
+    const section = activityDetailsRef.current;
+    if (!active || tab !== "activity" || !key || !activitySectionOpen || !section?.open) return;
+    let attempts = 0;
+    let frame = 0;
+    const reveal = () => {
+      const target = [...section.querySelectorAll<HTMLElement>("[data-activity-key]")]
+        .find(item => item.dataset.activityKey === key);
+      if (target) {
+        section.scrollTop = Math.max(0, target.getBoundingClientRect().top - section.getBoundingClientRect().top + section.scrollTop - 8);
+        window.scrollTo({ top: Math.max(0, section.getBoundingClientRect().top + window.scrollY - 72) });
+        pendingActivityScroll.current = null;
+        return;
+      }
+      if (++attempts < 12) frame = window.requestAnimationFrame(reveal);
+    };
+    frame = window.requestAnimationFrame(reveal);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, tab, activitySectionOpen, open, activity]);
   async function moreActivity() {
     if (historyBusy || historyLoaded && !historyCursor) return;
     const requestScope = historyScope.current, requestEpoch = epoch.current;
@@ -270,6 +311,30 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const currentAssignment = current.assignments.find(item => item.task.id === work?.id && !item.stale && item.assignment.state !== "released");
   const recentResult = latestSessionResult(current.results);
   const recentRunHref = session.latestBusinessRun ? observedRunTaskLink(session.latestBusinessRun, taskHref) : null;
+  const latestBusinessRun = session.latestBusinessRun;
+  const activitySource = observation.progress?.turn?.source ?? null;
+  const activitySourceKey = activitySource ? `${activitySource.kind}:${activitySource.id}` : null;
+  const activitySourceKind = activitySource?.kind ?? null;
+  const activityHref = viewUrl("activity", "important", activitySourceKey ? [activitySourceKey] : []);
+  const openActivityTarget = () => {
+    const nextOpen = activitySourceKey ? [...open.filter(value => value !== activitySourceKey), activitySourceKey].slice(-10) : open;
+    pendingActivityScroll.current = activitySourceKey;
+    setOpen(nextOpen);
+    setActivitySectionOpen(true);
+    window.history.replaceState(null, "", viewUrl(tab, filter, nextOpen));
+    if (!activitySourceKey) window.requestAnimationFrame(() => {
+      const section = activityDetailsRef.current;
+      if (section) window.scrollTo({ top: Math.max(0, section.getBoundingClientRect().top + window.scrollY - 72) });
+    });
+  };
+  const businessRunTaskTitle = latestBusinessRun?.taskId
+    ? (work?.id === latestBusinessRun.taskId ? work.title
+      : current.roleTasks.find(item => item.id === latestBusinessRun.taskId)?.title
+      ?? current.queue.find(item => item.taskId === latestBusinessRun.taskId)?.taskTitle
+      ?? current.assignments.find(item => item.task.id === latestBusinessRun.taskId)?.task.title
+      ?? null)
+    : null;
+  const businessRunIsCurrent = !!latestBusinessRun?.taskId && work?.id === latestBusinessRun.taskId;
   const failedRun = session.latestBusinessRun && ["failed", "interrupted", "unknown"].includes(session.latestBusinessRun.state)
     ? session.latestBusinessRun : null;
   const executionProfile = recoveryRead.status === "ready" ? recoveryRead.view.executionProfile : null;
@@ -280,32 +345,34 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   return <div className="content session-workspace">
     <header className="session-detail-header">
       <div className="session-detail-heading"><h1>{session.title}<span className="session-status-badge">{statusLabel}</span></h1><p>{session.kind === "owned" ? "项目受管" : "外部 Agent · 人工接入"}<span>·</span>{session.roles.map(role => role.title).join("、") || "职责待核对"}<span>·</span>{sessionMembership(session.membership)}</p></div>
-      <div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button><button type="button" aria-expanded={closeOpen} aria-controls="session-close-panel" onClick={() => setCloseOpen(value => !value)}>{session.kind === "owned" ? "关闭受管 Session" : "归档与归类"}</button></div>
+      <div className="session-workspace-actions"><button type="button" onClick={() => setReadAgain(value => value + 1)} disabled={loading}>重新读取</button><button type="button" aria-expanded={informationOpen} aria-controls="session-information-panel" onClick={() => setInformationOpen(value => !value)}>会话详情</button><button type="button" aria-expanded={closeOpen} aria-controls="session-close-panel" onClick={() => setCloseOpen(value => !value)}>{session.kind === "owned" ? "关闭受管 Session" : "归档与归类"}</button></div>
     </header>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
     {closeOpen && <div id="session-close-panel"><SessionClosePanel context={context} snapshot={current} currentRead={active && !loading && !error && confirmedRead === readKey} onReadAgain={() => setReadAgain(value => value + 1)} /></div>}
-    <div className="session-context-band">
-      <section className="session-current-work"><div>
-        <small>{work ? "当前任务" : activeBusy ? "当前活动" : idleResult ? "最近已读关联交付 · 当前任务未确认" : "当前状态"}</small>
-        <strong>{work ? <a href={taskHref(work.id)}>{work.title}</a> : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
-          : idleResult ? <a href={taskHref(idleResult.taskId)}>{idleResult.taskTitle || "任务标题未提供"}</a> : idleSummary}</strong>
-        <span>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
-          : idleResult ? `技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)} · 交付 ${date(idleResult.submittedAt)}${idleResult.latestUse ? ` · 使用观察 ${date(idleResult.latestUse.createdAt)}` : ""}${current.metadata.partial ? " · 来源仅展示已读范围" : ""}`
-            : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
-      </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
-      <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>思考强度</dt><dd>未同步</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>}</section>
+    <div className={`session-context-band ${contextCollapsed ? "collapsed" : ""}`}>
+      <button type="button" className="session-context-toggle" aria-expanded={!contextCollapsed} onClick={() => setContextCollapsed(value => !value)}>
+        <span>{contextCollapsed ? "▸" : "▾"}</span>
+        <small>{work ? "当前任务" : activeBusy ? "当前活动" : idleResult ? "最近已读关联交付" : "当前状态"}</small>
+        <strong>{work ? work.title : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
+          : idleResult ? (idleResult.taskTitle || "任务标题未提供") : idleSummary}</strong>
+        {session.kind === "owned" ? <span className="session-context-kind">受管</span> : <span className="session-context-kind">外部</span>}
+      </button>
+      {!contextCollapsed && <div className="session-context-detail">
+        <section className="session-current-work"><div>
+          <small>{work ? "当前任务" : activeBusy ? "当前活动" : idleResult ? "最近已读关联交付 · 当前任务未确认" : "当前状态"}</small>
+          <strong>{work ? <a href={taskHref(work.id)}>{work.title}</a> : activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对"
+            : idleResult ? <a href={taskHref(idleResult.taskId)}>{idleResult.taskTitle || "任务标题未提供"}</a> : idleSummary}</strong>
+          <span>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
+            : idleResult ? `技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)} · 交付 ${date(idleResult.submittedAt)}${idleResult.latestUse ? ` · 使用观察 ${date(idleResult.latestUse.createdAt)}` : ""}${current.metadata.partial ? " · 来源仅展示已读范围" : ""}`
+              : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
+        </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
+        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>思考强度</dt><dd>未同步</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>}</section>
+      </div>}
     </div>
     {failedRun && <p className="session-run-attention" role="status">最近运行{failedRun.state === "failed" ? "失败" : failedRun.state === "interrupted" ? "已中断" : "结果未知"}；{recentRunHref ? <>请先<a href={recentRunHref}>核对原 Run</a>和当前任务，再决定下一步。</> : "原 Run 缺少可核对的 Task 关联，暂不能直达；请重新读取会话并核对任务运行记录。"}</p>}
     {(session.runtimeState === "unknown" || session.runtimeState === "closed" || recoveryRead.status === "failed") && session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={`${href(context.projectId, "runtime")}?view=execution`} />}
     <nav className="session-workspace-tabs" aria-label="Session 工作区栏目">{(Object.keys(tabLabels) as Tab[]).map(key => <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.location.hash = viewUrl(key); }}>{tabLabels[key]}</button>)}</nav>
-    {tab === "activity" && <>
-      {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} taskHref={taskHref} section="questions" />}
-      {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} onApplied={() => setReadAgain(value => value + 1)} />}
-      <details className="session-project-activity"><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}</details>
-    </>}
-    {tab === "queue" && <section className="session-workspace-section"><div className="session-section-head"><div><h2>任务队列</h2><p className="muted">按已确认的顺序逐项处理；排队不表示已开始运行。</p></div><a href={`${href(context.projectId, "runtime")}?view=execution`}>管理受管队列</a></div><div className="session-queue-glance">{queueAttention && <p><strong>队列占用／顺位</strong><span><a href={taskHref(queueAttention.taskId)}>{queueAttention.taskTitle}</a> · {queueStateLabel(queueAttention.state)}{queueAttention.holdReason && ` · ${queueAttention.holdReason}`}</span></p>}{work && <p><strong>具体分派</strong><span>{currentAssignment ? assignmentLabel(currentAssignment) : "没有可确认的当前修订接受记录"}</span></p>}{recentResult && <p><strong>最近关联交付</strong><span><a href={taskHref(recentResult.taskId)}>{recentResult.taskTitle}</a> · {sessionResultUseLabel(recentResult)} · {date(recentResult.submittedAt)}</span></p>}</div><div className="session-task-summary"><h3>具体承接</h3>{work ? <p><a href={taskHref(work.id)}>{work.title}</a> · {taskProgress(work.state)} · {relationLabel}</p> : <p>当前没有可确认的具体承接。</p>}{current.assignments.filter(item => item.task.id !== work?.id).map(item => <p key={`${item.task.id}:${item.assignment.version}`}><a href={taskHref(item.task.id)}>{item.task.title}</a> · {assignmentLabel(item)}</p>)}</div><h3>排队顺序</h3>{current.queue.length ? <ol className="session-queue-list">{current.queue.map(item => <li key={item.entryId}><span className="session-queue-position" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span><div><strong><a href={taskHref(item.taskId)}>{item.taskTitle}</a></strong><small>{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</small></div></li>)}</ol> : <p className="empty">当前范围没有关联队列条目。</p>}</section>}
-    {tab === "results" && <section className="session-workspace-section"><h2>成果与使用</h2><p className="muted">这里包含与本 Session 关联的交付；关联关系不证明由本 Session 提交。</p>{current.results.length ? <ul className="session-results">{current.results.map(item => { const target = deliveryTarget(item, context.projectId); return <li key={item.deliveryId}><strong><a href={taskHref(item.taskId)}>{item.taskTitle}</a></strong><p>技术结果：{item.technicalResult} · {item.latestUse ? `使用观察：${item.latestUse.result}（${item.latestUse.observerKind}，${date(item.latestUse.createdAt)}）` : "尚无实际使用观察"}</p><p>{target.href ? <a href={target.href}>打开固定成果</a> : target.kind === "fallback" ? target.label : "固定成果不可打开"} · 固定修订 <code>{item.artifactRevision}</code></p><details><summary>交付来源</summary><code>{item.artifactRef}</code><p>内容 SHA-256 <code>{item.contentHash}</code></p><p>交付 {date(item.submittedAt)}</p></details></li>; })}</ul> : <p className="empty">当前范围没有交付记录。</p>}</section>}
-    <details className="session-support session-information" onToggle={event => setInformationOpen(event.currentTarget.open)}><summary>接入、职责、配置与恢复详情</summary>
+    <details className="session-support session-information" id="session-information-panel" open={informationOpen} onToggle={event => setInformationOpen(event.currentTarget.open)}><summary>接入、职责、配置与恢复详情</summary>
       <div className="session-support-grid">
         <section><h2>原聊天入口</h2><p>{session.kind === "owned" ? "项目受管；消息保存后进入真实处理队列。" : "外部接入；消息只保存为人工转交。"}</p><SessionOpenEntry session={session} token={context.token} projectId={context.projectId} currentRead={active && !loading && !error} active={active} /></section>
         <section><h2>职责与分派</h2><p>{session.profile?.purpose || "用途尚未登记"}</p>{session.roles.map(role => <p key={role.id}><a href={href(context.projectId, "roles")}>{role.title}</a> · {role.responsibility}</p>)}<h3>具体分派</h3>{current.assignments.length ? <ul>{current.assignments.map(item => <li key={`${item.assignment.taskId}:${item.assignment.version}`}><a href={taskHref(item.task.id)}>{item.task.title}</a> · {assignmentLabel(item)}</li>)}</ul> : <p>没有具体分派。</p>}<details><summary>角色责任范围 · {current.roleTasks.length} 项</summary><p>角色负责这些任务，不表示此 Session 已接手。</p><ul>{current.roleTasks.map(task => <li key={task.id}><a href={taskHref(task.id)}>{task.title}</a></li>)}</ul></details>{active && informationOpen && <AllocationBacklinks context={context} filter={{ sessionKey }} refresh={refresh + readAgain} />}<SessionProfileForm context={context} snapshot={current} onApplied={() => setReadAgain(value => value + 1)} /></section>
@@ -315,9 +382,25 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
       ] as const).map(([key, label]) => { const item = current.resources[key]; return <div key={key}><dt>{label}</dt><dd><strong>{item.value === null ? "不可用" : `${item.value}${item.unit ? ` ${item.unit}` : ""}`}</strong><small>{item.value === null ? item.unavailableReason ?? "没有可靠观察来源" : `${item.scope} · ${item.source ?? "来源未记录"} · ${date(item.observedAt ?? undefined)}`}</small></dd></div>; })}</dl></section>
       {session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={`${href(context.projectId, "runtime")}?view=execution`} />}
       {session.kind === "owned" && session.target.kind === "owned" && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={error || native.error} replyBlockedReason={null} onAnswer={answerNative} taskHref={taskHref} section="diagnostics" />}
+      <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}。{current.metadata.partial || historyPartial ? "来源仅展示已读范围。" : ""}</p>
+      {limitation.length > 0 && <details className="session-workspace-limitations"><summary>来源限制与未确认信息</summary><ul>{limitation.map(item => <li key={item}>{item}</li>)}</ul></details>}
     </details>
-    <p className="session-workspace-freshness">工作区读于 {date(current.metadata.generatedAt)}。{current.metadata.partial || historyPartial ? "来源仅展示已读范围。" : ""}</p>
-    {limitation.length > 0 && <details className="session-workspace-limitations"><summary>来源限制与未确认信息</summary><ul>{limitation.map(item => <li key={item}>{item}</li>)}</ul></details>}
+    {tab === "activity" && <>
+      {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) && <NativeSessionPanel projectId={context.projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={error || native.error} replyBlockedReason={error || native.error ? null : !nativeReadCurrent ? "正在重新读取当前会话，请稍候。" : context.blocked ? "当前还有结果未确认的操作；请先按原操作 ID 核对，再回答。" : null} onAnswer={answerNative} taskHref={taskHref} section="questions" />}
+      {businessRunReplyEligible(session.kind, latestBusinessRun) && latestBusinessRun && <BusinessRunReply
+        key={`${session.key}:${latestBusinessRun.id}:${latestBusinessRun.updatedAt}`}
+        token={context.token} projectId={context.projectId} sessionKey={session.key}
+        run={latestBusinessRun}
+        taskTitle={businessRunTaskTitle}
+        taskHref={latestBusinessRun.taskId ? taskHref(latestBusinessRun.taskId) : null}
+        current={businessRunIsCurrent} />}
+      {active && <SessionConversation key={current.session.key} context={context} snapshot={current} progress={observation.progress} activityHref={activityHref} activitySourceKind={activitySourceKind} onOpenActivity={openActivityTarget} onApplied={() => setReadAgain(value => value + 1)}>
+      </SessionConversation>}
+      <details ref={activityDetailsRef} className="session-project-activity" open={activitySectionOpen} onToggle={event => setActivitySectionOpen(event.currentTarget.open)}><summary>项目活动与来源记录<span>{activity.length} 项已读</span></summary><ActivityFeed items={activity} filter={filter} onFilter={value => { setFilter(value); window.history.replaceState(null, "", viewUrl(tab, value)); }} open={open} onOpen={value => { setOpen(value); window.history.replaceState(null, "", viewUrl(tab, filter, value)); }} projectId={context.projectId} sessionKey={sessionKey} token={context.token} taskHref={taskHref} taskTitle={id => id === work?.id ? work.title : current.queue.find(item => item.taskId === id)?.taskTitle ?? current.roleTasks.find(item => item.id === id)?.title ?? null} currentRunId={currentRunId} />{(!historyLoaded || historyCursor) && <button type="button" disabled={historyBusy} onClick={() => void moreActivity()}>{historyBusy ? "读取中…" : historyCursor ? "加载更早活动" : "读取活动历史"}</button>}{historyError && <Alert kind="error">{historyError}</Alert>}
+      </details>
+    </>}
+    {tab === "queue" && <section className="session-workspace-section"><div className="session-section-head"><div><h2>任务队列</h2><p className="muted">按已确认的顺序逐项处理；排队不表示已开始运行。</p></div><a href={`${href(context.projectId, "runtime")}?view=execution`}>管理受管队列</a></div><div className="session-queue-glance">{queueAttention && <p><strong>队列占用／顺位</strong><span><a href={taskHref(queueAttention.taskId)}>{queueAttention.taskTitle}</a> · {queueStateLabel(queueAttention.state)}{queueAttention.holdReason && ` · ${queueAttention.holdReason}`}</span></p>}{work && <p><strong>具体分派</strong><span>{currentAssignment ? assignmentLabel(currentAssignment) : "没有可确认的当前修订接受记录"}</span></p>}{recentResult && <p><strong>最近关联交付</strong><span><a href={taskHref(recentResult.taskId)}>{recentResult.taskTitle}</a> · {sessionResultUseLabel(recentResult)} · {date(recentResult.submittedAt)}</span></p>}</div><div className="session-task-summary"><h3>具体承接</h3>{work ? <p><a href={taskHref(work.id)}>{work.title}</a> · {taskProgress(work.state)} · {relationLabel}</p> : <p>当前没有可确认的具体承接。</p>}{current.assignments.filter(item => item.task.id !== work?.id).map(item => <p key={`${item.task.id}:${item.assignment.version}`}><a href={taskHref(item.task.id)}>{item.task.title}</a> · {assignmentLabel(item)}</p>)}</div><h3>排队顺序</h3>{current.queue.length ? <ol className="session-queue-list">{current.queue.map(item => <li key={item.entryId}><span className="session-queue-position" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span><div><strong><a href={taskHref(item.taskId)}>{item.taskTitle}</a></strong><small>{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</small></div></li>)}</ol> : <p className="empty">当前范围没有关联队列条目。</p>}</section>}
+    {tab === "results" && <section className="session-workspace-section"><h2>成果与使用</h2><p className="muted">这里包含与本 Session 关联的交付；关联关系不证明由本 Session 提交。</p>{current.results.length ? <ul className="session-results">{current.results.map(item => { const target = deliveryTarget(item, context.projectId); return <li key={item.deliveryId}><strong><a href={taskHref(item.taskId)}>{item.taskTitle}</a></strong><p>技术结果：{item.technicalResult} · {item.latestUse ? `使用观察：${item.latestUse.result}（${item.latestUse.observerKind}，${date(item.latestUse.createdAt)}）` : "尚无实际使用观察"}</p><p>{target.href ? <a href={target.href}>打开固定成果</a> : target.kind === "fallback" ? target.label : "固定成果不可打开"} · 固定修订 <code>{item.artifactRevision}</code></p><details><summary>交付来源</summary><code>{item.artifactRef}</code><p>内容 SHA-256 <code>{item.contentHash}</code></p><p>交付 {date(item.submittedAt)}</p></details></li>; })}</ul> : <p className="empty">当前范围没有交付记录。</p>}</section>}
   </div>;
 }
 

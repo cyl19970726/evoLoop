@@ -1,5 +1,5 @@
 .session-workspace{max-width:1380px}
-.session-workspace{min-width:0;padding-bottom:96px}
+.session-workspace{min-width:0}
 .session-status-badge{display:inline-block;vertical-align:middle;padding:3px 9px;border-radius:5px;background:#edf1f8;color:#45536c;font-size:12px;font-weight:600}
 .session-meta{display:flex;flex-wrap:wrap;gap:8px 0;color:#697995;font-size:12px;margin:0 0 17px}.session-meta span{padding:0 16px;border-right:1px solid #dce3ef}.session-meta span:first-child{padding-left:0}.session-meta span:last-child{border-right:0}.session-meta strong{color:#253958;margin-left:5px}
 .session-activity-card{min-width:0;border:1px solid #e0e7f2;border-radius:8px;background:#fff;padding:12px 15px}.session-activity-toggle{display:grid;justify-content:start;justify-items:start;gap:4px;width:100%;text-align:left;background:none;border:0;padding:0;white-space:normal;cursor:pointer}.session-activity-toggle strong,.session-activity-toggle small{text-align:left;max-width:100%}.session-activity-toggle:focus-visible,.session-workspace-tabs button:focus-visible{outline:2px solid #245bd6;outline-offset:3px}.session-activity-detail{border-top:1px solid #e7edf5;margin-top:12px;padding-top:12px;min-width:0;font-size:12px;color:#52627c}.session-activity-detail pre,.session-trace-item pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;font:inherit}.session-activity-detail code{overflow-wrap:anywhere;white-space:normal}.session-activity-detail li{display:list-item;padding:3px 0}.session-activity-detail li::before,.session-activity-detail li::after{display:none}.session-activity-detail li time{margin-right:8px}.session-trace-item{border-top:1px solid #e7edf5;padding:10px 0;min-width:0}.session-trace-item strong{display:block}.session-feed .session-section-head label{font-size:12px;color:#6b778d;white-space:nowrap}.session-feed select{margin-left:5px}
@@ -89,7 +89,6 @@
 .session-workspace .session-workspace-actions{align-items:center;flex-wrap:nowrap;margin-top:5px}
 .session-workspace .session-workspace-actions button{min-height:40px;padding:8px 13px;border:1px solid #d7e0ed;border-radius:5px;background:#fff;color:#344b72;font-size:13px}
 .session-workspace .session-workspace-actions button:first-child{color:#2457c5;border-color:#b8c9eb}
-.session-workspace .session-context-band{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(310px,1fr);gap:12px;align-items:stretch;margin-bottom:10px}
 .session-workspace .session-current-work{align-items:flex-start;margin:0;padding:18px 20px;border-color:#d7e2f4;border-radius:5px;background:#f5f8ff}
 .session-workspace .session-current-work small{font-size:11px;color:#667892}
 .session-workspace .session-current-work strong{font-size:18px;line-height:1.45}
@@ -167,8 +166,37 @@
 .session-working-observation li,.session-turn-tools li{padding:3px 0;font-size:11px}
 .session-working-observation li span,.session-turn-tools li span{margin-left:7px;color:#77879f}
 .session-working-observation li p,.session-turn-tools li p{margin:3px 0;color:#536784;font-size:11px}
-.session-workspace .session-message-detail{margin:14px 0 0;border-radius:5px;background:#fbfcfe}
+.session-tool-source{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-top:10px;padding-top:9px;border-top:1px dashed #d7e0ec}
+.session-tool-source p{flex:1 1 320px;margin:0;color:#65768c;font-size:11px;line-height:1.55}
+.session-tool-source a{display:inline-flex;flex:0 0 auto;align-items:center;gap:4px;color:#245ba8;font-size:11px;font-weight:600;text-decoration:none;white-space:nowrap}
+.session-tool-source a:hover{text-decoration:underline}
+.session-tool-source a:focus-visible{outline:2px solid #2d66b5;outline-offset:3px;border-radius:2px}
+.session-workspace .session-message-detail{position:absolute;top:0;left:0;right:0;bottom:0;z-index:6;margin:0;border-radius:0;background:#fff;overflow-y:auto;padding:20px}
+.session-workspace .session-message-detail .panel-head{position:sticky;top:0;background:#fff;padding-bottom:12px;border-bottom:1px solid #e5eaf1;margin-bottom:16px;z-index:1}
 .session-workspace .session-message-detail .markdown-body{font-size:14px}
+
+/* 受管业务 Run 的公开最终答复：摘要常显，全文按需展开。 */
+.business-run-reply{margin:0 0 14px;padding:14px 16px;border:1px solid #d7e2f5;border-left:3px solid #2457c5;border-radius:6px;background:#f7faff;min-width:0}
+.business-run-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.business-run-kicker{margin:0 0 3px;color:#52698e;font-size:12px;font-weight:650}
+.business-run-head h2{margin:0;font-size:17px;line-height:1.45;color:#182f5b}
+.business-run-head h2 a{color:inherit}
+.business-run-context{margin:4px 0 0;color:#697a96;font-size:12px}
+.business-run-context code{overflow-wrap:anywhere}
+.business-run-state{flex:0 0 auto;padding:2px 8px;border-radius:999px;background:#e9eefc;color:#3157a8;font-size:11px}
+.business-run-state.active{background:#fff5e7;color:#8a5a22}
+.business-run-note{margin:10px 0;color:#5e7090;font-size:13px;line-height:1.6}
+.business-run-preview{margin:10px 0;padding:10px 12px;border:1px solid #e0e8f5;border-radius:5px;background:#fff;color:#293d60;font-size:13px;line-height:1.65}
+.business-run-full{margin-top:8px;border-top:1px solid #e0e8f5;padding-top:8px}
+.business-run-full>summary{cursor:pointer;color:#315ba8;font-size:13px;font-weight:650}
+.business-run-full-body{max-height:min(58vh,620px);overflow:auto;margin-top:10px;padding:14px 16px;border:1px solid #e0e8f5;border-radius:5px;background:#fff}
+.business-run-full-body .markdown-body{font-size:14px;line-height:1.75}
+.business-run-source{margin:8px 0 0;color:#7b879b;font-size:11px;line-height:1.55}
+@media(max-height:700px){
+  .business-run-reply{padding:10px 12px;margin-bottom:10px}
+  .business-run-head h2{font-size:15px}
+  .business-run-preview{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+}
 .session-composer-host{position:static;max-height:none;overflow:visible;margin:14px 0 0;padding:13px 0 0;border:0;border-top:1px solid #e2e7ef;border-radius:0;box-shadow:none;background:#fff}
 .session-composer-host .workflow-form{display:flex;grid-template-columns:minmax(0,1fr);gap:10px;align-items:flex-end}
 .session-composer-host .workflow-form>label{display:grid;font-size:0;flex:1;min-width:0}
@@ -188,11 +216,61 @@
 .session-support h2{font-size:15px;margin:0 0 8px;color:#22385f}
 .session-support p,.session-support li{font-size:12px}
 .session-workspace>.session-workspace-freshness{margin-top:10px;color:#8490a3;font-size:11px}
+
+/* 页首紧凑横带：可折叠，把高度让给活动。 */
+.session-context-band{border:1px solid #dfe5ee;border-radius:6px;background:#fff;overflow:hidden}
+.session-context-toggle{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;border:0;background:none;cursor:pointer;text-align:left;font-size:13px;color:#33496d}
+.session-context-toggle:hover{background:#f6f9ff}
+.session-context-toggle>span:first-child{font-size:10px;color:#8490a3;width:12px}
+.session-context-toggle>small{color:#7b879b;font-size:11px;flex-shrink:0}
+.session-context-toggle>strong{flex:1;min-width:0;font-size:13px;color:#22385f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-context-kind{padding:2px 6px;border-radius:3px;background:#f0f3f8;color:#60728f;font-size:10px;flex-shrink:0}
+.session-context-band.collapsed .session-context-toggle{border-bottom:0}
+.session-context-detail{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;border-top:1px solid #e5eaf1}
+.session-context-detail>section{padding:14px 16px;border-top:0}
+.session-context-detail>section+section{border-left:1px solid #e5eaf1}
+
+/* 活动与对话为主工作容器：页首固定、消息内部滚动、输入区固定底部。 */
+@media(min-width:851px){
+  .session-workspace{display:flex;flex-direction:column;height:calc(100dvh - 120px)}
+  .workbench-layout .content.session-workspace{padding-bottom:0}
+  .session-workspace .session-detail-header,.session-workspace .session-context-band,.session-workspace .session-workspace-tabs{flex-shrink:0}
+  .session-workspace .session-conversation{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:0;padding:18px 20px 0;border-top:0;border-radius:0 0 5px 5px}
+  .session-workspace .session-conversation{overflow:hidden}
+  .session-workspace .session-conversation{position:relative}
+  .session-workspace .session-conversation .session-conversation-scroll{flex:1;min-height:0;max-height:none;overflow-y:auto}
+  .session-workspace .session-conversation .session-composer-host{flex-shrink:0;position:static;margin:0;padding:10px 0 0;border-top:1px solid #e2e7ef}
+  .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:64px;max-height:180px}
+  .session-workspace .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0;max-height:200px;overflow-y:auto}
+  /* 短视口时项目活动默认收起，可展开阅读。 */
+  @media(max-height:1000px){
+    .session-workspace .session-project-activity{flex-shrink:0;max-height:200px;overflow-y:auto}
+  }
+  .session-workspace .session-project-activity{margin-top:14px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;flex-shrink:0}
+  .session-workspace .session-project-activity .session-information{margin-top:0;border-top:1px solid #e5eaf1;padding-top:12px}
+  .session-workspace .session-project-activity .session-information>summary{padding:13px 16px}
+  .session-workspace .session-project-activity .session-information .session-support-grid{margin:14px 16px}
+  .session-workspace .session-project-activity .session-information>section{margin:14px 16px}
+  /* 未展开时隐藏详情面板，只有页首"会话详情"一个入口。 */
+  .session-workspace .session-information:not([open]){display:none}
+  /* 短视口（<1000px 高）时进一步压缩 composer，保证消息阅读高度。 */
+  @media(max-height:1000px){
+    .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:44px;max-height:120px}
+    .session-workspace .session-conversation .session-composer-hint{display:none}
+  }
+}
+
 @media(max-width:1180px){
   .session-workspace .session-context-band{grid-template-columns:1fr}
   .session-workspace>.session-next-facts{grid-template-columns:1fr}
   .session-workspace .session-detail-header{gap:18px}
   .session-queue-glance{grid-template-columns:1fr}
+}
+/* 极短桌面：释放固定工作区高度，至少保留 220px 消息阅读区。 */
+@media(min-width:851px) and (max-height:700px){
+  .session-workspace{height:auto;overflow:visible}
+  .session-workspace .session-conversation{flex:none;height:auto}
+  .session-workspace .session-conversation .session-conversation-scroll{flex:none;height:220px;min-height:220px;max-height:220px;overflow-y:auto}
 }
 @media(max-width:850px){
   .session-workspace .session-detail-header{display:block}
@@ -200,6 +278,8 @@
   .session-conversation-head{display:block}
   .session-message-rules{max-width:none;margin-top:8px}
   .session-conversation-scroll{max-height:none;overflow:visible;padding-inline:0}
+  .session-workspace .session-message-detail{position:static;height:auto;margin:14px 0 0;border-radius:5px;padding:14px;overflow:visible}
+  .session-workspace .session-message-detail .panel-head{position:static}
   .session-chat-message{width:92%}
   .session-support-grid{grid-template-columns:1fr}
 }

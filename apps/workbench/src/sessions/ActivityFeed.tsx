@@ -132,7 +132,7 @@ export function ActivityFeed({ items, filter, onFilter, open, onOpen, projectId,
       const runStateLabel = ({ running: "运行中", dispatching: "启动中", requested: "待启动", completed: "已结束", failed: "失败", interrupted: "已中断", unknown: "结果待核对" } as Record<string, string>)[runState ?? ""] ?? "进展待核对";
       const title = item.source.kind === "run" ? `${linkedTaskId && taskTitle(linkedTaskId) || "业务运行"} · ${item.source.id === currentRunId ? runStateLabel : `历史记录：${runStateLabel}`}`
         : activityHeadline(group.items, linkedTaskId ? taskTitle(linkedTaskId) : null);
-      return <li key={group.key}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div className="session-activity-card"><button type="button" className="session-activity-toggle" aria-expanded={expanded} onClick={() => {
+      return <li key={group.key} data-activity-key={group.key}><time>{date(item.occurredAt ?? item.recordedAt)}</time><div className="session-activity-card"><button type="button" className="session-activity-toggle" aria-expanded={expanded} onClick={() => {
         onOpen(expanded ? open.filter(key => key !== group.key) : [...open, group.key]);
         if (!expanded && !detail) void load(group);
       }}><strong>{title}</strong><small>{group.items.length > 1 ? `${group.items.length} 条记录 · ` : ""}{item.source.kind === "run" ? "项目运行记录" : presented.sourceLabel}</small></button>
