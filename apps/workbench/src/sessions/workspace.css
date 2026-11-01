@@ -202,6 +202,13 @@
   .session-workspace .session-conversation .session-project-activity .session-information>summary{padding:13px 16px}
   .session-workspace .session-conversation .session-project-activity .session-information .session-support-grid{margin:14px 16px}
   .session-workspace .session-conversation .session-project-activity .session-information>section{margin:14px 16px}
+  /* 短视口时项目活动默认收起，给消息阅读留更多空间。 */
+  .session-workspace .session-conversation .session-project-activity:not([open]){height:auto}
+  /* 短视口（<1000px 高）时进一步压缩 composer，保证消息阅读高度。 */
+  @media(max-height:1000px){
+    .session-workspace .session-conversation .session-composer-host .workflow-form textarea{min-height:44px;max-height:120px}
+    .session-workspace .session-conversation .session-composer-hint{display:none}
+  }
 }
 
 @media(max-width:1180px){
