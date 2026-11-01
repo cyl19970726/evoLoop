@@ -64,6 +64,18 @@ test("worker route guard denies foreign reads and every unlisted write", async (
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages/${wikiId}?revision=${revisionId}&revision=${u()}` }, facts), false);
 });
 
+test('worker Item detail requires one exact fixed Run query and cannot open a timeline feed',async()=>{
+  const sourceRun=u(),notFixed=u(),item='tool-1',turn='turn-1';
+  const scoped={...facts,fixedRunTrace:async(id:string)=>id===sourceRun};
+  const base=`/api/projects/${projectId}/session-work/owned:${sessionId}/timeline`;
+  const detail=`${base}/items/${item}?turnId=${turn}&runId=${sourceRun}`;
+  assert.equal(await authorizeWorkerRequest(worker,{method:'GET',path:detail},scoped),true);
+  assert.equal(await authorizeWorkerRequest(worker,{method:'GET',path:detail.replace(sourceRun,notFixed)},scoped),false);
+  assert.equal(await authorizeWorkerRequest(worker,{method:'GET',path:`${detail}&runId=${sourceRun}`},scoped),false);
+  assert.equal(await authorizeWorkerRequest(worker,{method:'GET',path:base},scoped),false);
+  assert.equal(await authorizeWorkerRequest(worker,{method:'GET',path:`${base}/updates`},scoped),false);
+});
+
 test("a cognition worker may update its Task but cannot reselect fixed inputs", async () => {
   const cognition: WorkerIdentity = { ...worker, scope: { ...worker.scope, kind: "cognition", roleId: "planner" } };
   const update = command("task.update", { taskId, owner: "builder" });

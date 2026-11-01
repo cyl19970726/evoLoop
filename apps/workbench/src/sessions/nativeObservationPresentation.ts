@@ -52,7 +52,8 @@ export function nativeObservationPresentation(value: unknown, projectId: string,
     return invalid("计划变化无法核实");
   const diff = value.diff;
   if (diff !== null && (!object(diff) || !text(diff.turnId) || !text(diff.text) ||
-    new TextEncoder().encode(diff.text).byteLength > 8192 || typeof diff.truncated !== "boolean" || !time(diff.observedAt)))
+    new TextEncoder().encode(diff.text).byteLength > 8192 || typeof diff.truncated !== "boolean" || !time(diff.observedAt) ||
+    diff.contentProtected !== undefined && typeof diff.contentProtected !== "boolean"))
     return invalid("变更预览无法核实");
   const usage = value.usage;
   if (usage !== null && (!object(usage) || !text(usage.turnId) || !usageBreakdown(usage.total) ||
@@ -71,7 +72,8 @@ export function nativeObservationPresentation(value: unknown, projectId: string,
         id: String(source.kind === "run" ? source.runId : source.messageId),
         taskId: source.kind === "run" && text(source.taskId) ? source.taskId : null } },
     items, plan: plan as NativeProgressView["plan"],
-    diff: diff === null ? null : { turnId: diff.turnId as string, hasContent: !!(diff.text as string).trim(),
+    diff: diff === null ? null : { turnId: diff.turnId as string,
+      hasContent: diff.contentProtected === true || !!(diff.text as string).trim(),
       truncated: diff.truncated as boolean, observedAt: diff.observedAt as string },
     usage: usage as NativeProgressView["usage"],
   }, error: null };

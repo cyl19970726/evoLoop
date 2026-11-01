@@ -212,6 +212,10 @@ test('Run source links only the exact project Session and Turn, including after 
     WHERE project_id=$1 AND run_id=$2`,[projectId,runId,now]);
   const after=capture(13,turn);after.sessionId=runSessionId;after.threadId='run-thread';
   assert.equal((await service.capture(after)).source?.kind,'run','terminal Run remains a valid exact source');
+  const batch=await uow.read(projectId,r=>r.nativeInputs!.findSources!(projectId,runSessionId,[turn,'unrelated-turn']));
+  assert.equal(batch.get(turn)?.kind,'run');
+  assert.equal(batch.has('unrelated-turn'),false);
+  assert.equal((await uow.read(projectId,r=>r.nativeInputs!.findSources!(projectId,sessionId,[turn]))).size,0);
   const foreignProjectId=randomUUID();
   assert.equal(await uow.read(foreignProjectId,r=>r.nativeInputs!.findSource(foreignProjectId,runSessionId,turn)),null);
   const messageId=randomUUID(),processingId=randomUUID();
@@ -224,6 +228,8 @@ test('Run source links only the exact project Session and Turn, including after 
     [projectId,processingId,messageId,runSessionId,randomUUID(),turn,'a'.repeat(64),now]);
   const ambiguous={...capture(14,turn),sessionId:runSessionId,threadId:'run-thread'};
   await assert.rejects(()=>service.capture(ambiguous),/multiple business sources/);
+  await assert.rejects(()=>uow.read(projectId,r=>r.nativeInputs!.findSources!(projectId,runSessionId,[turn])),
+    /multiple business sources/);
   assert.equal(await service.get(projectId,ambiguous.id),null,'ambiguous linkage cannot persist a guessed source');
   assert.equal((await service.get(projectId,exact.id))?.source?.kind,'run','an existing fixed source is not rewritten');
 });

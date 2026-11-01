@@ -59,6 +59,15 @@ export async function authorizeWorkerRequest(identity: WorkerIdentity, request: 
     const prefix = `/api/projects/${scope.projectId}/`;
     if (!path.startsWith(prefix)) return false;
     const rest = path.slice(prefix.length), parts = rest.split("/");
+    if(parts[0]==='session-work'&&/^owned:[0-9a-f-]{36}$/i.test(parts[1]??'')&&
+        parts[2]==='timeline'&&parts[3]==='items'&&parts.length===5&&
+        typeof parts[4]==='string'&&parts[4].length>0&&parts[4].length<=256){
+      const query=new URLSearchParams(rawQuery??'');
+      if([...query.keys()].some(key=>!['turnId','runId'].includes(key))||
+          query.getAll('turnId').length!==1||query.getAll('runId').length!==1||
+          !query.get('turnId')||query.get('turnId')!.length>256||!id(query.get('runId')))return false;
+      return !!facts.fixedRunTrace&&await facts.fixedRunTrace(query.get('runId')!);
+    }
     if (parts[0] === "references" && parts[1] === "tasks" && id(parts[2]) &&
         parts[3] === "revisions" && id(parts[4]) && parts.length === 5) {
       const gap = scope.kind === "cognition" ? await facts.recoveryGap?.() : null;

@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -108,6 +109,8 @@ test("long Run activity and expanded source stay inside the Session page at mobi
         if (scenario === "unknown") value = { ...(value as object), session: { ...snapshot.session, runtimeState: "unknown", busy: false,
           currentTask: null, latestBusinessRun: null }, currentWork: null, nativeInputRequests: [] };
       }
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) value = timelinePage(sessionKey, { title: "窄屏活动测试会话" });
+      else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname === `${root}/tasks/${taskId}`) {
         const task = { projectId, id: taskId, version: 1, currentRevisionId: taskId, title: "关联的真实任务", content: "任务正文", contentDocumentId: taskId,
           contentRevisionId: taskId, kind: "implementation", acceptance: "可返回来源", owner: "reader", state: "in_progress", basisSetId: null,
@@ -156,48 +159,55 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
-  await page.locator(".session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "展开任务与 Agent 信息" }).click();
+  async function openAuditPanel() {
+    const detailsButton = page.getByRole("button", { name: "会话详情" });
+    if (await detailsButton.getAttribute("aria-expanded") !== "true") await detailsButton.click();
+    const audit = page.locator(".session-workspace:visible .session-project-activity");
+    if (await audit.getAttribute("open") === null) await audit.locator("> summary").click();
+  }
+  await page.locator(".session-workspace:visible .session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/ready-message`);
-  await page.getByRole("button", { name: "重新读取" }).click();
-  await page.locator(".session-status-badge").getByText("消息处理中").waitFor();
-  await page.locator(".session-current-work").getByText("正在回复消息").waitFor();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.locator(".session-workspace:visible .session-status-badge").getByText("消息处理中").waitFor();
+  await page.locator(".session-workspace:visible .session-current-work").getByText("正在回复消息").waitFor();
   await fetch(`${base}/__fixture/closing`);
-  await page.getByRole("button", { name: "重新读取" }).click();
-  await page.locator(".session-status-badge").getByText("关闭中").waitFor();
-  assert.equal(await page.locator(".session-workspace-head").getByText("消息处理中").count(), 0, "late message does not mask closing");
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.locator(".session-workspace:visible .session-status-badge").getByText("关闭中").waitFor();
+  assert.equal(await page.locator(".session-workspace:visible .session-detail-header").getByText("消息处理中").count(), 0, "late message does not mask closing");
   await fetch(`${base}/__fixture/closed`);
-  await page.getByRole("button", { name: "重新读取" }).click();
-  await page.locator(".session-status-badge").getByText("已关闭").waitFor();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.locator(".session-workspace:visible .session-status-badge").getByText("已关闭").waitFor();
   await fetch(`${base}/__fixture/completed-claim`);
-  await page.getByRole("button", { name: "重新读取" }).click();
-  await page.locator(".session-current-work").getByText("最近一次执行已结束，结果待核对", { exact: false }).waitFor();
-  assert.equal(await page.locator(".session-current-work").getByText("Run／队列已认领或占用；当前运行待核对", { exact: false }).count(), 0, "completed claim is not pending run");
-  await page.locator(".session-project-activity > summary").click();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.locator(".session-workspace:visible .session-current-work").getByText("最近一次执行已结束，结果待核对", { exact: false }).waitFor();
+  assert.equal(await page.locator(".session-workspace:visible .session-current-work").getByText("Run／队列已认领或占用；当前运行待核对", { exact: false }).count(), 0, "completed claim is not pending run");
+  await openAuditPanel();
   await page.locator(".session-activity-list").getByText("历史记录：已结束", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/active-run`);
-  await page.getByRole("button", { name: "重新读取" }).click();
-  await page.locator(".session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.locator(".session-workspace:visible .session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
   assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
   async function showTool(index: number) { const tool = page.locator(".session-feed:visible .session-trace-item").nth(index); await tool.locator("summary").waitFor(); if (await tool.getAttribute("open") === null) await tool.locator("summary").click(); }
   await item.getByText("关联的真实任务 · 运行中", { exact: false }).waitFor();
-  assert.equal(await page.locator(".native-progress-card").isVisible(), false, "healthy progress is in collapsed Session information");
-  assert.ok((await page.locator(".session-feed").boundingBox())!.width <= 390, "activity remains inside the mobile reading column");
-  await page.locator(".session-information:visible > summary").click();
+  assert.equal(await page.locator(".native-progress-card").isVisible(), true, "opening Session details reveals native diagnostics");
+  assert.ok((await page.locator(".session-workspace:visible .session-feed").boundingBox())!.width <= 390, "activity remains inside the mobile reading column");
+  assert.equal(await page.locator(".session-workspace:visible .session-information").evaluate(element => (element as HTMLDetailsElement).open), true);
   await page.locator(".native-progress-card").waitFor({ state: "visible" });
   await page.getByRole("heading", { name: "原聊天入口" }).waitFor();
   await page.getByText("原生进度来源").click();
   await page.locator(".native-progress-card").getByRole("link", { name: "关联任务" }).click();
   await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
   await page.getByRole("button", { name: "活动与对话" }).waitFor();
-  await page.locator(".session-information:visible > summary").click();
-  await page.locator(".session-information:visible > summary").click();
+  await openAuditPanel();
   if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) for (const width of [390, 1280, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.screenshot({ path: `/tmp/evoloop-first-screen-active-${width}.png` });
   }
+  await openAuditPanel();
   const returnedActivity = page.locator(".session-project-activity:visible");
-  if (await returnedActivity.getAttribute("open") === null) await returnedActivity.locator("> summary").click();
+  await returnedActivity.waitFor();
   const returnedItem = page.locator(".session-feed:visible .session-activity-list li").first();
   await returnedItem.getByRole("button", { name: /关联的真实任务 · 运行中/ }).click();
   await returnedItem.getByText("详情暂不可用").waitFor();
@@ -226,16 +236,28 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   }
   await page.locator(".session-feed:visible").getByLabel("活动范围").selectOption("all");
   await page.setViewportSize({ width: 390, height: 520 });
-  await page.evaluate(() => window.scrollTo(0, 500));
-  await page.waitForFunction(() => window.scrollY > 0);
+  const informationPane = page.locator(".session-workspace:visible .session-information");
+  const paneMetrics = await informationPane.evaluate(element => ({ clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY }));
+  assert.equal(paneMetrics.overflowY, "auto", "narrow Session details remains its own scrollable secondary pane");
+  assert.ok(paneMetrics.clientHeight > 0 && paneMetrics.scrollHeight > paneMetrics.clientHeight,
+    `the narrow audit content scrolls inside Session details: ${JSON.stringify(paneMetrics)}`);
+  const auditScrollTop = await informationPane.evaluate(element => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  assert.ok(auditScrollTop > 0, `the narrow audit scroll position advances inside its pane (scrollTop=${auditScrollTop})`);
+  assert.equal(await page.evaluate(() => window.scrollY), 0, "the narrow audit pane scrolls without moving the page");
   await page.locator(".session-feed:visible").getByRole("link", { name: "查看任务" }).first().click();
   await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).waitFor();
   await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
   await showTool(1);
   await page.locator(".session-feed:visible").getByText("第二页真实输出").waitFor();
   assert.equal(await page.locator(".session-feed:visible").getByLabel("活动范围").inputValue(), "all");
-  await page.waitForFunction(() => window.scrollY > 0);
-  assert.ok(await page.evaluate(() => window.scrollY) > 0, "return restores the Session reading position");
+  const returnedAuditScrollTop = await informationPane.evaluate(element => element.scrollTop);
+  assert.ok(returnedAuditScrollTop > 0,
+    `return restores the Session reading position inside its scrollable details pane (scrollTop=${returnedAuditScrollTop})`);
+  assert.equal(await page.evaluate(() => window.scrollY), 0, "return keeps the mobile Session page inside its viewport");
   assert.match(new URL(page.url()).hash, /open=/);
   await page.getByRole("link", { name: "查看任务" }).first().click();
   await page.goBack();
@@ -244,9 +266,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.reload();
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
+  await openAuditPanel();
   const reloadedActivity = page.locator(".session-project-activity:visible");
   await reloadedActivity.waitFor();
-  if (await reloadedActivity.getAttribute("open") === null) await reloadedActivity.locator("> summary").click();
   await showTool(0);
   await page.getByText("第一页真实输出").waitFor();
   await fetch(`${base}/__fixture/idle`);
@@ -254,13 +276,16 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
-  await page.locator(".session-status-badge").getByText("空闲").waitFor();
-  const recentWork = page.locator(".session-current-work");
+  const contextToggle = page.getByRole("button", { name: "展开任务与 Agent 信息" });
+  if (await contextToggle.count()) await contextToggle.click();
+  await page.locator(".session-workspace:visible .session-status-badge").getByText("空闲").waitFor();
+  const recentWork = page.locator(".session-workspace:visible .session-current-work");
   await recentWork.getByText("最近真实成果", { exact: true }).waitFor();
   await recentWork.getByText("技术结果：passed · 已记录使用", { exact: false }).waitFor();
   assert.equal(await recentWork.getByText("已有交付待核对").count(), 0, "older failed Delivery cannot override newer used Delivery");
+  await openAuditPanel();
   const idleActivity = page.locator(".session-project-activity:visible");
-  if (await idleActivity.getAttribute("open") === null) await idleActivity.locator("> summary").click();
+  await idleActivity.waitFor();
   await page.locator(".session-feed:visible").getByLabel("活动范围").selectOption("important");
   const idleItem = page.locator(".session-feed:visible .session-activity-list li").first();
   await idleItem.getByText("历史记录：运行中").waitFor();
@@ -310,11 +335,17 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await messageItem.getByText("最新回复正文").waitFor();
   await fetch(`${base}/__fixture/include-question`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  const question = page.locator(".native-question-card").first();
+  const activityTab = page.getByRole("button", { name: "活动与对话" });
+  if (await activityTab.getAttribute("aria-current") !== "page") await activityTab.click();
+  const detailsButton = page.getByRole("button", { name: "会话详情" });
+  if (await detailsButton.getAttribute("aria-expanded") === "true") await detailsButton.click();
+  await page.locator(".unified-session-timeline:visible").waitFor();
+  const question = page.getByRole("log", { name: "Session 消息与工具时间线" }).locator(".native-question-card").first();
   await question.getByText("是否继续？").waitFor();
   await question.getByRole("link", { name: "关联任务" }).click();
   await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
   assert.equal(await page.getByLabel("活动范围").inputValue(), "important");
+  await openAuditPanel();
   await fetch(`${base}/__fixture/hold-trace`);
   await idleItem.getByRole("button", { name: "重读执行轨迹" }).click();
   await page.waitForFunction(async base => await (await fetch(`${base}/__fixture/trace-held`)).text() === "true", base);
@@ -324,8 +355,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
+  await openAuditPanel();
   const freshActivity = page.locator(".session-project-activity:visible");
-  if (await freshActivity.getAttribute("open") === null) await freshActivity.locator("> summary").click();
+  await freshActivity.waitFor();
   const newItem = page.locator(".session-feed:visible .session-activity-list li").first();
   if (await newItem.getByRole("button", { name: /历史记录：已结束/ }).getAttribute("aria-expanded") !== "true") await newItem.getByRole("button", { name: /历史记录：已结束/ }).click();
   await newItem.locator(".session-trace-item").first().locator("summary").click();
@@ -341,8 +373,8 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   }
   await fetch(`${base}/__fixture/unknown`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await page.locator(".session-status-badge").getByText("生命周期待核对").waitFor();
-  assert.equal(await page.locator(".session-current-work").getByText("当前空闲").count(), 0);
+  await page.locator(".session-workspace:visible .session-status-badge").getByText("生命周期待核对").waitFor();
+  assert.equal(await page.locator(".session-workspace:visible .session-current-work").getByText("当前空闲").count(), 0);
   if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) for (const width of [390, 1280, 1440]) {
     await page.setViewportSize({ width, height: 1000 }); await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `/tmp/evoloop-first-screen-unknown-${width}.png` });

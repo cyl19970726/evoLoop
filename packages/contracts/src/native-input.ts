@@ -68,6 +68,8 @@ export interface NativeInputReader {
   pendingResponses(projectId: string, limit: number): Promise<NativeInputRecord[]>;
   unlinked(projectId: string, sessionId: string, limit: number): Promise<NativeInputRecord[]>;
   findSource(projectId: string, sessionId: string, turnId: string): Promise<NativeInputSource | null>;
+  /** Same ambiguity rejection as findSource, in one bounded read for a native page. */
+  findSources?(projectId: string, sessionId: string, turnIds: string[]): Promise<Map<string, NativeInputSource>>;
 }
 
 export interface NativeInputTransaction extends NativeInputReader {

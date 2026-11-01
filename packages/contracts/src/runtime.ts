@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { EvaluationFixedRef } from "./evaluation.js";
 import type { ExecutionProfileSnapshot, SessionExecutionProfile } from "./session-recovery.js";
 import type { NativeInputEvent } from "./native-input.js";
+import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "./session-timeline.js";
 
 export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000), turnCursor: z.string().min(1).max(2048).optional() });
 
@@ -199,6 +200,10 @@ export interface RuntimePort {
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
   /** Optional classified trace capability. Absence means unsupported, never an empty complete trace. */
   readWorkPage?(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimeWorkPage>;
+  /** Source-ordered, permission-neutral display facts. Never resumes or starts work. */
+  readWorkspaceHistory?(binding: RuntimeBinding, options?: NativeWorkspaceReadOptions): Promise<NativeWorkspacePage>;
+  /** Public display updates from this same native owner connection, not a replay log. */
+  onWorkspaceUpdate?(listener: (event: WorkspaceRuntimeUpdate) => void): () => void;
   startTurn(binding: RuntimeBinding, input: string, operationId: string,
     executionProfile?: ExecutionProfileSnapshot | null): Promise<RuntimeTurn>;
   interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void>;

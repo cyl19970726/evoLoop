@@ -40,3 +40,75 @@ test("Agent help and schemas expose common message/assignment operations without
     const r = await run(["command", "schema", type]); assert.equal(r.code, 0); assert.ok(r.body.required.includes("operationId"));
   }
 });
+
+test('timeline, selected Item and live update paths encode independent positions and native IDs', () => {
+  const timeline=new URL(sessionWorkPath(['timeline',key],new Map([
+    ['source','native'],['cursor','native+/='],['messages-cursor','messages?&='],['limit','25'],
+  ])),'http://local');
+  assert.equal(timeline.pathname,`/session-work/${encodeURIComponent(key)}/timeline`);
+  assert.deepEqual(Object.fromEntries(timeline.searchParams),{source:'native',cursor:'native+/=',messagesCursor:'messages?&=',limit:'25'});
+  const item=new URL(sessionWorkPath(['item',key,'item/1 ?#'],new Map([['turn-id','turn/1 ?#']])),'http://local');
+  assert.equal(item.pathname,`/session-work/${encodeURIComponent(key)}/timeline/items/item%2F1%20%3F%23`);
+  assert.equal(item.searchParams.get('turnId'),'turn/1 ?#');
+  const updates=new URL(sessionWorkPath(['updates',key],new Map([['after','live+/=']])),'http://local');
+  assert.equal(updates.pathname,`/session-work/${encodeURIComponent(key)}/timeline/updates`);
+  assert.equal(updates.searchParams.get('after'),'live+/=');
+  assert.equal(updates.searchParams.get('waitMs'),'0');
+  const waited=new URL(sessionWorkPath(['updates',key],new Map([['wait-ms','10000'],['after','live ?&=']])),'http://local');
+  assert.equal(waited.searchParams.get('waitMs'),'10000');
+  assert.equal(waited.searchParams.get('after'),'live ?&=');
+});
+
+test('timeline options reject invalid source, misplaced cursors and ambiguous item paths', () => {
+  assert.throws(()=>sessionWorkPath(['timeline',key],new Map([['source','all']])));
+  assert.throws(()=>sessionWorkPath(['timeline',key],new Map([['limit','51']])));
+  assert.throws(()=>sessionWorkPath(['item',key,'item'],new Map()),/turn-id/);
+  assert.throws(()=>sessionWorkPath(['item',key,'..'],new Map([['turn-id','turn']])));
+  assert.throws(()=>sessionWorkPath(['updates',key],new Map([['cursor','native']])));
+  for(const invalid of ['-1','10001','1.5','oops'])
+    assert.throws(()=>sessionWorkPath(['updates',key],new Map([['wait-ms',invalid]])));
+  assert.throws(()=>sessionWorkPath(['timeline',key],new Map([['wait-ms','0']])));
+  assert.throws(()=>sessionWorkPath(['timeline',`${key}/other`],new Map()));
+});
+
+test('work timeline CLI passes service JSON, cursor positions and errors without local mutation',async()=>{
+  const {mock}=await import('node:test');
+  const requests:Array<{url:URL;method:string;authorization:string|null}>=[];
+  const page={sessionKey:key,entries:[{id:'native-item',kind:'message',body:'public'}],
+    nextCursor:'native-next',messagesCursor:'pg-next',partial:true,limitations:['older page available'],unsupportedKinds:['newKind']};
+  const selected={id:'native-item',kind:'message',body:'full public text'};
+  const live={cursor:'live-next',resetRequired:false,entries:[],turns:[],freshness:'live',limitations:[]};
+  const intercepted=mock.method(globalThis,'fetch',async (url:string|URL|Request,init?:RequestInit)=>{
+    const target=new URL(String(url));requests.push({url:target,method:init?.method??'',authorization:new Headers(init?.headers).get('Authorization')});
+    if(target.pathname.endsWith('/timeline/updates'))return new Response(JSON.stringify(live),{status:200});
+    if(target.pathname.includes('/timeline/items/'))return new Response(JSON.stringify(selected),{status:200});
+    if(target.searchParams.get('source')==='messages')return new Response(JSON.stringify({code:'FORBIDDEN',reason:'exact service rejection'}),{status:403});
+    return new Response(JSON.stringify(page),{status:200});
+  });
+  const env={EVOLOOP_TOKEN:'fixture-token',EVOLOOP_PROJECT:id,EVOLOOP_API_URL:'http://127.0.0.1:4318'};
+  const run=async(args:string[])=>{let stdout='',stderr='';const code=await runCli(args,env,{stdout:s=>{stdout+=s;},stderr:s=>{stderr+=s;}});return{code,stdout,stderr};};
+  try{
+    const history=await run(['work','timeline',key,'--source','both','--cursor','native+/=','--messages-cursor','pg?&=','--limit','25']);
+    assert.equal(history.code,0);assert.deepEqual(JSON.parse(history.stdout),page);
+    const item=await run(['work','item',key,'item/1','--turn-id','turn/1']);
+    assert.equal(item.code,0);assert.deepEqual(JSON.parse(item.stdout),selected);
+    const updates=await run(['work','updates',key,'--after','live+/=']);
+    assert.equal(updates.code,0);assert.deepEqual(JSON.parse(updates.stdout),live);
+    const waited=await run(['work','updates',key,'--wait-ms','10000']);
+    assert.equal(waited.code,0);assert.deepEqual(JSON.parse(waited.stdout),live);
+    assert.equal(requests.length,4);
+    assert.equal(requests[0]?.url.searchParams.get('messagesCursor'),'pg?&=');
+    assert.equal(requests[0]?.url.searchParams.get('cursor'),'native+/=');
+    assert.equal(requests[1]?.url.pathname.endsWith('/timeline/items/item%2F1'),true);
+    assert.equal(requests[1]?.url.searchParams.get('turnId'),'turn/1');
+    assert.equal(requests[2]?.url.searchParams.get('after'),'live+/=');
+    assert.equal(requests[2]?.url.searchParams.get('waitMs'),'0');
+    assert.equal(requests[3]?.url.searchParams.get('waitMs'),'10000');
+    assert.ok(requests.every(request=>request.method==='GET'&&request.authorization==='Bearer fixture-token'));
+    const rejected=await run(['work','timeline',key,'--source','messages']);
+    assert.equal(rejected.code,1);assert.equal(rejected.stdout,'');
+    assert.deepEqual(JSON.parse(rejected.stderr).error.data,{code:'FORBIDDEN',reason:'exact service rejection'});
+    const invalid=await run(['work','item',key,'item/1']);
+    assert.equal(invalid.code,2);assert.equal(requests.length,5);
+  }finally{intercepted.mock.restore();}
+});

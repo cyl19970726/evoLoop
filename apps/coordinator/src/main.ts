@@ -59,6 +59,7 @@ import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
@@ -518,6 +519,8 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
   projectRoot: fileURLToPath(new URL("../../../", import.meta.url)),
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 managedCliBroker = managed?.broker ?? null;
+const sessionWork = new SessionObservationService({ uow });
+const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,...(runner?{runner}:{})});
 if (runner) {
   try { await runner.start(); }
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
@@ -525,7 +528,7 @@ if (runner) {
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
-  sessionWork: new SessionObservationService({ uow }),
+  sessionWork, sessionTimeline,
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
   messageExecution: createMessageExecutionReader({
@@ -607,7 +610,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); }
+  try { messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.

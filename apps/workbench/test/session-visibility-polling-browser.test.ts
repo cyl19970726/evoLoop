@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -60,7 +61,11 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
         if (notify) changeDelivered = true;
         value = { items: notify ? [{ sessionKeys: [ownedKey] }] : [], nextCursor: changeDelivered ? "1" : "0",
           hasMore: false, resetRequired: false, metadata };
-      } else if (url.pathname.endsWith("/recovery")) {
+      } else if (url.pathname.endsWith("/timeline")) {
+        const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length, -"/timeline".length));
+        value = timelinePage(key, { title: key === externalKey ? "外部测试会话" : "受管测试会话" });
+      } else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
+      else if (url.pathname.endsWith("/recovery")) {
         counts.recovery++; status = 404; value = { message: "无恢复记录" };
       } else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
       else if (url.pathname.startsWith(`${root}/session-work/`)) {
@@ -90,6 +95,7 @@ test("busy owned polling shows a fixture update, pauses under simulated hidden v
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "受管测试会话" }).waitFor();
+  await page.getByRole("button", { name: "会话详情" }).click();
   await page.locator(".session-project-activity > summary").click();
   for (let i = 0; i < 30 && (await readCounts()).recovery === 0; i++) await page.waitForTimeout(50);
   assert.equal((await readCounts()).recovery > 0, true, "owned initial read requests recovery");

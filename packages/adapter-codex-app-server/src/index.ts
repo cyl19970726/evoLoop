@@ -8,7 +8,10 @@ import { promisify } from "node:util";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import type { NativeInputCapture, NativeInputEvent, NativeInputQuestion } from "@evoloop/contracts/native-input";
+import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import { mapWorkItem } from "./work-trace.js";
+import { mapWorkspaceEvent } from "./workspace-map.js";
+import { WorkspaceHistoryReader } from "./workspace-read.js";
 
 const OWNER = "evoloop-codex-app-server" as const;
 const PINNED_PROTOCOLS = {
@@ -107,10 +110,10 @@ export class RuntimeProtocolError extends Error {
 export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "invalid_params" | "method_not_found" | "permission_denied" | "server_rejected";
 const serverErrorCategory = (code: number, message: string): RuntimeServerErrorCategory => {
   if (/rollout.{0,60}not found|not found.{0,60}rollout/i.test(message)) return "rollout_not_found";
+  if (/permission|unauthorized|forbidden/i.test(message)) return "permission_denied";
   if (/thread.{0,60}(read|load)|(read|load).{0,60}thread/i.test(message)) return "thread_unavailable";
   if (code === -32602 || /invalid params/i.test(message)) return "invalid_params";
   if (code === -32601) return "method_not_found";
-  if (/permission|unauthorized|forbidden/i.test(message)) return "permission_denied";
   return "server_rejected";
 };
 /** Stable protocol evidence only. The native error message can contain private paths or session material. */
@@ -134,6 +137,8 @@ export interface CodexAppServerOptions {
   clientVersion?: string;
   /** Enable pinned modern native request_user_input on this child only; never writes user configuration. */
   nativeUserInput?: boolean;
+  /** Experimental workspace history needs explicit owner-connection opt-in after wire/store validation. */
+  workspaceExperimental?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
   /** Actual child exit evidence, independent of a transport EOF. */
@@ -216,6 +221,9 @@ export class CodexAppServerAdapter implements RuntimePort {
   /** A create hint is only for durable denial evidence; it never registers native ownership. */
   private pendingCreate: RuntimeSessionSpec | null = null;
   private events = new Set<(event: RuntimeEvent) => void>();
+  private workspaceUpdates = new Set<(event: WorkspaceRuntimeUpdate) => void>();
+  private readonly workspaceReader = new WorkspaceHistoryReader((method, params) => this.request(method, params),
+    () => this.experimental && this.options.workspaceExperimental === true && this.expectedVersion === "codex-cli 0.166.0-alpha.5.1");
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   private declaredTools = new Map<string, Set<string>>();
   private profileTransitionThreads = new Set<string>();
@@ -253,6 +261,10 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('nativeUserInput must be boolean');
     if(options.nativeUserInput&&!supportsModernProtocol(this.expectedVersion))
       throw new RuntimeProtocolError('nativeUserInput requires a pinned modern Codex CLI protocol');
+    if(options.workspaceExperimental!==undefined&&typeof options.workspaceExperimental!=='boolean')
+      throw new RuntimeProtocolError('workspaceExperimental must be boolean');
+    if(options.workspaceExperimental&&this.expectedVersion!=="codex-cli 0.166.0-alpha.5.1")
+      throw new RuntimeProtocolError('workspaceExperimental requires the pinned 0.166 experimental protocol');
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
@@ -366,7 +378,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (this.child) throw new RuntimeProtocolError("adapter opening");
     if(this.ownedProcess?.pid&&this.ownedProcess.exitCode===null&&this.ownedProcess.signalCode===null)
       throw new RuntimeProtocolError('previous App Server process has not exited');
-    this.experimental=!!(this.options.dynamicTools&&this.options.callDynamicTool)||
+    this.experimental=this.options.workspaceExperimental===true||!!(this.options.dynamicTools&&this.options.callDynamicTool)||
       (supportsModernProtocol(this.expectedVersion)&&this.nativeInputListeners.size>0);
     if (!this.options.spawnArgs) {
       const version = await this.probeVersion();
@@ -475,6 +487,8 @@ export class CodexAppServerAdapter implements RuntimePort {
       const event: RuntimeEvent = { method: message.method, projectId: binding.projectId, sessionId: binding.sessionId,
         threadId, params: message.params, ...(nonempty(params?.turnId) ? { turnId: params.turnId } : nonempty(turn?.id) ? { turnId: turn.id } : {}) };
       for (const listener of this.events) { try { listener(event); } catch { /* observers cannot break transport */ } }
+      const update=mapWorkspaceEvent(message.method,message.params,binding,new Date().toISOString(),this.connectionId);
+      if(update)for(const listener of this.workspaceUpdates){try{listener(update);}catch{/* observers cannot break transport */}}
       return;
     }
     if (typeof message.id !== "number" || !Number.isInteger(message.id)) { this.disconnect("invalid response id"); return; }
@@ -660,6 +674,11 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   private disconnect(reason: string): void {
     const wasConnected = this.ready || !!this.child;
+    if(wasConnected)for(const binding of this.bindings.values()){
+      const update:WorkspaceRuntimeUpdate={kind:'reset',projectId:binding.projectId,sessionId:binding.sessionId,
+        threadId:binding.nativeThreadId,turnId:null,observedAt:new Date().toISOString(),reason:'owner connection changed'};
+      for(const listener of this.workspaceUpdates){try{listener(update);}catch{/* observers cannot break transport */}}
+    }
     this.ready = false;
     this.modelListCache=null;
     this.modelListPending=null;
@@ -1026,6 +1045,16 @@ export class CodexAppServerAdapter implements RuntimePort {
       else unsupportedCount++;
     }
     return { data, unsupportedCount, truncated, nextCursor: nonempty(result.nextCursor) ? result.nextCursor : null };
+  }
+
+  async readWorkspaceHistory(binding:RuntimeBinding,options:NativeWorkspaceReadOptions={}):Promise<NativeWorkspacePage>{
+    this.owned(binding);
+    return this.workspaceReader.read(binding,options);
+  }
+
+  onWorkspaceUpdate(listener:(event:WorkspaceRuntimeUpdate)=>void):()=>void{
+    this.workspaceUpdates.add(listener);
+    return ()=>this.workspaceUpdates.delete(listener);
   }
 
   async startTurn(binding: RuntimeBinding, input: string, operationId: string,

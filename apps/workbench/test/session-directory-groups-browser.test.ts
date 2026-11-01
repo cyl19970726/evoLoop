@@ -10,9 +10,9 @@ const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
 const projectId = "30000001-0000-4000-8000-000000000001";
 const stamp = "2026-10-27T00:00:00.000Z";
-const totals = { current: 5, historical: 37, unclassified: 14 };
+const totals = { current: 51, historical: 37, unclassified: 14 };
 const entries = {
-  current: Array.from({ length: 5 }, (_, i) => ({ key: `external:current-${i}`, title: `当前成员 ${i + 1}`, membership: "current" })),
+  current: Array.from({ length: 51 }, (_, i) => ({ key: `external:current-${i}`, title: `当前成员 ${i + 1}`, membership: "current" })),
   historical: Array.from({ length: 37 }, (_, i) => ({ key: `external:historical-${i}`, title: `历史会话 ${i + 1}`, membership: "historical" })),
   unclassified: Array.from({ length: 14 }, (_, i) => ({ key: `external:unclassified-${i}`, title: `待归类会话 ${i + 1}`, membership: "unclassified" })),
 };
@@ -40,8 +40,9 @@ test("retrying one Session category preserves another category's loaded pages", 
           const rows = (entries[membership as keyof typeof entries] ?? []).filter(item => item.title.includes(search));
           const start = cursor ? Number(cursor.split(":")[1]) : 0;
           const limit = Number(url.searchParams.get("limit") ?? "20");
-          value = { items: rows.slice(start, start + limit).map(item => ({ ...item, kind: "external", roles: [], currentTask: null, busy: null })),
-            nextCursor: start + limit < rows.length ? `${membership}:${start + limit}` : null, totals, observationCursor: "0",
+          const pageLimit = membership === "current" && start === 0 ? 5 : limit;
+          value = { items: rows.slice(start, start + pageLimit).map(item => ({ ...item, kind: "external", roles: [], currentTask: null, busy: null })),
+            nextCursor: start + pageLimit < rows.length ? `${membership}:${start + pageLimit}` : null, totals, observationCursor: "0",
             metadata: { generatedAt: stamp, sourceObservedAt: null, partial: false, limitations: [] },
             attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: null, unclassifiedSessions: 14 } };
         }
@@ -63,14 +64,25 @@ test("retrying one Session category preserves another category's loaded pages", 
   await page.goto(`${base}/#/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
+  const navigationToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
+  if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator(".project-sidebar .session-navigation");
+  const current = sidebar.locator(".session-nav-current");
+  await current.getByText("待归类 · 5", { exact: true }).waitFor();
+  assert.equal(await current.locator(".session-nav-item").count(), 5,
+    "the Sessions root shows all five rows in its first current page");
+  await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
+  await current.getByText("当前成员 25", { exact: true }).waitFor();
+  await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
+  await current.getByText("当前成员 45", { exact: true }).waitFor();
+  await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
+  await current.getByText("当前成员 51", { exact: true }).waitFor();
+  assert.equal(await current.locator(".session-nav-item").count(), 51,
+    "the Sessions root continues until all 51 current rows are loaded");
+  assert.equal(await page.locator(".sessions-directory-page").count(), 0,
+    "the root keeps the directory in navigation instead of adding a second catalog page");
   await sidebar.locator(".session-nav-history").click();
   await sidebar.locator(".session-nav-error").waitFor();
-  const mainHistory = page.locator(".sessions-directory-history");
-  await mainHistory.locator("> summary").click();
-  await mainHistory.getByText(/待归类 Session 暂不可读取/).waitFor();
-  assert.equal(await mainHistory.getByText("没有待归类的 Session。", { exact: true }).count(), 0,
-    "a failed history read is not presented as a normal empty catalog");
   await sidebar.getByRole("button", { name: "加载更多历史 Session" }).click();
   await sidebar.locator(".session-nav-item").filter({ hasText: "历史会话 37" }).waitFor();
   assert.equal(await sidebar.locator(".session-nav-group").nth(1).locator(".session-nav-item").count(), 37);

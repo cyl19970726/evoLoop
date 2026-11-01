@@ -1,0 +1,25 @@
+{
+  "observedAt": "2026-11-02",
+  "sample": "An isolated test project with one real managed native message Turn. All visible input/README/result text was created solely for this bounded test; no formal project transcripts, native rollout, credentials, original tool output or private paths are included.",
+  "captureTool": "Product Design in-app browser",
+  "viewportCssPx": [
+    1536,
+    1024
+  ],
+  "reportedDevicePixelRatio": 0.75,
+  "rawCanvasPx": [
+    2048,
+    1365
+  ],
+  "publishedImagePx": [
+    1536,
+    1024
+  ],
+  "normalization": "Crop to measured document rectangle at origin; retain source pixels without rescaling text. The raw canvas includes blank area beyond the document.",
+  "verification": "One real message input, public commentary, one README read tool and final reply; four stable source IDs survive persistence and read-only restart. This figure shows read-only replay, not a live subscription or business acceptance.",
+  "automaticExecutionAtCapture": false,
+  "modelTurnsForFixture": 1,
+  "publicSourcePolicy": "Controlled test material only; real business history screenshots remain in the Task process Document.",
+  "file": "01-native-message-workspace.png",
+  "sha256": "3f371c4e53ef21fb12e2605b0bf69029376e2779641aea1378f7639ffd4369c9"
+}

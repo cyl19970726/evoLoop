@@ -48,11 +48,38 @@ for await (const line of lines) {
   }
   const { id, method, params } = message;
   if (method === "initialize") {
-    if ((mode.startsWith("dynamic") || mode==='full-dynamic') && params.capabilities?.experimentalApi !== true) process.exit(2);
-    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && params.capabilities?.experimentalApi === true) process.exit(2);
+    if ((mode.startsWith("dynamic") || mode==='full-dynamic' || mode==='workspace-timeline') && params.capabilities?.experimentalApi !== true) process.exit(2);
+    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && mode!=='workspace-timeline' && mode!=='workspace-history' && params.capabilities?.experimentalApi === true) process.exit(2);
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
+  if ((mode === 'workspace-history'||mode==='workspace-timeline') && method === 'thread/read') {
+    send({id,result:{thread:{...thread,historyMode:'paginated'},observedTurnStarts:turnStarts,observedResumes}});continue;
+  }
+  if (mode === 'workspace-history' && method === 'thread/timeline/list') {
+    send({id,error:{code:-32000,message:'timeline was not explicitly enabled'}});continue;
+  }
+  if (mode === 'workspace-timeline' && method === 'thread/timeline/list') {
+    send({id,result:{data:[
+      {type:'turnStarted',position:1,turnId:'turn-1',startedAt:1700000000},
+      {type:'item',position:1,turnId:'turn-1',item:{id:'reply-1',type:'agentMessage',phase:'final_answer',text:'public reply'}},
+      {type:'turnCompleted',position:2,turnId:'turn-1',status:'failed',completedAt:1700000001},
+    ],nextCursor:null,activeRealtimeSessionAtPageStart:null}});continue;
+  }
+  if (mode === 'workspace-history' && method === 'thread/items/list') {
+    send({id,result:{data:[{turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:'commentary',text:'public update'},startedAtMs:1700000000000},
+      {turnId:'turn-1',item:{id:'input-1',type:'userMessage',clientId:'client-1',content:[{type:'text',text:'private handoff credential'}]}}],nextCursor:null}});
+    send({method:'thread/status/changed',params:{threadId:thread.id,status:'active'}});
+    send({method:'item/started',params:{threadId:thread.id,turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:'commentary',text:''}}});
+    send({method:'item/agentMessage/delta',params:{threadId:thread.id,turnId:'turn-1',itemId:'message-1',delta:' public'}});
+    send({method:'item/completed',params:{threadId:thread.id,turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:'commentary',text:'public update'}}});
+    send({method:'thread/status/changed',params:{threadId:thread.id,status:'idle'}});
+    send({method:'item/commandExecution/outputDelta',params:{threadId:thread.id,turnId:'turn-1',itemId:'tool-1',delta:'private output'}});
+    continue;
+  }
+  if (mode === 'workspace-history' && method === 'thread/turns/list') {
+    send({id,result:{data:[{id:'turn-1',status:'completed',startedAt:1700000000,completedAt:1700000001,items:[]}],nextCursor:null}});continue;
+  }
   if (method === "model/list") {
     modelListReads++;
     if (params.limit !== 100) { send({id,error:{code:-32602,message:"wrong page size"}}); continue; }

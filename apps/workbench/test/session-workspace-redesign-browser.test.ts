@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelineAssistant, timelinePage, timelineTool } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -57,6 +58,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     items: [{ id: "tool-1", kind: "commandExecution", name: "读取固定文档", status: "completed", summary: "读取完成", truncated: false },
       { id: "tool-2", kind: "commandExecution", name: "核对图片", status: "failed", summary: "图片暂不可读", truncated: false }],
     plan: null, diff: null, usage: null };
+  const longAnswer = timelineAssistant("long-answer", "截断预览", { turnId: "long-turn", nativeItemId: "long-item", truncated: true });
   const snapshot = { session: { ...currentItems[0], currentTask, busy: false }, observationCursor: "1", currentWork: currentTask,
     assignments: [{ assignment: { projectId, taskId, version: 1, taskRevisionId: currentTask.revisionId,
       target: { kind: "owned", sessionId }, recipientActorId: "reader", state: "accepted",
@@ -70,6 +72,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "Sessions 设计测试", createdAt: stamp };
+      else if (url.pathname === `${root}/impacts`) value = [];
+      else if (url.pathname === `${root}/work-management/index`) value = {
+        items: [], nextCursor: null, total: 0, counts: {}, changeSequence: 1, observedAt: stamp, partial: false,
+      };
       else if (url.pathname === `${root}/session-work`) {
         const membership = url.searchParams.get("membership") ?? "current";
         value = { items: membership === "current" ? currentItems : [], nextCursor: null, observationCursor: "1", metadata,
@@ -77,6 +83,20 @@ test("Sessions is the sole directory and renders conversation, source, reply and
             pendingAcceptance: null, unclassifiedSessions: 1 } };
       } else if (url.pathname === `${root}/session-work/changes`) value = { items: [], nextCursor: "2", hasMore: false, resetRequired: false, metadata };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) value = snapshot;
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) {
+        const entries = [
+          { ...timelineAssistant("answer-1", "## 已收到\n\n- 工具已完成\n- 结果可核对"), origin: { kind: "message" as const,
+            id: messageId, taskId, taskRevisionId: currentTask.revisionId, initiatingActorId: "reader" } },
+          longAnswer,
+          timelineTool("tool-1", "读取固定文档", "工具已完成"),
+          timelineTool("tool-2", "核对图片", "图片暂不可读", "failed"),
+        ];
+        value = timelinePage(sessionKey, { title: "测试 Session", entries, cursor: String(messageListReads + 1) });
+      } else if (url.pathname.endsWith("/timeline/updates")) value = {
+        cursor: "1", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [],
+      };
+      else if (url.pathname.endsWith("/timeline/items/long-item")) value = { ...longAnswer,
+        body: "截断预览\n\n完整补充段落可以在同一条消息中读取。", truncated: false };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/messages`) {
         messageListReads++;
         value = { items: [messageListReads === 1 ? message : { ...message, processing: undefined }], nextCursor: null, metadata };
@@ -106,44 +126,66 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "Sessions", exact: true }).waitFor();
   assert.deepEqual(await page.locator(".module-rail > a:not(.rail-brand)").allTextContents(), ["工作", "Sessions"]);
+  const navigationToggle = page.locator(".sidebar-toggle");
+  if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator(".project-sidebar .session-navigation");
   await sidebar.getByText("业务 Session · 1", { exact: true }).waitFor();
   await sidebar.getByText("System Session · 1", { exact: true }).waitFor();
   await sidebar.getByText("待归类 · 1", { exact: true }).waitFor();
   const workPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const workPageErrors: string[] = [];
+  workPage.on("pageerror", error => workPageErrors.push(error.message));
+  workPage.on("console", message => { if (message.type() === "error") workPageErrors.push(message.text()); });
   await workPage.goto(`${base}/#/p/${projectId}/work`);
   await workPage.getByLabel("访问令牌").fill("fixture-token");
   await workPage.getByRole("button", { name: "进入", exact: true }).click();
-  await workPage.locator(".project-sidebar").waitFor();
+  await workPage.waitForTimeout(500);
+  assert.equal(await workPage.locator(".workbench-layout").count(), 1,
+    `the Work route mounts the shared shell; errors=${workPageErrors.join(" | ")}; current page: ${(await workPage.locator("body").innerText()).slice(0, 500)}`);
+  const workNavigationToggle = workPage.locator(".sidebar-toggle");
+  await workNavigationToggle.waitFor();
+  if (await workNavigationToggle.getAttribute("aria-expanded") !== "true") await workNavigationToggle.click();
+  await workPage.locator(".project-sidebar").waitFor({ state: "visible" });
   assert.equal(await workPage.locator(".session-navigation:visible").count(), 0, "Work does not duplicate the Session directory");
   await workPage.close();
   await sidebar.getByRole("link").filter({ hasText: "测试 Session" }).first().click();
   await page.getByRole("heading", { name: /测试 Session/ }).waitFor();
+  await page.getByRole("button", { name: "展开任务与 Agent 信息" }).click();
   await page.getByRole("link", { name: "验证 Sessions 阅读体验" }).first().waitFor();
   await page.getByText("已收到", { exact: false }).waitFor();
-  await page.getByText("工具已完成", { exact: false }).waitFor();
-  const tools = page.locator(".session-turn-tools");
+  await page.locator(".workspace-tools").getByText("工具已完成", { exact: false }).waitFor();
+  const fullMessage = page.locator('[data-workspace-entry="long-answer"]');
+  await fullMessage.getByText("截断预览", { exact: true }).waitFor();
+  await fullMessage.getByRole("button", { name: "读取完整回复" }).click();
+  await fullMessage.getByText("完整补充段落可以在同一条消息中读取。", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog", { name: "活动详情" }).count(), 0,
+    "a full native message read expands inside its existing timeline bubble");
+  const tools = page.locator(".workspace-tools");
   assert.equal(await tools.count(), 1, await page.locator(".session-workspace").innerText());
   await tools.getByText("核对图片", { exact: true }).waitFor();
-  const toolSource = page.getByRole("link", { name: "在项目活动中核对消息来源" });
-  await toolSource.waitFor();
-  const toolSourceHref = await toolSource.getAttribute("href") ?? "";
-  assert.equal(new URLSearchParams(toolSourceHref.split("?")[1]).get("open"), `message:${messageId}`);
-  await toolSource.click();
-  const projectActivity = page.locator(".session-project-activity");
-  assert.equal(await projectActivity.evaluate(element => (element as HTMLDetailsElement).open), true);
-  await projectActivity.locator(":scope > summary").click();
-  assert.equal(await projectActivity.evaluate(element => (element as HTMLDetailsElement).open), false);
-  await page.getByRole("button", { name: "任务与队列" }).click();
-  await page.getByRole("button", { name: "活动与对话" }).click();
-  assert.equal(await projectActivity.evaluate(element => (element as HTMLDetailsElement).open), true);
+  assert.equal(await tools.getByText(/1 项失败或中断/).count(), 1, "failed tools remain visible in the collapsed preview");
+  const toolToggle = tools.locator(".workspace-tools-toggle");
+  await toolToggle.click();
+  assert.equal(await toolToggle.getAttribute("aria-expanded"), "true");
+  await tools.getByText("核对图片", { exact: true }).waitFor();
+  await tools.getByRole("button", { name: "查看工具详情：核对图片" }).click();
+  await page.getByRole("dialog", { name: "活动详情" }).getByText("来源标识与读取范围", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "关闭活动详情" }).click();
+  await page.getByRole("button", { name: "会话详情" }).click();
+  const informationPanel = page.locator(".session-information");
+  assert.equal(await informationPanel.evaluate(element => (element as HTMLDetailsElement).open), true);
+  assert.equal(await informationPanel.locator(".session-project-activity").count(), 1,
+    "project audit remains reachable inside Session details");
+  assert.equal(await page.locator(".unified-session-timeline:visible").count(), 0, "the audit panel temporarily replaces the main stream");
   const deepLinkPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await deepLinkPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity&filter=important&open=${encodeURIComponent(`message:${messageId}`)}`);
   await deepLinkPage.getByLabel("访问令牌").fill("fixture-token");
   await deepLinkPage.getByRole("button", { name: "进入", exact: true }).click();
   await deepLinkPage.getByRole("heading", { name: /测试 Session/ }).waitFor();
-  assert.equal(await deepLinkPage.locator(".session-project-activity").evaluate(element => (element as HTMLDetailsElement).open), true);
+  assert.equal(await deepLinkPage.locator(".session-information").evaluate(element => (element as HTMLDetailsElement).open), true,
+    "an audit deep link restores the Session details panel");
   await deepLinkPage.close();
+  await page.getByRole("button", { name: "会话详情" }).click();
   const contextToggle = page.locator(".session-context-toggle");
   if (await contextToggle.getAttribute("aria-expanded") === "false") await contextToggle.click();
   assert.equal(await page.getByText("未同步", { exact: true }).count() >= 2, true);
@@ -158,5 +200,5 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);
   await page.waitForTimeout(5200);
   await page.getByText("已收到", { exact: false }).waitFor();
-  assert.equal(await page.locator(".session-turn-tools").count(), 1, "processing survives polling responses that use the legacy list shape");
+  assert.equal(await page.locator(".workspace-tools").count(), 1, "timeline polling preserves the grouped tool activity");
 });

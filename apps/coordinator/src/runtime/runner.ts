@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
+import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
@@ -118,6 +119,10 @@ export class RuntimeRunner {
   private recovering: Promise<void> | null = null;
   private unsubscribeDisconnect: (() => void) | null = null;
   private unsubscribeApproval: (() => void) | null = null;
+  private workspaceRuntime: ManagedRuntime | null = null;
+  private unsubscribeWorkspaceUpdate: (() => void) | null = null;
+  private readonly workspaceUpdates = new Set<(event: WorkspaceRuntimeUpdate) => void>();
+  private readonly workspaceDisconnects = new Set<(reason: string) => void>();
 
   constructor(private readonly deps: {
     readExternalMaterials?(principal:Principal,projectId:string,taskId:string,taskRevisionId:string):Promise<string>;
@@ -143,6 +148,40 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
   nativeAdapter():ManagedRuntime { return this.runtime; }
+  onWorkspaceUpdate(listener:(event:WorkspaceRuntimeUpdate)=>void):()=>void {
+    this.workspaceUpdates.add(listener); return () => { this.workspaceUpdates.delete(listener); };
+  }
+  onWorkspaceDisconnect(listener:(reason:string)=>void):()=>void {
+    this.workspaceDisconnects.add(listener); return () => { this.workspaceDisconnects.delete(listener); };
+  }
+  private workspaceDisconnected(reason:string):void {
+    for(const listener of this.workspaceDisconnects)try{listener(reason)}catch{/* observers cannot break recovery */}
+  }
+  private detachWorkspaceRuntime():void {
+    this.workspaceRuntime=null;
+    this.unsubscribeWorkspaceUpdate?.();this.unsubscribeWorkspaceUpdate=null;
+  }
+  async workspaceBinding(principal:Principal,projectId:string,sessionId:string):Promise<RuntimeBinding>{
+    const session=await this.deps.workflow.getRuntimeSession(principal,projectId,sessionId);
+    if(session.projectId!==projectId||session.id!==sessionId||!session.nativeThreadId||!session.nativeSessionId||
+        !(await this.authorized(session)&&await this.deps.allowedCwd(projectId,session.cwd)||await this.owned(session)))
+      throw new DomainError("FORBIDDEN","此会话没有当前可读的原生绑定。");
+    return bindingOf(session);
+  }
+  async workspaceHistory(principal:Principal,projectId:string,sessionId:string,
+    options:NativeWorkspaceReadOptions):Promise<NativeWorkspacePage>{
+    const session=await this.deps.workflow.getRuntimeSession(principal,projectId,sessionId);
+    if(session.projectId!==projectId||session.id!==sessionId||!session.nativeThreadId||!session.nativeSessionId)
+      throw new DomainError("RUNTIME_READ_UNAVAILABLE","此会话没有可验证的原生历史绑定。");
+    if(!this.runtime.readWorkspaceHistory)
+      throw new DomainError("RUNTIME_READ_UNAVAILABLE","当前执行适配器不支持会话时间线读取。");
+    try { return await this.runtime.readWorkspaceHistory(await this.readBinding(session),options); }
+    catch(error){
+      if(error instanceof RuntimeServerError&&error.category==='permission_denied')
+        throw new DomainError('FORBIDDEN','Native history access was denied');
+      throw this.readFailure(error);
+    }
+  }
   nativeStartsAvailable():boolean { return this.available && !this.recovering && !this.stopped && this.deps.canWrite(); }
   status(projectId?: string) {
     const faults = projectId ? [...this.faults.values()].filter(fault => fault.projectId === projectId) : [];
@@ -207,10 +246,17 @@ export class RuntimeRunner {
   private attachRuntime(): void {
     this.deps.nativeInputs?.attach(this.runtime);
     this.deps.nativeObservation?.attach(this.runtime);
-    this.unsubscribeDisconnect = this.runtime.onDisconnect(_reason => {
-      if (this.stopped) return;
+    const runtime=this.runtime;
+    this.workspaceRuntime=runtime;
+    this.unsubscribeWorkspaceUpdate=runtime.onWorkspaceUpdate?.(event=>{
+      if(this.workspaceRuntime!==runtime||this.stopped||!this.available)return;
+      for(const listener of this.workspaceUpdates)try{listener(event)}catch{/* observers cannot break transport */}
+    })??null;
+    this.unsubscribeDisconnect = runtime.onDisconnect(reason => {
+      if (this.stopped||this.workspaceRuntime!==runtime) return;
       this.available = false;
       this.serviceError = "Codex 执行连接已断开；需要显式恢复。";
+      this.workspaceDisconnected(reason);
     });
     this.unsubscribeApproval = this.runtime.onApprovalRequest(async request => {
       const approval = { id: request.id, method: request.method,
@@ -241,6 +287,8 @@ export class RuntimeRunner {
   private async reopen(): Promise<void> {
     this.available = false;
     if (this.busy) await this.busy;
+    this.detachWorkspaceRuntime();
+    this.workspaceDisconnected('Native runtime is being replaced');
     this.unsubscribeDisconnect?.(); this.unsubscribeApproval?.();
     try {
       // A replacement must wait for proof that the previous owned child exited.
@@ -1001,6 +1049,8 @@ export class RuntimeRunner {
     this.stopped = true; this.available = false;
     if (this.timer) clearInterval(this.timer);
     if (this.busy) await this.busy;
+    this.detachWorkspaceRuntime();
+    this.workspaceDisconnected('Native runtime stopped');
     this.unsubscribeDisconnect?.(); this.unsubscribeApproval?.();
     await this.runtime.close();
     await this.deps.nativeInputs?.drain();

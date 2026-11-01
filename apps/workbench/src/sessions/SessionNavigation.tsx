@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ListFilter, Plus, Search } from "lucide-react";
+import { ArrowRight, ChevronDown, ListFilter, Plus, Search } from "lucide-react";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../ui/shared";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet";
@@ -17,8 +17,10 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const [search, setSearch] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [showAllCurrent, setShowAllCurrent] = useState(!selectedId);
   const [retries, setRetries] = useState<Record<DirectoryMembership, number>>({ current: 0, historical: 0, unclassified: 0 });
   useEffect(() => { const timer = window.setTimeout(() => setSearch(query.trim()), 250); return () => window.clearTimeout(timer); }, [query]);
+  useEffect(() => setShowAllCurrent(!selectedId), [selectedId]);
   const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, true);
   const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen);
   const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen);
@@ -37,7 +39,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
     return <p role="alert" className="session-nav-error">Session 目录暂不可读取：{message}。<button type="button" onClick={() => setRetries(value => ({ ...value, [membership]: value[membership] + 1 }))}>重试</button></p>;
   }
   return <section className="session-navigation" aria-label="Session 目录">
-    <div className="session-nav-head"><strong>Session 目录</strong>{totals && <span>{totals.current + totals.historical + totals.unclassified}</span>}<button type="button" className="quiet" onClick={() => setConnectOpen(true)} aria-label="连接已有或建立受管会话"><Plus size={17} aria-hidden="true" /></button></div>
+    <div className="session-nav-head"><a href={href(projectId, "sessions")} onClick={onNavigate}>Session 目录</a>{totals && <span>{totals.current + totals.historical + totals.unclassified}</span>}<button type="button" className="quiet" onClick={() => setConnectOpen(true)} aria-label="连接已有或建立受管会话"><Plus size={17} aria-hidden="true" /></button></div>
     <label className="session-nav-search"><Search size={15} aria-hidden="true" /><input aria-label="搜索 Session 名称或职责" placeholder="搜索 Session…" value={query} onChange={event => setQuery(event.target.value)} /><ListFilter size={15} aria-hidden="true" /></label>
     {current.error && groupError("current", current.error)}
     {current.loading && !current.page && <p className="session-nav-muted">正在读取 Session 目录…</p>}
@@ -48,14 +50,16 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
         if (!entries.length) return null;
         const limit = groupName === "unclassified" ? 1 : 2;
         const selected = selectedId ? entries.find(entry => entry.key === selectedId) : undefined;
-        const visible = search ? entries : selected
+        const visible = search || showAllCurrent ? entries : selected
           ? [selected, ...entries.filter(entry => entry.key !== selected.key).slice(0, limit - 1)]
           : entries.slice(0, limit);
         return <div className="session-nav-class" key={groupName}><span>{sessionClassLabel[groupName]} · {entries.length}</span>{visible.map(item)}</div>;
       })}
     </div>
+    {showAllCurrent && current.hasMore && <button className="session-nav-more" type="button" disabled={current.moreBusy || current.loading} onClick={() => void current.more()}>{current.moreBusy ? "加载中…" : "加载更多当前 Session"}</button>}
+    <a className="session-nav-directory-link" href={href(projectId, "sessions")} onClick={onNavigate}>查看全部 Session <ArrowRight size={14} aria-hidden="true" /></a>
     <div className="session-nav-group">
-      <button type="button" className="session-nav-history" onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}>{historyOpen ? "▾" : "▸"} 历史与待归类 {totals && `· ${historicalCount}`}</button>
+      <button type="button" className="session-nav-history" onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}><ChevronDown size={13} aria-hidden="true" className={historyOpen ? "" : "collapsed"} /> 历史与待归类 {totals && `· ${historicalCount}`}</button>
       {historyOpen && <>
         <span>历史 · {totals?.historical ?? 0}</span>
         {historical.error && groupError("historical", historical.error)}

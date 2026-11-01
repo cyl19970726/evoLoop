@@ -25,7 +25,7 @@
 
 /* Sessions is the sole Session catalog. Work keeps project navigation and no Session shortcut list. */
 .session-nav-head{min-height:38px;padding:4px 2px;gap:8px}
-.session-nav-head>strong{font-size:14px;color:#26385c;font-weight:700}
+.session-nav-head>strong,.session-nav-head>a{font-size:14px;color:#26385c;font-weight:700}
 .session-nav-head>span{margin-left:auto;color:#71809a;font-size:12px}
 .session-nav-search{margin:2px 0 8px;border-color:#d8e1ef;border-radius:5px;min-height:36px;background:#fff}
 .session-nav-search input{font-size:13px;color:#263958;padding:0}
@@ -50,6 +50,8 @@
 .session-nav-reason{color:#9b6728!important;white-space:normal!important}
 .session-nav-directory-link{display:flex;justify-content:space-between;align-items:center;padding:10px 7px;margin:2px 0 6px;border-top:1px solid #e2e7ef;color:#2457c5;font-size:12px;font-weight:600}
 .session-nav-directory-link:hover{text-decoration:none;color:#163d96}
+.session-nav-history>svg.collapsed{transform:rotate(-90deg)}
+.session-nav-history{justify-content:flex-start;gap:4px}
 .sessions-empty-state{display:flex;align-items:center;justify-content:center;min-height:60vh}
 .sessions-empty-card{text-align:center;max-width:480px;padding:48px 32px}
 .sessions-empty-card h1{font-size:32px;margin:0 0 12px;color:#14264a}

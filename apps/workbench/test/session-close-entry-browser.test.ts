@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
@@ -60,6 +61,8 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
         faults: state === "closing" ? [{ sessionId, phase: "session_close", category: "native_rejected",
           nativeMethod: "thread/archive", nativeCode: -32600, nativeCategory: "rollout_not_found", observedAtUtc: stamp }] : [] };
       else if (url.pathname === `${root}/runtime/runs`) value = blocked ? [{ projectId, id: "run", sessionId, state: "running" }] : [];
+      else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) value = timelinePage(sessionKey, { title: "关闭入口测试会话" });
+      else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/messages`) value = blocked ? {
         items: [{ projectId, id: "message", content: "待处理消息", createdAt: stamp, updatedAt: stamp,
           target: { kind: "owned", sessionId }, state: "queued" }], nextCursor: null, metadata } : {

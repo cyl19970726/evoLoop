@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import { runInputPage } from "./runtime/input-read.js";
 import type { NativeInputBridge } from "./runtime/native-input.js";
-import type { NativeObservationBridge } from "./runtime/native-observation.js";
+import { publicNativeObservationView, type NativeObservationBridge } from "./runtime/native-observation.js";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
@@ -18,6 +18,8 @@ import type { AllocationRelationsService } from "@evoloop/core/allocation-relati
 import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
+import type { SessionTimelineService } from "./session-timeline/index.js";
+import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
@@ -47,6 +49,7 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  sessionTimeline?: SessionTimelineService;
   nativeInputs?: NativeInputBridge;
   nativeObservation?: NativeObservationBridge;
   /** Read-only, snapshot-only projection. Must not initialize native processes or perform dispatch. */
@@ -364,7 +367,8 @@ export async function buildServer(options: {
     },
   }), async (principal, projectId, snapshot) => {
     const nativeObservation = options.nativeObservation && snapshot.session.target.kind === "owned"
-      ? await options.nativeObservation.get(projectId, snapshot.session.target.sessionId) : null;
+      ? publicNativeObservationView(await options.nativeObservation.get(projectId, snapshot.session.target.sessionId),
+        principal.permissions.includes("read") && principal.permissions.includes("review")) : null;
     const usage = nativeObservation?.usage;
     const metric = (name: "inputTokens" | "outputTokens") => ({ ...snapshot.resources[name],
       value: usage!.total[name], source: "owned-native-event:thread/tokenUsage/updated", unit: "tokens", scope: "session" as const,
@@ -382,6 +386,7 @@ export async function buildServer(options: {
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });
+  if (options.sessionTimeline) registerSessionTimelineRoutes(app,options.sessionTimeline,options.runtime);
   app.get("/api/projects/:projectId/runtime/sessions/:id/inputs", async request => {
     const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
     const principal = who(request.principal);
@@ -391,9 +396,11 @@ export async function buildServer(options: {
   });
   app.get("/api/projects/:projectId/runtime/sessions/:id/observation", async request => {
     const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
-    await options.service.getRuntimeSession(who(request.principal), p.projectId, p.id);
+    const principal=who(request.principal);
+    await options.service.getRuntimeSession(principal, p.projectId, p.id);
     if (!options.nativeObservation) throw new DomainError("NATIVE_OBSERVATION_UNAVAILABLE", "此服务尚未启用原生进度观察。");
-    return options.nativeObservation.get(p.projectId, p.id);
+    return publicNativeObservationView(await options.nativeObservation.get(p.projectId, p.id),
+      principal.permissions.includes("read") && principal.permissions.includes("review"));
   });
   app.get("/api/projects/:projectId/session-inputs/:id", async request => {
     const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
