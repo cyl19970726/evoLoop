@@ -257,7 +257,7 @@ export function SessionConversation({ context, snapshot, onApplied, progress }: 
       keepAtBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
     }}>
       {loading && !messages.length && <p className="session-conversation-empty">正在读取对话…</p>}
-      {!loading && !listError && !messages.length && <div className="session-conversation-empty"><MessageCircle size={24} aria-hidden="true" /><strong>还没有已保存的消息</strong><span>在下方写下要沟通的内容。保存、送达、处理与回复分别以真实记录为准。</span></div>}
+      {!loading && !listError && !messages.length && !progress && <div className="session-conversation-empty"><MessageCircle size={24} aria-hidden="true" /><strong>还没有已保存的消息</strong><span>在下方写下要沟通的内容。保存、送达、处理与回复分别以真实记录为准。</span></div>}
       {nextCursor && <button type="button" className="session-conversation-older" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : "加载更早消息"}</button>}
       {ordered.map(item => <ConversationMessage key={item.id} item={item} context={context} snapshot={snapshot} progress={progress} onDetail={id => void detail(id)} />)}
       {working && <WorkingObservation item={working} snapshot={snapshot} progress={progress} projectId={context.projectId} />}
