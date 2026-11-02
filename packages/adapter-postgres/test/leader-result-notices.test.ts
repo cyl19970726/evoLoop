@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
+import { canonicalJson } from "@evoloop/core";
+import { leaderNoticePostCommand } from "@evoloop/contracts/leader-notices";
 import { migrate } from "../src/index.ts";
 import { getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listBlockedLeaderNotices, listLeaderNotices, listPendingLeaderNotices,
@@ -182,7 +184,7 @@ test("recoverable admission reason remains pending and clears without changing f
   assert.equal(resumed.operationId, first.operationId);
 });
 
-async function rejectedPost(options: {code?: string; blockedCode?: string; sender?: string;
+async function rejectedPost(options: {code?: string; blockedCode?: string; sender?: string; commandHash?: string;
   commandType?: string; status?: string} = {}) {
   const code = options.code ?? "MESSAGE_GRANT_DENIED";
   const item = await task("todo");
@@ -192,11 +194,15 @@ async function rejectedPost(options: {code?: string; blockedCode?: string; sende
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
     VALUES($1,$2,'leader','/tmp','project','danger-full-access','never','ready',1,$3,$4,$5,'lead',$6,$6)`,
     [projectId, sessionId, `thread-${sessionId}`, `native-${sessionId}`, randomUUID(), now]);
-  await pinLeaderNoticeRecipient(pool, projectId, first.id,
+  const pinned=await pinLeaderNoticeRecipient(pool, projectId, first.id,
     {sessionId,receiverRoleId:"leader",receiverActorId:"receiver",senderActorId:"technical-sender"});
+  assert.ok(pinned);
+  const sender=options.sender ?? "technical-sender";
+  const commandHash=options.commandHash ?? createHash("sha256").update(canonicalJson({
+    actorId:sender,command:leaderNoticePostCommand(pinned,sessionId)})).digest("hex");
   await pool.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
     VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)`,
-    [projectId,first.operationId,options.sender ?? "technical-sender",hash,
+    [projectId,first.operationId,sender,commandHash,
       options.commandType ?? "session.message.post",JSON.stringify({status:options.status ?? "rejected",
         operationId:first.operationId,code,message:"not permitted"}),now]);
   await markLeaderNoticeBlocked(pool, projectId, first.id, `MESSAGE_POST_REJECTED:${options.blockedCode ?? code}`);
@@ -245,6 +251,9 @@ test("recovery CAS rejects wrong operation, unrecorded rejection and in-flight m
     randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
   const {original:wrongCommand} = await rejectedPost({commandType:"task.create"});
   await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,wrongCommand.id,wrongCommand.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
+  const {original:wrongHash}=await rejectedPost({commandHash:hash});
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,wrongHash.id,wrongHash.operationId,
     randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
   const {original:unknown} = await rejectedPost({status:"unknown"});
   await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,unknown.id,unknown.operationId,

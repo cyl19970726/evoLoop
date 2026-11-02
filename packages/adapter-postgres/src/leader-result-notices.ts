@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
+import { createHash } from "node:crypto";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { LeaderNotice, LeaderNoticeKind, LeaderNoticePage, LeaderNoticeState,
   LeaderNoticeRecoveryLink } from "@evoloop/contracts/leader-notices";
+import { leaderNoticePostCommand } from "@evoloop/contracts/leader-notices";
 
 export interface LeaderNoticeListOptions { taskId?: string; limit: number; cursor?: string }
 export interface LeaderNoticeRecipient {
@@ -13,6 +15,15 @@ export type LeaderResultNoticePage = Omit<LeaderNoticePage, "items"> & { items: 
 
 type Row = Record<string, unknown>;
 const iso = (value: unknown): string => value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.entries(value as Record<string,unknown>)
+    .filter(([,item])=>item!==undefined).sort(([a],[b])=>a<b?-1:a>b?1:0)
+    .map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+  const encoded=JSON.stringify(value);
+  if(encoded===undefined)throw new DomainError("INVALID_COMMAND","Unsupported notice command value");
+  return encoded;
+}
 const notice = (row: Row): LeaderResultNotice => ({
   id: String(row.notice_id), projectId: String(row.project_id), kind: row.kind as LeaderNoticeKind,
   sourceEventId: String(row.source_event_id), taskId: String(row.task_id), taskRevisionId: String(row.task_revision_id),
@@ -170,7 +181,7 @@ export async function recoverRejectedLeaderNotice(pool: Pool, projectId: string,
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const originalResult = await client.query(`SELECT n.*,o.actor_id AS recorded_sender,o.command_type,
+    const originalResult = await client.query(`SELECT n.*,o.actor_id AS recorded_sender,o.command_type,o.command_hash,
       o.result->>'status' AS operation_status,o.result->>'code' AS rejection_code,
       o.result->>'operationId' AS result_operation_id,
       m.state AS message_state,p.state AS processing_state
@@ -195,10 +206,20 @@ export async function recoverRejectedLeaderNotice(pool: Pool, projectId: string,
       await client.query("COMMIT");
       return { ...notice(replay.rows[0]), recovery: recoveryLink(replay.rows[0]) };
     }
+    const fixedCommand=original.recipient_session_id && original.sender_actor_id
+      ? leaderNoticePostCommand({projectId:String(original.project_id),kind:original.kind as LeaderNoticeKind,
+          sourceEventId:String(original.source_event_id),occurredAt:iso(original.occurred_at),
+          taskId:String(original.task_id),taskRevisionId:String(original.task_revision_id),
+          sourceActorId:original.source_actor_id===null?null:String(original.source_actor_id),
+          sourceSessionId:original.source_session_id===null?null:String(original.source_session_id),
+          sourceRef:String(original.source_ref),operationId:String(original.operation_id),
+          messageId:String(original.message_id)},String(original.recipient_session_id)):null;
+    const fixedHash=fixedCommand?createHash("sha256").update(canonical({
+      actorId:original.sender_actor_id,command:fixedCommand})).digest("hex"):null;
     if (original.state !== "blocked" || original.blocked_reason !== `MESSAGE_POST_REJECTED:${original.rejection_code}` ||
       original.rejection_code === null || original.recorded_sender !== original.sender_actor_id ||
       original.command_type !== "session.message.post" || original.operation_status !== "rejected" ||
-      original.result_operation_id !== original.operation_id)
+      original.result_operation_id !== original.operation_id || original.command_hash !== fixedHash)
       throw new DomainError("NOTICE_RECOVERY_UNCONFIRMED", "The original message post needs a matching saved rejection");
     if (["queued", "processing", "unknown"].includes(original.message_state) ||
       ["dispatching", "running", "unknown"].includes(original.processing_state))

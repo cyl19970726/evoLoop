@@ -70,13 +70,14 @@ test("Leader notice recovery confirms only the exact replacement IDs",async t=>{
 test("lost recovery response confirms by reading both immutable notice identities",async t=>{
   const store=await temporaryStore(t),noticeId=randomUUID(),actor=verifiedActor("reviewer");
   const body={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),
-    newOperationId:randomUUID(),reason:"Recorded rejection reviewed"};
+    newOperationId:randomUUID(),reason:"  Recorded rejection reviewed  "};
   const intent=prepareRequest("leader.notice.recover",projectId,body,noticeId,randomUUID());
+  assert.equal((intent.body as typeof body).reason,"Recorded rejection reviewed");
   const transport=client(async (url,init)=>{
     if(init?.method==="POST")throw new TypeError("response lost");
     if(String(url).endsWith(`/notices/${noticeId}`))return response({id:noticeId,projectId,
       operationId:body.expectedOperationId,state:"blocked",sourceEventId:entityId,taskId:entityId,
-      recovery:{replacementNoticeId:body.newNoticeId,dispositionActorId:actor.actorId,dispositionReason:body.reason}});
+      recovery:{replacementNoticeId:body.newNoticeId,dispositionActorId:actor.actorId,dispositionReason:body.reason.trim()}});
     return response({id:body.newNoticeId,projectId,messageId:body.newMessageId,
       operationId:body.newOperationId,sourceEventId:entityId,taskId:entityId,
       recovery:{parentNoticeId:noticeId}});

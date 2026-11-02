@@ -44,3 +44,23 @@ export interface LeaderNotice {
   recovery?: LeaderNoticeRecoveryLink;
 }
 export interface LeaderNoticePage { items: LeaderNotice[]; nextCursor: string | null }
+
+/** Exact saved message intent, shared by the pump and rejection-journal verification. */
+export function leaderNoticePostCommand(notice: Pick<LeaderNotice,"projectId"|"kind"|"sourceEventId"|
+  "occurredAt"|"taskId"|"taskRevisionId"|"sourceActorId"|"sourceSessionId"|"sourceRef"|
+  "operationId"|"messageId">, sessionId: string) {
+  const label: Record<LeaderNoticeKind,string>={task_todo:"A Task was created for Leader triage",
+    delivery:"A fixed Delivery was recorded",observation:"An independent use observation was recorded",
+    task_question:"A Task recipient asked a question",task_blocker:"A Task recipient reported a blocker",
+    run_without_submission:"A terminal Run has no signed submission",
+    run_submission_blocked:"A signed Run submission cannot be sealed"};
+  const content=`${label[notice.kind]}.\nSource event: ${notice.sourceEventId} at ${notice.occurredAt}`+
+    `\nSource Task revision: ${notice.taskId}@${notice.taskRevisionId}`+
+    `\nSource actor: ${notice.sourceActorId ?? "unverified"}; source Session: ${notice.sourceSessionId ?? "unverified"}`+
+    `\nSource: ${notice.sourceRef}`+
+    "\nThis is a historical source event that may have been superseded. Next responsibility: Leader reads the current Task, fixed source and any existing arrangement, then saves the next decision. This notice is not current acceptance, consumer use, or Task closure.";
+  return {type:"session.message.post" as const,projectId:notice.projectId,
+    operationId:notice.operationId,messageId:notice.messageId,
+    target:{kind:"owned" as const,sessionId},
+    context:{taskId:notice.taskId,taskRevisionId:notice.taskRevisionId},content};
+}

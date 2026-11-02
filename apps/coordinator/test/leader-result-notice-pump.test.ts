@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
+import { canonicalJson } from "@evoloop/core";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { SessionMessageRecord } from "@evoloop/contracts/session-messages";
@@ -65,11 +67,13 @@ function fixture(initial=notice()){
     listRuntimeSessions:async()=>sessions,
     execute:async(_principal:Principal,command:Record<string,unknown>)=>{
       commands.push(command);
+      const fixed={actorId:sender.actorId,command};
+      const commandHash=createHash("sha256").update(canonicalJson(fixed)).digest("hex");
       if(postRejection){
-        operation={commandType:command.type,result:{status:"rejected",code:postRejection}};
+        operation={actorId:sender.actorId,commandHash,commandType:command.type,result:{status:"rejected",code:postRejection}};
         throw Error("recorded post rejection");
       }
-      operation={commandType:command.type,result:{status:"applied",entityId:row.messageId}};
+      operation={actorId:sender.actorId,commandHash,commandType:command.type,result:{status:"applied",entityId:row.messageId}};
       saved={projectId,id:row.messageId,operationId:row.operationId,target:command.target as SessionMessageRecord["target"],
         senderActorId:sender.actorId,content:command.content as string,
         context:command.context as SessionMessageRecord["context"],replyToMessageId:null,state:"queued",version:1,
@@ -180,6 +184,18 @@ test("a journaled post rejection blocks the original notice and never reuses its
   await f.pump.tick();
   assert.equal(f.commands.length,1,"confirmed rejection requires a new explicit intent");
   assert.deepEqual(f.errors,[]);
+});
+
+test("a rejected operation for different message bytes is never classified as this notice post",async()=>{
+  const n=notice();n.recipient={sessionId,receiverRoleId:roleId,
+    receiverActorId:receiver.actorId,senderActorId:sender.actorId};
+  const f=fixture(n);
+  f.setOperation({actorId:sender.actorId,commandHash:"a".repeat(64),commandType:"session.message.post",
+    result:{status:"rejected",code:"SESSION_NOT_READY"}});
+  await f.pump.tick();
+  assert.equal(f.row.state,"blocked");
+  assert.equal(f.pendingReason,"MESSAGE_OPERATION_MISMATCH");
+  assert.equal(f.commands.length,0);
 });
 
 test("pinned original operation is reconciled after lost acknowledgement and target switch",async()=>{

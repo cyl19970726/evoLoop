@@ -269,6 +269,7 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
   }
   // The receipt and write must carry the same normalized bytes for safe same-ID recovery.
   let savedBody: unknown = bodyInput;
+  if (name === "leader.notice.recover") savedBody = leaderNoticeRecoverySchema.parse(body);
   if (name === "ordinary.submit") {
     const parsed = ordinaryRunSubmissionSchema.parse(body);
     try {

@@ -1,7 +1,10 @@
 import type { Operation, Principal, RuntimeSessionRecord } from "@evoloop/contracts";
+import { createHash } from "node:crypto";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { SessionMessageRecord } from "@evoloop/contracts/session-messages";
+import { leaderNoticePostCommand } from "@evoloop/contracts/leader-notices";
 import type { WorkflowService } from "@evoloop/core";
+import { canonicalJson } from "@evoloop/core";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 
 export interface LeaderResultRecipient {
@@ -63,15 +66,6 @@ export interface LeaderResultNoticePumpDeps {
   pollIntervalMs: number;
   onError(error: unknown): void;
   onDiagnostic?(projectId: string, noticeId: string, reason: string): void;
-}
-
-function contentOf(notice: LeaderResultNotice): string {
-  const label:Record<LeaderResultNotice["kind"],string>={task_todo:"A Task was created for Leader triage",
-    delivery:"A fixed Delivery was recorded",observation:"An independent use observation was recorded",
-    task_question:"A Task recipient asked a question",task_blocker:"A Task recipient reported a blocker",
-    run_without_submission:"A terminal Run has no signed submission",
-    run_submission_blocked:"A signed Run submission cannot be sealed"};
-  return `${label[notice.kind]}.\nSource event: ${notice.sourceEventId} at ${notice.occurredAt}\nSource Task revision: ${notice.taskId}@${notice.taskRevisionId}\nSource actor: ${notice.sourceActorId ?? "unverified"}; source Session: ${notice.sourceSessionId ?? "unverified"}\nSource: ${notice.sourceRef}\nThis is a historical source event that may have been superseded. Next responsibility: Leader reads the current Task, fixed source and any existing arrangement, then saves the next decision. This notice is not current acceptance, consumer use, or Task closure.`;
 }
 
 type Eligibility={recipient:LeaderResultRecipient;reason:null}|{recipient:null;reason:string};
@@ -239,19 +233,19 @@ export class LeaderResultNoticePump {
   }
 
   private command(notice:LeaderResultNotice,recipient:LeaderResultRecipient){
-    return {type:"session.message.post" as const,projectId:notice.projectId,
-      operationId:notice.operationId,messageId:notice.messageId,
-      target:{kind:"owned" as const,sessionId:recipient.sessionId},
-      context:{taskId:notice.taskId,taskRevisionId:notice.taskRevisionId},content:contentOf(notice)};
+    return leaderNoticePostCommand(notice,recipient.sessionId);
   }
 
   private async reconcile(notice:LeaderResultNotice,recipient:LeaderResultRecipient,operation:Operation):Promise<void>{
     const command=this.command(notice,recipient);
-    if(operation.commandType!==command.type||operation.result.status!=="applied"||
+    const commandHash=createHash("sha256").update(canonicalJson({actorId:recipient.senderActorId,command})).digest("hex");
+    if(operation.actorId!==recipient.senderActorId||operation.commandHash!==commandHash||
+      operation.commandType!==command.type||operation.result.status!=="applied"||
       operation.result.entityId!==notice.messageId){
       const code=operation.result.status==="rejected"&&/^[A-Z][A-Z0-9_]{0,100}$/.test(operation.result.code)
         ? operation.result.code:"UNKNOWN";
       await this.deps.store.block(notice.projectId,notice.id,
+        operation.actorId===recipient.senderActorId&&operation.commandHash===commandHash&&
         operation.commandType===command.type&&operation.result.status==="rejected"
           ?`MESSAGE_POST_REJECTED:${code}`:"MESSAGE_OPERATION_MISMATCH");
       return;
