@@ -91,6 +91,16 @@ const integrationSchema = z.strictObject({
     })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
   }).optional(),
+  leaderResultNotices: z.strictObject({
+    enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
+    targets: z.array(z.strictObject({
+      projectId: z.uuid(), sessionId: z.uuid(), receiverRoleId: z.uuid(),
+      receiverActorId: z.string().trim().min(1).max(100), senderActorId: z.string().trim().min(1).max(100),
+    }).refine(value=>value.receiverActorId!==value.senderActorId,
+      "Leader result sender and receiver must be different actors")).max(200)
+      .refine(values=>new Set(values.map(value=>value.projectId)).size===values.length,
+        "Only one managed Leader result target may be configured per project"),
+  }).optional(),
   runtime: z.strictObject({
     enabled: z.boolean(), executable: absolute.optional(),
     /** Explicit read-capable CLI bound to a Session requester and Task recipient; no secret is stored here. */
@@ -167,5 +177,5 @@ export async function loadIntegrations(path?: string) {
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
     return { template, hash: delegationTemplateHash(template) };
   };
-  return { runtime, sessionMessages: configuration.sessionMessages, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
+  return { runtime, sessionMessages: configuration.sessionMessages, leaderResultNotices: configuration.leaderResultNotices, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
 }

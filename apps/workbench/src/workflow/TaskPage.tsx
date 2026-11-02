@@ -373,7 +373,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <section className="panel task-focus"><h2>关联过程文档</h2>{detail.links.length ? <ul className="basis-list task-basis-list">{detail.links.map(link => <li key={link.id}><a href={href(projectId, "document", link.documentId)}>{basisDocuments[link.documentId]?.document.title ?? `文档 ${link.documentId.slice(0, 8)}`} →</a></li>)}</ul> : <p className="empty">此任务没有另行关联的过程文档。</p>}{basisError && <Alert kind="error">部分关联文档名称暂不可读，仍可按链接打开：{basisError}</Alert>}</section>
 
         </aside>
-        {leaderTask && <details className="task-arrangement-details"><summary>计划、对账来源与依赖</summary><LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} responsibleName={responsibleName} /></details>}
+        {leaderTask && <details className="task-arrangement-details"><summary>计划、通知与依赖</summary><LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} token={token} responsibleName={responsibleName} /></details>}
 
       </div>
       <details className="task-provenance"><summary>职责、任务修订与评价入口</summary><p>任务固定修订 <ShortId value={detail.revision.id} /></p>    <details className="task-role-history"><summary>负责职责与同 Role 的其他会话（不代表本任务承接）</summary><TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></details>

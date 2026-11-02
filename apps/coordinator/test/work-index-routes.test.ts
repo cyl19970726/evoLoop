@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import Fastify from "fastify";
 import { registerLeaderWorkRoutes } from "../src/work-management/leader-routes.ts";
+import { registerLeaderNoticeRoutes } from "../src/work-management/leader-notice-routes.ts";
 import type { LeaderWorkIndexReader } from "../src/work-management/work-index.ts";
 import { DomainError } from "@evoloop/contracts/ports";
 
@@ -69,4 +70,29 @@ test("work-management routes bind route identity and expose stable read/write co
     payload: { operationId: randomUUID(), expectedTaskVersion: 1, expectedPlanVersion: 1,
       plannedStartAt: null, dueAt: null, priority: 2, reason: "Should require review authority" } });
   assert.equal(denied.statusCode, 403);
+});
+
+test("Leader notice reads require project access and retain Task scoped cursor", async t => {
+  const projectId = randomUUID(), taskId = randomUUID();
+  let authenticated = true;
+  const seen: unknown[] = [];
+  const app = Fastify();
+  t.after(() => app.close());
+  app.decorateRequest("principal", null);
+  app.addHook("onRequest", async request => { request.principal = authenticated ?
+    { actorId: "reader", projectIds: [projectId], permissions: ["read"] } : null; });
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof DomainError) return reply.code(403).send({ code: error.code });
+    throw error;
+  });
+  registerLeaderNoticeRoutes(app, { getProject: async (_who, p) => {
+    if (p !== projectId) throw new DomainError("FORBIDDEN", "project");
+    return { id: p };
+  } }, { list: async (p, query) => { seen.push({ p, query }); return { items: [], nextCursor: null }; } });
+  const url = `/api/projects/${projectId}/work-management/notices?taskId=${taskId}&limit=20&cursor=next`;
+  assert.equal((await app.inject({ method: "GET", url })).statusCode, 200);
+  assert.deepEqual(seen[0], { p: projectId, query: { taskId, limit: 20, cursor: "next" } });
+  authenticated = false;
+  assert.equal((await app.inject({ method: "GET", url })).statusCode, 403);
+  assert.equal(seen.length, 1);
 });

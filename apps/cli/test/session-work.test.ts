@@ -27,6 +27,10 @@ test("Leader work discovery has runnable bounded Task, Document and change comma
   assert.equal(sessionWorkPath(["leader", "changes"], new Map([["cursor", "opaque"], ["limit", "100"]])),
     "/work-management/changes?cursor=opaque&limit=100");
   assert.equal(sessionWorkPath(["leader", "changes"], new Map()), "/work-management/changes");
+  assert.equal(sessionWorkPath(["leader", "notices"], new Map([["task", id], ["limit", "25"]])),
+    `/work-management/notices?taskId=${id}&limit=25`);
+  assert.throws(() => sessionWorkPath(["leader", "notices"], new Map([["task", "other"]])));
+  assert.throws(() => sessionWorkPath(["leader", "notices"], new Map([["documents", true]])));
 });
 test("Agent help and schemas expose common message/assignment operations without authentication", async () => {
   const run = async (args: string[]) => { let out = ""; const code = await runCli(args, {}, { stdout: s => { out += s; }, stderr: () => {} }); return { code, body: JSON.parse(out) }; };

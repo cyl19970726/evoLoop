@@ -117,6 +117,8 @@ export function api(token: string, timeoutMs = 15000) {
       leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/review`, command),
     leaderWorkChanges: (p: string, cursor?: string) => call<LeaderWorkChangesPage>(
       `${projectPath(p)}/work-management/changes?limit=100${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    leaderNotices: (p: string, taskId: string, cursor?: string) => call<import("@evoloop/contracts/leader-notices").LeaderNoticePage>(
+      `${projectPath(p)}/work-management/notices?taskId=${key(taskId)}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),

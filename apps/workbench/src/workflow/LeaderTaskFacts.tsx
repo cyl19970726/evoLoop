@@ -1,6 +1,8 @@
 import * as React from "react";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
+import { api } from "../api";
 import { leaderPhaseLabel } from "./leaderWorkLoad";
 
 const date = (value: string) => new Date(value).toLocaleString("zh-CN");
@@ -9,9 +11,40 @@ const ShortId = ({ value }: { value: string }) =>
 const taskHref = (projectId: string, taskId: string) =>
   `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
 
-export function LeaderTaskFacts({ leader, detail, projectId, responsibleName }: {
-  leader: LeaderWorkTask; detail: TaskDetail; projectId: string; responsibleName?: string | null;
+const noticeLabel: Record<LeaderNotice["kind"], string> = {
+  task_todo: "待编排任务", delivery: "交付已封存", observation: "验收结果",
+  task_question: "关键问题", task_blocker: "执行受阻", run_without_submission: "Run 终态缺交付",
+  run_submission_blocked: "Run 封存受阻",
+};
+
+export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleName }: {
+  leader: LeaderWorkTask; detail: TaskDetail; projectId: string; token: string; responsibleName?: string | null;
 }) {
+  const [notices, setNotices] = React.useState<LeaderNotice[]>([]);
+  const [noticeError, setNoticeError] = React.useState("");
+  const [noticeCursor, setNoticeCursor] = React.useState<string | null>(null);
+  const [noticeLoading, setNoticeLoading] = React.useState(false);
+  const [noticeRefresh, setNoticeRefresh] = React.useState(0);
+  React.useEffect(() => {
+    let active = true;
+    setNoticeLoading(true);
+    api(token).leaderNotices(projectId, detail.task.id).then(page => {
+      if (active) { setNotices(page.items); setNoticeCursor(page.nextCursor); setNoticeError(""); }
+    }).catch(() => { if (active) setNoticeError("通知记录暂不可读取，请从工作变化流核对。"); })
+      .finally(() => { if (active) setNoticeLoading(false); });
+    return () => { active = false; };
+  }, [token, projectId, detail.task.id, detail.task.version, noticeRefresh]);
+  const loadOlder = async () => {
+    if (!noticeCursor || noticeLoading) return;
+    setNoticeLoading(true);
+    try {
+      const page = await api(token).leaderNotices(projectId, detail.task.id, noticeCursor);
+      setNotices(previous => [...previous, ...page.items]);
+      setNoticeCursor(page.nextCursor);
+      setNoticeError("");
+    } catch { setNoticeError("较早通知读取失败，可重试。"); }
+    finally { setNoticeLoading(false); }
+  };
   const plan = leader.plan;
   const consumer = detail.proposal?.consumer ?? leader.delivery?.consumer ?? null;
   const source = detail.proposal?.evidence?.trim() || null;
@@ -60,6 +93,29 @@ export function LeaderTaskFacts({ leader, detail, projectId, responsibleName }: 
         <small>{leader.review.actorId} · {date(leader.review.at)} · 变化 {leader.review.reviewedChangeSequence}</small>
       </> : "当前工作位置尚未记录 Leader 决定。"}</dd></div>
     </dl>
+    <h3>结果回程</h3><button type="button" disabled={noticeLoading} onClick={() => setNoticeRefresh(value => value + 1)}>重新读取通知</button>
+    {noticeError && <p role="status">{noticeError}</p>}
+    {notices.length ? <ul className="basis-list task-basis-list">{notices.map(item =>
+      <li key={item.id}><strong>{noticeLabel[item.kind]}</strong> · {date(item.occurredAt)}
+        <span>{item.messageState === "failed" || item.messageState === "cancelled"
+          ? `原通知${item.messageState === "failed" ? "失败" : "已取消"}；须核原消息和 Task，再作新的人工安排` :
+          item.blockedReason?.startsWith("MESSAGE_POST_REJECTED") || item.blockedReason === "PINNED_RECIPIENT_CHANGED"
+            ? "原消息意图已被拒绝或目标已变；核原操作后人工安排新意图" :
+          item.state === "linked" ? item.readAt ? `Leader 已记录收阅 · ${date(item.readAt)}；下一安排另核` :
+            item.messageBlockedReason ? `消息待恢复：${item.messageBlockedReason}` :
+            item.nativeTurnId ? "原生 Turn 已关联；收阅与下一安排另核" : "已保存给 Leader 的消息，尚未核到原生接收" :
+          item.blockedReason ? `待恢复：${item.blockedReason}` :
+          item.stale ? "来源属于历史修订，须核当前 Task" : "待通知 Leader"}</span>
+        <small>来源 <code className="break-anywhere">{item.sourceRef}</code> · Task 修订 <ShortId value={item.taskRevisionId} />
+          {item.stale && <> · 来源属于历史修订</>}
+          {item.sourceSessionId && <> · 来源 Session <ShortId value={item.sourceSessionId} /></>}
+          {item.sourceActorId && <> · 来源 actor {item.sourceActorId}</>}
+          {item.linkedSessionId && <> · <a href={`#/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看目标 Session ↗</a></>}</small>
+        {(item.state === "linked" || item.blockedReason) && <details><summary>核对原通知身份</summary>
+          <small>消息 <code className="break-anywhere">{item.messageId}</code><br />
+            操作 <code className="break-anywhere">{item.operationId}</code></small></details>}
+      </li>)}</ul> : !noticeError && <p className="empty">当前没有结果通知记录。</p>}
+    {noticeCursor && <button type="button" disabled={noticeLoading} onClick={() => { void loadOlder(); }}>读取较早通知</button>}
     <h3>前置依赖</h3>
     {leader.dependencies.length ? <ul className="basis-list task-basis-list">{leader.dependencies.map(dependency =>
       <li key={dependency.taskId}><a href={taskHref(projectId, dependency.taskId)}>{dependency.title} ↗</a>

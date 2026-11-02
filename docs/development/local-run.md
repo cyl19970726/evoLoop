@@ -49,6 +49,8 @@ JS
 
 集成默认关闭。以 `0600` 权限创建 `.local/integrations.json`，初始内容如下（`repositories`、`feishu`、`knowledge` 均可暂时省略）：
 
+业务结果通知受管 Leader 的配置、切换和回退见[结果回程](leader-result-return.md)。当前外部 Lead 阶段保持该通知泵关闭，数据库仍保存新业务事件。
+
 ```json
 {
   "scheduling": { "enabled": false, "grants": [] },
