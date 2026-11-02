@@ -15,7 +15,7 @@ test("registry exposes every bounded named route and target/body requirements", 
   assert.deepEqual(names.map(item => item.name), [
     "document.import", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
     "reference.git-register", "reference.formal-decide", "reference.task-decide",
-    "work.plan.set", "work.dependencies.set", "work.review.set",
+    "work.plan.set", "work.dependencies.set", "work.review.set", "leader.notice.recover",
     "runtime.reconcile", "runtime.recover", "ordinary.submit",
   ]);
   assert.ok(names.find(item => item.name === "document.import")?.requiredBodyKeys.includes("command.operationId"));
@@ -47,6 +47,18 @@ test("ordinary result intent keeps its original operation and has a direct readb
     artifactRef:`document:${documentId}`}}),/ARTIFACT_DOCUMENT_REVISION_REQUIRED/);
   assert.throws(()=>prepareRequest("ordinary.submit",project,{...body,deliveryIntent:{...body.deliveryIntent,
     artifactRef:"https://example.test/report; PR https://example.test/other"}}),/ARTIFACT_REF_AMBIGUOUS/);
+});
+
+test("rejected Leader notice recovery requires fresh fixed IDs and manual readback", () => {
+  const body={expectedOperationId:operation,newNoticeId:revision,newMessageId:other,
+    newOperationId:receipt,reason:"Confirmed recorded SESSION_NOT_READY rejection; resume after receiver recovery"};
+  const prepared=prepareRequest("leader.notice.recover",project,body,target,receipt);
+  assert.equal(prepared.path,`/api/projects/${project}/work-management/notices/${target}/recover`);
+  assert.equal(prepared.operationId,null);
+  assert.equal(prepared.confirmation,"leader-notice-recovery");
+  assert.deepEqual(prepared.recovery,{kind:"manual",path:`/api/projects/${project}/work-management/notices/${target}`});
+  assert.throws(()=>prepareRequest("leader.notice.recover",project,body,target),/--receipt/);
+  assert.throws(()=>prepareRequest("leader.notice.recover",project,{...body,newMessageId:revision},target,receipt),/distinct/);
 });
 
 test("request schema exposes exact enums and nested required fields from shared contracts", () => {

@@ -30,6 +30,9 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
       if (words[1] === "changes") {
         path = "/work-management/changes";
         allowed = ["limit", "cursor"];
+      } else if (words[1] === "notices") {
+        path = "/work-management/notices";
+        allowed = ["limit", "cursor", "task"];
       } else {
         path = "/work-management/index";
         allowed = ["limit", "cursor", "documents", "closed"];
@@ -37,10 +40,10 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
         if (options.has("closed")) query.set("includeClosed", "true");
       }
       break;
-    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes]|history KEY|timeline KEY|item KEY ITEM_ID|updates KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
+    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes|notices]|history KEY|timeline KEY|item KEY ITEM_ID|updates KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
   }
   const count = kind === "list" ? 1 : kind === "changes" && !words[1] ? 1 :
-    kind === "leader" ? (words[1] === "changes" ? 2 : 1) : kind === "item" ? 3 : 2;
+    kind === "leader" ? (words[1] === "changes" || words[1] === "notices" ? 2 : 1) : kind === "item" ? 3 : 2;
   if (words.length !== count) throw new Error("Unexpected Session work arguments.");
   for (const [name, value] of options) {
     if (name === "project") continue;

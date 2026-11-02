@@ -388,6 +388,11 @@
       "group": "开发与维护"
     },
     {
+      "path": "docs/development/leader-result-return.md",
+      "title": "Leader 结果回程",
+      "group": "开发与维护"
+    },
+    {
       "path": "docs/research/design-review-20261020.md",
       "title": "多角度设计审阅与首片实测",
       "group": "研究 · 综合判断"

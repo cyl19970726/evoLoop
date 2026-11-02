@@ -12,6 +12,9 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
 import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
+import { getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
+  listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
+  recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
 import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease } from "./lease.js";
@@ -66,6 +69,7 @@ import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
+import { LeaderResultNoticePump } from "./leader-results/pump.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -456,6 +460,45 @@ const messageService = new SessionMessageService({ uow, clock, ids, grantFor: as
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
   try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
 } });
+const leaderResultNoticePump = new LeaderResultNoticePump({
+  store: {
+    listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
+    getByMessageId: (projectId, messageId) => getLeaderNoticeByMessageId(pool, projectId, messageId),
+    hasInFlightOnOtherSession: (projectId, sessionId) => hasInFlightLeaderNoticeMessage(pool, projectId, sessionId),
+    notePendingReason: async (projectId, noticeId, reason) => {
+      await setLeaderNoticePendingReason(pool, projectId, noticeId, reason);
+    },
+    block: async (projectId, noticeId, reason) => {
+      await markLeaderNoticeBlocked(pool, projectId, noticeId, reason);
+    },
+    pinRecipient: (projectId, noticeId, recipient) => pinLeaderNoticeRecipient(pool, projectId, noticeId, recipient),
+    markPosted: async (projectId, noticeId, messageId, sessionId) => {
+      await linkLeaderNoticeMessage(pool, projectId, noticeId, messageId, sessionId);
+    },
+  },
+  workflow: service, messages: messageService,
+  configuration: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices,
+  principals: currentIdentity, canExecuteSession: currentSessionExecutionAuthority,
+  hasMessageGrant: async ({projectId,session,senderActorId,receiverActorId}) => {
+    const current=(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
+    return !!current?.enabled&&!!current.grants.find(grant=>grant.enabled&&
+      grant.projectId===projectId&&grant.sessionId===session.id&&grant.senderActorId===senderActorId&&
+      grant.receiverActorId===receiverActorId&&grant.receiverRoleId===session.roleId&&grant.cwd===session.cwd)&&
+      await currentProjectWriter(projectId,senderActorId)&&await currentProjectWriter(projectId,receiverActorId);
+  },
+  readTaskFacts: (projectId, taskId) => uow.read(projectId, async reader => {
+    const task=await reader.getTask(taskId);
+    if(!task)return null;
+    if(!reader.sessionAssignments)throw new DomainError("ASSIGNMENT_UNAVAILABLE","Task assignment facts are unavailable");
+    const assignment=await reader.sessionAssignments.getTaskSessionAssignment(taskId);
+    return {currentRevisionId:task.currentRevisionId,state:task.state,
+      assigned:!!assignment&&assignment.state!=="released"&&assignment.taskRevisionId===task.currentRevisionId};
+  }),
+  canWrite: lease.canWrite, canStartNative: () => !!runner?.nativeStartsAvailable(),
+  pollIntervalMs: integrations.leaderResultNotices?.pollIntervalMs??2000,
+  onError: () => console.error("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
+  onDiagnostic: (projectId, noticeId, reason) => console.error(`Leader result notice ${noticeId} in project ${projectId} waits: ${reason}`),
+});
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
@@ -467,6 +510,10 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
     if (!current?.enabled) {
       await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用，消息保留待处理。");
+      return false;
+    }
+    if(!await leaderResultNoticePump.canStartMessage(message)){
+      await messageService.noteBlocked(message.projectId,message.id,"Leader result notice target is no longer the unique authorized managed Leader");
       return false;
     }
     return businessBeforeMessage(message);
@@ -528,6 +575,17 @@ if (runner) {
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
+  leaderNotices: {
+    list: (projectId, query) => listLeaderNotices(pool, projectId, query),
+    get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
+    recover: async (projectId, noticeId, input, actorId) => {
+      const recovered=await recoverRejectedLeaderNotice(pool, projectId, noticeId,
+        input.expectedOperationId, input.newNoticeId, input.newMessageId, input.newOperationId,
+        actorId, input.reason);
+      return {status:"recorded" as const,originalNoticeId:noticeId,newNoticeId:recovered.id,
+        newMessageId:recovered.messageId,newOperationId:recovered.operationId,recovery:recovered.recovery};
+    },
+  },
   sessionWork, sessionTimeline,
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
@@ -610,7 +668,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
+  try { leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.
@@ -620,5 +678,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); leaderResultNoticePump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

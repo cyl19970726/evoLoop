@@ -77,3 +77,27 @@ test("ordinary message grants have independent bounds, actual receiver identity 
     await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("Leader result notices require one explicit managed target per project and distinct actors", async () => {
+  const dir=await mkdtemp(join(tmpdir(),"evoloop-leader-result-config-"));
+  const path=join(dir,"integrations.json");
+  const target={projectId:"00000000-0000-4000-8000-000000000001",
+    sessionId:"00000000-0000-4000-8000-000000000002",
+    receiverRoleId:"00000000-0000-4000-8000-000000000003",
+    receiverActorId:"actual-leader",senderActorId:"system:leader-result-notifier"};
+  try {
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[target]}}));
+    const loaded=await loadIntegrations(path);
+    assert.equal(loaded.leaderResultNotices?.pollIntervalMs,2000);
+    assert.deepEqual(loaded.leaderResultNotices?.targets,[target]);
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[target,{...target,sessionId:"00000000-0000-4000-8000-000000000004"}]}}));
+    await assert.rejects(loadIntegrations(path),/Invalid integration configuration/);
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[]}}));
+    assert.deepEqual((await loadIntegrations(path)).leaderResultNotices?.targets,[],
+      "a project with only an external Lead can leave notices pending for diagnosis");
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[{...target,senderActorId:target.receiverActorId}]}}));
+    await assert.rejects(loadIntegrations(path),/Invalid integration configuration/);
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[{...target,receiverRoleId:"external-link"}]}}));
+    await assert.rejects(loadIntegrations(path),/Invalid integration configuration/);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});

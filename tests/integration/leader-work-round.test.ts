@@ -12,6 +12,7 @@ import type { Principal } from "@evoloop/contracts";
 import { canonicalTaskInputJson, taskInputSignature } from "../../packages/core/src/task-input.js";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 import { createLeaderWorkIndexReader } from "../../apps/coordinator/src/work-management/work-index.js";
+import { listLeaderNotices } from "@evoloop/adapter-postgres/leader-result-notices";
 import { OrdinaryRunSubmissionService } from "../../apps/coordinator/src/ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "../../apps/coordinator/src/ordinary-run-submission/seal.js";
 import { prepareRequest } from "../../apps/cli/src/requests.js";
@@ -57,6 +58,7 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
   const app = await buildServer({
     service: workflow,
     workIndex: createLeaderWorkIndexReader(pool),
+    leaderNotices: { list: (projectId, query) => listLeaderNotices(pool, projectId, query) },
     ordinarySubmissions: ordinary,
     credentials: [
       { token: workerToken, actorId: worker.actorId, projectIds: [projectId], permissions: ["read", "write"] },
@@ -155,6 +157,11 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     });
     assert.equal(started.statusCode, 200, started.body);
   }
+  const notices = await cli(["work", "leader", "notices", "--project", projectId,
+    "--task", prerequisiteTaskId]);
+  assert.equal(notices.items[0]?.kind, "task_todo");
+  assert.equal(notices.items[0]?.taskId, prerequisiteTaskId);
+  assert.equal(notices.items[0]?.stale, true);
   for (const taskId of [prerequisiteTaskId, dependentTaskId]) {
     const task = (await workflow.getTask(lead, projectId, taskId)).task;
     const assigned = await command(leadToken, {

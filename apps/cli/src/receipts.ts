@@ -26,7 +26,7 @@ export interface Recovery { kind: "core" | "orchestration" | "ordinary" | "candi
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
   method?: "PUT"; // Absence preserves the POST method of existing receipts.
-  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover";
+  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery";
   targetId?: string;
 }
 export interface Receipt extends Intent {
@@ -147,6 +147,9 @@ function confirmed(receipt: Receipt, result: unknown): boolean {
     return value.status === "recorded" && !!decision && decision.candidateId === receipt.targetId && typeof decision.reviewerId === "string" &&
       ["candidateRevision", "contentHash", "expectedRevision", "decision", "reason"].every(key => decision[key] === body?.[key]);
   }
+  if (receipt.confirmation === "leader-notice-recovery") return value.status === "recorded" &&
+    value.originalNoticeId === receipt.targetId && value.newNoticeId === body?.newNoticeId &&
+    value.newMessageId === body?.newMessageId && value.newOperationId === body?.newOperationId;
   if (receipt.confirmation === "runtime-recover") return value.available === true && (value.error === null || value.error === undefined);
   if (receipt.confirmation === "runtime-reconcile" && value.status === "partial") return value.changed === false &&
     value.runId === receipt.targetId && value.projectId === receipt.projectId &&
@@ -280,6 +283,31 @@ export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, a
     const details = error instanceof CliApiError ? { code: error.code, status: error.status } : { code: "READ_UNAVAILABLE" };
     await store.update(receipt, { lastError: details });
     throw pending(receipt, details);
+  }
+  if (receipt.confirmation === "leader-notice-recovery") {
+    const original=record(observed), disposition=record(original?.recovery), body=record(receipt.body);
+    if (body && original?.id === receipt.targetId && original?.projectId === receipt.projectId &&
+      original?.operationId === body?.expectedOperationId && original?.state === "blocked" &&
+      disposition?.replacementNoticeId === body?.newNoticeId &&
+      disposition?.dispositionActorId === receipt.actorId && disposition?.dispositionReason === body?.reason) {
+      let replacement: Record<string, unknown> | null = null;
+      try { replacement=record(await client.get(`/api/projects/${receipt.projectId}/work-management/notices/${body.newNoticeId}`)); }
+      catch (error) {
+        await store.update(receipt,{lastError:{code:error instanceof CliApiError?error.code:"READ_UNAVAILABLE"}});
+        throw pending(receipt);
+      }
+      if(replacement?.id===body.newNoticeId && replacement?.projectId===receipt.projectId &&
+        replacement?.messageId===body.newMessageId && replacement?.operationId===body.newOperationId &&
+        record(replacement?.recovery)?.parentNoticeId===receipt.targetId &&
+        replacement?.sourceEventId===original.sourceEventId && replacement?.taskId===original.taskId){
+        const result={status:"recorded",originalNoticeId:receipt.targetId,newNoticeId:body.newNoticeId,
+          newMessageId:body.newMessageId,newOperationId:body.newOperationId};
+        await store.update(receipt,{state:"confirmed",result});
+        return store.get(receipt.id);
+      }
+    }
+    await store.update(receipt,{lastError:{code:"RECOVERY_NOT_CONFIRMED",observation:observed}});
+    throw pending(receipt,observed);
   }
   if (receipt.recovery.kind === "manual") {
     await store.update(receipt, { lastError: { code: "MANUAL_RECONCILIATION_REQUIRED", observation: observed } });

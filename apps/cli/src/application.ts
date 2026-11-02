@@ -80,6 +80,8 @@ const help = {
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
     "work leader --project UUID [--documents] [--closed] [--limit 1..100 --cursor CURSOR]",
     "work leader changes --project UUID [--cursor CURSOR --limit 1..100] (monotonic Task/Document change feed)",
+    "work leader notices --project UUID [--task TASK_UUID --cursor CURSOR --limit 1..100] (durable result notices and dispatch status)",
+    "request leader.notice.recover --project UUID --id BLOCKED_NOTICE_UUID --file BODY.json --receipt LOCAL_UUID (explicit new intent after confirmed post rejection; read original notice before any retry)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
     "models --project UUID (read authorized, currently available App Server models before session prepare)",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",

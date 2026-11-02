@@ -12,7 +12,8 @@
     "./references": "./dist/references.js",
     "./orchestration": "./dist/orchestration.js",
     "./work-index": "./dist/work-index.js",
-    "./ordinary-run-submission": "./dist/ordinary-run-submission.js"
+    "./ordinary-run-submission": "./dist/ordinary-run-submission.js",
+    "./leader-result-notices": "./dist/leader-result-notices.js"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",

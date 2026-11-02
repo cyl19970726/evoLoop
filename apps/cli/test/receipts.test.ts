@@ -55,6 +55,37 @@ const ordinaryIntent = (): Intent => prepareRequest("ordinary.submit", projectId
     technicalResult: "passed", technicalEvidence: "checks passed", reason: "ready" },
 });
 
+test("Leader notice recovery confirms only the exact replacement IDs",async t=>{
+  const store=await temporaryStore(t),noticeId=randomUUID(),actor=verifiedActor("reviewer");
+  const body={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),
+    newOperationId:randomUUID(),reason:"Original post was rejected"};
+  const intent=prepareRequest("leader.notice.recover",projectId,body,noticeId,randomUUID());
+  const transport=client(async()=>response({status:"recorded",originalNoticeId:noticeId,
+    newNoticeId:body.newNoticeId,newMessageId:body.newMessageId,newOperationId:body.newOperationId}));
+  const result=await dispatchMutation(transport,store,apiUrl,token,intent,()=>{},actor);
+  assert.equal((result as {status:string}).status,"recorded");
+  assert.equal((await store.get(intent.id)).state,"confirmed");
+});
+
+test("lost recovery response confirms by reading both immutable notice identities",async t=>{
+  const store=await temporaryStore(t),noticeId=randomUUID(),actor=verifiedActor("reviewer");
+  const body={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),
+    newOperationId:randomUUID(),reason:"  Recorded rejection reviewed  "};
+  const intent=prepareRequest("leader.notice.recover",projectId,body,noticeId,randomUUID());
+  assert.equal((intent.body as typeof body).reason,"Recorded rejection reviewed");
+  const transport=client(async (url,init)=>{
+    if(init?.method==="POST")throw new TypeError("response lost");
+    if(String(url).endsWith(`/notices/${noticeId}`))return response({id:noticeId,projectId,
+      operationId:body.expectedOperationId,state:"blocked",sourceEventId:entityId,taskId:entityId,
+      recovery:{replacementNoticeId:body.newNoticeId,dispositionActorId:actor.actorId,dispositionReason:body.reason.trim()}});
+    return response({id:body.newNoticeId,projectId,messageId:body.newMessageId,
+      operationId:body.newOperationId,sourceEventId:entityId,taskId:entityId,
+      recovery:{parentNoticeId:noticeId}});
+  });
+  await assert.rejects(dispatchMutation(transport,store,apiUrl,token,intent,()=>{},actor),pendingError);
+  assert.equal((await reconcileReceipt(transport,store,apiUrl,token,intent.id,actor)).state,"confirmed");
+});
+
 test("lost ordinary submission reply reconciles only the original signed intent", async t => {
   const store = await temporaryStore(t), intent = ordinaryIntent(), actor = verifiedActor("ordinary-worker");
   let posts = 0;
