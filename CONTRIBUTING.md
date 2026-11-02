@@ -7,6 +7,7 @@ evoLoop 当前包含正式文档、隔离实验和本机试用切片；当前能
 | 本次任务 | 最少阅读 | 何时再下钻 |
 | --- | --- | --- |
 | 通过 evoLoop Task 承接工作 | 固定 Task/context 与项目内 `.agents/skills/evoloop-workflow/SKILL.md`；写任务时加读其 `references/writing.md` | 再按下列工作类型选工程入口；普通静态 Run 与 Loop worker 按实际身份分流，不能只因有 wrapper 就提交 worker 意图。 |
+| 从用户目标整理需求和待排 Task | 项目内 `.agents/skills/evoloop-requirements/SKILL.md` 与适用产品目标；登记时按 `evoloop-workflow` 核身份和命令 | 复杂关系才画总图；Leader 排序、业务执行和独立验收沿正式派单接力。 |
 | 项目 skill、任务表达或开发流程改进 | `.agents/skills/development-workflow/SKILL.md`、相关规范与真实工作样本 | 用实际消费检验改法；普通功能修复不自动触发整套规范重建。 |
 | 文字、链接、导航或研究报告维护 | 目标正文及[文档维护](docs/development/documentation.md) | 改变含义时读所属正式正文；新增研究时读研究入口；不加载无关后端测试清单。 |
 | 产品目标、体验或架构修订 | 受影响的产品/架构正文、[决定记录](docs/decisions.md)及[文档维护](docs/development/documentation.md) | 从引用追到相关研究；改接口时核对双方与对应验收。 |
