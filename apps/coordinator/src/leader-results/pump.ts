@@ -249,8 +249,11 @@ export class LeaderResultNoticePump {
     const command=this.command(notice,recipient);
     if(operation.commandType!==command.type||operation.result.status!=="applied"||
       operation.result.entityId!==notice.messageId){
-      await this.reason(notice,operation.result.status==="rejected"?`MESSAGE_POST_REJECTED:${operation.result.code}`:
-        "MESSAGE_OPERATION_MISMATCH");
+      const code=operation.result.status==="rejected"&&/^[A-Z][A-Z0-9_]{0,100}$/.test(operation.result.code)
+        ? operation.result.code:"UNKNOWN";
+      await this.deps.store.block(notice.projectId,notice.id,
+        operation.commandType===command.type&&operation.result.status==="rejected"
+          ?`MESSAGE_POST_REJECTED:${code}`:"MESSAGE_OPERATION_MISMATCH");
       return;
     }
     const saved:SessionMessageRecord=await this.deps.messages.get(notice.projectId,notice.messageId);
@@ -258,7 +261,7 @@ export class LeaderResultNoticePump {
       saved.target.kind!=="owned"||saved.target.sessionId!==recipient.sessionId||
       saved.content!==command.content||saved.context?.taskId!==notice.taskId||
       saved.context?.taskRevisionId!==notice.taskRevisionId){
-      await this.reason(notice,"MESSAGE_IDENTITY_MISMATCH");return;
+      await this.deps.store.block(notice.projectId,notice.id,"MESSAGE_IDENTITY_MISMATCH");return;
     }
     await this.reason(notice,null);
     await this.deps.store.markPosted(notice.projectId,notice.id,notice.messageId,recipient.sessionId);

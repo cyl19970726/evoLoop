@@ -3,6 +3,7 @@ import { documentImportSchema } from "@evoloop/contracts/process-documents";
 import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowledgeReviewInputSchema } from "@evoloop/contracts/knowledge";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
 import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
+import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
 import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { Intent, Recovery } from "./receipts.js";
@@ -12,6 +13,7 @@ export type RequestName =
   | "knowledge.propose" | "knowledge.review" | "knowledge.publish" | "knowledge.reconcile" | "knowledge.retract-source"
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
   | "work.plan.set" | "work.dependencies.set" | "work.review.set"
+  | "leader.notice.recover"
   | "runtime.reconcile" | "runtime.recover" | "ordinary.submit";
 
 export class RequestInputError extends Error {
@@ -39,6 +41,7 @@ const help: readonly RequestHelp[] = [
   { name: "work.plan.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedPlanVersion", "plannedStartAt", "dueAt", "priority", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.dependencies.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedDependencyVersion", "dependsOnTaskIds", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "expectedWorkChangeSequence", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
+  { name: "leader.notice.recover", requiredBodyKeys: ["expectedOperationId", "newNoticeId", "newMessageId", "newOperationId", "reason"], targetId: "original noticeId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
   { name: "ordinary.submit", requiredBodyKeys: ["projectId", "operationId", "submissionId", "runId", "taskId", "sessionId", "taskRevisionId", "runInputHash", "deliveryOperationId", "deliveryIntent"], targetId: null, operationId: "body", recovery: "ordinary" },
@@ -87,6 +90,7 @@ function bodySchema(name: string) {
     case "work.plan.set": return workPlanBody;
     case "work.dependencies.set": return workDependenciesBody;
     case "work.review.set": return workReviewBody;
+    case "leader.notice.recover": return leaderNoticeRecoverySchema;
     case "runtime.reconcile": return runtimeReconcileSchema;
     case "ordinary.submit": return ordinaryRunSubmissionSchema;
     default: throw new RequestInputError(`Unsupported request ${name}; inspect request types`);
@@ -237,6 +241,12 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       path = `${base}/work-management/tasks/${id}/review`;
       recovery = { kind: "core", path: `${base}/operations/${receiptId}` };
       confirmation = "command";
+      break;
+    }
+    case "leader.notice.recover": {
+      path = `${base}/work-management/notices/${id}/recover`;
+      recovery = { kind: "manual", path: `${base}/work-management/notices/${id}` };
+      confirmation = "leader-notice-recovery";
       break;
     }
     case "runtime.reconcile": {

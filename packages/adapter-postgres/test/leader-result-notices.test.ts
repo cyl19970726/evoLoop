@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { migrate } from "../src/index.ts";
-import { getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
+import { getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listBlockedLeaderNotices, listLeaderNotices, listPendingLeaderNotices,
-  markLeaderNoticeBlocked, pinLeaderNoticeRecipient, requeueLeaderNotice,
+  markLeaderNoticeBlocked, pinLeaderNoticeRecipient, recoverRejectedLeaderNotice, requeueLeaderNotice,
   setLeaderNoticePendingReason } from "../src/leader-result-notices.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -180,6 +180,103 @@ test("recoverable admission reason remains pending and clears without changing f
   assert.equal(resumed.blockedReason, null);
   assert.equal(resumed.messageId, first.messageId);
   assert.equal(resumed.operationId, first.operationId);
+});
+
+async function rejectedPost(options: {code?: string; blockedCode?: string; sender?: string;
+  commandType?: string; status?: string} = {}) {
+  const code = options.code ?? "MESSAGE_GRANT_DENIED";
+  const item = await task("todo");
+  const first = (await listLeaderNotices(pool, projectId, {taskId:item.taskId,limit:1})).items[0]!;
+  const sessionId = randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,'leader','/tmp','project','danger-full-access','never','ready',1,$3,$4,$5,'lead',$6,$6)`,
+    [projectId, sessionId, `thread-${sessionId}`, `native-${sessionId}`, randomUUID(), now]);
+  await pinLeaderNoticeRecipient(pool, projectId, first.id,
+    {sessionId,receiverRoleId:"leader",receiverActorId:"receiver",senderActorId:"technical-sender"});
+  await pool.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)
+    VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+    [projectId,first.operationId,options.sender ?? "technical-sender",hash,
+      options.commandType ?? "session.message.post",JSON.stringify({status:options.status ?? "rejected",
+        operationId:first.operationId,code,message:"not permitted"}),now]);
+  await markLeaderNoticeBlocked(pool, projectId, first.id, `MESSAGE_POST_REJECTED:${options.blockedCode ?? code}`);
+  return {item, original:await getLeaderNotice(pool,projectId,first.id), sessionId};
+}
+
+test("confirmed rejected post creates one traced replacement and keeps the original blocked", async () => {
+  const {item,original} = await rejectedPost();
+  const ids = [randomUUID(),randomUUID(),randomUUID()] as const;
+  const args = [pool,projectId,original.id,original.operationId,...ids,"reviewer","Grant fixed; retry delivery"] as const;
+  const replacement = await recoverRejectedLeaderNotice(...args);
+  assert.equal(replacement.id, ids[0]);
+  assert.equal(replacement.messageId, ids[1]);
+  assert.equal(replacement.operationId, ids[2]);
+  assert.equal(replacement.state, "pending");
+  assert.equal(replacement.recovery.parentNoticeId, original.id);
+  assert.equal(replacement.sourceEventId, original.sourceEventId);
+  assert.equal(replacement.occurredAt, original.occurredAt, "a new delivery intent does not change the source event time");
+  assert.equal(replacement.sourceRef, original.sourceRef);
+  const preserved = await getLeaderNotice(pool,projectId,original.id);
+  assert.equal(preserved.state, "blocked");
+  assert.equal(preserved.blockedReason, "MESSAGE_POST_REJECTED:MESSAGE_GRANT_DENIED");
+  assert.equal(preserved.messageId, original.messageId);
+  assert.equal(preserved.operationId, original.operationId);
+  assert.equal(preserved.recovery?.replacementNoticeId, ids[0]);
+  assert.equal(preserved.recovery?.dispositionActorId, "reviewer");
+  assert.equal(preserved.recovery?.dispositionReason, "Grant fixed; retry delivery");
+  assert.deepEqual(await recoverRejectedLeaderNotice(...args), replacement);
+  assert.equal((await listLeaderNotices(pool,projectId,{taskId:item.taskId,limit:10})).items.length,2);
+  await assert.rejects(requeueLeaderNotice(pool,projectId,original.id), /cannot be requeued/i);
+  await pool.query(`SELECT enqueue_leader_result_notice($1,'task_todo',$2,$3,$2,NULL,'lead',$4,$5)`,
+    [projectId,item.revisionId,item.taskId,original.sourceRef,now]);
+  assert.equal((await listLeaderNotices(pool,projectId,{taskId:item.taskId,limit:10})).items.length,2);
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,original.id,original.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","other retry"), /different replacement/i);
+});
+
+test("recovery CAS rejects wrong operation, unrecorded rejection and in-flight messages", async () => {
+  const {original} = await rejectedPost({code:"NO_GRANT",blockedCode:"OTHER_CODE"});
+  const recover = (operationId=original.operationId) => recoverRejectedLeaderNotice(pool,projectId,original.id,
+    operationId,randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed rejection");
+  await assert.rejects(recover(randomUUID()), /operation changed/i);
+  await assert.rejects(recover(), /matching saved rejection/i);
+  const {original:wrongSender} = await rejectedPost({sender:"other-sender"});
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,wrongSender.id,wrongSender.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
+  const {original:wrongCommand} = await rejectedPost({commandType:"task.create"});
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,wrongCommand.id,wrongCommand.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
+  const {original:unknown} = await rejectedPost({status:"unknown"});
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,unknown.id,unknown.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
+  const missing = await task("todo");
+  const withoutJournal = (await listLeaderNotices(pool,projectId,{taskId:missing.taskId,limit:1})).items[0]!;
+  await markLeaderNoticeBlocked(pool,projectId,withoutJournal.id,"MESSAGE_POST_REJECTED:NO_JOURNAL");
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,withoutJournal.id,withoutJournal.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /matching saved rejection/i);
+  const {original:inFlight,sessionId} = await rejectedPost();
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
+    sender_actor_id,content,context_task_id,context_task_revision_id,state,version,created_at,updated_at)
+    VALUES($1,$2,$3,'owned',$4,'technical-sender','Review result',$5,$6,'queued',1,$7,$7)`,
+    [projectId,inFlight.messageId,inFlight.operationId,sessionId,inFlight.taskId,inFlight.taskRevisionId,now]);
+  // A matching journal entry alone cannot displace a still queued/unknown original message.
+  await assert.rejects(recoverRejectedLeaderNotice(pool,projectId,inFlight.id,inFlight.operationId,
+    randomUUID(),randomUUID(),randomUUID(),"reviewer","reviewed"), /in flight/i);
+});
+
+test("concurrent recovery keeps one replacement and replay uses the same fixed IDs", async () => {
+  const {item,original} = await rejectedPost();
+  const firstIds = [randomUUID(),randomUUID(),randomUUID()] as const;
+  const secondIds = [randomUUID(),randomUUID(),randomUUID()] as const;
+  const attempt = (ids: readonly [string,string,string]) => recoverRejectedLeaderNotice(pool,projectId,
+    original.id,original.operationId,...ids,"reviewer","Reviewed explicit post rejection");
+  const outcomes = await Promise.allSettled([attempt(firstIds),attempt(secondIds)]);
+  assert.equal(outcomes.filter(x=>x.status==="fulfilled").length,1);
+  assert.equal(outcomes.filter(x=>x.status==="rejected").length,1);
+  const winner = outcomes.find(x=>x.status==="fulfilled") as PromiseFulfilledResult<Awaited<ReturnType<typeof attempt>>>;
+  const chosen = winner.value.id===firstIds[0]?firstIds:secondIds;
+  assert.deepEqual(await attempt(chosen),winner.value);
+  assert.equal((await listLeaderNotices(pool,projectId,{taskId:item.taskId,limit:10})).items.length,2);
 });
 
 test("link requires the fixed saved message, is idempotent, and never creates another notice", async () => {

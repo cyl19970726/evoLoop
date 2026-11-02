@@ -30,6 +30,8 @@ Leader 读取原 Task、Delivery 或 Observation 后，保存计划和分派；�
 
 ## 诊断、回退和发布边界
 
-投递受阻时保留通知、原 message/operation ID 和安全原因。缺 grant、Session 暂不可用或旧 Leader 在途时，修复后从同一固定通知恢复。已固定收件人时不可自动改投新 Session；原消息确认失败、取消或原 post 被确认拒绝后，也不得把可能已经执行的工作自动重发。操作者先核原 operation、消息状态、Task 当前修订和旧目标的 Turn，再以有权身份保存新的人工通知或接续安排，保留原失败记录。配置切回 `enabled:false` 会停止产生新的自动投递，数据库通知和已保存消息仍保留；已在途或 unknown 的原生 Turn 须先按原 operation 对账。数据库迁移不回滚删表，避免丢失结果历史。
+投递受阻时保留通知、原 message/operation ID 和安全原因。缺 grant、Session 暂不可用或旧 Leader 在途时，修复后从同一固定通知恢复。已固定收件人时不可自动改投新 Session。原 `session.message.post` 的操作日志明确拒绝时，原通知转为 `blocked`，不再以原 ID 自动重试；未知结果仍只读原 operation 对账。
+
+有项目 `write` 和 `review` 权限的操作者先核原 operation 的拒绝、当前 Task、消息状态和旧目标 Turn，再以正式 CLI 显式建立新意图：`request leader.notice.recover --project PROJECT_UUID --id ORIGINAL_NOTICE_UUID --file BODY.json --receipt LOCAL_RECEIPT_UUID`。BODY 包含原 `expectedOperationId`、全新的 `newNoticeId`、`newMessageId`、`newOperationId` 和处置 `reason`。读取原通知 `GET /api/projects/PROJECT_UUID/work-management/notices/ORIGINAL_NOTICE_UUID` 可核关联和结果；如写入应答未知，用 `receipts reconcile LOCAL_RECEIPT_UUID` 核原通知与新通知的固定身份，不另造一组 ID 猜测重发。新通知保留源事实和原拒绝的关联，再按当前唯一 Leader 目标投递；原通知、拒绝和历史成本不被改写。配置切回 `enabled:false` 会停止自动投递，数据库通知和已保存消息仍保留；已在途或 unknown 的原生 Turn 须先按原 operation 对账。数据库迁移不回滚删表，避免丢失结果历史。
 
 切服务前核所有业务 Run 和消息 Turn 已静默，保留当前服务的配置、身份、模型和 CLI manifest；候选集成检查不代替正式原生接力。上线后分别核通知入库、消息已保存、原生接收/已读、Leader 安排、QA 实际观察和 Task 完成。旧修订的 Delivery/观察不得用于关闭新修订。

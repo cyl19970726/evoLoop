@@ -12,9 +12,9 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
 import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
-import { getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
+import { getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
-  setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
+  recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
 import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease } from "./lease.js";
@@ -575,7 +575,17 @@ if (runner) {
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
-  leaderNotices: {list: (projectId, query) => listLeaderNotices(pool, projectId, query)},
+  leaderNotices: {
+    list: (projectId, query) => listLeaderNotices(pool, projectId, query),
+    get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
+    recover: async (projectId, noticeId, input, actorId) => {
+      const recovered=await recoverRejectedLeaderNotice(pool, projectId, noticeId,
+        input.expectedOperationId, input.newNoticeId, input.newMessageId, input.newOperationId,
+        actorId, input.reason);
+      return {status:"recorded" as const,originalNoticeId:noticeId,newNoticeId:recovered.id,
+        newMessageId:recovered.messageId,newOperationId:recovered.operationId,recovery:recovered.recovery};
+    },
+  },
   sessionWork, sessionTimeline,
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,

@@ -1,12 +1,14 @@
 import type { Pool } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
-import type { LeaderNotice, LeaderNoticeKind, LeaderNoticePage, LeaderNoticeState } from "@evoloop/contracts/leader-notices";
+import type { LeaderNotice, LeaderNoticeKind, LeaderNoticePage, LeaderNoticeState,
+  LeaderNoticeRecoveryLink } from "@evoloop/contracts/leader-notices";
 
 export interface LeaderNoticeListOptions { taskId?: string; limit: number; cursor?: string }
 export interface LeaderNoticeRecipient {
   sessionId: string; receiverRoleId: string; receiverActorId: string; senderActorId: string;
 }
-export type LeaderResultNotice = LeaderNotice & { recipient: LeaderNoticeRecipient | null };
+export type LeaderResultNotice = LeaderNotice & { recipient: LeaderNoticeRecipient | null; recovery?: LeaderNoticeRecoveryLink };
+export type RecoveredLeaderNotice = LeaderResultNotice & { recovery: LeaderNoticeRecoveryLink };
 export type LeaderResultNoticePage = Omit<LeaderNoticePage, "items"> & { items: LeaderResultNotice[] };
 
 type Row = Record<string, unknown>;
@@ -29,6 +31,14 @@ const notice = (row: Row): LeaderResultNotice => ({
   recipient: row.recipient_session_id ? { sessionId: String(row.recipient_session_id),
     receiverRoleId: String(row.receiver_role_id), receiverActorId: String(row.receiver_actor_id),
     senderActorId: String(row.sender_actor_id) } : null,
+  recovery: recoveryLink(row),
+});
+
+const recoveryLink = (row: Row): LeaderNoticeRecoveryLink => ({
+  parentNoticeId: row.recovery_parent_notice_id === null ? null : String(row.recovery_parent_notice_id),
+  replacementNoticeId: row.recovery_replacement_notice_id === null ? null : String(row.recovery_replacement_notice_id),
+  dispositionActorId: row.recovery_actor_id === null ? null : String(row.recovery_actor_id),
+  dispositionReason: row.recovery_reason === null ? null : String(row.recovery_reason),
 });
 
 interface Position { version: 1; projectId: string; taskId: string | null; order: "recent" | "pending" | "blocked"; occurredAt: string; id: string }
@@ -106,6 +116,10 @@ async function current(pool: Pool, projectId: string, id: string): Promise<Leade
   return notice(result.rows[0]);
 }
 
+export function getLeaderNotice(pool: Pool, projectId: string, noticeId: string): Promise<LeaderResultNotice> {
+  return current(pool, projectId, noticeId);
+}
+
 /** A recoverable admission reason. It clears when the same fixed notice becomes eligible. */
 export async function setLeaderNoticePendingReason(pool: Pool, projectId: string, id: string,
   reason: string | null): Promise<LeaderResultNotice> {
@@ -135,11 +149,79 @@ export async function markLeaderNoticeBlocked(pool: Pool, projectId: string, id:
 /** Reconsider a blocked notice after configuration or receiver recovery. Fixed IDs are retained. */
 export async function requeueLeaderNotice(pool: Pool, projectId: string, id: string): Promise<LeaderResultNotice> {
   const result = await pool.query(`UPDATE leader_result_notice SET state='pending',blocked_reason=NULL,updated_at=now()
-    WHERE project_id=$1 AND notice_id=$2 AND state='blocked' RETURNING notice_id`, [projectId, id]);
+    WHERE project_id=$1 AND notice_id=$2 AND state='blocked' AND recovery_replacement_notice_id IS NULL
+      AND blocked_reason NOT LIKE 'MESSAGE_POST_REJECTED:%' RETURNING notice_id`, [projectId, id]);
   if (result.rows[0]) return current(pool, projectId, id);
   const prior = await current(pool, projectId, id);
   if (prior.state === "pending") return prior;
-  throw new DomainError("NOTICE_STATE_CONFLICT", "Linked Leader notice cannot be requeued");
+  throw new DomainError("NOTICE_STATE_CONFLICT", "Rejected or replaced Leader notice cannot be requeued");
+}
+
+/** Explicitly replace one confirmed rejected post; the old notice and operation remain blocked and immutable. */
+export async function recoverRejectedLeaderNotice(pool: Pool, projectId: string, originalNoticeId: string,
+  expectedOperationId: string, newNoticeId: string, newMessageId: string, newOperationId: string,
+  dispositionActorId: string, reason: string): Promise<RecoveredLeaderNotice> {
+  const actor = dispositionActorId.trim(), explanation = reason.trim();
+  if (!actor || actor.length > 200 || !explanation || explanation.length > 4000)
+    throw new DomainError("INVALID_RECOVERY_DISPOSITION", "Recovery needs a reviewer actor and a reason of at most 4000 characters");
+  if (new Set([originalNoticeId, expectedOperationId, newNoticeId, newMessageId, newOperationId]
+    .map(id => id.toLowerCase())).size !== 5)
+    throw new DomainError("INVALID_RECOVERY_IDS", "Recovery needs distinct original, notice, message and operation IDs");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const originalResult = await client.query(`SELECT n.*,o.actor_id AS recorded_sender,o.command_type,
+      o.result->>'status' AS operation_status,o.result->>'code' AS rejection_code,
+      o.result->>'operationId' AS result_operation_id,
+      m.state AS message_state,p.state AS processing_state
+      FROM leader_result_notice n
+      LEFT JOIN operation_journal o ON o.project_id=n.project_id AND o.operation_id=n.operation_id
+      LEFT JOIN session_message m ON m.project_id=n.project_id AND m.message_id=n.message_id
+      LEFT JOIN session_message_processing p ON p.project_id=n.project_id AND p.message_id=n.message_id
+      WHERE n.project_id=$1 AND n.notice_id=$2 FOR UPDATE OF n`, [projectId, originalNoticeId]);
+    const original = originalResult.rows[0];
+    if (!original) throw new DomainError("NOTICE_NOT_FOUND", "Leader notice was not found in this project");
+    if (original.operation_id !== expectedOperationId)
+      throw new DomainError("NOTICE_OPERATION_MISMATCH", "The original notice operation changed");
+    if (original.recovery_replacement_notice_id !== null) {
+      if (original.recovery_replacement_notice_id !== newNoticeId || original.recovery_actor_id !== actor ||
+        original.recovery_reason !== explanation)
+        throw new DomainError("NOTICE_RECOVERY_CONFLICT", "This rejected notice already has a different replacement");
+      const replay = await client.query(`SELECT ${noticeFrom}
+        WHERE n.project_id=$1 AND n.notice_id=$2 AND n.recovery_parent_notice_id=$3
+          AND n.message_id=$4 AND n.operation_id=$5`,
+        [projectId, newNoticeId, originalNoticeId, newMessageId, newOperationId]);
+      if (!replay.rows[0]) throw new DomainError("NOTICE_RECOVERY_CONFLICT", "Replacement IDs do not match the saved disposition");
+      await client.query("COMMIT");
+      return { ...notice(replay.rows[0]), recovery: recoveryLink(replay.rows[0]) };
+    }
+    if (original.state !== "blocked" || original.blocked_reason !== `MESSAGE_POST_REJECTED:${original.rejection_code}` ||
+      original.rejection_code === null || original.recorded_sender !== original.sender_actor_id ||
+      original.command_type !== "session.message.post" || original.operation_status !== "rejected" ||
+      original.result_operation_id !== original.operation_id)
+      throw new DomainError("NOTICE_RECOVERY_UNCONFIRMED", "The original message post needs a matching saved rejection");
+    if (["queued", "processing", "unknown"].includes(original.message_state) ||
+      ["dispatching", "running", "unknown"].includes(original.processing_state))
+      throw new DomainError("NOTICE_MESSAGE_IN_FLIGHT", "The original message is still in flight");
+    await client.query(`INSERT INTO leader_result_notice(project_id,notice_id,kind,source_event_id,task_id,
+      task_revision_id,source_session_id,source_actor_id,source_ref,occurred_at,message_id,operation_id,
+      recovery_parent_notice_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$13,$10,$11,$12)`,
+      [projectId,newNoticeId,original.kind,original.source_event_id,original.task_id,
+        original.task_revision_id,original.source_session_id,original.source_actor_id,original.source_ref,
+        newMessageId,newOperationId,originalNoticeId,original.occurred_at]);
+    await client.query(`UPDATE leader_result_notice SET recovery_replacement_notice_id=$3,
+      recovery_actor_id=$4,recovery_reason=$5,updated_at=now()
+      WHERE project_id=$1 AND notice_id=$2 AND state='blocked' AND recovery_replacement_notice_id IS NULL`,
+      [projectId,originalNoticeId,newNoticeId,actor,explanation]);
+    const created = await client.query(`SELECT ${noticeFrom} WHERE n.project_id=$1 AND n.notice_id=$2`,
+      [projectId,newNoticeId]);
+    await client.query("COMMIT");
+    return { ...notice(created.rows[0]!), recovery: recoveryLink(created.rows[0]!) };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
 }
 
 export async function linkLeaderNoticeMessage(pool: Pool, projectId: string, id: string,

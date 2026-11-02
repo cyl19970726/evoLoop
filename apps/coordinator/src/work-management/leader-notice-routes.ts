@@ -2,9 +2,12 @@ import type { FastifyInstance } from "fastify";
 import type { Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
+import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
 
 export interface LeaderNoticeReader {
   list(projectId: string, query: { taskId?: string; limit: number; cursor?: string }): Promise<unknown>;
+  get?(projectId: string, noticeId: string): Promise<unknown>;
+  recover?(projectId: string, noticeId: string, input: z.infer<typeof leaderNoticeRecoverySchema>, actorId: string): Promise<unknown>;
 }
 
 /** The notice read is a project fact, not a permit to dispatch a managed Leader. */
@@ -20,5 +23,21 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
     return notices.list(projectId, { limit: query.limit,
       ...(query.taskId ? { taskId: query.taskId } : {}),
       ...(query.cursor ? { cursor: query.cursor } : {}) });
+  });
+  if (notices.get) app.get("/api/projects/:projectId/work-management/notices/:noticeId", async request => {
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    const {projectId,noticeId}=z.strictObject({projectId:z.uuid(),noticeId:z.uuid()}).parse(request.params);
+    await service.getProject(request.principal,projectId);
+    return notices.get!(projectId,noticeId);
+  });
+  if (notices.recover) app.post("/api/projects/:projectId/work-management/notices/:noticeId/recover", async request => {
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    const { projectId, noticeId } = z.strictObject({projectId:z.uuid(),noticeId:z.uuid()}).parse(request.params);
+    const who=request.principal;
+    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader notice recovery");
+    await service.getProject(who, projectId);
+    const input=leaderNoticeRecoverySchema.parse(request.body);
+    return notices.recover!(projectId, noticeId, input, who.actorId);
   });
 }

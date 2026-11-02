@@ -96,3 +96,32 @@ test("Leader notice reads require project access and retain Task scoped cursor",
   assert.equal((await app.inject({ method: "GET", url })).statusCode, 403);
   assert.equal(seen.length, 1);
 });
+
+test("only a project reviewer can create a fresh intent for a rejected notice",async t=>{
+  const projectId=randomUUID(),noticeId=randomUUID();
+  const input={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),
+    newOperationId:randomUUID(),reason:"Confirmed rejection after Session recovery"};
+  let principal={actorId:"lead",projectIds:[projectId],permissions:["read","write"] as string[]};
+  const calls:unknown[]=[];
+  const app=Fastify();t.after(()=>app.close());
+  app.decorateRequest("principal",null);
+  app.addHook("onRequest",async request=>{request.principal=principal as typeof request.principal;});
+  app.setErrorHandler((error,_request,reply)=>{
+    if(error instanceof DomainError)return reply.code(403).send({code:error.code});
+    if(error.name==="ZodError")return reply.code(400).send({code:"INVALID_INPUT"});
+    throw error;
+  });
+  registerLeaderNoticeRoutes(app,{getProject:async (_who,p)=>{
+    if(p!==projectId)throw new DomainError("FORBIDDEN","project");return {id:p};
+  }},{list:async()=>({items:[],nextCursor:null}),get:async()=>({id:noticeId}),
+    recover:async(p,id,body,actor)=>{calls.push({p,id,body,actor});return {status:"recorded",originalNoticeId:id,
+      newNoticeId:body.newNoticeId,newMessageId:body.newMessageId,newOperationId:body.newOperationId};}});
+  const url=`/api/projects/${projectId}/work-management/notices/${noticeId}/recover`;
+  assert.equal((await app.inject({method:"POST",url,payload:input})).statusCode,403);
+  principal={...principal,permissions:["read","write","review"]};
+  const response=await app.inject({method:"POST",url,payload:input});
+  assert.equal(response.statusCode,200);
+  assert.deepEqual(calls,[{p:projectId,id:noticeId,body:input,actor:"lead"}]);
+  assert.equal((await app.inject({method:"GET",url:url.slice(0,-"/recover".length)})).statusCode,200);
+  assert.equal((await app.inject({method:"POST",url,payload:{...input,newMessageId:input.newNoticeId}})).statusCode,400);
+});

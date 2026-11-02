@@ -110,6 +110,8 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
           {item.stale && <> · 来源属于历史修订</>}
           {item.sourceSessionId && <> · 来源 Session <ShortId value={item.sourceSessionId} /></>}
           {item.sourceActorId && <> · 来源 actor {item.sourceActorId}</>}
+          {item.recovery?.parentNoticeId && <> · 新意图继承原拒绝通知 <ShortId value={item.recovery.parentNoticeId} /></>}
+          {item.recovery?.replacementNoticeId && <> · 已由 {item.recovery.dispositionActorId} 保存替代通知 <ShortId value={item.recovery.replacementNoticeId} /></>}
           {item.linkedSessionId && <> · <a href={`#/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看目标 Session ↗</a></>}</small>
         {(item.state === "linked" || item.blockedReason) && <details><summary>核对原通知身份</summary>
           <small>消息 <code className="break-anywhere">{item.messageId}</code><br />

@@ -36,7 +36,7 @@ function fixture(initial=notice()){
   const commands:unknown[]=[],errors:unknown[]=[],diagnostics:string[]=[];
   let saved:SessionMessageRecord|null=null;
   let operation:Record<string,unknown>|null=null;
-  let loseAcknowledgement=false,linkFails=false;
+  let loseAcknowledgement=false,linkFails=false,postRejection:string|null=null;
   let firstPage:LeaderResultNotice[]|null=null;
   const cursors:Array<string|undefined>=[];
   const store={
@@ -65,6 +65,10 @@ function fixture(initial=notice()){
     listRuntimeSessions:async()=>sessions,
     execute:async(_principal:Principal,command:Record<string,unknown>)=>{
       commands.push(command);
+      if(postRejection){
+        operation={commandType:command.type,result:{status:"rejected",code:postRejection}};
+        throw Error("recorded post rejection");
+      }
       operation={commandType:command.type,result:{status:"applied",entityId:row.messageId}};
       saved={projectId,id:row.messageId,operationId:row.operationId,target:command.target as SessionMessageRecord["target"],
         senderActorId:sender.actorId,content:command.content as string,
@@ -93,6 +97,7 @@ function fixture(initial=notice()){
     setNative(value:boolean){native=value;},
     setInFlight(value:boolean){inFlight=value;},
     loseAcknowledgement(){loseAcknowledgement=true;},failLink(value:boolean){linkFails=value;},
+    rejectPost(code:string){postRejection=code;},
     setOperation(value:Record<string,unknown>|null){operation=value;},setMessage(value:SessionMessageRecord|null){saved=value;},
     get message(){return saved;}};
 }
@@ -133,6 +138,21 @@ test("a receiver without Leader review authority is not awakened",async()=>{
   assert.equal(f.commands.length,1);
 });
 
+test("notice pins the actual message receiver, not the Session creator",async()=>{
+  const creator={...session,actorId:"session-creator"};
+  assert.notEqual(creator.actorId,receiver.actorId);
+  const f=fixture();f.setSessions([creator]);
+  await f.pump.tick();
+  assert.equal(f.row.state,"linked");
+  assert.equal(f.row.recipient?.receiverActorId,receiver.actorId);
+  assert.equal(await f.pump.canStartMessage(f.message!),true);
+  const replacement:Principal={...receiver,actorId:"replacement-leader"};
+  f.setPrincipals([sender,replacement]);
+  f.setConfig({...config,targets:[{...target,receiverActorId:replacement.actorId}]});
+  assert.equal(await f.pump.canStartMessage(f.message!),false,
+    "an old queued notice cannot start under a new actual receiver on the same Session");
+});
+
 test("external-only project remains pending with a target diagnosis",async()=>{
   const f=fixture();f.setConfig({enabled:true,targets:[]});
   await f.pump.tick();
@@ -147,6 +167,19 @@ test("native runtime outage remains a diagnosed pending notice",async()=>{
   assert.equal(f.commands.length,0);
   f.setNative(true);await f.pump.tick();
   assert.equal(f.row.state,"linked");assert.equal(f.pendingReason,null);
+});
+
+test("a journaled post rejection blocks the original notice and never reuses its operation",async()=>{
+  const f=fixture();f.rejectPost("SESSION_NOT_READY");
+  await f.pump.tick();
+  assert.equal(f.row.state,"blocked");
+  assert.equal(f.pendingReason,"MESSAGE_POST_REJECTED:SESSION_NOT_READY");
+  assert.equal(f.row.operationId,notice().operationId);
+  assert.equal(f.row.messageId,notice().messageId);
+  assert.equal(f.commands.length,1);
+  await f.pump.tick();
+  assert.equal(f.commands.length,1,"confirmed rejection requires a new explicit intent");
+  assert.deepEqual(f.errors,[]);
 });
 
 test("pinned original operation is reconciled after lost acknowledgement and target switch",async()=>{
