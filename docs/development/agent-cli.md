@@ -104,6 +104,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 ```sh
 npm run --silent cli -- work list --project "$PROJECT_ID" --membership all --limit 20
 npm run --silent cli -- work snapshot "$SESSION_KEY" --project "$PROJECT_ID"
+npm run --silent cli -- work status "$SESSION_KEY" --project "$PROJECT_ID" --message "$MESSAGE_ID"
 npm run --silent cli -- work history "$SESSION_KEY" --project "$PROJECT_ID" --limit 20
 npm run --silent cli -- work timeline "$SESSION_KEY" --project "$PROJECT_ID" --source both --limit 25
 npm run --silent cli -- work timeline "$SESSION_KEY" --project "$PROJECT_ID" --source both --cursor "$NATIVE_CURSOR" --messages-cursor "$MESSAGES_CURSOR"
@@ -153,6 +154,16 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 ### 读取原生当前观察
 
 `work snapshot owned:SESSION_ID --project PROJECT_ID` 的 `nativeObservation` 与 `read session SESSION_ID --observation --project PROJECT_ID` 返回同一有界观察。`null` 表示尚无该投影，不能推断从未运行。先核 `freshness`、`lastEventAt`、精确 Turn 和来源，再读工具／计划／diff 预览；旧连接或不可用 Session 的 `stale` 事实只供核对。该只读入口不唤醒模型，也不凭通知改变 Run、Task 或交付验收。
+
+`work status` 将服务 Session 状态、原生连接／Turn 状态、最近原生活动和持久消息状态分列。`--message` 另读原消息与 processing；目标必须属于所选 Session 或已登记别名。两次只读查询不是原子快照，操作前仍须回读当前版本。缺少状态或时间时保持 null。`freshness: live` 只说明连接与绑定在观察时有效，`inProgress` 是宿主报告；两者均不证明最近仍有模型进展。状态冲突时保留各自来源与时间，不按耗时判终态。
+
+### 普通消息的精确核对与受控中断
+
+项目复核者先核本人身份及当前精确 Session 执行授权，再读 `work status owned:SESSION_ID --project PROJECT_ID --message MESSAGE_ID`、`work message MESSAGE_ID`、`read session SESSION_ID --observation` 和原 Turn 历史。核对消息、processing、Session、Thread、Turn 的绑定，当前消息与 processing 版本、已执行操作及排队消息。使用当前构建的 `command schema session.message.reconcile`／`session.message.interrupt`。两者均以 `command run PRIVATE_JSON` 提交，固定 `operationId`、`projectId`、`messageId`、`sessionId`、`processingId`、`nativeTurnId`、`expectedMessageVersion`、`expectedProcessingVersion` 和 `reason`。保存原正文和操作 ID；回包不明时用 `operation`／`receipts reconcile` 按原 ID 核对。
+
+先提交 `session.message.reconcile` 登记精确核对。owner pump 只读原 Turn，已明确终态时结算**原** processing 和消息；仍在执行则保留占用。命令成功仅表示核对意图已登记，须回读 `work message` 和原生历史确认实际结算。断连、状态冲突或历史暂不可读时保留 unknown，核原操作回执；不要重发原消息。
+
+若宿主仍报执行中、审阅后确需中断，提交同一绑定和当前版本的 `session.message.interrupt`。pump 在调用前再次读取精确 Turn；发现终态便先结算。否则先持久记录一次尝试，再调用宿主中断，结果不明时不自动重试。原生协议没有附带 Turn 状态前提的原子中断；最后一次读与调用之间仍可能刚好终结，须以原 Turn 后续状态和原消息结算判定真实结果，不能仅凭调用回执声称中断成功。回读原 Turn、processing、消息和操作结果；仅当原消息终态明确、Session 恢复 gate 和队列允许时，才在原 Session／Thread 接续未完成工作。旧执行者回归或重复请求须按原操作账和版本处理。宿主重建不等于新聊天；替代 Leader 需原线程不可恢复与旧执行者隔离、唯一通知目标的独立证据。核对和中断本身不构成派工、Delivery、使用或 Task 关闭。
 
 `usage.total` 保留原生 Thread 累计快照，`usage.last` 保留原生范围；重复读数不累加，缓存和推理指标是子集。null 保持未知，不据此估价或把配置模型当逐 Turn 实际用模。投影、预览、分页历史及固定原件分别阅读，不把截断摘要当完整证据。
 

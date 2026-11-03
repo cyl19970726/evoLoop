@@ -7,6 +7,7 @@ import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./
 import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
 import { sessionWorkPath } from "./session-work.js";
+import { sessionStatus } from "./session-status.js";
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 import { prepareSession } from "./session-preparation.js";
@@ -15,7 +16,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "kind", "hash", "asset-hash"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -74,6 +75,7 @@ const help = {
     "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
     "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
+    "work status OWNED_OR_EXTERNAL_KEY --project UUID [--message UUID] (read only; separate service, native, activity and message facts)",
     "work timeline KEY --project UUID [--source both|native|messages --limit 1..50 --cursor NATIVE_CURSOR --messages-cursor MESSAGES_CURSOR]",
     "work item KEY ITEM_ID --project UUID --turn-id TURN_ID (selected public message or authorized tool detail)",
     "work updates KEY --project UUID [--after LIVE_CURSOR] [--wait-ms 0..10000] (default 0; follow resetRequired)",
@@ -185,6 +187,15 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "work") {
+    if (args.words[1] === "status") {
+      check(args, 3, ["project", "message"]);
+      const snapshotPath = sessionWorkPath(["snapshot", args.words[2]!], new Map([["project", projectId]]));
+      const messageId = option(args, "message") ? uuid(option(args, "message"), "Message") : undefined;
+      const snapshot = await client.get(`${prefix}${snapshotPath}`);
+      const detail = messageId ? await client.get(`${prefix}/session-messages/${messageId}`) : undefined;
+      try { return sessionStatus(snapshot, detail, messageId); }
+      catch (error) { throw new ReceiptError("INVALID_STATUS_SOURCE", error instanceof Error ? error.message : "Cannot verify status sources."); }
+    }
     let path: string;
     try { path = sessionWorkPath(args.words.slice(1), args.options); }
     catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid Session work read parameters."); }
