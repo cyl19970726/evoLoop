@@ -174,7 +174,7 @@ test('full sequence keeps message and business inputs on one owned Thread',async
   assert.deepEqual(await adapter.inspect(binding).then(value=>{
     const result=value as {observedTurnStarts:number;observedResumes:number;lastTurnModel:string};
     return {starts:result.observedTurnStarts,resumes:result.observedResumes,model:result.lastTurnModel};
-  }),{starts:2,resumes:1,model:'gpt-6-sol'});
+  }),{starts:2,resumes:0,model:'gpt-6-sol'});
 });
 
 test('default-model full Session survives persisted resume and an ordinary message',async t=>{
@@ -202,6 +202,7 @@ for(const mode of ['full-resume-wrong-model','full-resume-thread-model-mismatch'
     const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
       expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
     t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+    await adapter.startTurn(binding,'establish existing Turn','existing-turn');
     await assert.rejects(()=>adapter.resume(binding,fullSpec),
       error=>error instanceof RuntimeUnknownError&&error.method==='thread/resume');
   });
@@ -254,6 +255,7 @@ test('full creation and resume reject native policy mismatches without inventing
   const badResume=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-resume-wrong'],
     expectedVersion:'codex-cli 0.164.0-alpha.11.1'});
   t.after(()=>badResume.close());await badResume.open();const binding=await badResume.create(fullSpec);
+  await badResume.startTurn(binding,'establish existing Turn','existing-turn');
   await assert.rejects(()=>badResume.resume(binding,fullSpec),RuntimeUnknownError);
 });
 
@@ -938,6 +940,7 @@ test("persisted business resume uses only current trusted tool names and clears 
 test("owned read remains available when native resume is rejected", async t => {
   const adapter = await open("resume-rejected"); t.after(() => adapter.close());
   const binding = await adapter.create(spec);
+  await adapter.startTurn(binding,"establish existing Turn","existing-turn");
   await assert.rejects(() => adapter.resume(binding, restoreSpec), RuntimeServerError);
   assert.equal((await adapter.inspect(binding) as { thread: { id: string } }).thread.id, binding.nativeThreadId);
   assert.equal((await adapter.listTurns(binding)).data.length, 1);
@@ -962,4 +965,117 @@ test("normalizes native ThreadItemEntry and rejects a foreign turn envelope", as
   assert.deepEqual(result.data,[{id:"item-1",type:"agentMessage",text:"fixture final answer"}]);
   const other=await open("wrong-turn-items");t.after(()=>other.close());const owned=await other.create(spec);
   await assert.rejects(()=>other.listItems(owned,"turn-1"),RuntimeProtocolError);
+});
+
+
+const zeroTurnAdapter = (options: CodexAppServerOptions = {}) => testAdapter({
+  executable:process.execPath,spawnArgs:[fixture,'zero-turn'],
+  expectedVersion:'codex-cli 0.166.0-alpha.5.1',...options,
+});
+const noRollout = (error:unknown) => error instanceof RuntimeServerError &&
+  error.method==='thread/resume' && error.code===-32600;
+
+test('zero-turn first dispatch consumes start policy proof exactly once',async t=>{
+  const adapter=zeroTurnAdapter({verifyBinding:async()=>true});t.after(()=>adapter.close());await adapter.open();
+  const binding=await adapter.create(fullSpec);
+  // The runner reconstructs its binding from PostgreSQL, without create-only observations.
+  const {observedModel: _model,observedProvider: _provider,...persisted}=binding;
+  await adapter.registerBinding(persisted);
+  assert.deepEqual(await adapter.resume(persisted,fullSpec),persisted);
+  assert.equal((await adapter.inspect(binding) as {observedResumes:number}).observedResumes,0);
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+  await adapter.startTurn(binding,'first business Turn','zero-business');
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+});
+
+for(const ordinary of [false,true])test(`zero-turn ${ordinary?'ordinary message':'direct Turn'} invalidates first-dispatch proof`,async t=>{
+  const adapter=zeroTurnAdapter();t.after(()=>adapter.close());await adapter.open();
+  const binding=await adapter.create(fullSpec);
+  if(ordinary){
+    assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+    await adapter.startConversationTurn(binding,'first message','zero-message');
+  }else await adapter.startTurn(binding,'first direct Turn','zero-direct');
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+});
+
+for(const change of ['actor','scope','binding','config','tools','invalid-tools','provider-failure'] as const)
+test(`zero-turn does not bypass ${change} checks or retain failed admission`,async t=>{
+  let changed=false;
+  const tool={type:'function' as const,name:'browser_snapshot',description:'Read browser',inputSchema:{type:'object'}};
+  const adapter=zeroTurnAdapter({threadConfig:async()=>({reasoning:changed&&change==='config'?'high':'medium'}),
+    dynamicTools:async()=>{
+      if(changed&&change==='provider-failure')throw new Error('unavailable');
+      return changed&&change==='invalid-tools'?[{...tool,description:''}]:
+        [{...tool,inputSchema:{type:changed&&change==='tools'?'string':'object'}}];
+    },callDynamicTool:async()=>({contentItems:[],success:true})});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);changed=true;
+  const target=change==='actor'?{...fullSpec,actorId:'foreign'}:
+    change==='scope'?{...fullSpec,authorizationScope:'foreign'}:fullSpec;
+  await assert.rejects(()=>adapter.resume(change==='binding'?{...binding,nativeSessionId:'foreign'}:binding,target),
+    change==='config'||change==='tools'?noRollout:RuntimeProtocolError);
+  changed=false;
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+});
+
+test('zero-turn unknown Turn and restarted adapter always use strict native recovery',async t=>{
+  const adapter=zeroTurnAdapter({spawnArgs:[fixture,'zero-turn-timeout'],requestTimeoutMs:100});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  await assert.rejects(()=>adapter.startTurn(binding,'unknown','zero-unknown'),RuntimeUnknownError);
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+  await adapter.close();
+  const restored=zeroTurnAdapter({verifyBinding:async()=>true});t.after(()=>restored.close());
+  await restored.open();await restored.registerBinding(binding);
+  await assert.rejects(()=>restored.resume(binding,fullSpec),noRollout);
+});
+
+
+test('zero-turn disconnect clears proof even when the same adapter reopens',async t=>{
+  let exited!:()=>void;
+  const exit=new Promise<void>(resolveExit=>{exited=resolveExit;});
+  const adapter=zeroTurnAdapter({spawnArgs:[fixture,'zero-turn-disconnect'],onExited:()=>exited()});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  await assert.rejects(()=>adapter.setThreadName(binding,'disconnect'),RuntimeUnknownError);
+  await exit;await adapter.open();
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+});
+
+test('zero-turn provider await cannot reuse proof after a concurrent Turn',async t=>{
+  let release!:()=>void,entered!:()=>void;
+  const gate=new Promise<void>(resolveGate=>{release=resolveGate;});
+  const waiting=new Promise<void>(resolveWaiting=>{entered=resolveWaiting;});
+  let creating=true;
+  const adapter=zeroTurnAdapter({threadConfig:async()=>{
+    if(!creating){entered();await gate;}return {reasoning:'medium'};
+  }});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);creating=false;
+  const resuming=adapter.resume(binding,fullSpec);
+  await waiting;await adapter.startTurn(binding,'concurrent Turn','concurrent-op');release();
+  await assert.rejects(()=>resuming,noRollout);
+});
+
+
+for(const ordinary of [false,true])test(`zero-turn notLoaded read and missing rollout preserve ${ordinary?'message':'Runner'} first dispatch`,async t=>{
+  const adapter=zeroTurnAdapter({spawnArgs:[fixture,'zero-turn-not-loaded']});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  const read=await adapter.inspect(binding) as {thread:{status:{type:string}}};
+  assert.equal(read.thread.status.type,'notLoaded');
+  await assert.rejects(()=>adapter.listTurns(binding),error=>error instanceof RuntimeServerError&&error.code===-32600);
+  if(ordinary){
+    assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+    await adapter.startConversationTurn(binding,'first ordinary message','not-loaded-message');
+  }else{
+    await adapter.resume(binding,fullSpec);
+    await adapter.startTurn(binding,'first Runner Turn','not-loaded-run');
+  }
+  const observed=await adapter.inspect(binding) as {observedTurnStarts:number;observedResumes:number};
+  assert.equal(observed.observedTurnStarts,1);assert.equal(observed.observedResumes,0);
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
+});
+
+
+test('zero-turn native active notification without Turn ID invalidates start proof',async t=>{
+  const adapter=zeroTurnAdapter({spawnArgs:[fixture,'zero-turn-active-event']});
+  t.after(()=>adapter.close());await adapter.open();const binding=await adapter.create(fullSpec);
+  await adapter.setThreadName(binding,'observe active event');
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
 });

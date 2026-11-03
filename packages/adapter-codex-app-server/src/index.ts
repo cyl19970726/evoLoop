@@ -228,6 +228,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   private declaredTools = new Map<string, Set<string>>();
   private profileTransitionThreads = new Set<string>();
   private conversationQualifications = new Map<string,{fingerprint:string;observedAt:number;model:string|null;status:string}>();
+  /** Ephemeral thread/start proof; never reconstructed from a persisted binding or history. */
+  private freshThreads = new Map<string,{connectionId:string;binding:RuntimeBinding;config:string;tools:string;claimed:boolean}>();
   private fullTurnAttempts = new Map<string,Set<string>>();
   private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
@@ -453,16 +455,33 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   private request(method: string, params: unknown, timeoutMs = this.timeout): Promise<unknown> {
     if (!this.child) return Promise.reject(new RuntimeProtocolError("App Server not open"));
+    const threadId=object(params)?.threadId;
+    // Invalidate before sending, including rejected or unknown native operations.
+    if(nonempty(threadId)&&['turn/start','turn/interrupt','thread/resume','thread/archive'].includes(method))
+      this.freshThreads.delete(threadId);
     const id = this.nextId++;
     return new Promise((resolveResult, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, "response timeout"));
       }, timeoutMs);
-      this.pending.set(id, { method, resolve: resolveResult, reject, timer });
+      this.pending.set(id, { method, resolve: value => {
+        const result=object(value),thread=object(result?.thread);
+        const saved=nonempty(threadId)?this.bindings.get(threadId):undefined;
+        // notLoaded and missing rollout are legal zero-Turn read observations.
+        if(nonempty(threadId)&&(
+          (thread&&saved&&(thread.id!==threadId||thread.sessionId!==saved.nativeSessionId||thread.cwd!==saved.cwd))||
+          (Array.isArray(thread?.turns)&&thread.turns.length>0)||
+          ['active','systemError','unknown'].includes(String(object(thread?.status)?.type))||
+          (method==='thread/turns/list'&&Array.isArray(result?.data)&&result.data.length>0)))
+          this.freshThreads.delete(threadId);
+        resolveResult(value);
+      }, reject, timer });
       try { this.send({ id, method, params }); }
       catch (error) {
         clearTimeout(timer); this.pending.delete(id);
+        this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, error instanceof Error ? error.message : "send failed"));
       }
     });
@@ -483,6 +502,10 @@ export class CodexAppServerAdapter implements RuntimePort {
       const threadId = params?.threadId;
       if (!nonempty(threadId) || !this.bindings.has(threadId)) return;
       const turn = object(params?.turn);
+      const status=object(params?.status)?.type??params?.status;
+      if(nonempty(params?.turnId)||nonempty(turn?.id)||
+        message.method==='thread/status/changed'&&['active','systemError','unknown'].includes(String(status)))
+        this.freshThreads.delete(threadId);
       const binding = this.bindings.get(threadId)!;
       const event: RuntimeEvent = { method: message.method, projectId: binding.projectId, sessionId: binding.sessionId,
         threadId, params: message.params, ...(nonempty(params?.turnId) ? { turnId: params.turnId } : nonempty(turn?.id) ? { turnId: turn.id } : {}) };
@@ -683,6 +706,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.modelListCache=null;
     this.modelListPending=null;
     this.conversationQualifications.clear();
+    this.freshThreads.clear();
     for(const handle of [...this.pendingNativeInputs.keys()])this.closeNativeInput(handle,'disconnected');
     this.connectionId=null;
     const child = this.child; this.child = null;
@@ -725,9 +749,12 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(!fullProfile(spec))throw new RuntimeProtocolError('new Session requires danger-full-access and approval never');
     if (this.pendingCreate) throw new RuntimeProtocolError("another thread creation is pending");
     this.pendingCreate = { ...spec };
+    const connectionId=this.connectionId;
     try {
       const config = await this.options.threadConfig?.(spec);
       const dynamicTools = this.options.dynamicTools && this.options.callDynamicTool ? await this.options.dynamicTools(spec) : undefined;
+      // Freeze provider-owned objects before awaiting the native acknowledgement.
+      const launchConfig=policyJson(config??null),launchTools=policyJson(dynamicTools??[]);
       const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}), ...(dynamicTools?.length ? {dynamicTools} : {}) }));
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");
@@ -744,53 +771,77 @@ export class CodexAppServerAdapter implements RuntimePort {
             {executionProfileRevisionId:spec.executionProfileRevisionId}:{})}} : {}) };
       this.rememberBinding(binding);
       if (dynamicTools?.length) this.declaredTools.set(binding.nativeThreadId,new Set(dynamicTools.map(tool=>tool.name)));
+      if(connectionId&&connectionId===this.connectionId&&this.ready&&
+        (!Array.isArray(thread.turns)||thread.turns.length===0))
+        this.freshThreads.set(binding.nativeThreadId,{connectionId,binding,
+          config:launchConfig,tools:launchTools,claimed:false});
       return binding;
     } finally { this.pendingCreate = null; }
   }
 
   async resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
-    this.owned(binding);
-    this.conversationQualifications.delete(binding.nativeThreadId);
-    if (!spec || !nonempty(spec.actorId) || spec.sessionId !== binding.sessionId || spec.roleId !== binding.roleId ||
-      spec.projectId !== binding.projectId || spec.authorizationScope !== binding.authorizationScope ||
-      spec.cwd !== binding.cwd || resolve(spec.cwd) !== spec.cwd ||
-      !fullProfile(spec) ||
-      !binding.resumeProfile || binding.resumeProfile.actorId !== spec.actorId ||
-      binding.resumeProfile.model !== (spec.model??null) || binding.resumeProfile.sandbox !== spec.sandbox ||
-      binding.resumeProfile.approvalPolicy !== spec.approvalPolicy ||
-      (binding.resumeProfile.executionProfileRevisionId??null)!==(spec.executionProfileRevisionId??null))
-      throw new RuntimeProtocolError("resume profile does not match registered binding");
-    // The native rollout may retain an old declaration. Rebuild the host allowlist
-    // only from the current trusted business scope, and keep it empty until the
-    // exact owned resume is acknowledged. A failed provider or native RPC cannot
-    // leave an earlier allowlist open.
-    this.declaredTools.delete(binding.nativeThreadId);
-    const config = await this.options.threadConfig?.(spec);
-    let currentTools:DynamicToolSpec[]|undefined;
-    if (this.options.dynamicTools && this.options.callDynamicTool) {
-      try { currentTools=await this.options.dynamicTools(spec); }
-      catch { throw new RuntimeProtocolError("current dynamic tool declaration is unavailable"); }
-    }
-    const currentNames = new Set<string>();
-    if (currentTools !== undefined) {
-      if (!Array.isArray(currentTools)) throw new RuntimeProtocolError("invalid current dynamic tool declaration");
-      for (const tool of currentTools) {
-        const declaration=object(tool);
-        if (declaration?.type !== "function" || !nonempty(declaration.name) ||
-          !nonempty(declaration.description) || !object(declaration.inputSchema) ||
-          currentNames.has(declaration.name))
-          throw new RuntimeProtocolError("invalid current dynamic tool declaration");
-        currentNames.add(declaration.name);
+    return (await this.resumeBinding(binding,spec)).binding;
+  }
+
+  private async resumeBinding(binding:RuntimeBinding,spec:RuntimeSessionSpec):Promise<{binding:RuntimeBinding;usedStartProof:boolean}> {
+    const fresh=this.freshThreads.get(binding.nativeThreadId);
+    const first=fresh&&!fresh.claimed;
+    if(fresh)fresh.claimed=true; // Reserve once, before any provider await or validation failure.
+    try {
+      this.owned(binding);
+      this.conversationQualifications.delete(binding.nativeThreadId);
+      if (!spec || !nonempty(spec.actorId) || spec.sessionId !== binding.sessionId || spec.roleId !== binding.roleId ||
+        spec.projectId !== binding.projectId || spec.authorizationScope !== binding.authorizationScope ||
+        spec.cwd !== binding.cwd || resolve(spec.cwd) !== spec.cwd ||
+        !fullProfile(spec) ||
+        !binding.resumeProfile || binding.resumeProfile.actorId !== spec.actorId ||
+        binding.resumeProfile.model !== (spec.model??null) || binding.resumeProfile.sandbox !== spec.sandbox ||
+        binding.resumeProfile.approvalPolicy !== spec.approvalPolicy ||
+        (binding.resumeProfile.executionProfileRevisionId??null)!==(spec.executionProfileRevisionId??null))
+        throw new RuntimeProtocolError("resume profile does not match registered binding");
+      // The native rollout may retain an old declaration. Rebuild the host allowlist
+      // only from the current trusted business scope, and keep it empty until the
+      // exact owned resume (or matching full thread/start proof) is confirmed.
+      // A failed provider or native RPC cannot
+      // leave an earlier allowlist open.
+      this.declaredTools.delete(binding.nativeThreadId);
+      const config = await this.options.threadConfig?.(spec);
+      let currentTools:DynamicToolSpec[]|undefined;
+      if (this.options.dynamicTools && this.options.callDynamicTool) {
+        try { currentTools=await this.options.dynamicTools(spec); }
+        catch { throw new RuntimeProtocolError("current dynamic tool declaration is unavailable"); }
       }
+      const currentNames = new Set<string>();
+      if (currentTools !== undefined) {
+        if (!Array.isArray(currentTools)) throw new RuntimeProtocolError("invalid current dynamic tool declaration");
+        for (const tool of currentTools) {
+          const declaration=object(tool);
+          if (declaration?.type !== "function" || !nonempty(declaration.name) ||
+            !nonempty(declaration.description) || !object(declaration.inputSchema) ||
+            currentNames.has(declaration.name))
+            throw new RuntimeProtocolError("invalid current dynamic tool declaration");
+          currentNames.add(declaration.name);
+        }
+      }
+      this.owned(binding); // Providers can yield across disconnect or binding changes.
+      if(first&&this.freshThreads.get(binding.nativeThreadId)===fresh&&
+        fresh.connectionId===this.connectionId&&sameBinding(fresh.binding,binding)&&
+        fresh.config===policyJson(config??null)&&fresh.tools===policyJson(currentTools??[])){
+        this.freshThreads.delete(binding.nativeThreadId);
+        if(currentNames.size)this.declaredTools.set(binding.nativeThreadId,currentNames);
+        return {binding,usedStartProof:true};
+      }
+      const result = object(await this.request("thread/resume", { threadId: binding.nativeThreadId,
+        excludeTurns: true, cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}),
+        sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
+      const thread = object(result?.thread);
+      if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("resumed thread does not match registered binding");
+      this.assertRevisedProfileReply(result,binding,spec);
+      if (currentNames.size) this.declaredTools.set(binding.nativeThreadId,currentNames);
+      return {binding,usedStartProof:false};
+    } finally {
+      if(this.freshThreads.get(binding.nativeThreadId)===fresh)this.freshThreads.delete(binding.nativeThreadId);
     }
-    const result = object(await this.request("thread/resume", { threadId: binding.nativeThreadId,
-      excludeTurns: true, cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}),
-      sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, ...(config ? { config } : {}) }));
-    const thread = object(result?.thread);
-    if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("resumed thread does not match registered binding");
-    this.assertRevisedProfileReply(result,binding,spec);
-    if (currentNames.size) this.declaredTools.set(binding.nativeThreadId,currentNames);
-    return binding;
   }
 
   private revisedBinding(current: RuntimeBinding, target: RuntimeSessionSpec,
@@ -880,7 +931,8 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('native idle check does not match owned Session');
     const status=object(thread.status)?.type;
     return (status==='idle'||allowNotLoaded&&status==='notLoaded')&&
-      (expectedModel===undefined||thread.model===expectedModel);
+      (expectedModel===undefined||thread.model===expectedModel||
+        allowNotLoaded&&status==='notLoaded'&&thread.model==null);
   }
 
   /** Admission evidence for an owned full-profile Thread, not proof of per-Turn native policy. */
@@ -946,7 +998,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.conversationQualifications.delete(binding.nativeThreadId);
     attempts.add(operationId);this.fullTurnAttempts.set(binding.nativeThreadId,attempts);
     const profile=binding.resumeProfile;
-    await this.resume(binding,{
+    const resumed=await this.resumeBinding(binding,{
       actorId:profile.actorId,sessionId:binding.sessionId,roleId:binding.roleId,
       projectId:binding.projectId,cwd:binding.cwd,authorizationScope:binding.authorizationScope,
       ...(profile.model?{model:profile.model}:{}),sandbox:FULL_SANDBOX,approvalPolicy:'never',
@@ -960,7 +1012,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       if(!afterResume.available||afterResume.fingerprint!==prior.fingerprint)
         throw new RuntimeUnknownError('thread/resume',null,'owned failed Thread changed after exact full resume');
       this.conversationQualifications.delete(binding.nativeThreadId);
-    }else if(!await this.nativeThreadIdle(binding,false,prior.model??undefined))
+    }else if(!await this.nativeThreadIdle(binding,resumed.usedStartProof,prior.model??undefined))
       throw new RuntimeUnknownError('thread/resume',null,'owned Thread did not become idle after exact full resume');
     const started=object(await this.request('turn/start',{
       threadId:binding.nativeThreadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
