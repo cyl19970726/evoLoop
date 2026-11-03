@@ -201,6 +201,7 @@ export class SessionMessageService {
       if(!/^[a-f0-9]{64}$/.test(readOnlyPolicyFingerprint))throw new DomainError('POLICY_PROOF_MISSING','Session execution admission fingerprint is required');
       const {item,session,grant}=await this.admission(projectId,messageId,tx);
       const store=tx.sessionMessages!;
+      await store.assertCurrentLeaderTodo(messageId);
       await store.assertSessionVacant(session.id);
       await tx.recovery?.assertStartupAllowed(session.id,'message',messageId);
       const now=this.deps.clock.now();
