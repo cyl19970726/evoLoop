@@ -194,7 +194,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     if(!sessionKey||! /^(owned|external):[0-9a-fA-F-]{36}$/.test(sessionKey))
       throw new UsageError('Use an exact owned:UUID or external:UUID Session key.');
     const [kind,rawId]=sessionKey.split(':');
-    const target=kind==='owned'?{kind,sessionId:uuid(rawId,'Session')}:{kind:'external',linkId:uuid(rawId,'HostLink')};
+    if(kind==='owned')uuid(rawId,'Session');else uuid(rawId,'HostLink');
     if(mode==='show'){
       check(args,4,['project']);
       const snapshot=record(await client.get(`/api/projects/${projectId}/session-work/${encodeURIComponent(sessionKey)}`));
@@ -207,6 +207,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const snapshot=record(await client.get(`/api/projects/${projectId}/session-work/${encodeURIComponent(sessionKey)}`));
       const identity=record(record(snapshot?.session)?.identity);
       if(!identity||typeof identity.version!=='number')throw new UsageError('Persisted Session identity is unavailable.');
+      const target=record(identity.target);
+      if(!target || target.kind!==kind || (kind==='owned' && typeof target.sessionId!=='string') ||
+        (kind==='external' && typeof target.linkId!=='string'))
+        throw new UsageError('Persisted Session identity target is unavailable.');
       const operationId=option(args,'operation')?uuid(option(args,'operation'),'Operation'):randomUUID();
       const command=commandSchema.parse({type:'session.identity.set',projectId,operationId,target,
         expectedVersion:identity.version,color,mark,reason});

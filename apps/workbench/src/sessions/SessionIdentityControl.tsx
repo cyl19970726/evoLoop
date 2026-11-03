@@ -19,7 +19,7 @@ export function SessionIdentityControl({ context, session, onApplied }: {
       { name: "mark", label: "图形标记", kind: "select", value: visual.mark,
         options: identityMarks.map((mark, index) => ({ value: mark, label: markLabels[index]! })) },
       { name: "reason", label: "变更依据", kind: "textarea" },
-    ]} build={value => ({ type: "session.identity.set", target: session.target,
+    ]} build={value => ({ type: "session.identity.set", target: session.identity!.target,
       expectedVersion: session.identity!.version, color: value.color, mark: value.mark, reason: value.reason })}
       onApplied={onApplied} /> : <p role="status">此 Session 尚无已保存的身份标记；请先完成数据库迁移并重新读取。</p>}
   </section>;

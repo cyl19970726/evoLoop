@@ -112,6 +112,8 @@ test("directory keeps separate same-Role chats, deduplicates aliases, includes u
     const aliased = await reader.snapshot(`external:${a}`);
     assert.equal(aliased?.session.title, "Alias title");
     assert.deepEqual(aliased?.session.profile?.target, { kind: "external", linkId: aAlias });
+    assert.deepEqual(aliased?.session.identity?.target, { kind: "external", linkId: a },
+      "display metadata may come from an alias, while visual identity edits use the canonical target");
     const first = await reader.directory({ limit: 1, membership: "current" });
     assert.equal(first.items.length, 1); assert.ok(first.nextCursor);
     assert.equal(first.totals.current, 3);

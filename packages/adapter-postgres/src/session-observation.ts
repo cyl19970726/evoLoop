@@ -202,7 +202,7 @@ export class PgSessionObservation implements SessionObservationReader {
     const canOpen = !!row.can_open && !!row.external_ref && !row.historical;
     return { key: row.key, target, aliases: row.aliases.map((id: string) => row.kind === "owned" ? { kind: "owned", sessionId: id } : { kind: "external", linkId: id }),
       title: profile?.displayName ?? clip(row.title, 240), profile, identity: selectedIdentity(row), kind: row.kind, roles,
-      membership: row.membership, membershipReason: profile ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
+      membership: row.membership, membershipReason: profile?.membership ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
       currentTask: current ? this.task(current, current.relation) : null,
       latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id) } : null,
