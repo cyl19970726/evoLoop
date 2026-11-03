@@ -12,7 +12,7 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
 import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
-import { getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
+import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
 import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
@@ -467,6 +467,8 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
   store: {
     listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
     getByMessageId: (projectId, messageId) => getLeaderNoticeByMessageId(pool, projectId, messageId),
+    disposeStalePendingTodo: (projectId, noticeId) => disposeStalePendingTodo(pool, projectId, noticeId),
+    disposeStaleTodo: (projectId, noticeId, messageId) => disposeStaleTodoMessage(pool, projectId, noticeId, messageId),
     hasInFlightOnOtherSession: (projectId, sessionId) => hasInFlightLeaderNoticeMessage(pool, projectId, sessionId),
     notePendingReason: async (projectId, noticeId, reason) => {
       await setLeaderNoticePendingReason(pool, projectId, noticeId, reason);
@@ -509,14 +511,21 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
   projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   pollIntervalMs: integrations.sessionMessages?.pollIntervalMs ?? 2000,
+  beforePreflight: async message => {
+    const admission=await leaderResultNoticePump.messageAdmission(message);
+    if(!admission.allowed&&admission.reason)
+      await messageService.noteBlocked(message.projectId,message.id,admission.reason);
+    return admission.allowed;
+  },
   canStart: async message => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
     if (!current?.enabled) {
       await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用，消息保留待处理。");
       return false;
     }
-    if(!await leaderResultNoticePump.canStartMessage(message)){
-      await messageService.noteBlocked(message.projectId,message.id,"Leader result notice target is no longer the unique authorized managed Leader");
+    const noticeAdmission=await leaderResultNoticePump.messageAdmission(message);
+    if(!noticeAdmission.allowed){
+      if(noticeAdmission.reason)await messageService.noteBlocked(message.projectId,message.id,noticeAdmission.reason);
       return false;
     }
     return businessBeforeMessage(message);

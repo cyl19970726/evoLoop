@@ -248,6 +248,8 @@ export async function buildServer(options: {
       // Closing is a reviewer request; the runner archives under the original Session grant.
       if (command.type === "runtime.session.executionProfile.revise" && command.reasoningEffort &&
         !await options.service.getOperation(principal,command.projectId,command.operationId)) {
+        if(!options.runtime)throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
+        await options.runtime.preflightExecutionProfileRevision(principal,command);
         const current=await catalog();
         if(current.status!=="available")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","原生模型目录不可用，未保存新配置。");
         if(!current.options?.find(option=>option.model===command.model)?.supportedReasoningEfforts.includes(command.reasoningEffort??""))

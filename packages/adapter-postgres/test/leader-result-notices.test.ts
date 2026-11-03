@@ -386,7 +386,7 @@ test("signed submission is quiet until blocked; a later failed sealing attempt c
   assert.equal(repeated[0]!.sourceRef, `submission:${submissionId}@v5`);
 });
 
-test("public notice pages are recent-first and retain stale historical sources", async () => {
+test("public notice pages retain stale history while pending scan exposes it for disposition", async () => {
   const item = await task("todo");
   const first = (await listLeaderNotices(pool, projectId, { taskId: item.taskId, limit: 10 })).items[0]!;
   const nextRevision = randomUUID();
@@ -400,7 +400,7 @@ test("public notice pages are recent-first and retain stale historical sources",
   assert.equal(page.items[0]!.id, first.id);
   assert.equal(page.items[0]!.stale, true);
   assert.equal((await listPendingLeaderNotices(pool, projectId, {limit: 100})).items
-    .some(x => x.id === first.id), false);
+    .some(x => x.id === first.id), true);
   const latest = await listLeaderNotices(pool, projectId, { limit: 3 });
   assert.deepEqual(latest.items.map(x => [x.occurredAt, x.id]),
     [...latest.items.map(x => [x.occurredAt, x.id])].sort((a, b) =>

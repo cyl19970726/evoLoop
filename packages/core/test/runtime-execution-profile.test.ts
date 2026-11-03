@@ -93,6 +93,21 @@ test('binding registration cannot inherit a different business sandbox after pro
     resumeProfile:{...approved.resumeProfile!,sandbox:'read-only'}}),/registered native profile differs/);
 });
 
+test('binding registration checks the active reasoning effort as well as the model and revision',async()=>{
+  const active={...session,executionProfile:{...session.executionProfile!,
+    revision:{...session.executionProfile!.revision,reasoningEffort:'max'},
+    activeRevisionId:revisionId,activeReasoningEffort:'max',activationState:'active' as const}};
+  const service=new RuntimeWorkflowService({uow:{read:async(_project:string,action:(reader:unknown)=>Promise<unknown>)=>
+    action({getRuntimeSession:async()=>active})} as UnitOfWork,
+    clock:{now:()=>now},ids:{next:randomUUID}});
+  const approved:RuntimeBinding={...binding,resumeProfile:{...binding.resumeProfile!,model:'old-model',
+    reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never',
+    executionProfileRevisionId:revisionId}};
+  await service.verifyBinding(projectId,approved);
+  await assert.rejects(()=>service.verifyBinding(projectId,{...approved,
+    resumeProfile:{...approved.resumeProfile!,reasoningEffort:'high'}}),/registered native profile differs/);
+});
+
 test('a closed accepted Task must reopen before its source Run terminal result changes',async()=>{
   const runId=randomUUID(),taskId=randomUUID();
   const run={projectId,id:runId,taskId,nativeTurnId:'owned-turn',version:4,state:'completed'} as RuntimeRunRecord;

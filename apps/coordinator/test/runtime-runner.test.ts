@@ -9,7 +9,7 @@ import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop
 import type { WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { UnitOfWork } from "@evoloop/contracts/ports";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
-import { RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { SessionTimelineService } from "../src/session-timeline/index.js";
@@ -711,7 +711,8 @@ test("lost execution profile resume needs original Thread readback and a separat
   }finally{await runner.stop();}
 });
 
-test("explicit native profile rejection fails the fixed requested Run without dispatch or replay", async () => {
+for(const rejection of ["native rejection","zero-Turn guard","unclassified protocol error"] as const)
+test(`profile activation ${rejection} never dispatches or replays the fixed requested Run`, async () => {
   const oldRevisionId=randomUUID(),revisionId=randomUUID(),profileOperationId=randomUUID();
   const oldRevision={projectId,sessionId:session.id,revisionId:oldRevisionId,version:1,model:"old-model",
     sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,cwd:session.cwd,
@@ -730,7 +731,10 @@ test("explicit native profile rejection fails the fixed requested Run without di
     executionProfile:fixed};
   class RejectedProfileRuntime extends FakeRuntime {
     resumes=0;readbacks=0;
-    async activateExecutionProfile(){this.resumes++;throw new RuntimeServerError("thread/resume",7,-32602,"profile denied");}
+    async activateExecutionProfile(){this.resumes++;
+      if(rejection==="zero-Turn guard")throw new RuntimeProtocolError("EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED: zero-turn Thread has no rollout");
+      if(rejection==="unclassified protocol error")throw new RuntimeProtocolError("unexpected reply after activation");
+      throw new RuntimeServerError("thread/resume",7,-32602,"profile denied");}
     async inspectExecutionProfileActivation(){this.readbacks++;return null;}
   }
   const runtime=new RejectedProfileRuntime();let permits=0,dispatches=0,rejections=0;
@@ -740,7 +744,7 @@ test("explicit native profile rejection fails the fixed requested Run without di
     getExecutionProfileRevision:async()=>oldRevision,
     beginExecutionProfileActivation:async()=>{permits++;return true;},
     settleExecutionProfileActivation:async (_p:string,_s:string,_r:string,state:string)=>{
-      revisedSession.executionProfile!.activationState=state as "rejected";
+      revisedSession.executionProfile!.activationState=state as "rejected"|"unknown";
     },
     rejectDispatch:async (_p:string,id:string)=>{assert.equal(id,requested.id);rejections++;requested.state="failed";},
     beginDispatch:async()=>{dispatches++;},
@@ -751,11 +755,13 @@ test("explicit native profile rejection fails the fixed requested Run without di
   try{
     await runner.start();
     assert.equal(permits,1);assert.equal(runtime.resumes,1);assert.equal(runtime.readbacks,0);
-    assert.equal(runtime.starts,0);assert.equal(dispatches,0);assert.equal(rejections,1);
-    assert.equal(requested.state,"failed");assert.deepEqual(requested.executionProfile,fixed);
+    const uncertain=rejection==="unclassified protocol error";
+    assert.equal(runtime.starts,0);assert.equal(dispatches,0);assert.equal(rejections,uncertain?0:1);
+    assert.equal(revisedSession.executionProfile!.activationState,uncertain?"unknown":"rejected");
+    assert.equal(requested.state,uncertain?"requested":"failed");assert.deepEqual(requested.executionProfile,fixed);
     assert.equal(revisedSession.executionProfile?.activeRevisionId,oldRevisionId);
     await runner.pump();
-    assert.equal(runtime.resumes,1);assert.equal(runtime.starts,0);assert.equal(rejections,1);
+    assert.equal(runtime.resumes,1);assert.equal(runtime.starts,0);assert.equal(rejections,uncertain?0:1);
   }finally{await runner.stop();}
 });
 

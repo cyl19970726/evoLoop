@@ -36,8 +36,12 @@ export class RuntimeWorkflowService {
       }
       const confirmed=saved.executionProfile?.activeRevisionId;
       const activeModel=saved.executionProfile?.activationState==='active'?saved.model:saved.executionProfile?.activeModel;
+      const activeEffort=saved.executionProfile?.activationState==='active'?
+        saved.executionProfile.revision.reasoningEffort:saved.executionProfile?.activeReasoningEffort;
       if(saved.executionProfile && (binding.resumeProfile?.actorId!==saved.actorId||
-        binding.resumeProfile.model!==activeModel||binding.resumeProfile.sandbox!==saved.sandbox||
+        binding.resumeProfile.model!==activeModel||
+        (binding.resumeProfile.reasoningEffort??null)!==(activeEffort??null)||
+        binding.resumeProfile.sandbox!==saved.sandbox||
         binding.resumeProfile.approvalPolicy!==saved.approvalPolicy))
         throw new DomainError("FOREIGN_BINDING","registered native profile differs from the owned Session");
       if (saved.executionProfile && (!confirmed ||
