@@ -147,6 +147,31 @@ test("internal Task tab updates the URL so a later same-Task delivery link chang
   assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
 });
 
+test("Task tab navigation retains a verified Session return and its filter through a refresh", () => {
+  const taskId="33333333-3333-4333-8333-333333333333";
+  const returnRoute=`#/p/${projectId}/sessions?session=owned%3A44444444-4444-4444-8444-444444444444&tab=queue&filter=active`;
+  const location={hash:`${taskSectionHref(projectId,taskId)}?${new URLSearchParams({return:returnRoute,actor:"reader",returnTitle:"临时开发"})}`};
+  assert.equal(navigateTaskTab(projectId,taskId,"runtime",location,"reader"),true);
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime");
+  const query=new URLSearchParams(location.hash.split("?")[1]);
+  assert.equal(query.get("return"),returnRoute);
+  assert.equal(query.get("actor"),"reader");
+  assert.equal(query.get("returnTitle"),"临时开发");
+  assert.equal(taskSectionFromHash(location.hash,projectId,taskId),"runtime","reloading the URL restores the tab");
+  assert.equal(navigateTaskTab(projectId,taskId,"delivery",location,"reader"),true);
+  assert.equal(new URLSearchParams(location.hash.split("?")[1]).get("return"),returnRoute);
+  const wrongActor={hash:`${taskSectionHref(projectId,taskId)}?${new URLSearchParams({return:returnRoute,actor:"other",returnTitle:"冒名 Session"})}`};
+  navigateTaskTab(projectId,taskId,"runtime",wrongActor,"reader");
+  assert.equal(wrongActor.hash,taskSectionHref(projectId,taskId,{tab:"runtime"}));
+  const ordinary={hash:taskSectionHref(projectId,taskId)};
+  navigateTaskTab(projectId,taskId,"runtime",ordinary,"reader");
+  assert.equal(ordinary.hash,taskSectionHref(projectId,taskId,{tab:"runtime"}));
+  const workList=`#/p/${projectId}/work?filter=mine&sort=recent`;
+  const fromWork={hash:`${taskSectionHref(projectId,taskId)}?${new URLSearchParams({list:workList})}`};
+  navigateTaskTab(projectId,taskId,"history",fromWork,"reader");
+  assert.equal(new URLSearchParams(fromWork.hash.split("?")[1]).get("list"),workList);
+});
+
 test("story trigger uses formal source kind and leaves complete reasons to expanded evidence", () => {
   const source=(kind:string)=>({kind} as OrchestrationSourceFact);
   assert.match(sourceTriggerLabel(source("worker.outcome")),/工作结果/);
