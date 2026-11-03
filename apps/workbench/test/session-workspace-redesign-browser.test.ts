@@ -75,6 +75,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     activationOperationId: null, attemptedAt: null, activationEvidence: "fixture" };
   let currentProfile = executionProfile;
   let currentRuntimeVersion = 1;
+  let holdRuntimeRead = false;
+  let releaseRuntimeRead: (() => void) | null = null;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
@@ -83,17 +85,21 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "Sessions 设计测试", createdAt: stamp };
       else if (url.pathname === `${root}/impacts`) value = [];
-      else if (url.pathname === `${root}/runtime/sessions`) value = [{ projectId, id: sessionId,
-        version: currentRuntimeVersion, state: "ready", sandbox: "danger-full-access", approvalPolicy: "never",
-        model: currentProfile.revision.model, executionProfile: currentProfile }];
+      else if (url.pathname === `${root}/runtime/sessions`) {
+        if (holdRuntimeRead) await new Promise<void>(resolve => { releaseRuntimeRead = resolve; });
+        value = [{ projectId, id: sessionId,
+          version: currentRuntimeVersion, state: "ready", sandbox: "danger-full-access", approvalPolicy: "never",
+          model: currentProfile.revision.model, executionProfile: currentProfile }];
+      }
       else if (url.pathname === `${root}/runtime/models`) value = { status: "available",
         models: ["gpt-6-sol", "gpt-6-astra"], options: [
           { model: "gpt-6-sol", supportedReasoningEfforts: ["high"], defaultReasoningEffort: "high" },
           { model: "gpt-6-astra", supportedReasoningEfforts: ["high", "max"], defaultReasoningEffort: "high" }],
         error: null, observedAtUtc: stamp };
-      else if (url.pathname === `${root}/runtime/sessions/${sessionId}/recovery`) value = {
-        sessionId, executionProfile: currentProfile, gate: null, decisions: [], queues: [], nextAction: "normal_work",
-        partial: false, observedAtUtc: stamp };
+      else if (url.pathname === `${root}/runtime/sessions/${sessionId}/recovery`) {
+        value = { sessionId, executionProfile: currentProfile, gate: null, decisions: [], queues: [], nextAction: "normal_work",
+          partial: false, observedAtUtc: stamp };
+      }
       else if (url.pathname === `${root}/work-management/index`) value = {
         items: [], nextCursor: null, total: 0, counts: {}, changeSequence: 1, observedAt: stamp, partial: false,
       };
@@ -271,11 +277,21 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const secondRevision = posted.filter(command => command.type === "runtime.session.executionProfile.revise")[1];
   assert.deepEqual([secondRevision?.expectedVersion, secondRevision?.expectedExecutionProfileRevisionId],
     [3, "95000015-0000-4000-8000-000000000015"], "the next write uses the CLI revision as its CAS base");
-  // Native activation can change without another profile revision.
+  // Native activation can change without another profile revision. Hold the
+  // runtime response to prove recovery immediately blocks editing during lag.
+  // Visibility reread uses the same parent read path as background polling
+  // without resetting the control through the top refresh button.
+  holdRuntimeRead = true;
   currentProfile = { ...currentProfile, activationState: "unknown" };
-  await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await modelControl.getByText("激活结果未知，需核对", { exact: false }).waitFor();
-  assert.equal(await modelControl.getByRole("button", { name: "调整模型与强度" }).isDisabled(), true);
+  try {
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await modelControl.getByText("激活结果未知，需核对", { exact: false }).waitFor({ timeout: 12000 });
+    assert.equal(await modelControl.getByRole("button", { name: "调整模型与强度" }).isDisabled(), true);
+    assert.ok(releaseRuntimeRead, "runtime reread is still waiting while recovery already blocks editing");
+  } finally {
+    holdRuntimeRead = false;
+    releaseRuntimeRead?.();
+  }
   await page.setViewportSize({ width: 390, height: 840 });
   await page.waitForTimeout(100);
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);

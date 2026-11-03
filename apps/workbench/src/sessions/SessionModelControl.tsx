@@ -39,21 +39,22 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
   },[context.token,context.projectId,sessionId,reload,recoveryRevisionId,recoveryActivationState,recoveryActiveRevisionId]);
   const profile=runtime?.executionProfile;
   const currentRevision=profile?.revision;
+  const viewMismatch=!!recovery&&!!currentRevision&&recovery.executionProfile?.revision.revisionId!==currentRevision.revisionId;
+  const observedProfile=recovery ? recovery.executionProfile : profile;
   const options=catalog?.options.find(option=>option.model===selectedModel)?.supportedReasoningEfforts??[];
   const canEdit=context.principal.permissions.includes('write')&&context.principal.permissions.includes('review')&&
-    !context.blocked&&runtime?.state==='ready'&&runtime.sandbox==='danger-full-access'&&
+    !context.blocked&&!!recovery&&!viewMismatch&&runtime?.state==='ready'&&runtime.sandbox==='danger-full-access'&&
     runtime.approvalPolicy==='never'&&!!currentRevision&&catalog?.status==='available'&&
-    !!catalog.options.length&&profile?.activationState!=='attempting'&&profile?.activationState!=='unknown';
-  const viewMismatch=!!recovery&&!!currentRevision&&recovery.executionProfile?.revision.revisionId!==currentRevision.revisionId;
+    !!catalog.options.length&&observedProfile?.activationState!=='attempting'&&observedProfile?.activationState!=='unknown';
   const target=currentRevision?`${currentRevision.model??'默认模型'} / ${currentRevision.reasoningEffort??'未配置'}`:'未读到受管配置';
-  const active=profile?.activeRevisionId?
-    `${profile.activeModel??'未确认'} / ${profile.activeReasoningEffort??'未记录'}`:'未确认';
+  const active=observedProfile?.activeRevisionId?
+    `${observedProfile.activeModel??'未确认'} / ${observedProfile.activeReasoningEffort??'未记录'}`:'未确认';
   return <div className="session-model-control">
     <p><strong>目标配置</strong> {target}{currentRevision&&<> · 修订 {currentRevision.version}</>}</p>
-    <p><strong>最后确认</strong> {active} · <strong>应用状态</strong> {profile?recoveryActivationLabel(profile.activationState):'未读取'}</p>
-    {profile?.activationState==='pending'&&busy&&<p role="status">当前 Turn 沿旧配置继续；结束后在原 Thread 应用目标，新的业务启动会等待确认。</p>}
-    {profile?.activationState==='unknown'&&<p role="alert">原操作结果未知。请按修订 {currentRevision?.revisionId} 和操作 {profile.activationOperationId??currentRevision?.operationId} 对账。</p>}
-    {profile?.activationState==='rejected'&&<p role="alert">原生配置请求已拒绝。最后确认配置仍见上方；请核原操作后再选择。</p>}
+    <p><strong>最后确认</strong> {active} · <strong>应用状态</strong> {observedProfile?recoveryActivationLabel(observedProfile.activationState):'未读取'}</p>
+    {observedProfile?.activationState==='pending'&&busy&&<p role="status">当前 Turn 沿旧配置继续；结束后在原 Thread 应用目标，新的业务启动会等待确认。</p>}
+    {observedProfile?.activationState==='unknown'&&<p role="alert">原操作结果未知。请按修订 {observedProfile.revision.revisionId} 和操作 {observedProfile.activationOperationId??observedProfile.revision.operationId} 对账。</p>}
+    {observedProfile?.activationState==='rejected'&&<p role="alert">原生配置请求已拒绝。最后确认配置仍见上方；请核原操作后再选择。</p>}
     <p className="session-model-evidence">最近实际使用的思考强度尚无逐 Turn 遥测；配置读回不代表提供方已执行该强度。</p>
     {readError&&<p role="alert">模型配置读取失败：{readError}</p>}
     {viewMismatch&&<p role="status">页面两次读取的修订不一致，请重新核对再编辑。</p>}
