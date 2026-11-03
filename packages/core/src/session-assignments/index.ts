@@ -3,6 +3,7 @@ import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { SessionAssignmentCommand, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
+import { fallbackSessionIdentity } from "@evoloop/contracts/session-identity";
 import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
 
 type AssignmentTx = Transaction & { sessionAssignments?: SessionAssignmentTransaction };
@@ -72,10 +73,13 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
     await targetRole(tx, command.projectId, command.target, true);
     const previous = await store.getSessionProfile(command.target);
     ensureVersion(previous?.version ?? 0, command.expectedVersion, "Session profile");
+    const visual = previous?.identityColor && previous.identityMark
+      ? { color: previous.identityColor, mark: previous.identityMark }
+      : fallbackSessionIdentity(command.target);
     const profile: SessionProfileRecord = { projectId: command.projectId, target: command.target,
       version: command.expectedVersion + 1, displayName: command.displayName, purpose: command.purpose,
       membership: command.membership, tenure: command.tenure, actorId: principal.actorId,
-      reason: command.reason, updatedAt: now };
+      identityColor: visual.color, identityMark: visual.mark, reason: command.reason, updatedAt: now };
     await store.saveSessionProfile(profile, command.expectedVersion);
     return result(command, command.target.kind === "owned" ? command.target.sessionId : command.target.linkId, profile.version);
   }

@@ -179,10 +179,10 @@ test("exact HostLink profiles and assignment revisions persist; CAS and immutabl
     await client.query("BEGIN");
     const store = new PgSessionAssignments(client, projectId);
     const first = { kind: "external" as const, linkId: link1 }, second = { kind: "external" as const, linkId: link2 };
-    await store.saveSessionProfile({ projectId, target: first, version: 1, displayName: "Session A", purpose: "Design",
-      membership: "current", tenure: "temporary", actorId: "lead", reason: "named", updatedAt: now }, 0);
-    await store.saveSessionProfile({ projectId, target: second, version: 1, displayName: "Session B", purpose: "Review",
-      membership: "current", tenure: "resident", actorId: "lead", reason: "named", updatedAt: now }, 0);
+    await store.saveSessionProfile({ projectId, target: first, version: 2, displayName: "Session A", purpose: "Design",
+      membership: "current", tenure: "temporary", actorId: "lead", reason: "named", updatedAt: now }, 1);
+    await store.saveSessionProfile({ projectId, target: second, version: 2, displayName: "Session B", purpose: "Review",
+      membership: "current", tenure: "resident", actorId: "lead", reason: "named", updatedAt: now }, 1);
     assert.equal((await store.getSessionProfile(first))?.displayName, "Session A");
     assert.equal((await store.getSessionProfile(second))?.displayName, "Session B");
     await store.saveTaskSessionAssignment({ projectId, taskId, version: 1, taskRevisionId, target: first,
@@ -219,26 +219,35 @@ test("Session identities are persisted on creation and versioned without changin
   const target = { kind: "external" as const, linkId: link1 };
   const profileBefore = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionProfile(target));
   const before = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity(target));
-  const changesBefore = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_identity' AND target_id=$2",[projectId,link1]);
+  const changesBefore = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_profile' AND target_id=$2",[projectId,link1]);
   const other = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity({ kind: "external", linkId: link2 }));
-  assert.equal(before?.version, 1);
+  assert.equal(before?.version, 2);
   assert.notDeepEqual([before?.color,before?.mark],[other?.color,other?.mark]);
   const changed = await workflow.execute(principal, { type: "session.identity.set", projectId,
-    operationId: randomUUID(), target, expectedVersion: 1, color: "teal", mark: "brackets", reason: "User selection" });
+    operationId: randomUUID(), target, expectedVersion: 2, color: "teal", mark: "brackets", reason: "User selection" });
   assert.equal(changed.status, "applied");
   const readback = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity(target));
-  assert.deepEqual([readback?.version,readback?.color,readback?.mark],[2,"teal","brackets"]);
-  const changes = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_identity' AND target_id=$2",[projectId,link1]);
+  assert.deepEqual([readback?.version,readback?.color,readback?.mark],[3,"teal","brackets"]);
+  const changes = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_profile' AND target_id=$2",[projectId,link1]);
   assert.equal(changes.rows[0]?.n, changesBefore.rows[0]?.n + 1, "the identity edit invalidates Session directory reads");
-  assert.deepEqual(await uow.read(projectId, reader => reader.sessionAssignments!.getSessionProfile(target)), profileBefore,
+  const profileAfter = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionProfile(target));
+  assert.deepEqual([profileAfter?.displayName,profileAfter?.purpose,profileAfter?.membership,profileAfter?.tenure],
+    [profileBefore?.displayName,profileBefore?.purpose,profileBefore?.membership,profileBefore?.tenure],
     "choosing an identity must not alter team membership or Session purpose");
+  const renamed = await workflow.execute(principal, { type: "session.profile.set", projectId,
+    operationId: randomUUID(), target, expectedVersion: 3, displayName: "Renamed Session", purpose: "Design",
+    membership: "current", tenure: "temporary", reason: "Name changed" });
+  assert.equal(renamed.status,"applied");
+  const afterRename = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity(target));
+  assert.deepEqual([afterRename?.version,afterRename?.color,afterRename?.mark],[4,"teal","brackets"],
+    "a profile name edit preserves the exact Session identity");
   const stale = await workflow.execute(principal, { type: "session.identity.set", projectId,
     operationId: randomUUID(), target, expectedVersion: 1, color: "blue", mark: "dot", reason: "Stale read" });
   assert.equal(stale.status === "rejected" && stale.code, "VERSION_CONFLICT");
   const client = await pool.connect();
   try {
-    const history = await client.query("SELECT version,color,mark FROM session_identity_revision WHERE project_id=$1 AND target_kind='external' AND target_id=$2 ORDER BY version", [projectId,link1]);
-    assert.deepEqual(history.rows.map(row => row.version),[1,2]);
-    await assert.rejects(client.query("UPDATE session_identity_revision SET color='blue' WHERE project_id=$1 AND target_id=$2",[projectId,link1]),/immutable/);
+    const history = await client.query("SELECT version,identity_color,identity_mark FROM session_profile_revision WHERE project_id=$1 AND target_kind='external' AND target_id=$2 ORDER BY version", [projectId,link1]);
+    assert.deepEqual(history.rows.map(row => row.version),[1,2,3,4]);
+    await assert.rejects(client.query("UPDATE session_profile_revision SET identity_color='blue' WHERE project_id=$1 AND target_id=$2",[projectId,link1]),/immutable/);
   } finally { client.release(); }
 });

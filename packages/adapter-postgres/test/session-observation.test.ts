@@ -107,8 +107,8 @@ test("directory keeps separate same-Role chats, deduplicates aliases, includes u
     assert.equal(current.items.find(item => item.key === `owned:${owned}`)?.capabilities.send.mode, "owned-conversation");
     assert.equal(current.items.find(item => item.key === `owned:${owned}`)?.capabilities.open.available, false);
     await new PgSessionAssignments(client, projectId).saveSessionProfile({ projectId,
-      target: { kind: "external", linkId: aAlias }, version: 1, displayName: "Alias title", purpose: "Alias metadata",
-      membership: "current", tenure: "temporary", actorId: "lead", reason: "alias presentation", updatedAt: later }, 0);
+      target: { kind: "external", linkId: aAlias }, version: 2, displayName: "Alias title", purpose: "Alias metadata",
+      membership: "current", tenure: "temporary", actorId: "lead", reason: "alias presentation", updatedAt: later }, 1);
     const aliased = await reader.snapshot(`external:${a}`);
     assert.equal(aliased?.session.title, "Alias title");
     assert.deepEqual(aliased?.session.profile?.target, { kind: "external", linkId: aAlias });
@@ -168,9 +168,9 @@ test("profile and accepted assignment remain explicit; role responsibility alone
   try {
     await client.query("BEGIN");
     const store = new PgSessionAssignments(client, projectId);
-    await store.saveSessionProfile({ projectId, target: { kind: "external", linkId: a }, version: 1,
+    await store.saveSessionProfile({ projectId, target: { kind: "external", linkId: a }, version: 2,
       displayName: "Design chat", purpose: "Design the requested change", membership: "current", tenure: "temporary",
-      actorId: "lead", reason: "presentation", updatedAt: now }, 0);
+      actorId: "lead", reason: "presentation", updatedAt: now }, 1);
     await store.saveTaskSessionAssignment({ projectId, taskId, version: 1, taskRevisionId,
       target: { kind: "external", linkId: a }, recipientActorId: "worker", state: "accepted",
       ack: { method: "lead-observed", actorId: null, observerActorId: "lead", evidence: "Manual reply", sourceRef: "chat:1", at: now },
@@ -247,9 +247,9 @@ test("incremental changes and history are scoped, bounded, and cursor-stable", a
     const empty = await reader.changes({ cursor: before.observationCursor, limit: 10 });
     assert.equal(empty.items.length, 0);
     const store = new PgSessionAssignments(client, projectId);
-    await store.saveSessionProfile({ projectId, target: { kind: "external", linkId: b }, version: 1,
+    await store.saveSessionProfile({ projectId, target: { kind: "external", linkId: b }, version: 2,
       displayName: "Review chat", purpose: "Review", membership: "current", tenure: "resident",
-      actorId: "lead", reason: "presentation", updatedAt: later }, 0);
+      actorId: "lead", reason: "presentation", updatedAt: later }, 1);
     const changed = await reader.changes({ cursor: before.observationCursor, limit: 1 });
     assert.equal(changed.items.length, 1);
     assert.equal(changed.items[0]?.operation, "invalidate");
@@ -322,12 +322,12 @@ test("commit-ordered counter does not lose a blocked later writer across a read 
     await writerA.query("BEGIN"); await writerB.query("BEGIN");
     const first = new PgSessionAssignments(writerA, projectId), second = new PgSessionAssignments(writerB, projectId);
     await first.saveSessionProfile({ projectId, target: { kind: "external", linkId: unclassified },
-      version: 1, displayName: "Pending classification", purpose: "Check", membership: "unclassified", tenure: "unknown",
-      actorId: "lead", reason: "first writer", updatedAt: later }, 0);
+      version: 2, displayName: "Pending classification", purpose: "Check", membership: "unclassified", tenure: "unknown",
+      actorId: "lead", reason: "first writer", updatedAt: later }, 1);
     // Writer B reaches the same project counter only after A has locked it.
     const laterWrite = second.saveSessionProfile({ projectId, target: { kind: "owned", sessionId: ownedUnbound },
-      version: 1, displayName: "Unbound owned", purpose: "Observe", membership: "unclassified", tenure: "unknown",
-      actorId: "lead", reason: "second writer", updatedAt: later }, 0);
+      version: 2, displayName: "Unbound owned", purpose: "Observe", membership: "unclassified", tenure: "unknown",
+      actorId: "lead", reason: "second writer", updatedAt: later }, 1);
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal((await reader.changes({ cursor: baseline, limit: 10 })).items.length, 0);
     await writerA.query("COMMIT");

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { sessionTargetSchema, type SessionTarget } from "./session-work.js";
-import { sessionIdentityCommand, type SessionIdentity } from "./session-identity.js";
+import { sessionIdentityCommand, type SessionIdentity, type IdentityColor, type IdentityMark } from "./session-identity.js";
 
 const id = z.uuid();
 const note = z.string().trim().min(1).max(4000);
@@ -25,8 +25,9 @@ export const sessionAssignmentCommands = [
 ] as const;
 export type SessionAssignmentCommand = z.infer<(typeof sessionAssignmentCommands)[number]>;
 export interface SessionProfileRecord {
-  projectId: string; target: SessionTarget; version: number; displayName: string; purpose: string;
-  membership: "current" | "historical" | "unclassified"; tenure: "resident" | "temporary" | "unknown";
+  projectId: string; target: SessionTarget; version: number; displayName: string | null; purpose: string | null;
+  membership: "current" | "historical" | "unclassified" | null; tenure: "resident" | "temporary" | "unknown" | null;
+  identityColor?: IdentityColor | null; identityMark?: IdentityMark | null;
   actorId: string; reason: string; updatedAt: string;
 }
 export interface TaskSessionAssignment {
