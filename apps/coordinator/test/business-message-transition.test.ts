@@ -131,7 +131,7 @@ for(const scenario of scenarios){
       assert.equal(run.operationId,operationId);assert.equal(run.input,input);assert.deepEqual(run.executionProfile,profile);
       assert.equal(session.executionProfile?.revision.revisionId,revisionId);
       assert.equal(taskStarts,1,'the original Task operation is the only Task turn/start call');
-      assert.deepEqual(events,['message durable beginDispatch','ordinary message turn/start','message thread/resume',
+      assert.deepEqual(events,['message durable beginDispatch','ordinary message turn/start',
         'Task durable beginDispatch','Task thread/resume','Task turn/start']);
       assert.equal(bindAttempts,scenario.loseBindingAck?2:1,
         'only a lost Run binding acknowledgement needs a second history-marker bind');
@@ -145,7 +145,7 @@ for(const scenario of scenarios){
       assert.equal((taskItems.data[0] as {text?:string}).text,input);
       const observed=await adapter.inspect(binding) as {observedTurnStarts:number;observedResumes:number;lastTurnModel:string};
       assert.equal(observed.observedTurnStarts,2,'M and Task are the only native Turn starts');
-      assert.equal(observed.observedResumes,2,'M and the Task each resume the same full Thread once');
+      assert.equal(observed.observedResumes,2,'the preexisting Thread resumes for both message and Task');
       assert.equal(observed.lastTurnModel,'gpt-6-sol');
     }finally{await runner.stop();}
   });
