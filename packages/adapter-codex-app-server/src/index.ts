@@ -109,7 +109,7 @@ export class RuntimeProtocolError extends Error {
 }
 export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "invalid_params" | "method_not_found" | "permission_denied" | "server_rejected";
 const serverErrorCategory = (code: number, message: string): RuntimeServerErrorCategory => {
-  if (/rollout.{0,60}not found|not found.{0,60}rollout/i.test(message)) return "rollout_not_found";
+  if (/rollout.{0,60}not found|not found.{0,60}rollout|no rollout found/i.test(message)) return "rollout_not_found";
   if (/permission|unauthorized|forbidden/i.test(message)) return "permission_denied";
   if (/thread.{0,60}(read|load)|(read|load).{0,60}thread/i.test(message)) return "thread_unavailable";
   if (code === -32602 || /invalid params/i.test(message)) return "invalid_params";
@@ -805,7 +805,9 @@ export class CodexAppServerAdapter implements RuntimePort {
         spec.cwd !== binding.cwd || resolve(spec.cwd) !== spec.cwd ||
         !fullProfile(spec) ||
         !binding.resumeProfile || binding.resumeProfile.actorId !== spec.actorId ||
-        binding.resumeProfile.model !== (spec.model??null) || binding.resumeProfile.sandbox !== spec.sandbox ||
+        binding.resumeProfile.model !== (spec.model??null) ||
+        (binding.resumeProfile.reasoningEffort??null)!==(spec.reasoningEffort??null) ||
+        binding.resumeProfile.sandbox !== spec.sandbox ||
         binding.resumeProfile.approvalPolicy !== spec.approvalPolicy ||
         (binding.resumeProfile.executionProfileRevisionId??null)!==(spec.executionProfileRevisionId??null))
         throw new RuntimeProtocolError("resume profile does not match registered binding");
@@ -899,6 +901,26 @@ export class CodexAppServerAdapter implements RuntimePort {
   /** Called only after the coordinator has durably claimed this one revision's activation. */
   async activateExecutionProfile(current:RuntimeBinding,target:RuntimeSessionSpec,
     revisionId:string,operationId:string):Promise<RuntimeBinding>{
+    if(target.reasoningEffort){
+      // A newly created Thread can be notLoaded with no rollout. Resuming it
+      // consumes its one first-dispatch proof without loading a usable Thread.
+      // Reject before marking an activation attempt; the original first Turn
+      // can still use its exact saved profile.
+      this.owned(current);
+      const result=object(await this.request('thread/read',{threadId:current.nativeThreadId,includeTurns:false}));
+      const thread=object(result?.thread);
+      if(thread?.id!==current.nativeThreadId||thread?.sessionId!==current.nativeSessionId||
+        thread?.cwd!==current.cwd)throw new RuntimeProtocolError('profile activation lost the owned Thread');
+      if(object(thread.status)?.type==='notLoaded'){
+        let hasRollout=false;
+        try{hasRollout=(await this.listTurns(current)).data.length>0;}
+        catch(error){
+          if(!(error instanceof RuntimeServerError&&error.method==='thread/turns/list'&&
+            error.code===-32600&&error.category==='rollout_not_found'))throw error;
+        }
+        if(!hasRollout)throw new RuntimeProtocolError('EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED: zero-turn Thread has no rollout for effort activation; complete its first Turn under the current profile');
+      }
+    }
     const revised=await this.authorizeRevision(current,target,revisionId,operationId);
     if(!sameBinding(this.bindings.get(current.nativeThreadId)!,current))
       throw new RuntimeProtocolError('execution profile activation was already attempted in this adapter');

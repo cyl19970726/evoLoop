@@ -1156,3 +1156,43 @@ test('zero-turn native active notification without Turn ID invalidates start pro
   await adapter.setThreadName(binding,'observe active event');
   await assert.rejects(()=>adapter.resume(binding,fullSpec),noRollout);
 });
+
+test('zero-turn notLoaded effort change fails before consuming first-start proof',async t=>{
+  const adapter=zeroTurnAdapter({spawnArgs:[fixture,'zero-turn-not-loaded'],
+    authorizeExecutionProfileActivation:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const prior={...fullSpec,executionProfileRevisionId:'prior'};
+  const binding=await adapter.create(prior);
+  await assert.rejects(()=>adapter.activateExecutionProfile(binding,{...prior,model:'new-model',
+    reasoningEffort:'max',executionProfileRevisionId:'next'},'next','change-operation'),
+    error=>error instanceof RuntimeProtocolError&&/zero.turn|rollout/i.test(error.message));
+  assert.deepEqual(await adapter.resume(binding,prior),binding);
+  await adapter.startTurn(binding,'original first Turn','first-operation',{
+    revisionId:'prior',version:1,model:prior.model!,reasoningEffort:null,
+    sandbox:'danger-full-access',approvalPolicy:'never',cwd:prior.cwd,
+    authorizationScope:prior.authorizationScope,provenance:'reserved'});
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+});
+
+test('first-start proof rejects an effort mismatch and cannot be reused',async t=>{
+  const adapter=zeroTurnAdapter();t.after(()=>adapter.close());await adapter.open();
+  const prior={...fullSpec,executionProfileRevisionId:'prior'};
+  const binding=await adapter.create(prior);
+  await assert.rejects(()=>adapter.resume(binding,{...prior,reasoningEffort:'max'}),RuntimeProtocolError);
+  await assert.rejects(()=>adapter.resume(binding,prior),noRollout);
+});
+
+test('first ordinary message sends the fixed reasoning effort to the native Turn',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'model-effort-active'],
+    expectedVersion:'codex-cli 0.166.0-alpha.5.1',verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:spec.actorId!,model:'new-model',reasoningEffort:'max',
+      sandbox:'danger-full-access',approvalPolicy:'never',executionProfileRevisionId:'active'}};
+  await adapter.registerBinding(binding);
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  await adapter.startConversationTurn(binding,'first message','message-operation');
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+});

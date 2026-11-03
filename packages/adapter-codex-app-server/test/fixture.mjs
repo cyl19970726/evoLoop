@@ -15,8 +15,8 @@ let observedResumes = 0;
 let lastTurnModel = null;
 let threadName = null;
 let modelListReads = 0;
-let selectedModel = 'old-model';
-let selectedEffort = 'high';
+let selectedModel = mode==='model-effort-active'?'new-model':'old-model';
+let selectedEffort = mode==='model-effort-active'?'max':'high';
 const sequenceInputs = [];
 let unloaded = mode.startsWith('full-unloaded')||mode==='model-effort-unloaded';
 for await (const line of lines) {
