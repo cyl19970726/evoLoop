@@ -12,6 +12,7 @@ const dist = resolve(import.meta.dirname, "../dist");
 const projectId = "94000001-0000-4000-8000-000000000001";
 const sessionId = "94000002-0000-4000-8000-000000000002";
 const taskId = "94000003-0000-4000-8000-000000000003";
+const messageId = "94000008-0000-4000-8000-000000000008";
 const sessionKey = `owned:${sessionId}`;
 const stamp = "2026-10-27T00:00:00.000Z";
 const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
@@ -24,14 +25,17 @@ test("native progress keeps source, freshness and cumulative usage separate from
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let mode: "live" | "waiting" | "recentTool" | "stale" | "notLoaded" | "protected" | "foreign" | "fail" |
-    "completed" | "failed" | "interrupted" | "completedWaiting" = "live";
+    "completed" | "failed" | "interrupted" | "completedWaiting" | "messageLive" | "messageConflict" | "messageUnknown" | "messageReadError" = "live";
   const observation = () => ({ projectId, sessionId: mode === "foreign" ? "other-session" : sessionId,
-    threadId: "thread-1", version: 3, observedAt: stamp, lastEventAt: stamp,
+    threadId: "thread-1", version: 3, observedAt: stamp,
+    lastEventAt: mode.startsWith("message") ? "2026-10-26T00:00:00.000Z" : stamp,
     freshness: mode === "stale" ? "stale" : "live", staleReason: mode === "stale" ? "disconnected" : null,
     status: mode === "notLoaded" ? "notLoaded" : "active",
     currentTurn: mode === "notLoaded" ? null : { id: "turn-1",
       status: mode === "completedWaiting" ? "completed" : mode === "completed" || mode === "failed" || mode === "interrupted" ? mode : "inProgress", startedAt: 1793059200,
-      source: { kind: "run", runId: "94000004-0000-4000-8000-000000000004",
+      source: mode.startsWith("message") ? { kind: "message", messageId,
+        processingId: "94000009-0000-4000-8000-000000000009",
+        operationId: "94000005-0000-4000-8000-000000000005", actorId: "operator" } : { kind: "run", runId: "94000004-0000-4000-8000-000000000004",
         operationId: "94000005-0000-4000-8000-000000000005", actorId: "operator", taskId,
         taskRevisionId: "94000006-0000-4000-8000-000000000006" } },
     items: mode === "notLoaded" ? [] : [{ id: "item-1", kind: "mcpToolCall", name: "Tool call",
@@ -47,7 +51,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
       modelContextWindow: null, observedAt: stamp } });
   const snapshot = () => ({ session: { key: sessionKey, target: { kind: "owned", sessionId }, aliases: [],
     title: "进度测试会话", profile: null, kind: "owned", roles: [], membership: "current", membershipReason: "fixture",
-    runtimeState: "busy", busy: true, currentTask: null, latestBusinessRun: null, lastProgressAt: null,
+    runtimeState: mode.startsWith("message") ? "ready" : "busy", busy: true, currentTask: null, latestBusinessRun: null, lastProgressAt: null,
     capabilities: { observe: unavailable, send: { ...unavailable, mode: "unavailable" },
       open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
     source: { kind: "session", id: sessionId, revision: null, evidence: "project-record", href: "" }, metadata },
@@ -61,7 +65,8 @@ test("native progress keeps source, freshness and cumulative usage separate from
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/set") { const next = url.searchParams.get("mode");
       if (next === "live" || next === "waiting" || next === "recentTool" || next === "stale" || next === "notLoaded" || next === "protected" || next === "foreign" || next === "fail" ||
-        next === "completed" || next === "failed" || next === "interrupted" || next === "completedWaiting") mode = next;
+        next === "completed" || next === "failed" || next === "interrupted" || next === "completedWaiting" ||
+        next === "messageLive" || next === "messageConflict" || next === "messageUnknown" || next === "messageReadError") mode = next;
       res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
@@ -71,6 +76,12 @@ test("native progress keeps source, freshness and cumulative usage separate from
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) {
         if (mode === "fail") { status = 503; value = { message: "进度读取失败" }; } else value = snapshot();
       } else if (url.pathname.endsWith("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
+      else if (url.pathname.endsWith(`/session-messages/${messageId}`)) {
+        if (mode === "messageReadError") { status = 503; value = { message: "消息读取失败" }; }
+        else value = { message: { id: messageId, projectId, target: { kind: "owned", sessionId },
+          state: mode === "messageConflict" ? "replied" : mode === "messageUnknown" ? "unknown" : "processing",
+          updatedAt: stamp }, processing: { id: "94000009-0000-4000-8000-000000000009", messageId, projectId, sessionId }, metadata };
+      }
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) value = timelinePage(sessionKey, { title: "进度测试会话" });
       else if (url.pathname.endsWith("/timeline/updates")) value = { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
       else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
@@ -109,6 +120,24 @@ test("native progress keeps source, freshness and cumulative usage separate from
     await page.screenshot({ path: "/tmp/evoloop-native-progress-desktop.png", fullPage: true });
     await page.setViewportSize({ width: 390, height: 840 });
   }
+
+  const facts = page.getByRole("region", { name: "执行与消息状态" });
+  await fetch(`${base}/__fixture/set?mode=messageLive`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await facts.getByText("原生宿主回报 Turn 进行中").waitFor();
+  await facts.getByText("处理中 · 更新于", { exact: false }).waitFor();
+  await facts.getByText("不能据此认定仍在有效推进", { exact: false }).waitFor();
+  await fetch(`${base}/__fixture/set?mode=messageConflict`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await facts.getByText("原生 Turn 与持久消息状态不一致", { exact: false }).waitFor();
+  await fetch(`${base}/__fixture/set?mode=messageUnknown`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await facts.getByText("执行或消息结果未知", { exact: false }).waitFor();
+  await fetch(`${base}/__fixture/set?mode=messageReadError`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await facts.getByText("消息记录暂不可读取，状态未知").waitFor();
+  await fetch(`${base}/__fixture/set?mode=live`);
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
 
   await fetch(`${base}/__fixture/set?mode=waiting`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();

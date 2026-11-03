@@ -35,7 +35,7 @@ export interface NativeProgressView {
   staleReason: string | null;
   status: "notLoaded" | "idle" | "systemError" | "active" | null;
   turn: null | { id: string; status: "inProgress" | "completed" | "interrupted" | "failed" | "unknown";
-    source: null | { kind: "run" | "message"; id: string; taskId: string | null } };
+    source: null | { kind: "run" | "message"; id: string; taskId: string | null; processingId: string | null } };
   items: Array<{ id: string; kind: string; name: string; status: "inProgress" | "completed" | "failed" | "declined";
     summary: string; truncated: boolean }>;
   plan: null | { turnId: string; steps: Array<{ step: string; status: "pending" | "inProgress" | "completed" }>;
@@ -136,6 +136,7 @@ function NativeProgressCard({ progress, currentRead, waiting, taskHref }: {
   return <section className="native-progress-card">
     <div className="native-panel-heading"><div><span className="native-panel-kicker">原生事件的有界观察</span><h2>原生执行进度</h2></div><span className="native-panel-state">{stateLabel}</span></div>
     <p className="native-panel-context">最近事件 {date(progress.lastEventAt)} · 记录于 {date(progress.observedAt)} · {partial ? "仅展示最近有界范围" : "仅展示已观察到的事件"}</p>
+    {fresh && turn?.status === "inProgress" && <p className="native-panel-warning">原生宿主回报 Turn 进行中，连接与绑定仍匹配；最近事件时间单独列示，不能据此确认仍在有效推进，也不能仅凭无新事件判定失败。</p>}
     {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{staleReason ? ` 原因：${staleReason}。` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
     {fresh && progress.status === "systemError" && <p className="native-panel-warning">原生状态报告异常；请结合固定 Run 和原生终态核对。</p>}
     {turnEnded && (progress.items.some(item => item.status === "inProgress") || progress.plan?.steps.some(step => step.status === "inProgress")) &&
