@@ -110,7 +110,7 @@ for(const expectedVersion of modernVersions){
   });
 }
 
-for(const mode of ['full-network-failed','full-network-lost-resume',
+for(const mode of ['full-network-failed','full-network-lost-resume','full-network-turn-changed',
   'full-network-active','full-network-unsettled','full-network-no-completion',
   'full-network-completed','full-network-unknown-status',
   'full-network-model-mismatch','full-network-model-missing'] as const){
@@ -129,7 +129,7 @@ for(const mode of ['full-network-failed','full-network-lost-resume',
       assert.equal(admission.available,true,admission.reason);
       assert.equal((await adapter.startConversationTurn(binding,'continue original QA','message-op')).id,'turn-1');
       await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
-    }else if(mode==='full-network-lost-resume'){
+    }else if(mode==='full-network-lost-resume'||mode==='full-network-turn-changed'){
       assert.equal(admission.available,true,admission.reason);
       await assert.rejects(()=>adapter.startConversationTurn(binding,'continue original QA','message-op'),
         error=>error instanceof RuntimeUnknownError&&error.method==='thread/resume');

@@ -227,7 +227,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   private declaredTools = new Map<string, Set<string>>();
   private profileTransitionThreads = new Set<string>();
-  private conversationQualifications = new Map<string,{fingerprint:string;observedAt:number;model:string|null}>();
+  private conversationQualifications = new Map<string,{fingerprint:string;observedAt:number;model:string|null;status:string}>();
   private fullTurnAttempts = new Map<string,Set<string>>();
   private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
@@ -923,9 +923,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       })).digest('hex');
       const prior=this.conversationQualifications.get(binding.nativeThreadId);
       if(prior&&prior.fingerprint!==fingerprint)return unavailable('Owned Thread model or profile changed during admission');
-      this.conversationQualifications.set(binding.nativeThreadId,{fingerprint,observedAt:Date.now(),model});
+      this.conversationQualifications.set(binding.nativeThreadId,{fingerprint,observedAt:Date.now(),model,status});
       return {available:true,reason:terminalFailedTurn?
-        'Owned full-profile Thread has a confirmed failed terminal Turn; exact full resume is required before the next Turn':
+        'Owned full-profile Thread has a confirmed failed terminal Turn; recheck it after exact full resume before the next Turn':
         'Owned full-profile Thread has no active Turn; exact full policy is confirmed on resume and sent on the Turn',fingerprint};
     }catch{return unavailable('Owned native Thread could not be read');}
   }
@@ -952,7 +952,15 @@ export class CodexAppServerAdapter implements RuntimePort {
       ...(profile.model?{model:profile.model}:{}),sandbox:FULL_SANDBOX,approvalPolicy:'never',
       ...(profile.executionProfileRevisionId?{executionProfileRevisionId:profile.executionProfileRevisionId}:{}),
     });
-    if(!await this.nativeThreadIdle(binding,false,prior.model??undefined))
+    if(prior.status==='systemError'){
+      // Pinned App Server reattaches a loaded failed Thread without clearing
+      // systemError. Its next turn/start clears that flag. Recheck the exact
+      // failed Turn and profile after resume, before the one native start.
+      const afterResume=await this.qualifyConversationThread(binding);
+      if(!afterResume.available||afterResume.fingerprint!==prior.fingerprint)
+        throw new RuntimeUnknownError('thread/resume',null,'owned failed Thread changed after exact full resume');
+      this.conversationQualifications.delete(binding.nativeThreadId);
+    }else if(!await this.nativeThreadIdle(binding,false,prior.model??undefined))
       throw new RuntimeUnknownError('thread/resume',null,'owned Thread did not become idle after exact full resume');
     const started=object(await this.request('turn/start',{
       threadId:binding.nativeThreadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
