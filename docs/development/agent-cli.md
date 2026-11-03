@@ -173,6 +173,8 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 人工停止后的原 Session recovery gate 会由消息失败触发器转为 `blocked`，此时不能直接发送下一条普通消息。复核者先用 `read session SESSION_UUID --recovery` 回读 `causeKind: message`、原消息 `causeId`、当前 gate `version` 和 `resumeMessageId`，并确认原消息与 processing 均已终态、旧 owner 仍不存在、原生 Thread 空闲及当前精确授权仍有效。再读 `command schema runtime.session.recovery.resume`，用新的稳定 operation ID 提交原 `sessionId`、当前 `expectedVersion`、原 `expectedCauseId`、原样 `resumeMessageId`、`evidenceRef` 与 `reason`。该命令在同一原 Session 上登记恢复决定；已结算的原消息 pin 只会由这次决定清除，不会重播。回读 gate 成为 `open`（若仍有原 claim 则按其实际状态复核），再按原授权与队列条件继续同一个原生 Thread。恢复决定、下一 Turn 的实际启动、Delivery、独立使用和 Task 关闭分别留证；候选版本的本机结果不等于正式 Leader 已恢复。
 
+`runtime.session.recovery.resume` 只核持久 Session、Run／消息占用、cause 和 gate 版本，**不读取原生 Thread，也不证明旧 owner 已退出**；这些是上述停机取证、manual stop 的新 owner 原生预览和复核者在 resume 前后必须回读的事实。resume 后，已启用的消息 pump 才可能按原排队顺序尝试下一条：它还要核唯一 Leader 收件对象、原队列优先权、Session ready、额度、数据库互斥和当前原生 full-profile Thread 的 `idle`／`notLoaded`，原生 `turn/start` 前再次核同一 Thread 空闲。任何一步不通过就保留消息等待或未知，不能从 gate `open` 推断下一 Turn 已启动。以新 Turn 与 processing 的实际回读判定是否接续。
+
 `usage.total` 保留原生 Thread 累计快照，`usage.last` 保留原生范围；重复读数不累加，缓存和推理指标是子集。null 保持未知，不据此估价或把配置模型当逐 Turn 实际用模。投影、预览、分页历史及固定原件分别阅读，不把截断摘要当完整证据。
 
 ## 未知结果与本地回执
