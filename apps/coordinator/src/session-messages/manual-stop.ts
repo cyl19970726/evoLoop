@@ -115,6 +115,7 @@ async function verifyExitManifest(command: StopCommand, session: RuntimeSessionR
   let anchor:Record<string,unknown>|null=null;
   try { anchor=record(JSON.parse(preflight.preStopEvidenceJson)); } catch { /* malformed DB anchor */ }
   const anchorNative=record(anchor?.oldNative),anchorCoordinator=record(anchor?.oldCoordinator);
+  const databaseLease=record(anchor?.databaseLease);
   if (preflight.projectId !== command.projectId || preflight.messageId !== command.messageId ||
     preflight.preflightId !== command.preflightId ||
     preflight.processingId !== command.processingId || preflight.sessionId !== session.id ||
@@ -130,6 +131,7 @@ async function verifyExitManifest(command: StopCommand, session: RuntimeSessionR
     anchor?.projectId !== preflight.projectId || anchor?.sessionId !== preflight.sessionId ||
     anchor?.threadId !== preflight.nativeThreadId || anchor?.messageId !== preflight.messageId ||
     anchor?.processingId !== preflight.processingId || anchor?.nativeTurnId !== preflight.nativeTurnId ||
+    !Number.isInteger(databaseLease?.clientPort) || !Number.isInteger(databaseLease?.serverPort) ||
     anchorCoordinator?.pid !== preflight.oldCoordinatorPid ||
     anchorCoordinator?.startIdentity !== preflight.oldCoordinatorStartIdentity ||
     anchorNative?.pid !== preflight.oldNativePid ||

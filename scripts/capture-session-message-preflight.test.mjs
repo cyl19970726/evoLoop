@@ -4,13 +4,15 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { authenticatedRoot, capturePreflight, directChildren, discoverOriginalOwner, uniqueListener } from './capture-session-message-preflight.mjs';
+import { authenticatedRoot, capturePreflight, confirmServiceOriginal, directChildren,
+  discoverOriginalOwner, proveDatabaseLease, uniqueListener } from './capture-session-message-preflight.mjs';
 
 const start = 'Tue Oct 27 16:18:54 2026';
 function probe({ children = '123 1 /usr/local/bin/node\n456 123 /opt/homebrew/bin/codex\n',
-  listener = 'p123\nn127.0.0.1:4318\n', nativeParent = 123 } = {}) {
+  listener = 'p123\nn127.0.0.1:4318\n',socket='n127.0.0.1:56000->127.0.0.1:55461\n',
+  nativeParent = 123 } = {}) {
   return async (name, args) => {
-    if (name === 'lsof') return listener;
+    if (name === 'lsof') return args.includes('-a') ? socket : listener;
     if (args[0] === '-axo') return children;
     const pid = Number(args[1]), field = args.at(-1);
     if (field === 'command=') return '/opt/homebrew/bin/codex app-server --stdio\n';
@@ -71,6 +73,19 @@ test('Root identity comes from the old service response and cannot be self-decla
   }
 });
 
+test('listener must hold the exact target database coordinator lease and serve the original message',async()=>{
+  const database={query:async()=>({rows:[{client_addr:'127.0.0.1',client_port:56000,server_port:55461}]})};
+  await proveDatabaseLease(database,123,probe());
+  await assert.rejects(proveDatabaseLease(database,123,probe({socket:'n127.0.0.1:56001->127.0.0.1:55461\n'})),
+    /DATABASE_OWNER_LEASE_UNVERIFIED/);
+  const original={port:4318,projectId:'project',sessionId:'session',messageId:'message',
+    processingId:'processing',nativeTurnId:'turn'};
+  const fetcher=async()=>({ok:true,json:async()=>({message:{id:'message',target:{kind:'owned',sessionId:'session'}},
+    processing:{id:'processing',nativeTurnId:'turn'}})});
+  await confirmServiceOriginal(original,fetcher);
+  await assert.rejects(confirmServiceOriginal({...original,processingId:'other'},fetcher),/SERVICE_ORIGINAL_UNVERIFIED/);
+});
+
 test('capture binds OS discovery to the exact locked DB original and writes a private hashed anchor', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'evoloop-preflight-test-'));
   const out = join(directory, 'capture.json');
@@ -84,6 +99,7 @@ test('capture binds OS discovery to the exact locked DB original and writes a pr
     connect: async () => {}, end: async () => {},
     query: async (sql, values) => {
       calls.push({ sql, values });
+      if (sql.includes('FROM pg_locks')) return {rows:[{client_addr:'127.0.0.1',client_port:56000,server_port:55461}]};
       if (sql.startsWith('SELECT')) return { rows: [{ native_thread_id: 'original-thread',
         native_session_id: 'original-native-session', session_state: 'ready', message_state: 'unknown',
         message_version: 3, processing_state: 'unknown', processing_version: 4,
@@ -95,7 +111,7 @@ test('capture binds OS discovery to the exact locked DB original and writes a pr
   try {
     const result = await capturePreflight({ out, port: 4318, projectId, sessionId,
       messageId, processingId, nativeTurnId }, {
-      probe: probe(), identify: async () => 'root-actor', connect: () => client,
+      probe: probe(), identify: async () => 'root-actor', confirm:async()=>{},connect: () => client,
     });
     const bytes = await readFile(out);
     const saved = JSON.parse(bytes.toString());

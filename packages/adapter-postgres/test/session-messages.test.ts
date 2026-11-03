@@ -8,6 +8,7 @@ import { migrate,PostgresUnitOfWork } from '../src/index.ts';
 import { WorkflowService } from '@evoloop/core';
 import { SessionMessageService,applySessionMessage } from '@evoloop/core/session-messages';
 import { SessionMessagePump } from '../../../apps/coordinator/src/session-messages/pump.ts';
+import { leaseFencedUnitOfWork } from '../../../apps/coordinator/src/lease.ts';
 import { PgSessionMessages } from '../src/session-messages.ts';
 import { commandSchema } from '@evoloop/contracts';
 import type { SessionMessageManualStopEvidence,SessionMessageRecord } from '@evoloop/contracts/session-messages';
@@ -593,6 +594,20 @@ test('manual stop command requires exact old process start identities and fixed 
   for(const change of [{oldCoordinatorStartIdentity:''},{oldNativeStartIdentity:' '.repeat(2)},
     {oldNativePid:0},{observedItemCount:-1},{exitEvidenceHash:'bad'}])
     assert.equal(commandSchema.safeParse({...value,...change}).success,false);
+});
+
+test('a coordinator generation change after preview refuses the original manual stop transaction',async()=>{
+  const first=randomUUID(),successor=randomUUID();
+  await pool.query(`INSERT INTO coordinator_lease_epoch(singleton,nonce) VALUES(true,$1)
+    ON CONFLICT(singleton) DO UPDATE SET nonce=EXCLUDED.nonce,acquired_at=now()`,[first]);
+  const preview=await uow.read(projectId,r=>r.getProject());
+  assert.equal(preview?.id,projectId);
+  await pool.query('UPDATE coordinator_lease_epoch SET nonce=$1,acquired_at=now() WHERE singleton=true',[successor]);
+  let applied=false;
+  const guarded=leaseFencedUnitOfWork(uow,{nonce:first,canWrite:()=>true});
+  await assert.rejects(guarded.transaction(projectId,async()=>{applied=true;}),
+    /Coordinator lease generation changed/);
+  assert.equal(applied,false);
 });
 
 test('manual stop evidence binds the original processing, preserves prior failure and cannot change',async()=>{

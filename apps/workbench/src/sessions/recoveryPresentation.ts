@@ -7,7 +7,7 @@ export type RecoveryRead =
   | { status: "unavailable" | "forbidden" | "failed"; message: string };
 
 const phaseText: Record<NonNullable<SessionRecoveryView["gate"]>["phase"], string> = {
-  open: "可按正常规则接续",
+  open: "数据库恢复门未限制",
   blocked: "已停止接续",
   retrying: "等待原任务重试",
   reworking: "原任务返工中",
@@ -44,7 +44,7 @@ const sourceStateText = new Map([
 ]);
 export const recoverySourceStateLabel = (state: string) => sourceStateText.get(state) ?? "状态需核对原始记录";
 export function recoveryReasonSummary(gate: RecoveryGate): string {
-  if (gate.phase === "open") return "恢复门已开放；具体恢复依据请核对原始记录";
+  if (gate.phase === "open") return "仅数据库恢复门未限制；原消息占用和原生状态须分别核对";
   if (gate.phase === "retrying") return "原任务重试已获批准，等待执行结果核对";
   if (gate.phase === "reworking") return "同一承接的返工已获批准，等待本次运行结果";
   if (gate.phase === "message_pending") return "等待原排队消息处理";

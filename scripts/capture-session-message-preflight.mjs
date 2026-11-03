@@ -124,8 +124,43 @@ export async function authenticatedRoot(projectId, port, fetcher = fetch) {
   return expected;
 }
 
+/** The listening PID must own a TCP socket whose client port holds this database's coordinator lock. */
+export async function proveDatabaseLease(client, coordinatorPid, probe = run) {
+  const locks = (await client.query(`SELECT a.client_addr::text AS client_addr,a.client_port,
+      inet_server_port() AS server_port
+    FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
+    WHERE l.locktype='advisory' AND l.classid=0::oid AND l.objid=731209842::oid
+      AND l.objsubid=1 AND l.mode='ExclusiveLock' AND l.granted`)).rows;
+  if (locks.length !== 1 || !['127.0.0.1', '::1'].includes(locks[0].client_addr) ||
+    !Number.isInteger(locks[0].client_port) || locks[0].client_port < 1 ||
+    !Number.isInteger(locks[0].server_port) || locks[0].server_port < 1)
+    fail('DATABASE_OWNER_LEASE_UNVERIFIED');
+  const sockets = await probe('lsof', ['-nP', '-a', '-p', String(coordinatorPid), '-iTCP', '-Fn']);
+  const matches = [...sockets.matchAll(/^n(?:127\.0\.0\.1|\[::1\]):(\d+)->(?:127\.0\.0\.1|\[::1\]):(\d+)\s*$/gm)];
+  if (!matches.some(match => Number(match[1]) === locks[0].client_port &&
+    Number(match[2]) === locks[0].server_port)) fail('DATABASE_OWNER_LEASE_UNVERIFIED');
+  return {clientPort:locks[0].client_port,serverPort:locks[0].server_port};
+}
+
+/** The old service must independently return the same saved original, using its own DB connection. */
+export async function confirmServiceOriginal(options, fetcher = fetch) {
+  let reply,value;
+  try {
+    reply=await fetcher(`http://127.0.0.1:${options.port}/api/projects/${options.projectId}/session-messages/${options.messageId}`,{
+      headers:{Authorization:`Bearer ${process.env.PREFLIGHT_ROOT_TOKEN}`},redirect:'error',signal:AbortSignal.timeout(5000),
+    });
+    if(!reply.ok)fail('SERVICE_ORIGINAL_UNVERIFIED');
+    value=await reply.json();
+  }catch{fail('SERVICE_ORIGINAL_UNVERIFIED');}
+  if(value?.message?.id!==options.messageId || value?.message?.target?.kind!=='owned' ||
+    value.message.target.sessionId!==options.sessionId || value?.processing?.id!==options.processingId ||
+    value.processing.nativeTurnId!==options.nativeTurnId)
+    fail('SERVICE_ORIGINAL_UNVERIFIED');
+}
+
 /** A read-only OS probe plus one append-only DB insert. Does not stop or signal processes. */
-export async function capturePreflight(options, { probe = run, identify = authenticatedRoot, connect = () => new pg.Client({
+export async function capturePreflight(options, { probe = run, identify = authenticatedRoot,
+  confirm = confirmServiceOriginal, connect = () => new pg.Client({
   connectionString: databaseUrl(process.env.PREFLIGHT_DATABASE_URL), connectionTimeoutMillis: 5000,
   query_timeout: 5000, statement_timeout: 5000,
 }) } = {}) {
@@ -148,13 +183,15 @@ export async function capturePreflight(options, { probe = run, identify = authen
       !['processing','unknown'].includes(row.message_state) || !['running','unknown'].includes(row.processing_state))
       fail('ORIGINAL_BINDING_NOT_ACTIVE');
     const owner = await discoverOriginalOwner(options.port, probe);
+    const databaseLease=await proveDatabaseLease(client,owner.coordinator.pid,probe);
     const capturedByActorId = await identify(options.projectId, options.port);
+    await confirm(options);
     const preflightId = randomUUID();
     const evidence = { format: 'evoloop-message-preflight-v1', preflightId,
       host: hostname(), capturedByActorId, projectId: options.projectId, sessionId: options.sessionId,
       threadId: row.native_thread_id, nativeSessionId: row.native_session_id,
       messageId: options.messageId, processingId: options.processingId, nativeTurnId: options.nativeTurnId,
-      messageVersion: row.message_version, processingVersion: row.processing_version,
+      messageVersion: row.message_version, processingVersion: row.processing_version,databaseLease,
       dbObservedAt: row.db_observed_at.toISOString(), osObservedAt: new Date().toISOString(),
       oldCoordinator: { pid: owner.coordinator.pid, startIdentity: owner.coordinator.startIdentity },
       oldNative: { pid: owner.native.pid, startIdentity: owner.native.startIdentity,

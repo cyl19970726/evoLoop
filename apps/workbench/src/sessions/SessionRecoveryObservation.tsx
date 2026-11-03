@@ -18,7 +18,7 @@ export function SessionRecoveryOverview({ read, runtimeState, queueHref }: { rea
   return <section className="session-recovery-overview" aria-label="恢复进度">
     <div className="session-recovery-heading"><h2>恢复进度</h2><small>读取于 {date(view.observedAtUtc)}</small></div>
     {gate ? <>
-      <div className="session-recovery-facts"><div><small>当前阶段</small><strong>{runtimeState === "closed" && gate.phase === "open" ? "恢复门开放；会话已关闭" : recoveryPhaseLabel(gate.phase)}</strong></div><div><small>{gate.phase === "open" ? "最近停止或恢复的说明" : "停止或等待原因"}</small><strong>{recoveryReasonSummary(gate)}</strong></div><div><small>下一动作</small><strong>{recoveryNextActionLabel(view.nextAction, runtimeState)}</strong></div></div>
+      <div className="session-recovery-facts"><div><small>当前阶段</small><strong>{runtimeState === "closed" && gate.phase === "open" ? "数据库恢复门未限制；会话已关闭" : recoveryPhaseLabel(gate.phase)}</strong></div><div><small>{gate.phase === "open" ? "最近停止或恢复的说明" : "停止或等待原因"}</small><strong>{recoveryReasonSummary(gate)}</strong></div><div><small>下一动作</small><strong>{recoveryNextActionLabel(view.nextAction, runtimeState)}</strong></div></div>
       {runtimeState === "closed" && <p className="session-recovery-note">该受管 Session 已关闭；恢复阶段不能使它直接接续。请先核对会话生命周期与授权。</p>}
       {gate.causeKind && <p className="session-recovery-context">{gate.phase === "open" ? "最近来源" : "来源"}：{recoveryCauseLabel(gate.causeKind)}{gate.causeId && <> <ShortId value={gate.causeId} /></>}{gate.causeState && ` · 保存状态：${recoverySourceStateLabel(gate.causeState)}`} · 更新于 {date(gate.updatedAt)}</p>}
       <details className="session-recovery-full-id"><summary>查看原始恢复原因与状态代码</summary><p>{gate.reason || "原始原因未记录"}</p><code>{gate.causeState ?? "原始状态未记录"}</code></details>
@@ -36,7 +36,7 @@ export function SessionRecoveryOverview({ read, runtimeState, queueHref }: { rea
       {gate.phase === "awaiting_acceptance" && <p className="session-recovery-note">新任务与消息仍等待交付、实际使用和验收放行。</p>}
       {gate.phase === "awaiting_acceptance" && gate.claimId && <p className="session-recovery-context">等待验收放行的承接：<ShortId value={gate.claimId} /></p>}
       {gate.phase === "awaiting_acceptance" && gate.claimId && <FullRecoveryId label="等待验收放行的承接" value={gate.claimId} />}
-      {gate.phase === "open" && <p className="session-recovery-note">仍需满足权限、额度、互斥、任务及交付条件。</p>}
+      {gate.phase === "open" && <p className="session-recovery-note">原消息占用、原生 Turn 和当前 owner 状态须另行核对；还需满足权限、额度、互斥、任务及交付条件。下一 Turn 是否启动以实际记录为准。</p>}
       {gate.decisionOperationId && <FullRecoveryId label="最近采用决定的操作" value={gate.decisionOperationId} />}
     </> : <><p className="session-recovery-note">没有持久恢复记录；这不代表所有运行已核实健康。{recoveryNextActionLabel(view.nextAction, runtimeState)}。</p>
       {runtimeState === "closed" && view.nextAction !== "normal_work" && <p className="session-recovery-note">该受管 Session 已关闭；没有恢复记录也不能视为可直接接续。</p>}</>}
