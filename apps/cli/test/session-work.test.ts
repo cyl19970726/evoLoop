@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { sessionWorkPath } from "../src/session-work.ts";
 import { runCli } from "../src/application.ts";
+import { sessionStatus } from "../src/session-status.ts";
 const id = "00000000-0000-4000-8000-000000000001";
 const key = `external:${id}`;
 test("named work reads preserve opaque cursors, real Session identity and project-scoped filters", () => {
@@ -36,6 +37,11 @@ test("Agent help and schemas expose common message/assignment operations without
   const run = async (args: string[]) => { let out = ""; const code = await runCli(args, {}, { stdout: s => { out += s; }, stderr: () => {} }); return { code, body: JSON.parse(out) }; };
   assert.equal((await run(["help"])).body.commands.some((x: string) => x.startsWith("work list ")), true);
   assert.equal((await run(["help"])).body.commands.some((x: string) => x.startsWith("work leader ")), true);
+  assert.equal((await run(["help"])).body.commands.some((x: string) => x.startsWith("work status ")), true);
+  for (const type of ["session.message.reconcile", "session.message.interrupt"]) {
+    const schema = await run(["command", "schema", type]); assert.equal(schema.code, 0);
+    assert.ok(schema.body.required.includes("expectedProcessingVersion"));
+  }
   for (const name of ["work.plan.set", "work.dependencies.set", "work.review.set"]) {
     const schema = await run(["request", "schema", name]); assert.equal(schema.code, 0);
     assert.ok(schema.body.properties.operationId);
@@ -43,6 +49,19 @@ test("Agent help and schemas expose common message/assignment operations without
   for (const type of ["session.message.post", "session.profile.set", "task.assignment.acknowledge"]) {
     const r = await run(["command", "schema", type]); assert.equal(r.code, 0); assert.ok(r.body.required.includes("operationId"));
   }
+});
+
+test("work status keeps native connection, activity and persistent processing separate", () => {
+  const snapshot={session:{key:`owned:${id}`,runtimeState:"ready",busy:true,lastProgressAt:null,aliases:[]},
+    nativeObservation:{freshness:"live",status:"active",lastEventAt:"2026-11-03T00:54:15Z",
+      observedAt:"2026-11-03T03:42:00Z",currentTurn:{id:"turn-1",status:"inProgress"}}};
+  const detail={message:{id,target:{kind:"owned",sessionId:id},state:"processing",version:2,updatedAt:"2026-11-03T00:47:30Z"},
+    processing:{id:"processing-1",messageId:id,sessionId:id,state:"running",version:2,nativeTurnId:"turn-1"}};
+  const value=sessionStatus(snapshot,detail,id) as {native:{freshness:string;lastEventAt:string};message:{state:string;processing:{state:string}}};
+  assert.deepEqual([value.native.freshness,value.native.lastEventAt,value.message.state,value.message.processing.state],
+    ["live","2026-11-03T00:54:15Z","processing","running"]);
+  assert.throws(()=>sessionStatus(snapshot,{...detail,message:{...detail.message,target:{kind:"owned",sessionId:"another"}}},id),
+    /target does not match/);
 });
 
 test('timeline, selected Item and live update paths encode independent positions and native IDs', () => {

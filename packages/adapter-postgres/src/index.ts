@@ -564,6 +564,12 @@ class PgReader implements Reader {
 }
 
 class PgTransaction extends PgReader implements Transaction {
+  async assertCoordinatorLeaseEpoch(nonce:string):Promise<void>{
+    const row=await this.client.query<{nonce:string}>(
+      'SELECT nonce FROM coordinator_lease_epoch WHERE singleton=true FOR SHARE');
+    if(row.rows[0]?.nonce!==nonce)
+      throw new DomainError('LEASE_LOST','Coordinator lease generation changed before manual stop');
+  }
   async lockRuntimeSession(id: string) {
     await this.client.query('SELECT session_id FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE',[this.projectId,id]);
     return this.getRuntimeSession(id);

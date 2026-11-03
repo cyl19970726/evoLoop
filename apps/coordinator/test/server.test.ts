@@ -231,3 +231,73 @@ test("schedule status scopes grants to the caller and active commands require an
     assert.deepEqual(executed, ["schedule.create", "schedule.revise"]);
   } finally { await app.close(); }
 });
+
+test("message recovery uses current dynamic Session authority and never falls back to a static grant", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000114",messageId="00000000-0000-4000-8000-000000000115";
+  const payload={type:"session.message.reconcile",projectId,operationId:"00000000-0000-4000-8000-000000000116",
+    messageId,sessionId,processingId:"00000000-0000-4000-8000-000000000117",nativeTurnId:"turn-exact",
+    expectedMessageVersion:2,expectedProcessingVersion:2,reason:"Review original owned Turn"};
+  let dynamicAllowed=true,staticCalls=0,dynamicCalls=0,executed=0;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getOperation:async()=>null,
+    getRuntimeSession:async()=>({projectId,id:sessionId,roleId:"role",cwd:"/tmp/owned",authorizationScope:"dynamic",
+      model:"model",sandbox:"danger-full-access",approvalPolicy:"never",state:"ready"}),
+    execute:async()=>{executed++;return{status:"applied",operationId:payload.operationId,entityId:messageId,version:2};},
+  } as unknown as WorkflowService,
+    isDynamicSession:async()=>true,
+    authorizeDynamicMessageRecovery:async()=>{dynamicCalls++;return dynamicAllowed;},
+    hasRuntimeGrant:async()=>{staticCalls++;return true;}});
+  try{
+    const request=()=>app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload});
+    assert.equal((await request()).statusCode,200);
+    dynamicAllowed=false;
+    const denied=await request();assert.equal(denied.statusCode,403);
+    assert.equal(denied.json().code,"FORBIDDEN");
+    assert.deepEqual([dynamicCalls,staticCalls,executed],[2,0,1]);
+  }finally{await app.close();}
+});
+
+test("manual stop previews the original Turn and verifies owner evidence before the command journal", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000121",messageId="00000000-0000-4000-8000-000000000122";
+  const processingId="00000000-0000-4000-8000-000000000123";
+  const preview={sessionId,nativeTurnId:"turn-original",nativeStatus:"interrupted",completedAtUtc:null,
+    threadStatus:"idle",itemCount:1,itemIdsHash:"a".repeat(64),observedAt:new Date().toISOString(),eligible:true,reason:"stopped"};
+  const payload={type:"session.message.manualStop",projectId,operationId:"00000000-0000-4000-8000-000000000124",
+    messageId,sessionId,processingId,nativeTurnId:"turn-original",
+    preflightId:"00000000-0000-4000-8000-000000000125",expectedMessageVersion:2,
+    expectedProcessingVersion:3,oldCoordinatorPid:101,oldNativePid:102,
+    oldCoordinatorStartIdentity:"old-coordinator",oldNativeStartIdentity:"old-native",
+    exitEvidenceRef:"/private/owner-exit.json",exitEvidenceHash:"b".repeat(64),
+    observedNativeStatus:"interrupted",observedThreadStatus:"idle",observedItemCount:1,
+    observedItemIdsHash:"a".repeat(64),reason:"Reviewed old owner exit"};
+  let allowed=true,proof=false,preflightAvailable=true,executed=0,previews=0;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getOperation:async()=>null,getRuntimeSession:async()=>({projectId,id:sessionId,roleId:"role",
+      cwd:"/tmp/owned",authorizationScope:"project",model:"model",sandbox:"danger-full-access",
+      approvalPolicy:"never",state:"ready"}),
+    execute:async()=>{executed++;return{status:"applied",operationId:payload.operationId,entityId:messageId,version:3};},
+  } as unknown as WorkflowService,
+  sessionMessages:{manualStopPreflight:async()=>preflightAvailable?{preflightId:payload.preflightId}:null,
+    detail:async()=>({message:{id:messageId,version:2,target:{kind:"owned",sessionId}},
+    processing:{id:processingId,version:3,nativeTurnId:"turn-original"},manualStop:null})} as never,
+  hasRuntimeGrant:async()=>allowed,
+  manualStop:{execute:async()=>{executed++;return{status:"applied",operationId:payload.operationId,entityId:messageId,version:3};},
+    preview:async()=>{previews++;return preview;},verify:async()=>{
+    if(!proof)throw new DomainError("MANUAL_STOP_OWNER_LIVE","old owner remains");}}});
+  try{
+    const auth={authorization:`Bearer ${token}`};
+    const read=()=>app.inject({url:`/api/projects/${projectId}/session-messages/${messageId}/manual-stop-preview`,headers:auth});
+    assert.equal((await read()).json().preview.nativeTurnId,"turn-original");
+    const write=()=>app.inject({method:"POST",url:"/api/commands",headers:auth,payload});
+    preflightAvailable=false;
+    assert.equal((await write()).json().code,"MANUAL_STOP_PREFLIGHT_MISSING");
+    assert.equal(executed,0);
+    preflightAvailable=true;
+    assert.equal((await write()).json().code,"MANUAL_STOP_OWNER_LIVE");
+    assert.equal(executed,0);
+    proof=true;assert.equal((await write()).statusCode,200);assert.equal(executed,1);
+    allowed=false;assert.equal((await read()).statusCode,403);
+    assert.equal((await write()).statusCode,403);
+    assert.equal(executed,1);assert.equal(previews,3);
+  }finally{await app.close();}
+});

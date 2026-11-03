@@ -59,7 +59,7 @@ test("late message progress cannot mask a closing or closed owned Session", () =
   for (const state of ["closing", "closed", "unknown"] as const) {
     assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: state, busy: true }, true), sessionLifecycleLabel({ kind: "owned", runtimeState: state, busy: true }));
   }
-  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }, true), "消息处理中");
+  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }, true), "消息执行状态待核对");
   assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }, true), "空闲");
 });
 

@@ -1,6 +1,6 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
-import type { SessionMessageProcessing, SessionMessageRecord, SessionMessageTransaction } from "@evoloop/contracts/session-messages";
+import type { SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageTransaction } from "@evoloop/contracts/session-messages";
 import { DomainError } from "@evoloop/contracts/ports";
 
 const iso = (v: Date | string): string => v instanceof Date ? v.toISOString() : v;
@@ -25,7 +25,31 @@ const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
   failure:r.failure,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
+  interruptOperationId:r.interrupt_operation_id??null,interruptActorId:r.interrupt_actor_id??null,
+  interruptReason:r.interrupt_reason??null,
+  interruptRequestedAt:r.interrupt_requested_at?iso(r.interrupt_requested_at):null,
+  interruptAttemptedAt:r.interrupt_attempted_at?iso(r.interrupt_attempted_at):null,
   version:r.version,startedAt:iso(r.started_at),updatedAt:iso(r.updated_at),
+});
+const manualStopEvidence = (r: QueryResultRow): SessionMessageManualStopEvidence => ({
+  projectId:r.project_id,messageId:r.message_id,processingId:r.processing_id,sessionId:r.session_id,
+  nativeTurnId:r.native_turn_id,preflightId:r.preflight_id,operationId:r.operation_id,actorId:r.actor_id,reason:r.reason,
+  priorFailure:r.prior_failure,oldCoordinatorPid:r.old_coordinator_pid,oldNativePid:r.old_native_pid,
+  oldCoordinatorStartIdentity:r.old_coordinator_start_identity,oldNativeStartIdentity:r.old_native_start_identity,
+  exitEvidenceRef:r.exit_evidence_ref,exitEvidenceHash:r.exit_evidence_hash,
+  observedNativeStatus:r.observed_native_status,observedThreadStatus:r.observed_thread_status,
+  observedItemCount:r.observed_item_count,observedItemIdsHash:r.observed_item_ids_hash,
+  recordedAt:iso(r.recorded_at),
+});
+const manualStopPreflight = (r: QueryResultRow): SessionMessageManualStopPreflight => ({
+  projectId:r.project_id,messageId:r.message_id,preflightId:r.preflight_id,
+  processingId:r.processing_id,sessionId:r.session_id,nativeTurnId:r.native_turn_id,
+  nativeThreadId:r.native_thread_id,messageVersion:r.message_version,processingVersion:r.processing_version,
+  host:r.host,capturedByActorId:r.captured_by_actor_id,listenPort:r.listen_port,
+  oldCoordinatorPid:r.old_coordinator_pid,oldCoordinatorStartIdentity:r.old_coordinator_start_identity,
+  oldNativePid:r.old_native_pid,oldNativeStartIdentity:r.old_native_start_identity,
+  preStopEvidenceJson:r.pre_stop_evidence_json,preStopEvidenceHash:r.pre_stop_evidence_hash,
+  captureFileRef:r.capture_file_ref,captureFileHash:r.capture_file_hash,capturedAt:iso(r.captured_at),
 });
 const SELECT_MESSAGE = `SELECT m.*, rr.actor_id AS receipt_actor_id,rr.evidence AS receipt_evidence,
   rr.recorded_at AS receipt_recorded_at FROM session_message m LEFT JOIN LATERAL (
@@ -72,6 +96,16 @@ export class PgSessionMessages implements SessionMessageTransaction {
   async getSessionMessageProcessing(messageId:string):Promise<SessionMessageProcessing|null>{
     const r=await this.client.query('SELECT * FROM session_message_processing WHERE project_id=$1 AND message_id=$2',[this.projectId,messageId]);
     return r.rows[0]?processing(r.rows[0]):null;
+  }
+  async getSessionMessageManualStopEvidence(messageId:string):Promise<SessionMessageManualStopEvidence|null>{
+    const r=await this.client.query('SELECT * FROM session_message_manual_stop_evidence WHERE project_id=$1 AND message_id=$2',
+      [this.projectId,messageId]);
+    return r.rows[0]?manualStopEvidence(r.rows[0]):null;
+  }
+  async getSessionMessageManualStopPreflight(messageId:string):Promise<SessionMessageManualStopPreflight|null>{
+    const r=await this.client.query('SELECT * FROM session_message_manual_stop_preflight WHERE project_id=$1 AND message_id=$2',
+      [this.projectId,messageId]);
+    return r.rows[0]?manualStopPreflight(r.rows[0]):null;
   }
   async listSessionMessageProcessing(messageIds:string[]):Promise<SessionMessageProcessing[]>{
     const ids=[...new Set(messageIds)];
@@ -122,9 +156,32 @@ export class PgSessionMessages implements SessionMessageTransaction {
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt]);
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
-    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8
-      WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion]);
+    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,
+      interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13
+      WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion,
+      v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null]);
     if(!r.rowCount)throw new DomainError('VERSION_CONFLICT','message processing changed');
+  }
+  async insertSessionMessageManualStopEvidence(v:SessionMessageManualStopEvidence):Promise<void>{
+    this.scope(v.projectId);
+    await this.client.query(`INSERT INTO session_message_manual_stop_evidence(project_id,message_id,processing_id,session_id,
+      native_turn_id,operation_id,actor_id,reason,prior_failure,old_coordinator_pid,old_native_pid,
+      old_coordinator_start_identity,old_native_start_identity,
+      exit_evidence_ref,exit_evidence_hash,observed_native_status,observed_thread_status,observed_item_count,
+      observed_item_ids_hash,recorded_at,preflight_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      [v.projectId,v.messageId,v.processingId,v.sessionId,v.nativeTurnId,v.operationId,v.actorId,v.reason,
+        v.priorFailure,v.oldCoordinatorPid,v.oldNativePid,v.oldCoordinatorStartIdentity,v.oldNativeStartIdentity,
+        v.exitEvidenceRef,v.exitEvidenceHash,
+        v.observedNativeStatus,v.observedThreadStatus,v.observedItemCount,v.observedItemIdsHash,v.recordedAt,
+        v.preflightId]);
+  }
+  async markSessionMessageInterruptAttempted(messageId:string,operationId:string,expectedVersion:number,at:string):Promise<boolean>{
+    const r=await this.client.query(`UPDATE session_message_processing SET interrupt_attempted_at=$5,version=version+1,updated_at=$5
+      WHERE project_id=$1 AND message_id=$2 AND interrupt_operation_id=$3 AND version=$4
+      AND interrupt_attempted_at IS NULL AND state IN ('running','unknown')`,
+      [this.projectId,messageId,operationId,expectedVersion,at]);
+    return !!r.rowCount;
   }
   async insertSessionMessageReadReceipt(messageId:string,actorId:string,evidence:string,at:string):Promise<void>{
     await this.client.query(`INSERT INTO session_message_read_receipt(project_id,message_id,actor_id,evidence,recorded_at)

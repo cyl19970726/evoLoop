@@ -12,7 +12,7 @@ const base: SessionRecoveryView = {
 test("all five recovery phases describe permission and waiting rather than inferred execution", () => {
   assert.deepEqual(["open", "blocked", "retrying", "message_pending", "awaiting_acceptance"].map(phase =>
     recoveryPhaseLabel(phase as NonNullable<SessionRecoveryView["gate"]>["phase"])), [
-    "可按正常规则接续", "已停止接续", "等待原任务重试", "等待原排队消息", "等待交付与验收",
+    "数据库恢复门未限制", "已停止接续", "等待原任务重试", "等待原排队消息", "等待交付与验收",
   ]);
   assert.match(recoveryNextActionLabel("await_authorized_retry"), /是否运行以 Run 记录为准/);
   assert.match(recoveryNextActionLabel("await_original_message"), /消息记录为准/);
@@ -51,6 +51,7 @@ test("recovery reason summarizes only recognized saved outcomes", () => {
     causeState: "unknown", reason: "Run terminal failure or unresolved native outcome", queueId: null, claimId: null,
     retryRunId: null, resumeMessageId: null, decisionOperationId: null, updatedAt: base.observedAtUtc };
   assert.equal(recoveryReasonSummary(gate), "本次运行结果尚未确认");
+  assert.match(recoveryReasonSummary({...gate,phase:"open"}),/原消息占用和原生状态须分别核对/);
   assert.equal(recoveryReasonSummary({ ...gate, causeState: "failed" }), "本次运行已记录为失败");
   assert.equal(recoveryReasonSummary({ ...gate, causeState: "interrupted" }), "本次运行已记录为中断");
   assert.equal(recoveryReasonSummary({ ...gate, causeKind: "message", causeState: "unknown" }), "原消息处理结果尚未确认");

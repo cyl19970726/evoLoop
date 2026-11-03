@@ -37,7 +37,7 @@ export function sessionStatusLabel(session: StatusSource): string {
 
 export function sessionHeaderStatusLabel(session: StatusSource, messageRunning: boolean): string {
   return session.kind === "owned" && session.runtimeState === "ready" && session.busy === true && messageRunning
-    ? "消息处理中" : sessionStatusLabel(session);
+    ? "消息执行状态待核对" : sessionStatusLabel(session);
 }
 
 export function currentWorkRelationLabel(work: ObservedTask, session: StatusSource & Pick<ObservedSession, "latestBusinessRun">,

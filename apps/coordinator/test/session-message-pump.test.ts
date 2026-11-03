@@ -212,3 +212,53 @@ test('admission denial stops scheduling and native qualification before any proc
     assert.equal(blocked,'ordinary admission denied');
   }
 });
+
+test('reviewed interrupt settles a terminal original Turn without calling native interrupt',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'processing');
+  let settled=0,attempted=0,interrupted=0;
+  const service={pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running',version:3,
+      interruptOperationId:randomUUID(),interruptAttemptedAt:null}),
+    settle:async()=>{settled++;},markInterruptAttempted:async()=>{attempted++;return true;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    listTurns:async()=>({data:[{id:'turn-exact',status:'completed',completedAtUtc:new Date().toISOString()}],nextCursor:null}),
+    listItems:async()=>({data:[],nextCursor:null}),interruptTurn:async()=>{interrupted++;}};
+  await new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}}).tick();
+  assert.deepEqual([settled,attempted,interrupted],[1,0,0]);
+});
+
+test('reviewed interrupt marks its one native attempt before call and cannot replay after restart',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'processing'),operationId=randomUUID();
+  let version=3,attemptedAt:string|null=null,calls=0,unknown=0;
+  const service={pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running',version,
+      interruptOperationId:operationId,interruptAttemptedAt:attemptedAt}),
+    markInterruptAttempted:async(_project:string,_message:string,op:string,expected:number)=>{
+      assert.equal(op,operationId);assert.equal(expected,version);attemptedAt=new Date().toISOString();version++;return true;},
+    markUnknown:async()=>{unknown++;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    listTurns:async()=>({data:[{id:'turn-exact',status:'inProgress',completedAtUtc:null}],nextCursor:null}),
+    listItems:async()=>({data:[],nextCursor:null}),interruptTurn:async()=>{calls++;throw new Error('ack lost');}};
+  const deps={service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:(e:unknown)=>{throw e;}};
+  await new SessionMessagePump(deps).tick();
+  await new SessionMessagePump(deps).tick();
+  assert.deepEqual([calls,unknown,version],[1,1,4]);
+});
+
+test('a Turn finishing between readback and reviewed interrupt is settled without native interrupt',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'processing');
+  let reads=0,settled=0,attempted=0,interrupted=0;
+  const service={pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running',version:3,
+      interruptOperationId:randomUUID(),interruptAttemptedAt:null}),
+    settle:async()=>{settled++;},markInterruptAttempted:async()=>{attempted++;return true;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},listTurns:async()=>{
+      reads++;return{data:[{id:'turn-exact',status:reads===1?'inProgress':'completed',
+        completedAtUtc:reads===1?null:new Date().toISOString()}],nextCursor:null};},
+    listItems:async()=>({data:[],nextCursor:null}),interruptTurn:async()=>{interrupted++;}};
+  await new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}}).tick();
+  assert.deepEqual([reads,settled,attempted,interrupted],[2,1,0,0]);
+});

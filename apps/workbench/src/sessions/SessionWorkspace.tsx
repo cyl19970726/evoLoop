@@ -16,6 +16,7 @@ import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
 import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
+import { SessionExecutionFacts } from "./SessionExecutionFacts";
 import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
@@ -343,6 +344,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
       <div className="session-workspace-actions"><button type="button" onClick={() => { setAccessReadAgain(value => value + 1); setReadAgain(value => value + 1); }} disabled={loading}>重新读取</button><button type="button" aria-expanded={informationOpen} aria-controls="session-information-panel" onClick={() => showInformation(!informationOpen)}>会话详情</button><button type="button" aria-expanded={closeOpen} aria-controls="session-close-panel" onClick={() => setCloseOpen(value => !value)}>{session.kind === "owned" ? "关闭受管 Session" : "归档与归类"}</button></div>
     </header>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
+    {session.kind === "owned" && session.target.kind === "owned" && <SessionExecutionFacts token={context.token} projectId={context.projectId} sessionId={session.target.sessionId} progress={observation.progress} currentRead={nativeReadCurrent && !observation.error} refreshKey={`${current.metadata.generatedAt}:${readAgain}`} />}
     {closeOpen && <div id="session-close-panel"><SessionClosePanel context={context} snapshot={current} currentRead={active && !loading && !error && confirmedRead === readKey} onReadAgain={() => setReadAgain(value => value + 1)} /></div>}
     <div className={`session-context-band ${contextCollapsed ? "collapsed" : ""}`}>
       <button type="button" className="session-context-toggle" aria-label={contextCollapsed ? "展开任务与 Agent 信息" : "收起任务与 Agent 信息"} aria-expanded={!contextCollapsed} onClick={() => setContextCollapsed(value => !value)}>

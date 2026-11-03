@@ -18,6 +18,8 @@ import type { AllocationRelationsService } from "@evoloop/core/allocation-relati
 import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
+import type { ManualStopPreview } from "./session-messages/manual-stop.js";
+import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
 import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
 import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
@@ -60,6 +62,13 @@ export async function buildServer(options: {
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
+  authorizeDynamicMessageRecovery?: (principal: Principal, session: RuntimeSessionRecord) => Promise<boolean>;
+  manualStop?: {
+    execute(principal:Principal,command:Extract<Command,{type:"session.message.manualStop"}>):ReturnType<WorkflowService["execute"]>;
+    preview(session: RuntimeSessionRecord, turnId: string): Promise<ManualStopPreview>;
+    verify(command: Extract<Command,{type:"session.message.manualStop"}>, session: RuntimeSessionRecord,
+      preview: ManualStopPreview,preflight:SessionMessageManualStopPreflight): Promise<void>;
+  };
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
   listRuntimeModels?: () => Promise<{status:"available"|"empty"|"unavailable";models:string[];error:string|null;observedAtUtc:string}>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
@@ -129,6 +138,19 @@ export async function buildServer(options: {
     return reply.code(503).send({ code: "RESULT_UNCONFIRMED", message: "暂时无法确认结果。写操作请保留原操作 ID 并查询记录。", requestId: request.id });
   });
   const who = (p: Principal | null) => { if (!p) throw new DomainError("FORBIDDEN", "未认证"); return p; };
+  const messageRecoverySession = async (principal:Principal,projectId:string,sessionId:string) => {
+    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目复核权限。");
+    const session = await options.service.getRuntimeSession(principal, projectId, sessionId);
+    const dynamic = await options.isDynamicSession?.(projectId, sessionId);
+    const granted = dynamic ? await options.authorizeDynamicMessageRecovery?.(principal, session) :
+      await options.hasRuntimeGrant?.({ projectId, actorId:principal.actorId, roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
+        model:session.model,approvalPolicy:session.approvalPolicy });
+    if (session.state !== "ready" || !granted)
+      throw new DomainError("FORBIDDEN", "当前身份没有此原会话的精确执行恢复授权。");
+    return session;
+  };
   const params = (value: unknown) => z.record(z.string(), idSchema).parse(value);
   const callerGrants = (projectId:string,actorId:string) => (options.runtimeGrants?.(projectId,actorId) ?? []).filter(g=>g.projectId===projectId && g.actorId===actorId);
   const catalog = async () => {
@@ -170,6 +192,29 @@ export async function buildServer(options: {
       if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
         if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问回复。");
         await options.nativeInputs.requireReply(principal, command.projectId, command.inputRequestId);
+      }
+    }
+    if (command.type === "session.message.reconcile" || command.type === "session.message.interrupt" ||
+      command.type === "session.message.manualStop") {
+      const principal = who(request.principal);
+      // A replay of the original journalled intent remains readable after grant drift;
+      // a new control decision must match the current exact Session environment.
+      if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        const session = await messageRecoverySession(principal,command.projectId,command.sessionId);
+        if (command.type === "session.message.manualStop") {
+          if (!options.manualStop || !options.sessionMessages)
+            throw new DomainError("MANUAL_STOP_UNAVAILABLE", "当前 owner 未提供首次维护交接核验入口。");
+          const detail = await options.sessionMessages.detail(command.projectId,command.messageId);
+          const preflight = await options.sessionMessages.manualStopPreflight(command.projectId,command.messageId);
+          if (!preflight) throw new DomainError("MANUAL_STOP_PREFLIGHT_MISSING", "停前原 owner 身份锚点不存在。");
+          if (detail.message.target.kind !== "owned" || detail.message.target.sessionId !== command.sessionId ||
+            detail.processing?.id !== command.processingId || detail.processing.nativeTurnId !== command.nativeTurnId ||
+            detail.message.version !== command.expectedMessageVersion ||
+            detail.processing.version !== command.expectedProcessingVersion)
+            throw new DomainError("MANUAL_STOP_BINDING_CHANGED", "原消息、processing 或版本已变化；请重新预览。");
+          const preview = await options.manualStop.preview(session,command.nativeTurnId);
+          await options.manualStop.verify(command,session,preview,preflight);
+        }
       }
     }
     if (command.type.startsWith("runtime.")) {
@@ -220,7 +265,9 @@ export async function buildServer(options: {
         throw new DomainError("FORBIDDEN", "当前身份没有此项目、范围和职责的日程授权。");
       }
     }
-    const result = await options.service.execute(who(request.principal), command);
+    const result = command.type === "session.message.manualStop"
+      ? await options.manualStop!.execute(who(request.principal),command)
+      : await options.service.execute(who(request.principal), command);
     return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
   });
   app.get("/api/projects/:projectId", async request => options.service.getProject(who(request.principal), params(request.params).projectId!));
@@ -387,6 +434,21 @@ export async function buildServer(options: {
   });
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
+  });
+  app.get("/api/projects/:projectId/session-messages/:id/manual-stop-preview", async request => {
+    const {projectId,id}=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    const principal=who(request.principal);
+    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目复核权限。");
+    if (!options.manualStop || !options.sessionMessages)
+      throw new DomainError("MANUAL_STOP_UNAVAILABLE", "当前 owner 未提供首次维护交接核验入口。");
+    const detail=await options.sessionMessages.detail(projectId,id);
+    if (detail.message.target.kind!=="owned" || !detail.processing?.nativeTurnId)
+      throw new DomainError("MANUAL_STOP_BINDING_CHANGED", "原消息未精确绑定可读取的原生 Turn。");
+    const session=await messageRecoverySession(principal,projectId,detail.message.target.sessionId);
+    return {messageId:id,messageVersion:detail.message.version,processingId:detail.processing.id,
+      processingVersion:detail.processing.version,
+      preview:await options.manualStop.preview(session,detail.processing.nativeTurnId)};
   });
   if (options.sessionTimeline) registerSessionTimelineRoutes(app,options.sessionTimeline,options.runtime);
   app.get("/api/projects/:projectId/runtime/sessions/:id/inputs", async request => {

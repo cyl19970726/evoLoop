@@ -17,7 +17,7 @@ import { getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMes
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
 import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
 import { buildServer } from "./server.js";
-import { acquireCoordinatorLease } from "./lease.js";
+import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
 import { FeishuBitableConnector } from "@evoloop/connector-feishu";
@@ -61,7 +61,9 @@ import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
+import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { previewManualStop, verifyManualStop } from "./session-messages/manual-stop.js";
 import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
@@ -155,6 +157,7 @@ const service = new WorkflowService({
 });
 const ordinarySubmissions = new OrdinaryRunSubmissionService(pool, uow, lease.canWrite);
 const ordinarySealWorkflow = new WorkflowService({uow:leaseCheckedUnitOfWork(uow, lease.canWrite),clock,ids,hasher});
+const manualStopWorkflow = new WorkflowService({uow:leaseFencedUnitOfWork(uow,lease),clock,ids,hasher});
 const trustedRuntime = new RuntimeWorkflowService({ uow, clock, ids });
 const configuredBlobRoot = process.env.EVOLOOP_BLOB_ROOT;
 if (configuredBlobRoot && !isAbsolute(configuredBlobRoot)) throw new Error("EVOLOOP_BLOB_ROOT must be an absolute external data directory.");
@@ -589,6 +592,16 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   sessionWork, sessionTimeline,
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
+  ...(runner ? {manualStop: {
+    execute: (principal:Principal,command:Extract<import("@evoloop/contracts").Command,{type:"session.message.manualStop"}>) =>
+      manualStopWorkflow.execute(principal,command),
+    preview: (session:RuntimeSessionRecord,turnId:string) =>
+      previewManualStop(runner.nativeAdapter(),session,turnId),
+    verify: (command:Extract<import("@evoloop/contracts").Command,{type:"session.message.manualStop"}>,
+      session:RuntimeSessionRecord,preview:import("./session-messages/manual-stop.js").ManualStopPreview,
+      preflight:SessionMessageManualStopPreflight) =>
+      verifyManualStop(command,session,preview,preflight,`${homedir()}/.local/share/evoloop-pilot`,lease.canWrite),
+  }} : {}),
   messageExecution: createMessageExecutionReader({
     loadConfiguration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
     runtimeAvailable: () => runner?.status().available === true,
@@ -621,6 +634,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
+  authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
+    await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);

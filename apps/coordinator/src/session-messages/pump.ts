@@ -12,7 +12,8 @@ type MessageRuntime={isReady():boolean;registerBinding(binding:RuntimeBinding):P
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   listTurns(binding:RuntimeBinding,cursor?:string):Promise<RuntimePage<RuntimeTurn>>;
-  listItems(binding:RuntimeBinding,turnId:string,cursor?:string):Promise<RuntimePage<unknown>>};
+  listItems(binding:RuntimeBinding,turnId:string,cursor?:string):Promise<RuntimePage<unknown>>;
+  interruptTurn?(binding:RuntimeBinding,turnId:string):Promise<void>};
 const marker=(operationId:string)=>`[evoloop-message-operation:${operationId}]`;
 const TERMINAL_HISTORY_GRACE_MS=30_000;
 const object=(v:unknown):Record<string,unknown>|null=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:null;
@@ -127,7 +128,36 @@ export class SessionMessagePump {
       if(nativeTurnId&&await this.mayDeferMissingBoundTurn(message.projectId,session.id,binding,nativeTurnId))return;
       await this.deps.service.markUnknown(message.projectId,message.id,'Bound native Turn is not currently readable');return;
     }
-    if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status))return;
+    if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status)){
+      if(record.interruptOperationId&&!record.interruptAttemptedAt&&turn.status==='inProgress'){
+        if(!runtime.interruptTurn)throw new DomainError('INTERRUPT_UNAVAILABLE','owned native interrupt is unavailable');
+        // A Turn may finish after the first page was read. Recheck the exact ID
+        // immediately before recording the one external attempt.
+        const refreshed=await runtime.listTurns(binding);
+        let latest=refreshed.data.find(t=>t.id===turn.id);
+        if(!latest&&refreshed.nextCursor)
+          latest=(await runtime.listTurns(binding,refreshed.nextCursor)).data.find(t=>t.id===turn.id);
+        if(latest?.completedAtUtc&&['completed','failed','interrupted'].includes(latest.status)){
+          const items=await collect(cursor=>runtime.listItems(binding,latest!.id,cursor),10);
+          await this.deps.service.settle(message.projectId,message.id,latest,finalMessages(items).join('\n\n')||null);
+          return;
+        }
+        if(latest?.status!=='inProgress'){
+          await this.deps.service.markUnknown(message.projectId,message.id,'Original Turn changed or became unreadable before interrupt');
+          return;
+        }
+        // Mark the one native attempt before making the external call. A lost acknowledgement
+        // remains visible and cannot trigger a second interrupt after coordinator restart.
+        const claimed=await this.deps.service.markInterruptAttempted(message.projectId,message.id,
+          record.interruptOperationId,record.version);
+        if(claimed){
+          try{await runtime.interruptTurn(binding,turn.id);}
+          catch(error){await this.deps.service.markUnknown(message.projectId,message.id,
+            `Native interrupt acknowledgement unavailable; inspect original Turn ${turn.id} before recovery`);}
+        }
+      }
+      return;
+    }
     const items=await collect(cursor=>runtime.listItems(binding,turn.id,cursor),10);
     await this.deps.service.settle(message.projectId,message.id,turn,finalMessages(items).join('\n\n')||null);
   }
