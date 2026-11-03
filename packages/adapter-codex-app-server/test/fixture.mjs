@@ -51,7 +51,7 @@ for await (const line of lines) {
   const { id, method, params } = message;
   if (method === "initialize") {
     if ((mode.startsWith("dynamic") || mode==='full-dynamic' || mode==='workspace-timeline') && params.capabilities?.experimentalApi !== true) process.exit(2);
-    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && mode!=='workspace-timeline' && mode!=='workspace-history' && params.capabilities?.experimentalApi === true) process.exit(2);
+    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && mode!=='workspace-timeline' && mode!=='workspace-history' && !mode.startsWith("zero-turn") && params.capabilities?.experimentalApi === true) process.exit(2);
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
@@ -115,7 +115,7 @@ for await (const line of lines) {
   }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
-  if (mode === "timeout" && method === "turn/start") continue;
+  if ((mode === "timeout" || mode === "zero-turn-timeout") && method === "turn/start") continue;
   if (mode === "reject-start" && method === "turn/start") { send({ id, error: { code: -32602, message: "invalid params: private fixture detail" } }); continue; }
   if (method === "thread/start") {
     if (mode.startsWith("dynamic") && (!Array.isArray(params.dynamicTools) || !params.dynamicTools.some(tool=>tool.name==="browser_snapshot"))) process.exit(2);
@@ -132,6 +132,10 @@ for await (const line of lines) {
         sandbox:mode==='full-start-wrong'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}}});continue;
     }
     send({id,error:{code:-32602,message:"new fixture Session requires full policy"}});continue;
+  }
+  if (method === "thread/resume" && mode.startsWith("zero-turn")) {
+    observedResumes++;
+    send({id,error:{code:-32600,message:"no rollout found for new thread"}});continue;
   }
   if (method === "thread/resume" && mode === "dynamic-persisted-resume") {
     if (params.dynamicTools !== undefined) {send({id,error:{code:-32602,message:"resume must not redeclare native tools"}});continue;}
@@ -182,12 +186,14 @@ for await (const line of lines) {
     if (mode === "lost-archive-ack") continue;
     send({ id, result: {} }); continue;
   }
+  if (method === "thread/name/set" && mode === "zero-turn-disconnect") process.exit(0);
   if (method === "thread/name/set") {
     if (params.threadId !== thread.id || typeof params.name !== "string" || !params.name.trim()) {
       send({ id, error: { code: -32602, message: "invalid name target" } }); continue;
     }
     if (mode === "name-sync-reject") { send({ id, error: { code: -32000, message: "name rejected" } }); continue; }
     threadName = params.name;
+    if(mode==='zero-turn-active-event')send({method:'thread/status/changed',params:{threadId:thread.id,status:{type:'active',activeFlags:[]}}});
     if (mode !== "name-sync-lost") send({ id, result: {} });
     continue;
   }
@@ -215,10 +221,13 @@ for await (const line of lines) {
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
     const networkFailure=mode.startsWith('full-network-')&&turnStarts===0;
-    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode==='full-sequence'?{model:mode==='full-network-model-mismatch'?'other-model':mode==='full-network-model-missing'||unloaded?null:'gpt-6-sol'}:{}),status:{type:networkFailure?(mode==='full-network-active'?'active':mode==='full-network-unknown-status'?'unknown':'systemError'):unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
+    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode.startsWith('zero-turn')||mode==='full-sequence'?{model:mode==='zero-turn-not-loaded'?null:mode==='full-network-model-mismatch'?'other-model':mode==='full-network-model-missing'||unloaded?null:'gpt-6-sol'}:{}),status:{type:mode==='zero-turn-not-loaded'&&turnStarts===0?'notLoaded':networkFailure?(mode==='full-network-active'?'active':mode==='full-network-unknown-status'?'unknown':'systemError'):unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
+  }
+  if (method === "thread/turns/list" && mode.startsWith("zero-turn") && turnStarts===0) {
+    send({id,error:{code:-32600,message:"no rollout found for new thread"}});continue;
   }
   if (method === "thread/turns/list") {
     turnListReads++;
