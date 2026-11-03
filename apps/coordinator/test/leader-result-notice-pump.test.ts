@@ -33,7 +33,7 @@ function fixture(initial=notice()){
   let principals:Principal[]=[sender,receiver];
   let roles=[role],sessions=[session],grant=true,execution=true,write=true,native=true,inFlight=false;
   let taskFacts={currentRevisionId:initial.taskRevisionId,state:"todo",assigned:false};
-  let taskReads=0,blocks=0;
+  let taskReads=0,blocks=0,dispositions=0,pendingDispositions=0,refreshes=0;
   let pendingReason:string|null=null;
   const commands:unknown[]=[],errors:unknown[]=[],diagnostics:string[]=[];
   let saved:SessionMessageRecord|null=null;
@@ -49,6 +49,28 @@ function fixture(initial=notice()){
         : {items:row.state==="pending"?[row]:[],nextCursor:null};
     },
     getByMessageId:async(_project:string,messageId:string)=>messageId===row.messageId?row:null,
+    disposeStalePendingTodo:async(_project:string,noticeId:string)=>{
+      assert.equal(noticeId,row.id);
+      pendingDispositions++;
+      if(saved)return "posted" as const;
+      const refresh=taskFacts.state==="todo"&&!taskFacts.assigned&&
+        taskFacts.currentRevisionId!==row.taskRevisionId;
+      if(refresh)refreshes++;
+      const reason=taskFacts.state!=="todo"?"TODO_SOURCE_NOT_TODO":
+        taskFacts.assigned?"TODO_SOURCE_ASSIGNED":refresh?"TODO_SOURCE_SUPERSEDED_REFRESHED":
+          "TODO_SOURCE_SUPERSEDED_HANDLED";
+      row={...row,state:"blocked"};pendingReason=reason;
+      return "disposed" as const;
+    },
+    disposeStaleTodo:async(_project:string,noticeId:string,messageId:string)=>{
+      assert.equal(noticeId,row.id);assert.equal(messageId,row.messageId);
+      dispositions++;
+      if(saved?.state!=="queued")return "in_flight" as const;
+      saved={...saved,state:"cancelled",version:saved.version+1,
+        blockedReason:taskFacts.state==="todo"?"TODO_SOURCE_SUPERSEDED_REFRESHED":"TODO_SOURCE_NOT_TODO"};
+      if(taskFacts.state==="todo"&&!taskFacts.assigned)refreshes++;
+      return "disposed" as const;
+    },
     hasInFlightOnOtherSession:async()=>inFlight,
     notePendingReason:async(_project:string,_id:string,reason:string|null)=>{pendingReason=reason;},
     block:async(_project:string,_id:string,reason:string)=>{blocks++;row={...row,state:"blocked"};pendingReason=reason;},
@@ -91,8 +113,11 @@ function fixture(initial=notice()){
     onDiagnostic:(_project,_notice,reason)=>diagnostics.push(reason)});
   return {pump,commands,errors,diagnostics,cursors,get row(){return row;},get pendingReason(){return pendingReason;},
     get taskReads(){return taskReads;},get blocks(){return blocks;},
+    get dispositions(){return dispositions;},get pendingDispositions(){return pendingDispositions;},
+    get refreshes(){return refreshes;},
     setConfig(value:LeaderResultNoticeConfig|undefined){configured=value;},
     setPrincipals(value:Principal[]){principals=value;},
+    setNotice(value:LeaderResultNotice){row=value;},
     requeue(){row={...row,state:"pending"};},
     setTaskFacts(value:typeof taskFacts){taskFacts=value;},
     setFirstPage(value:LeaderResultNotice[]){firstPage=value;},
@@ -284,19 +309,83 @@ test("superseded or assigned todo leaves the pending scan as a diagnosed histori
   first.setTaskFacts({currentRevisionId:first.row.taskRevisionId,state:"todo",assigned:true});
   await first.pump.tick();
   assert.equal(first.commands.length,0);assert.equal(first.row.state,"blocked");
-  assert.equal(first.pendingReason,"TODO_ALREADY_ARRANGED_OR_SUPERSEDED");
+  assert.equal(first.pendingReason,"TODO_SOURCE_ASSIGNED");
   await first.pump.tick();
   assert.equal(first.taskReads,1,"arranged todo is removed from subsequent pending scans");
-  assert.equal(first.blocks,1,"the historical disposition is written once");
+  assert.equal(first.pendingDispositions,1,"the historical disposition is written once");
   const old=notice("task_todo");old.stale=true;
-  const second=fixture(old);await second.pump.tick();
+  const second=fixture(old);
+  second.setTaskFacts({currentRevisionId:"00000000-0000-4000-8000-000000000016",state:"todo",assigned:false});
+  await second.pump.tick();
   assert.equal(second.commands.length,0);assert.equal(second.row.state,"blocked");
-  assert.equal(second.pendingReason,"TODO_ALREADY_ARRANGED_OR_SUPERSEDED");
+  assert.equal(second.pendingReason,"TODO_SOURCE_SUPERSEDED_REFRESHED");
+  assert.equal(second.refreshes,1);
+  await second.pump.tick();
+  assert.equal(second.pendingDispositions,1);
   const queued=fixture(notice("task_todo"));await queued.pump.tick();
   assert.equal(await queued.pump.canStartMessage(queued.message!),true);
   queued.setTaskFacts({currentRevisionId:queued.row.taskRevisionId,state:"todo",assigned:true});
   assert.equal(await queued.pump.canStartMessage(queued.message!),false,
     "assignment after message save still prevents an obsolete native wakeup");
+});
+
+test("a pending old todo that is no longer todo is retired without a replacement",async()=>{
+  const old=notice("task_todo");
+  const f=fixture(old);
+  f.setTaskFacts({currentRevisionId:"00000000-0000-4000-8000-000000000016",state:"in_progress",assigned:false});
+  await f.pump.tick();
+  assert.equal(f.row.state,"blocked");
+  assert.equal(f.pendingReason,"TODO_SOURCE_NOT_TODO");
+  assert.equal(f.refreshes,0);
+  assert.equal(f.commands.length,0);
+});
+
+test("the pump handles the refreshed current todo on its next scan",async()=>{
+  const old=notice("task_todo");
+  const currentRevisionId="00000000-0000-4000-8000-000000000016";
+  const f=fixture(old);
+  f.setTaskFacts({currentRevisionId,state:"todo",assigned:false});
+  await f.pump.tick();
+  assert.equal(f.pendingDispositions,1);
+  assert.equal(f.refreshes,1);
+  f.setNotice({...notice("task_todo"),id:"00000000-0000-4000-8000-000000000018",
+    messageId:"00000000-0000-4000-8000-000000000019",
+    operationId:"00000000-0000-4000-8000-000000000020",
+    sourceEventId:currentRevisionId,taskRevisionId:currentRevisionId,stale:false});
+  await f.pump.tick();
+  assert.equal(f.commands.length,1);
+  assert.equal(f.row.state,"linked");
+  assert.equal(f.pendingDispositions,1);
+});
+
+test("a pending pinned todo with a saved post reconciles before stale disposal",async()=>{
+  const f=fixture(notice("task_todo"));
+  await f.pump.tick();
+  assert.equal(f.row.state,"linked");
+  f.setNotice({...f.row,state:"pending",stale:true});
+  f.setTaskFacts({currentRevisionId:"00000000-0000-4000-8000-000000000016",state:"todo",assigned:false});
+  await f.pump.tick();
+  assert.equal(f.row.state,"linked");
+  assert.equal(f.pendingDispositions,0);
+  assert.equal(f.commands.length,1,"the fixed post is not issued again");
+});
+
+test("a saved message without a readable operation keeps its pending notice unresolved",async()=>{
+  const n=notice("task_todo");
+  n.recipient={sessionId,receiverRoleId:roleId,receiverActorId:receiver.actorId,
+    senderActorId:sender.actorId};
+  const f=fixture(n);
+  f.setMessage({projectId,id:n.messageId,operationId:n.operationId,target:{kind:"owned",sessionId},
+    senderActorId:sender.actorId,content:"fixed todo",context:{taskId:n.taskId,taskRevisionId:n.taskRevisionId},
+    replyToMessageId:null,state:"queued",version:1,blockedReason:null,readReceipt:null,
+    createdAt:"2026-11-02T00:00:00.000Z",updatedAt:"2026-11-02T00:00:00.000Z"});
+  f.setTaskFacts({currentRevisionId:"00000000-0000-4000-8000-000000000016",state:"todo",assigned:false});
+  await f.pump.tick();
+  assert.equal(f.row.state,"pending");
+  assert.equal(f.pendingReason,"MESSAGE_POST_UNCONFIRMED");
+  assert.equal(f.message?.state,"queued");
+  assert.equal(f.refreshes,0);
+  assert.equal(f.commands.length,0);
 });
 
 test("stale Delivery and Observation point to fixed history without implying current acceptance",async()=>{
@@ -311,4 +400,22 @@ test("stale Delivery and Observation point to fixed history without implying cur
     assert.match(content,/not current acceptance, consumer use, or Task closure/);
     assert.match(content,new RegExp(old.taskRevisionId));
   }
+});
+
+test("the original linked queued todo from a changed Task is retired once, freeing its Session queue",async()=>{
+  const old={...notice("task_todo"),state:"linked" as const,stale:true,recipient:{
+    sessionId,receiverRoleId:roleId,receiverActorId:receiver.actorId,senderActorId:sender.actorId}};
+  const f=fixture(old);
+  f.setMessage({projectId,id:old.messageId,operationId:old.operationId,target:{kind:"owned",sessionId},
+    senderActorId:sender.actorId,content:"historical todo",context:{taskId:old.taskId,taskRevisionId:old.taskRevisionId},
+    replyToMessageId:null,state:"queued",version:2,blockedReason:null,readReceipt:null,
+    createdAt:"2026-11-02T00:00:00.000Z",updatedAt:"2026-11-02T00:00:00.000Z"});
+  f.setTaskFacts({currentRevisionId:"00000000-0000-4000-8000-000000000016",state:"in_progress",assigned:false});
+  assert.equal(await f.pump.canStartMessage(f.message!),false);
+  assert.equal(f.dispositions,1);
+  assert.equal(f.message?.state,"cancelled");
+  assert.equal(f.message?.blockedReason,"TODO_SOURCE_NOT_TODO");
+  assert.equal(f.refreshes,0);
+  assert.equal(await f.pump.canStartMessage(f.message!),false);
+  assert.equal(f.dispositions,1,"a repeated pump must not retire or dispatch twice");
 });

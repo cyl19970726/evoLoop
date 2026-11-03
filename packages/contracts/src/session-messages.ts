@@ -106,4 +106,6 @@ export interface SessionMessageTransaction extends SessionMessageReader {
   markSessionMessageSettled(sessionId:string,messageId:string,at:string):Promise<void>;
   /** Includes unresolved Task Runs and ordinary processing; close also checks queued messages. */
   assertSessionVacant(sessionId: string, includeQueued?: boolean): Promise<void>;
+  /** Lock the source Task and reject a linked todo whose fixed revision is no longer current. */
+  assertCurrentLeaderTodo(messageId: string): Promise<void>;
 }

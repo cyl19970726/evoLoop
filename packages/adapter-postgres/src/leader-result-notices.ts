@@ -90,7 +90,7 @@ async function page(pool: Pool, projectId: string, options: LeaderNoticeListOpti
     WHERE n.project_id=$1 AND ($2::uuid IS NULL OR n.task_id=$2::uuid)
       AND ($3::timestamptz IS NULL OR (n.occurred_at,n.notice_id)${compare}($3::timestamptz,$4::uuid))
       AND ($5::text='all' OR (n.state=$5::text AND
-        (n.kind<>'task_todo' OR t.current_revision_id=n.task_revision_id)))
+        ($5::text='pending' OR n.kind<>'task_todo' OR t.current_revision_id=n.task_revision_id)))
     ORDER BY n.occurred_at ${direction},n.notice_id ${direction} LIMIT $6`,
   [projectId, taskId, after?.occurredAt ?? null, after?.id ?? null, state, limit + 1]);
   const items = result.rows.slice(0, limit).map(notice);
@@ -268,6 +268,178 @@ export async function getLeaderNoticeByMessageId(pool: Pool, projectId: string,
   const result = await pool.query(`SELECT ${noticeFrom}
     WHERE n.project_id=$1 AND n.message_id=$2`, [projectId, messageId]);
   return result.rows[0] ? notice(result.rows[0]) : null;
+}
+
+/** Retire a pending todo that has no saved post. Task locking keeps the
+ * current revision fixed while its replacement and historical disposition
+ * are committed together. */
+export async function disposeStalePendingTodo(pool: Pool, projectId: string,
+  noticeId: string): Promise<"disposed"|"current"|"posted"|"linked"> {
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
+    const origin=await client.query(`SELECT task_id,message_id FROM leader_result_notice
+      WHERE project_id=$1 AND notice_id=$2 AND kind='task_todo'`,[projectId,noticeId]);
+    if(!origin.rows[0])throw new DomainError("NOTICE_IDENTITY_MISMATCH","Todo notice was not found");
+    const task=await client.query(`SELECT t.state,t.current_revision_id,r.actor_id,r.created_at
+      FROM task t JOIN task_revision r ON r.project_id=t.project_id AND r.task_id=t.task_id
+        AND r.revision_id=t.current_revision_id
+      WHERE t.project_id=$1 AND t.task_id=$2 FOR UPDATE OF t`,[projectId,origin.rows[0].task_id]);
+    if(!task.rows[0])throw new DomainError("TASK_UNAVAILABLE","Todo source Task is unavailable");
+    const old=await client.query(`SELECT * FROM leader_result_notice
+      WHERE project_id=$1 AND notice_id=$2 FOR UPDATE`,[projectId,noticeId]);
+    const notice=old.rows[0];
+    if(notice?.state!=="pending"){
+      await client.query("COMMIT");return "current";
+    }
+    const saved=await client.query(`SELECT * FROM session_message WHERE project_id=$1 AND message_id=$2`,
+      [projectId,notice.message_id]);
+    if(saved.rowCount){
+      const message=saved.rows[0];
+      const fixed=notice.recipient_session_id&&notice.sender_actor_id
+        ? leaderNoticePostCommand({projectId,kind:notice.kind as LeaderNoticeKind,
+            sourceEventId:String(notice.source_event_id),occurredAt:iso(notice.occurred_at),
+            taskId:String(notice.task_id),taskRevisionId:String(notice.task_revision_id),
+            sourceActorId:notice.source_actor_id===null?null:String(notice.source_actor_id),
+            sourceSessionId:notice.source_session_id===null?null:String(notice.source_session_id),
+            sourceRef:String(notice.source_ref),operationId:String(notice.operation_id),
+            messageId:String(notice.message_id)},String(notice.recipient_session_id)):null;
+      const operation=await client.query(`SELECT actor_id,command_type,command_hash,result->>'status' AS status
+        FROM operation_journal WHERE project_id=$1 AND operation_id=$2`,[projectId,notice.operation_id]);
+      const journal=operation.rows[0];
+      if(fixed&&journal?.actor_id===notice.sender_actor_id&&journal.command_type==='session.message.post'&&
+        journal.status==='applied'&&journal.command_hash===createHash('sha256').update(canonical({
+          actorId:notice.sender_actor_id,command:fixed})).digest('hex')&&
+        message.operation_id===notice.operation_id&&message.sender_actor_id===notice.sender_actor_id&&
+        message.target_kind==='owned'&&message.session_id===notice.recipient_session_id&&
+        message.context_task_id===notice.task_id&&message.context_task_revision_id===notice.task_revision_id&&
+        message.content===fixed.content){
+        await client.query(`UPDATE leader_result_notice SET state='linked',linked_session_id=$3,updated_at=now()
+          WHERE project_id=$1 AND notice_id=$2 AND state='pending'`,
+          [projectId,noticeId,notice.recipient_session_id]);
+        await client.query("COMMIT");return "linked";
+      }
+      await client.query("COMMIT");return "posted";
+    }
+    const t=task.rows[0];
+    const currentRevision=String(t.current_revision_id);
+    const assignment=await client.query(`SELECT EXISTS(SELECT 1 FROM task_session_assignment
+      WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND state<>'released') AS assigned`,
+      [projectId,origin.rows[0].task_id,currentRevision]);
+    const arranged=assignment.rows[0]?.assigned===true;
+    if(t.state==="todo"&&currentRevision===notice.task_revision_id&&!arranged){
+      await client.query("COMMIT");return "current";
+    }
+    const refresh=t.state==="todo"&&currentRevision!==notice.task_revision_id&&!arranged&&
+      !await hasCurrentTodoReview(client,projectId,origin.rows[0].task_id,currentRevision);
+    if(refresh)await enqueueCurrentTodo(client,projectId,origin.rows[0].task_id,currentRevision,t);
+    const reason=t.state!=="todo"?"TODO_SOURCE_NOT_TODO":
+      arranged?"TODO_SOURCE_ASSIGNED":refresh?"TODO_SOURCE_SUPERSEDED_REFRESHED":"TODO_SOURCE_SUPERSEDED_HANDLED";
+    await client.query(`UPDATE leader_result_notice SET state='blocked',blocked_reason=$3,updated_at=now()
+      WHERE project_id=$1 AND notice_id=$2 AND state='pending'`,[projectId,noticeId,reason]);
+    await client.query("COMMIT");
+    return "disposed";
+  } catch(error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
+}
+
+async function hasCurrentTodoReview(client: import("pg").PoolClient, projectId:string,
+  taskId:string, revisionId:string):Promise<boolean>{
+  const result=await client.query(`SELECT EXISTS(SELECT 1 FROM leader_work_review r
+    JOIN task t ON t.project_id=r.project_id AND t.task_id=r.task_id
+      AND t.version=r.task_version AND t.current_revision_id=r.task_revision_id
+    WHERE r.project_id=$1 AND r.task_id=$2 AND r.task_revision_id=$3
+      AND NOT EXISTS(SELECT 1 FROM leader_work_change c
+        WHERE c.project_id=r.project_id AND c.sequence>r.reviewed_change_sequence
+          AND c.entity_kind<>'review' AND (c.task_id=r.task_id OR
+            (c.entity_kind IN ('task','closure','queue') AND EXISTS(
+              SELECT 1 FROM task_dependency d WHERE d.project_id=r.project_id
+                AND d.task_id=r.task_id AND d.depends_on_task_id=c.task_id))))) AS reviewed`,
+    [projectId,taskId,revisionId]);
+  return result.rows[0]?.reviewed===true;
+}
+
+async function enqueueCurrentTodo(client: import("pg").PoolClient, projectId:string,
+  taskId:string, revisionId:string, revision:{actor_id:string;created_at:Date}):Promise<void>{
+  await client.query(`INSERT INTO leader_result_notice(project_id,kind,source_event_id,task_id,
+    task_revision_id,source_session_id,source_actor_id,source_ref,occurred_at)
+    VALUES($1,'task_todo',$3,$2,$3,NULL,$4,$5,$6)
+    ON CONFLICT DO NOTHING`,
+    [projectId,taskId,revisionId,revision.actor_id,`task:${taskId}@${revisionId}`,revision.created_at]);
+}
+
+/** Retire only the queued, never-started message for a superseded todo source.
+ * The old linked notice remains evidence of the original post. Its message
+ * records the disposition; a still-unarranged current todo receives one
+ * source-revision-bound notice in the same transaction. */
+export async function disposeStaleTodoMessage(pool: Pool, projectId: string,
+  noticeId: string, messageId: string): Promise<"disposed"|"in_flight"|"current"> {
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
+    const origin=await client.query(`SELECT task_id FROM leader_result_notice
+      WHERE project_id=$1 AND notice_id=$2 AND message_id=$3 AND kind='task_todo'`,
+      [projectId,noticeId,messageId]);
+    if(!origin.rows[0])throw new DomainError("NOTICE_IDENTITY_MISMATCH","Todo notice and message do not match");
+    // Task writers also take this row lock, so the observed current revision
+    // cannot move between disposition and optional replacement creation.
+    const task=await client.query(`SELECT t.state,t.current_revision_id,r.actor_id,r.created_at
+      FROM task t JOIN task_revision r ON r.project_id=t.project_id AND r.task_id=t.task_id
+        AND r.revision_id=t.current_revision_id
+      WHERE t.project_id=$1 AND t.task_id=$2 FOR UPDATE OF t`,[projectId,origin.rows[0].task_id]);
+    if(!task.rows[0])throw new DomainError("TASK_UNAVAILABLE","Todo source Task is unavailable");
+    const old=await client.query(`SELECT state,task_revision_id,recipient_session_id,sender_actor_id
+      FROM leader_result_notice WHERE project_id=$1 AND notice_id=$2 AND message_id=$3 FOR UPDATE`,
+      [projectId,noticeId,messageId]);
+    const notice=old.rows[0];
+    if(!notice||notice.state!=="linked"||!notice.recipient_session_id||!notice.sender_actor_id){
+      await client.query("COMMIT");return "current";
+    }
+    const message=await client.query(`SELECT state,version,session_id,sender_actor_id,context_task_id,
+      context_task_revision_id FROM session_message WHERE project_id=$1 AND message_id=$2 FOR UPDATE`,
+      [projectId,messageId]);
+    const saved=message.rows[0];
+    if(!saved||saved.state!=="queued"){
+      await client.query("COMMIT");return "in_flight";
+    }
+    if(saved.session_id!==notice.recipient_session_id||saved.sender_actor_id!==notice.sender_actor_id||
+      saved.context_task_id!==origin.rows[0].task_id||
+      saved.context_task_revision_id!==notice.task_revision_id)
+      throw new DomainError("NOTICE_IDENTITY_MISMATCH","Saved todo message differs from its fixed notice");
+    const started=await client.query(`SELECT EXISTS(SELECT 1 FROM session_message_processing
+      WHERE project_id=$1 AND message_id=$2) AS started`,[projectId,messageId]);
+    if(started.rows[0]?.started){
+      await client.query("COMMIT");return "in_flight";
+    }
+    const t=task.rows[0];
+    const currentRevision=String(t.current_revision_id);
+    const assignment=await client.query(`SELECT EXISTS(SELECT 1 FROM task_session_assignment
+      WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND state<>'released') AS assigned`,
+      [projectId,origin.rows[0].task_id,currentRevision]);
+    const arranged=assignment.rows[0]?.assigned===true;
+    if(t.state==="todo"&&currentRevision===notice.task_revision_id&&!arranged){
+      await client.query("COMMIT");return "current";
+    }
+    const refresh=t.state==="todo"&&currentRevision!==notice.task_revision_id&&!arranged&&
+      !await hasCurrentTodoReview(client,projectId,origin.rows[0].task_id,currentRevision);
+    const reason=t.state!=="todo"?"TODO_SOURCE_NOT_TODO":
+      arranged?"TODO_SOURCE_ASSIGNED":refresh?"TODO_SOURCE_SUPERSEDED_REFRESHED":"TODO_SOURCE_SUPERSEDED_HANDLED";
+    if(refresh)await enqueueCurrentTodo(client,projectId,origin.rows[0].task_id,currentRevision,t);
+    const changed=await client.query(`UPDATE session_message SET state='cancelled',version=version+1,
+      blocked_reason=$4,updated_at=now() WHERE project_id=$1 AND message_id=$2
+      AND state='queued' AND version=$3`,
+      [projectId,messageId,saved.version,reason]);
+    if(changed.rowCount!==1)throw new DomainError("VERSION_CONFLICT","Todo message changed during disposition");
+    await client.query("COMMIT");
+    return "disposed";
+  } catch(error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
 }
 
 /** A previous Leader's native processing/unknown notice blocks a replacement target. */

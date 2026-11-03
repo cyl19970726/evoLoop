@@ -213,6 +213,22 @@ test('admission denial stops scheduling and native qualification before any proc
   }
 });
 
+test('a retired notice clears the queued head before a revoked grant preflight',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'queued');
+  let retired=0,preflight=0,scheduled=0;
+  const service = {
+    pending:async()=>[m],session:async()=>session(target),processing:async()=>null,
+    preflightDispatch:async()=>{preflight++;throw new DomainError('MESSAGE_GRANT_MISSING','revoked');},
+  } as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},listTurns:async()=>({data:[],nextCursor:null}),
+    listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
+    beforePreflight:async()=>{retired++;return false;},canStart:async()=>{scheduled++;return true;},
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.equal(retired,1);assert.equal(preflight,0);assert.equal(scheduled,0);
+});
+
 test('reviewed interrupt settles a terminal original Turn without calling native interrupt',async()=>{
   const target=randomUUID(),m=message(randomUUID(),target,'processing');
   let settled=0,attempted=0,interrupted=0;
