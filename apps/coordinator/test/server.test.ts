@@ -231,3 +231,28 @@ test("schedule status scopes grants to the caller and active commands require an
     assert.deepEqual(executed, ["schedule.create", "schedule.revise"]);
   } finally { await app.close(); }
 });
+
+test("message recovery uses current dynamic Session authority and never falls back to a static grant", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000114",messageId="00000000-0000-4000-8000-000000000115";
+  const payload={type:"session.message.reconcile",projectId,operationId:"00000000-0000-4000-8000-000000000116",
+    messageId,sessionId,processingId:"00000000-0000-4000-8000-000000000117",nativeTurnId:"turn-exact",
+    expectedMessageVersion:2,expectedProcessingVersion:2,reason:"Review original owned Turn"};
+  let dynamicAllowed=true,staticCalls=0,dynamicCalls=0,executed=0;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getOperation:async()=>null,
+    getRuntimeSession:async()=>({projectId,id:sessionId,roleId:"role",cwd:"/tmp/owned",authorizationScope:"dynamic",
+      model:"model",sandbox:"danger-full-access",approvalPolicy:"never",state:"ready"}),
+    execute:async()=>{executed++;return{status:"applied",operationId:payload.operationId,entityId:messageId,version:2};},
+  } as unknown as WorkflowService,
+    isDynamicSession:async()=>true,
+    authorizeDynamicMessageRecovery:async()=>{dynamicCalls++;return dynamicAllowed;},
+    hasRuntimeGrant:async()=>{staticCalls++;return true;}});
+  try{
+    const request=()=>app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload});
+    assert.equal((await request()).statusCode,200);
+    dynamicAllowed=false;
+    const denied=await request();assert.equal(denied.statusCode,403);
+    assert.equal(denied.json().code,"FORBIDDEN");
+    assert.deepEqual([dynamicCalls,staticCalls,executed],[2,0,1]);
+  }finally{await app.close();}
+});

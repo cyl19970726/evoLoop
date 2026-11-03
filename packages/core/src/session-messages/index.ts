@@ -47,6 +47,31 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     await store.updateSessionMessage(next,item.version);
     return{result:applied(command.operationId,item.id,next.version),effects:[{kind:'session.message',entityId:item.id,version:next.version}]};
   }
+  if(command.type==='session.message.reconcile'||command.type==='session.message.interrupt'){
+    if(!principal.permissions.includes('review'))throw new DomainError('FORBIDDEN','message recovery requires project review authority');
+    const processing=required(await store.getSessionMessageProcessing(item.id),'processing');
+    if(item.target.kind!=='owned'||item.target.sessionId!==command.sessionId||
+      processing.sessionId!==command.sessionId||processing.id!==command.processingId||
+      processing.nativeTurnId!==command.nativeTurnId)
+      throw new DomainError('MESSAGE_BINDING_CHANGED','exact owned Session, processing and native Turn are required');
+    if(item.version!==command.expectedMessageVersion||processing.version!==command.expectedProcessingVersion)
+      throw new DomainError('VERSION_CONFLICT','message or processing changed',item.version);
+    if(item.state!=='processing'&&item.state!=='unknown'||
+      !['running','unknown'].includes(processing.state))
+      throw new DomainError('MESSAGE_NOT_RUNNING','only an unresolved bound Turn can be reviewed');
+    if(command.type==='session.message.interrupt'){
+      if(processing.interruptOperationId)
+        throw new DomainError('INTERRUPT_ALREADY_REQUESTED','the original interrupt request must be reconciled');
+      const next={...processing,interruptOperationId:command.operationId,interruptActorId:principal.actorId,
+        interruptReason:command.reason,interruptRequestedAt:now,version:processing.version+1,updatedAt:now};
+      await store.updateSessionMessageProcessing(next,processing.version);
+      return{result:applied(command.operationId,item.id,next.version),effects:[{kind:'session.message.interrupt',entityId:item.id,version:next.version}]};
+    }
+    // The journal records the exact reviewed readback intent. The owner pump reads and
+    // settles only the original native Turn; no Turn start or state rewrite occurs here.
+    return{result:applied(command.operationId,item.id,processing.version),
+      effects:[{kind:'session.message.reconcile',entityId:item.id,version:processing.version}]};
+  }
   if(item.target.kind!=='owned')throw new DomainError('MANUAL_PENDING','external message has no automatic recipient read receipt');
   const processing=await store.getSessionMessageProcessing(item.id);
   if(!processing?.receiverActorId||principal.actorId!==processing.receiverActorId)
@@ -120,6 +145,10 @@ export class SessionMessageService {
   }
   async pending(projectId:string,limit=30,offset=0){return this.deps.uow.read(projectId,async r=>r.sessionMessages?.listPendingSessionMessages(limit,offset)??[]);}
   async processing(projectId:string,messageId:string){return this.deps.uow.read(projectId,async r=>r.sessionMessages?.getSessionMessageProcessing(messageId)??null);}
+  async markInterruptAttempted(projectId:string,messageId:string,operationId:string,expectedVersion:number):Promise<boolean>{
+    return this.deps.uow.transaction(projectId,async tx=>await tx.sessionMessages?.markSessionMessageInterruptAttempted(
+      messageId,operationId,expectedVersion,this.deps.clock.now())??false);
+  }
   async session(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>required(await r.getRuntimeSession(sessionId),'Session'));}
   async mustYieldBusiness(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>await r.sessionMessages?.mustYieldBusiness(sessionId)??false);}
   async isBusy(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>await r.sessionMessages?.hasActiveSessionMessage(sessionId)??false);}

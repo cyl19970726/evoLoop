@@ -25,6 +25,10 @@ const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
   failure:r.failure,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
+  interruptOperationId:r.interrupt_operation_id??null,interruptActorId:r.interrupt_actor_id??null,
+  interruptReason:r.interrupt_reason??null,
+  interruptRequestedAt:r.interrupt_requested_at?iso(r.interrupt_requested_at):null,
+  interruptAttemptedAt:r.interrupt_attempted_at?iso(r.interrupt_attempted_at):null,
   version:r.version,startedAt:iso(r.started_at),updatedAt:iso(r.updated_at),
 });
 const SELECT_MESSAGE = `SELECT m.*, rr.actor_id AS receipt_actor_id,rr.evidence AS receipt_evidence,
@@ -122,9 +126,18 @@ export class PgSessionMessages implements SessionMessageTransaction {
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt]);
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
-    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8
-      WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion]);
+    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,
+      interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13
+      WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion,
+      v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null]);
     if(!r.rowCount)throw new DomainError('VERSION_CONFLICT','message processing changed');
+  }
+  async markSessionMessageInterruptAttempted(messageId:string,operationId:string,expectedVersion:number,at:string):Promise<boolean>{
+    const r=await this.client.query(`UPDATE session_message_processing SET interrupt_attempted_at=$5,version=version+1,updated_at=$5
+      WHERE project_id=$1 AND message_id=$2 AND interrupt_operation_id=$3 AND version=$4
+      AND interrupt_attempted_at IS NULL AND state IN ('running','unknown')`,
+      [this.projectId,messageId,operationId,expectedVersion,at]);
+    return !!r.rowCount;
   }
   async insertSessionMessageReadReceipt(messageId:string,actorId:string,evidence:string,at:string):Promise<void>{
     await this.client.query(`INSERT INTO session_message_read_receipt(project_id,message_id,actor_id,evidence,recorded_at)

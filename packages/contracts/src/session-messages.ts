@@ -12,6 +12,12 @@ export const sessionMessageCommands = [
     expectedVersion: z.number().int().positive(), reason: note }),
   z.strictObject({ ...base, type: z.literal("session.message.receipt"), messageId: id,
     stage: z.literal("read"), evidence: note }),
+  z.strictObject({ ...base, type: z.literal("session.message.reconcile"), messageId: id,
+    sessionId: id, processingId: id, nativeTurnId: z.string().trim().min(1).max(256),
+    expectedMessageVersion: z.number().int().positive(), expectedProcessingVersion: z.number().int().positive(), reason: note }),
+  z.strictObject({ ...base, type: z.literal("session.message.interrupt"), messageId: id,
+    sessionId: id, processingId: id, nativeTurnId: z.string().trim().min(1).max(256),
+    expectedMessageVersion: z.number().int().positive(), expectedProcessingVersion: z.number().int().positive(), reason: note }),
 ] as const;
 export type SessionMessageCommand = z.infer<(typeof sessionMessageCommands)[number]>;
 export type SessionMessageState = "queued" | "processing" | "replied" | "completed_without_reply" | "failed" | "unknown" | "cancelled" | "manual_pending";
@@ -31,6 +37,9 @@ export interface SessionMessageProcessing {
   failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
   /** Fixed by the same transaction as the original processing's native-start permit. */
   nativeEnvironmentEpoch?: number | null;
+  /** Durable one-shot request. An attempted native interrupt is never replayed after a lost response. */
+  interruptOperationId?: string | null; interruptActorId?: string | null;
+  interruptReason?: string | null; interruptRequestedAt?: string | null; interruptAttemptedAt?: string | null;
   version: number; startedAt: string; updatedAt: string;
 }
 /** A separate, explicit ordinary-conversation grant. Business queue or Loop quotas do not satisfy it. */
@@ -55,6 +64,7 @@ export interface SessionMessageTransaction extends SessionMessageReader {
   updateSessionMessage(value: SessionMessageRecord, expectedVersion: number): Promise<void>;
   insertSessionMessageProcessing(value: SessionMessageProcessing): Promise<void>;
   updateSessionMessageProcessing(value: SessionMessageProcessing, expectedVersion: number): Promise<void>;
+  markSessionMessageInterruptAttempted(messageId: string, operationId: string, expectedVersion: number, at: string): Promise<boolean>;
   insertSessionMessageReadReceipt(messageId: string, actorId: string, evidence: string, at: string): Promise<void>;
   setSessionMessageBlockedReason(messageId:string,reason:string|null):Promise<void>;
   markSessionMessageSettled(sessionId:string,messageId:string,at:string):Promise<void>;

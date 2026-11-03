@@ -522,3 +522,46 @@ test('unqualified current full execution profile keeps an ordinary message queue
   assert.equal(saved.state,'queued');assert.equal(saved.blockedReason,'Full execution profile has not been verified');
   assert.equal(await service.processing(projectId,message.id),null);assert.equal(starts,0);
 });
+
+test('reviewed exact message recovery request is durable, CAS-bound and one-shot',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:targetSessionId})});
+  const m={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+  const p=await local.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified);
+  await local.bindTurn(projectId,m.id,{id:'turn-'+m.id,status:'inProgress'});
+  const before=await local.detail(projectId,m.id);
+  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['read' as const,'write' as const]};
+  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+  const exact={projectId,messageId:m.id,sessionId:targetSessionId,processingId:p.id,nativeTurnId:'turn-'+m.id,
+    expectedMessageVersion:before.message.version,expectedProcessingVersion:before.processing!.version,
+    reason:'Review original in-progress native Turn before controlled recovery'};
+  await assert.rejects(()=>workflow.execute(sender,{...exact,type:'session.message.interrupt',operationId:randomUUID()}),
+    error=>(error as {code?:string}).code==='FORBIDDEN');
+  const mismatch=await workflow.execute(reviewer,{...exact,nativeTurnId:'other-turn',
+    type:'session.message.interrupt',operationId:randomUUID()});
+  assert.equal(mismatch.status,'rejected');
+  const check=await workflow.execute(reviewer,{...exact,type:'session.message.reconcile',operationId:randomUUID()});
+  assert.equal(check.status,'applied');
+  const op=randomUUID(),request={...exact,type:'session.message.interrupt' as const,operationId:op};
+  const applied=await workflow.execute(reviewer,request);
+  assert.equal(applied.status,'applied');
+  assert.deepEqual(await workflow.execute(reviewer,request),applied);
+  const requested=await local.detail(projectId,m.id);
+  assert.equal(requested.processing?.interruptOperationId,op);
+  assert.equal(requested.processing?.interruptAttemptedAt,null);
+  assert.equal(await local.markInterruptAttempted(projectId,m.id,op,requested.processing!.version),true);
+  assert.equal(await local.markInterruptAttempted(projectId,m.id,op,requested.processing!.version),false);
+  const attempted=await local.detail(projectId,m.id);
+  assert.ok(attempted.processing?.interruptAttemptedAt);
+  const second=await workflow.execute(reviewer,{...exact,expectedProcessingVersion:attempted.processing!.version,
+    type:'session.message.interrupt',operationId:randomUUID()});
+  assert.equal(second.status,'rejected');
+  await local.settle(projectId,m.id,{id:'turn-'+m.id,status:'interrupted',completedAtUtc:new Date().toISOString()},null);
+  const final=await local.detail(projectId,m.id);
+  assert.equal(final.message.state,'failed');
+  assert.equal(final.processing?.interruptOperationId,op);
+});

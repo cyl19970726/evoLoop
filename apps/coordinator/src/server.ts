@@ -60,6 +60,7 @@ export async function buildServer(options: {
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
+  authorizeDynamicMessageRecovery?: (principal: Principal, session: RuntimeSessionRecord) => Promise<boolean>;
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
   listRuntimeModels?: () => Promise<{status:"available"|"empty"|"unavailable";models:string[];error:string|null;observedAtUtc:string}>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
@@ -170,6 +171,23 @@ export async function buildServer(options: {
       if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
         if (!options.nativeInputs) throw new DomainError("NATIVE_INPUT_UNAVAILABLE", "此服务尚未启用原生提问回复。");
         await options.nativeInputs.requireReply(principal, command.projectId, command.inputRequestId);
+      }
+    }
+    if (command.type === "session.message.reconcile" || command.type === "session.message.interrupt") {
+      const principal = who(request.principal);
+      if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review"))
+        throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目复核权限。");
+      // A replay of the original journalled intent remains readable after grant drift;
+      // a new control decision must match the current exact Session environment.
+      if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        const session = await options.service.getRuntimeSession(principal, command.projectId, command.sessionId);
+        const dynamic = await options.isDynamicSession?.(command.projectId, command.sessionId);
+        const granted = dynamic ? await options.authorizeDynamicMessageRecovery?.(principal, session) :
+          await options.hasRuntimeGrant?.({ projectId: command.projectId,
+            actorId: principal.actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
+            cwd: session.cwd, sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy });
+        if (session.state !== "ready" || !granted)
+          throw new DomainError("FORBIDDEN", "当前身份没有此原会话的精确执行恢复授权。");
       }
     }
     if (command.type.startsWith("runtime.")) {
