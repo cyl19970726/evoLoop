@@ -85,8 +85,16 @@ test('036 retires 035 cold admission without rewriting historical epoch or bypas
   await migrate(url!, schema);
   assert.deepEqual((await client.query('SELECT to_jsonb(e) AS row FROM native_execution_environment e')).rows[0]?.row,
     before.control, 'migration preserves the historical control row');
-  assert.deepEqual((await client.query('SELECT to_jsonb(p) AS row FROM session_message_processing p WHERE processing_id=$1',
-    [oldProcessing])).rows[0]?.row, before.processing, 'migration preserves the original operation and epoch');
+  const processingAfterMigration = (await client.query(
+    'SELECT to_jsonb(p) AS row FROM session_message_processing p WHERE processing_id=$1',
+    [oldProcessing])).rows[0]?.row;
+  const { interrupt_actor_id, interrupt_attempted_at, interrupt_operation_id,
+    interrupt_reason, interrupt_requested_at, ...historicalProcessing } = processingAfterMigration;
+  assert.deepEqual(historicalProcessing, before.processing,
+    'migration preserves the original operation and epoch');
+  assert.deepEqual([interrupt_actor_id, interrupt_attempted_at, interrupt_operation_id,
+    interrupt_reason, interrupt_requested_at], [null, null, null, null, null],
+    'migration adds no interrupt request to historical processing');
   assert.deepEqual((await client.query('SELECT to_jsonb(g) AS row FROM session_recovery_gate g WHERE session_id=$1',
     [oldSession])).rows[0]?.row, before.gate, 'migration preserves the unresolved recovery gate');
   const triggers = (await client.query(`SELECT tgname FROM pg_trigger WHERE tgrelid IN
