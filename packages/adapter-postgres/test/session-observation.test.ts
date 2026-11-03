@@ -410,3 +410,32 @@ test("Codex bare and URI refs share identity; invalid or different refs stay sep
     await client.query("ROLLBACK");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 });
+
+test("a HostLink beyond the bounded directory alias list still resolves its exact Session and assignment", async () => {
+  const client = await pool.connect();
+  try {
+    const host = (await client.query("SELECT host FROM role_host_link_revision WHERE project_id=$1 AND link_id=$2 AND version=1",
+      [projectId, a])).rows[0].host;
+    const added = Array.from({ length: 20 }, () => randomUUID());
+    await client.query("BEGIN");
+    for (const linkId of added) await addHost(client, linkId, host, "verified", "2026-10-26T00:00:10.000Z");
+    await client.query("COMMIT");
+    const reader = new PgSessionObservation(client, projectId, scope);
+    const primary = await reader.snapshot(`external:${a}`);
+    assert.equal(primary?.session.aliases.length, 20, "directory alias payload remains bounded");
+    const visible = new Set(primary!.session.aliases.map(item => item.kind === "external" && item.linkId));
+    const omitted = added.find(id => !visible.has(id));
+    assert.ok(omitted, "the fixture has an alias past the public 20-link limit");
+    const store = new PgSessionAssignments(client, projectId);
+    const previous = (await store.getTaskSessionAssignment(taskId))!;
+    await client.query("BEGIN");
+    await store.saveTaskSessionAssignment({ ...previous, version: previous.version + 1,
+      target: { kind: "external", linkId: omitted }, updatedAt: "2026-10-26T00:00:11.000Z",
+      reason: "same native Session via later HostLink" }, previous.version);
+    await client.query("COMMIT");
+    const exact = await reader.snapshot(`external:${omitted}`);
+    assert.equal(exact?.session.key, `external:${a}`);
+    assert.equal(exact?.assignments[0]?.assignment.target.kind, "external");
+    assert.equal(exact?.currentWork?.id, taskId);
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+});

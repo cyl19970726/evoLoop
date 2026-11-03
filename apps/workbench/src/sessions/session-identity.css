@@ -8,5 +8,11 @@
 .session-identity-olive{--identity-color:#5f6923}
 .session-identity-coral{--identity-color:#a83b32}
 .session-identity-plum{--identity-color:#6b4a99}
-.session-nav-item:has(> .session-identity-mark){grid-template-columns:28px minmax(0,1fr)}
-.session-nav-state .session-nav-status{vertical-align:middle;margin-top:0}
+.session-detail-heading .session-identity-mark{width:36px;height:36px;border-radius:10px}
+.session-detail-name{min-width:0;overflow-wrap:anywhere}
+.session-identity-settings{margin-top:12px;border-top:1px solid #e2e8f2;padding-top:9px}
+.session-identity-settings>summary{cursor:pointer;color:#305aa0;font-size:12px;font-weight:600}
+.session-identity-settings>section{margin-top:10px;min-width:0}
+.session-identity-settings p{font-size:12px;line-height:1.5;color:#52627d}
+.session-identity-settings p>.session-identity-mark{vertical-align:middle;margin-right:4px}
+@media(max-width:650px){.session-detail-heading .session-identity-mark{width:32px;height:32px}}

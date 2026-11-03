@@ -2,15 +2,20 @@ import { useEffect, useState } from "react";
 import type { Task } from "@evoloop/contracts";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
+import type { SessionTarget } from "@evoloop/contracts/session-work";
 import { errorText } from "../api";
 import { ActionForm, option, type MutationContext } from "../workflow/ActionForm";
 import { Alert, date } from "../ui/shared";
 import { sessionClient } from "./client";
+import { assignedObservedSession, sameSessionTarget } from "./assignmentEligibility";
+import { SessionIdentityMark } from "./SessionIdentityMark";
 import { sessionHref } from "./SessionNavigation";
 
 export function TaskAssignmentPanel({ context, task, refresh }: { context: MutationContext; task: Task; refresh: number }) {
   const [assignment, setAssignment] = useState<TaskSessionAssignment | null>(null);
   const [sessions, setSessions] = useState<ObservedSession[]>([]);
+  const [exactAssigned, setExactAssigned] = useState<{ target: SessionTarget; session: ObservedSession } | null>(null);
+  const [exactReadError, setExactReadError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [truncated, setTruncated] = useState(false);
@@ -19,7 +24,7 @@ export function TaskAssignmentPanel({ context, task, refresh }: { context: Mutat
     const controller = new AbortController();
     const client = sessionClient(context.token, context.projectId);
     let active = true;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setExactReadError(""); setExactAssigned(null);
     void (async () => {
       try {
         const [current, first] = await Promise.all([client.assignment(task.id, controller.signal), client.directory({}, controller.signal)]);
@@ -29,21 +34,37 @@ export function TaskAssignmentPanel({ context, task, refresh }: { context: Mutat
           const page = await client.directory({ cursor }, controller.signal);
           items = [...items, ...page.items]; cursor = page.nextCursor; pages++;
         }
+        const eligible = items.filter(item => item.roles.some(role => role.id === task.owner));
+        let exact: { target: SessionTarget; session: ObservedSession } | null = null;
+        if (current && !assignedObservedSession(current, context.projectId, task.id, eligible)) {
+          const key = current.target.kind === "owned" ? `owned:${current.target.sessionId}` : `external:${current.target.linkId}`;
+          try {
+            const specific = (await client.snapshot(key, controller.signal)).session;
+            if (specific.kind === current.target.kind && specific.roles.some(role => role.id === task.owner))
+              exact = { target: current.target, session: specific };
+            else if (active) setExactReadError("分派目标与会话职责不符，身份标记暂不显示。");
+          } catch (cause) { if (active) setExactReadError(`分派目标会话未核实：${errorText(cause)}。`); }
+        }
         if (!active) return;
-        setAssignment(current); setSessions(items.filter(item => item.roles.some(role => role.id === task.owner))); setTruncated(!!cursor);
+        setAssignment(current); setSessions(eligible); setExactAssigned(exact); setTruncated(!!cursor);
       } catch (cause) { if (active) setError(errorText(cause)); }
       finally { if (active) setLoading(false); }
     })();
     return () => { active = false; controller.abort(); };
   }, [context.token, context.projectId, task.id, task.owner, refresh, reload]);
-  const selected = assignment && sessions.find(item => JSON.stringify(item.target) === JSON.stringify(assignment.target));
+  const selected = assignedObservedSession(assignment, context.projectId, task.id, sessions)
+    ?? (assignment && exactAssigned && sameSessionTarget(exactAssigned.target, assignment.target)
+      ? exactAssigned.session : undefined);
+  const markedSession = !loading && !error && selected && selected.identity?.projectId === context.projectId
+    && sameSessionTarget(selected.identity.target, selected.target) ? selected : null;
   const valid = assignment && assignment.state !== "released" && assignment.taskRevisionId === task.currentRevisionId;
   const choices = sessions.filter(item => item.membership === "current" && item.capabilities.observe.available);
   return <section className="panel" aria-label="具体 Session 分派"><div className="panel-head"><h2>具体 Session 承接</h2><button type="button" className="quiet" onClick={() => setReload(value => value + 1)}>重新读取</button></div>
     {loading && <p>正在核对分派与同角色 Session…</p>}
     {error && <Alert kind="error">分派暂不可读取：{error}。请重试；以下不表示无人接手。</Alert>}
+    {exactReadError && <Alert>{exactReadError}</Alert>}
     {truncated && <Alert>会话目录超过本次读取范围。请先在 Session 目录缩小范围，再核对目标。</Alert>}
-    {assignment && <div><p><strong>{selected?.title || "原承接 Session"}</strong> · {assignment.state === "accepted" ? valid ? "已接手" : "旧修订的接手记录" : assignment.state === "assigned" ? valid ? "已分派，待确认接手" : "旧修订的分派记录" : "已释放"} · {date(assignment.updatedAt)}</p>
+    {assignment && <div><p>{markedSession && <><SessionIdentityMark target={markedSession.target} identity={markedSession.identity} name={markedSession.title} size="small" /> </>}<strong>{selected?.title || "原承接 Session"}</strong> · {assignment.state === "accepted" ? valid ? "已接手" : "旧修订的接手记录" : assignment.state === "assigned" ? valid ? "已分派，待确认接手" : "旧修订的分派记录" : "已释放"} · {date(assignment.updatedAt)}</p>
       {selected && <a href={sessionHref(context.projectId, selected.key)}>查看该 Session 的工作区</a>}
       {assignment.ack && <p className="muted">{assignment.ack.method === "direct" ? "指定执行者本人确认" : "负责人观察到接手"} · {assignment.ack.evidence}</p>}
       {!valid && assignment.state !== "released" && <Alert>任务当前修订与分派固定修订不同，旧接手证据仍保留，但不能视为新修订已接手。</Alert>}
