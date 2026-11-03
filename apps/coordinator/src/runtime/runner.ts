@@ -56,6 +56,7 @@ const dispatchFailureDetail = (error: unknown): string => {
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
+  hasFreshStartProof?(binding:RuntimeBinding):boolean;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
@@ -192,6 +193,11 @@ export class RuntimeRunner {
         throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生 Thread 状态不可判定，未保存新配置。");
       const unsupported=()=>new DomainError("EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED",
         "原 Thread 尚无可读取的 Turn，当前原生服务不支持在此状态修订模型与思考强度。未保存新配置，旧 active 配置保留；请先使用原配置完成一次已授权的正常对话，再重试修订，或按目标配置新建 Session。");
+      // The same owner connection that accepted thread/start knows whether its
+      // one first-Turn proof is still unused. This proves a fresh zero-Turn
+      // Thread even when the native history RPC rejects with an opaque -32600.
+      if((status==="idle"||status==="notLoaded")&&this.runtime.hasFreshStartProof?.(binding))
+        throw unsupported();
       try {
         const turns=await this.runtime.listTurns(binding);
         if(turns.data.length===0)throw unsupported();

@@ -227,7 +227,7 @@ for await (const line of lines) {
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list" && mode.startsWith("zero-turn") && turnStarts===0) {
-    send({id,error:{code:-32600,message:"no rollout found for new thread"}});continue;
+    send({id,error:{code:-32600,message:mode==='zero-turn-generic-reject'?"unclassified native rejection":"no rollout found for new thread"}});continue;
   }
   if (method === "thread/turns/list") {
     turnListReads++;

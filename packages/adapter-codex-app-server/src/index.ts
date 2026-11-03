@@ -736,6 +736,14 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.rememberBinding(binding);
   }
 
+  /** Exact, unused thread/start proof on this owner connection; no native Turn has been attempted. */
+  hasFreshStartProof(binding: RuntimeBinding): boolean {
+    this.owned(binding);
+    const fresh=this.freshThreads.get(binding.nativeThreadId);
+    return !!fresh&&!fresh.claimed&&fresh.connectionId===this.connectionId&&
+      sameBinding(fresh.binding,binding);
+  }
+
   private validateBinding(binding: RuntimeBinding): void {
     if (binding.owner !== OWNER || !nonempty(binding.authorizationScope) || !nonempty(binding.projectId) || !nonempty(binding.roleId) || !nonempty(binding.sessionId) || !nonempty(binding.nativeThreadId) || !binding.cwd.startsWith("/") || resolve(binding.cwd) !== binding.cwd) throw new RuntimeProtocolError("invalid runtime binding");
   }
@@ -911,6 +919,8 @@ export class CodexAppServerAdapter implements RuntimePort {
       const thread=object(result?.thread);
       if(thread?.id!==current.nativeThreadId||thread?.sessionId!==current.nativeSessionId||
         thread?.cwd!==current.cwd)throw new RuntimeProtocolError('profile activation lost the owned Thread');
+      if(['idle','notLoaded'].includes(String(object(thread.status)?.type))&&this.hasFreshStartProof(current))
+        throw new RuntimeProtocolError('EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED: original first Turn has not started; complete it under the current profile');
       if(object(thread.status)?.type==='notLoaded'){
         let hasRollout=false;
         try{hasRollout=(await this.listTurns(current)).data.length>0;}
