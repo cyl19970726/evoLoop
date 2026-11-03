@@ -145,7 +145,9 @@ for await (const line of lines) {
       if(mode==='full-unloaded-lost-resume')continue;
     }
     const nativeModel=mode==='full-resume-wrong-model'||mode==='full-resume-thread-model-mismatch'?'other-model':params.model??'gpt-6-sol';
-    const nativeThread={...thread,model:nativeModel,status:{type:'idle',activeFlags:[]},...(mode==='changed-session'?{sessionId:'different-session'}:{})};
+    // Pinned App Server reattaches a loaded systemError Thread; only turn/start clears the flag.
+    const nativeThread={...thread,model:nativeModel,status:{type:mode.startsWith('full-network-')?'systemError':'idle',activeFlags:[]},...(mode==='changed-session'?{sessionId:'different-session'}:{})};
+    if(mode==='full-network-lost-resume')continue;
     send({id,result:{thread:nativeThread,model:mode==='full-resume-thread-model-mismatch'?'gpt-6-sol':nativeModel,modelProvider:'openai',cwd:thread.cwd,
       approvalPolicy:params.approvalPolicy,
       sandbox:mode==='full-resume-wrong'||mode==='full-loaded-old'||mode==='full-unloaded-wrong-policy'?
@@ -189,13 +191,20 @@ for await (const line of lines) {
       NODE_OPTIONS: process.env.NODE_OPTIONS ?? null,
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
-    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode==='full-sequence'?{model:unloaded?null:'gpt-6-sol'}:{}),status:{type:unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
+    const networkFailure=mode.startsWith('full-network-')&&turnStarts===0;
+    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode==='full-sequence'?{model:mode==='full-network-model-mismatch'?'other-model':mode==='full-network-model-missing'||unloaded?null:'gpt-6-sol'}:{}),status:{type:networkFailure?(mode==='full-network-active'?'active':mode==='full-network-unknown-status'?'unknown':'systemError'):unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
   }
   if (method === "thread/turns/list") {
     turnListReads++;
+    if(mode.startsWith('full-network-')){
+      send({id,result:{data:[{id:mode==='full-network-turn-changed'&&observedResumes>0?'different-failed-turn':'failed-network-turn',
+        status:mode==='full-network-unsettled'?'inProgress':mode==='full-network-completed'?'completed':'failed',
+        completedAt:mode==='full-network-no-completion'||mode==='full-network-unsettled'?null:1792498484}],nextCursor:null}});
+      continue;
+    }
     if (mode.startsWith("turn-cursor-") && mode !== "turn-cursor-legacy-missing") {
       const nextCursor = mode === "turn-cursor-missing" ? {} :
         { nextCursor: mode === "turn-cursor-empty" ? "" : mode === "turn-cursor-number" ? 7 : null };

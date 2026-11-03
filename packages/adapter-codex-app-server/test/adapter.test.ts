@@ -110,6 +110,40 @@ for(const expectedVersion of modernVersions){
   });
 }
 
+for(const mode of ['full-network-failed','full-network-lost-resume','full-network-turn-changed',
+  'full-network-active','full-network-unsettled','full-network-no-completion',
+  'full-network-completed','full-network-unknown-status',
+  'full-network-model-mismatch','full-network-model-missing'] as const){
+  test(`${mode} admits a failed original Thread only with terminal and fixed-profile proof`,async t=>{
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
+      expectedVersion:'codex-cli 0.164.0-alpha.11.1',verifyBinding:async()=>true,
+      requestTimeoutMs:100});
+    t.after(()=>adapter.close());await adapter.open();
+    const binding:RuntimeBinding={sessionId:fullSpec.sessionId,roleId:fullSpec.roleId,
+      projectId:fullSpec.projectId,nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',
+      cwd:fullSpec.cwd,authorizationScope:fullSpec.authorizationScope,owner:'evoloop-codex-app-server',
+      resumeProfile:{actorId:'original-actor',model:'gpt-6-sol',sandbox:'danger-full-access',approvalPolicy:'never'}};
+    await adapter.registerBinding(binding);
+    const admission=await adapter.qualifyConversationThread(binding);
+    if(mode==='full-network-failed'){
+      assert.equal(admission.available,true,admission.reason);
+      assert.equal((await adapter.startConversationTurn(binding,'continue original QA','message-op')).id,'turn-1');
+      await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
+    }else if(mode==='full-network-lost-resume'||mode==='full-network-turn-changed'){
+      assert.equal(admission.available,true,admission.reason);
+      await assert.rejects(()=>adapter.startConversationTurn(binding,'continue original QA','message-op'),
+        error=>error instanceof RuntimeUnknownError&&error.method==='thread/resume');
+      await assert.rejects(()=>adapter.startConversationTurn(binding,'replay','message-op'),RuntimeProtocolError);
+    }else{
+      assert.equal(admission.available,false);
+      await assert.rejects(()=>adapter.startConversationTurn(binding,'unsafe','message-op'),RuntimeProtocolError);
+    }
+    const observed=await adapter.inspect(binding) as {observedResumes:number;observedTurnStarts:number};
+    assert.equal(observed.observedResumes,admission.available?1:0);
+    assert.equal(observed.observedTurnStarts,mode==='full-network-failed'?1:0);
+  });
+}
+
 test('full conversation Turn retains current trusted dynamic tool callback',async t=>{
   let bridgeCalls=0;
   const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-dynamic'],
