@@ -22,6 +22,8 @@ const session = {key:sessionKey,target:{kind:"owned",sessionId},aliases:[],title
   capabilities:{observe:{available:false,reason:"fixture"},send:{available:false,reason:"fixture",mode:null},
     open:{available:false,reason:"fixture",ref:null},interrupt:{available:false,reason:"fixture"},close:{available:false,reason:"fixture"}},
   source:{kind:"session",id:sessionId,revision:null,evidence:"project-record",href:""},metadata};
+const resources=Object.fromEntries(["configuredModel","actualModel","inputTokens","outputTokens","cost","processMemory"]
+  .map(key => [key,{value:null,unit:"",source:null,scope:"session",observedAt:null,interval:null,unavailableReason:"fixture"}]));
 
 test("Task tabs and refresh retain the verified Session return; ordinary and wrong-actor entries do not", {
   skip:!modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
@@ -53,7 +55,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
     else if (url.pathname === `${root}/session-work`) value={items:[session],nextCursor:null,observationCursor:"0",metadata,
       totals:{current:1,historical:0,unclassified:0},attention:{unansweredQuestions:0,pendingMessages:0,pendingAcceptance:null,unclassifiedSessions:0}};
     else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) value={session,observationCursor:"0",currentWork:null,
-      assignments:[],roleTasks:[],queue:[],results:[],questions:[],activity:[],resources:{},metadata};
+      assignments:[],roleTasks:[],queue:[],results:[],questions:[],activity:[],resources,metadata};
     else if (url.pathname === `${root}/references/tasks/${taskId}`) value=[];
     else if (url.pathname.startsWith(`${root}/work-management/tasks/`)) {status=404;value={message:"fixture"};}
     await route.fulfill({status,contentType:"application/json",body:JSON.stringify(value)});
@@ -81,6 +83,9 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   assert.equal(await page.getByRole("tab",{name:"运行与关联"}).getAttribute("aria-selected"),"true");
   await back.click();
   assert.equal(await page.evaluate(() => location.hash),returnRoute);
+  await page.getByRole("heading",{name:"临时开发 Session"}).waitFor({timeout:5000}).catch(async () => {
+    assert.fail(`Session view missing after return: body=${(await page.locator("body").innerText()).slice(0,900)}, errors=${errors.join(" | ")}`);
+  });
   await page.goto(`${base}/?fresh=1${taskRoute}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
