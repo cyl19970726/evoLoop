@@ -31,6 +31,8 @@ export interface SessionMessagePumpDeps {
   /** Current in-process native notification state for one exact Session, if available. */
   nativeTurn?(projectId:string,sessionId:string):Pick<NativeObservationRecord,'threadId'|'freshness'|'status'|'currentTurn'>|null;
   now?():number;
+  /** Retire a known obsolete queued source before a revoked grant can pin it at the head. */
+  beforePreflight?(message:SessionMessageRecord):Promise<boolean>;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
   canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
@@ -74,6 +76,7 @@ export class SessionMessagePump {
     let record=await this.deps.service.processing(message.projectId,message.id);
     if(message.state==='queued'){
       if(record)return;
+      if(this.deps.beforePreflight&&!await this.deps.beforePreflight(message))return;
       try{await this.deps.service.preflightDispatch(message.projectId,message.id);}
       catch(error){
         if(error instanceof DomainError){await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;}
@@ -91,7 +94,7 @@ export class SessionMessagePump {
       // Persist before any native resume or Turn start. A lost response is never a retry signal.
       try{record=await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint);}
       catch(error){
-        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED'].includes(error.code)){
+        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED'].includes(error.code)){
           await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;
         }
         throw error;

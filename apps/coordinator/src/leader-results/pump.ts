@@ -38,6 +38,8 @@ export interface LeaderResultNoticeStore {
   /** Blocked rows require an explicit source/operation review and requeue; they are never retried by this pump. */
   listPending(projectId: string, query: {limit:number;cursor?:string}): Promise<{items:LeaderResultNotice[];nextCursor:string|null}>;
   getByMessageId(projectId: string, messageId: string): Promise<LeaderResultNotice | null>;
+  disposeStalePendingTodo(projectId:string,noticeId:string):Promise<"disposed"|"current"|"posted"|"linked">;
+  disposeStaleTodo(projectId:string,noticeId:string,messageId:string):Promise<"disposed"|"in_flight"|"current">;
   hasInFlightOnOtherSession(projectId: string, sessionId: string): Promise<boolean>;
   /** Pending reasons are diagnostic and retryable; null clears a resolved reason. */
   notePendingReason(projectId: string, noticeId: string, reason: string | null): Promise<void>;
@@ -97,21 +99,40 @@ export class LeaderResultNoticePump {
 
   /** Called by the existing message pump immediately before a queued notice can start. */
   async canStartMessage(message: SessionMessageRecord): Promise<boolean> {
+    return (await this.messageAdmission(message)).allowed;
+  }
+
+  /** Separate a superseded source from a changed Leader target. A linked
+   * message is retired only by the store's transactional native-start guard. */
+  async messageAdmission(message:SessionMessageRecord):Promise<{allowed:boolean;reason:string|null}> {
     const notice=await this.deps.store.getByMessageId(message.projectId,message.id);
-    if(!notice)return true;
+    if(!notice)return {allowed:true,reason:null};
     if(notice.state==="blocked"||!notice.recipient||notice.messageId!==message.id||
       message.target.kind!=="owned"||message.target.sessionId!==notice.recipient.sessionId||
-      message.senderActorId!==notice.recipient.senderActorId)return false;
+      message.senderActorId!==notice.recipient.senderActorId)
+      return {allowed:false,reason:"NOTICE_IDENTITY_OR_RECIPIENT_CHANGED"};
     if(notice.kind==="task_todo"){
       const task=await this.deps.readTaskFacts(message.projectId,notice.taskId);
-      if(!task||notice.stale||task.currentRevisionId!==notice.taskRevisionId||
-        task.state!=="todo"||task.assigned)return false;
+      if(!task)return {allowed:false,reason:"TODO_SOURCE_UNKNOWN"};
+      if(notice.stale||task.currentRevisionId!==notice.taskRevisionId||
+        task.state!=="todo"||task.assigned){
+        if(message.state==="queued"&&notice.state==="linked"&&this.deps.canWrite()){
+          const result=await this.deps.store.disposeStaleTodo(message.projectId,notice.id,message.id);
+          if(result==="disposed")return {allowed:false,reason:null};
+          if(result==="in_flight")return {allowed:false,reason:"TODO_MESSAGE_IN_FLIGHT"};
+        }
+        return {allowed:false,reason:"TODO_SOURCE_SUPERSEDED"};
+      }
     }
     const config=await this.deps.configuration();
-    if(!config?.enabled)return false;
+    if(!config?.enabled)return {allowed:false,reason:"LEADER_NOTICES_DISABLED"};
     const current=await this.eligibleRecipient(message.projectId,config,await this.deps.principals());
-    return !!current.recipient&&sameRecipient(current.recipient,notice.recipient)&&
-      !await this.deps.store.hasInFlightOnOtherSession(message.projectId,notice.recipient.sessionId);
+    if(!current.recipient)return {allowed:false,reason:current.reason};
+    if(!sameRecipient(current.recipient,notice.recipient))
+      return {allowed:false,reason:"LEADER_TARGET_CHANGED"};
+    if(await this.deps.store.hasInFlightOnOtherSession(message.projectId,notice.recipient.sessionId))
+      return {allowed:false,reason:"OLD_LEADER_NOTICE_IN_FLIGHT"};
+    return {allowed:true,reason:null};
   }
 
   private async roles(principal: Principal, projectId: string): Promise<RoleRecord[]> {
@@ -189,7 +210,9 @@ export class LeaderResultNoticePump {
     if(!task){await this.reason(notice,"TASK_UNAVAILABLE");return;}
     if(notice.kind==="task_todo"&&(notice.stale||task.currentRevisionId!==notice.taskRevisionId||
       task.state!=="todo"||task.assigned)){
-      await this.deps.store.block(notice.projectId,notice.id,"TODO_ALREADY_ARRANGED_OR_SUPERSEDED");return;
+      const result=await this.deps.store.disposeStalePendingTodo(notice.projectId,notice.id);
+      if(result==="posted")await this.reason(notice,"MESSAGE_POST_UNCONFIRMED");
+      return;
     }
     const eligibility=await this.eligibleRecipient(notice.projectId,config,principals);
     if(!eligibility.recipient){await this.reason(notice,eligibility.reason);return;}

@@ -204,4 +204,20 @@ export class PgSessionMessages implements SessionMessageTransaction {
         AND target_kind='owned' AND state='queued')) AS occupied`,[this.projectId,sessionId,includeQueued]);
     if(r.rows[0]?.occupied)throw new DomainError('SESSION_BUSY','Session has an active or unresolved turn');
   }
+  async assertCurrentLeaderTodo(messageId:string):Promise<void>{
+    const source=await this.client.query(`SELECT task_id,task_revision_id,state FROM leader_result_notice
+      WHERE project_id=$1 AND message_id=$2 AND kind='task_todo'`,[this.projectId,messageId]);
+    if(!source.rows[0])return;
+    const notice=source.rows[0];
+    const task=await this.client.query(`SELECT state,current_revision_id FROM task
+      WHERE project_id=$1 AND task_id=$2 FOR UPDATE`,[this.projectId,notice.task_id]);
+    const current=task.rows[0];
+    if(notice.state!=='linked'||!current||current.state!=='todo'||
+      current.current_revision_id!==notice.task_revision_id)
+      throw new DomainError('TODO_SOURCE_SUPERSEDED','Fixed Leader todo is no longer current');
+    const assignment=await this.client.query(`SELECT 1 FROM task_session_assignment
+      WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND state<>'released' LIMIT 1`,
+      [this.projectId,notice.task_id,notice.task_revision_id]);
+    if(assignment.rows[0])throw new DomainError('TODO_SOURCE_SUPERSEDED','Fixed Leader todo is already assigned');
+  }
 }
