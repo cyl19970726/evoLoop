@@ -70,7 +70,9 @@ export async function buildServer(options: {
       preview: ManualStopPreview,preflight:SessionMessageManualStopPreflight): Promise<void>;
   };
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
-  listRuntimeModels?: () => Promise<{status:"available"|"empty"|"unavailable";models:string[];error:string|null;observedAtUtc:string}>;
+  listRuntimeModels?: () => Promise<{status:"available"|"empty"|"unavailable";models:string[];
+    options?:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
+    error:string|null;observedAtUtc:string}>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
     cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
@@ -244,17 +246,25 @@ export async function buildServer(options: {
         if(!dynamic)await requireActiveModel(command.model!);
       }
       // Closing is a reviewer request; the runner archives under the original Session grant.
+      if (command.type === "runtime.session.executionProfile.revise" && command.reasoningEffort &&
+        !await options.service.getOperation(principal,command.projectId,command.operationId)) {
+        const current=await catalog();
+        if(current.status!=="available")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","原生模型目录不可用，未保存新配置。");
+        if(!current.options?.find(option=>option.model===command.model)?.supportedReasoningEfforts.includes(command.reasoningEffort??""))
+          throw new DomainError("REASONING_EFFORT_UNSUPPORTED","该模型当前未列出所选思考强度，未保存新配置。");
+      }
       if (command.type === "runtime.run.reserve") {
         const session = await options.service.getRuntimeSession(principal, command.projectId, command.sessionId);
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
         if (dynamic ? !await options.authorizeDynamicRun?.(principal,command,session) :
           !await options.hasRuntimeGrant?.({ projectId: command.projectId, actorId: principal.actorId,
           roleId: session.roleId, authorizationScope: session.authorizationScope, cwd: session.cwd,
-          sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy })) {
+          sandbox: session.sandbox, model: session.executionProfile?.revision.model??session.model,
+          approvalPolicy: session.approvalPolicy })) {
           if (!await options.authorizeDynamicRun?.(principal, command, session))
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
-        if(!dynamic)await requireActiveModel(session.model);
+        if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model);
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
@@ -391,6 +401,7 @@ export async function buildServer(options: {
       (g.approvalPolicy??"never")==="never"&&g.networkAccess!==false);
     const allowed=new Set(fullGrants.flatMap(grantModels));
     return {...current,models:current.status==="available"?current.models.filter(model=>allowed.has(model)):[],
+      options:current.status==="available"?current.options?.filter(option=>allowed.has(option.model))??[]:[],
       authorizedModels:[...allowed],environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};

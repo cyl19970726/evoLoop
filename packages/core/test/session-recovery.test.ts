@@ -80,6 +80,8 @@ test('budget extension belongs to the registered controller and does not resume 
 test('profile revision upgrades the same model with exact authority and cannot bypass unknown native work',async()=>{
   const f=await fixture();const c:any={type:'runtime.session.executionProfile.revise',projectId:f.projectId,operationId:randomUUID(),sessionId:f.sessionId,expectedVersion:3,expectedExecutionProfileRevisionId:f.profileId,model:'approved-model',sandbox:'danger-full-access',approvalPolicy:'never',evidenceRef:'Provider and exact grant reviewed',reason:'Controlled change'};
   const tx:any={...f.reader,recovery:f.recovery};
+  await assert.rejects(applySessionRecovery(tx,f.principal as any,{...c,reasoningEffort:'max'},now,randomUUID,
+    {canRevise:async()=>true}),/already confirmed full-access/);
   await assert.rejects(applySessionRecovery(tx,f.principal as any,c,now,randomUUID),/exact static/);
   let adopted:any;f.recovery.adoptExecutionProfile=async(r:any,v:number)=>{adopted=r;assert.equal(v,3);};
   await applySessionRecovery(tx,f.principal as any,c,now,randomUUID,{canRevise:async(_p:any,_s:any,target:any)=>{
@@ -90,6 +92,13 @@ test('profile revision upgrades the same model with exact authority and cannot b
   f.recovery.isDynamicSession=async()=>true;
   await assert.rejects(applySessionRecovery(tx,f.principal as any,c,now,randomUUID,{canRevise:async()=>true}),/delegated Session/);
   f.recovery.isDynamicSession=async()=>false;
+  f.session.sandbox='danger-full-access';f.session.approvalPolicy='never';
+  f.session.executionProfile.revision.sandbox='danger-full-access';
+  f.session.executionProfile.revision.approvalPolicy='never';
+  f.source.state='running';f.source.nativeTurnId='original-running-turn';
+  await applySessionRecovery(tx,f.principal as any,{...c,reasoningEffort:'max'},now,randomUUID,
+    {canRevise:async()=>true});
+  assert.equal(adopted.reasoningEffort,'max','running original Turn keeps its own fixed launch profile');
   f.source.state='unknown';await assert.rejects(applySessionRecovery(tx,f.principal as any,c,now,randomUUID,{canRevise:async()=>true}),/active or unknown/);
 });
 test('resume cannot clear a failed active claim or substitute a newly posted message',async()=>{

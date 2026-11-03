@@ -173,7 +173,7 @@ Codex App Server 协议版本由本机运行配置显式固定；省略时维持
 
 已完成 retry 且原 claim 仍等待验收时，独立复核可要求同 Task 返工。若依据是业务输入变更，控制者先修订并重新封存 Task 业务输入、amend 并 readopt 队列；若依据是合法问答，则固定前一 Task 通道的真实问答。随后以 `queue.continue.rework` 固定 gate 版本、最近 completed Run 的 ID/version/inputHash、active 执行配置及依据。项目事务只为此原 claim 的一个新 Run 进入 `reworking`，PG 启动栅栏和 attempt 追加只认该 Run；旧失败来源、retry 决定、消息 pin 和累计预算不变。完成后回 `awaiting_acceptance`，失败或未知重回 `blocked`；其他 Task、claim、Run 或普通消息均不因返工许可开放。若业务输入未改且无合法问答，或来源、身份、权限、预算、配置、采纳版本不符，事务拒绝且不留下许可。
 
-`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。
+`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。 已确认完整权限的 Session 可在新修订固定原生目录所列的模型和思考强度；已确认运行的旧 Turn 继续使用原不可变快照，目标修订 pending 时不启动新业务。激活用原 Thread 的模型与强度读回证明配置，后续 `turn/start` 仍同时显式携带固定的两个参数；原生请求入队回包和启动回包均不能证明 provider 真实执行参数。
 
 Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回；Leader 组织试行承接。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 Session 可提出，Evocation 不控制全部业务任务。[产品职责](../product/functional-scenarios.md#共同前提谁负责信息在哪里)
 

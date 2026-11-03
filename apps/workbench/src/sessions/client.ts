@@ -3,6 +3,7 @@ import type { SessionProfileRecord, TaskSessionAssignment, SessionAssignmentPage
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { ObservationMetadata } from "@evoloop/contracts/session-work";
 import type { RuntimeWorkTrace } from "@evoloop/contracts/runtime";
+import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { SessionTimelinePage, WorkspaceEntry, WorkspaceLiveRead } from "@evoloop/contracts/session-timeline";
 import type { SessionRecoveryView } from "./recoveryPresentation";
 import { request, requestNullable } from "../api";
@@ -27,6 +28,10 @@ export function sessionClient(token: string, projectId: string) {
       get<SessionDirectory>(`${base}/session-work?${query({ limit: 50, ...options })}`, signal),
     snapshot: (key: string, signal?: AbortSignal) => get<SessionSnapshot>(`${base}/session-work/${part(key)}`, signal),
     recovery: (sessionId: string, signal?: AbortSignal) => get<SessionRecoveryView>(`${base}/runtime/sessions/${part(sessionId)}/recovery`, signal),
+    runtimeSessions: (signal?:AbortSignal) => get<RuntimeSessionRecord[]>(`${base}/runtime/sessions`,signal),
+    models: (signal?:AbortSignal) => get<{status:'available'|'empty'|'unavailable';models:string[];
+      options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
+      error:string|null}>(`${base}/runtime/models`,signal),
     changes: (cursor: string, key?: string, signal?: AbortSignal) =>
       get<SessionChanges>(`${base}/session-work/changes?${query({ cursor, limit: 100, key })}`, signal),
     activities: (key: string, cursor?: string, signal?: AbortSignal) =>

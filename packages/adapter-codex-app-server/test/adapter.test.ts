@@ -705,6 +705,83 @@ test(`${expectedVersion} approved execution profile revision changes only the ow
 });
 }
 
+test('pinned native settings readback confirms both model and effort before a fixed Turn',async t=>{
+  const priorRevisionId='00000000-0000-4000-8000-000000000201';
+  const revisionId='00000000-0000-4000-8000-000000000202';
+  const operationId='00000000-0000-4000-8000-000000000203';
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'model-effort'],
+    expectedVersion:'codex-cli 0.166.0-alpha.5.1',authorizeExecutionProfileActivation:async()=>true,
+    verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const prior:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'original-actor',model:'old-model',reasoningEffort:'high',sandbox:'danger-full-access',
+      approvalPolicy:'never',executionProfileRevisionId:priorRevisionId}};
+  const target:RuntimeSessionSpec={...spec,model:'new-model',reasoningEffort:'max',
+    executionProfileRevisionId:revisionId};
+  await adapter.registerBinding(prior);
+  const revised=await adapter.activateExecutionProfile(prior,target,revisionId,operationId);
+  assert.equal(revised.resumeProfile?.reasoningEffort,'max');
+  await adapter.startTurn(revised,'fixed business input','fixed-turn-op',{
+    revisionId,version:2,model:'new-model',reasoningEffort:'max',sandbox:'danger-full-access',
+    approvalPolicy:'never',cwd:spec.cwd,authorizationScope:spec.authorizationScope,provenance:'revised'});
+  assert.equal((await adapter.inspect(revised) as {observedTurnStarts:number}).observedTurnStarts,1);
+});
+
+test('a restarted native owner loads the original Thread before updating model and effort',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'model-effort-unloaded'],
+    expectedVersion:'codex-cli 0.166.0-alpha.5.1',authorizeExecutionProfileActivation:async()=>true,
+    verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const prior:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'original-actor',model:'old-model',reasoningEffort:'high',
+      sandbox:'danger-full-access',approvalPolicy:'never',executionProfileRevisionId:'prior'}};
+  await adapter.registerBinding(prior);
+  const revised=await adapter.activateExecutionProfile(prior,{...spec,model:'new-model',
+    reasoningEffort:'max',executionProfileRevisionId:'target'},'target','operation');
+  assert.equal(revised.nativeThreadId,prior.nativeThreadId);
+  assert.equal(revised.resumeProfile?.reasoningEffort,'max');
+  assert.equal((await adapter.inspect(revised) as {observedResumes:number}).observedResumes,1);
+});
+
+test('a replacement revision can restore the last confirmed model and effort after rejection',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'model-effort'],
+    expectedVersion:'codex-cli 0.166.0-alpha.5.1',authorizeExecutionProfileActivation:async()=>true,
+    verifyBinding:async()=>true});
+  t.after(()=>adapter.close());await adapter.open();
+  const prior:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+    nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,
+    authorizationScope:spec.authorizationScope,owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'original-actor',model:'old-model',reasoningEffort:'high',
+      sandbox:'danger-full-access',approvalPolicy:'never',executionProfileRevisionId:'confirmed'}};
+  await adapter.registerBinding(prior);
+  const restored=await adapter.activateExecutionProfile(prior,{...spec,model:'old-model',
+    reasoningEffort:'high',executionProfileRevisionId:'replacement'},'replacement','operation');
+  assert.equal(restored.resumeProfile?.executionProfileRevisionId,'replacement');
+  assert.equal(restored.resumeProfile?.model,'old-model');
+});
+
+test('explicit settings rejection and lost reply never confirm a new profile',async t=>{
+  for(const mode of ['model-effort-reject','model-effort-lost']){
+    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],requestTimeoutMs:80,
+      expectedVersion:'codex-cli 0.166.0-alpha.5.1',authorizeExecutionProfileActivation:async()=>true,
+      verifyBinding:async()=>true});
+    t.after(()=>adapter.close());await adapter.open();
+    const prior:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
+      nativeThreadId:'thread-owned',nativeSessionId:'thread-owned',cwd:spec.cwd,
+      authorizationScope:spec.authorizationScope,owner:'evoloop-codex-app-server',
+      resumeProfile:{actorId:'original-actor',model:'old-model',reasoningEffort:'high',
+        sandbox:'danger-full-access',approvalPolicy:'never',executionProfileRevisionId:'prior'}};
+    await adapter.registerBinding(prior);
+    await assert.rejects(()=>adapter.activateExecutionProfile(prior,{...spec,model:'new-model',
+      reasoningEffort:'max',executionProfileRevisionId:'target'},'target','operation'),
+      error=>mode.endsWith('reject')?error instanceof RuntimeServerError:error instanceof RuntimeUnknownError);
+  }
+});
+
 test("lost execution profile acknowledgement is reconciled by one read of the original Thread", async t => {
   const oldRevisionId="00000000-0000-4000-8000-000000000111";
   const revisionId="00000000-0000-4000-8000-000000000112";

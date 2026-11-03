@@ -17,6 +17,7 @@ import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessi
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
+import { SessionModelControl } from "./SessionModelControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
@@ -334,7 +335,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const failedRun = session.latestBusinessRun && ["failed", "interrupted", "unknown"].includes(session.latestBusinessRun.state)
     ? session.latestBusinessRun : null;
   const executionProfile = recoveryRead.status === "ready" ? recoveryRead.view.executionProfile : null;
-  const configuredModel = current.resources.configuredModel.value ?? executionProfile?.revision.model ?? "未同步";
+  const configuredModel = executionProfile?.revision.model ?? current.resources.configuredModel.value ?? "未同步";
   const actualModel = current.resources.actualModel.value ?? "未同步";
   const permissionScope = executionProfile ? `${executionProfile.revision.sandbox} · ${executionProfile.revision.approvalPolicy}` : "未同步";
   const turnLabel = observation.progress?.turn ? `${observation.progress.turn.status === "inProgress" ? "进行中" : observation.progress.turn.status === "completed" ? "已结束" : observation.progress.turn.status === "failed" ? "失败" : "状态待核对"} · ${date(observation.progress.lastEventAt)}` : "未同步";
@@ -363,7 +364,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
             : idleResult ? `最近关联交付 · 技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)}${current.metadata.partial ? " · 已读范围有限" : ""}`
               : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
         </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
-        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>思考强度</dt><dd>未同步</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>}</section>
+        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>目标模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>目标强度</dt><dd>{executionProfile?.revision.reasoningEffort??"未配置"}</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <><p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>{session.target.kind === "owned"&&<SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status==='ready'?recoveryRead.view:null} busy={session.busy===true} onApplied={()=>setReadAgain(value=>value+1)}/>}</>}</section>
       </div>}
     </div>
     {failedRun && <p className="session-run-attention" role="status">最近运行{failedRun.state === "failed" ? "失败" : failedRun.state === "interrupted" ? "已中断" : "结果未知"}；{recentRunHref ? <>请先<a href={recentRunHref}>核对原 Run</a>和当前任务，再决定下一步。</> : "原 Run 缺少可核对的 Task 关联，暂不能直达；请重新读取会话并核对任务运行记录。"}</p>}

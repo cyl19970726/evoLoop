@@ -15,8 +15,10 @@ let observedResumes = 0;
 let lastTurnModel = null;
 let threadName = null;
 let modelListReads = 0;
+let selectedModel = 'old-model';
+let selectedEffort = 'high';
 const sequenceInputs = [];
-let unloaded = mode.startsWith('full-unloaded');
+let unloaded = mode.startsWith('full-unloaded')||mode==='model-effort-unloaded';
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") {
@@ -87,6 +89,9 @@ for await (const line of lines) {
     if (mode === "model-reject") { send({id,error:{code:-32000,message:"private token and path"}}); continue; }
     if (mode === "model-invalid") { send({id,result:{data:[{id:"display-only"}],nextCursor:null}}); continue; }
     if (mode === "model-empty") { send({id,result:{data:[],nextCursor:null}}); continue; }
+    if (mode === "model-effort") { send({id,result:{data:[{model:'new-model',
+      supportedReasoningEfforts:[{reasoningEffort:'high'},{reasoningEffort:'max'}],
+      defaultReasoningEffort:'high'}],nextCursor:null}});continue; }
     if (mode === "model-loop") { send({id,result:{data:[{model:"gpt-6-astra"}],nextCursor:"again"}}); continue; }
     if (mode === "model-overflow") { send({id,result:{data:[{model:`slug-${modelListReads}`}],nextCursor:`page-${modelListReads}`}}); continue; }
     if (mode === "model-page") {
@@ -95,6 +100,18 @@ for await (const line of lines) {
         {data:[{id:"different-id",model:"gpt-6-astra",displayName:"Astra"}],nextCursor:"next"}}); continue;
     }
     send({id,result:{data:[{model:`gpt-6-astra-${modelListReads}`,displayName:"Astra"}],nextCursor:null}}); continue;
+  }
+  if(mode.startsWith('model-effort')&&method==='thread/settings/update'){
+    if(unloaded){send({id,error:{code:-32602,message:'thread is not loaded'}});continue;}
+    if(mode==='model-effort-reject'){send({id,error:{code:-32602,message:'unsupported effort'}});continue;}
+    if(mode==='model-effort-lost')continue;
+    selectedModel=params.model;selectedEffort=params.effort;
+    send({id,result:{}});continue;
+  }
+  if(mode.startsWith('model-effort')&&method==='thread/read'){
+    send({id,result:{thread:{...thread,model:selectedModel,reasoningEffort:selectedEffort,
+      status:{type:unloaded?'notLoaded':'idle',activeFlags:[]}},observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
+      lastTurnEffort:selectedEffort}});continue;
   }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
@@ -135,6 +152,12 @@ for await (const line of lines) {
   }
   if(method==='thread/resume'&&params.sandbox==='danger-full-access'){
     observedResumes++;
+    if(mode==='model-effort-unloaded'){
+      if(params.model!=='old-model'||params.threadId!==thread.id||params.excludeTurns!==true){
+        send({id,error:{code:-32602,message:'old profile required to load'}});continue;
+      }
+      unloaded=false;
+    }
     if(mode.startsWith('full-unloaded')){
       if(params.threadId!==thread.id||params.cwd!==thread.cwd||
         (mode==='full-unloaded-default'?params.model!=null:params.model!=='gpt-6-sol')||
@@ -259,6 +282,9 @@ for await (const line of lines) {
   if (method === "turn/start") {
     turnStarts++;
     if(unloaded){send({id,error:{code:-32000,message:'ThreadNotLoaded'}});continue;}
+    if(mode.startsWith('model-effort')&&(params.model!=='new-model'||params.effort!=='max')){
+      send({id,error:{code:-32602,message:'model and effort missing'}});continue;
+    }
     if(mode.startsWith('full-')){
       if(params.sandboxPolicy?.type!=='dangerFullAccess'||params.approvalPolicy!=='never'||
         params.cwd!==thread.cwd||

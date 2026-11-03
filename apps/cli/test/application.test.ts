@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createServer } from "node:http";
 import { test, mock } from "node:test";
 import { commandSchema } from "@evoloop/contracts";
@@ -51,6 +54,38 @@ test("native input CLI reads retain the owned Session and request identity", asy
     assert.ok(schema.required.includes("answers")); assert.ok(schema.required.includes("expectedVersion"));
     assert.equal(schema.properties.actorId, undefined); assert.equal(schema.properties.connectionId, undefined);
   } finally { fetch.mock.restore(); }
+});
+
+test('session profile CLI saves an exact model and effort target with the current revision',async()=>{
+  const projectId='00000000-0000-4000-8000-000000000011';
+  const sessionId='00000000-0000-4000-8000-000000000012';
+  const revisionId='00000000-0000-4000-8000-000000000013';
+  const operationId='00000000-0000-4000-8000-000000000014';
+  const directory=await mkdtemp(join(tmpdir(),'evoloop-profile-cli-'));
+  let submitted:Record<string,unknown>|null=null;
+  const fetch=mock.method(globalThis,'fetch',async(url:string|URL|Request,init?:RequestInit)=>{
+    const path=new URL(String(url)).pathname;
+    if(path==='/api/session')return new Response(JSON.stringify({principal:{actorId:'reviewer',projectIds:[projectId]}}));
+    if(path===`/api/projects/${projectId}/runtime/sessions`)return new Response(JSON.stringify([
+      {id:sessionId,version:8,executionProfile:{revision:{revisionId}}}]));
+    if(path==='/api/commands'){
+      submitted=JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({status:'applied',operationId,entityId:sessionId,version:9}));
+    }
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try{
+    const result=await run(['session','profile','set',sessionId,'--project',projectId,
+      '--model','gpt-6-astra','--effort','max','--reason','Reviewed exact grant',
+      '--evidence-ref','review://profile','--operation',operationId],
+      {EVOLOOP_TOKEN:'fixture',EVOLOOP_STATE_DIR:directory});
+    assert.equal(result.code,0,result.stderr);
+    assert.equal(submitted?.type,'runtime.session.executionProfile.revise');
+    assert.equal(submitted?.expectedVersion,8);
+    assert.equal(submitted?.expectedExecutionProfileRevisionId,revisionId);
+    assert.equal(submitted?.model,'gpt-6-astra');
+    assert.equal(submitted?.reasoningEffort,'max');
+  }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
 });
 test("evaluation CLI reads preserve fixed revision, attempt and source identities", async () => {
   const p = "00000000-0000-4000-8000-000000000001", e = "00000000-0000-4000-8000-000000000002";

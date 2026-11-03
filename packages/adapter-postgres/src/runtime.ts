@@ -29,12 +29,14 @@ const session = (r: QueryResultRow): RuntimeSessionRecord => ({
   executionProfile: r.profile_revision ? {
     revision: { projectId:r.project_id,sessionId:r.session_id,revisionId:r.profile_revision.revision_id,
       version:r.profile_revision.version,previousRevisionId:r.profile_revision.previous_revision_id,
-      model:r.profile_revision.model,sandbox:r.profile_revision.sandbox,approvalPolicy:r.profile_revision.approval_policy,
+      model:r.profile_revision.model,...(r.profile_revision.reasoning_effort?{reasoningEffort:r.profile_revision.reasoning_effort}:{}),
+      sandbox:r.profile_revision.sandbox,approvalPolicy:r.profile_revision.approval_policy,
       cwd:r.profile_revision.cwd,authorizationScope:r.profile_revision.authorization_scope,
       provenance:r.profile_revision.provenance,operationId:r.profile_revision.operation_id,actorId:r.profile_revision.actor_id,
       reason:r.profile_revision.reason,evidenceRef:r.profile_revision.evidence_ref,
       createdAt:iso(r.profile_revision.created_at) },
     activationState:r.profile_activation_state,activeRevisionId:r.profile_active_revision_id,
+    activeModel:r.profile_active_model,activeReasoningEffort:r.profile_active_reasoning_effort,
     activationOperationId:r.profile_activation_operation_id,
     attemptedAt:r.profile_attempted_at?iso(r.profile_attempted_at):null,
     activationEvidence:r.profile_activation_evidence,
@@ -80,10 +82,13 @@ export class PgRuntimeStore {
   }
   private sessionProjection():string {return `SELECT s.*,to_jsonb(p) AS profile_revision,
     h.activation_state AS profile_activation_state,h.active_revision_id AS profile_active_revision_id,
+    active.model AS profile_active_model,active.reasoning_effort AS profile_active_reasoning_effort,
     h.activation_operation_id AS profile_activation_operation_id,h.attempted_at AS profile_attempted_at,
     h.activation_evidence AS profile_activation_evidence
     FROM runtime_session s LEFT JOIN session_execution_profile h ON h.project_id=s.project_id AND h.session_id=s.session_id
-    LEFT JOIN session_execution_profile_revision p ON p.project_id=h.project_id AND p.session_id=h.session_id AND p.revision_id=h.revision_id`;}
+    LEFT JOIN session_execution_profile_revision p ON p.project_id=h.project_id AND p.session_id=h.session_id AND p.revision_id=h.revision_id
+    LEFT JOIN session_execution_profile_revision active ON active.project_id=h.project_id AND active.session_id=h.session_id
+      AND active.revision_id=h.active_revision_id`;}
   async getRuntimeRun(id: string): Promise<RuntimeRunRecord | null> {
     const result = await this.client.query("SELECT * FROM runtime_run WHERE project_id=$1 AND run_id=$2", [this.projectId, id]);
     return result.rows[0] ? run(result.rows[0]) : null;

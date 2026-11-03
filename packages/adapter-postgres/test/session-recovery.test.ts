@@ -246,7 +246,7 @@ test('configured execution profile is immutable per Run and unknown activation n
       provenance:'revised',operationId,actorId:'lead',reason:'Reviewed model grant',
       evidenceRef:'review://model',createdAt:now},1);
     const changed=(await tx.getRuntimeSession(another))!;
-    assert.equal(changed.model,'configured-new-model');
+    assert.equal(changed.model,original.model,'saved target keeps the last confirmed model until activation');
     assert.equal(changed.sandbox,'danger-full-access');assert.equal(changed.approvalPolicy,'never');
     assert.equal(changed.executionProfile?.activationState,'pending');
     assert.equal(changed.executionProfile?.activeRevisionId,profile.revision.revisionId);
@@ -260,6 +260,7 @@ test('configured execution profile is immutable per Run and unknown activation n
     await assert.rejects(tx.recovery!.assertStartupAllowed(another,'run',pendingRunId),/profile/i,
       'persisted requested Run cannot dispatch before native activation is positively confirmed');
     assert.equal(await tx.recovery!.beginExecutionProfileActivation(another,revisionId,operationId),true);
+    assert.equal((await tx.getRuntimeSession(another))!.model,'configured-new-model');
     assert.equal(await tx.recovery!.beginExecutionProfileActivation(another,revisionId,operationId),false);
     await tx.recovery!.settleExecutionProfileActivation(another,revisionId,'unknown','No positive native receipt');
     assert.equal((await tx.recovery!.getRecoveryGate(another))!.phase,'blocked');
@@ -331,6 +332,40 @@ test('explicit native rejection and failed unstarted Run permit a new target whi
     await tx.recovery!.settleExecutionProfileActivation(session,secondRevision,'active','Exact replacement profile confirmed');
     const afterActivation=(await tx.recovery!.getRecoveryGate(session))!;
     assert.equal(afterActivation.phase,'blocked');assert.equal(afterActivation.causeId,requestedId);
+  });
+});
+
+test('a running original Turn keeps its fixed profile while a model and effort target waits',async()=>{
+  const owned=randomUUID(),originalRun=randomUUID(),targetRevision=randomUUID(),targetOperation=randomUUID();
+  const client=await pool.connect();
+  try{await client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,'project','old-model','danger-full-access','never','ready',1,$5,$5,$6,'worker',$7,$7)`,
+    [project,owned,role,grant.cwd,`native-${owned}`,randomUUID(),at]);}finally{client.release();}
+  await uow.transaction(project,async tx=>{
+    const old=(await tx.getRuntimeSession(owned))!;
+    const source=(await tx.getRuntimeRun(run))!;
+    await tx.insertRuntimeRun({...source,id:originalRun,sessionId:owned,operationId:randomUUID(),
+      state:'running',version:1,nativeTurnId:'still-running',createdAt:at,updatedAt:at,
+      executionProfile:{revisionId:old.executionProfile!.revision.revisionId,version:1,model:'old-model',
+        sandbox:'danger-full-access',approvalPolicy:'never',cwd:old.cwd,authorizationScope:old.authorizationScope,
+        provenance:'reserved'}});
+    await tx.recovery!.adoptExecutionProfile({...old.executionProfile!.revision,
+      revisionId:targetRevision,previousRevisionId:old.executionProfile!.revision.revisionId,version:2,
+      model:'new-model',reasoningEffort:'max',provenance:'revised',operationId:targetOperation,
+      actorId:'lead',reason:'Approved next Turn profile',evidenceRef:'review://model-effort',createdAt:new Date().toISOString()},old.version);
+    const pending=(await tx.getRuntimeSession(owned))!;
+    assert.equal(pending.model,'old-model');
+    assert.equal(pending.executionProfile?.revision.reasoningEffort,'max');
+    assert.equal(pending.executionProfile?.activeModel,'old-model');
+    assert.equal((await tx.getRuntimeRun(originalRun))!.executionProfile?.reasoningEffort,undefined);
+    await assert.rejects(tx.recovery!.beginExecutionProfileActivation(owned,targetRevision,targetOperation),/vacant Session/);
+    const current=(await tx.getRuntimeRun(originalRun))!;
+    await tx.updateRuntimeRun({...current,state:'completed',version:2,updatedAt:new Date().toISOString()},1);
+    assert.equal(await tx.recovery!.beginExecutionProfileActivation(owned,targetRevision,targetOperation),true);
+    assert.equal((await tx.getRuntimeSession(owned))!.model,'new-model');
+    await tx.recovery!.settleExecutionProfileActivation(owned,targetRevision,'active','Exact native model and effort readback');
+    assert.equal((await tx.getRuntimeSession(owned))!.executionProfile?.activeRevisionId,targetRevision);
   });
 });
 

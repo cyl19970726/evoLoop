@@ -80,13 +80,23 @@ export function bindingOf(session: RuntimeSessionRecord): RuntimeBinding {
   return { sessionId: session.id, roleId: session.roleId, projectId: session.projectId, cwd: session.cwd,
     authorizationScope: session.authorizationScope, nativeThreadId: session.nativeThreadId,
     nativeSessionId: session.nativeSessionId, owner: "evoloop-codex-app-server",
-    resumeProfile:{actorId:session.actorId,model:session.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
-      ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.revision.revisionId}:{})} };
+    resumeProfile:{actorId:session.actorId,
+      model:session.executionProfile?.activationState==='active'?session.model:
+        session.executionProfile?.activeModel??session.model,
+      ...(session.executionProfile?.activationState==='active'&&session.executionProfile.revision.reasoningEffort?
+        {reasoningEffort:session.executionProfile.revision.reasoningEffort}:
+        session.executionProfile?.activeReasoningEffort?
+          {reasoningEffort:session.executionProfile.activeReasoningEffort}:{}),
+      sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
+      ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.activeRevisionId??session.executionProfile.revision.revisionId}:{})} };
 }
 function specOf(session: RuntimeSessionRecord): RuntimeSessionSpec {
   return { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
     cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
-    approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}),
+    approvalPolicy: session.approvalPolicy,
+    ...((session.executionProfile?.revision.model??session.model)?{model:(session.executionProfile?.revision.model??session.model)!}:{}),
+    ...(session.executionProfile?.revision.reasoningEffort?
+      {reasoningEffort:session.executionProfile.revision.reasoningEffort}:{}),
     ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.revision.revisionId}:{}) };
 }
 async function collect<T>(load: (cursor?: string) => Promise<RuntimePage<T>>, maxPages: number): Promise<T[]> {
@@ -486,6 +496,7 @@ export class RuntimeRunner {
     if(!profile)return this.readBinding(session);
     if(run && (!run.executionProfile||run.executionProfile.revisionId!==profile.revision.revisionId||
       run.executionProfile.model!==profile.revision.model||run.executionProfile.sandbox!==session.sandbox||
+      (run.executionProfile.reasoningEffort??null)!==(profile.revision.reasoningEffort??null)||
       run.executionProfile.approvalPolicy!==session.approvalPolicy||run.executionProfile.cwd!==session.cwd||
       run.executionProfile.authorizationScope!==session.authorizationScope))
       throw new DomainError("EXECUTION_PROFILE_MISMATCH","Run's fixed launch profile differs from its Session revision");
@@ -506,7 +517,7 @@ export class RuntimeRunner {
       previous.cwd!==session.cwd||previous.authorizationScope!==session.authorizationScope)
       throw new DomainError("EXECUTION_PROFILE_MISMATCH","previous execution profile changed immutable Session identity");
     const prior=bindingOf(session);
-    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,sandbox:previous.sandbox,
+    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,reasoningEffort:previous.reasoningEffort??null,sandbox:previous.sandbox,
       approvalPolicy:previous.approvalPolicy,executionProfileRevisionId:previous.revisionId};
     const target=specOf(session),revisionId=profile.revision.revisionId,operationId=profile.revision.operationId;
     if(profile.activationState==='pending'){
@@ -519,7 +530,9 @@ export class RuntimeRunner {
           this.registered.add(session.id);
           return revised;
         }catch(error){
-          const state=error instanceof RuntimeServerError&&error.method==='thread/resume'?'rejected':'unknown';
+          const state=error instanceof RuntimeServerError&&
+            (error.method==='thread/resume'||error.method==='thread/settings/update'&&
+              error.category==='invalid_params')?'rejected':'unknown';
           await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,state,
             state==='rejected'?'Native thread/resume explicitly rejected the chosen profile':
               'Native profile activation outcome is uncertain; original Thread requires readback');

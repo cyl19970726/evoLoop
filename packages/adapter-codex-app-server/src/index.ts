@@ -61,7 +61,7 @@ const policyJson=(value:unknown):string=>JSON.stringify(value,(_key,current)=>ob
   Object.fromEntries(Object.entries(current).sort(([a],[b])=>a.localeCompare(b))):current);
 const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
-  (["actorId","model","sandbox","approvalPolicy","executionProfileRevisionId"] as const).every(key =>
+  (["actorId","model","reasoningEffort","sandbox","approvalPolicy","executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const safeModelIdentity = (value:unknown):string|null => typeof value==="string"&&
@@ -167,7 +167,9 @@ export interface DynamicToolCall { threadId: string; turnId: string; callId: str
 export interface DynamicToolResult { contentItems: ({type:"inputText";text:string}|{type:"inputImage";imageUrl:string})[]; success: boolean }
 
 interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
-type ModelListResult = {status:"available"|"empty"|"unavailable";models:string[];error:string|null;observedAtUtc:string};
+type ModelListResult = {status:"available"|"empty"|"unavailable";models:string[];
+  options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
+  error:string|null;observedAtUtc:string};
 const MODEL_LIST_PAGE_SIZE = 100;
 const MODEL_LIST_MAX_PAGES = 5;
 const MODEL_LIST_CACHE_MS = 10_000;
@@ -309,14 +311,16 @@ export class CodexAppServerAdapter implements RuntimePort {
   async listModels():Promise<ModelListResult>{
     const now=Date.now();
     if(this.modelListCache&&now<this.modelListCache.expiresAt&&this.isReady())
-      return {...this.modelListCache.value,models:[...this.modelListCache.value.models]};
+      return {...this.modelListCache.value,models:[...this.modelListCache.value.models],
+        options:this.modelListCache.value.options.map(option=>({...option,supportedReasoningEfforts:[...option.supportedReasoningEfforts]}))};
     if(this.modelListPending){
       const value=await this.modelListPending;
-      return {...value,models:[...value.models]};
+      return {...value,models:[...value.models],options:value.options.map(option=>({...option,supportedReasoningEfforts:[...option.supportedReasoningEfforts]}))};
     }
     const connection=this.connectionId;
     const read=async():Promise<ModelListResult>=>{
       const models:string[]=[];
+      const options:ModelListResult['options']=[];
       const seenModels=new Set<string>();
       const seenCursors=new Set<string>();
       let cursor:string|undefined;
@@ -336,10 +340,16 @@ export class CodexAppServerAdapter implements RuntimePort {
             const model=object(entry)?.model;
             if(typeof model!=='string'||!model.length||model.length>256||model.trim()!==model)
               throw new RuntimeProtocolError('invalid model/list entry');
-            if(!seenModels.has(model)){seenModels.add(model);models.push(model);}
+            const source=object(entry)!;
+            const effortOptions=Array.isArray(source.supportedReasoningEfforts)?source.supportedReasoningEfforts:[];
+            const efforts=effortOptions.map(value=>object(value)?.reasoningEffort).filter((value):value is string=>
+              typeof value==='string'&&/^(minimal|low|medium|high|xhigh|max|ultra)$/.test(value));
+            const defaultEffort=typeof source.defaultReasoningEffort==='string'?source.defaultReasoningEffort:null;
+            if(!seenModels.has(model)){seenModels.add(model);models.push(model);
+              options.push({model,supportedReasoningEfforts:[...new Set(efforts)],defaultReasoningEffort:defaultEffort});}
           }
           if(result.nextCursor==null){
-            return {status:models.length?'available':'empty',models,error:null,observedAtUtc:new Date().toISOString()};
+            return {status:models.length?'available':'empty',models,options,error:null,observedAtUtc:new Date().toISOString()};
           }
           if(seenCursors.has(result.nextCursor))throw new RuntimeProtocolError('repeated model/list cursor');
           seenCursors.add(result.nextCursor);
@@ -352,7 +362,7 @@ export class CodexAppServerAdapter implements RuntimePort {
           error instanceof RuntimeProtocolError&&/pagination limit|cursor/.test(error.message)?'model_list_incomplete':
           error instanceof RuntimeProtocolError&&/invalid model\/list/.test(error.message)?'model_list_invalid_response':
           'model_list_unavailable';
-        return {status:'unavailable',models:[],error:code,observedAtUtc:new Date().toISOString()};
+        return {status:'unavailable',models:[],options:[],error:code,observedAtUtc:new Date().toISOString()};
       }
     };
     const pending=read();
@@ -361,7 +371,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const value=await pending;
       if(connection===this.connectionId&&this.isReady())
         this.modelListCache={value,expiresAt:Date.now()+MODEL_LIST_CACHE_MS};
-      return {...value,models:[...value.models]};
+      return {...value,models:[...value.models],options:value.options.map(option=>({...option,supportedReasoningEfforts:[...option.supportedReasoningEfforts]}))};
     }finally{if(this.modelListPending===pending)this.modelListPending=null;}
   }
 
@@ -800,13 +810,12 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(!old||!nonempty(old.executionProfileRevisionId)||!nonempty(revisionId)||!nonempty(operationId)||
       old.executionProfileRevisionId===revisionId||target.executionProfileRevisionId!==revisionId||
       !nonempty(target.actorId)||!nonempty(target.model)||
-      (target.model===old.model&&target.sandbox===old.sandbox&&target.approvalPolicy===old.approvalPolicy)||
       target.actorId!==old.actorId||target.sessionId!==current.sessionId||target.roleId!==current.roleId||
       target.projectId!==current.projectId||target.cwd!==current.cwd||
       target.authorizationScope!==current.authorizationScope||
       !fullProfile(target))
       throw new RuntimeProtocolError('execution profile revision changed owned identity or lacks a durable target');
-    return {...current,resumeProfile:{...old,model:target.model,sandbox:target.sandbox,
+    return {...current,resumeProfile:{...old,model:target.model,reasoningEffort:target.reasoningEffort??null,sandbox:target.sandbox,
       approvalPolicy:target.approvalPolicy,executionProfileRevisionId:revisionId}};
   }
 
@@ -844,6 +853,45 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('execution profile activation was already attempted in this adapter');
     if(!await this.nativeThreadIdle(current,true))
       throw new RuntimeProtocolError('owned Thread is active; execution profile cannot be applied');
+    if(target.reasoningEffort){
+      if(!fullProfile(current.resumeProfile!))
+        throw new RuntimeProtocolError('model and effort activation requires a previously confirmed full-access profile');
+      const before=object(await this.request('thread/read',{threadId:current.nativeThreadId,includeTurns:false}));
+      const priorThread=object(before?.thread);
+      if(priorThread?.id!==current.nativeThreadId||priorThread?.sessionId!==current.nativeSessionId||
+        priorThread?.cwd!==current.cwd)throw new RuntimeProtocolError('profile activation lost the owned Thread');
+      if(object(priorThread.status)?.type==='notLoaded'){
+        const prior=current.resumeProfile!;
+        await this.resume(current,{actorId:prior.actorId,sessionId:current.sessionId,roleId:current.roleId,
+          projectId:current.projectId,cwd:current.cwd,authorizationScope:current.authorizationScope,
+          ...(prior.model?{model:prior.model}:{}),
+          ...(prior.reasoningEffort?{reasoningEffort:prior.reasoningEffort}:{}),
+          sandbox:prior.sandbox,approvalPolicy:prior.approvalPolicy,
+          ...(prior.executionProfileRevisionId?{executionProfileRevisionId:prior.executionProfileRevisionId}:{})});
+      }
+      if(!await this.nativeThreadIdle(current,false,current.resumeProfile?.model??undefined))
+        throw new RuntimeUnknownError('thread/resume',null,'original Thread did not become idle under its last confirmed model');
+      // The pinned App Server's loaded-thread resume may retain the old model.
+      // This one durable attempt updates both fields together; the empty reply
+      // merely acknowledges queuing, so only the exact readback can confirm it.
+      await this.request('thread/settings/update',{
+        threadId:current.nativeThreadId,model:target.model,effort:target.reasoningEffort,
+        cwd:target.cwd,sandboxPolicy:FULL_POLICY,approvalPolicy:'never'});
+      for(let attempt=0;attempt<10;attempt++){
+        const result=object(await this.request('thread/read',{threadId:current.nativeThreadId,includeTurns:false}));
+        const thread=object(result?.thread);
+        if(thread?.id!==current.nativeThreadId||thread?.sessionId!==current.nativeSessionId||thread?.cwd!==current.cwd)
+          throw new RuntimeUnknownError('thread/settings/update',null,'profile readback changed owned Thread');
+        if(thread.model===target.model&&thread.reasoningEffort===target.reasoningEffort&&
+          object(thread.status)?.type==='idle'){
+          this.bindings.set(current.nativeThreadId,revised);
+          this.profileTransitionThreads.delete(current.nativeThreadId);
+          return revised;
+        }
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      throw new RuntimeUnknownError('thread/settings/update',null,'queued profile update has no exact model and effort readback');
+    }
     const config=await this.options.threadConfig?.(target);
     const reply=object(await this.request('thread/resume',{
       threadId:current.nativeThreadId,excludeTurns:true,cwd:target.cwd,model:target.model,
@@ -863,7 +911,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     const thread=object(result?.thread);
     if(!thread||thread.id!==current.nativeThreadId||thread.sessionId!==current.nativeSessionId||thread.cwd!==current.cwd)
       throw new RuntimeProtocolError('profile readback did not match the owned Thread');
-    if(thread.model!==target.model||object(thread.status)?.type!=='idle')return null;
+    if(thread.model!==target.model||target.reasoningEffort&&thread.reasoningEffort!==target.reasoningEffort||
+      object(thread.status)?.type!=='idle')return null;
     // Thread/read has no effective sandbox or approval fields. A model-only readback
     // cannot prove that a legacy loaded Thread adopted full permissions.
     if(fullProfile(target)&&!fullProfile(current.resumeProfile!))return null;
@@ -950,6 +999,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       actorId:profile.actorId,sessionId:binding.sessionId,roleId:binding.roleId,
       projectId:binding.projectId,cwd:binding.cwd,authorizationScope:binding.authorizationScope,
       ...(profile.model?{model:profile.model}:{}),sandbox:FULL_SANDBOX,approvalPolicy:'never',
+      reasoningEffort:profile.reasoningEffort??null,
       ...(profile.executionProfileRevisionId?{executionProfileRevisionId:profile.executionProfileRevisionId}:{}),
     });
     if(prior.status==='systemError'){
@@ -964,7 +1014,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeUnknownError('thread/resume',null,'owned Thread did not become idle after exact full resume');
     const started=object(await this.request('turn/start',{
       threadId:binding.nativeThreadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
-      cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
+      cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),
+      ...(profile.reasoningEffort?{effort:profile.reasoningEffort}:{}),
+      sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
     }));
     const turn=runtimeTurn(started?.turn);
     if(!turn)throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
@@ -1088,6 +1140,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(binding.resumeProfile?.executionProfileRevisionId){
       if(!executionProfile||executionProfile.revisionId!==binding.resumeProfile.executionProfileRevisionId||
         executionProfile.model!==binding.resumeProfile.model||executionProfile.sandbox!==binding.resumeProfile.sandbox||
+        (executionProfile.reasoningEffort??null)!==(binding.resumeProfile.reasoningEffort??null)||
         executionProfile.approvalPolicy!==binding.resumeProfile.approvalPolicy||
         executionProfile.cwd!==binding.cwd||executionProfile.authorizationScope!==binding.authorizationScope)
         throw new RuntimeProtocolError('Run does not carry this exact immutable execution profile');
@@ -1102,6 +1155,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     fullAttempts.add(operationId);this.fullTurnAttempts.set(binding.nativeThreadId,fullAttempts);
     const result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
       ...(binding.resumeProfile?.model?{model:binding.resumeProfile.model}:{}),
+      ...(executionProfile?.reasoningEffort?{effort:executionProfile.reasoningEffort}:{}),
       cwd:binding.cwd,sandboxPolicy:FULL_POLICY,approvalPolicy:'never' }));
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");

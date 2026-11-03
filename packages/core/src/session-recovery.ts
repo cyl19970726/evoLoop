@@ -22,8 +22,24 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
   const permittedUnstarted=command.type==='runtime.session.recovery.resume'&&gate.causeKind==='execution_profile'
     ?runs.find(r=>r.id===gate.retryRunId&&r.state==='requested'&&!r.nativeTurnId&&
       r.executionProfile?.revisionId===gate.causeId&&session.executionProfile?.revision.revisionId===gate.causeId):null;
-  if(runs.some(r=>active.has(r.state)&&r.id!==permittedUnstarted?.id))throw new DomainError('SESSION_BUSY','Reconcile every active or unknown Run first');
-  if(permittedUnstarted){
+  if(command.type==='runtime.session.executionProfile.revise'){
+    if(runs.some(r=>['requested','dispatching','unknown'].includes(r.state)||
+      r.state==='running'&&(!r.nativeTurnId||session.sandbox!=='danger-full-access'||session.approvalPolicy!=='never')))
+      throw new DomainError('SESSION_BUSY','Reconcile active or unknown unstarted Runs before changing the target');
+    if(await tx.sessionMessages?.hasActiveSessionMessage(session.id)){
+      // A confirmed running ordinary Turn may finish under the old revision. An
+      // unstarted/unknown processing cannot be safely rebound to a new target.
+      const messages=await tx.sessionMessages?.listSessionMessages({kind:'owned',sessionId:session.id},100);
+      if(!messages||messages.nextCursor||!(await Promise.all(messages.items.map(async message=>{
+        if(!['processing','unknown'].includes(message.state))return true;
+        const processing=await tx.sessionMessages?.getSessionMessageProcessing(message.id);
+        return message.state==='processing'&&processing?.state==='running'&&!!processing.nativeTurnId;
+      }))).every(Boolean))throw new DomainError('SESSION_BUSY','Reconcile active or unknown messages first');
+    }
+  }else if(runs.some(r=>active.has(r.state)&&r.id!==permittedUnstarted?.id))throw new DomainError('SESSION_BUSY','Reconcile every active or unknown Run first');
+  if(command.type==='runtime.session.executionProfile.revise'){
+    // The Session slot and profile gate serialize this intent with native start.
+  }else if(permittedUnstarted){
     if(await tx.sessionMessages?.hasActiveSessionMessage(session.id))throw new DomainError('SESSION_BUSY','Reconcile the active or unknown message first');
   }else await tx.sessionMessages?.assertSessionVacant(session.id);
   if(command.type==='runtime.session.executionProfile.revise'){
@@ -31,18 +47,24 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
     const profile=need(session.executionProfile,'Execution profile');
     if(profile.revision.revisionId!==command.expectedExecutionProfileRevisionId)
       throw new DomainError('EXECUTION_PROFILE_CONFLICT','Execution profile changed');
+    if(profile.revision.reasoningEffort&&!command.reasoningEffort)
+      throw new DomainError('REASONING_EFFORT_REQUIRED','A configured reasoning effort cannot be cleared by a legacy profile command');
     if(['attempting','unknown'].includes(profile.activationState))
       throw new DomainError('PROFILE_ACTIVATION_UNRESOLVED','Reconcile the original activation before changing its target');
     if(command.sandbox!=='danger-full-access'||command.approvalPolicy!=='never')
       throw new DomainError('EXECUTION_PROFILE_INVALID','The target must use the approved full-access execution policy');
-    if(session.model===command.model&&session.sandbox===command.sandbox&&session.approvalPolicy===command.approvalPolicy)
+    if(command.reasoningEffort&&(session.sandbox!=='danger-full-access'||session.approvalPolicy!=='never'))
+      throw new DomainError('EXECUTION_PROFILE_INVALID','Model and effort changes require an already confirmed full-access Session');
+    if(profile.revision.model===command.model&&
+      (profile.revision.reasoningEffort??null)===(command.reasoningEffort??null)&&
+      profile.revision.sandbox===command.sandbox&&profile.revision.approvalPolicy===command.approvalPolicy)
       throw new DomainError('EXECUTION_PROFILE_UNCHANGED','The selected execution profile is unchanged');
     if(await recovery.isDynamicSession(session.id))throw new DomainError('DYNAMIC_PROFILE_FIXED','A delegated Session keeps its fixed template execution profile');
     if(!authority||!await authority.canRevise(principal,session,{model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy}))
       throw new DomainError('FORBIDDEN','The exact static Session execution grant is not current');
     const revision:ExecutionProfileRevision={...profile.revision,projectId:session.projectId,sessionId:session.id,
       revisionId:nextId(),previousRevisionId:profile.revision.revisionId,version:profile.revision.version+1,
-      model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy,
+      model:command.model,reasoningEffort:command.reasoningEffort??null,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy,
       provenance:'revised',operationId:command.operationId,actorId:principal.actorId,
       reason:command.reason,evidenceRef:command.evidenceRef,createdAt:now};
     await recovery.adoptExecutionProfile(revision,session.version);

@@ -65,14 +65,33 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       ack: { method: "direct", actorId: "reader", observerActorId: "reader", evidence: "阅读固定输入后接手", sourceRef: null, at: stamp },
       actorId: "lead", reason: "fixture", updatedAt: stamp }, task: currentTask, stale: false }],
     roleTasks: [], queue: [], results: [], questions: [], activity: [], resources, metadata, nativeObservation: progress };
+  const profileRevision = { projectId, sessionId, revisionId: "95000013-0000-4000-8000-000000000013",
+    version: 1, previousRevisionId: null, model: "gpt-6-sol", reasoningEffort: "high",
+    sandbox: "danger-full-access", approvalPolicy: "never", cwd: "/tmp/fixture",
+    authorizationScope: "fixture", provenance: "reserved", operationId: messageId,
+    actorId: "reader", reason: "fixture", evidenceRef: null, createdAt: stamp };
+  const executionProfile = { revision: profileRevision, activationState: "active",
+    activeRevisionId: profileRevision.revisionId, activeModel: "gpt-6-sol", activeReasoningEffort: "high",
+    activationOperationId: null, attemptedAt: null, activationEvidence: "fixture" };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "Sessions 设计测试", createdAt: stamp };
       else if (url.pathname === `${root}/impacts`) value = [];
+      else if (url.pathname === `${root}/runtime/sessions`) value = [{ projectId, id: sessionId,
+        version: 1, state: "ready", sandbox: "danger-full-access", approvalPolicy: "never",
+        model: "gpt-6-sol", executionProfile }];
+      else if (url.pathname === `${root}/runtime/models`) value = { status: "available",
+        models: ["gpt-6-sol", "gpt-6-astra"], options: [
+          { model: "gpt-6-sol", supportedReasoningEfforts: ["high"], defaultReasoningEffort: "high" },
+          { model: "gpt-6-astra", supportedReasoningEfforts: ["high", "max"], defaultReasoningEffort: "high" }],
+        error: null, observedAtUtc: stamp };
+      else if (url.pathname === `${root}/runtime/sessions/${sessionId}/recovery`) value = {
+        sessionId, executionProfile, gate: null, decisions: [], queues: [], nextAction: "normal_work",
+        partial: false, observedAtUtc: stamp };
       else if (url.pathname === `${root}/work-management/index`) value = {
         items: [], nextCursor: null, total: 0, counts: {}, changeSequence: 1, observedAt: stamp, partial: false,
       };
@@ -188,13 +207,29 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.getByRole("button", { name: "会话详情" }).click();
   const contextToggle = page.locator(".session-context-toggle");
   if (await contextToggle.getAttribute("aria-expanded") === "false") await contextToggle.click();
-  assert.equal(await page.getByText("未同步", { exact: true }).count() >= 2, true);
   await page.getByLabel("消息内容").fill("键盘发送");
   await page.getByLabel("消息内容").press("Control+Enter");
   await page.getByText("已保存，正在读取持久记录。", { exact: true }).waitFor();
-  assert.equal(posted.length, 1);
-  assert.equal(posted[0]?.type, "session.message.post");
-  assert.deepEqual(posted[0]?.context, { taskId, taskRevisionId: currentTask.revisionId });
+  const postedMessage = posted.find(command => command.type === "session.message.post");
+  assert.equal(posted.filter(command => command.type === "session.message.post").length, 1);
+  assert.deepEqual(postedMessage?.context, { taskId, taskRevisionId: currentTask.revisionId });
+  const modelControl = page.locator(".session-model-control");
+  await modelControl.getByText("gpt-6-sol / high", { exact: false }).first().waitFor();
+  await modelControl.getByRole("button", { name: "调整模型与强度" }).click();
+  const editor = modelControl.locator(".session-model-editor");
+  await editor.locator("select").first().selectOption("gpt-6-astra");
+  await editor.getByLabel("思考强度").selectOption("max");
+  if (process.env.EVOLOOP_CAPTURE_MODEL_CONTROL) await page.screenshot({
+    path: `${process.env.EVOLOOP_CAPTURE_MODEL_CONTROL}-wide.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 840 });
+  assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);
+  if (process.env.EVOLOOP_CAPTURE_MODEL_CONTROL) await page.screenshot({
+    path: `${process.env.EVOLOOP_CAPTURE_MODEL_CONTROL}-narrow.png`, fullPage: true });
+  await editor.getByLabel("调整理由").fill("固定测试中的受控换模");
+  await editor.getByLabel("授权与模型能力依据").fill("fixture-model-list-and-grant");
+  await editor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).click();
+  assert.equal(posted.filter(command => command.type === "runtime.session.executionProfile.revise").length, 1);
+  assert.equal(posted.find(command => command.type === "runtime.session.executionProfile.revise")?.reasoningEffort, "max");
   await page.setViewportSize({ width: 390, height: 840 });
   await page.waitForTimeout(100);
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);
