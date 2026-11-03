@@ -73,6 +73,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const executionProfile = { revision: profileRevision, activationState: "active",
     activeRevisionId: profileRevision.revisionId, activeModel: "gpt-6-sol", activeReasoningEffort: "high",
     activationOperationId: null, attemptedAt: null, activationEvidence: "fixture" };
+  let currentProfile = executionProfile;
+  let currentRuntimeVersion = 1;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
@@ -82,15 +84,15 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       else if (url.pathname === root) value = { id: projectId, title: "Sessions 设计测试", createdAt: stamp };
       else if (url.pathname === `${root}/impacts`) value = [];
       else if (url.pathname === `${root}/runtime/sessions`) value = [{ projectId, id: sessionId,
-        version: 1, state: "ready", sandbox: "danger-full-access", approvalPolicy: "never",
-        model: "gpt-6-sol", executionProfile }];
+        version: currentRuntimeVersion, state: "ready", sandbox: "danger-full-access", approvalPolicy: "never",
+        model: currentProfile.revision.model, executionProfile: currentProfile }];
       else if (url.pathname === `${root}/runtime/models`) value = { status: "available",
         models: ["gpt-6-sol", "gpt-6-astra"], options: [
           { model: "gpt-6-sol", supportedReasoningEfforts: ["high"], defaultReasoningEffort: "high" },
           { model: "gpt-6-astra", supportedReasoningEfforts: ["high", "max"], defaultReasoningEffort: "high" }],
         error: null, observedAtUtc: stamp };
       else if (url.pathname === `${root}/runtime/sessions/${sessionId}/recovery`) value = {
-        sessionId, executionProfile, gate: null, decisions: [], queues: [], nextAction: "normal_work",
+        sessionId, executionProfile: currentProfile, gate: null, decisions: [], queues: [], nextAction: "normal_work",
         partial: false, observedAtUtc: stamp };
       else if (url.pathname === `${root}/work-management/index`) value = {
         items: [], nextCursor: null, total: 0, counts: {}, changeSequence: 1, observedAt: stamp, partial: false,
@@ -124,7 +126,21 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
         const command = JSON.parse(body); posted.push(command);
-        value = { status: "applied", operationId: command.operationId, entityId: command.messageId, version: 1 };
+        if (command.type === "runtime.session.executionProfile.revise") {
+          if (command.expectedVersion !== currentRuntimeVersion ||
+              command.expectedExecutionProfileRevisionId !== currentProfile.revision.revisionId) {
+            value = { status: "rejected", operationId: command.operationId, code: "VERSION_CONFLICT", message: "stale profile" };
+          } else {
+            currentRuntimeVersion++;
+            currentProfile = { ...currentProfile, revision: { ...currentProfile.revision,
+              revisionId: `95000016-0000-4000-8000-${String(12 + currentRuntimeVersion).padStart(12, "0")}`,
+              version: currentRuntimeVersion, model: command.model, reasoningEffort: command.reasoningEffort },
+              activationState: "pending" };
+            value = { status: "applied", operationId: command.operationId, entityId: sessionId, version: currentRuntimeVersion };
+          }
+        } else {
+          value = { status: "applied", operationId: command.operationId, entityId: command.messageId, version: 1 };
+        }
       } else if (url.pathname.includes("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
@@ -230,6 +246,36 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await editor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).click();
   assert.equal(posted.filter(command => command.type === "runtime.session.executionProfile.revise").length, 1);
   assert.equal(posted.find(command => command.type === "runtime.session.executionProfile.revise")?.reasoningEffort, "max");
+  await modelControl.getByText("gpt-6-astra / max", { exact: false }).first().waitFor();
+  // A CLI writer changes the same Session while this page stays open. The top
+  // reread must update both the summary and the editor's CAS baseline.
+  currentRuntimeVersion++;
+  currentProfile = { ...currentProfile, revision: { ...currentProfile.revision,
+    revisionId: "95000015-0000-4000-8000-000000000015", version: currentRuntimeVersion,
+    reasoningEffort: "high" } };
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.locator(".session-agent-card").getByText("high", { exact: true }).waitFor();
+  await modelControl.getByText("gpt-6-astra / high", { exact: false }).first().waitFor();
+  assert.equal(await modelControl.getByText("页面两次读取的修订不一致").count(), 0);
+  const adjust = modelControl.getByRole("button", { name: "调整模型与强度" });
+  if (await adjust.count()) await adjust.click();
+  const rereadEditor = modelControl.locator(".session-model-editor");
+  await rereadEditor.getByLabel("思考强度").waitFor();
+  assert.equal(await rereadEditor.getByLabel("思考强度").inputValue(), "high");
+  assert.equal(await rereadEditor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).isEnabled(), true);
+  await rereadEditor.getByLabel("思考强度").selectOption("max");
+  await rereadEditor.getByLabel("调整理由").fill("current reread baseline");
+  await rereadEditor.getByLabel("授权与模型能力依据").fill("fixture catalog and grant");
+  await rereadEditor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).click();
+  await modelControl.getByText("gpt-6-astra / max", { exact: false }).first().waitFor();
+  const secondRevision = posted.filter(command => command.type === "runtime.session.executionProfile.revise")[1];
+  assert.deepEqual([secondRevision?.expectedVersion, secondRevision?.expectedExecutionProfileRevisionId],
+    [3, "95000015-0000-4000-8000-000000000015"], "the next write uses the CLI revision as its CAS base");
+  // Native activation can change without another profile revision.
+  currentProfile = { ...currentProfile, activationState: "unknown" };
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await modelControl.getByText("激活结果未知，需核对", { exact: false }).waitFor();
+  assert.equal(await modelControl.getByRole("button", { name: "调整模型与强度" }).isDisabled(), true);
   await page.setViewportSize({ width: 390, height: 840 });
   await page.waitForTimeout(100);
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);

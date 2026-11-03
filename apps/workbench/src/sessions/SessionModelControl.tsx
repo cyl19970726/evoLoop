@@ -19,6 +19,11 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
   const [editing,setEditing]=useState(false);
   const [selectedModel,setSelectedModel]=useState('');
   const [reload,setReload]=useState(0);
+  // Parent recovery reads can learn a newer revision or activation outcome after
+  // CLI/native writes. Re-fetch the editor's runtime snapshot before using it.
+  const recoveryRevisionId=recovery?.executionProfile?.revision.revisionId??null;
+  const recoveryActivationState=recovery?.executionProfile?.activationState??null;
+  const recoveryActiveRevisionId=recovery?.executionProfile?.activeRevisionId??null;
   useEffect(()=>{
     let live=true;const controller=new AbortController();
     setRuntime(null);setCatalog(null);setReadError('');
@@ -31,7 +36,7 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
       setSelectedModel(matches[0]!.executionProfile?.revision.model??'');
     }).catch(error=>{if(live)setReadError(errorText(error));});
     return()=>{live=false;controller.abort();};
-  },[context.token,context.projectId,sessionId,reload]);
+  },[context.token,context.projectId,sessionId,reload,recoveryRevisionId,recoveryActivationState,recoveryActiveRevisionId]);
   const profile=runtime?.executionProfile;
   const currentRevision=profile?.revision;
   const options=catalog?.options.find(option=>option.model===selectedModel)?.supportedReasoningEfforts??[];
