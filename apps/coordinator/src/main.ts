@@ -68,7 +68,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
-import { requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
+import { materialCliRecipientMatches, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
@@ -356,17 +356,17 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
     const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,
       run.projectId, session.id, session.actorId, run.taskId, session.roleId) : null;
     const proposal = await uow.read(run.projectId, reader => reader.getTaskProposal(run.taskId, run.taskRevisionId));
-    if (proposal?.acceptanceMode) {
-      const recipient = await ordinarySubmissions.getFixedRecipient(run.projectId, run.id);
-      requireOrdinaryRecipient(proposal.acceptanceMode, recipient, entry?.cliActorId ?? null, run.taskId, run.taskRevisionId);
-    }
+    const fixedRecipient = proposal?.acceptanceMode
+      ? await ordinarySubmissions.getFixedRecipient(run.projectId, run.id) : null;
+    requireOrdinaryRecipient(proposal?.acceptanceMode, fixedRecipient, entry?.cliActorId ?? null,
+      run.taskId, run.taskRevisionId);
     if (!entry) return null;
     const channels = await pool.query(`SELECT collaboration_recipient_actor_id AS recipient FROM discussion
       WHERE project_id=$1 AND kind='task_collaboration' AND task_id=$2
         AND collaboration_run_id=$3 AND collaboration_session_id=$4`,
       [run.projectId, run.taskId, run.id, run.sessionId]);
-    if (channels.rows.length > 1 || channels.rows.length === 1 && channels.rows[0].recipient !== entry.cliActorId ||
-        channels.rows.length === 0 && entry.cliActorId !== session.actorId ||
+    if (!materialCliRecipientMatches(channels.rows.map(row => row.recipient), entry.cliActorId,
+      session.actorId, fixedRecipient) ||
         !await currentProjectWriter(run.projectId, entry.cliActorId)) return null;
     const paths = entry.command.split(" ");
     try {
