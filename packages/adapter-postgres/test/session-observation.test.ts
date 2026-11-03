@@ -435,7 +435,7 @@ test("a HostLink beyond the bounded directory alias list still resolves its exac
     await client.query("COMMIT");
     const exact = await reader.snapshot(`external:${omitted}`);
     assert.equal(exact?.session.key, `external:${a}`);
-    assert.equal(exact?.assignments[0]?.assignment.target.kind, "external");
+    assert.deepEqual(exact?.assignments[0]?.assignment.target, { kind: "external", linkId: omitted });
     assert.equal(exact?.currentWork?.id, taskId);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 });

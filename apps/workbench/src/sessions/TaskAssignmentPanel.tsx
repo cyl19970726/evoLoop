@@ -40,9 +40,10 @@ export function TaskAssignmentPanel({ context, task, refresh }: { context: Mutat
           const key = current.target.kind === "owned" ? `owned:${current.target.sessionId}` : `external:${current.target.linkId}`;
           try {
             const specific = (await client.snapshot(key, controller.signal)).session;
-            if (specific.kind === current.target.kind && specific.roles.some(role => role.id === task.owner))
+            // The exact target route proves the HostLink association; the directory may cap its Role list.
+            if (specific.kind === current.target.kind)
               exact = { target: current.target, session: specific };
-            else if (active) setExactReadError("分派目标与会话职责不符，身份标记暂不显示。");
+            else if (active) setExactReadError("分派目标类型与会话读回不符，身份标记暂不显示。");
           } catch (cause) { if (active) setExactReadError(`分派目标会话未核实：${errorText(cause)}。`); }
         }
         if (!active) return;
