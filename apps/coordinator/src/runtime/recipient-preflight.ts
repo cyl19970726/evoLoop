@@ -8,3 +8,13 @@ export function requireOrdinaryRecipient(
   if (acceptanceMode && (!recipient || cliActorId !== recipient))
     throw new PreflightError("RECIPIENT_UNBOUND", { kind: "task", id: taskId, revisionId: taskRevisionId });
 }
+
+/** A direct Run may fix its signer through the owned Session assignment. */
+export function materialCliRecipientMatches(
+  channelRecipients: string[], cliActorId: string,
+  sessionActorId: string, fixedRecipient: string | null,
+): boolean {
+  if (channelRecipients.length > 1) return false;
+  if (channelRecipients.length === 1) return channelRecipients[0] === cliActorId;
+  return cliActorId === sessionActorId || fixedRecipient === cliActorId;
+}
