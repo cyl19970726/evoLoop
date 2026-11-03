@@ -89,6 +89,17 @@ test('listener must hold the exact target database coordinator lease and serve t
   await assert.rejects(confirmServiceOriginal({...original,processingId:'other'},fetcher),/SERVICE_ORIGINAL_UNVERIFIED/);
 });
 
+test('a matching lease in another database of the same cluster cannot prove ownership', async () => {
+  // A same-key lock in a different database may still have this listener's socket tuple.
+  const otherDatabaseLease = { client_addr:'127.0.0.1', client_port:56000,
+    server_addr:'127.0.0.1', server_port:55461 };
+  const database = { query: async sql => ({ rows:
+    /l\.database\s*=\s*\(SELECT oid FROM pg_database WHERE datname\s*=\s*current_database\(\)\)/.test(sql)
+      ? [] : [otherDatabaseLease] }) };
+  await assert.rejects(proveDatabaseLease(database, 123, probe()),
+    /DATABASE_OWNER_LEASE_UNVERIFIED/);
+});
+
 test('capture binds OS discovery to the exact locked DB original and writes a private hashed anchor', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'evoloop-preflight-test-'));
   const out = join(directory, 'capture.json');

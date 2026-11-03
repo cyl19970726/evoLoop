@@ -120,10 +120,11 @@ test('owned message insertion waits for the Session row lock and rejects after c
     let settled=false;
     const inserting=new PgSessionMessages(poster,projectId).insertSessionMessage({...item(),target:{kind:'owned',sessionId:targetSessionId}})
       .finally(()=>{settled=true;});
+    const rejection=assert.rejects(inserting,error=>(error as {code?:string}).code==='SESSION_NOT_READY');
     await new Promise(resolve=>setTimeout(resolve,30));
     assert.equal(settled,false,'insert must wait behind close row lock');
     await closer.query('COMMIT');
-    await assert.rejects(inserting,error=>(error as {code?:string}).code==='SESSION_NOT_READY');
+    await rejection;
     await poster.query('ROLLBACK');
     const count=await pool.query('SELECT count(*)::int AS count FROM session_message WHERE project_id=$1 AND session_id=$2',
       [projectId,targetSessionId]);

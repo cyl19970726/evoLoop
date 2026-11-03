@@ -129,7 +129,8 @@ export async function proveDatabaseLease(client, coordinatorPid, probe = run) {
   const locks = (await client.query(`SELECT host(a.client_addr) AS client_addr,a.client_port,
       host(inet_server_addr()) AS server_addr,inet_server_port() AS server_port
     FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
-    WHERE l.locktype='advisory' AND l.classid=0::oid AND l.objid=731209842::oid
+    WHERE l.locktype='advisory' AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database())
+      AND l.classid=0::oid AND l.objid=731209842::oid
       AND l.objsubid=1 AND l.mode='ExclusiveLock' AND l.granted`)).rows;
   if (locks.length !== 1 || !['127.0.0.1', '::1'].includes(locks[0].client_addr) ||
     !['127.0.0.1', '::1'].includes(locks[0].server_addr) ||
