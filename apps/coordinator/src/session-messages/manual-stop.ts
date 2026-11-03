@@ -131,6 +131,8 @@ async function verifyExitManifest(command: StopCommand, session: RuntimeSessionR
     anchor?.projectId !== preflight.projectId || anchor?.sessionId !== preflight.sessionId ||
     anchor?.threadId !== preflight.nativeThreadId || anchor?.messageId !== preflight.messageId ||
     anchor?.processingId !== preflight.processingId || anchor?.nativeTurnId !== preflight.nativeTurnId ||
+    !['127.0.0.1','::1'].includes(String(databaseLease?.clientAddr)) ||
+    !['127.0.0.1','::1'].includes(String(databaseLease?.serverAddr)) ||
     !Number.isInteger(databaseLease?.clientPort) || !Number.isInteger(databaseLease?.serverPort) ||
     anchorCoordinator?.pid !== preflight.oldCoordinatorPid ||
     anchorCoordinator?.startIdentity !== preflight.oldCoordinatorStartIdentity ||

@@ -74,9 +74,12 @@ test('Root identity comes from the old service response and cannot be self-decla
 });
 
 test('listener must hold the exact target database coordinator lease and serve the original message',async()=>{
-  const database={query:async()=>({rows:[{client_addr:'127.0.0.1',client_port:56000,server_port:55461}]})};
+  const database={query:async()=>({rows:[{client_addr:'127.0.0.1',client_port:56000,
+    server_addr:'127.0.0.1',server_port:55461}]})};
   await proveDatabaseLease(database,123,probe());
   await assert.rejects(proveDatabaseLease(database,123,probe({socket:'n127.0.0.1:56001->127.0.0.1:55461\n'})),
+    /DATABASE_OWNER_LEASE_UNVERIFIED/);
+  await assert.rejects(proveDatabaseLease(database,123,probe({socket:'n[::1]:56000->[::1]:55461\n'})),
     /DATABASE_OWNER_LEASE_UNVERIFIED/);
   const original={port:4318,projectId:'project',sessionId:'session',messageId:'message',
     processingId:'processing',nativeTurnId:'turn'};
@@ -99,7 +102,8 @@ test('capture binds OS discovery to the exact locked DB original and writes a pr
     connect: async () => {}, end: async () => {},
     query: async (sql, values) => {
       calls.push({ sql, values });
-      if (sql.includes('FROM pg_locks')) return {rows:[{client_addr:'127.0.0.1',client_port:56000,server_port:55461}]};
+      if (sql.includes('FROM pg_locks')) return {rows:[{client_addr:'127.0.0.1',client_port:56000,
+        server_addr:'127.0.0.1',server_port:55461}]};
       if (sql.startsWith('SELECT')) return { rows: [{ native_thread_id: 'original-thread',
         native_session_id: 'original-native-session', session_state: 'ready', message_state: 'unknown',
         message_version: 3, processing_state: 'unknown', processing_version: 4,

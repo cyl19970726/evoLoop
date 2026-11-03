@@ -48,7 +48,8 @@ test('manual stop requires a private exact exit manifest, absent old processes a
     const anchor={format:'evoloop-message-preflight-v1',preflightId,host:hostname(),capturedByActorId:'root',
       projectId:original.projectId,sessionId:original.id,threadId:original.nativeThreadId,
       messageId,processingId,nativeTurnId:'original-turn',
-      osObservedAt:'2026-11-03T01:00:00Z',databaseLease:{clientPort:56000,serverPort:55461},
+      osObservedAt:'2026-11-03T01:00:00Z',databaseLease:{clientAddr:'127.0.0.1',clientPort:56000,
+        serverAddr:'127.0.0.1',serverPort:55461},
       oldCoordinator:{pid:910001,startIdentity:'old-coordinator-start'},
       oldNative:{pid:910002,startIdentity:'old-native-start',parentPid:910001}};
     const preflight={...anchor,preStopEvidenceJson:JSON.stringify(anchor),

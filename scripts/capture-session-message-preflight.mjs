@@ -126,20 +126,25 @@ export async function authenticatedRoot(projectId, port, fetcher = fetch) {
 
 /** The listening PID must own a TCP socket whose client port holds this database's coordinator lock. */
 export async function proveDatabaseLease(client, coordinatorPid, probe = run) {
-  const locks = (await client.query(`SELECT a.client_addr::text AS client_addr,a.client_port,
-      inet_server_port() AS server_port
+  const locks = (await client.query(`SELECT host(a.client_addr) AS client_addr,a.client_port,
+      host(inet_server_addr()) AS server_addr,inet_server_port() AS server_port
     FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
     WHERE l.locktype='advisory' AND l.classid=0::oid AND l.objid=731209842::oid
       AND l.objsubid=1 AND l.mode='ExclusiveLock' AND l.granted`)).rows;
   if (locks.length !== 1 || !['127.0.0.1', '::1'].includes(locks[0].client_addr) ||
+    !['127.0.0.1', '::1'].includes(locks[0].server_addr) ||
     !Number.isInteger(locks[0].client_port) || locks[0].client_port < 1 ||
     !Number.isInteger(locks[0].server_port) || locks[0].server_port < 1)
     fail('DATABASE_OWNER_LEASE_UNVERIFIED');
   const sockets = await probe('lsof', ['-nP', '-a', '-p', String(coordinatorPid), '-iTCP', '-Fn']);
-  const matches = [...sockets.matchAll(/^n(?:127\.0\.0\.1|\[::1\]):(\d+)->(?:127\.0\.0\.1|\[::1\]):(\d+)\s*$/gm)];
-  if (!matches.some(match => Number(match[1]) === locks[0].client_port &&
-    Number(match[2]) === locks[0].server_port)) fail('DATABASE_OWNER_LEASE_UNVERIFIED');
-  return {clientPort:locks[0].client_port,serverPort:locks[0].server_port};
+  const matches = [...sockets.matchAll(/^n(127\.0\.0\.1|\[::1\]):(\d+)->(127\.0\.0\.1|\[::1\]):(\d+)\s*$/gm)];
+  const address = value => value === '[::1]' ? '::1' : value;
+  if (!matches.some(match => address(match[1]) === locks[0].client_addr &&
+    Number(match[2]) === locks[0].client_port &&
+    address(match[3]) === locks[0].server_addr &&
+    Number(match[4]) === locks[0].server_port)) fail('DATABASE_OWNER_LEASE_UNVERIFIED');
+  return {clientAddr:locks[0].client_addr,clientPort:locks[0].client_port,
+    serverAddr:locks[0].server_addr,serverPort:locks[0].server_port};
 }
 
 /** The old service must independently return the same saved original, using its own DB connection. */
