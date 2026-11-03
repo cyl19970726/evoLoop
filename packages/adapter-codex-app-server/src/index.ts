@@ -898,20 +898,35 @@ export class CodexAppServerAdapter implements RuntimePort {
       if(thread?.id!==binding.nativeThreadId||thread?.sessionId!==binding.nativeSessionId||thread?.cwd!==binding.cwd)
         return unavailable('Native Thread identity does not match the owned Session');
       const status=object(thread.status)?.type;
-      if((status!=='idle'&&status!=='notLoaded')||
-        (thread.model!=null&&(!nonempty(thread.model)||binding.resumeProfile.model!=null&&thread.model!==binding.resumeProfile.model)))
-        return unavailable('Owned native Thread is active or its model differs from the fixed profile');
+      if(thread.model!=null&&(!nonempty(thread.model)||
+        binding.resumeProfile.model!=null&&thread.model!==binding.resumeProfile.model))
+        return unavailable('Owned native Thread model differs from the fixed profile');
+      let terminalFailedTurn:RuntimeTurn|null=null;
+      if(status==='systemError'){
+        // A loaded Thread with an unknown model cannot use a failed Turn to prove safe admission.
+        if(!nonempty(thread.model)||thread.model!==binding.resumeProfile.model)
+          return unavailable('Owned native Thread model cannot be verified against the fixed profile');
+        const latest=(await this.listTurns(binding)).data[0];
+        if(latest?.status!=='failed'||!latest.completedAtUtc)
+          return unavailable('Owned native Thread system error has no confirmed failed terminal Turn');
+        terminalFailedTurn=latest;
+      }else if(status==='active')return unavailable('Owned native Thread is active');
+      else if(status!=='idle'&&status!=='notLoaded')
+        return unavailable('Owned native Thread status is not ready');
       const model=nonempty(thread.model)?thread.model:binding.resumeProfile.model;
       const fingerprint=createHash('sha256').update(policyJson({
         admission:'evoloop-full-conversation-v1',protocol:this.expectedVersion,
         projectId:binding.projectId,sessionId:binding.sessionId,roleId:binding.roleId,
         threadId:binding.nativeThreadId,nativeSessionId:binding.nativeSessionId,
         cwd:binding.cwd,scope:binding.authorizationScope,profile:binding.resumeProfile,model,status,
+        terminalFailedTurn:terminalFailedTurn?{id:terminalFailedTurn.id,completedAtUtc:terminalFailedTurn.completedAtUtc}:null,
       })).digest('hex');
       const prior=this.conversationQualifications.get(binding.nativeThreadId);
       if(prior&&prior.fingerprint!==fingerprint)return unavailable('Owned Thread model or profile changed during admission');
       this.conversationQualifications.set(binding.nativeThreadId,{fingerprint,observedAt:Date.now(),model});
-      return {available:true,reason:'Owned full-profile Thread has no active Turn; exact full policy is confirmed on resume and sent on the Turn',fingerprint};
+      return {available:true,reason:terminalFailedTurn?
+        'Owned full-profile Thread has a confirmed failed terminal Turn; exact full resume is required before the next Turn':
+        'Owned full-profile Thread has no active Turn; exact full policy is confirmed on resume and sent on the Turn',fingerprint};
     }catch{return unavailable('Owned native Thread could not be read');}
   }
 
