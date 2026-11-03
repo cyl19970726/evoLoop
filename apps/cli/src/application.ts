@@ -16,7 +16,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "reason", "evidence-ref", "operation"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -88,6 +88,8 @@ const help = {
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
     "session profile show SESSION_UUID --project UUID (configured target, last confirmed profile and recovery state)",
     "session profile set SESSION_UUID --project UUID --model SLUG --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",
+    "session identity show owned:UUID|external:UUID --project UUID",
+    "session identity set owned:UUID|external:UUID --project UUID --color TOKEN --mark TOKEN --reason TEXT [--operation UUID] (read current version, save and read back)",
     "models --project UUID (read authorized, currently available App Server models before session prepare)",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
@@ -186,6 +188,35 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
         value=>io.stderr(JSON.stringify(value)+'\n'),await verifiedActor());
     }
     throw new UsageError('Use session profile show or session profile set.');
+  }
+  if(action==="session"&&args.words[1]==="identity"){
+    const mode=args.words[2],sessionKey=args.words[3],projectId=project();
+    if(!sessionKey||! /^(owned|external):[0-9a-fA-F-]{36}$/.test(sessionKey))
+      throw new UsageError('Use an exact owned:UUID or external:UUID Session key.');
+    const [kind,rawId]=sessionKey.split(':');
+    const target=kind==='owned'?{kind,sessionId:uuid(rawId,'Session')}:{kind:'external',linkId:uuid(rawId,'HostLink')};
+    if(mode==='show'){
+      check(args,4,['project']);
+      const snapshot=record(await client.get(`/api/projects/${projectId}/session-work/${encodeURIComponent(sessionKey)}`));
+      return record(snapshot?.session)?.identity??null;
+    }
+    if(mode==='set'){
+      check(args,4,['project','color','mark','reason','operation']);
+      const color=option(args,'color'),mark=option(args,'mark'),reason=option(args,'reason');
+      if(!color||!mark||!reason)throw new UsageError('identity set requires --color, --mark and --reason.');
+      const snapshot=record(await client.get(`/api/projects/${projectId}/session-work/${encodeURIComponent(sessionKey)}`));
+      const identity=record(record(snapshot?.session)?.identity);
+      if(!identity||typeof identity.version!=='number')throw new UsageError('Persisted Session identity is unavailable.');
+      const operationId=option(args,'operation')?uuid(option(args,'operation'),'Operation'):randomUUID();
+      const command=commandSchema.parse({type:'session.identity.set',projectId,operationId,target,
+        expectedVersion:identity.version,color,mark,reason});
+      const result=await dispatchMutation(client,store,origin,token,{id:operationId,operationId,projectId,
+        kind:command.type,path:'/api/commands',body:command,confirmation:'command',
+        recovery:{kind:'core',path:`/api/projects/${projectId}/operations/${operationId}`}},
+        value=>io.stderr(JSON.stringify(value)+'\n'),await verifiedActor());
+      return {result,identity:record(record(await client.get(`/api/projects/${projectId}/session-work/${encodeURIComponent(sessionKey)}`))?.session)?.identity??null};
+    }
+    throw new UsageError('Use session identity show or set.');
   }
   if (action === "session") { check(args, 1); return client.get("/api/session"); }
   if (action === "models") { check(args, 1, ["project"]); return client.get(`/api/projects/${project()}/runtime/models`); }

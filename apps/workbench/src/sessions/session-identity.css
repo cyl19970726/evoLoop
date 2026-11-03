@@ -1,0 +1,12 @@
+.session-identity-mark{--identity-color:#5b3fb5;display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;border:1.5px solid var(--identity-color);border-radius:9px;color:var(--identity-color);background:color-mix(in srgb,var(--identity-color) 10%,white)}
+.session-identity-mark.small{width:28px;height:28px;border-radius:8px}
+.session-identity-violet{--identity-color:#5b3fb5}
+.session-identity-copper{--identity-color:#9d4b18}
+.session-identity-blue{--identity-color:#325ea8}
+.session-identity-teal{--identity-color:#08736d}
+.session-identity-magenta{--identity-color:#a32967}
+.session-identity-olive{--identity-color:#5f6923}
+.session-identity-coral{--identity-color:#a83b32}
+.session-identity-plum{--identity-color:#6b4a99}
+.session-nav-item:has(> .session-identity-mark){grid-template-columns:28px minmax(0,1fr)}
+.session-nav-state .session-nav-status{vertical-align:middle;margin-top:0}

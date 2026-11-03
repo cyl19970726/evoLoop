@@ -2,6 +2,7 @@ import type { AppliedResult, Principal, Task } from "@evoloop/contracts";
 import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { SessionAssignmentCommand, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
+import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
 
 type AssignmentTx = Transaction & { sessionAssignments?: SessionAssignmentTransaction };
@@ -56,6 +57,16 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write"))
     fail("FORBIDDEN", "Actual project principal with write access required");
   const store = tx.sessionAssignments ?? fail("CAPABILITY_UNAVAILABLE", "Session assignment storage is unavailable");
+  if (command.type === "session.identity.set") {
+    await targetRole(tx, command.projectId, command.target, true);
+    const previous = requireRecord(await store.getSessionIdentity(command.target), "Session identity");
+    ensureVersion(previous.version, command.expectedVersion, "Session identity");
+    const identity: SessionIdentity = { ...previous, version: previous.version + 1,
+      color: command.color, mark: command.mark, actorId: principal.actorId,
+      reason: command.reason, updatedAt: now };
+    await store.saveSessionIdentity(identity, previous.version);
+    return result(command, command.target.kind === "owned" ? command.target.sessionId : command.target.linkId, identity.version);
+  }
   if (command.type === "session.profile.set") {
     if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Session profile requires review authority");
     await targetRole(tx, command.projectId, command.target, true);

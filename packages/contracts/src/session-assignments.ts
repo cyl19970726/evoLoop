@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sessionTargetSchema, type SessionTarget } from "./session-work.js";
+import { sessionIdentityCommand, type SessionIdentity } from "./session-identity.js";
 
 const id = z.uuid();
 const note = z.string().trim().min(1).max(4000);
@@ -7,6 +8,7 @@ const version = z.number().int().nonnegative();
 const base = { projectId: id, operationId: id };
 
 export const sessionAssignmentCommands = [
+  sessionIdentityCommand,
   z.strictObject({ ...base, type: z.literal("session.profile.set"), target: sessionTargetSchema,
     expectedVersion: version, displayName: z.string().trim().min(1).max(240), purpose: z.string().trim().max(4000),
     membership: z.enum(["current", "historical", "unclassified"]), tenure: z.enum(["resident", "temporary", "unknown"]), reason: note }),
@@ -36,6 +38,7 @@ export interface TaskSessionAssignment {
 }
 export interface SessionAssignmentPage<T> { items: T[]; nextCursor: string | null }
 export interface SessionAssignmentReader {
+  getSessionIdentity(target: SessionTarget): Promise<SessionIdentity | null>;
   getSessionProfile(target: SessionTarget): Promise<SessionProfileRecord | null>;
   listSessionProfileHistory(target: SessionTarget, limit: number, cursor?: string): Promise<SessionAssignmentPage<SessionProfileRecord>>;
   getTaskSessionAssignment(taskId: string): Promise<TaskSessionAssignment | null>;
@@ -43,6 +46,7 @@ export interface SessionAssignmentReader {
   listTaskSessionAssignmentHistory(taskId: string, limit: number, cursor?: string): Promise<SessionAssignmentPage<TaskSessionAssignment>>;
 }
 export interface SessionAssignmentTransaction extends SessionAssignmentReader {
+  saveSessionIdentity(value: SessionIdentity, expectedVersion: number): Promise<void>;
   saveSessionProfile(value: SessionProfileRecord, expectedVersion: number): Promise<void>;
   saveTaskSessionAssignment(value: TaskSessionAssignment, expectedVersion: number): Promise<void>;
   /** Refuse reassignment/release while an unresolved Run or active queue claim owns the Task. */

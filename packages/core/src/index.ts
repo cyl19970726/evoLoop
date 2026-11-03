@@ -175,7 +175,7 @@ export class WorkflowService {
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume'||
       command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
       command.type==='session.message.manualStop')return 'review';
-    if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
+    if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
@@ -189,7 +189,7 @@ export class WorkflowService {
       return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
     if (command.type === "session.input.reply")
       return applyNativeInputReply(tx, principal, command, now);
-    if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.")) {
+    if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.")) {
       const result = await applySessionAssignment({ tx, principal, command: command as SessionAssignmentCommand, now });
       return { result, effects: [{ kind: command.type, entityId: result.entityId, version: result.version! }] };
     }

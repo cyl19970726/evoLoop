@@ -3,6 +3,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { ObservationMetadata, ObservationSource, SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
+import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { ObservedRole, ObservedSession, ObservedTask, SessionActivity, SessionActivityPage, SessionChanges,
   SessionDirectory, SessionObservationReader, SessionSnapshot, ObservedResource } from "@evoloop/contracts/session-observation";
 import { PgSessionAssignments } from "./session-assignments.js";
@@ -20,6 +21,13 @@ const selectedProfile = (row: Row): SessionProfileRecord | null => {
   return { projectId: p.project_id, target: p.target_kind === "owned" ? { kind: "owned", sessionId: p.target_id } : { kind: "external", linkId: p.target_id },
     version: p.version, displayName: p.display_name, purpose: p.purpose, membership: p.membership, tenure: p.tenure,
     actorId: p.actor_id, reason: p.reason, updatedAt: iso(p.updated_at)! };
+};
+const selectedIdentity = (row: Row): SessionIdentity | null => {
+  const i = row.visual_identity as Row | null;
+  if (!i) return null;
+  return { projectId: i.project_id,
+    target: i.target_kind === "owned" ? { kind: "owned", sessionId: i.target_id } : { kind: "external", linkId: i.target_id },
+    version: i.version, color: i.color, mark: i.mark, actorId: i.actor_id, reason: i.reason, updatedAt: iso(i.updated_at)! };
 };
 interface PreparedSessions { runs: Map<string, Row>; work: Map<string, Row>; busy: Set<string> }
 
@@ -59,7 +67,7 @@ const catalog = `WITH hosts AS (
   SELECT 'external:'||h.identity::text,'external',h.identity,h.aliases,h.role_ids,NULL::jsonb,h.verified,h.can_open,h.revoked,h.observed_at,
     h.external_ref,h.alias_count FROM grouped_hosts h
 ), described AS (
-  SELECT i.*,to_jsonb(p) AS profile,
+  SELECT i.*,to_jsonb(p) AS profile,to_jsonb(si) AS visual_identity,
     CASE WHEN p.membership IS NOT NULL THEN p.membership WHEN i.historical THEN 'historical'
       WHEN i.verified THEN 'current' ELSE 'unclassified' END AS membership,
     COALESCE(p.display_name,CASE WHEN i.kind='owned' THEN COALESCE(r.proposal->>'title',i.runtime->>'role_id')
@@ -67,6 +75,8 @@ const catalog = `WITH hosts AS (
   FROM identities i
   LEFT JOIN LATERAL (SELECT sp.* FROM session_profile sp WHERE sp.project_id=$1 AND sp.target_kind=i.kind
     AND sp.target_id=ANY(i.aliases) ORDER BY (sp.target_id=i.identity) DESC,sp.updated_at DESC,sp.target_id LIMIT 1) p ON true
+  LEFT JOIN LATERAL (SELECT sid.* FROM session_identity sid WHERE sid.project_id=$1 AND sid.target_kind=i.kind
+    AND sid.target_id=ANY(i.aliases) ORDER BY (sid.target_id=i.identity) DESC,sid.updated_at DESC,sid.target_id LIMIT 1) si ON true
   LEFT JOIN role_definition rd ON rd.project_id=$1 AND rd.role_id::text=i.role_ids[1]
   LEFT JOIN role_revision r ON r.project_id=rd.project_id AND r.role_id=rd.role_id AND r.revision_id=rd.current_revision_id
 )
@@ -189,7 +199,7 @@ export class PgSessionObservation implements SessionObservationReader {
       : { ...unavailable("会话已关闭或接入已撤销。"), mode: "unavailable" as const };
     const canOpen = !!row.can_open && !!row.external_ref && !row.historical;
     return { key: row.key, target, aliases: row.aliases.map((id: string) => row.kind === "owned" ? { kind: "owned", sessionId: id } : { kind: "external", linkId: id }),
-      title: profile?.displayName ?? clip(row.title, 240), profile, kind: row.kind, roles,
+      title: profile?.displayName ?? clip(row.title, 240), profile, identity: selectedIdentity(row), kind: row.kind, roles,
       membership: row.membership, membershipReason: profile ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
       currentTask: current ? this.task(current, current.relation) : null,
@@ -295,7 +305,7 @@ export class PgSessionObservation implements SessionObservationReader {
     if (table === "process_document" || table === "document_revision") return this.source("document", row.entity_id, row.source_revision);
     if (table === "project_stage" || table === "stage_revision") return this.source("stage", row.entity_id, row.source_revision);
     if (table.startsWith("session_message")) return this.source("message", row.message_id ?? row.entity_id, row.entity_id);
-    if (table === "session_profile") return this.source("session-profile", row.entity_id, row.source_revision);
+    if (table === "session_profile" || table === "session_identity") return this.source("session-profile", row.entity_id, row.source_revision);
     if (table === "delivery") return this.source("delivery", row.entity_id, row.source_revision, "project-record", row.task_id);
     if (table === "consumer_observation") return this.source("consumer-observation", row.entity_id, row.source_revision, "independent-use", row.task_id);
     return this.source("task", row.task_id ?? row.entity_id, row.source_revision);

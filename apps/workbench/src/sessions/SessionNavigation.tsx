@@ -6,6 +6,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { sessionStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
+import { SessionIdentityMark } from "./SessionIdentityMark";
 import "./sessions.css";
 
 export const sessionHref = (projectId: string, key: string) => `${href(projectId, "sessions")}?session=${encodeURIComponent(key)}`;
@@ -32,7 +33,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
     const taskSignal = session.currentTask ? session.currentTask.title : null;
     const stateClass = session.busy === true ? "running" : session.runtimeState === "failed" ? "failed" : session.busy === false && session.runtimeState === "ready" ? "idle" : "unknown";
     return <a key={session.key} href={sessionHref(projectId, session.key)} className={`session-nav-item ${selectedId === session.key ? "selected" : ""}`} aria-current={selectedId === session.key ? "page" : undefined} onClick={onNavigate}>
-      <span className={`session-nav-status ${stateClass}`} aria-hidden="true" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong>{taskSignal && <small className="session-nav-signal">{taskSignal}</small>}{roles && <small className="session-nav-meta">{roles}</small>}{!roles && <small className="session-nav-reason">{sessionClassReason(session)}</small>}<small className="session-nav-state">{session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
+      <SessionIdentityMark target={session.target} identity={session.identity} name={session.title} size="small" /><span className="session-nav-copy"><strong title={session.title}>{session.title}</strong>{taskSignal && <small className="session-nav-signal">{taskSignal}</small>}{roles && <small className="session-nav-meta">{roles}</small>}{!roles && <small className="session-nav-reason">{sessionClassReason(session)}</small>}<small className="session-nav-state"><span className={`session-nav-status ${stateClass}`} aria-hidden="true" /> {session.kind === "owned" ? "受管" : "外部"} · {sessionStatusLabel(session)}</small></span>
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {

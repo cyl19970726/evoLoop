@@ -2,6 +2,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { SessionAssignmentPage, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
+import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 
 type Row = QueryResultRow;
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
@@ -11,6 +12,8 @@ const targetId = (target: SessionTarget): string => target.kind === "owned" ? ta
 const profileOf = (r: Row): SessionProfileRecord => ({ projectId: r.project_id, target: targetOf(r), version: r.version,
   displayName: r.display_name, purpose: r.purpose, membership: r.membership, tenure: r.tenure,
   actorId: r.actor_id, reason: r.reason, updatedAt: iso(r.updated_at) });
+const identityOf = (r: Row): SessionIdentity => ({ projectId: r.project_id, target: targetOf(r), version: r.version,
+  color: r.color, mark: r.mark, actorId: r.actor_id, reason: r.reason, updatedAt: iso(r.updated_at) });
 const assignmentOf = (r: Row): TaskSessionAssignment => ({ projectId: r.project_id, taskId: r.task_id,
   version: r.version, taskRevisionId: r.task_revision_id, target: targetOf(r), recipientActorId: r.recipient_actor_id,
   state: r.state, ack: r.ack_method ? { method: r.ack_method, actorId: r.ack_actor_id,
@@ -25,6 +28,19 @@ function page<T>(rows: Row[], limit: number, mapper: (r: Row) => T, key: (r: Row
 }
 export class PgSessionAssignments implements SessionAssignmentTransaction {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
+  async getSessionIdentity(target: SessionTarget): Promise<SessionIdentity | null> {
+    const result = await this.client.query("SELECT * FROM session_identity WHERE project_id=$1 AND target_kind=$2 AND target_id=$3",
+      [this.projectId, target.kind, targetId(target)]);
+    return result.rows[0] ? identityOf(result.rows[0]) : null;
+  }
+  async saveSessionIdentity(value: SessionIdentity, expectedVersion: number): Promise<void> {
+    if (value.projectId !== this.projectId || value.version !== expectedVersion + 1)
+      throw new DomainError("PROJECT_SCOPE", "Invalid identity version or scope");
+    const updated = await this.client.query(`UPDATE session_identity SET version=$4,color=$5,mark=$6,actor_id=$7,reason=$8,updated_at=$9
+      WHERE project_id=$1 AND target_kind=$2 AND target_id=$3 AND version=$10 RETURNING version`,
+    [this.projectId,value.target.kind,targetId(value.target),value.version,value.color,value.mark,value.actorId,value.reason,value.updatedAt,expectedVersion]);
+    if (!updated.rowCount) throw new DomainError("VERSION_CONFLICT", "Session identity version changed");
+  }
   async getSessionProfile(target: SessionTarget): Promise<SessionProfileRecord | null> {
     const result = await this.client.query("SELECT * FROM session_profile WHERE project_id=$1 AND target_kind=$2 AND target_id=$3",
       [this.projectId, target.kind, targetId(target)]);

@@ -74,6 +74,8 @@ test("official queue and direct Run commands cannot bypass a concrete external a
   const task = (await workflow.getTask(principal, projectId, tid)).task;
   await accepted({ type: "runtime.session.reserve", projectId, operationId: randomUUID(), sessionId: sid, roleId,
     cwd: "/tmp/evoloop-assignment", authorizationScope: "test", sandbox: "danger-full-access", approvalPolicy: "never" });
+  const createdIdentity = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity({ kind: "owned", sessionId: sid }));
+  assert.equal(createdIdentity?.version, 1, "CLI-created managed Sessions receive a persisted identity at reservation");
   await runtime.beginSessionCreate(projectId, sid);
   const reservedSession=(await uow.read(projectId,reader=>reader.getRuntimeSession(sid)))!;
   await runtime.bindSession(projectId, sid, { owner: "evoloop-codex-app-server", projectId, sessionId: sid, roleId,
@@ -207,4 +209,36 @@ test("exact HostLink profiles and assignment revisions persist; CAS and immutabl
     assert.equal(history.items.length, 1);
     await assert.rejects(client.query("UPDATE session_profile_revision SET display_name='forged' WHERE project_id=$1", [projectId]), /immutable/);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+});
+
+test("Session identities are persisted on creation and versioned without changing profile classification", async () => {
+  const uow = new PostgresUnitOfWork(pool);
+  const principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() },
+    ids: { next: randomUUID }, hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
+  const target = { kind: "external" as const, linkId: link1 };
+  const profileBefore = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionProfile(target));
+  const before = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity(target));
+  const changesBefore = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_identity' AND target_id=$2",[projectId,link1]);
+  const other = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity({ kind: "external", linkId: link2 }));
+  assert.equal(before?.version, 1);
+  assert.notDeepEqual([before?.color,before?.mark],[other?.color,other?.mark]);
+  const changed = await workflow.execute(principal, { type: "session.identity.set", projectId,
+    operationId: randomUUID(), target, expectedVersion: 1, color: "teal", mark: "brackets", reason: "User selection" });
+  assert.equal(changed.status, "applied");
+  const readback = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity(target));
+  assert.deepEqual([readback?.version,readback?.color,readback?.mark],[2,"teal","brackets"]);
+  const changes = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_identity' AND target_id=$2",[projectId,link1]);
+  assert.equal(changes.rows[0]?.n, changesBefore.rows[0]?.n + 1, "the identity edit invalidates Session directory reads");
+  assert.deepEqual(await uow.read(projectId, reader => reader.sessionAssignments!.getSessionProfile(target)), profileBefore,
+    "choosing an identity must not alter team membership or Session purpose");
+  const stale = await workflow.execute(principal, { type: "session.identity.set", projectId,
+    operationId: randomUUID(), target, expectedVersion: 1, color: "blue", mark: "dot", reason: "Stale read" });
+  assert.equal(stale.status === "rejected" && stale.code, "VERSION_CONFLICT");
+  const client = await pool.connect();
+  try {
+    const history = await client.query("SELECT version,color,mark FROM session_identity_revision WHERE project_id=$1 AND target_kind='external' AND target_id=$2 ORDER BY version", [projectId,link1]);
+    assert.deepEqual(history.rows.map(row => row.version),[1,2]);
+    await assert.rejects(client.query("UPDATE session_identity_revision SET color='blue' WHERE project_id=$1 AND target_id=$2",[projectId,link1]),/immutable/);
+  } finally { client.release(); }
 });
