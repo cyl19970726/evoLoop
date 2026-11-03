@@ -119,7 +119,7 @@ test("HTTP original operation reaches actor/hash validation without catalog or n
 });
 
 
-for(const mode of ["zero-turn-not-loaded","zero-turn"])
+for(const mode of ["zero-turn-not-loaded","zero-turn","zero-turn-generic-reject"])
 test(`coordinator preflight preserves first-start proof for ${mode}`,async t=>{
   const f=fixture();
   f.session.cwd="/tmp/evoloop-fixture";
@@ -137,6 +137,13 @@ test(`coordinator preflight preserves first-start proof for ${mode}`,async t=>{
     model:f.session.model!,sandbox:f.session.sandbox,approvalPolicy:f.session.approvalPolicy,
     executionProfileRevisionId:f.command.expectedExecutionProfileRevisionId};
   const binding=await adapter.create(spec);
+  assert.equal(adapter.hasFreshStartProof(binding),true);
+  if(mode==="zero-turn-generic-reject"){
+    await assert.rejects(()=>adapter.listTurns(binding),(error:unknown)=>
+      error instanceof RuntimeServerError&&error.method==="thread/turns/list"&&
+      error.code===-32600&&error.category==="server_rejected");
+    assert.equal(adapter.hasFreshStartProof(binding),true);
+  }
   f.session.nativeThreadId=binding.nativeThreadId;f.session.nativeSessionId=binding.nativeSessionId;
   const runner=new RuntimeRunner({runtimeFactory:()=>adapter,workflow:f.workflow,trusted:{} as never,
     principals:[f.principal],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
@@ -144,6 +151,18 @@ test(`coordinator preflight preserves first-start proof for ${mode}`,async t=>{
   await assert.rejects(()=>runner.preflightExecutionProfileRevision(f.principal,f.command),
     (e:unknown)=>e instanceof DomainError&&e.code==="EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED");
   assert.deepEqual(f.session,before);assert.equal(f.writes,0);
+  if(mode==="zero-turn-generic-reject"){
+    const token="b".repeat(40);
+    const app=await buildServer({service:f.workflow,credentials:[{token,...f.principal}],runtime:runner,
+      listRuntimeModels:async()=>{assert.fail("zero-Turn preflight must run before model catalog");}});
+    try{
+      const response=await app.inject({method:"POST",url:"/api/commands",
+        headers:{authorization:`Bearer ${token}`},payload:f.command});
+      assert.equal(response.statusCode,409,response.body);
+      assert.equal(response.json().code,"EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED");
+      assert.equal(f.writes,0);
+    }finally{await app.close();}
+  }
   await adapter.resume(binding,spec);
   await adapter.startTurn(binding,"first authorized Turn under the original profile","first-operation",
     f.session.executionProfile!.revision);
