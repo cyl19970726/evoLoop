@@ -173,7 +173,8 @@ export class WorkflowService {
 
   private commandPermission(command: Command): "write" | "review" {
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume'||
-      command.type==='session.message.reconcile'||command.type==='session.message.interrupt')return 'review';
+      command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
+      command.type==='session.message.manualStop')return 'review';
     if (command.type === "session.profile.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";

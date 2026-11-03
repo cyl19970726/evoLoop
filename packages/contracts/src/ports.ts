@@ -111,6 +111,8 @@ export interface ChildHandoffFact {
   division?: { bindingId: string; waitingDecisionId: string; acknowledgedRunId: string };
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, ResidentTransaction, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
+  /** Lock the current coordinator generation until commit for an externally reviewed stop. */
+  assertCoordinatorLeaseEpoch?(nonce: string): Promise<void>;
   /** Row lock before Session gate admission; never requires an empty Run queue. */
   lockRuntimeSession?(id: string): Promise<RuntimeSessionRecord | null>;
   recovery?: import('./session-recovery.js').SessionRecoveryTransaction;

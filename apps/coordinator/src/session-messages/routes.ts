@@ -59,8 +59,8 @@ export function registerSessionMessageRoutes(app: FastifyInstance, deps: {
   app.get("/api/projects/:projectId/session-messages/:id", async request => {
     const { projectId, id } = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
     await identity(request.principal, projectId);
-    const { message, processing } = await deps.messages.detail(projectId, id);
-    return { message, processing, metadata: { generatedAt: new Date().toISOString(), sourceObservedAt: processing?.updatedAt ?? message.updatedAt,
+    const { message, processing, manualStop } = await deps.messages.detail(projectId, id);
+    return { message, processing, manualStop, metadata: { generatedAt: new Date().toISOString(), sourceObservedAt: manualStop?.recordedAt ?? processing?.updatedAt ?? message.updatedAt,
       partial: false, limitations: message.target.kind === "external" ? ["人工转交记录不证明原聊天已收到。"] : [] } };
   });
 }

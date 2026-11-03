@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash,randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { before,after,test } from 'node:test';
 import pg from 'pg';
+import { runner } from 'node-pg-migrate';
 import { migrate,PostgresUnitOfWork } from '../src/index.ts';
 import { WorkflowService } from '@evoloop/core';
 import { SessionMessageService,applySessionMessage } from '@evoloop/core/session-messages';
 import { SessionMessagePump } from '../../../apps/coordinator/src/session-messages/pump.ts';
 import { PgSessionMessages } from '../src/session-messages.ts';
-import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
+import { commandSchema } from '@evoloop/contracts';
+import type { SessionMessageManualStopEvidence,SessionMessageRecord } from '@evoloop/contracts/session-messages';
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname.slice(1)))
@@ -23,6 +26,18 @@ const qualified='a'.repeat(64);
 function item(id=randomUUID()):SessionMessageRecord{return{projectId,id,operationId:randomUUID(),target:{kind:'owned',sessionId},
   senderActorId:'sender',content:'What changed?',context:null,replyToMessageId:null,state:'queued',version:1,
   blockedReason:null,readReceipt:null,createdAt:now,updatedAt:now};}
+async function seedManualStopPreflight(messageId:string,processingId:string,targetSessionId:string,turn:string){
+  const preflightId=randomUUID(),evidenceJson=JSON.stringify({messageId,processingId,turn});
+  await pool.query(`INSERT INTO session_message_manual_stop_preflight(project_id,message_id,preflight_id,processing_id,
+    session_id,native_turn_id,native_thread_id,message_version,processing_version,host,captured_by_actor_id,listen_port,
+    old_coordinator_pid,old_coordinator_start_identity,old_native_pid,old_native_start_identity,
+    pre_stop_evidence_json,pre_stop_evidence_hash,capture_file_ref,capture_file_hash)
+    VALUES($1,$2,$3,$4,$5,$6,$7,2,2,'test-host','root-actor',4318,123,'old coordinator',456,'old native',$8,$9,$10,$11)`,
+    [projectId,messageId,preflightId,processingId,targetSessionId,turn,'thread-'+targetSessionId,
+      evidenceJson,createHash('sha256').update(evidenceJson).digest('hex'),
+      '/private/test-preflight.json','a'.repeat(64)]);
+  return preflightId;
+}
 async function seedFullSession(id:string):Promise<void>{
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
@@ -249,7 +264,7 @@ test('an uncertain processing state refuses read even after a native Turn was bo
 test('message persists separately, unknown retains exact operation, receipt requires receiving actor',async()=>{
   const message=item();
   await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
-  assert.deepEqual(await service.detail(projectId,message.id),{message,processing:null});
+  assert.deepEqual(await service.detail(projectId,message.id),{message,processing:null,manualStop:null});
   assert.equal((await service.list(projectId,{kind:'owned',sessionId},10)).items[0]?.senderActorId,'sender');
   const processingId=randomUUID(),operationId=randomUUID();
   await service.beginDispatch(projectId,message.id,processingId,operationId,qualified);
@@ -564,4 +579,154 @@ test('reviewed exact message recovery request is durable, CAS-bound and one-shot
   const final=await local.detail(projectId,m.id);
   assert.equal(final.message.state,'failed');
   assert.equal(final.processing?.interruptOperationId,op);
+});
+
+test('manual stop command requires exact old process start identities and fixed observations',()=>{
+  const value={type:'session.message.manualStop',projectId,operationId:randomUUID(),messageId:randomUUID(),
+    sessionId,processingId:randomUUID(),preflightId:randomUUID(),nativeTurnId:'turn-1',expectedMessageVersion:2,
+    expectedProcessingVersion:3,oldCoordinatorPid:123,oldNativePid:456,
+    oldCoordinatorStartIdentity:'start:coordinator',oldNativeStartIdentity:'start:native',
+    exitEvidenceRef:'private://stop-manifest',exitEvidenceHash:'a'.repeat(64),
+    observedNativeStatus:'inProgress',observedThreadStatus:'notLoaded',observedItemCount:0,
+    observedItemIdsHash:'b'.repeat(64),reason:'Reviewed original Turn and stopped old host'};
+  assert.equal(commandSchema.safeParse(value).success,true);
+  for(const change of [{oldCoordinatorStartIdentity:''},{oldNativeStartIdentity:' '.repeat(2)},
+    {oldNativePid:0},{observedItemCount:-1},{exitEvidenceHash:'bad'}])
+    assert.equal(commandSchema.safeParse({...value,...change}).success,false);
+});
+
+test('manual stop evidence binds the original processing, preserves prior failure and cannot change',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:targetSessionId,maxTurns:10})});
+  const m={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+  const processingId=randomUUID(),turn='original-'+m.id;
+  await local.beginDispatch(projectId,m.id,processingId,randomUUID(),qualified);
+  await local.bindTurn(projectId,m.id,{id:turn,status:'inProgress'});
+  await local.markUnknown(projectId,m.id,'Original uncertain result');
+  const before=await local.detail(projectId,m.id);
+  const preflightId=await seedManualStopPreflight(m.id,processingId,targetSessionId,turn);
+  const preflight=await uow.read(projectId,r=>r.sessionMessages!.getSessionMessageManualStopPreflight(m.id));
+  assert.equal(preflight?.preflightId,preflightId);
+  assert.equal(preflight?.capturedByActorId,'root-actor');
+  assert.equal(preflight?.nativeThreadId,'thread-'+targetSessionId);
+  assert.ok(Number.isFinite(Date.parse(preflight!.capturedAt)));
+  assert.equal(createHash('sha256').update(preflight!.preStopEvidenceJson).digest('hex'),preflight!.preStopEvidenceHash);
+  await assert.rejects(pool.query('UPDATE session_message_manual_stop_preflight SET host=$3 WHERE project_id=$1 AND message_id=$2',
+    [projectId,m.id,'changed']),/immutable/);
+  await assert.rejects(pool.query('DELETE FROM session_message_manual_stop_preflight WHERE project_id=$1 AND message_id=$2',
+    [projectId,m.id]),/immutable/);
+  const evidence:SessionMessageManualStopEvidence={projectId,messageId:m.id,processingId,sessionId:targetSessionId,
+    nativeTurnId:turn,preflightId,operationId:randomUUID(),actorId:'reviewer',reason:'Verified original host stopped',
+    priorFailure:before.processing!.failure,oldCoordinatorPid:123,oldNativePid:456,
+    oldCoordinatorStartIdentity:'coordinator-start-1',oldNativeStartIdentity:'native-start-1',
+    exitEvidenceRef:'private://manifest/original',exitEvidenceHash:'a'.repeat(64),
+    observedNativeStatus:'inProgress',observedThreadStatus:'notLoaded',observedItemCount:0,
+    observedItemIdsHash:'b'.repeat(64),recordedAt:new Date().toISOString()};
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.getSessionMessageManualStopEvidence(m.id)),null);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessageManualStopEvidence(
+    {...evidence,preflightId:randomUUID()})),/foreign key/);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessageManualStopEvidence(
+    {...evidence,sessionId:randomUUID()})),/foreign key/);
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessageManualStopEvidence(evidence));
+  assert.deepEqual(await uow.read(projectId,r=>r.sessionMessages!.getSessionMessageManualStopEvidence(m.id)),evidence);
+  assert.deepEqual(await local.detail(projectId,m.id),{...before,manualStop:evidence},'evidence insertion does not settle processing');
+  await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessageManualStopEvidence(evidence)),/duplicate key/);
+  const otherSessionId=randomUUID();await seedFullSession(otherSessionId);
+  const other={...item(),target:{kind:'owned' as const,sessionId:otherSessionId}};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(other));
+  const otherService=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:otherSessionId})});
+  const otherProcessingId=randomUUID();await otherService.beginDispatch(projectId,other.id,otherProcessingId,randomUUID(),qualified);
+  await otherService.bindTurn(projectId,other.id,{id:'other-'+other.id,status:'inProgress'});
+  const otherPreflightId=await seedManualStopPreflight(other.id,otherProcessingId,otherSessionId,'other-'+other.id);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessageManualStopEvidence({
+    ...evidence,messageId:other.id,processingId:otherProcessingId,sessionId:otherSessionId,preflightId:otherPreflightId,
+    nativeTurnId:'other-'+other.id})),/duplicate key/);
+  await assert.rejects(pool.query('UPDATE session_message_manual_stop_evidence SET reason=$3 WHERE project_id=$1 AND message_id=$2',
+    [projectId,m.id,'changed']),/immutable/);
+  await assert.rejects(pool.query('DELETE FROM session_message_manual_stop_evidence WHERE project_id=$1 AND message_id=$2',
+    [projectId,m.id]),/immutable/);
+});
+
+test('manual stop settles original processing, blocks the gate, and exact recovery clears a resolved pin',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:targetSessionId,maxTurns:10})});
+  const first={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+  const pinned={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+  await uow.transaction(projectId,async tx=>{
+    await tx.sessionMessages!.insertSessionMessage(first);
+    await tx.sessionMessages!.insertSessionMessage(pinned);
+  });
+  const processingId=randomUUID(),turn='manual-stop-'+first.id;
+  await local.beginDispatch(projectId,first.id,processingId,randomUUID(),qualified);
+  await local.bindTurn(projectId,first.id,{id:turn,status:'inProgress'});
+  await local.markUnknown(projectId,first.id,'Original unknown result');
+  const preflightId=await seedManualStopPreflight(first.id,processingId,targetSessionId,turn);
+  const before=await local.detail(projectId,first.id);
+  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+  const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
+  const stopped=await workflow.execute(reviewer,{type:'session.message.manualStop',projectId,operationId:randomUUID(),
+    messageId:first.id,sessionId:targetSessionId,processingId,preflightId,nativeTurnId:turn,
+    expectedMessageVersion:before.message.version,expectedProcessingVersion:before.processing!.version,
+    oldCoordinatorPid:123,oldNativePid:456,oldCoordinatorStartIdentity:'old coordinator',
+    oldNativeStartIdentity:'old native',exitEvidenceRef:'/private/stop-manifest.json',
+    exitEvidenceHash:'a'.repeat(64),observedNativeStatus:'inProgress',observedThreadStatus:'notLoaded',
+    observedItemCount:0,observedItemIdsHash:'b'.repeat(64),reason:'Reviewed original owner stop'});
+  assert.equal(stopped.status,'applied');
+  const detail=await local.detail(projectId,first.id);
+  assert.equal(detail.processing?.state,'failed');assert.equal(detail.message.state,'failed');
+  assert.equal(detail.manualStop?.priorFailure,'Original unknown result');
+  let gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.phase,'blocked');assert.equal(gate?.causeId,first.id);
+  assert.equal(gate?.resumeMessageId,pinned.id);
+  await workflow.execute(sender,{type:'session.message.cancel',projectId,operationId:randomUUID(),
+    messageId:pinned.id,expectedVersion:1,reason:'Resolved queued follow-up before resuming'});
+  const resumed=await workflow.execute(reviewer,{type:'runtime.session.recovery.resume',projectId,
+    operationId:randomUUID(),sessionId:targetSessionId,expectedVersion:gate!.version,
+    expectedCauseId:first.id,resumeMessageId:pinned.id,
+    evidenceRef:`preflight:${preflightId}`,reason:'Original manual stop and cancelled pin reviewed'});
+  assert.equal(resumed.status,'applied');
+  gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.phase,'open');assert.equal(gate?.resumeMessageId,null);
+  assert.equal((await local.detail(projectId,first.id)).manualStop?.preflightId,preflightId);
+});
+
+test('049 migration preserves preexisting ordinary message and processing rows',async()=>{
+  const legacySchema=`el_msg_legacy_${randomUUID().replaceAll('-','').slice(0,12)}`;
+  const migrations=fileURLToPath(new URL('../migrations/',import.meta.url));
+  const legacy=new pg.Client({connectionString:url,options:`-c search_path=${legacySchema}`});
+  try{
+    await runner({databaseUrl:url!,dir:migrations,migrationsTable:'pgmigrations',schema:legacySchema,
+      createSchema:true,createMigrationsSchema:true,direction:'up',singleTransaction:true,count:48,log:()=>{}});
+    await legacy.connect();
+    const p=randomUUID(),s=randomUUID(),m=randomUUID(),processingId=randomUUID(),operationId=randomUUID();
+    await legacy.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Legacy messages',$2)",[p,now]);
+    await legacy.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+      state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,'/tmp','project','danger-full-access','never','ready',1,$4,$5,$6,'receiver',$7,$7)`,
+      [p,s,randomUUID(),'thread-'+s,'native-'+s,randomUUID(),now]);
+    await legacy.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
+      content,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,'owned',$4,'sender','Original content','failed',3,$5,$5)`,[p,m,randomUUID(),s,now]);
+    await legacy.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,
+      receiver_actor_id,state,native_turn_id,failure,read_only_policy_fingerprint,version,started_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,'receiver','failed','original-turn','Old uncertain reason',$6,4,$7,$7)`,
+      [p,processingId,m,s,operationId,qualified,now]);
+    const prior=(await legacy.query('SELECT to_jsonb(p) AS value FROM session_message_processing p WHERE project_id=$1 AND message_id=$2',[p,m])).rows[0].value;
+    await migrate(url!,legacySchema);
+    const after=(await legacy.query('SELECT to_jsonb(p) AS value FROM session_message_processing p WHERE project_id=$1 AND message_id=$2',[p,m])).rows[0].value;
+    for(const [key,value] of Object.entries(prior))assert.deepEqual(after[key],value);
+    assert.deepEqual((await legacy.query('SELECT state,content FROM session_message WHERE project_id=$1 AND message_id=$2',[p,m])).rows[0],
+      {state:'failed',content:'Original content'});
+    assert.equal((await legacy.query('SELECT count(*)::int AS n FROM session_message_manual_stop_evidence')).rows[0].n,0);
+  }finally{
+    await legacy.end().catch(()=>{});
+    const cleanup=new pg.Client({connectionString:url});await cleanup.connect();
+    try{await cleanup.query(`DROP SCHEMA "${legacySchema}" CASCADE`);}finally{await cleanup.end();}
+  }
 });

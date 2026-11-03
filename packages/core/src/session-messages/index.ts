@@ -1,5 +1,5 @@
 import type { AppliedResult, Principal } from "@evoloop/contracts";
-import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
+import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { RuntimeTurn, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -47,7 +47,8 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     await store.updateSessionMessage(next,item.version);
     return{result:applied(command.operationId,item.id,next.version),effects:[{kind:'session.message',entityId:item.id,version:next.version}]};
   }
-  if(command.type==='session.message.reconcile'||command.type==='session.message.interrupt'){
+  if(command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
+    command.type==='session.message.manualStop'){
     if(!principal.permissions.includes('review'))throw new DomainError('FORBIDDEN','message recovery requires project review authority');
     const processing=required(await store.getSessionMessageProcessing(item.id),'processing');
     if(item.target.kind!=='owned'||item.target.sessionId!==command.sessionId||
@@ -59,6 +60,41 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     if(item.state!=='processing'&&item.state!=='unknown'||
       !['running','unknown'].includes(processing.state))
       throw new DomainError('MESSAGE_NOT_RUNNING','only an unresolved bound Turn can be reviewed');
+    if(command.type==='session.message.manualStop'){
+      if(await store.getSessionMessageManualStopEvidence(item.id))
+        throw new DomainError('MANUAL_STOP_EXISTS','original manual stop must be read back');
+      const anchor=await store.getSessionMessageManualStopPreflight(item.id);
+      if(anchor?.capturedByActorId===principal.actorId)
+        throw new DomainError('MANUAL_STOP_SELF_ATTESTATION','Stop reviewer must differ from the pre-stop Root actor');
+      if(!anchor || anchor.preflightId!==command.preflightId ||
+        anchor.processingId!==processing.id || anchor.sessionId!==command.sessionId ||
+        anchor.nativeTurnId!==command.nativeTurnId ||
+        anchor.oldCoordinatorPid!==command.oldCoordinatorPid || anchor.oldNativePid!==command.oldNativePid ||
+        anchor.oldCoordinatorStartIdentity!==command.oldCoordinatorStartIdentity ||
+        anchor.oldNativeStartIdentity!==command.oldNativeStartIdentity)
+        throw new DomainError('MANUAL_STOP_PREFLIGHT_CHANGED','Original pre-stop owner identity is unavailable or changed');
+      await store.insertSessionMessageManualStopEvidence({
+        projectId:command.projectId,messageId:item.id,processingId:processing.id,
+        sessionId:command.sessionId,nativeTurnId:command.nativeTurnId,preflightId:command.preflightId,
+        operationId:command.operationId,actorId:principal.actorId,reason:command.reason,
+        oldCoordinatorPid:command.oldCoordinatorPid,oldNativePid:command.oldNativePid,
+        oldCoordinatorStartIdentity:command.oldCoordinatorStartIdentity,
+        oldNativeStartIdentity:command.oldNativeStartIdentity,
+        exitEvidenceRef:command.exitEvidenceRef,exitEvidenceHash:command.exitEvidenceHash,
+        observedNativeStatus:command.observedNativeStatus,observedThreadStatus:command.observedThreadStatus,
+        observedItemCount:command.observedItemCount,observedItemIdsHash:command.observedItemIdsHash,
+        priorFailure:processing.failure,recordedAt:now,
+      });
+      const stopped={...processing,state:'failed' as const,response:null,
+        failure:`Reviewed manual stop after owner handoff; native completion unproven (observed ${command.observedNativeStatus})`,
+        version:processing.version+1,updatedAt:now};
+      await store.updateSessionMessageProcessing(stopped,processing.version);
+      const failed={...item,state:'failed' as const,version:item.version+1,updatedAt:now};
+      await store.updateSessionMessage(failed,item.version);
+      await store.markSessionMessageSettled(command.sessionId,item.id,now);
+      return{result:applied(command.operationId,item.id,failed.version),
+        effects:[{kind:'session.message.manualStop',entityId:item.id,version:failed.version}]};
+    }
     if(command.type==='session.message.interrupt'){
       if(processing.interruptOperationId)
         throw new DomainError('INTERRUPT_ALREADY_REQUESTED','the original interrupt request must be reconciled');
@@ -93,6 +129,10 @@ export interface SessionMessageServiceDeps {uow:UnitOfWork;clock:Clock;ids:IdFac
 }
 /** Trusted coordinator path. No public command can claim a native turn or change processing evidence. */
 export class SessionMessageService {
+  async manualStopPreflight(projectId:string,messageId:string):Promise<SessionMessageManualStopPreflight|null>{
+    return this.deps.uow.read(projectId,async reader=>
+      await reader.sessionMessages?.getSessionMessageManualStopPreflight(messageId)??null);
+  }
   constructor(private readonly deps:SessionMessageServiceDeps){}
   private async admission(projectId:string,messageId:string,reader:Reader){
     const store=reader.sessionMessages;
@@ -120,12 +160,14 @@ export class SessionMessageService {
   }
   async get(projectId:string,id:string){return this.deps.uow.read(projectId,async r=>required(await r.sessionMessages?.getSessionMessage(id)??null,'message'));}
   /** Message and processing are read from the same repeatable-read project snapshot. */
-  async detail(projectId:string,id:string):Promise<{message:SessionMessageRecord;processing:SessionMessageProcessing|null}>{
+  async detail(projectId:string,id:string):Promise<{message:SessionMessageRecord;processing:SessionMessageProcessing|null;
+    manualStop:SessionMessageManualStopEvidence|null}>{
     return this.deps.uow.read(projectId,async r=>{
       const store=r.sessionMessages;
       const message=required(await store?.getSessionMessage(id)??null,'message');
       const processing=await store?.getSessionMessageProcessing(id)??null;
-      return{message,processing};
+      const manualStop=await store?.getSessionMessageManualStopEvidence?.(id)??null;
+      return{message,processing,manualStop};
     });
   }
   async list(projectId:string,target:SessionMessageRecord['target'],limit:number,cursor?:string){

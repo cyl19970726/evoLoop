@@ -76,6 +76,7 @@ const help = {
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
     "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
     "work status OWNED_OR_EXTERNAL_KEY --project UUID [--message UUID] (read only; separate service, native, activity and message facts)",
+    "work manual-stop-preview MESSAGE_UUID --project UUID (reviewer read of exact original native Turn and Items; no state change)",
     "work timeline KEY --project UUID [--source both|native|messages --limit 1..50 --cursor NATIVE_CURSOR --messages-cursor MESSAGES_CURSOR]",
     "work item KEY ITEM_ID --project UUID --turn-id TURN_ID (selected public message or authorized tool detail)",
     "work updates KEY --project UUID [--after LIVE_CURSOR] [--wait-ms 0..10000] (default 0; follow resetRequired)",
@@ -187,6 +188,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "work") {
+    if (args.words[1] === "manual-stop-preview") {
+      check(args, 3, ["project"]);
+      return client.get(`${prefix}/session-messages/${uuid(args.words[2], "Message")}/manual-stop-preview`);
+    }
     if (args.words[1] === "status") {
       check(args, 3, ["project", "message"]);
       const snapshotPath = sessionWorkPath(["snapshot", args.words[2]!], new Map([["project", projectId]]));

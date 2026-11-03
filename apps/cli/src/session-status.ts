@@ -16,6 +16,7 @@ export function sessionStatus(snapshot: unknown, detail?: unknown, requestedMess
   };
   if (detail !== undefined) {
     const message = record(record(detail)?.message), processing = record(record(detail)?.processing);
+    const manualStop = record(record(detail)?.manualStop);
     const target = record(message?.target);
     const targetId = target?.kind === "owned" ? target.sessionId : target?.kind === "external" ? target.linkId : null;
     const expectedKey = target && typeof target.kind === "string" && typeof targetId === "string"
@@ -38,7 +39,11 @@ export function sessionStatus(snapshot: unknown, detail?: unknown, requestedMess
         version: processing.version ?? null, nativeTurnId: processing.nativeTurnId ?? null,
         updatedAt: processing.updatedAt ?? null, interruptOperationId: processing.interruptOperationId ?? null,
         interruptRequestedAt: processing.interruptRequestedAt ?? null,
-        interruptAttemptedAt: processing.interruptAttemptedAt ?? null } : null };
+        interruptAttemptedAt: processing.interruptAttemptedAt ?? null } : null,
+      manualStop: manualStop ? { operationId: manualStop.operationId ?? null,
+        actorId: manualStop.actorId ?? null, recordedAt: manualStop.recordedAt ?? null,
+        nativeStatus: manualStop.observedNativeStatus ?? null,
+        oldOwnerExitEvidenceRef: manualStop.exitEvidenceRef ?? null } : null };
   }
   return result;
 }
