@@ -4,7 +4,7 @@ const id=z.uuid(), text=z.string().trim().min(1).max(4000), version=z.number().i
 const base={projectId:id,operationId:id};
 export const sessionRecoveryCommands=[
   z.strictObject({...base,type:z.literal('runtime.session.executionProfile.revise'),sessionId:id,
-    expectedVersion:version,expectedExecutionProfileRevisionId:id,model:text,
+    expectedVersion:version,expectedExecutionProfileRevisionId:id,model:text,reasoningEffort:text.optional(),
     sandbox:z.literal('danger-full-access').default('danger-full-access'),
     approvalPolicy:z.literal('never').default('never'),evidenceRef:text,reason:text}),
   z.strictObject({...base,type:z.literal('runtime.session.recovery.resume'),sessionId:id,
@@ -16,7 +16,7 @@ export type ExecutionProfileActivation='active'|'pending'|'attempting'|'unknown'
 
 /** Configured launch policy. This is not provider-reported per-Turn model telemetry. */
 export interface ExecutionProfileSnapshot {
-  revisionId:string;version:number;model:string|null;sandbox:'read-only'|'workspace-write'|'danger-full-access';
+  revisionId:string;version:number;model:string|null;reasoningEffort?:string|null;sandbox:'read-only'|'workspace-write'|'danger-full-access';
   approvalPolicy:'on-request'|'untrusted'|'never';cwd:string;authorizationScope:string;
   provenance:'reserved'|'legacy_session_identity'|'revised';
 }
@@ -28,6 +28,7 @@ export interface SessionExecutionProfile {
   revision:ExecutionProfileRevision;activationState:ExecutionProfileActivation;
   /** Last positively confirmed native configuration, retained while a new target is pending/unknown. */
   activeRevisionId:string|null;
+  activeModel?:string|null;activeReasoningEffort?:string|null;
   activationOperationId:string|null;attemptedAt:string|null;activationEvidence:string|null;
 }
 export interface SessionRecoveryGate {

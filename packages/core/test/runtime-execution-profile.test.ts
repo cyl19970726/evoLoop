@@ -44,6 +44,27 @@ test('trusted activation proof requires the original Thread, last active revisio
   assert.equal(await service.verifyExecutionProfileActivation(projectId,binding,target,revisionId,operationId),false);
 });
 
+test('a rejected target may be replaced using the last confirmed full profile on the same Thread',async()=>{
+  const active={...oldRevision,sandbox:'danger-full-access' as const,approvalPolicy:'never' as const};
+  const rejected={...revision,revisionId:randomUUID(),model:'rejected-model',
+    previousRevisionId:active.revisionId,sandbox:active.sandbox,approvalPolicy:active.approvalPolicy};
+  const replacement={...rejected,revisionId:randomUUID(),version:3,model:active.model,
+    previousRevisionId:rejected.revisionId,operationId:randomUUID()};
+  const owned={...session,model:replacement.model,executionProfile:{...session.executionProfile!,
+    revision:replacement,activeRevisionId:active.revisionId,activationState:'attempting' as const}};
+  const prior={...binding,resumeProfile:{...binding.resumeProfile!,sandbox:active.sandbox,
+    approvalPolicy:active.approvalPolicy}};
+  const next={...target,model:replacement.model,executionProfileRevisionId:replacement.revisionId};
+  const revisions=new Map([active,rejected,replacement].map(item=>[item.revisionId,item]));
+  const service=new RuntimeWorkflowService({uow:{read:async(_project:string,action:(reader:unknown)=>Promise<unknown>)=>
+    action({getRuntimeSession:async()=>owned,recovery:{getExecutionProfileRevision:async(_session:string,id:string)=>revisions.get(id)}})} as UnitOfWork,
+    clock:{now:()=>now},ids:{next:randomUUID}});
+  owned.executionProfile.activationOperationId=replacement.operationId;
+  assert.equal(await service.verifyExecutionProfileActivation(projectId,prior,next,replacement.revisionId,replacement.operationId),true);
+  revisions.delete(rejected.revisionId);
+  assert.equal(await service.verifyExecutionProfileActivation(projectId,prior,next,replacement.revisionId,replacement.operationId),false);
+});
+
 test('a resolved native profile still waits for the explicit retry decision before a Run starts',async()=>{
   const gate:SessionRecoveryGate={projectId,sessionId,version:3,phase:'blocked',causeKind:'execution_profile',
     causeId:revisionId,causeState:'active',reason:'review required',queueId:null,claimId:null,
@@ -70,6 +91,21 @@ test('binding registration cannot inherit a different business sandbox after pro
   await assert.rejects(()=>service.verifyBinding(projectId,binding),/registered native profile differs/);
   await assert.rejects(()=>service.verifyBinding(projectId,{...approved,
     resumeProfile:{...approved.resumeProfile!,sandbox:'read-only'}}),/registered native profile differs/);
+});
+
+test('binding registration checks the active reasoning effort as well as the model and revision',async()=>{
+  const active={...session,executionProfile:{...session.executionProfile!,
+    revision:{...session.executionProfile!.revision,reasoningEffort:'max'},
+    activeRevisionId:revisionId,activeReasoningEffort:'max',activationState:'active' as const}};
+  const service=new RuntimeWorkflowService({uow:{read:async(_project:string,action:(reader:unknown)=>Promise<unknown>)=>
+    action({getRuntimeSession:async()=>active})} as UnitOfWork,
+    clock:{now:()=>now},ids:{next:randomUUID}});
+  const approved:RuntimeBinding={...binding,resumeProfile:{...binding.resumeProfile!,model:'old-model',
+    reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never',
+    executionProfileRevisionId:revisionId}};
+  await service.verifyBinding(projectId,approved);
+  await assert.rejects(()=>service.verifyBinding(projectId,{...approved,
+    resumeProfile:{...approved.resumeProfile!,reasoningEffort:'high'}}),/registered native profile differs/);
 });
 
 test('a closed accepted Task must reopen before its source Run terminal result changes',async()=>{

@@ -190,7 +190,9 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     resultSummary: null, actorId: principal.actorId, createdAt: now, updatedAt: now,
     ...(session.executionProfile ? {executionProfile:{
       revisionId:session.executionProfile.revision.revisionId,version:session.executionProfile.revision.version,
-      model:session.executionProfile.revision.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
+      model:session.executionProfile.revision.model,
+      ...(session.executionProfile.revision.reasoningEffort?{reasoningEffort:session.executionProfile.revision.reasoningEffort}:{}),
+      sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
       cwd:session.cwd,authorizationScope:session.authorizationScope,provenance:session.executionProfile.revision.provenance,
     }} : {}),
     ...(command.evaluation ? { evaluationBinding: { ...command.evaluation,

@@ -34,14 +34,19 @@ export class RuntimeWorkflowService {
         binding.nativeThreadId !== saved.nativeThreadId || binding.nativeSessionId !== saved.nativeSessionId) {
         throw new DomainError("FOREIGN_BINDING", "native binding does not match an owned active session");
       }
+      const confirmed=saved.executionProfile?.activeRevisionId;
+      const activeModel=saved.executionProfile?.activationState==='active'?saved.model:saved.executionProfile?.activeModel;
+      const activeEffort=saved.executionProfile?.activationState==='active'?
+        saved.executionProfile.revision.reasoningEffort:saved.executionProfile?.activeReasoningEffort;
       if(saved.executionProfile && (binding.resumeProfile?.actorId!==saved.actorId||
-        binding.resumeProfile.model!==saved.model||binding.resumeProfile.sandbox!==saved.sandbox||
+        binding.resumeProfile.model!==activeModel||
+        (binding.resumeProfile.reasoningEffort??null)!==(activeEffort??null)||
+        binding.resumeProfile.sandbox!==saved.sandbox||
         binding.resumeProfile.approvalPolicy!==saved.approvalPolicy))
         throw new DomainError("FOREIGN_BINDING","registered native profile differs from the owned Session");
-      if (saved.executionProfile && (saved.executionProfile.activationState !== "active" ||
-        saved.executionProfile.activeRevisionId !== saved.executionProfile.revision.revisionId ||
-        binding.resumeProfile?.executionProfileRevisionId !== saved.executionProfile.revision.revisionId ||
-        binding.resumeProfile.model !== saved.executionProfile.revision.model))
+      if (saved.executionProfile && (!confirmed ||
+        binding.resumeProfile?.executionProfileRevisionId !== confirmed ||
+        binding.resumeProfile.model !== activeModel))
         throw new DomainError("EXECUTION_PROFILE_NOT_ACTIVE", "binding is not the confirmed Session execution profile");
       return saved;
     });
@@ -66,6 +71,7 @@ export class RuntimeWorkflowService {
         adopted.revision.revisionId!==revisionId||adopted.revision.operationId!==operationId||
         adopted.activeRevisionId!==current.resumeProfile.executionProfileRevisionId||
         adopted.revision.model!==target.model||saved.model!==adopted.revision.model||
+        adopted.revision.reasoningEffort!==target.reasoningEffort||
         adopted.revision.sandbox!==target.sandbox||saved.sandbox!==adopted.revision.sandbox||
         adopted.revision.approvalPolicy!==target.approvalPolicy||saved.approvalPolicy!==adopted.revision.approvalPolicy||
         target.executionProfileRevisionId!==revisionId||
@@ -75,11 +81,21 @@ export class RuntimeWorkflowService {
         target.approvalPolicy!==saved.approvalPolicy)return false;
       const previous=adopted.activeRevisionId?
         await reader.recovery?.getExecutionProfileRevision(saved.id,adopted.activeRevisionId):null;
-      return !!previous&&adopted.revision.previousRevisionId===previous.revisionId&&
-        previous.model===current.resumeProfile.model&&
-        previous.sandbox===current.resumeProfile.sandbox&&
-        previous.approvalPolicy===current.resumeProfile.approvalPolicy&&
-        previous.cwd===current.cwd&&previous.authorizationScope===current.authorizationScope;
+      if(!previous||previous.model!==current.resumeProfile.model||
+        (previous.reasoningEffort??null)!==(current.resumeProfile.reasoningEffort??null)||
+        previous.sandbox!==current.resumeProfile.sandbox||
+        previous.approvalPolicy!==current.resumeProfile.approvalPolicy||
+        previous.cwd!==current.cwd||previous.authorizationScope!==current.authorizationScope)return false;
+      let cursor=adopted.revision;
+      const seen=new Set<string>();
+      while(cursor.revisionId!==previous.revisionId&&seen.size<1000){
+        if(seen.has(cursor.revisionId)||!cursor.previousRevisionId)return false;
+        seen.add(cursor.revisionId);
+        const parent=await reader.recovery?.getExecutionProfileRevision(saved.id,cursor.previousRevisionId);
+        if(!parent||parent.version!==cursor.version-1)return false;
+        cursor=parent;
+      }
+      return cursor.revisionId===previous.revisionId;
     });
   }
 

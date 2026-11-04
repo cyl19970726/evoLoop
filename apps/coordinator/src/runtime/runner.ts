@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { BasisSet, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
+import type { BasisSet, Command, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
@@ -56,6 +56,7 @@ const dispatchFailureDetail = (error: unknown): string => {
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
+  hasFreshStartProof?(binding:RuntimeBinding):boolean;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
@@ -80,13 +81,23 @@ export function bindingOf(session: RuntimeSessionRecord): RuntimeBinding {
   return { sessionId: session.id, roleId: session.roleId, projectId: session.projectId, cwd: session.cwd,
     authorizationScope: session.authorizationScope, nativeThreadId: session.nativeThreadId,
     nativeSessionId: session.nativeSessionId, owner: "evoloop-codex-app-server",
-    resumeProfile:{actorId:session.actorId,model:session.model,sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
-      ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.revision.revisionId}:{})} };
+    resumeProfile:{actorId:session.actorId,
+      model:session.executionProfile?.activationState==='active'?session.model:
+        session.executionProfile?.activeModel??session.model,
+      ...(session.executionProfile?.activationState==='active'&&session.executionProfile.revision.reasoningEffort?
+        {reasoningEffort:session.executionProfile.revision.reasoningEffort}:
+        session.executionProfile?.activeReasoningEffort?
+          {reasoningEffort:session.executionProfile.activeReasoningEffort}:{}),
+      sandbox:session.sandbox,approvalPolicy:session.approvalPolicy,
+      ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.activeRevisionId??session.executionProfile.revision.revisionId}:{})} };
 }
 function specOf(session: RuntimeSessionRecord): RuntimeSessionSpec {
   return { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
     cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
-    approvalPolicy: session.approvalPolicy, ...(session.model ? { model: session.model } : {}),
+    approvalPolicy: session.approvalPolicy,
+    ...((session.executionProfile?.revision.model??session.model)?{model:(session.executionProfile?.revision.model??session.model)!}:{}),
+    ...(session.executionProfile?.revision.reasoningEffort?
+      {reasoningEffort:session.executionProfile.revision.reasoningEffort}:{}),
     ...(session.executionProfile?{executionProfileRevisionId:session.executionProfile.revision.revisionId}:{}) };
 }
 async function collect<T>(load: (cursor?: string) => Promise<RuntimePage<T>>, maxPages: number): Promise<T[]> {
@@ -148,6 +159,59 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
   nativeAdapter():ManagedRuntime { return this.runtime; }
+  /** Read-only capability check, never a replacement for execute's transactional authorization/version checks. */
+  async preflightExecutionProfileRevision(principal:Principal,
+    command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
+    // Legacy model/policy-only activation uses a different native path.
+    if(!command.reasoningEffort)return;
+    if(!principal.projectIds.includes(command.projectId)||!principal.permissions.includes("write")||
+      !principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+      throw new DomainError("FORBIDDEN","执行配置修订需要本项目复核者的写入与复核权限。");
+    const session=await this.deps.workflow.getRuntimeSession(principal,command.projectId,command.sessionId);
+    if(session.projectId!==command.projectId||session.id!==command.sessionId)
+      throw new DomainError("FORBIDDEN","执行配置修订与原 Session 绑定不符。");
+    if(session.version!==command.expectedVersion)
+      throw new DomainError("VERSION_CONFLICT","Session changed",session.version);
+    if(session.executionProfile?.revision.revisionId!==command.expectedExecutionProfileRevisionId)
+      throw new DomainError("EXECUTION_PROFILE_CONFLICT","Execution profile changed");
+    if(session.state!=="ready"||!session.nativeThreadId||!session.nativeSessionId)
+      throw new DomainError("SESSION_NOT_READY","Only a bound ready Session can recover");
+    if(!await this.authorized({...session,model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy})||
+      !await this.deps.allowedCwd(session.projectId,session.cwd))
+      throw new DomainError("FORBIDDEN","原 Session 的目标配置或目录没有当前精确授权。");
+    if(!this.runtime.isReady())throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
+    try {
+      const binding=bindingOf(session);
+      await this.runtime.registerBinding(binding);
+      const result=object(await this.runtime.inspect(binding));
+      const thread=object(result?.thread);
+      if(thread?.id!==binding.nativeThreadId||thread?.sessionId!==binding.nativeSessionId||
+        thread?.cwd!==binding.cwd)
+        throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生 Thread 与当前 Session 绑定不符，未保存新配置。");
+      const status=object(thread.status)?.type;
+      if(status!=="notLoaded"&&status!=="idle"&&status!=="active")
+        throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生 Thread 状态不可判定，未保存新配置。");
+      const unsupported=()=>new DomainError("EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED",
+        "原 Thread 尚无可读取的 Turn，当前原生服务不支持在此状态修订模型与思考强度。未保存新配置，旧 active 配置保留；请先使用原配置完成一次已授权的正常对话，再重试修订，或按目标配置新建 Session。");
+      // The same owner connection that accepted thread/start knows whether its
+      // one first-Turn proof is still unused. This proves a fresh zero-Turn
+      // Thread even when the native history RPC rejects with an opaque -32600.
+      if((status==="idle"||status==="notLoaded")&&this.runtime.hasFreshStartProof?.(binding))
+        throw unsupported();
+      try {
+        const turns=await this.runtime.listTurns(binding);
+        if(turns.data.length===0)throw unsupported();
+      }
+      catch(error) {
+        // Even an idle new Thread can have no rollout. Checking history for
+        // every effort revision prevents a disconnect from turning a saved
+        // target into an unusable zero-Turn activation.
+        if(error instanceof RuntimeServerError&&error.method==="thread/turns/list"&&error.code===-32600&&
+          error.category==="rollout_not_found")throw unsupported();
+        throw error;
+      }
+    } catch(error) { throw this.readFailure(error); }
+  }
   onWorkspaceUpdate(listener:(event:WorkspaceRuntimeUpdate)=>void):()=>void {
     this.workspaceUpdates.add(listener); return () => { this.workspaceUpdates.delete(listener); };
   }
@@ -486,6 +550,7 @@ export class RuntimeRunner {
     if(!profile)return this.readBinding(session);
     if(run && (!run.executionProfile||run.executionProfile.revisionId!==profile.revision.revisionId||
       run.executionProfile.model!==profile.revision.model||run.executionProfile.sandbox!==session.sandbox||
+      (run.executionProfile.reasoningEffort??null)!==(profile.revision.reasoningEffort??null)||
       run.executionProfile.approvalPolicy!==session.approvalPolicy||run.executionProfile.cwd!==session.cwd||
       run.executionProfile.authorizationScope!==session.authorizationScope))
       throw new DomainError("EXECUTION_PROFILE_MISMATCH","Run's fixed launch profile differs from its Session revision");
@@ -506,7 +571,7 @@ export class RuntimeRunner {
       previous.cwd!==session.cwd||previous.authorizationScope!==session.authorizationScope)
       throw new DomainError("EXECUTION_PROFILE_MISMATCH","previous execution profile changed immutable Session identity");
     const prior=bindingOf(session);
-    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,sandbox:previous.sandbox,
+    prior.resumeProfile={...prior.resumeProfile!,model:previous.model,reasoningEffort:previous.reasoningEffort??null,sandbox:previous.sandbox,
       approvalPolicy:previous.approvalPolicy,executionProfileRevisionId:previous.revisionId};
     const target=specOf(session),revisionId=profile.revision.revisionId,operationId=profile.revision.operationId;
     if(profile.activationState==='pending'){
@@ -519,12 +584,19 @@ export class RuntimeRunner {
           this.registered.add(session.id);
           return revised;
         }catch(error){
-          const state=error instanceof RuntimeServerError&&error.method==='thread/resume'?'rejected':'unknown';
+          // This stable adapter marker is emitted only before revision authorization
+          // or fresh-proof consumption. Other protocol errors still have unknown outcomes.
+          const safeZeroTurnRejection=error instanceof RuntimeProtocolError&&
+            error.message.startsWith("EXECUTION_PROFILE_ZERO_TURN_UNSUPPORTED");
+          const state=safeZeroTurnRejection||error instanceof RuntimeServerError&&
+            (error.method==='thread/resume'||error.method==='thread/settings/update'&&
+              error.category==='invalid_params')?'rejected':'unknown';
           await this.deps.trusted.settleExecutionProfileActivation(session.projectId,session.id,revisionId,state,
-            state==='rejected'?'Native thread/resume explicitly rejected the chosen profile':
+            state==='rejected'?(safeZeroTurnRejection?'Native read-only zero-Turn guard rejected the profile before activation':
+              'Native thread/resume explicitly rejected the chosen profile'):
               'Native profile activation outcome is uncertain; original Thread requires readback');
           this.recordFault(session.projectId,'profile_activation',error,session.id,run?.id,
-            state==='unknown'?'unknown_outcome':faultCategory(error));
+            state==='unknown'?'unknown_outcome':safeZeroTurnRejection?'native_rejected':faultCategory(error));
           if(state==='rejected'&&run)await this.deps.trusted.rejectDispatch(run.projectId,run.id,
             'Native Thread rejected this execution profile before Turn start');
           return null;

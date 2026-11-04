@@ -84,7 +84,7 @@ export interface RuntimeBinding {
   owner: "evoloop-codex-app-server";
   observedModel?: string | null; observedProvider?: string | null;
   /** Persisted Session profile for an exact native resume; omitted only for legacy read-only inspection. */
-  resumeProfile?: { actorId: string; model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  resumeProfile?: { actorId: string; model: string | null; reasoningEffort?: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access";
     approvalPolicy: "on-request" | "untrusted" | "never"; executionProfileRevisionId?: string };
 }
 
@@ -97,6 +97,7 @@ export interface RuntimeSessionSpec {
   cwd: string;
   authorizationScope: string;
   model?: string;
+  reasoningEffort?: string | null;
   executionProfileRevisionId?: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "on-request" | "untrusted" | "never";

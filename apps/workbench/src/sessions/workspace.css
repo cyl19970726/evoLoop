@@ -123,6 +123,14 @@
 .session-agent-card dt { color: #8190a8; font-size: 11px; }
 .session-agent-card dd { min-width: 0; margin: 3px 0 0; color: #29426d; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .session-agent-card > p { display: none; }
+.session-model-control { margin-top: 10px; border-top: 1px solid #e2e8f3; padding-top: 9px; color: #344b70; font-size: 12px; line-height: 1.5; }
+.session-model-control p { margin: 4px 0; overflow-wrap: anywhere; }
+.session-model-control strong { color: #20385e; }
+.session-model-control .session-model-evidence { color: #667b9b; }
+.session-model-control > button { margin-top: 6px; min-height: 32px; }
+.session-model-editor { margin-top: 8px; padding: 10px; border: 1px solid #dce5f2; border-radius: 5px; background: #f8faff; }
+.session-model-editor > label { display: grid; gap: 5px; max-width: 310px; margin-bottom: 8px; }
+.session-model-editor select { min-height: 34px; max-width: 100%; }
 .session-workspace .session-workspace-tabs { flex-shrink: 0; gap: 28px; margin: 0; border-bottom: 1px solid #dae3f1; }
 .session-workspace .session-workspace-tabs button { min-height: 42px; padding: 10px 4px; color: #526688; font-size: 14px; font-weight: 550; }
 .session-workspace .session-workspace-tabs button.selected { color: #1557ef; border-bottom: 2px solid #1557ef; }

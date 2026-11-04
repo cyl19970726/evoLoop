@@ -16,7 +16,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "reason", "evidence-ref", "operation"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -86,6 +86,8 @@ const help = {
     "work leader notices --project UUID [--task TASK_UUID --cursor CURSOR --limit 1..100] (durable result notices and dispatch status)",
     "request leader.notice.recover --project UUID --id BLOCKED_NOTICE_UUID --file BODY.json --receipt LOCAL_UUID (explicit new intent after confirmed post rejection; read original notice before any retry)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
+    "session profile show SESSION_UUID --project UUID (configured target, last confirmed profile and recovery state)",
+    "session profile set SESSION_UUID --project UUID --model SLUG --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",
     "models --project UUID (read authorized, currently available App Server models before session prepare)",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
@@ -151,6 +153,39 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     const file=option(args,"file");if(!file)throw new UsageError("session prepare requires --file PRIVATE_JSON");
     return prepareSession(JSON.parse(await readFile(file,"utf8")),client,store,origin,token,
       await verifiedActor(),value=>io.stderr(JSON.stringify(value)+"\n"));
+  }
+  if(action==="session"&&args.words[1]==="profile"){
+    const mode=args.words[2],sessionId=uuid(args.words[3],"Session"),projectId=project();
+    if(mode==='show'){
+      check(args,4,["project"]);
+      const sessions=await client.get(`/api/projects/${projectId}/runtime/sessions`);
+      const current=Array.isArray(sessions)?sessions.find(value=>record(value)?.id===sessionId):null;
+      if(!current)throw new UsageError('Managed Session is unavailable in this project.');
+      const recovery=await client.get(`/api/projects/${projectId}/runtime/sessions/${sessionId}/recovery`);
+      return {session:current,recovery};
+    }
+    if(mode==='set'){
+      check(args,4,["project","model","effort","reason","evidence-ref","operation"]);
+      const model=option(args,"model"),reasoningEffort=option(args,"effort"),
+        reason=option(args,"reason"),evidenceRef=option(args,"evidence-ref");
+      if(!model||!reasoningEffort||!reason||!evidenceRef)
+        throw new UsageError('profile set requires --model, --effort, --reason and --evidence-ref.');
+      const sessions=await client.get(`/api/projects/${projectId}/runtime/sessions`);
+      const current=Array.isArray(sessions)?record(sessions.find(value=>record(value)?.id===sessionId)):null;
+      const profile=record(current?.executionProfile);
+      const revision=record(profile?.revision);
+      if(!current||!revision||typeof current.version!=='number'||typeof revision.revisionId!=='string')
+        throw new UsageError('Current managed Session profile is unavailable; use session profile show.');
+      const operationId=option(args,"operation")?uuid(option(args,"operation"),"Operation"):randomUUID();
+      const command=commandSchema.parse({type:'runtime.session.executionProfile.revise',projectId,sessionId,
+        operationId,expectedVersion:current.version,expectedExecutionProfileRevisionId:revision.revisionId,
+        model,reasoningEffort,reason,evidenceRef});
+      return dispatchMutation(client,store,origin,token,{id:operationId,operationId,projectId,
+        kind:command.type,path:'/api/commands',body:command,confirmation:'command',
+        recovery:{kind:'core',path:`/api/projects/${projectId}/operations/${operationId}`}},
+        value=>io.stderr(JSON.stringify(value)+'\n'),await verifiedActor());
+    }
+    throw new UsageError('Use session profile show or session profile set.');
   }
   if (action === "session") { check(args, 1); return client.get("/api/session"); }
   if (action === "models") { check(args, 1, ["project"]); return client.get(`/api/projects/${project()}/runtime/models`); }

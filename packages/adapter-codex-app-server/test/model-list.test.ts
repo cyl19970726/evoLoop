@@ -19,6 +19,13 @@ test('model/list follows cursors, preserves exact slugs and removes duplicates',
   assert.ok(Number.isFinite(Date.parse(result.observedAtUtc)));
 });
 
+test('model/list preserves the native effort options for each exact slug',async t=>{
+  const adapter=await open('model-effort');t.after(()=>adapter.close());
+  const result=await adapter.listModels();
+  assert.deepEqual(result.options,[{model:'new-model',supportedReasoningEfforts:['high','max'],
+    defaultReasoningEffort:'high'}]);
+});
+
 test('model/list caches a result briefly and isolates callers from array mutation',async t=>{
   const adapter=await open('model-cache');t.after(()=>adapter.close());
   const [first,concurrent]=await Promise.all([adapter.listModels(),adapter.listModels()]);
