@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { after,before,test } from "node:test";
 import pg from "pg";
 import { WorkflowService, assessTaskAttention, trialAttentionThreshold } from "@evoloop/core";
@@ -8,6 +10,7 @@ import { migrate,PostgresUnitOfWork } from "../src/index.ts";
 import { PgTaskAttention,taskAttentionNoticeCurrent,disposeStaleTaskAttentionNotice,
   scanTaskAttentionCandidates } from "../src/task-attention.ts";
 import { readLeaderWorkTask } from "../src/work-index.ts";
+import { buildServer } from "../../../apps/coordinator/src/server.ts";
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -203,4 +206,76 @@ test("indexed scan skips terminal history but revisits terminal Tasks with open 
     assessTaskAttention(ended,null,now),now,null);
   assert.equal((await new PgTaskAttention(pool,projectId).getItem(itemId))?.state,"resolved");
   assert.equal((await scanTaskAttentionCandidates(pool,projectId,null,50)).includes(endedTaskId),false);
+});
+test("real CLI reads filtered attention pages from isolated PostgreSQL through the project API",async()=>{
+  const records=[
+    {id:randomUUID(),signal:"stage_overdue",phase:"awaiting_publication",waiting:{kind:"publisher",id:"release-team"},at:"2026-10-25T02:00:00Z"},
+    {id:randomUUID(),signal:"activity_without_progress",phase:"awaiting_publication",waiting:{kind:"publisher",id:"release-team"},at:"2026-10-25T01:00:00Z"},
+    {id:randomUUID(),signal:"observation_gap",phase:"running",waiting:{kind:"session",id:"worker-session"},at:"2026-10-25T00:00:00Z"},
+  ];
+  for(const record of records)await pool.query(`INSERT INTO task_attention_item(project_id,item_id,task_id,
+    task_revision_id,phase,signal,source_kind,source_id,waiting_on,state,severity,version,
+    first_detected_at,last_detected_at,source_observed_at,reason,evidence)
+    VALUES($1,$2,$3,$4,$5,$6,'release_handoff',$10,$7::jsonb,'open','watch',1,$8,$8,$8,
+      'THRESHOLD_REACHED',$9::jsonb)`,[projectId,record.id,handoffTaskId,handoffRevisionId,
+      record.phase,record.signal,JSON.stringify(record.waiting),record.at,
+      JSON.stringify({source:{kind:"release_handoff",id:record.id}}),record.id]);
+  const resolvedId=randomUUID();
+  await pool.query(`INSERT INTO task_attention_item(project_id,item_id,task_id,task_revision_id,
+    phase,signal,source_kind,source_id,waiting_on,state,severity,version,first_detected_at,
+    last_detected_at,source_observed_at,reason,evidence,resolved_at,resolution_reason)
+    VALUES($1,$2,$3,$4,'awaiting_publication','stage_overdue','release_handoff',$7,
+      '{"kind":"publisher","id":"release-team"}'::jsonb,'resolved','watch',2,$5,$5,$5,
+      'THRESHOLD_REACHED','{}'::jsonb,$6,'SOURCE_EXPIRED')`,
+    [projectId,resolvedId,handoffTaskId,handoffRevisionId,"2026-10-24T00:00:00Z","2026-10-24T01:00:00Z",resolvedId]);
+  const token=randomUUID()+randomUUID();
+  const app=await buildServer({service:service(),credentials:[{token,actorId:"qa-reader",
+    projectIds:[projectId],permissions:["read"]}],taskAttentionPool:pool});
+  try{
+    const origin=await app.listen({host:"127.0.0.1",port:0});
+    const cli=async(args:string[])=>new Promise<{code:number|null;output:unknown;error:string}>((done,reject)=>{
+      const child=spawn(process.execPath,[resolve("apps/cli/dist/main.js"),...args],{
+        env:{...process.env,EVOLOOP_API_URL:origin,EVOLOOP_TOKEN:token,EVOLOOP_PROJECT:projectId},
+        stdio:["ignore","pipe","pipe"]});
+      let output="",error="";
+      child.stdout.on("data",data=>{output+=String(data);});
+      child.stderr.on("data",data=>{error+=String(data);});
+      child.once("error",reject);
+      child.once("close",code=>done({code,output:output?JSON.parse(output):null,error}));
+    });
+    const base=["work","attention","--task",handoffTaskId,"--state","open",
+      "--phase","awaiting_publication","--waiting-on-kind","publisher",
+      "--waiting-on-id","release-team","--limit","1"];
+    const first=await cli(base);assert.equal(first.code,0,first.error);
+    const page1=first.output as {items:Array<{id:string;sourceId?:string;source?:unknown;waitingOn:unknown}>;nextCursor:string|null};
+    assert.equal(page1.items.length,1);assert.ok(page1.nextCursor);
+    const second=await cli([...base,"--cursor",page1.nextCursor!]);
+    assert.equal(second.code,0,second.error);
+    const page2=second.output as typeof page1;
+    assert.equal(page2.items.length,1);assert.equal(page2.nextCursor,null);
+    const wrongScope=await cli(["work","attention","--task",handoffTaskId,"--state","open",
+      "--phase","running","--cursor",page1.nextCursor!]);
+    assert.equal(wrongScope.code,1,"a cursor cannot silently cross filter scopes");
+    assert.deepEqual([page1.items[0]?.id,page2.items[0]?.id],[records[0]?.id,records[1]?.id]);
+    assert.deepEqual(page1.items[0]?.waitingOn,{kind:"publisher",id:"release-team"});
+    assert.deepEqual((page1.items[0] as {evidence:unknown}).evidence,
+      {source:{kind:"release_handoff",id:records[0]?.id}});
+    const direct=await fetch(`${origin}/api/projects/${projectId}/task-attention/items?taskId=${handoffTaskId}&state=open&phase=await_publication`,
+      {headers:{Authorization:`Bearer ${token}`}});
+    assert.equal(direct.status,400,"API rejects an invalid phase instead of ignoring it");
+    const exact=await fetch(`${origin}/api/projects/${projectId}/task-attention/items?taskId=${handoffTaskId}&state=open&phase=awaiting_publication&waitingOnKind=publisher&waitingOnId=release-team&limit=1`,
+      {headers:{Authorization:`Bearer ${token}`}});
+    assert.equal(exact.status,200);
+    assert.deepEqual((await exact.json() as typeof page1).items,page1.items);
+    const signal=await cli(["work","attention","--task",handoffTaskId,"--signal","observation_gap"]);
+    assert.equal(signal.code,0,signal.error);
+    assert.deepEqual((signal.output as typeof page1).items.map(item=>item.id),[records[2]?.id]);
+    const resolved=await cli(["work","attention","--task",handoffTaskId,"--state","resolved"]);
+    assert.equal(resolved.code,0,resolved.error);
+    assert.deepEqual((resolved.output as typeof page1).items.map(item=>item.id),[resolvedId]);
+    for(const command of [["work","attention"],["work","attention","task",handoffTaskId],
+      ["work","attention","item",records[0]!.id],["work","attention","thresholds", "--phase","awaiting_publication"]]){
+      const result=await cli(command);assert.equal(result.code,0,`${command.join(" ")}: ${result.error}`);
+    }
+  }finally{await app.close();}
 });

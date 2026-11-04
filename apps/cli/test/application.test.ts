@@ -13,6 +13,46 @@ async function run(args: string[], env: Record<string, string | undefined> = {})
   const code = await runCli(args, env, { stdout: text => { stdout += text; }, stderr: text => { stderr += text; } });
   return { code, stdout, stderr };
 }
+test("work attention CLI entry forwards filters and cursor while rejecting invalid values", async () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const task = "00000000-0000-4000-8000-000000000002";
+  const item = "00000000-0000-4000-8000-000000000003";
+  const stage = "00000000-0000-4000-8000-000000000004";
+  const urls: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    urls.push(String(url)); return new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project };
+  try {
+    const commands = [
+      ["work", "attention"],
+      ["work", "attention", "--task", task, "--state", "open", "--phase", "awaiting_publication",
+        "--signal", "stage_overdue", "--waiting-on-kind", "publisher", "--waiting-on-id", "release-team",
+        "--limit", "2", "--cursor", "next-page"],
+      ["work", "attention", "task", task],
+      ["work", "attention", "item", item],
+      ["work", "attention", "thresholds", "--stage", stage, "--phase", "awaiting_publication"],
+    ];
+    for (const command of commands) {
+      const result = await run(command, env);
+      assert.equal(result.code, 0, `${command.join(" ")}: ${result.stderr}`);
+    }
+    assert.deepEqual(urls.map(value => new URL(value).pathname + new URL(value).search), [
+      `/api/projects/${project}/task-attention/items`,
+      `/api/projects/${project}/task-attention/items?taskId=${task}&state=open&phase=awaiting_publication&signal=stage_overdue&waitingOnKind=publisher&waitingOnId=release-team&limit=2&cursor=next-page`,
+      `/api/projects/${project}/tasks/${task}/attention`,
+      `/api/projects/${project}/task-attention/items/${item}`,
+      `/api/projects/${project}/task-attention/thresholds?stageId=${stage}&phase=awaiting_publication`,
+    ]);
+    for (const args of [["--state", "pending"], ["--phase", "bad"], ["--signal", "bad"],
+      ["--waiting-on-kind", "bad"], ["--limit", "0"], ["--unknown", "x"]]) {
+      const result = await run(["work", "attention", ...args], env);
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(JSON.parse(result.stderr).error.code, "INVALID_INPUT");
+    }
+    assert.equal(urls.length, commands.length, "invalid filters must not reach the API");
+  } finally { fetch.mock.restore(); }
+});
 test("an unauthenticated fresh Agent can discover help, IDs, exact command schemas and named routes", async () => {
   const help = await run(["help"]); assert.equal(help.code, 0); assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("context ")));
   assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("receipts retry ")));
