@@ -40,8 +40,8 @@ export interface LeaderResultNoticeStore {
   getByMessageId(projectId: string, messageId: string): Promise<LeaderResultNotice | null>;
   disposeStalePendingTodo(projectId:string,noticeId:string):Promise<"disposed"|"current"|"posted"|"linked">;
   disposeStaleTodo(projectId:string,noticeId:string,messageId:string):Promise<"disposed"|"in_flight"|"current">;
-  attentionSourceCurrent(projectId:string,noticeId:string):Promise<boolean>;
-  disposeStaleAttention(projectId:string,noticeId:string):Promise<boolean>;
+  attentionSourceCurrent(projectId:string,noticeId:string):Promise<"current"|"unknown"|"expired">;
+  disposeStaleAttention(projectId:string,noticeId:string):Promise<"current"|"unknown"|"expired">;
   hasInFlightOnOtherSession(projectId: string, sessionId: string): Promise<boolean>;
   /** Pending reasons are diagnostic and retryable; null clears a resolved reason. */
   notePendingReason(projectId: string, noticeId: string, reason: string | null): Promise<void>;
@@ -126,9 +126,13 @@ export class LeaderResultNoticePump {
         return {allowed:false,reason:"TODO_SOURCE_SUPERSEDED"};
       }
     }
-    if(notice.kind==="task_attention" && !await this.deps.store.attentionSourceCurrent(message.projectId,notice.id)){
-      if(this.deps.canWrite())await this.deps.store.disposeStaleAttention(message.projectId,notice.id);
-      return {allowed:false,reason:"ATTENTION_SOURCE_EXPIRED"};
+    if(notice.kind==="task_attention"){
+      const state=await this.deps.store.attentionSourceCurrent(message.projectId,notice.id);
+      if(state!=="current"){
+        if(state==="expired"&&this.deps.canWrite())
+          await this.deps.store.disposeStaleAttention(message.projectId,notice.id);
+        return {allowed:false,reason:state==="unknown"?"ATTENTION_SOURCE_UNKNOWN":"ATTENTION_SOURCE_EXPIRED"};
+      }
     }
     const config=await this.deps.configuration();
     if(!config?.enabled)return {allowed:false,reason:"LEADER_NOTICES_DISABLED"};
@@ -205,8 +209,13 @@ export class LeaderResultNoticePump {
   private async process(notice: LeaderResultNotice, config: LeaderResultNoticeConfig,
     principals: Principal[]): Promise<void> {
     if(notice.state!=="pending")return;
-    if(notice.kind==="task_attention" && !await this.deps.store.attentionSourceCurrent(notice.projectId,notice.id)){
-      await this.deps.store.disposeStaleAttention(notice.projectId,notice.id);return;
+    if(notice.kind==="task_attention"){
+      const state=await this.deps.store.attentionSourceCurrent(notice.projectId,notice.id);
+      if(state!=="current"){
+        if(state==="expired")await this.deps.store.disposeStaleAttention(notice.projectId,notice.id);
+        else await this.reason(notice,"ATTENTION_SOURCE_UNKNOWN");
+        return;
+      }
     }
     if(notice.recipient){
       const originalSender=this.sender(principals,notice.projectId,notice.recipient.senderActorId);

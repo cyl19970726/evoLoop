@@ -94,7 +94,7 @@ export class SessionMessagePump {
       // Persist before any native resume or Turn start. A lost response is never a retry signal.
       try{record=await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint);}
       catch(error){
-        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED'].includes(error.code)){
+        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED'].includes(error.code)){
           await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;
         }
         throw error;

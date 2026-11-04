@@ -312,8 +312,10 @@ export class PgTaskAttention {
   }
 }
 
+/** Unknown observation is a retryable hold, not proof that the source expired. */
+export type TaskAttentionNoticeState="current"|"unknown"|"expired";
 /** Recheck fixed notice source immediately before a native message can start. */
-export async function taskAttentionNoticeCurrent(pool:Db,projectId:string,noticeId:string):Promise<boolean>{
+export async function taskAttentionNoticeCurrent(pool:Db,projectId:string,noticeId:string):Promise<TaskAttentionNoticeState>{
   const r=await pool.query(`SELECT i.state,i.notice_id,i.task_id,i.task_revision_id,i.phase,i.signal,
       i.source_kind,i.source_id,t.current_revision_id AS current_revision_id,n.task_revision_id AS notice_revision_id
     FROM leader_result_notice n
@@ -324,7 +326,7 @@ export async function taskAttentionNoticeCurrent(pool:Db,projectId:string,notice
   const source=r.rows[0];
   if(!source||source.state!=="open"||source.notice_id!==noticeId||
     source.task_revision_id!==source.current_revision_id||source.notice_revision_id!==source.current_revision_id)
-    return false;
+    return "expired";
   const task=await readLeaderWorkTask(pool,projectId,String(source.task_id));
   const store=new PgTaskAttention(pool,projectId);
   const followUp=task?await store.getFollowUp(task.taskId):null;
@@ -332,19 +334,20 @@ export async function taskAttentionNoticeCurrent(pool:Db,projectId:string,notice
   if (!task || task.currentRevisionId!==source.task_revision_id ||
     task.timing.current.stage!==source.phase ||
     currentSource?.kind!==source.source_kind || currentSource?.id!==source.source_id)
-    return false;
+    return "expired";
   const configured=await store.effectiveThreshold(task.stage?.stageId??null,task.timing.current.stage);
   const assessment=assessTaskAttention(task,configured??trialAttentionThreshold(task.timing.current.stage),
     task.timing.observedAt,followUp).find(item=>item.signal===source.signal);
-  return assessment?.status==="triggered";
+  return assessment?.status==="triggered" ? "current" :
+    assessment?.status==="unknown" ? "unknown" : "expired";
 }
-export async function disposeStaleTaskAttentionNotice(pool:Pool,projectId:string,noticeId:string):Promise<boolean>{
+export async function disposeStaleTaskAttentionNotice(pool:Pool,projectId:string,noticeId:string):Promise<TaskAttentionNoticeState>{
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
     const current=await taskAttentionNoticeCurrent(client,projectId,noticeId);
-    if(!current)await new PgTaskAttention(client,projectId).retireNotice(noticeId);
+    if(current==="expired")await new PgTaskAttention(client,projectId).retireNotice(noticeId);
     await client.query("COMMIT");
     return current;
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}

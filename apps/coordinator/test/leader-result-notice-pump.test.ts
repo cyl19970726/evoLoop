@@ -38,7 +38,7 @@ function fixture(initial=notice()){
   const commands:unknown[]=[],errors:unknown[]=[],diagnostics:string[]=[];
   let saved:SessionMessageRecord|null=null;
   let operation:Record<string,unknown>|null=null;
-  let attentionCurrent=true,attentionDispositions=0;
+  let attentionCurrent:"current"|"unknown"|"expired"="current",attentionDispositions=0;
   let loseAcknowledgement=false,linkFails=false,postRejection:string|null=null;
   let firstPage:LeaderResultNotice[]|null=null;
   const cursors:Array<string|undefined>=[];
@@ -73,7 +73,7 @@ function fixture(initial=notice()){
       return "disposed" as const;
     },
     attentionSourceCurrent:async()=>attentionCurrent,
-    disposeStaleAttention:async()=>{attentionDispositions++;row={...row,state:"blocked"};return false;},
+    disposeStaleAttention:async()=>{attentionDispositions++;row={...row,state:"blocked"};return "expired" as const;},
     hasInFlightOnOtherSession:async()=>inFlight,
     notePendingReason:async(_project:string,_id:string,reason:string|null)=>{pendingReason=reason;},
     block:async(_project:string,_id:string,reason:string)=>{blocks++;row={...row,state:"blocked"};pendingReason=reason;},
@@ -119,7 +119,7 @@ function fixture(initial=notice()){
     get dispositions(){return dispositions;},get pendingDispositions(){return pendingDispositions;},
     get refreshes(){return refreshes;},
     get attentionDispositions(){return attentionDispositions;},
-    setAttentionCurrent(value:boolean){attentionCurrent=value;},
+    setAttentionCurrent(value:"current"|"unknown"|"expired"){attentionCurrent=value;},
     setConfig(value:LeaderResultNoticeConfig|undefined){configured=value;},
     setPrincipals(value:Principal[]){principals=value;},
     setNotice(value:LeaderResultNotice){row=value;},
@@ -138,10 +138,42 @@ function fixture(initial=notice()){
 
 test("attention notice checks the current phase and source before dispatch",async()=>{
   const f=fixture(notice("task_attention"));
-  f.setAttentionCurrent(false);
+  f.setAttentionCurrent("expired");
   await f.pump.tick();
   assert.equal(f.commands.length,0);
   assert.equal(f.attentionDispositions,1);
+});
+
+test("pending attention notice waits through unknown and posts its original operation once after recovery",async()=>{
+  const f=fixture(notice("task_attention"));
+  const original={noticeId:f.row.id,messageId:f.row.messageId,operationId:f.row.operationId};
+  f.setAttentionCurrent("unknown");
+  await f.pump.tick();await f.pump.tick();
+  assert.equal(f.row.state,"pending");
+  assert.equal(f.attentionDispositions,0);
+  assert.equal(f.commands.length,0);
+  f.setAttentionCurrent("current");
+  await f.pump.tick();await f.pump.tick();
+  assert.deepEqual({noticeId:f.row.id,messageId:f.row.messageId,operationId:f.row.operationId},original);
+  assert.equal(f.row.state,"linked");
+  assert.equal(f.commands.length,1);
+  assert.equal(f.attentionDispositions,0);
+});
+
+test("linked queued attention message waits through unknown and admits its original message after recovery",async()=>{
+  const f=fixture(notice("task_attention"));
+  await f.pump.tick();
+  const original=f.message!;
+  assert.equal(f.row.state,"linked");
+  f.setAttentionCurrent("unknown");
+  assert.deepEqual(await f.pump.messageAdmission(original),{allowed:false,reason:"ATTENTION_SOURCE_UNKNOWN"});
+  assert.equal(f.message?.state,"queued");
+  assert.equal(f.attentionDispositions,0);
+  f.setAttentionCurrent("current");
+  assert.deepEqual(await f.pump.messageAdmission(original),{allowed:true,reason:null});
+  assert.deepEqual(await f.pump.messageAdmission(original),{allowed:true,reason:null});
+  assert.equal(f.message?.id,original.id);
+  assert.equal(f.commands.length,1);
 });
 
 test("only an explicitly configured unique ready managed Lead gets a result message",async()=>{

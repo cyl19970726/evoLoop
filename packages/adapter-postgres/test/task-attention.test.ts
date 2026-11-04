@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { after,before,test } from "node:test";
 import pg from "pg";
 import { WorkflowService, assessTaskAttention, trialAttentionThreshold } from "@evoloop/core";
+import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { Principal } from "@evoloop/contracts";
 import { migrate,PostgresUnitOfWork } from "../src/index.ts";
 import { PgTaskAttention,taskAttentionNoticeCurrent,disposeStaleTaskAttentionNotice,
@@ -141,16 +142,16 @@ test("repeated evaluation deduplicates and same-revision phase change expires th
   const items=await store.items({taskId,state:"open",limit:10});
   assert.equal(items.items.length,1);
   const first=items.items[0]!;assert.ok(first.noticeId);
-  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),true);
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),"current");
   assert.equal((await service().execute(lead,{...thresholdCommand,operationId:randomUUID(),expectedVersion:1,
     stageOverdueMs:null})).status,"applied");
   assert.equal((await store.getItem(first.id))?.state,"open",
     "a notice may still be queued before the next attention evaluation");
-  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),false,
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),"expired",
     "native send preflight must respect the disabled threshold immediately");
   await store.recordAssessment(task,assessTaskAttention(task,{...policy,stageOverdueMs:null},evalNow),evalNow,null);
   assert.equal((await store.getItem(first.id))?.state,"resolved");
-  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),false);
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),"expired");
   assert.equal((await service().execute(lead,{...thresholdCommand,operationId:randomUUID(),expectedVersion:2})).status,"applied");
   await store.recordAssessment(task,assessed,evalNow,null);
   const item=(await store.items({taskId,state:"open",limit:10})).items[0]!;
@@ -166,11 +167,135 @@ test("repeated evaluation deduplicates and same-revision phase change expires th
     [projectId,taskId,revisionId,sessionId,new Date().toISOString()]);
   await pool.query(`INSERT INTO task_session_assignment_revision
     SELECT * FROM task_session_assignment WHERE project_id=$1 AND task_id=$2`,[projectId,taskId]);
-  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,item.noticeId!),false);
-  assert.equal(await disposeStaleTaskAttentionNotice(pool,projectId,item.noticeId!),false);
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,item.noticeId!),"expired");
+  assert.equal(await disposeStaleTaskAttentionNotice(pool,projectId,item.noticeId!),"expired");
   const stale=await pool.query(`SELECT state,blocked_reason FROM leader_result_notice
     WHERE project_id=$1 AND notice_id=$2`,[projectId,item.noticeId]);
   assert.deepEqual(stale.rows[0],{state:"blocked",blocked_reason:"ATTENTION_SOURCE_EXPIRED"});
+});
+test("one running Run keeps its watch notice and queued message through unknown observation, then retires on clear",async()=>{
+  const attentionTaskId=randomUUID(),attentionRevisionId=randomUUID(),attentionBasisId=randomUUID();
+  const attentionDocumentId=randomUUID(),attentionDocumentRevisionId=randomUUID();
+  const sessionId=randomUUID(),leaderSessionId=randomUUID(),runId=randomUUID(),turnId=`turn-${runId}`;
+  const started=new Date(Date.parse(now)-45*60*1000).toISOString();
+  const observed=new Date(Date.parse(now)-60*1000).toISOString();
+  const lastEvent=new Date(Date.parse(now)-40*60*1000).toISOString();
+  const setup=await pool.connect();
+  try{
+    await setup.query("BEGIN");
+    await setup.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
+      VALUES($1,$2,'Attention fixture',1,$3,'task','draft')`,
+      [projectId,attentionDocumentId,attentionDocumentRevisionId]);
+    await setup.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,
+      content_hash,author,created_at,reason,media_type,original_name,assets_manifest)
+      VALUES($1,$2,$3,'# Attention','markdown',$4,'lead',$5,'fixed','text/markdown','attention.md','[]'::jsonb)`,
+      [projectId,attentionDocumentId,attentionDocumentRevisionId,hash,earlier]);
+    await setup.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,
+      owner,state,content_document_id,content_revision_id)
+      VALUES($1,$2,1,$3,'Attention fixture','check','worker','in_progress',$4,$5)`,
+      [projectId,attentionTaskId,attentionRevisionId,attentionDocumentId,attentionDocumentRevisionId]);
+    await setup.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,
+      owner,state,basis_set_id,actor_id,reason,created_at,content_document_id,content_revision_id)
+      VALUES($1,$2,$3,1,'Attention fixture','check','worker','in_progress',$4,'lead','fixed',$5,$6,$7)`,
+      [projectId,attentionTaskId,attentionRevisionId,attentionBasisId,earlier,attentionDocumentId,attentionDocumentRevisionId]);
+    await setup.query(`INSERT INTO basis_set(project_id,task_id,task_revision_id,basis_set_id,sealed)
+      VALUES($1,$2,$3,$4,true)`,[projectId,attentionTaskId,attentionRevisionId,attentionBasisId]);
+    await setup.query("COMMIT");
+  }catch(error){await setup.query("ROLLBACK");throw error;}finally{setup.release();}
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
+    sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,
+    created_at,updated_at) VALUES($1,$2,'worker','/tmp','project','danger-full-access','never',
+    'ready',1,$3,$4,$5,'lead',$6,$6)`,
+    [projectId,sessionId,`thread-${sessionId}`,`native-${sessionId}`,randomUUID(),started]);
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
+    sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,
+    created_at,updated_at) VALUES($1,$2,'lead','/tmp','project','danger-full-access','never',
+    'ready',1,$3,$4,$5,'lead',$6,$6)`,
+    [projectId,leaderSessionId,`thread-${leaderSessionId}`,`native-${leaderSessionId}`,randomUUID(),started]);
+  await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,
+    session_id,operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'attention fixture',$8,'running',1,$9,'worker',$10,$10)`,
+    [projectId,runId,attentionTaskId,attentionRevisionId,attentionBasisId,sessionId,randomUUID(),hash,turnId,started]);
+  await pool.query(`INSERT INTO runtime_record_event(project_id,event_id,run_id,session_id,kind,detail,
+    native_turn_id,actor_id,created_at) VALUES($1,$2,$3,$4,'run.bound','Bound fixture',$5,'worker',$6)`,
+    [projectId,randomUUID(),runId,sessionId,turnId,started]);
+  const nativeProjection={currentTurn:{id:turnId,source:{kind:"run",taskId:attentionTaskId,runId}}};
+  const insertObservation=()=>pool.query(`INSERT INTO session_native_observation(project_id,session_id,
+    thread_id,connection_id,version,observed_at,last_event_at,freshness,stale_reason,projection)
+    VALUES($1,$2,$3,$4,1,$5,$6,'stale','fixture stale',$7::jsonb)`,
+    [projectId,sessionId,`thread-${sessionId}`,randomUUID(),observed,lastEvent,JSON.stringify(nativeProjection)]);
+  await insertObservation();
+  const store=new PgTaskAttention(pool,projectId);
+  const policy=trialAttentionThreshold("running");assert.ok(policy);
+  const task=await readLeaderWorkTask(pool,projectId,attentionTaskId);assert.ok(task);
+  assert.equal(task.timing.current.stage,"running");
+  assert.equal(task.timing.executionActivity?.freshness,"stale");
+  const watch=assessTaskAttention(task,policy,now).find(x=>x.signal==="observation_gap");
+  assert.equal(watch?.status,"triggered");assert.equal(watch?.severity,"watch");
+  await store.recordAssessment(task,[watch],now,null);
+  const item=(await store.items({taskId:attentionTaskId,state:"open",signal:"observation_gap",limit:10})).items[0]!;
+  const noticeId=item.noticeId!;
+  const original=(await pool.query(`SELECT notice_id,message_id,operation_id,state FROM leader_result_notice
+    WHERE project_id=$1 AND notice_id=$2`,[projectId,noticeId])).rows[0];
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,noticeId),"current");
+  await pool.query(`DELETE FROM session_native_observation WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+  const uncertain=await readLeaderWorkTask(pool,projectId,attentionTaskId);assert.ok(uncertain);
+  assert.equal(assessTaskAttention(uncertain,policy,now).find(x=>x.signal==="observation_gap")?.status,"unknown");
+  await store.recordAssessment(uncertain,assessTaskAttention(uncertain,policy,now),now,null);
+  assert.equal(await disposeStaleTaskAttentionNotice(pool,projectId,noticeId),"unknown");
+  assert.equal((await store.getItem(item.id))?.state,"open");
+  assert.equal((await pool.query(`SELECT state FROM leader_result_notice WHERE project_id=$1 AND notice_id=$2`,
+    [projectId,noticeId])).rows[0].state,"pending");
+  await insertObservation();
+  const restored=await readLeaderWorkTask(pool,projectId,attentionTaskId);assert.ok(restored);
+  await store.recordAssessment(restored,assessTaskAttention(restored,policy,now),now,null);
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,noticeId),"current");
+  const afterPending=(await pool.query(`SELECT notice_id,message_id,operation_id,state FROM leader_result_notice
+    WHERE project_id=$1 AND notice_id=$2`,[projectId,noticeId])).rows[0];
+  assert.deepEqual(afterPending,original);
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
+    sender_actor_id,content,context_task_id,context_task_revision_id,state,version,created_at,updated_at)
+    VALUES($1,$2,$3,'owned',$4,'system:fixture','Attention fixture',$5,$6,'queued',1,$7,$7)`,
+    [projectId,original.message_id,original.operation_id,leaderSessionId,attentionTaskId,attentionRevisionId,now]);
+  await pool.query(`UPDATE leader_result_notice SET state='linked',recipient_session_id=$3,
+    receiver_role_id='lead',receiver_actor_id='lead',sender_actor_id='system:fixture',
+    linked_session_id=$3 WHERE project_id=$1 AND notice_id=$2`,[projectId,noticeId,leaderSessionId]);
+  await pool.query(`DELETE FROM session_native_observation WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+  const linkedUnknown=await readLeaderWorkTask(pool,projectId,attentionTaskId);assert.ok(linkedUnknown);
+  await store.recordAssessment(linkedUnknown,assessTaskAttention(linkedUnknown,policy,now),now,null);
+  const messageService=new SessionMessageService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>now},
+    ids:{next:randomUUID},grantFor:async()=>({projectId,sessionId:leaderSessionId,
+      senderActorId:"system:fixture",receiverRoleId:"lead",receiverActorId:"lead",cwd:"/tmp",
+      maxTurns:3,enabled:true})});
+  await assert.rejects(()=>messageService.beginDispatch(projectId,original.message_id,randomUUID(),randomUUID(),hash),
+    error=>(error as {code?:string}).code==="ATTENTION_SOURCE_UNKNOWN",
+    "the transaction must recheck observation before persisting native start");
+  assert.equal(await disposeStaleTaskAttentionNotice(pool,projectId,noticeId),"unknown");
+  assert.equal((await pool.query(`SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2`,
+    [projectId,original.message_id])).rows[0].state,"queued");
+  await insertObservation();
+  const linkedRestored=await readLeaderWorkTask(pool,projectId,attentionTaskId);assert.ok(linkedRestored);
+  await store.recordAssessment(linkedRestored,assessTaskAttention(linkedRestored,policy,now),now,null);
+  assert.equal(await taskAttentionNoticeCurrent(pool,projectId,noticeId),"current");
+  assert.equal((await pool.query(`SELECT count(*)::int AS count FROM task_attention_item_event
+    WHERE project_id=$1 AND item_id=$2`,[projectId,item.id])).rows[0].count,1);
+  const processing=await messageService.beginDispatch(projectId,original.message_id,randomUUID(),randomUUID(),hash);
+  assert.equal(processing.messageId,original.message_id);
+  await assert.rejects(()=>messageService.beginDispatch(projectId,original.message_id,randomUUID(),randomUUID(),hash),
+    error=>(error as {code?:string}).code==="MESSAGE_NOT_QUEUED");
+  assert.equal((await pool.query(`SELECT count(*)::int AS count FROM session_message_processing
+    WHERE project_id=$1 AND message_id=$2`,[projectId,original.message_id])).rows[0].count,1);
+  const disabled={...policy,observationGapMs:null};
+  assert.equal((await service().execute(lead,{type:"task.attention.thresholds.set",projectId,
+    operationId:randomUUID(),stageId:null,phase:"running",expectedVersion:0,stageOverdueMs:null,
+    activityWithoutProgressMs:null,observationGapMs:null,reason:"Disable fixture gap"})).status,"applied");
+  assert.equal(assessTaskAttention(restored,disabled,now).find(x=>x.signal==="observation_gap")?.status,"clear");
+  assert.equal(await disposeStaleTaskAttentionNotice(pool,projectId,noticeId),"expired");
+  await store.recordAssessment(linkedRestored,assessTaskAttention(linkedRestored,disabled,now),now,null);
+  assert.equal((await store.getItem(item.id))?.state,"resolved");
+  assert.equal((await pool.query(`SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2`,
+    [projectId,original.message_id])).rows[0].state,"processing",
+    "a started message keeps its original processing history after source expiry");
 });
 test("indexed scan skips terminal history but revisits terminal Tasks with open items for cleanup",async()=>{
   const endedTaskId=randomUUID(),endedRevisionId=randomUUID(),endedDocId=randomUUID(),endedDocRevId=randomUUID();
