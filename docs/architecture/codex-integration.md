@@ -175,7 +175,7 @@ flowchart LR
 | `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
 | `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
 
-本机支持 `codex-cli 0.154.0`、`codex-cli 0.164.0-alpha.11.1` 与 `codex-cli 0.166.0-alpha.5.1`；当前默认协议为 `0.166.0-alpha.5.1`。适配器启动前核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查或更改全局 CLI。0.166 的标准/实验指纹分别为 `3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d` 和 `ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541`。以下只是可选运行配置片段，不代表安装路径或凭据：
+本机支持 `codex-cli 0.154.0`、`codex-cli 0.164.0-alpha.11.1`、`codex-cli 0.166.0-alpha.5.1` 与 `codex-cli 0.166.0-alpha.6`；当前默认协议为 `0.166.0-alpha.5.1`。适配器启动前核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查或更改全局 CLI。alpha.5.1 的标准/实验指纹分别为 `3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d` 和 `ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541`；alpha.6 的指纹分别为 `e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465` 和 `f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0`。以下只是可选运行配置片段，不代表安装路径或凭据：
 
 ```json
 {"runtime":{"enabled":true,"protocolVersion":"0.166.0-alpha.5.1"}}

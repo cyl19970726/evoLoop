@@ -18,7 +18,7 @@ const fixture = resolve(import.meta.dirname, "fixture.mjs");
 const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", model:"gpt-6-sol", sandbox: "danger-full-access", approvalPolicy: "never" };
 const fullSpec:RuntimeSessionSpec={...spec};
 const restoreSpec: RuntimeSessionSpec = { ...spec };
-const supportedVersions = ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1", "codex-cli 0.166.0-alpha.5.1"] as const;
+const supportedVersions = ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1", "codex-cli 0.166.0-alpha.5.1", "codex-cli 0.166.0-alpha.6"] as const;
 const modernVersions = supportedVersions.slice(1);
 // Whole-repository parallel tests can delay fake-child startup. Keep each test's
 // short request deadline for the deliberately lost native operation.
@@ -52,7 +52,7 @@ for (const expectedVersion of modernVersions) test(`${expectedVersion} native na
   });
 });
 
-test("only the three reviewed CLI protocol versions can be selected", () => {
+test("only the four reviewed CLI protocol versions can be selected", () => {
   for (const expectedVersion of supportedVersions)
     assert.doesNotThrow(() => testAdapter({ expectedVersion }));
   assert.throws(() => testAdapter({ expectedVersion: "codex-cli 0.165.0" }), /unsupported Codex CLI protocol version/);
@@ -707,12 +707,13 @@ test(`${expectedVersion} approved execution profile revision changes only the ow
 });
 }
 
-test('pinned native settings readback confirms both model and effort before a fixed Turn',async t=>{
+for(const expectedVersion of ['codex-cli 0.166.0-alpha.5.1','codex-cli 0.166.0-alpha.6'] as const)
+test(`${expectedVersion} pinned native settings readback confirms both model and effort before a fixed Turn`,async t=>{
   const priorRevisionId='00000000-0000-4000-8000-000000000201';
   const revisionId='00000000-0000-4000-8000-000000000202';
   const operationId='00000000-0000-4000-8000-000000000203';
   const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'model-effort'],
-    expectedVersion:'codex-cli 0.166.0-alpha.5.1',authorizeExecutionProfileActivation:async()=>true,
+    expectedVersion,authorizeExecutionProfileActivation:async()=>true,
     verifyBinding:async()=>true});
   t.after(()=>adapter.close());await adapter.open();
   const prior:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,
@@ -731,9 +732,10 @@ test('pinned native settings readback confirms both model and effort before a fi
   assert.equal((await adapter.inspect(revised) as {observedTurnStarts:number}).observedTurnStarts,1);
 });
 
-test('a restarted native owner loads the original Thread before updating model and effort',async t=>{
+for(const expectedVersion of ['codex-cli 0.166.0-alpha.5.1','codex-cli 0.166.0-alpha.6'] as const)
+test(`${expectedVersion} a restarted native owner loads the original Thread before updating model and effort`,async t=>{
   const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'model-effort-unloaded'],
-    expectedVersion:'codex-cli 0.166.0-alpha.5.1',authorizeExecutionProfileActivation:async()=>true,
+    expectedVersion,authorizeExecutionProfileActivation:async()=>true,
     verifyBinding:async()=>true});
   t.after(()=>adapter.close());await adapter.open();
   const prior:RuntimeBinding={sessionId:spec.sessionId,roleId:spec.roleId,projectId:spec.projectId,

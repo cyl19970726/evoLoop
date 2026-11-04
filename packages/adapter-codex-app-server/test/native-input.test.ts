@@ -12,7 +12,7 @@ const fixture=resolve(import.meta.dirname,'native-input-fixture.mjs');
 const spec:RuntimeSessionSpec={actorId:'owner',sessionId:'session-1',roleId:'role-1',projectId:'project-1',
   cwd:'/tmp/evoloop-fixture',authorizationScope:'task:fixture',model:'gpt-6-sol',
   sandbox:'danger-full-access',approvalPolicy:'never'};
-const modernVersions=['codex-cli 0.164.0-alpha.11.1','codex-cli 0.166.0-alpha.5.1'] as const;
+const modernVersions=['codex-cli 0.164.0-alpha.11.1','codex-cli 0.166.0-alpha.5.1','codex-cli 0.166.0-alpha.6'] as const;
 const pending=<T>(subscribe:(resolve:(value:T)=>void)=>void):Promise<T>=>
   new Promise((resolveValue,reject)=>{
     const timer=setTimeout(()=>reject(new Error('fixture event timeout')),2_000);
