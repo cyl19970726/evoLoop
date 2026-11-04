@@ -173,7 +173,7 @@ test("repeated evaluation deduplicates and same-revision phase change expires th
     WHERE project_id=$1 AND notice_id=$2`,[projectId,item.noticeId]);
   assert.deepEqual(stale.rows[0],{state:"blocked",blocked_reason:"ATTENTION_SOURCE_EXPIRED"});
 });
-test("one running Run keeps its watch notice and queued message through unknown observation, then retires on clear",async()=>{
+test("one running Run keeps its watch notice and queued message through unknown observation, then retires on clear",async t=>{
   const attentionTaskId=randomUUID(),attentionRevisionId=randomUUID(),attentionBasisId=randomUUID();
   const attentionDocumentId=randomUUID(),attentionDocumentRevisionId=randomUUID();
   const sessionId=randomUUID(),leaderSessionId=randomUUID(),runId=randomUUID(),turnId=`turn-${runId}`;
@@ -296,6 +296,10 @@ test("one running Run keeps its watch notice and queued message through unknown 
   assert.equal((await pool.query(`SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2`,
     [projectId,original.message_id])).rows[0].state,"processing",
     "a started message keeps its original processing history after source expiry");
+  t.diagnostic(JSON.stringify({fixture:true,taskId:attentionTaskId,runId,itemId:item.id,
+    noticeId, messageId:original.message_id,postOperationId:original.operation_id,
+    processingId:processing.id,pending:"unknown held, same IDs restored",
+    linked:"unknown held, same message started once",clear:"processing retained"}));
 });
 test("indexed scan skips terminal history but revisits terminal Tasks with open items for cleanup",async()=>{
   const endedTaskId=randomUUID(),endedRevisionId=randomUUID(),endedDocId=randomUUID(),endedDocRevId=randomUUID();
