@@ -146,6 +146,20 @@ test("a newer Task revision can assign the same Session for a distinct round", (
   assert.equal(value.timing.current.source?.id, "new-assignment");
 });
 
+test("a same-time assignment without a shared reservation operation still supersedes the Run", () => {
+  const value = leaderWorkTaskFromRow(row([
+    event("task", "rev-3", 0, { state: "in_progress", taskVersion: 9 }),
+    event("run_reserved", "run-3", 1, { targetId: "session", taskVersion: 9, sequence: 10 }),
+    event("assignment", "separate-assignment", 1,
+      { state: "assigned", targetId: "session", taskVersion: 9, sequence: 11 }),
+    event("run_bound", "run-3", 2, { taskVersion: 9 }),
+  ], { latest_run_state: "running", delivery_id: null }) as never, at(3));
+  assert.equal(value.timing.current.stage, "awaiting_ack");
+  assert.equal(value.timing.current.source?.id, "separate-assignment");
+  assert.ok(!value.timing.rounds.flatMap(round => round.intervals).some(interval =>
+    interval.stage === "running" && interval.source?.id === "run-3"));
+});
+
 test("a failed Run can be reassigned to the same Session and revision without reviving its old ack", () => {
   const value = leaderWorkTaskFromRow(row([
     event("task", "rev-3", 0, { state: "in_progress", taskVersion: 9 }),
