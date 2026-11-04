@@ -1,4 +1,63 @@
 /* Task production layout: readable six-column scan, persistent summary, article-first detail. */
+.task-timing {
+  min-width: 0;
+  color: #475a76;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.task-timing-current {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task-timing-current strong { color: #243954; font-size: 14px; }
+.task-timing-current span, .task-timing-facts dd, .task-timing-rounds li { overflow-wrap: anywhere; }
+.task-timing-unavailable { margin: 0; color: #697991; font-size: 13px; }
+.task-timing-facts { display: grid; gap: 9px; margin: 16px 0; }
+.task-timing-facts > div { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 12px; }
+.task-timing-facts dt { color: #687992; }
+.task-timing-facts dd { min-width: 0; margin: 0; color: #273c59; }
+.task-timing-rounds summary { cursor: pointer; color: var(--primary); }
+.task-timing-rounds ol { padding-left: 22px; }
+.task-timing-rounds ul { padding-left: 18px; }
+.task-list-stage-time { display: block; overflow-wrap: anywhere; }
+.session-current-task-timing { min-width: 0; margin-top: 8px; }
+.task-attention-list-status { padding: 8px 14px; color: #79562d; font-size: 13px; }
+.task-attention-list-link { display: inline-block; margin-right: 8px; color: #835922; }
+.task-attention-row { margin-top: 7px; font-size: 13px; }
+.task-attention-panel { min-width: 0; scroll-margin-top: 80px; }
+#task-attention { grid-column: 1 / -1; min-width: 0; }
+.task-attention-state { margin: 0 0 10px; font-weight: 650; color: #614520; }
+.task-attention-items { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.task-attention-items > li { display: grid; gap: 5px; padding: 12px; border: 1px solid #d9dfe9; border-left: 3px solid #b58c54; border-radius: 5px; }
+.task-attention-items span { font-size: 13px; color: #596a82; }
+.task-attention-items details summary { cursor: pointer; }
+.task-attention-items pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-attention-panel form { display: grid; gap: 10px; margin: 12px 0; }
+.task-attention-panel label { display: grid; gap: 4px; min-width: 0; font-size: 13px; color: #52647e; }
+.task-attention-panel input, .task-attention-panel select, .task-attention-panel textarea { width: 100%; min-width: 0; }
+.task-attention-panel button { justify-self: start; min-height: 40px; }
+.task-attention-handoff-toggle { display: flex !important; align-items: center; gap: 8px; }
+.task-attention-handoff-toggle input { width: auto; }
+.task-attention-handoff-fields { display: grid; gap: 10px; }
+.task-attention-stale { padding: 9px 12px; border-left: 3px solid #b58c54; background: #f8f4ed; }
+.task-attention-followup { margin-top: 20px; border-top: 1px solid #dce3ee; padding-top: 14px; }
+.task-attention-followup h3 { margin: 0 0 10px; font-size: 16px; }
+.task-attention-followup p { margin: 5px 0; overflow-wrap: anywhere; }
+
+@media (min-width: 801px) {
+  .task-attention-followup > form, .task-attention-handoff-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-attention-handoff-toggle, .task-attention-handoff-fields, .task-attention-followup form > h3,
+  .task-attention-followup form > p { grid-column: 1 / -1; }
+}
+
+@media (max-width: 480px) {
+  .task-timing-facts > div { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  .task-timing-rounds ol { padding-left: 18px; }
+}
+
 .work-index.task-index-view {
   width: 100%;
   max-width: none;

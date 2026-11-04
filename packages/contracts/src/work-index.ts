@@ -90,6 +90,41 @@ export interface LeaderWorkDeliveryFact {
   observationKind: "human" | "agent" | null;
 }
 
+export type LeaderWorkTimingStage = "unassigned" | "awaiting_ack" | "awaiting_run" |
+  "run_reserved" | "running" | "awaiting_submission" | "awaiting_delivery" |
+  "awaiting_acceptance" | "awaiting_publication" | "rework" | "blocked" | "closed" | "cancelled" | "unknown";
+export interface LeaderWorkTimingSource { kind: string; id: string }
+export interface LeaderWorkWaitingFor {
+  kind: "session" | "consumer" | "leader" | "publisher" | "user" | "task" | "unknown";
+  id: string | null;
+}
+export interface LeaderWorkTimingInterval {
+  stage: LeaderWorkTimingStage;
+  startedAt: string | null;
+  endedAt: string | null;
+  source: LeaderWorkTimingSource | null;
+  waitingFor: LeaderWorkWaitingFor;
+}
+/** Read-only Task timeline. Null times and unknown sources are gaps, never zero elapsed time. */
+export interface LeaderWorkTaskTiming {
+  /** Creation and entry to todo are one Task action; this does not assert code publication. */
+  createdAt: string | null;
+  publication: { at: string | null; source: "unknown" | "explicit" };
+  /** May show an explicit publication wait after Task closure; closed round duration remains fixed. */
+  current: LeaderWorkTimingInterval & { elapsedMs: number | null };
+  rounds: Array<{
+    number: number; startedAt: string | null; endedAt: string | null;
+    elapsedMs: number | null; intervals: LeaderWorkTimingInterval[];
+  }>;
+  latestEffectiveProgress: { kind: string; sourceId: string; at: string } | null;
+  /** Native current Turn activity, only when its source binds this exact Task and Run. */
+  executionActivity: {
+    runId: string; kind: "native_turn"; at: string; observedAt: string;
+    freshness: "live" | "stale" | "unknown";
+  } | null;
+  observedAt: string;
+}
+
 /** One current Task projection. Facts remain authoritative in the Task and related records. */
 export interface LeaderWorkTask {
   kind: "task";
@@ -139,6 +174,7 @@ export interface LeaderWorkTask {
     eventName: string;
     changedAt: string;
   } | null;
+  timing: LeaderWorkTaskTiming;
   /** Stable identity for a reviewed action on this exact observed Task version. */
   actionKey: string;
 }
@@ -175,7 +211,7 @@ export interface LeaderWorkDocument {
 export interface LeaderWorkChange {
   sequence: number;
   entityKind: "task" | "document" | "assignment" | "delivery" | "observation" |
-    "closure" | "run" | "impact" | "queue" | "plan" | "dependency" | "review";
+    "closure" | "run" | "submission" | "impact" | "queue" | "plan" | "dependency" | "review";
   entityId: string;
   taskId: string | null;
   documentId: string | null;

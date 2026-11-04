@@ -119,6 +119,12 @@ npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50
 npm run --silent cli -- work leader --project "$PROJECT_ID" --documents
 npm run --silent cli -- work leader changes --project "$PROJECT_ID"
 npm run --silent cli -- work leader changes --project "$PROJECT_ID" --cursor "$WORK_CHANGE_CURSOR"
+npm run --silent cli -- work task "$TASK_ID" --project "$PROJECT_ID"
+npm run --silent cli -- work attention --project "$PROJECT_ID" --state open --limit 50
+npm run --silent cli -- work attention --project "$PROJECT_ID" --phase awaiting_publication --signal stage_overdue --waiting-on-kind publisher
+npm run --silent cli -- work attention task "$TASK_ID" --project "$PROJECT_ID"
+npm run --silent cli -- work attention item "$ATTENTION_ITEM_ID" --project "$PROJECT_ID"
+npm run --silent cli -- work attention thresholds --project "$PROJECT_ID"
 npm run --silent cli -- request schema work.plan.set
 npm run --silent cli -- request schema work.dependencies.set
 npm run --silent cli -- request schema work.review.set
@@ -132,6 +138,10 @@ npm run --silent cli -- request work.review.set --project "$PROJECT_ID" --id "$T
 `work timeline` 读取与工作台同一条受权 Session 时间线；`--source` 可选 `both`（默认）、`native` 或 `messages`。响应的 `nextCursor` 与 `messagesCursor` 分别续读原生历史和已保存消息；仅传回实际返回的游标，不把两者合为一个位置。`partial`、`limitations`、`unsupportedKinds`、每条记录的时间与来源都原样保留。`work item` 用返回的 `nativeItemId` 和 `turnId` 选择单条原生记录；公开 Agent 正文和工具原始证据由服务分别按现行权限判断，CLI 不另开原生连接。`work updates` 的 `--after` 使用本服务返回的 `live.cursor`；默认带 `waitMs=0` 即时读取，可用 `--wait-ms 0..10000` 有界等待新更新，默认 CLI 请求期限 15 秒可覆盖最多 10 秒的服务等待与回包。`resetRequired` 表示应重新读时间线，更新流不是跨进程可重放的完整历史。服务拒绝或不可用时，CLI 将其错误正文放在 stderr 的 `error.data`，不改写为“空历史”。
 
 `work leader` 是 Leader 的当前工作入口。它从 Task 四态、assignment、最近 Run、当前 TaskRevision 的 Delivery、声明消费者的使用观察、待复核依据、依赖和队列 hold 派生阶段与下一责任；返回值含当前 Task version/revision、创建／业务变化／实际开始／完成时间和可选的计划开始、截止、优先级。依赖只在其前置 Task 的当前修订有 Task closure 或同修订 accepted release 时视为满足，Run 结束不能替代。计划字段不决定实际排序，结果按风险阶段、截止、显式优先级和稳定对象次序读取。
+
+`work task` 给一项 Task 的时间投影：创建、各轮阶段起止、当前阶段停留、最新有据业务进展、仅属于当前 Task/Run 的原生活动和观测时间。缺失来源是未知，不把 Session 正在做另一项 Task 算作本项进展。`work attention` 列持久关注项，支持 `--task`、`--phase`、`--signal`、`--waiting-on-kind`、`--waiting-on-id`、`--state` 和有界续页；`work attention task` 读该 Task 的跟进/发布交接历史，`work attention item` 读一项关注的事件，`work attention thresholds` 读项目试行门槛及覆盖。时间门槛只要求核查，不代表 Run 失败，也不会自动取消、重试、封存或签消息已读。保存、原生送达、本人 read 和实际跟进分别核。业务口径与可调初值见 [Task 时间与关注](task-stage-attention.md)。
+
+有项目 `write` 和 `review` 权限的负责人可先读 `command schema task.attention.thresholds.set`、`task.attention.followUp.set`、`task.attention.publication.record`、`task.attention.resolve`，再用 `command run PRIVATE_JSON` 提交。跟进固定当前 Task version/revision 与跟进版本；发布准备的交接需写明责任方和固定产物，真正发布另记时间与来源。跟进动作 `checked`、`waiting`、`acted` 均保留审计历史，重复检查不刷新业务进展。响应不明时核原 operation 与同一正文，不换 ID 猜测执行结果。
 
 Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它包含本次读取的持久变化序号和数字偏移，UUID 只作对象身份，不作为时间或变化水位。续页前若项目出现新的 Task/Document/assignment/Run/交付/观察/关闭/计划/依赖变化，接口返回 `WORK_INDEX_CHANGED`，不得拼接旧页并声称完整。`work leader changes` 以 `leader_work_change` 的递增序号读取变化，调用者保留最后处理的序号；该读取本身没有派发副作用，实际 Task 分派仍使用既有 assignment/queue 命令与稳定 operation ID，重读不会自动建 Task 或 Run。
 

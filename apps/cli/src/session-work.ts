@@ -26,6 +26,20 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
     case "assignment": path = `/tasks/${id()}/assignment${options.has("history") ? "/history" : ""}`;
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
+    case "task": path = `/work-management/tasks/${id()}`; allowed = []; break;
+    case "attention": {
+      const target = words[1];
+      if (!target) {
+        path = "/task-attention/items"; allowed = ["task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "limit", "cursor"];
+      } else if (target === "task") {
+        path = `/tasks/${z.uuid().parse(words[2])}/attention`; allowed = [];
+      } else if (target === "item") {
+        path = `/task-attention/items/${z.uuid().parse(words[2])}`; allowed = [];
+      } else if (target === "thresholds") {
+        path = "/task-attention/thresholds"; allowed = ["stage", "phase"];
+      } else throw new Error("Use work attention [task TASK_UUID|item ITEM_UUID|thresholds].");
+      break;
+    }
     case "leader":
       if (words[1] === "changes") {
         path = "/work-management/changes";
@@ -40,9 +54,10 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
         if (options.has("closed")) query.set("includeClosed", "true");
       }
       break;
-    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes|notices]|history KEY|timeline KEY|item KEY ITEM_ID|updates KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
+    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes|notices]|task UUID|attention [task UUID|item UUID|thresholds]|history KEY|timeline KEY|item KEY ITEM_ID|updates KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
   }
-  const count = kind === "list" ? 1 : kind === "changes" && !words[1] ? 1 :
+  const count = kind === "attention" ? (!words[1] ? 1 : words[1] === "thresholds" ? 2 : 3) :
+    kind === "list" ? 1 : kind === "changes" && !words[1] ? 1 :
     kind === "leader" ? (words[1] === "changes" || words[1] === "notices" ? 2 : 1) : kind === "item" ? 3 : 2;
   if (words.length !== count) throw new Error("Unexpected Session work arguments.");
   for (const [name, value] of options) {
@@ -50,8 +65,14 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
     if (!allowed.includes(name)) throw new Error(`--${name} does not apply to work ${kind}.`);
     if (name === "history" || name === "documents" || name === "closed") continue;
     if (typeof value !== "string") throw new Error(`--${name} requires a value.`);
-    if (name === "limit") query.set(name, String(z.coerce.number().int().min(1).max(kind === "changes" || kind === "leader" ? 100 : 50).parse(value)));
+    if (name === "limit") query.set(name, String(z.coerce.number().int().min(1).max(kind === "changes" || kind === "leader" || kind === "attention" ? 100 : 50).parse(value)));
     else if (name === "task") query.set("taskId", z.uuid().parse(value));
+    else if (name === "state") query.set(name, z.enum(["open", "resolved"]).parse(value));
+    else if (name === "stage") query.set("stageId", z.uuid().parse(value));
+    else if (name === "phase") query.set(name, z.enum(["unassigned", "awaiting_ack", "awaiting_run", "run_reserved", "running", "awaiting_submission", "awaiting_delivery", "awaiting_publication", "awaiting_acceptance", "rework", "blocked", "closed", "cancelled", "unknown"]).parse(value));
+    else if (name === "signal") query.set(name, z.enum(["stage_overdue", "activity_without_progress", "observation_gap"]).parse(value));
+    else if (name === "waiting-on-kind") query.set("waitingOnKind", z.enum(["session", "consumer", "leader", "publisher", "user", "task", "unknown"]).parse(value));
+    else if (name === "waiting-on-id") query.set("waitingOnId", z.string().trim().min(1).max(500).parse(value));
     else if (name === "membership") query.set(name, z.enum(["current", "historical", "unclassified", "all"]).parse(value));
     else if (name === "importance") query.set(name, z.enum(["important", "all"]).parse(value));
     else if (name === "source") query.set(name, z.enum(["both", "native", "messages"]).parse(value));

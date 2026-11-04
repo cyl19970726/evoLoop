@@ -393,6 +393,11 @@
       "group": "开发与维护"
     },
     {
+      "path": "docs/development/task-stage-attention.md",
+      "title": "Task 阶段时间与关注",
+      "group": "开发与维护"
+    },
+    {
       "path": "docs/research/design-review-20261020.md",
       "title": "多角度设计审阅与首片实测",
       "group": "研究 · 综合判断"

@@ -2,6 +2,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageTransaction } from "@evoloop/contracts/session-messages";
 import { DomainError } from "@evoloop/contracts/ports";
+import { taskAttentionNoticeCurrent } from "./task-attention.js";
 
 const iso = (v: Date | string): string => v instanceof Date ? v.toISOString() : v;
 const nativeEpoch = (value: unknown): number | null => {
@@ -204,11 +205,18 @@ export class PgSessionMessages implements SessionMessageTransaction {
         AND target_kind='owned' AND state='queued')) AS occupied`,[this.projectId,sessionId,includeQueued]);
     if(r.rows[0]?.occupied)throw new DomainError('SESSION_BUSY','Session has an active or unresolved turn');
   }
-  async assertCurrentLeaderTodo(messageId:string):Promise<void>{
-    const source=await this.client.query(`SELECT task_id,task_revision_id,state FROM leader_result_notice
-      WHERE project_id=$1 AND message_id=$2 AND kind='task_todo'`,[this.projectId,messageId]);
+  async assertCurrentLeaderSource(messageId:string):Promise<void>{
+    const source=await this.client.query(`SELECT task_id,task_revision_id,state,kind,notice_id FROM leader_result_notice
+      WHERE project_id=$1 AND message_id=$2 AND kind IN ('task_todo','task_attention')`,[this.projectId,messageId]);
     if(!source.rows[0])return;
     const notice=source.rows[0];
+    if(notice.kind==='task_attention'){
+      const state=await taskAttentionNoticeCurrent(this.client,this.projectId,notice.notice_id);
+      if(notice.state!=='linked'||state!=='current')
+        throw new DomainError(state==='unknown'?'ATTENTION_SOURCE_UNKNOWN':'ATTENTION_SOURCE_EXPIRED',
+          state==='unknown'?'Attention source observation is temporarily unknown':'Fixed attention source is no longer current');
+      return;
+    }
     const task=await this.client.query(`SELECT state,current_revision_id FROM task
       WHERE project_id=$1 AND task_id=$2 FOR UPDATE`,[this.projectId,notice.task_id]);
     const current=task.rows[0];

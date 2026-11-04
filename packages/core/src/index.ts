@@ -1,5 +1,7 @@
 import { reviewMetadata, validatePreviousReview } from "./documents/organization-review.js";
 import { commandSchema } from "@evoloop/contracts";
+import { applyTaskAttention } from "./task-attention-command.js";
+export { assessTaskAttention, trialAttentionThreshold, trialAttentionThresholdMs } from "./task-attention.js";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
   DocumentDetail, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
@@ -118,6 +120,10 @@ export class WorkflowService {
     const command = parsed.data;
     const permission = this.commandPermission(command);
     requirePermission(principal, command.projectId, permission);
+    if (command.type.startsWith("task.attention.")) {
+      requirePermission(principal, command.projectId, "read");
+      requirePermission(principal, command.projectId, "write");
+    }
     // An explicit stage decision needs review even when replaying an earlier operation.
     if (command.type === "task.update" && command.stageId !== undefined)
       requirePermission(principal, command.projectId, "review");
@@ -172,6 +178,7 @@ export class WorkflowService {
   }
 
   private commandPermission(command: Command): "write" | "review" {
+    if (command.type.startsWith("task.attention.")) return "review";
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume'||
       command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
       command.type==='session.message.manualStop')return 'review';
@@ -183,6 +190,9 @@ export class WorkflowService {
   }
 
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
+    if (command.type.startsWith("task.attention."))
+      return applyTaskAttention(tx, command as import("@evoloop/contracts").TaskAttentionCommand,
+        principal.actorId, now);
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("session.message."))

@@ -17,7 +17,7 @@ import { DeliveryArtifact, DeliveryObservation, DeliveryPanel, useDeliveryNames 
 import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskListReturn, taskRunFromHash, taskSectionFromHash, taskSessionReturn } from "../orchestration/navigation";
-import { LeaderTaskFacts } from "./LeaderTaskFacts";
+import { LeaderTaskFacts, TaskAttention, TaskTiming } from "./LeaderTaskFacts";
 import { leaderPhaseLabel, leaderProjectionMatchesTask } from "./leaderWorkLoad";
 import "./task-page.css";
 import "./task-experience.css";
@@ -204,6 +204,13 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     return () => window.cancelAnimationFrame(frame);
   }, [detail, id, projectId, selectedRevision, tab, landingVersion]);
   useEffect(() => {
+    if (!active || !leaderTask || !detail || detail.task.id !== id || selectedRevision) return;
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    if (params.get("section") !== "attention" || window.location.hash.split("?")[0] !== href(projectId, "task", id)) return;
+    const frame = window.requestAnimationFrame(() => document.getElementById("task-attention")?.scrollIntoView({ block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, leaderTask, detail, id, projectId, selectedRevision]);
+  useEffect(() => {
     let active = true;
     setError(""); setReading(true);
     api(token).task(projectId, id).then(value => {
@@ -354,6 +361,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           <dl className="task-result-facts">
             <div><dt>主进展</dt><dd>{progressLabel}</dd></div>
             <div><dt>下一责任</dt><dd>{leaderTask?.nextAction ?? "打开运行关联核对当前工作安排"}<small>{responsibilityLabel}</small></dd></div>
+            <div><dt>阶段时间与当前关注</dt><dd><TaskTiming timing={leaderTask?.timing} /><button type="button" className="quiet" onClick={() => document.getElementById("task-attention")?.scrollIntoView({ block: "start" })}>查看关注与跟进</button></dd></div>
             <div><dt>固定成果</dt><dd>{latest ? <DeliveryArtifact delivery={latest} projectId={projectId} name={deliveryNames[latest.id]} /> : <span>{deliveries.length ? "当前修订尚无交付；历史交付不沿用" : "当前修订尚无交付"}</span>}</dd></div>
             <div><dt>技术检查</dt><dd>{latest ? <><strong>{latest.technicalResult === "passed" ? "通过" : "失败"}</strong><small>登记于 {date(latest.createdAt)}</small></> : "尚无当前交付"}</dd></div>
             <div><dt>实际使用范围</dt><dd>{latestObservations.length
@@ -367,7 +375,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <section className="panel task-focus"><h2>关联过程文档</h2>{detail.links.length ? <ul className="basis-list task-basis-list">{detail.links.map(link => <li key={link.id}><a href={href(projectId, "document", link.documentId)}>{basisDocuments[link.documentId]?.document.title ?? `文档 ${link.documentId.slice(0, 8)}`} →</a></li>)}</ul> : <p className="empty">此任务没有另行关联的过程文档。</p>}{basisError && <Alert kind="error">部分关联文档名称暂不可读，仍可按链接打开：{basisError}</Alert>}</section>
 
         </aside>
-        {leaderTask && <details className="task-arrangement-details"><summary>计划、通知与依赖</summary><LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} token={token} responsibleName={responsibleName} /></details>}
+        {leaderTask && <div id="task-attention"><TaskAttention key={`${projectId}:${id}:${detail.task.currentRevisionId}`} token={token} projectId={projectId} detail={detail} leader={leaderTask}
+          canWrite={canReview && context.principal.permissions.includes("write")} blocked={blockedByUnknown || reading || !!error || !!context.blocked}
+          onAttempt={onAttempt} onKnown={onKnown} onChanged={onChanged} /></div>}
+        {leaderTask && <details className="task-arrangement-details" id="task-timing" {...(new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("section") === "timing" ? { open: true } : {})}><summary>阶段区间、计划与来源</summary><LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} token={token} responsibleName={responsibleName} /></details>}
 
       </div>
       <details className="task-provenance"><summary>职责、任务修订与评价入口</summary><p>任务固定修订 <ShortId value={detail.revision.id} /></p>    <details className="task-role-history"><summary>负责职责与同 Role 的其他会话（不代表本任务承接）</summary><TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></details>

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { SessionActivity, SessionSnapshot } from "@evoloop/contracts/session-observation";
+import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { commandSchema, type Command } from "@evoloop/contracts";
 import { ApiError, api, errorText, isUnconfirmed } from "../api";
 import { ActionForm, option, type MutationContext } from "../workflow/ActionForm";
@@ -23,6 +24,7 @@ import { SessionIdentityControl } from "./SessionIdentityControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
+import { TaskTiming } from "../workflow/LeaderTaskFacts";
 import { SessionTimeline, clearSessionTimelineViews } from "./SessionTimeline";
 import { clearSessionTimelineReads } from "./useSessionTimeline";
 import "./workspace.css";
@@ -91,6 +93,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [loading, setLoading] = useState(true);
   const [historyBusy, setHistoryBusy] = useState(false);
   const [readAgain, setReadAgain] = useState(0);
+  const [taskTimingRead, setTaskTimingRead] = useState<{ projectId: string; taskId: string; revisionId: string; value: LeaderWorkTask | null; error: string } | null>(null);
   const [accessReadAgain, setAccessReadAgain] = useState(0);
   const [recoveryRead, setRecoveryRead] = useState<RecoveryRead>({ status: "loading" });
   const epoch = useRef(0);
@@ -103,6 +106,22 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const cursor = useRef<string | null>(null);
   const requestVersion = useRef(0);
   const readKey = `${context.token}\0${context.projectId}\0${sessionKey}`;
+  const currentTaskId = snapshot?.session.key === sessionKey ? snapshot.currentWork?.id : undefined;
+  const currentTaskRevision = snapshot?.session.key === sessionKey ? snapshot.currentWork?.revisionId : undefined;
+  useEffect(() => {
+    let live = true;
+    setTaskTimingRead(null);
+    if (!active || !currentTaskId || !currentTaskRevision) return () => { live = false; };
+    api(context.token).leaderTask(context.projectId, currentTaskId).then(value => {
+      if (!live) return;
+      if (value.taskId !== currentTaskId || value.currentRevisionId !== currentTaskRevision)
+        throw new Error("任务阶段响应与当前 Task 修订不符");
+      setTaskTimingRead({ projectId: context.projectId, taskId: currentTaskId, revisionId: currentTaskRevision, value, error: "" });
+    }).catch(cause => {
+      if (live) setTaskTimingRead({ projectId: context.projectId, taskId: currentTaskId, revisionId: currentTaskRevision, value: null, error: errorText(cause) });
+    });
+    return () => { live = false; };
+  }, [active, context.token, context.projectId, currentTaskId, currentTaskRevision, readAgain, refresh]);
   const pollInterval = snapshot?.session.key === sessionKey && snapshot.session.kind !== "owned" && snapshot.session.busy === false ? 15000 : 5000;
   useEffect(() => {
     const sync = () => {
@@ -287,6 +306,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   if (!current) return <div className="content"><h1>Session</h1>{loading ? <p>正在读取会话工作区…</p> : <Alert kind="error">会话暂不可读取：{error || "未找到当前项目的会话"}。<button onClick={() => setReadAgain(value => value + 1)}>重试</button></Alert>}</div>;
   const session = current.session;
   const work = current.currentWork;
+  const exactTaskTiming = work && taskTimingRead?.projectId === context.projectId && taskTimingRead.taskId === work.id && taskTimingRead.revisionId === work.revisionId
+    ? taskTimingRead : null;
   const native = session.kind === "owned" && session.target.kind === "owned"
     ? nativeInputPresentation(current.nativeInputRequests, session.target.sessionId)
     : { questions: [], error: null };
@@ -365,6 +386,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
           <span>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
             : idleResult ? `最近关联交付 · 技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)}${current.metadata.partial ? " · 已读范围有限" : ""}`
               : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
+          {work && <div className="session-current-task-timing">{exactTaskTiming?.error
+            ? <small>此 Task 阶段时间暂不可读：{exactTaskTiming.error}</small>
+            : <TaskTiming timing={exactTaskTiming?.value?.timing} />}</div>}
         </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
         <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>目标模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>目标强度</dt><dd>{executionProfile?.revision.reasoningEffort??"未配置"}</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <><p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>{session.target.kind === "owned"&&<SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status==='ready'?recoveryRead.view:null} busy={session.busy===true} onApplied={()=>setReadAgain(value=>value+1)}/>}</>}
           <details className="session-identity-settings"><summary>调整颜色与图标</summary><SessionIdentityControl context={context} session={session} onApplied={() => setReadAgain(value => value + 1)} /></details>

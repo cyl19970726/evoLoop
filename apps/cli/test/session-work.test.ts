@@ -30,8 +30,24 @@ test("Leader work discovery has runnable bounded Task, Document and change comma
   assert.equal(sessionWorkPath(["leader", "changes"], new Map()), "/work-management/changes");
   assert.equal(sessionWorkPath(["leader", "notices"], new Map([["task", id], ["limit", "25"]])),
     `/work-management/notices?taskId=${id}&limit=25`);
+  assert.equal(sessionWorkPath(["task", id], new Map()), `/work-management/tasks/${id}`);
+  assert.throws(() => sessionWorkPath(["task", `${id}/other`], new Map()));
   assert.throws(() => sessionWorkPath(["leader", "notices"], new Map([["task", "other"]])));
   assert.throws(() => sessionWorkPath(["leader", "notices"], new Map([["documents", true]])));
+});
+test("attention reads retain Task and item identity with bounded filters", () => {
+  assert.equal(sessionWorkPath(["attention"], new Map([["task", id], ["state", "open"], ["limit", "100"]])),
+    `/task-attention/items?taskId=${id}&state=open&limit=100`);
+  assert.equal(sessionWorkPath(["attention"], new Map([["phase", "awaiting_publication"],
+    ["signal", "stage_overdue"], ["waiting-on-kind", "publisher"], ["waiting-on-id", "release-team"]])),
+    "/task-attention/items?phase=awaiting_publication&signal=stage_overdue&waitingOnKind=publisher&waitingOnId=release-team");
+  assert.equal(sessionWorkPath(["attention", "task", id], new Map()), `/tasks/${id}/attention`);
+  assert.equal(sessionWorkPath(["attention", "item", id], new Map()), `/task-attention/items/${id}`);
+  assert.equal(sessionWorkPath(["attention", "thresholds"], new Map([["stage", id], ["phase", "awaiting_publication"]])),
+    `/task-attention/thresholds?stageId=${id}&phase=awaiting_publication`);
+  assert.throws(() => sessionWorkPath(["attention", "task", `${id}/other`], new Map()));
+  assert.throws(() => sessionWorkPath(["attention"], new Map([["state", "other"]])));
+  assert.throws(() => sessionWorkPath(["attention"], new Map([["limit", "101"]])));
 });
 test("Agent help and schemas expose common message/assignment operations without authentication", async () => {
   const run = async (args: string[]) => { let out = ""; const code = await runCli(args, {}, { stdout: s => { out += s; }, stderr: () => {} }); return { code, body: JSON.parse(out) }; };

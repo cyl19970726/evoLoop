@@ -7,6 +7,7 @@ import { PgSessionAssignments } from "../src/session-assignments.ts";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "../../core/src/task-input.ts";
 import { SessionObservationService } from "@evoloop/core/session-observation";
+import { fallbackSessionIdentity } from "@evoloop/contracts/session-identity";
 import { buildServer } from "../../../apps/coordinator/src/server.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -222,7 +223,9 @@ test("Session identities are persisted on creation and versioned without changin
   const changesBefore = await pool.query("SELECT count(*)::integer AS n FROM session_observation_change WHERE project_id=$1 AND source_table='session_profile' AND target_id=$2",[projectId,link1]);
   const other = await uow.read(projectId, reader => reader.sessionAssignments!.getSessionIdentity({ kind: "external", linkId: link2 }));
   assert.equal(before?.version, 2);
-  assert.notDeepEqual([before?.color,before?.mark],[other?.color,other?.mark]);
+  assert.deepEqual([before?.color,before?.mark],Object.values(fallbackSessionIdentity(target)));
+  assert.deepEqual([other?.color,other?.mark],
+    Object.values(fallbackSessionIdentity({ kind: "external", linkId: link2 })));
   const changed = await workflow.execute(principal, { type: "session.identity.set", projectId,
     operationId: randomUUID(), target, expectedVersion: 2, color: "teal", mark: "brackets", reason: "User selection" });
   assert.equal(changed.status, "applied");

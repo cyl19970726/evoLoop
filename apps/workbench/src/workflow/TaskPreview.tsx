@@ -10,6 +10,7 @@ import { leaderPhaseLabel } from "./leaderWorkLoad";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskExperience";
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
+import { TaskTiming } from "./LeaderTaskFacts";
 
 const empty: NonNullable<TaskDetail["deliveries"]> = [];
 
@@ -62,6 +63,12 @@ export function TaskPreview({ token, projectId, id, item, returnTo, sessionName,
       <section className="task-summary-current" aria-label="当前进展与下一责任">
         <div><span>当前进展</span><strong>{projection ? leaderPhaseLabel[projection.phase] : "工作安排尚未读回"}</strong></div>
         <div><span>下一责任</span><strong>{projection?.nextAction ?? "打开完整任务核对当前工作安排"}</strong><small>{responsibility}</small></div>
+      </section>
+      <section className="task-summary-section" aria-label="阶段时间与当前关注">
+        <h3>阶段时间与当前关注</h3>
+        <TaskTiming timing={projection?.timing} />
+        <a href={`${fullHref}&tab=overview&section=timing`}>查看时间区间与来源 <ArrowRight size={14} /></a>
+        <a href={`${fullHref}&tab=overview&section=attention`}>查看当前关注 <ArrowRight size={14} /></a>
       </section>
 
       <section className="task-summary-section task-summary-acceptance">

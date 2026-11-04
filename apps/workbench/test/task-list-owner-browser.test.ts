@@ -16,11 +16,31 @@ const offPageRole = "30000008-0000-4000-8000-000000000008";
 const taskId = "30000005-0000-4000-8000-000000000005";
 const stamp = "2026-10-25T00:00:00.000Z";
 const task = (id:string, owner:string, title:string) => ({projectId,id,version:1,currentRevisionId:id,title,content:"正文",contentDocumentId:id,contentRevisionId:id,kind:"implementation",acceptance:"确认",owner,state:"todo",createdAt:stamp});
+const timing = {createdAt:stamp,publication:{at:null,source:"unknown"},
+  current:{stage:"awaiting_publication",startedAt:stamp,endedAt:null,elapsedMs:null,source:null,
+    waitingFor:{kind:"publisher",id:null}},
+  rounds:[{number:1,startedAt:stamp,endedAt:null,elapsedMs:null,intervals:[{stage:"awaiting_publication",startedAt:stamp,endedAt:null,source:null,waitingFor:{kind:"publisher",id:null}}]}],
+  latestEffectiveProgress:null,executionActivity:null,observedAt:stamp};
+const attentionId="30000040-0000-4000-8000-000000000040";
+const oldRevision="30000041-0000-4000-8000-000000000041";
+const oldAttentionId="30000042-0000-4000-8000-000000000042";
 
 test("Task list resolves only displayed Role owners and rejects stale or failed names", {skip:!modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const {chromium} = (await import(pathToFileURL(modulePath!).href)).default;
   let currentOwner = roleA, fail = false, holdA = false, releaseA:(()=>void)|null = null, held = 0;
+  let followUp:Record<string,unknown>|null={taskId,taskRevisionId:oldRevision,version:1,waitingOn:{kind:"leader",id:null},
+    decision:"waiting",actionTaken:"旧修订待核",evidenceRef:null,nextCheckAt:stamp,releaseHandoff:null,publication:null,
+    actorId:"reader",reason:"历史安排",updatedAt:stamp};
+  const followUpHistory:Record<string,unknown>[]=[{...followUp}];
+  let attentionState:"open"|"resolved"="open", attentionVersion=1;
+  const item=()=>({id:attentionId,taskId,taskRevisionId:taskId,stageId:null,phase:"awaiting_publication",signal:"stage_overdue",
+    waitingOn:{kind:"publisher",id:null},state:attentionState,severity:"watch",version:attentionVersion,
+    firstDetectedAt:stamp,lastDetectedAt:stamp,sourceObservedAt:stamp,evidence:{stage:"awaiting_publication",elapsedMs:null},
+    noticeId:null,resolvedAt:attentionState==="resolved"?stamp:null,resolutionReason:null});
+  const oldItem=()=>({...item(),id:oldAttentionId,taskRevisionId:oldRevision,waitingOn:{kind:"consumer",id:"历史消费者"},
+    state:"open",version:1});
   const reads:string[] = [];
+  const attentionReads:string[]=[];
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,"http://127.0.0.1");
     if (url.pathname === "/__fixture/owner") {currentOwner=url.searchParams.get("id")!;res.end("ok");return;}
@@ -29,13 +49,36 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
     if (url.pathname === "/__fixture/held") {res.end(String(held));return;}
     if (url.pathname === "/__fixture/release") {releaseA?.();res.end("ok");return;}
     if (url.pathname === "/__fixture/reads") {res.end(JSON.stringify(reads));return;}
+    if (url.pathname === "/__fixture/reset-attention") {followUp={...followUpHistory[0]};followUpHistory.splice(1);
+      attentionState="open";attentionVersion=1;res.end("ok");return;}
     if (url.pathname.startsWith("/api/")) {
       const p=`/api/projects/${projectId}`; let value:unknown={items:[],nextCursor:null}, status=200;
-      if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["read","review","write"]},capabilities:{}};
       else if (url.pathname === p) value={id:projectId,title:"夹具项目",createdAt:stamp};
       else if (url.pathname === `${p}/tasks`) value=url.searchParams.has("cursor")
         ? {items:[task("30000009-0000-4000-8000-000000000009",offPageRole,"跨页任务")],nextCursor:null}
         : {items:[task(taskId,currentOwner,"澄清分工页待办"),task("30000006-0000-4000-8000-000000000006","acceptance-owner","逻辑责任者"),task("30000007-0000-4000-8000-000000000007",unknown,"未知职责")],nextCursor:"next"};
+      else if (url.pathname === `${p}/tasks/${taskId}`) {
+        const currentTask=task(taskId,currentOwner,"澄清分工页待办");
+        value={task:currentTask,revision:{...currentTask,taskId,id:taskId,actorId:"reader",reason:"fixture",createdAt:stamp},
+          basis:null,links:[],impacts:[],decisions:[],proposal:null,judgements:[],deliveries:[],observations:[],closures:[]};
+      }
+      else if (url.pathname === `${p}/tasks/${taskId}/attention`) value={followUp,followUpHistory:[...followUpHistory].reverse(),
+        items:[...(attentionState==="open"?[item()]:[]),oldItem()],itemsNextCursor:null};
+      else if (url.pathname === `${p}/task-attention/items`) {attentionReads.push(url.search);value={items:[...(attentionState==="open"?[item()]:[]),oldItem()],nextCursor:null};}
+      else if (url.pathname === `${p}/task-attention/items/${attentionId}`) value={item:item(),events:[]};
+      else if (url.pathname === `${p}/references/tasks/${taskId}`) value=[];
+      else if (url.pathname === "/api/commands" && req.method==="POST") {
+        const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk as Buffer);
+        const command=JSON.parse(Buffer.concat(chunks).toString()) as Record<string,unknown>;
+        if(command.type==="task.attention.followUp.set") followUp={...followUp,...command,
+          taskRevisionId:taskId,version:Number(followUp?.version??0)+1,actorId:"reader",updatedAt:stamp,publication:null};
+        if(command.type==="task.attention.publication.record") followUp={...followUp,
+          publication:{publishedAt:command.publishedAt,publicationRef:command.publicationRef},version:Number(followUp?.version??0)+1};
+        if(command.type==="task.attention.resolve") {attentionState="resolved";attentionVersion++;}
+        if(command.type==="task.attention.followUp.set"||command.type==="task.attention.publication.record") followUpHistory.push({...followUp});
+        value={operationId:command.operationId,status:"applied",entityId:command.taskId??command.itemId,version:followUp?.version??attentionVersion};
+      }
       else if (url.pathname === `${p}/impacts`) value=[];
       else if (url.pathname === `${p}/orchestration/work-status`) value={items:(url.searchParams.get("taskIds")??"").split(",").filter(Boolean).map(taskId=>({taskId,cognition:false,hasClosure:false,readyForAcceptance:false}))};
       else if (url.pathname === `${p}/work-management/index`) value={items:[{kind:"task",taskId,version:1,
@@ -51,7 +94,13 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
         dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},
         latestProgress:{sequence:4,entityKind:"delivery",entityId:"30000032-0000-4000-8000-000000000032",
           eventName:"交付已登记",changedAt:stamp},
-        actionKey:`task:${taskId}:v1:ready:4`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
+        timing,actionKey:`task:${taskId}:v1:ready:4`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
+      else if (url.pathname === `${p}/work-management/tasks/${taskId}`) value={kind:"task",taskId,version:1,currentRevisionId:taskId,
+        workChangeSequence:4,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",nextAction:"等待维护者发布",
+        responsible:{kind:"role",id:roleA,label:"负责职责"},assignment:null,latestRun:null,delivery:null,pendingImpactCount:0,queueHold:null,
+        goal:null,stage:null,plan:null,dependencies:[],dependencyVersion:0,review:null,
+        dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},timing,
+        actionKey:`task:${taskId}:v1:ready:4`};
       else if (url.pathname.startsWith(`${p}/roles/`)) {
         const id=url.pathname.slice(`${p}/roles/`.length);reads.push(id);
         if (id===roleA && holdA) {holdA=false;held++;await new Promise<void>(resolve=>{releaseA=resolve;});}
@@ -68,6 +117,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const browser=await chromium.launch({headless:true,...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH}:{})});t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:390,height:844}});
+  const pageErrors:string[]=[];
+  page.on("pageerror", error => pageErrors.push(error.stack ?? error.message));
   await page.goto(`${base}/#/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
@@ -84,6 +135,9 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await row.locator(".task-list-kind").innerText(),/实施/);
   assert.match(await row.locator(".task-list-created").innerText(),/2026/);
   assert.match(await row.locator(".task-list-progress-time").innerText(),/交付已登记/);
+  assert.match(await row.locator(".task-list-stage-time").innerText(),/未知 · 等待 维护者/);
+  await page.locator(".task-selection .task-timing").getByText("具备发布条件，等待维护者").waitFor();
+  assert.doesNotMatch(await page.locator(".task-selection .task-timing").innerText(),/已发布|已历时 0/);
   assert.equal(await page.getByRole("button",{name:"关闭任务摘要"}).count(),0,"desktop summary stays persistent");
   await row.getByText(/负责职责 · 开发流程与规范负责人/).waitFor({timeout:5000}).catch(async()=>{
     assert.fail(`Task owner label missing: ${await row.innerText()} reads=${JSON.stringify(reads)}`);
@@ -103,8 +157,11 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("澄清分工页待办");
   await row.getByText("开发流程与规范负责人",{exact:false}).waitFor();
   assert.match(await page.locator(".task-selection-top").innerText(),/不在当前筛选结果中/);
+  await row.getByRole("button",{name:"澄清分工页待办",exact:true}).click();
+  await page.locator(".task-selection .task-timing").getByText("具备发布条件，等待维护者").waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator(".task-list-table").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await page.locator(".task-selection .task-timing").isVisible(),true);
   await fetch(`${base}/__fixture/hold`);
   await page.getByRole("button",{name:"重新读取列表"}).click();
   for (let i=0;i<30 && await (await fetch(`${base}/__fixture/held`)).text()!=="1";i++) await new Promise(resolve=>setTimeout(resolve,20));
@@ -147,4 +204,75 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const wideBody=await page.locator(".workspace-body").boundingBox();
   assert.ok(wideBody && wideBody.y<70 && wideBody.width>1400);
   if (process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT,fullPage:false});
+  await page.setViewportSize({width:1280,height:900});
+  await row.getByRole("button",{name:"澄清分工页待办",exact:true}).click();
+  await page.locator(".task-selection .task-timing").getByText("具备发布条件，等待维护者").waitFor();
+  await row.getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
+    assert.fail(`attention discovery missing: row=${await row.innerText()} status=${await page.locator(".task-attention-list-status").allInnerTexts()} reads=${attentionReads.join(" | ")} errors=${pageErrors.join(" | ")}`);
+  });
+  const detailTiming=page.locator("#task-timing");
+  await detailTiming.locator(":scope > summary").click();
+  await detailTiming.getByText("发布证据").waitFor({timeout:5000}).catch(async () => {
+    assert.fail(`timing detail missing: route=${await page.evaluate(() => location.hash)} detail=${await detailTiming.innerText({timeout:1000}).catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
+  });
+  assert.match(await detailTiming.innerText(),/未知；具备发布条件不代表已发布/);
+  assert.match(await detailTiming.innerText(),/来源未知/);
+  assert.doesNotMatch(await detailTiming.innerText(),/已发布 · 2026|历时 0/);
+  const attention=page.locator(".task-attention-panel");
+  await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
+  assert.match(await attention.innerText(),/2 项已关注/);
+  assert.match(await attention.innerText(),/等待方 消费者 · 历史消费者/);
+  assert.match(await attention.innerText(),/等待方 维护者/);
+  await attention.getByLabel("已做什么").fill("核对固定产物与发布责任");
+  await attention.getByLabel("跟进理由").fill("当前修订已具备交接条件");
+  await attention.getByLabel("登记具备发布条件，交给维护者").check();
+  await attention.getByLabel("维护者或接收方").fill("发布维护者");
+  await attention.getByLabel("待发布固定产物引用").fill("artifact:fixed-42");
+  await attention.getByLabel("交接说明").fill("核对固定产物后发布");
+  await attention.getByLabel("具备发布条件时间").fill("2026-10-25T01:00");
+  await attention.getByRole("button",{name:"保存跟进安排"}).click();
+  await attention.getByText(/具备发布条件，等待维护者/).waitFor();
+  assert.doesNotMatch(await attention.innerText(),/旧跟进属于历史 Task 修订/);
+  const desktopMetrics=await page.evaluate(() => ({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,
+    documentWidth:document.documentElement.scrollWidth}));
+  assert.equal(desktopMetrics.width,1280);assert.ok(desktopMetrics.documentWidth<=1280,JSON.stringify(desktopMetrics));
+  await attention.evaluate(el => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 70));
+  if (process.env.EVOLOOP_TASK_ATTENTION_DESKTOP_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_ATTENTION_DESKTOP_SCREENSHOT,fullPage:false});
+  if (process.env.EVOLOOP_TASK_ATTENTION_DESKTOP_FULL_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_ATTENTION_DESKTOP_FULL_SCREENSHOT,fullPage:true});
+  console.log(`Task attention desktop viewport: ${JSON.stringify(desktopMetrics)}`);
+  await page.setViewportSize({width:390,height:844});
+  await attention.getByLabel("实际发布时间").fill("2026-10-25T02:00");
+  await attention.getByLabel("发布证据引用").fill("release:fixed-43");
+  await attention.getByLabel("记录理由").fill("维护者已发布固定版本");
+  await attention.getByRole("button",{name:"记录已发布"}).click();
+  await attention.getByText(/已发布且有固定证据/).waitFor();
+  await attention.getByLabel("解决依据").waitFor();
+  assert.equal(await attention.getByLabel("解决依据").count(),1,"historical item cannot use the current Task resolve form");
+  await attention.getByLabel("解决依据").fill("发布证据已核对");
+  await attention.getByRole("button",{name:"记录已解决"}).click();
+  await attention.getByText("1 项已关注").waitFor();
+  assert.match(await attention.innerText(),/等待方 消费者 · 历史消费者/);
+  await fetch(`${base}/__fixture/reset-attention`);
+  await page.goto(`${base}/?fresh=attention-narrow#/p/${projectId}/work`);
+  await page.getByLabel("访问令牌").fill("fixture-token");
+  await page.getByRole("button",{name:"进入",exact:true}).click();
+  await row.getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
+    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => location.hash)} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.locator(".task-attention-list-link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
+  });
+  await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
+  await attention.getByLabel("已做什么").fill("窄屏核对当前修订");
+  await attention.getByLabel("跟进理由").fill("安排下一检查点");
+  await attention.getByLabel("下一检查时间").fill("2026-10-26T09:30");
+  await attention.getByRole("button",{name:"保存跟进安排"}).click();
+  await attention.getByText(/下一检查点.*2026\/10\/26/).waitFor();
+  await attention.getByLabel("解决依据").fill("当前关注已核对");
+  await attention.getByRole("button",{name:"记录已解决"}).click();
+  await attention.getByText("1 项已关注").waitFor();
+  const metrics=await page.evaluate(() => ({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,
+    documentWidth:document.documentElement.scrollWidth}));
+  assert.equal(metrics.width,390);assert.ok(metrics.documentWidth<=390,JSON.stringify(metrics));
+  await attention.evaluate(el => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 65));
+  if (process.env.EVOLOOP_TASK_ATTENTION_NARROW_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_ATTENTION_NARROW_SCREENSHOT,fullPage:false});
+  if (process.env.EVOLOOP_TASK_ATTENTION_NARROW_FULL_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_ATTENTION_NARROW_FULL_SCREENSHOT,fullPage:true});
+  console.log(`Task attention narrow viewport: ${JSON.stringify(metrics)}`);
 });

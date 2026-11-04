@@ -14,6 +14,12 @@ import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
 import { nativeInputReplyCommand } from "./native-input.js";
+import { taskAttentionCommands } from "./task-attention.js";
+export { taskAttentionThresholdsSetSchema, taskAttentionFollowUpSetSchema,
+  taskAttentionPublicationRecordSchema, taskAttentionResolveSchema,
+  taskAttentionStageSchema, taskAttentionSource } from "./task-attention.js";
+export type { TaskAttentionCommand, TaskAttentionThreshold, TaskAttentionFollowUp, TaskAttentionSignal,
+  TaskAttentionItem, TaskAttentionAssessment, TaskAttentionTimedTask } from "./task-attention.js";
 export type { NativeInputCapture, NativeInputEvent, NativeInputQuestion, NativeInputRecord, NativeInputResponse, NativeInputSource } from "./native-input.js";
 export type { ExecutionProfileSnapshot, ExecutionProfileRevision, SessionExecutionProfile, SessionRecoveryGate, SessionRecoveryDecision, SessionRecoveryView } from "./session-recovery.js";
 export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
@@ -64,6 +70,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...taskCollaborationCommands,
   ...queueCommandSchema.options,
   ...evaluationCommands,
+  ...taskAttentionCommands,
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandInput = z.input<typeof commandSchema>;

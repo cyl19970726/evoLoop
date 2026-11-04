@@ -18,6 +18,9 @@ import { verifiedOrchestrationSource } from "./orchestration.js";
 import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
+import { PgTaskAttention } from "./task-attention.js";
+export { PgTaskAttention, taskAttentionNoticeCurrent, disposeStaleTaskAttentionNotice,
+  scanTaskAttentionCandidates } from "./task-attention.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
 import type { BusinessDomain, BusinessDomainRevision, HostLink, HostLinkRevision } from "@evoloop/contracts/resident-hosts";
 import { PgResidentHosts } from "./resident-hosts.js";
@@ -109,6 +112,7 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 }
 
 class PgReader implements Reader {
+  readonly attention: PgTaskAttention;
   sessionObservation(scope: string) { return new PgSessionObservation(this.client, this.projectId, scope); }
   allocationRelations(scope: string) { return new PgAllocationRelations(this.client, this.projectId, scope); }
   readonly queue: PgResidentQueue;
@@ -127,6 +131,7 @@ class PgReader implements Reader {
   protected readonly evaluations: PgEvaluationStore;
   constructor(protected readonly client: PoolClient, protected readonly projectId: string,
     queueAuthority: QueueAuthority = {}) {
+    this.attention = new PgTaskAttention(client, projectId);
     this.references = new PgReferenceStore(client, projectId);
     this.runtime = new PgRuntimeStore(client, projectId);
     this.recovery = new PgSessionRecovery(client, projectId);

@@ -34,6 +34,8 @@ import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerLeaderNoticeRoutes, type LeaderNoticeReader } from "./work-management/leader-notice-routes.js";
+import { registerTaskAttentionRoutes } from "./task-attention/routes.js";
+import type { Pool } from "pg";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
 import { registerOrchestrationRoutes, registerPlanningSourcesRoute, registerWorkStatusRoute,
@@ -95,6 +97,7 @@ export async function buildServer(options: {
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
   leaderNotices?: LeaderNoticeReader;
+  taskAttentionPool?: Pool;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
   ordinarySubmissions?: OrdinaryRunSubmissionRoutes;
@@ -626,6 +629,7 @@ export async function buildServer(options: {
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
+  if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });
   if (options.documents) {

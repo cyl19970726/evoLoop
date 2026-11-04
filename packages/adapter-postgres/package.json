@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",
+    "@evoloop/core": "0.1.0",
     "pg": "8.23.1",
     "node-pg-migrate": "9.0.0"
   },
