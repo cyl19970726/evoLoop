@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { MutationContext } from "../src/workflow/ActionForm.tsx";
-import { LeaderTaskFacts } from "../src/workflow/LeaderTaskFacts.tsx";
+import { LeaderTaskFacts, TaskTiming } from "../src/workflow/LeaderTaskFacts.tsx";
 import { TaskWorkflow } from "../src/workflow/TaskWorkflow.tsx";
 
 const owner = "10000002-0000-4000-8000-000000000002";
@@ -48,6 +48,21 @@ test("Task actions expose planning, dependency and exact-position Leader review"
   assert.match(html, /设置前置 Task 依赖/);
   assert.match(html, /记录 Leader 处理决定/);
   assert.match(html, /已核对当前工作/);
+});
+
+test("Task timing names the actual waiting party and does not present the owner Role as Leader", () => {
+  const timing = { current: { stage: "awaiting_acceptance", startedAt: "2026-11-04T13:00:00Z",
+    endedAt: null, elapsedMs: 60_000, source: { kind: "observation", id: "used" },
+    waitingFor: { kind: "role", id: owner } }, rounds: [], createdAt: null,
+    publication: { at: null, source: "unknown" }, latestEffectiveProgress: null,
+    executionActivity: null, observedAt: "2026-11-04T13:01:00Z" };
+  const ownerHtml = renderToStaticMarkup(createElement(TaskTiming, { timing: timing as never }));
+  assert.match(ownerHtml, /等待 任务负责 Role/);
+  assert.doesNotMatch(ownerHtml, /项目 Leader/);
+  const consumerHtml = renderToStaticMarkup(createElement(TaskTiming, { timing: {
+    ...timing, current: { ...timing.current, waitingFor: { kind: "consumer", id: "qa-actor" } },
+  } as never }));
+  assert.match(consumerHtml, /等待 消费者 · qa-actor/);
 });
 
 test("Task detail exposes current plan, responsibility, consumer, source and next action", () => {

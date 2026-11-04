@@ -284,8 +284,26 @@ function taskAction(phase: LeaderWorkPhase): string {
   }
 }
 
-function taskResponsibility(row: QueryResultRow, phase: LeaderWorkPhase): LeaderWorkTask["responsible"] {
-  if (phase === "awaiting_acceptance" && row.consumer) return { kind: "consumer", id: row.consumer, label: `验收者 ${row.consumer}` };
+function taskResponsibility(row: QueryResultRow, phase: LeaderWorkPhase,
+  timing: LeaderWorkTaskTiming): LeaderWorkTask["responsible"] {
+  if (phase === "awaiting_acceptance") {
+    const waiting = timing.current.waitingFor;
+    if (waiting.kind === "consumer" && waiting.id)
+      return { kind: "consumer", id: waiting.id, label: `验收者 ${waiting.id}` };
+    if (waiting.kind === "leader" && waiting.id)
+      return { kind: "leader", id: waiting.id, label: `项目 Leader ${waiting.id}` };
+    if (waiting.kind === "role" && waiting.id)
+      return { kind: "role", id: waiting.id, label: `负责 Role ${waiting.id}` };
+    if (waiting.kind === "session" && waiting.id)
+      return { kind: "session", id: waiting.id, label: `Session ${waiting.id}` };
+    if (waiting.kind === "publisher" && waiting.id)
+      return { kind: "publisher", id: waiting.id, label: `发布维护者 ${waiting.id}` };
+    if (waiting.kind === "user" && waiting.id)
+      return { kind: "user", id: waiting.id, label: `用户 ${waiting.id}` };
+    if (waiting.kind === "task" && waiting.id)
+      return { kind: "task", id: waiting.id, label: `前置任务 ${waiting.id}` };
+    return { kind: "unknown", id: null, label: "下一责任未登记" };
+  }
   if (["running", "awaiting_delivery", "awaiting_assignment"].includes(phase) && row.assignment_target_id)
     return { kind: "session", id: row.assignment_target_id,
       label: `${row.assignment_target_kind === "owned" ? "受管 Session" : "外部 HostLink"} ${row.assignment_target_id}` };
@@ -318,7 +336,7 @@ function latestProgressEventName(row: QueryResultRow): string {
 interface TimingEvent {
   kind: string; id: string; at: string; state?: string | null;
   targetId?: string | null; runId?: string | null; deliveryId?: string | null;
-  sequence?: number | null; taskVersion?: number | null;
+  taskRevisionId?: string | null; sequence?: number | null; taskVersion?: number | null;
 }
 const eventOrder: Record<string, number> = {
   task: 0, assignment: 1, ack: 2, run_reserved: 3, run_bound: 4,
@@ -340,17 +358,17 @@ function timingWaitingFor(stage: LeaderWorkTimingStage, row: QueryResultRow,
   targetId: string | null, observationUsed = false): LeaderWorkWaitingFor {
   if (["awaiting_ack", "awaiting_run", "run_reserved", "running", "awaiting_submission", "awaiting_delivery"].includes(stage))
     return targetId ? { kind: "session", id: targetId } : { kind: "unknown", id: null };
-  if (stage === "awaiting_acceptance" && observationUsed)
-    return { kind: "leader", id: row.owner ?? null };
-  if (stage === "awaiting_acceptance") return row.use_required && row.consumer
-    ? { kind: "consumer", id: String(row.consumer) } : { kind: "leader", id: row.owner ?? null };
+  if (stage === "awaiting_acceptance") return !observationUsed && row.use_required && row.consumer
+    ? { kind: "consumer", id: String(row.consumer) }
+    : row.owner ? { kind: "role", id: String(row.owner) } : { kind: "unknown", id: null };
   if (stage === "awaiting_publication") return { kind: "publisher", id: targetId ?? row.publication_owner ?? null };
   if (stage === "blocked") {
     const blocked = (row.dependency_facts as Array<{ taskId: string; acceptanceSatisfied: boolean }> | undefined)
       ?.find(item => !item.acceptanceSatisfied);
     if (blocked) return { kind: "task", id: blocked.taskId };
   }
-  if (["unassigned", "rework"].includes(stage)) return { kind: "leader", id: row.owner ?? null };
+  if (["unassigned", "rework"].includes(stage)) return row.owner
+    ? { kind: "role", id: String(row.owner) } : { kind: "unknown", id: null };
   return { kind: "unknown", id: null };
 }
 
@@ -382,6 +400,19 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
   let latestEffectiveProgress: LeaderWorkTaskTiming["latestEffectiveProgress"] = null;
   let priorObservation: string | null = null;
   let observationUsed = false;
+  let activeRun: { id: string; taskRevisionId: string | null; taskVersion: number | null;
+    targetId: string | null; assignmentIds: Set<string> } | null = null;
+  const assignmentIds = new Set<string>();
+  const supersededRuns = new Set<string>();
+  let currentAssignmentId: string | null = null;
+  const submittedRuns = new Set<string>();
+  const belongsToActiveRun = (event: TimingEvent) => activeRun !== null &&
+    event.targetId === activeRun.targetId && event.targetId !== null &&
+    (event.taskVersion != null && activeRun.taskVersion != null
+      ? Number(event.taskVersion) <= activeRun.taskVersion
+      : event.taskRevisionId != null && event.taskRevisionId === activeRun.taskRevisionId) &&
+    ["run_reserved", "running", "awaiting_submission", "awaiting_delivery", "awaiting_acceptance",
+      "awaiting_publication", "rework", "unknown"].includes(active?.stage ?? "");
   const begin = (stage: LeaderWorkTimingStage, at: string | null, source: { kind: string; id: string } | null) => {
     if (!round) {
       round = { number: rounds.length + 1, startedAt: at, endedAt: null, elapsedMs: null, intervals: [] };
@@ -401,7 +432,7 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
   for (const event of uniqueEvents) {
     if (event.kind === "task") {
       if (!getRound() || getRound()?.endedAt && event.state !== "done" && event.state !== "cancelled") {
-        round = null; active = null; targetId = null;
+        round = null; active = null; targetId = null; activeRun = null; currentAssignmentId = null;
         begin(event.state === "todo" ? "unassigned" : "awaiting_run", event.at,
           { kind: "task_revision", id: event.id });
         progress(event);
@@ -416,29 +447,56 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
       continue;
     }
     if (event.kind === "assignment") {
+      if (event.state === "accepted" && belongsToActiveRun(event) && activeRun) {
+        assignmentIds.add(event.id);
+        activeRun.assignmentIds.add(event.id);
+        currentAssignmentId = event.id;
+        continue;
+      }
+      if (event.state !== "released" && belongsToActiveRun(event) &&
+        activeRun?.assignmentIds.has(event.id)) continue;
+      assignmentIds.add(event.id);
+      currentAssignmentId = event.id;
+      if (activeRun) supersededRuns.add(activeRun.id);
+      activeRun = null;
       targetId = event.targetId ?? null;
       begin(event.state === "released" ? "unassigned" : event.state === "accepted" ? "awaiting_run" : "awaiting_ack",
         event.at, { kind: "assignment", id: event.id });
       progress(event);
     } else if (event.kind === "ack") {
+      if (currentAssignmentId && event.id !== currentAssignmentId) continue;
+      if (belongsToActiveRun(event) && activeRun?.assignmentIds.has(event.id)) continue;
       targetId = event.targetId ?? targetId;
       begin("awaiting_run", event.at, { kind: "assignment", id: event.id });
       progress(event);
     } else if (event.kind === "run_reserved") {
       targetId = event.targetId ?? targetId;
+      activeRun = { id: event.id, taskRevisionId: event.taskRevisionId ?? null,
+        taskVersion: event.taskVersion == null ? null : Number(event.taskVersion), targetId,
+        assignmentIds: new Set(assignmentIds) };
       begin("run_reserved", event.at, { kind: "run", id: event.id });
       progress(event);
     } else if (event.kind === "run_bound") {
+      if (supersededRuns.has(event.id)) continue;
+      activeRun = { id: event.id,
+        taskRevisionId: event.taskRevisionId ?? null,
+        taskVersion: event.taskVersion == null ? null : Number(event.taskVersion), targetId,
+        assignmentIds: new Set(assignmentIds) };
       begin("running", event.at, { kind: "run", id: event.id });
       progress(event);
     } else if (event.kind === "run_terminal") {
+      if (supersededRuns.has(event.id) || activeRun && event.id !== activeRun.id) continue;
+      if (event.state === "completed" && submittedRuns.has(event.id)) continue;
       begin(event.state === "completed" ? "awaiting_submission" : event.state === "unknown" ? "unknown" : "rework",
         event.at, { kind: "run", id: event.id });
       progress(event);
     } else if (event.kind === "submission") {
+      if (event.runId) submittedRuns.add(event.runId);
+      if (event.runId && (supersededRuns.has(event.runId) || activeRun && event.runId !== activeRun.id)) continue;
       begin("awaiting_delivery", event.at, { kind: "submission", id: event.id });
       progress(event);
     } else if (event.kind === "delivery") {
+      if (event.runId && supersededRuns.has(event.runId)) continue;
       observationUsed = false;
       begin(event.state === "failed" ? "rework" : "awaiting_acceptance", event.at,
         { kind: "delivery", id: event.id });
@@ -511,6 +569,12 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
       source: { kind: "release_handoff", id: currentArtifactRef },
       waitingFor: { kind: "publisher", id: currentHandoff.recipient ?? null } };
   }
+  const followUpWaiting = row.follow_up_task_revision_id === row.current_revision_id
+    ? row.follow_up_waiting_on as LeaderWorkWaitingFor | null : null;
+  if (current.stage === "awaiting_acceptance" && followUpWaiting?.kind &&
+    (typeof followUpWaiting.id === "string" || followUpWaiting.id === null))
+    current.waitingFor = followUpWaiting.id === null || followUpWaiting.kind === "unknown"
+      ? { kind: "unknown", id: null } : followUpWaiting;
   if (current.stage === "awaiting_publication" &&
     (row.follow_up_task_revision_id !== row.current_revision_id || !currentArtifactRef)) {
     const sameRevision = row.follow_up_task_revision_id === row.current_revision_id;
@@ -548,6 +612,7 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
 
 export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): LeaderWorkTask {
   const phase = taskPhase(row);
+  const timing = taskTiming(row, observedAt);
   const assignment = row.assignment_state ? {
     state: row.assignment_state as "assigned" | "accepted" | "released",
     targetKind: row.assignment_target_kind as "owned" | "external",
@@ -558,7 +623,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     kind: "task", taskId: row.task_id, version: int(row.version),
     currentRevisionId: row.current_revision_id, workChangeSequence: int(row.work_change_sequence ?? 0),
     title: row.title, taskKind: row.kind, taskState: row.state,
-    phase, nextAction: taskAction(phase), responsible: taskResponsibility(row, phase), assignment,
+    phase, nextAction: taskAction(phase), responsible: taskResponsibility(row, phase, timing), assignment,
     latestRun: row.latest_run_id ? { runId: row.latest_run_id, state: row.latest_run_state } : null,
     delivery: row.delivery_id ? {
       deliveryId: row.delivery_id, taskRevisionId: row.delivery_task_revision_id,
@@ -593,7 +658,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
       eventName: latestProgressEventName(row),
       changedAt: iso(row.latest_change_at),
     },
-    timing: taskTiming(row, observedAt),
+    timing,
     actionKey: `task:${row.task_id}:v${int(row.version)}:${phase}:${int(row.work_change_sequence ?? 0)}`,
   };
 }
@@ -753,6 +818,7 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         CASE WHEN follow_up.task_revision_id=facts.current_revision_id THEN
           follow_up.release_handoff->>'recipient' END AS publication_owner,
         follow_up.task_revision_id AS follow_up_task_revision_id,
+        follow_up.waiting_on AS follow_up_waiting_on,
         follow_up.release_handoff AS current_release_handoff,
         follow_up.updated_at AS follow_up_updated_at,
         follow_up.version AS follow_up_version

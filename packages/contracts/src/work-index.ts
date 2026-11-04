@@ -95,7 +95,7 @@ export type LeaderWorkTimingStage = "unassigned" | "awaiting_ack" | "awaiting_ru
   "awaiting_acceptance" | "awaiting_publication" | "rework" | "blocked" | "closed" | "cancelled" | "unknown";
 export interface LeaderWorkTimingSource { kind: string; id: string }
 export interface LeaderWorkWaitingFor {
-  kind: "session" | "consumer" | "leader" | "publisher" | "user" | "task" | "unknown";
+  kind: "session" | "consumer" | "leader" | "role" | "publisher" | "user" | "task" | "unknown";
   id: string | null;
 }
 export interface LeaderWorkTimingInterval {
@@ -138,7 +138,7 @@ export interface LeaderWorkTask {
   phase: LeaderWorkPhase;
   nextAction: string;
   responsible: {
-    kind: "role" | "session" | "consumer" | "unknown";
+    kind: "role" | "session" | "consumer" | "leader" | "publisher" | "user" | "task" | "unknown";
     id: string | null;
     label: string;
   };

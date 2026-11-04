@@ -597,7 +597,7 @@ test("timing keeps assignment, Run, submission and acceptance in separate source
   assert.equal(value.timing.publication.source, "unknown");
   assert.equal(value.timing.current.stage, "awaiting_acceptance");
   assert.equal(value.timing.current.startedAt, "2026-10-28T02:30:00.000Z");
-  assert.equal(value.timing.current.waitingFor.kind, "leader");
+  assert.equal(value.timing.current.waitingFor.kind, "role");
   assert.deepEqual(value.timing.rounds[0]?.intervals.map(i => i.stage),
     ["unassigned", "awaiting_ack", "awaiting_run", "run_reserved", "running",
       "awaiting_submission", "awaiting_delivery", "awaiting_acceptance"]);
@@ -695,7 +695,7 @@ test("repeated same-result Observation and deferred review do not refresh effect
   const value = leaderWorkTaskFromRow(row as never, "2026-10-28T05:00:00Z");
   assert.deepEqual(value.timing.latestEffectiveProgress,
     { kind: "observation", sourceId: "first", at: "2026-10-28T02:00:00.000Z" });
-  assert.equal(value.timing.current.waitingFor.kind, "leader");
+  assert.equal(value.timing.current.waitingFor.kind, "role");
 });
 
 test("latest progress is a direct business event rather than a renamed Task revision time", () => {

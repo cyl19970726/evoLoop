@@ -19,7 +19,7 @@ export const timingStageLabel: Record<LeaderWorkTimingStage, string> = {
   closed: "已关闭", cancelled: "已取消", unknown: "阶段未知",
 };
 const waitingKindLabel: Record<LeaderWorkTaskTiming["current"]["waitingFor"]["kind"], string> = {
-  session: "Session", consumer: "消费者", leader: "负责人", publisher: "维护者",
+  session: "Session", consumer: "消费者", leader: "项目 Leader", role: "任务负责 Role", publisher: "维护者",
   user: "用户", task: "前置任务", unknown: "责任未知",
 };
 export function timingDate(value: string | null | undefined): string {
