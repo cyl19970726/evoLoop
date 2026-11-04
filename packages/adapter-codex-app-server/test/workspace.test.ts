@@ -409,12 +409,13 @@ test('dynamic experimental negotiation alone keeps workspace on standard Items',
   assert.equal((await adapter.readWorkspaceHistory(owned)).method,'items');
 });
 
-test('explicit pinned workspace opt-in negotiates experimental timeline on its owner connection',async t=>{
+for(const expectedVersion of ['codex-cli 0.166.0-alpha.5.1','codex-cli 0.166.0-alpha.6'] as const)
+test(`${expectedVersion} explicit workspace opt-in negotiates experimental timeline on its owner connection`,async t=>{
   const {CodexAppServerAdapter,RuntimeProtocolError}=await import('../src/index.js');
   const {resolve}=await import('node:path');
   assert.throws(()=>new CodexAppServerAdapter({workspaceExperimental:true,expectedVersion:'codex-cli 0.164.0-alpha.11.1'}),RuntimeProtocolError);
   const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[resolve(import.meta.dirname,'fixture.mjs'),'workspace-timeline'],
-    expectedVersion:'codex-cli 0.166.0-alpha.5.1',workspaceExperimental:true,requestTimeoutMs:2000});
+    expectedVersion,workspaceExperimental:true,requestTimeoutMs:2000});
   t.after(()=>adapter.close());await adapter.open();
   const owned=await adapter.create({sessionId:'session',roleId:'role',projectId:'project',cwd:'/tmp/evoloop-fixture',authorizationScope:'scope',sandbox:'danger-full-access',approvalPolicy:'never'});
   const page=await adapter.readWorkspaceHistory(owned);
