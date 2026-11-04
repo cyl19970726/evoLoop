@@ -336,6 +336,7 @@ function latestProgressEventName(row: QueryResultRow): string {
 interface TimingEvent {
   kind: string; id: string; at: string; state?: string | null;
   targetId?: string | null; runId?: string | null; deliveryId?: string | null;
+  reservationRunId?: string | null;
   taskRevisionId?: string | null; sequence?: number | null; taskVersion?: number | null;
 }
 const eventOrder: Record<string, number> = {
@@ -447,6 +448,15 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
       continue;
     }
     if (event.kind === "assignment") {
+      // The reserve transaction advances an unacknowledged assignment after inserting
+      // its Run. That revision belongs to the Run; it is not a later reassignment.
+      if (event.reservationRunId === activeRun?.id && activeRun &&
+        event.taskRevisionId === activeRun.taskRevisionId) {
+        assignmentIds.add(event.id);
+        activeRun.assignmentIds.add(event.id);
+        currentAssignmentId = event.id;
+        continue;
+      }
       if (event.state === "accepted" && belongsToActiveRun(event) && activeRun) {
         assignmentIds.add(event.id);
         activeRun.assignmentIds.add(event.id);
@@ -674,7 +684,7 @@ async function readTimingEvents(db: Database, projectId: string, taskIds: string
   if (!taskIds.length) return result;
   const rows = await db.query(`
     SELECT timeline.task_id,timeline.event || jsonb_build_object('sequence',source_change.sequence,
-      'taskVersion',source_revision.version) AS event FROM (
+      'taskVersion',source_revision.version,'reservationRunId',reservation.run_id) AS event FROM (
       SELECT r.task_id,jsonb_build_object('kind','task','id',r.revision_id,'at',r.created_at,
         'state',r.state,'version',r.version,'taskRevisionId',r.revision_id) AS event
         FROM task_revision r WHERE r.project_id=$1 AND r.task_id=ANY($2::uuid[])
@@ -758,6 +768,30 @@ async function readTimingEvents(db: Database, projectId: string, taskIds: string
           c.version=(timeline.event->>'version')::integer ELSE c.entity_id::text=timeline.event->>'id' END)
       ORDER BY CASE WHEN timeline.event->>'kind'='run_terminal' THEN -c.sequence ELSE c.sequence END LIMIT 1
     ) source_change ON true
+    LEFT JOIN LATERAL (
+      SELECT r.run_id FROM outbox_event assignment_effect
+      JOIN operation_journal operation ON operation.project_id=assignment_effect.project_id
+        AND operation.operation_id=assignment_effect.operation_id
+        AND operation.command_type IN ('runtime.run.reserve','queue.claim','queue.continue','queue.retryFailed')
+        AND operation.result->>'status'='applied'
+      JOIN outbox_event run_effect ON run_effect.project_id=assignment_effect.project_id
+        AND run_effect.operation_id=assignment_effect.operation_id
+        AND run_effect.kind='runtime.run.requested' AND run_effect.version=1
+      JOIN runtime_run r ON r.project_id=run_effect.project_id AND r.run_id=run_effect.entity_id
+        AND r.operation_id=assignment_effect.operation_id
+      WHERE timeline.event->>'kind'='assignment' AND timeline.event->>'state'='assigned'
+        AND assignment_effect.project_id=$1 AND assignment_effect.kind='task.assignment.set'
+        AND assignment_effect.entity_id=timeline.task_id
+        AND assignment_effect.version=(timeline.event->>'version')::integer
+        AND r.task_id=timeline.task_id
+        AND r.task_revision_id=(timeline.event->>'taskRevisionId')::uuid
+        AND r.session_id=CASE WHEN timeline.event->>'kind'='assignment'
+          THEN (timeline.event->>'targetId')::uuid ELSE NULL::uuid END
+        AND (operation.command_type<>'runtime.run.reserve' OR
+          operation.result->>'entityId'=r.run_id::text AND
+          operation.result->>'revisionId'=r.task_revision_id::text)
+      LIMIT 1
+    ) reservation ON true
     ORDER BY timeline.task_id,(timeline.event->>'at')::timestamptz`, [projectId, taskIds]);
   for (const row of rows.rows) {
     const list = result.get(row.task_id) ?? [];
