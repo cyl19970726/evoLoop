@@ -260,6 +260,11 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
   assert.ok(names034.includes('038_native_observation') && names034.includes('039_reviewed_claim_rework')
     && names034.includes('040_task_acceptance_mode') && names034.includes('041_ordinary_run_submission')
     && names034.includes('042_leader_work_index'));
+  const oldIdentities = await client.query(`SELECT target_kind,target_id,version,identity_color,identity_mark FROM session_profile
+    WHERE project_id=$1 AND (target_id=$2 OR target_id=$3) ORDER BY target_kind`,[projectId,sessionId,hostLinkId]);
+  assert.equal(oldIdentities.rowCount,2,'052 must persist identities for existing managed and external Sessions');
+  assert.ok(oldIdentities.rows.every(row=>row.version===1 && row.identity_color && row.identity_mark));
+  assert.equal((await client.query('SELECT count(*)::int AS count FROM session_profile_revision WHERE project_id=$1 AND (target_id=$2 OR target_id=$3)',[projectId,sessionId,hostLinkId])).rows[0].count,2);
   assert.equal((await client.query('SELECT count(*)::int AS count FROM session_native_input_request')).rows[0].count,0,
     '037 must not invent native questions or reply intents from historical Sessions');
   assert.equal((await client.query('SELECT count(*)::int AS count FROM session_native_observation')).rows[0].count,0,

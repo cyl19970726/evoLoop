@@ -87,6 +87,60 @@ test('session profile CLI saves an exact model and effort target with the curren
     assert.equal(submitted?.reasoningEffort,'max');
   }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
 });
+test('Session identity CLI reads current version and returns persisted readback after CAS',async()=>{
+  const projectId='00000000-0000-4000-8000-000000000021';
+  const sessionId='00000000-0000-4000-8000-000000000022';
+  const operationId='00000000-0000-4000-8000-000000000023';
+  const key=`owned:${sessionId}`;
+  const directory=await mkdtemp(join(tmpdir(),'evoloop-identity-cli-'));
+  let version=1,submitted:Record<string,unknown>|null=null;
+  const fetch=mock.method(globalThis,'fetch',async(url:string|URL|Request,init?:RequestInit)=>{
+    const path=new URL(String(url)).pathname;
+    if(path==='/api/session')return new Response(JSON.stringify({principal:{actorId:'reviewer',projectIds:[projectId]}}));
+    if(path===`/api/projects/${projectId}/session-work/${encodeURIComponent(key)}`)
+      return new Response(JSON.stringify({session:{identity:{target:{kind:'owned',sessionId},version,color:version===1?'blue':'teal',mark:version===1?'dot':'brackets'}}}));
+    if(path==='/api/commands'){
+      submitted=JSON.parse(String(init?.body));version=2;
+      return new Response(JSON.stringify({status:'applied',operationId,entityId:sessionId,version}));
+    }
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try{
+    const result=await run(['session','identity','set',key,'--project',projectId,'--color','teal','--mark','brackets',
+      '--reason','Selected visible identity','--operation',operationId],
+      {EVOLOOP_TOKEN:'fixture',EVOLOOP_STATE_DIR:directory});
+    assert.equal(result.code,0,result.stderr);
+    assert.deepEqual([submitted?.type,submitted?.expectedVersion,submitted?.color,submitted?.mark],
+      ['session.identity.set',1,'teal','brackets']);
+    assert.deepEqual(JSON.parse(result.stdout).identity,{target:{kind:'owned',sessionId},version:2,color:'teal',mark:'brackets'});
+  }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
+});
+test('Session identity CLI writes the canonical target when the requested key is an alias',async()=>{
+  const projectId='00000000-0000-4000-8000-000000000031';
+  const aliasId='00000000-0000-4000-8000-000000000032';
+  const canonicalId='00000000-0000-4000-8000-000000000033';
+  const operationId='00000000-0000-4000-8000-000000000034';
+  const key=`external:${aliasId}`;
+  const directory=await mkdtemp(join(tmpdir(),'evoloop-identity-alias-cli-'));
+  let submitted:Record<string,unknown>|null=null;
+  const fetch=mock.method(globalThis,'fetch',async(url:string|URL|Request,init?:RequestInit)=>{
+    const path=new URL(String(url)).pathname;
+    if(path==='/api/session')return new Response(JSON.stringify({principal:{actorId:'reviewer',projectIds:[projectId]}}));
+    if(path===`/api/projects/${projectId}/session-work/${encodeURIComponent(key)}`)
+      return new Response(JSON.stringify({session:{identity:{target:{kind:'external',linkId:canonicalId},version:2,color:'blue',mark:'dot'}}}));
+    if(path==='/api/commands'){
+      submitted=JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({status:'applied',operationId,entityId:canonicalId,version:3}));
+    }
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try{
+    const result=await run(['session','identity','set',key,'--project',projectId,'--color','teal','--mark','brackets',
+      '--reason','Alias selection','--operation',operationId],{EVOLOOP_TOKEN:'fixture',EVOLOOP_STATE_DIR:directory});
+    assert.equal(result.code,0,result.stderr);
+    assert.deepEqual(submitted?.target,{kind:'external',linkId:canonicalId});
+  }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
+});
 test("evaluation CLI reads preserve fixed revision, attempt and source identities", async () => {
   const p = "00000000-0000-4000-8000-000000000001", e = "00000000-0000-4000-8000-000000000002";
   const r = "00000000-0000-4000-8000-000000000003", a = "00000000-0000-4000-8000-000000000004";

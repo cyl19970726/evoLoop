@@ -16,7 +16,7 @@ import { legacyDecisionLabel } from "./taskListPresentation";
 import { DeliveryArtifact, DeliveryObservation, DeliveryPanel, useDeliveryNames } from "./DeliveryPanel";
 import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
-import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash } from "../orchestration/navigation";
+import { navigateTaskTab, scrollToTaskSection, taskListReturn, taskRunFromHash, taskSectionFromHash, taskSessionReturn } from "../orchestration/navigation";
 import { LeaderTaskFacts } from "./LeaderTaskFacts";
 import { leaderPhaseLabel, leaderProjectionMatchesTask } from "./leaderWorkLoad";
 import "./task-page.css";
@@ -142,16 +142,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   selectedRevision?: string;
   onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean | Promise<boolean>; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean; active: boolean;
 }) {
-  const routeQuery = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-  const proposedReturn = routeQuery.get("return");
-  const sessionReturn = active && routeQuery.get("actor") === context.principal.actorId
-    && (proposedReturn?.startsWith(`${href(projectId, "sessions")}?`) || proposedReturn?.startsWith(`${href(projectId, "runtime")}?`))
-    && new URLSearchParams(proposedReturn.split("?")[1] ?? "").get("session")?.match(/^(owned|external):[0-9a-f-]{36}$/i)
-    ? proposedReturn : null;
-  const sessionReturnTitle = routeQuery.get("returnTitle")?.slice(0, 80).trim() || "Session";
+  const sessionReturn = active ? taskSessionReturn(window.location.hash, projectId, id, context.principal.actorId) : null;
   const listReturnRef = useRef<string | null>(null);
-  const requestedList = routeQuery.get("list");
-  if (active && requestedList?.split("?")[0] === href(projectId, "work")) listReturnRef.current = requestedList;
+  const requestedList = taskListReturn(window.location.hash, projectId, id);
+  if (active && requestedList) listReturnRef.current = requestedList;
   if (!listReturnRef.current) try {
     const saved = sessionStorage.getItem(`evoloop:list:${projectId}`);
     if (saved?.split("?")[0] === href(projectId, "work")) listReturnRef.current = saved;
@@ -295,7 +289,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const panelId = (value: TaskTab) => `task-panel-${projectId}-${id}-${instanceId}-${value}`;
   function selectTab(value: TaskTab) {
     if (selectedRevision && value === "history") return;
-    if (!navigateTaskTab(projectId, id, value, window.location)) {
+    if (!navigateTaskTab(projectId, id, value, window.location, context.principal.actorId)) {
       landingRef.current = value;
       setLandingVersion(current => current + 1);
       setTab(value);
@@ -311,7 +305,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   return <div className="content task-page">
     <div className="task-detail-toolbar">
       <div className="task-detail-backlinks">
-        {sessionReturn && <a className="back" href={sessionReturn}>← 返回【{sessionReturnTitle}】</a>}
+        {sessionReturn && <a className="back" href={sessionReturn.href}>← 返回【{sessionReturn.title}】</a>}
         <a className="back" href={listReturnRef.current ?? taskListHref(projectId)}>← 返回任务列表</a>
       </div>
       <div className="task-read-status"><span>{reading ? "正在核对当前任务…" : observedAt ? `当前任务读于 ${date(observedAt.toISOString())}` : "当前任务尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前任务</button></div>

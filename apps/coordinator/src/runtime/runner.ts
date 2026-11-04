@@ -504,7 +504,7 @@ export class RuntimeRunner {
   }
   private async syncSessionName(principal: Principal, session: RuntimeSessionRecord): Promise<void> {
     const profile = await this.deps.profileForSession!(principal, session);
-    if (!profile || profile.projectId !== session.projectId || profile.target.kind !== "owned" ||
+    if (!profile?.displayName || profile.projectId !== session.projectId || profile.target.kind !== "owned" ||
         profile.target.sessionId !== session.id) return;
     if (this.checkedNames.get(session.id) === profile.version) return;
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;

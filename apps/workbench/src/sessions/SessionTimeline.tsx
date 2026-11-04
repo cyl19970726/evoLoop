@@ -12,6 +12,9 @@ import { sessionClient } from "./client";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
 import { workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
+import { SessionIdentityMark } from "./SessionIdentityMark";
+import type { SessionIdentity } from "@evoloop/contracts/session-identity";
+import type { SessionTarget } from "@evoloop/contracts/session-work";
 
 const states: Record<WorkspaceState, string> = { pending: "待处理", running: "进行中", completed: "已完成", failed: "失败", interrupted: "已中断", declined: "已拒绝", unknown: "状态未确认" };
 const messageStates: Record<SessionMessageRecord["state"], string> = { queued: "待派发", processing: "原会话处理中", replied: "已回复", completed_without_reply: "已完成但无回复", failed: "失败", unknown: "结果未知", cancelled: "已取消", manual_pending: "待人工转交" };
@@ -73,8 +76,8 @@ function ToolGroup({ entries, scope, onDetail }: { entries: WorkspaceTool[]; sco
   </div>;
 }
 
-function TimelineEntry({ item, context, title, sessionKey, taskHref, onDetail, onMessage, onExpanded }: {
-  item: WorkspaceEntry; context: MutationContext; title: string; sessionKey: string;
+function TimelineEntry({ item, context, title, sessionKey, target, identity, taskHref, onDetail, onMessage, onExpanded }: {
+  item: WorkspaceEntry; context: MutationContext; title: string; sessionKey: string; target: SessionTarget; identity: SessionIdentity | null;
   taskHref(taskId: string): string;
   onDetail(entry: WorkspaceEntry): void; onMessage(id: string): void; onExpanded?(entry: WorkspaceEntry): void;
 }) {
@@ -100,6 +103,7 @@ function TimelineEntry({ item, context, title, sessionKey, taskHref, onDetail, o
   const dispatched = item.kind === "message" && item.role === "input" && item.origin?.kind === "run";
   const mine = !dispatched && item.kind === "message" && item.role === "input" && item.author.kind === "actor" && item.author.id === context.principal.actorId;
   const assistant = item.kind === "message" && item.role === "assistant";
+  const provenSession = assistant && target.kind === "owned" && item.author.kind === "session" && item.author.id === target.sessionId;
   const label = dispatched ? `项目派发 · ${item.author.label || "发起者未确认"}` : mine ? "我" : item.author.label || (assistant ? `${title} Agent` : "发送者未确认");
   const messageId = item.origin?.kind === "message" ? item.origin.id : null;
   const summary = item.kind === "message" ? null : item.kind === "tool" ? item.name : item.label;
@@ -107,7 +111,7 @@ function TimelineEntry({ item, context, title, sessionKey, taskHref, onDetail, o
   const body = expandedBody?.body ?? (item.kind === "tool" ? item.summary : item.body);
   return <article aria-label={dispatched ? "项目派发的任务输入" : mine ? "我发出的消息" : label} className={`workspace-message ${mine ? "from-me" : assistant ? "from-agent" : "from-other"} ${item.kind !== "message" ? "workspace-record" : ""}`} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
     <span className="workspace-avatar" aria-hidden="true">{dispatched ? <FileText size={18} /> : mine ? <UserRound size={18} /> : assistant ? <Bot size={19} /> : item.author.kind === "actor" ? <Users size={18} /> : <Info size={18} />}</span>
-    <div className="workspace-message-content"><header><strong>{label}</strong>{item.occurredAt && <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time>}
+    <div className="workspace-message-content"><header>{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong>{label}</strong>{item.occurredAt && <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time>}
       {item.freshness === "stale" && <span className="workspace-stale">上次观察</span>}
       {item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state) && <span className={`workspace-input-state ${item.state}`}>{states[item.state]}</span>}
     </header><div className={`workspace-message-body ${item.kind === "message" ? item.phase : ""}`}>
@@ -286,7 +290,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       {(timeline.nextCursor || timeline.messagesCursor) && <button className="session-conversation-older" type="button" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</button>}
       {!timeline.loaded && <p className="workspace-reading-status" role="status"><LoaderCircle size={16} className="workspace-spinning" aria-hidden="true" />正在读取会话…</p>}
       {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty"><MessageCircle size={25} aria-hidden="true" /><strong>{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原会话没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个 Agent 的回复与工具活动会连续显示在这里。"}</span></div>}
-      {groups.map(group => group.kind === "tools" ? <ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} onDetail={entry => inspect({ entry })} /> : <TimelineEntry key={group.entry.id} item={group.entry} context={context} title={snapshot.session.title} sessionKey={snapshot.session.key} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />)}
+      {groups.map(group => group.kind === "tools" ? <ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} onDetail={entry => inspect({ entry })} /> : <TimelineEntry key={group.entry.id} item={group.entry} context={context} title={snapshot.session.title} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />)}
       {activeTurn && <div className={`workspace-turn-state ${live ? "" : "stale"}`} role="status"><span className="workspace-avatar"><Bot size={19} aria-hidden="true" /></span><div><strong>{live ? <><LoaderCircle size={15} className="workspace-spinning" aria-hidden="true" />处理中</> : "上次观察为进行中"}</strong><span>{live ? "活动将随原会话更新。" : "当前连接状态待核对。"}</span></div></div>}
       {!timeline.denied && children}
     </div>

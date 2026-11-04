@@ -340,7 +340,7 @@ export async function buildServer(options: {
         recovery.partial?"recovery_partial":`recovery_${recovery.gate.phase}`]:[]),
       ...(session?.state==="unknown"?["session_unknown"]:[]),
       ...(session&&session.state==="ready"&&!bound?["role_binding"]:[]),
-      ...(session&&session.state==="ready"&&!profile?["display_profile"]:[])];
+      ...(session&&session.state==="ready"&&!profile?.displayName?.trim()?["display_profile"]:[])];
     return {projectId:p.projectId,sessionId:p.sessionId,roleId:q.roleId,roleVersion:role.version,roleRevisionId:role.currentRevisionId,
       roleState:role.state,responsibility:{goal:role.proposal.goal,independentResponsibility:role.proposal.independentResponsibility,
         workflow:role.proposal.workflow,handoffBoundary:role.proposal.handoffBoundary},
@@ -354,7 +354,7 @@ export async function buildServer(options: {
       missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
       executionProfile:executionProfile?{revision:executionProfile.revision,activationState:executionProfile.activationState,
         activeRevisionId:executionProfile.activeRevisionId,activationOperationId:executionProfile.activationOperationId}:null,
-      readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile&&missing.length===0,
+      readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile?.displayName?.trim()&&missing.length===0,
       communication:{taskDiscussion:"available",nativeLeadMessage:"unverified",nextAction:"Use the Task discussion and confirm native communication in the actual host"},
       nameSync:"Saved profile is visible; native Thread name requires the runner's independent sync check",
       emptyThreadVisibility:"Native Desktop list may filter Threads without a first message; no message is created by preparation"};

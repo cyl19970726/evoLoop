@@ -25,7 +25,11 @@ const source = { kind: "session", id: sessionId, revision: null, evidence: "proj
 
 function observed(key: string, title: string, roles: ReturnType<typeof role>[]) {
   const id = key.split(":")[1]!;
+  const color = id === sessionId ? "violet" : id === systemId ? "copper" : "blue";
+  const mark = id === sessionId ? "diamond" : id === systemId ? "dot" : "layers";
   return { key, target: { kind: "owned", sessionId: id }, aliases: [], title, profile: null, kind: "owned", roles,
+    identity: { projectId, target: { kind: "owned", sessionId: id }, version: 1, color, mark,
+      actorId: "reader", reason: "fixture", updatedAt: stamp },
     membership: "current", membershipReason: "fixture", runtimeState: "ready", busy: false, currentTask: null,
     latestBusinessRun: null, lastProgressAt: null, capabilities: { observe: { available: true, reason: null },
       send: { available: true, reason: "fixture", mode: "owned-conversation" }, open: { ...unavailable, ref: null },
@@ -112,7 +116,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) value = snapshot;
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}/timeline`) {
         const entries = [
-          { ...timelineAssistant("answer-1", "## 已收到\n\n- 工具已完成\n- 结果可核对"), origin: { kind: "message" as const,
+          { ...timelineAssistant("answer-1", "## 已收到\n\n- 工具已完成\n- 结果可核对", { author: { kind: "session", id: sessionId, label: "测试 Session" } }), origin: { kind: "message" as const,
             id: messageId, taskId, taskRevisionId: currentTask.revisionId, initiatingActorId: "reader" } },
           longAnswer,
           timelineTool("tool-1", "读取固定文档", "工具已完成"),
@@ -144,6 +148,16 @@ test("Sessions is the sole directory and renders conversation, source, reply and
               activationState: "pending" };
             value = { status: "applied", operationId: command.operationId, entityId: sessionId, version: currentRuntimeVersion };
           }
+        } else if (command.type === "session.identity.set") {
+          const identity = currentItems[0]!.identity;
+          if (command.expectedVersion !== identity.version) {
+            value = { status: "rejected", operationId: command.operationId, code: "VERSION_CONFLICT", message: "stale identity" };
+          } else {
+            identity.version++;
+            identity.color = command.color;
+            identity.mark = command.mark;
+            value = { status: "applied", operationId: command.operationId, entityId: sessionId, version: identity.version };
+          }
         } else {
           value = { status: "applied", operationId: command.operationId, entityId: command.messageId, version: 1 };
         }
@@ -170,6 +184,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const navigationToggle = page.locator(".sidebar-toggle");
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator(".project-sidebar .session-navigation");
+  await sidebar.locator(`.session-nav-item[href*="${sessionId}"] .session-identity-violet`).waitFor();
   await sidebar.getByText("业务 Session · 1", { exact: true }).waitFor();
   await sidebar.getByText("System Session · 1", { exact: true }).waitFor();
   await sidebar.getByText("待归类 · 1", { exact: true }).waitFor();
@@ -191,9 +206,35 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await workPage.close();
   await sidebar.getByRole("link").filter({ hasText: "测试 Session" }).first().click();
   await page.getByRole("heading", { name: /测试 Session/ }).waitFor();
+  await page.locator(".session-detail-heading .session-identity-violet").waitFor();
+  await page.getByRole("button", { name: "展开任务与 Agent 信息" }).click();
+  const identitySettings = page.locator(".session-identity-settings");
+  await identitySettings.locator("summary").first().click();
+  await identitySettings.locator(".command-disclosure > summary").click();
+  await identitySettings.getByLabel("身份颜色").selectOption("teal");
+  await identitySettings.getByLabel("图形标记").selectOption("grid");
+  await identitySettings.getByLabel("变更依据").fill("same Session identity across clients");
+  await identitySettings.getByRole("button", { name: "调整 Session 颜色与图标" }).click();
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator(".session-detail-heading .session-identity-teal").count(), 1,
+    JSON.stringify({ commands: posted.filter(command => command.type === "session.identity.set"),
+      control: await identitySettings.innerText(), header: await page.locator(".session-detail-heading").innerText() }));
+  const identityCommand = posted.find(command => command.type === "session.identity.set");
+  assert.deepEqual([identityCommand?.target, identityCommand?.expectedVersion, identityCommand?.color, identityCommand?.mark],
+    [{ kind: "owned", sessionId }, 1, "teal", "grid"]);
+  await page.reload();
+  await page.getByLabel("访问令牌").fill("fixture-token");
+  await page.getByRole("button", { name: "进入", exact: true }).click();
+  await page.locator(".session-detail-heading .session-identity-teal").waitFor();
+  assert.match(await page.locator(".session-detail-heading .session-identity-teal").getAttribute("aria-label") ?? "",
+    /测试 Session.*青色.*方格/, "the mark gives screen readers both stable identity properties");
   await page.getByRole("button", { name: "展开任务与 Agent 信息" }).click();
   await page.getByRole("link", { name: "验证 Sessions 阅读体验" }).first().waitFor();
   await page.getByText("已收到", { exact: false }).waitFor();
+  assert.equal(await page.locator('[data-workspace-entry="answer-1"] .session-identity-teal').count(), 1,
+    "a reply with the exact Session author uses the saved identity");
+  assert.equal(await page.locator('[data-workspace-entry="long-answer"] .session-identity-mark').count(), 0,
+    "an unproven Session author does not inherit the selected Session mark");
   await page.locator(".workspace-tools").getByText("工具已完成", { exact: false }).waitFor();
   const fullMessage = page.locator('[data-workspace-entry="long-answer"]');
   await fullMessage.getByText("截断预览", { exact: true }).waitFor();

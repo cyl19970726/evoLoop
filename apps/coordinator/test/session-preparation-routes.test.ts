@@ -47,10 +47,11 @@ test("existing Session requires its actual full profile, open recovery and match
     executionProfile:null as Record<string,unknown>|null};
   const gate={phase:"open",version:1,causeId:null,decisionOperationId:null};
   let cliActor="agent";
+  let displayName: string | null = "Agent";
   const empty=async()=>[];
   const service={getProject:async()=>({id:projectId}),getRole:async()=>role,getRuntimeSession:async()=>current,
     getSessionRecovery:async()=>({gate,executionProfile:current.executionProfile,partial:false,nextAction:"normal_work"}),
-    getRuntimeSessionProfile:async()=>({version:1,displayName:"Agent",purpose:"Work"}),
+    getRuntimeSessionProfile:async()=>({version:1,displayName,purpose:"Work"}),
     listRoleSessionBindings:async()=>[{sessionId}],listRoleRevisions:empty,listRoleReviews:empty,listRoleHandoffs:empty,
     listSchedules:empty,listScheduleRevisions:empty,listScheduleOccurrences:empty,
     listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
@@ -67,6 +68,11 @@ test("existing Session requires its actual full profile, open recovery and match
   };
   try {
     assert.equal((await read()).readyForTasks,true);
+    displayName=null;
+    const identityOnly=await read();
+    assert.equal(identityOnly.readyForTasks,false);
+    assert.ok(identityOnly.missing.includes("display_profile"));
+    displayName="Agent";
     current.sandbox="read-only";current.approvalPolicy="on-request";
     assert.deepEqual((await read()).missing,["session_execution_profile_restricted"]);
     current.sandbox="danger-full-access";current.approvalPolicy="never";

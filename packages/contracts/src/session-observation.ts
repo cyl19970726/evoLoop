@@ -1,5 +1,6 @@
 import type { SessionKey, SessionTarget, SessionCapabilities, ObservationMetadata, ObservationSource } from "./session-work.js";
 import type { SessionProfileRecord, TaskSessionAssignment } from "./session-assignments.js";
+import type { SessionIdentity } from "./session-identity.js";
 
 export interface ObservedRole {
   id: string;
@@ -31,6 +32,7 @@ export interface ObservedSession {
   aliases: SessionTarget[];
   title: string;
   profile: SessionProfileRecord | null;
+  identity: SessionIdentity | null;
   kind: "owned" | "external";
   roles: ObservedRole[];
   membership: "current" | "historical" | "unclassified";

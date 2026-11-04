@@ -3,6 +3,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { ObservationMetadata, ObservationSource, SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
+import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { ObservedRole, ObservedSession, ObservedTask, SessionActivity, SessionActivityPage, SessionChanges,
   SessionDirectory, SessionObservationReader, SessionSnapshot, ObservedResource } from "@evoloop/contracts/session-observation";
 import { PgSessionAssignments } from "./session-assignments.js";
@@ -19,7 +20,15 @@ const selectedProfile = (row: Row): SessionProfileRecord | null => {
   if (!p) return null;
   return { projectId: p.project_id, target: p.target_kind === "owned" ? { kind: "owned", sessionId: p.target_id } : { kind: "external", linkId: p.target_id },
     version: p.version, displayName: p.display_name, purpose: p.purpose, membership: p.membership, tenure: p.tenure,
+    identityColor: p.identity_color, identityMark: p.identity_mark,
     actorId: p.actor_id, reason: p.reason, updatedAt: iso(p.updated_at)! };
+};
+const selectedIdentity = (row: Row): SessionIdentity | null => {
+  const i = row.visual_profile as Row | null;
+  if (!i?.identity_color || !i.identity_mark) return null;
+  return { projectId: i.project_id,
+    target: i.target_kind === "owned" ? { kind: "owned", sessionId: i.target_id } : { kind: "external", linkId: i.target_id },
+    version: i.version, color: i.identity_color, mark: i.identity_mark, actorId: i.actor_id, reason: i.reason, updatedAt: iso(i.updated_at)! };
 };
 interface PreparedSessions { runs: Map<string, Row>; work: Map<string, Row>; busy: Set<string> }
 
@@ -39,6 +48,7 @@ const catalog = `WITH hosts AS (
   SELECT host->>'provider' AS provider,max(external_ref) AS external_ref,
     (array_agg(link_id ORDER BY registered_at,link_id))[1] AS identity,
     (array_agg(link_id ORDER BY registered_at,link_id))[1:20] AS aliases,
+    array_agg(link_id ORDER BY registered_at,link_id) AS all_aliases,
     (array_agg(DISTINCT role_id::text))[1:10] AS role_ids,
     bool_or(state='verified') AS verified,bool_and(state='revoked') AS revoked,
     bool_or(host->>'provider'='codex-desktop' AND external_ref IS NOT NULL AND state='verified' AND verified_capabilities ? 'open') AS can_open,
@@ -47,7 +57,8 @@ const catalog = `WITH hosts AS (
     GROUP BY host->>'provider',COALESCE(external_ref,'link:'||link_id::text)
 ), identities AS (
   SELECT 'owned:'||s.session_id::text AS key,'owned'::text AS kind,s.session_id AS identity,
-    ARRAY[s.session_id]::uuid[] AS aliases,ARRAY[s.role_id]::text[] AS role_ids,to_jsonb(s) AS runtime,
+    ARRAY[s.session_id]::uuid[] AS aliases,ARRAY[s.session_id]::uuid[] AS all_aliases,
+    ARRAY[s.role_id]::text[] AS role_ids,to_jsonb(s) AS runtime,
     EXISTS(SELECT 1 FROM hosts h WHERE h.host->>'kind'='owned' AND h.host->>'sessionId'=s.session_id::text AND h.state='verified') AS verified,
     EXISTS(SELECT 1 FROM hosts h WHERE h.host->>'kind'='owned' AND h.host->>'sessionId'=s.session_id::text
       AND h.state='verified' AND h.verified_capabilities ? 'open') AS can_open,
@@ -56,17 +67,20 @@ const catalog = `WITH hosts AS (
       THEN s.native_thread_id END AS external_ref,1::bigint AS alias_count
   FROM runtime_session s WHERE s.project_id=$1
   UNION ALL
-  SELECT 'external:'||h.identity::text,'external',h.identity,h.aliases,h.role_ids,NULL::jsonb,h.verified,h.can_open,h.revoked,h.observed_at,
+  SELECT 'external:'||h.identity::text,'external',h.identity,h.aliases,h.all_aliases,h.role_ids,NULL::jsonb,h.verified,h.can_open,h.revoked,h.observed_at,
     h.external_ref,h.alias_count FROM grouped_hosts h
 ), described AS (
-  SELECT i.*,to_jsonb(p) AS profile,
+  SELECT i.*,to_jsonb(p) AS profile,to_jsonb(v) AS visual_profile,
     CASE WHEN p.membership IS NOT NULL THEN p.membership WHEN i.historical THEN 'historical'
       WHEN i.verified THEN 'current' ELSE 'unclassified' END AS membership,
     COALESCE(p.display_name,CASE WHEN i.kind='owned' THEN COALESCE(r.proposal->>'title',i.runtime->>'role_id')
       ELSE COALESCE(r.proposal->>'title','外部会话')||' · 外部 '||left(i.identity::text,8) END) AS title
   FROM identities i
   LEFT JOIN LATERAL (SELECT sp.* FROM session_profile sp WHERE sp.project_id=$1 AND sp.target_kind=i.kind
-    AND sp.target_id=ANY(i.aliases) ORDER BY (sp.target_id=i.identity) DESC,sp.updated_at DESC,sp.target_id LIMIT 1) p ON true
+    AND sp.target_id=ANY(i.all_aliases) ORDER BY (sp.display_name IS NOT NULL OR sp.membership IS NOT NULL) DESC,
+      (sp.target_id=i.identity) DESC,sp.updated_at DESC,sp.target_id LIMIT 1) p ON true
+  LEFT JOIN LATERAL (SELECT sp.* FROM session_profile sp WHERE sp.project_id=$1 AND sp.target_kind=i.kind
+    AND sp.target_id=i.identity LIMIT 1) v ON true
   LEFT JOIN role_definition rd ON rd.project_id=$1 AND rd.role_id::text=i.role_ids[1]
   LEFT JOIN role_revision r ON r.project_id=rd.project_id AND r.role_id=rd.role_id AND r.revision_id=rd.current_revision_id
 )
@@ -111,7 +125,7 @@ export class PgSessionObservation implements SessionObservationReader {
   private async raw(key: string): Promise<Row | null> {
     if (!validKey.test(key)) throw new DomainError("INVALID_SESSION_KEY", "会话入口无效。");
     const [kind, id] = key.split(":");
-    const r = await this.client.query(`${catalog} SELECT * FROM described WHERE kind=$2 AND $3::uuid=ANY(aliases)`, [this.projectId, kind, id]);
+    const r = await this.client.query(`${catalog} SELECT * FROM described WHERE kind=$2 AND $3::uuid=ANY(all_aliases)`, [this.projectId, kind, id]);
     return r.rows[0] ?? null;
   }
   private async roles(ids: string[]): Promise<ObservedRole[]> {
@@ -136,7 +150,7 @@ export class PgSessionObservation implements SessionObservationReader {
   }
   private async prepare(rows: Row[]): Promise<PreparedSessions> {
     const owned = rows.filter(row => row.kind === "owned").map(row => row.identity as string);
-    const aliases = [...new Set(rows.flatMap(row => row.aliases as string[]))];
+    const aliases = [...new Set(rows.flatMap(row => row.all_aliases as string[]))];
     const runs = await this.client.query(`SELECT DISTINCT ON(session_id) session_id,run_id,task_id,state,updated_at FROM runtime_run
         WHERE project_id=$1 AND session_id=ANY($2::uuid[]) ORDER BY session_id,created_at DESC,run_id DESC`, [this.projectId, owned]);
     const claims = await this.client.query(`SELECT DISTINCT ON(c.session_id) c.session_id,t.*,'claimed'::text AS relation FROM resident_queue_claim c
@@ -168,14 +182,14 @@ export class PgSessionObservation implements SessionObservationReader {
     const runs = prepared ? { rows: [prepared.runs.get(row.identity)].filter(Boolean) } : row.kind === "owned" ? await this.client.query(`SELECT run_id,task_id,state,updated_at FROM runtime_run
       WHERE project_id=$1 AND session_id=$2 ORDER BY created_at DESC,run_id DESC LIMIT 1`, [this.projectId, row.identity]) : { rows: [] };
     const run = runs.rows[0];
-    const work = prepared ? { rows: [((row.aliases as string[]).map(id => prepared.work.get(`${row.kind}:${id}`)).find(Boolean))].filter(Boolean) } : await this.client.query(`SELECT t.*,CASE WHEN c.claim_id IS NOT NULL THEN 'claimed' ELSE a.state END AS relation
+    const work = prepared ? { rows: [((row.all_aliases as string[]).map(id => prepared.work.get(`${row.kind}:${id}`)).find(Boolean))].filter(Boolean) } : await this.client.query(`SELECT t.*,CASE WHEN c.claim_id IS NOT NULL THEN 'claimed' ELSE a.state END AS relation
       FROM task t LEFT JOIN resident_queue_claim c ON c.project_id=t.project_id AND c.task_id=t.task_id
         AND c.session_id=$2 AND c.released_at IS NULL
       LEFT JOIN task_session_assignment a ON a.project_id=t.project_id AND a.task_id=t.task_id AND a.target_kind=$3
         AND a.target_id=ANY($4::uuid[]) AND a.task_revision_id=t.current_revision_id AND a.state IN ('assigned','accepted')
       WHERE t.project_id=$1 AND t.state='in_progress' AND (c.claim_id IS NOT NULL OR a.task_id IS NOT NULL)
       ORDER BY (c.claim_id IS NOT NULL) DESC,(a.state='accepted') DESC,t.task_id LIMIT 2`,
-      [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.aliases]);
+      [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.all_aliases]);
     if (work.rows.length > 1) limitations.push("存在多项分派/承接工作；首屏只列一项，分派与任务列表保留全部。不能推定都在执行。");
     const inFlight = prepared ? { rows: [{ busy: prepared.busy.has(row.identity) }] } : row.kind === "owned" ? await this.client.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
         AND state=ANY($3::text[])) OR EXISTS(SELECT 1 FROM session_message_processing WHERE project_id=$1 AND session_id=$2
@@ -189,8 +203,8 @@ export class PgSessionObservation implements SessionObservationReader {
       : { ...unavailable("会话已关闭或接入已撤销。"), mode: "unavailable" as const };
     const canOpen = !!row.can_open && !!row.external_ref && !row.historical;
     return { key: row.key, target, aliases: row.aliases.map((id: string) => row.kind === "owned" ? { kind: "owned", sessionId: id } : { kind: "external", linkId: id }),
-      title: profile?.displayName ?? clip(row.title, 240), profile, kind: row.kind, roles,
-      membership: row.membership, membershipReason: profile ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
+      title: profile?.displayName ?? clip(row.title, 240), profile, identity: selectedIdentity(row), kind: row.kind, roles,
+      membership: row.membership, membershipReason: profile?.membership ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
       currentTask: current ? this.task(current, current.relation) : null,
       latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id) } : null,
@@ -253,7 +267,7 @@ export class PgSessionObservation implements SessionObservationReader {
       SELECT task_id FROM runtime_run WHERE project_id=$1 AND session_id=$2
       UNION SELECT task_id FROM task_session_assignment_revision WHERE project_id=$1 AND target_kind=$3 AND target_id=ANY($4::uuid[])
       UNION SELECT task_id FROM resident_queue_entry WHERE project_id=$1 AND session_id=$2
-      ) related ORDER BY task_id LIMIT 201`, [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.aliases]);
+      ) related ORDER BY task_id LIMIT 201`, [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.all_aliases]);
     return r.rows.map(x => x.task_id);
   }
   private async acceptedWindows(row: Row): Promise<Array<{ task_id: string; start_at: Date; end_at: Date | null }>> {
@@ -263,7 +277,7 @@ export class PgSessionObservation implements SessionObservationReader {
       FROM task_session_assignment_revision WHERE project_id=$1
     ) SELECT task_id,ack_at AS start_at,end_at FROM revisions
       WHERE target_kind=$2 AND target_id=ANY($3::uuid[]) AND state='accepted' AND ack_at IS NOT NULL
-      ORDER BY task_id,ack_at LIMIT 201`, [this.projectId, row.kind, row.aliases]);
+      ORDER BY task_id,ack_at LIMIT 201`, [this.projectId, row.kind, row.all_aliases]);
     return r.rows;
   }
   private async changeScope(row: Row, tasks: string[]): Promise<{ sql: string; params: unknown[]; limited: boolean }> {
@@ -276,7 +290,7 @@ export class PgSessionObservation implements SessionObservationReader {
         WHERE w.task_id=session_observation_change.task_id AND session_observation_change.occurred_at>=w.start_at
           AND (w.end_at IS NULL OR session_observation_change.occurred_at<w.end_at)))
       OR (source_table='role_revision' AND role_id=ANY($6::text[])))`,
-      params: [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.aliases, tasks.slice(0, 200), row.role_ids,
+      params: [this.projectId, row.kind === "owned" ? row.identity : null, row.kind, row.all_aliases, tasks.slice(0, 200), row.role_ids,
         windows.map(x => x.task_id), windows.map(x => x.start_at), windows.map(x => x.end_at)], limited: allWindows.length > 200 || tasks.length > 200 };
   }
   private eventSource(row: Row): ObservationSource {
@@ -388,7 +402,7 @@ export class PgSessionObservation implements SessionObservationReader {
     const owned = row.kind === "owned" ? row.identity : null;
     const assignments = await this.client.query(`SELECT a.task_id,t.title,t.state,t.owner,t.current_revision_id FROM task_session_assignment a
       JOIN task t ON t.project_id=a.project_id AND t.task_id=a.task_id WHERE a.project_id=$1 AND a.target_kind=$2
-      AND a.target_id=ANY($3::uuid[]) AND a.state<>'released' ORDER BY a.updated_at DESC,a.task_id LIMIT 21`, [this.projectId, row.kind, row.aliases]);
+      AND a.target_id=ANY($3::uuid[]) AND a.state<>'released' ORDER BY a.updated_at DESC,a.task_id LIMIT 21`, [this.projectId, row.kind, row.all_aliases]);
     const store = new PgSessionAssignments(this.client, this.projectId);
     const assigned: SessionSnapshot["assignments"] = [];
     for (const item of assignments.rows.slice(0, 20)) { const assignment = await store.getTaskSessionAssignment(item.task_id); if (assignment)

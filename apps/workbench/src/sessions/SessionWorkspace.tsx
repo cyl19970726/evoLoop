@@ -18,6 +18,8 @@ import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
 import { SessionModelControl } from "./SessionModelControl";
+import { SessionIdentityMark } from "./SessionIdentityMark";
+import { SessionIdentityControl } from "./SessionIdentityControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
@@ -341,7 +343,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const turnLabel = observation.progress?.turn ? `${observation.progress.turn.status === "inProgress" ? "进行中" : observation.progress.turn.status === "completed" ? "已结束" : observation.progress.turn.status === "failed" ? "失败" : "状态待核对"} · ${date(observation.progress.lastEventAt)}` : "未同步";
   return <div ref={workspaceRef} className="content session-workspace" data-view={informationOpen ? "information" : tab}>
     <header className="session-detail-header">
-      <div className="session-detail-heading"><h1>{session.title}<span className="session-status-badge">{statusLabel}</span></h1><p>{session.kind === "owned" ? "项目受管" : "外部 Agent · 人工接入"}<span>·</span>{session.roles.map(role => role.title).join("、") || "职责待核对"}<span>·</span>{sessionMembership(session.membership)}</p></div>
+      <div className="session-detail-heading"><h1><SessionIdentityMark target={session.target} identity={session.identity} name={session.title} /><span className="session-detail-name">{session.title}</span><span className="session-status-badge">{statusLabel}</span></h1><p>{session.kind === "owned" ? "项目受管" : "外部 Agent · 人工接入"}<span>·</span>{session.roles.map(role => role.title).join("、") || "职责待核对"}<span>·</span>{sessionMembership(session.membership)}</p></div>
       <div className="session-workspace-actions"><button type="button" onClick={() => { setAccessReadAgain(value => value + 1); setReadAgain(value => value + 1); }} disabled={loading}>重新读取</button><button type="button" aria-expanded={informationOpen} aria-controls="session-information-panel" onClick={() => showInformation(!informationOpen)}>会话详情</button><button type="button" aria-expanded={closeOpen} aria-controls="session-close-panel" onClick={() => setCloseOpen(value => !value)}>{session.kind === "owned" ? "关闭受管 Session" : "归档与归类"}</button></div>
     </header>
     {error && <Alert kind="error">{error}。显示上次读回；请重新读取。</Alert>}
@@ -364,7 +366,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
             : idleResult ? `最近关联交付 · 技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)}${current.metadata.partial ? " · 已读范围有限" : ""}`
               : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "暂无可确认的当前 Task"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
         </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
-        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>目标模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>目标强度</dt><dd>{executionProfile?.revision.reasoningEffort??"未配置"}</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <><p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>{session.target.kind === "owned"&&<SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status==='ready'?recoveryRead.view:null} busy={session.busy===true} onApplied={()=>setReadAgain(value=>value+1)}/>}</>}</section>
+        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>目标模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>目标强度</dt><dd>{executionProfile?.revision.reasoningEffort??"未配置"}</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <><p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>{session.target.kind === "owned"&&<SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status==='ready'?recoveryRead.view:null} busy={session.busy===true} onApplied={()=>setReadAgain(value=>value+1)}/>}</>}
+          <details className="session-identity-settings"><summary>调整颜色与图标</summary><SessionIdentityControl context={context} session={session} onApplied={() => setReadAgain(value => value + 1)} /></details>
+        </section>
       </div>}
     </div>
     {failedRun && <p className="session-run-attention" role="status">最近运行{failedRun.state === "failed" ? "失败" : failedRun.state === "interrupted" ? "已中断" : "结果未知"}；{recentRunHref ? <>请先<a href={recentRunHref}>核对原 Run</a>和当前任务，再决定下一步。</> : "原 Run 缺少可核对的 Task 关联，暂不能直达；请重新读取会话并核对任务运行记录。"}</p>}
@@ -401,5 +405,5 @@ function SessionProfileForm({ context, snapshot, onApplied }: { context: Mutatio
     { name: "membership", label: "团队归属", kind: "select", value: profile?.membership ?? snapshot.session.membership, options: [option("current", "当前团队"), option("historical", "历史"), option("unclassified", "待归类")] },
     { name: "tenure", label: "会话性质", kind: "select", value: profile?.tenure ?? "unknown", options: [option("resident", "常驻"), option("temporary", "临时"), option("unknown", "未知")] },
     { name: "reason", label: "变更依据", kind: "textarea" },
-  ]} build={v => ({ type: "session.profile.set", target: snapshot.session.target, expectedVersion: profile?.version ?? 0, displayName: v.displayName, purpose: v.purpose, membership: v.membership, tenure: v.tenure, reason: v.reason })} onApplied={onApplied} />;
+  ]} build={v => ({ type: "session.profile.set", target: profile?.target ?? snapshot.session.target, expectedVersion: profile?.version ?? 0, displayName: v.displayName, purpose: v.purpose, membership: v.membership, tenure: v.tenure, reason: v.reason })} onApplied={onApplied} />;
 }

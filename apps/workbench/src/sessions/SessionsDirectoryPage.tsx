@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CircleAlert, Clock3, Search, UserRound } from "lucide-react";
+import { ArrowRight, CircleAlert, Clock3, Search } from "lucide-react";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { date, href } from "../ui/shared";
 import type { MutationContext } from "../workflow/ActionForm";
@@ -7,6 +7,7 @@ import { sessionHref } from "./SessionNavigation";
 import { sessionStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
 import { useSessionDirectoryGroup } from "./useSessionDirectoryGroup";
+import { SessionIdentityMark } from "./SessionIdentityMark";
 import "./sessions.css";
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
@@ -14,7 +15,7 @@ const classOrder: SessionClass[] = ["business", "system", "unclassified"];
 function SessionRow({ context, session }: { context: MutationContext; session: ObservedSession }) {
   const unclassified = sessionClassReason(session);
   return <article className="sessions-directory-row">
-    <span className="sessions-directory-icon" aria-hidden="true"><UserRound size={18} /></span>
+    <SessionIdentityMark target={session.target} identity={session.identity} name={session.title} />
     <div className="sessions-directory-main">
       <div className="sessions-directory-title"><a href={sessionHref(context.projectId, session.key)}>{session.title}</a><span>{session.kind === "owned" ? "受管" : "外部"}</span></div>
       <p>{session.roles.map(role => role.title).join(" · ") || "职责待核对"}<span> · {sessionStatusLabel(session)}</span></p>

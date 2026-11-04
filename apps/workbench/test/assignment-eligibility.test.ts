@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
-import { eligibleOwnedSessions } from "../src/sessions/assignmentEligibility.ts";
+import { assignedObservedSession, eligibleOwnedSessions } from "../src/sessions/assignmentEligibility.ts";
 
 const projectId = "20000001-0000-4000-8000-000000000001";
 const taskId = "20000002-0000-4000-8000-000000000002";
@@ -38,4 +38,14 @@ test("released or absent assignments preserve the legacy ready same-Role path", 
 
 test("a mismatched assignment response never enables a run", () => {
   assert.deepEqual(eligibleOwnedSessions(task, sessions, assignment({ taskId: secondId })), []);
+});
+
+test("an external HostLink alias retains its proven directory Session in the Task handoff", () => {
+  const canonical = { kind: "external" as const, linkId: firstId };
+  const alias = { kind: "external" as const, linkId: secondId };
+  const observed = { target: canonical, aliases: [canonical, alias], title: "同一原生会话" };
+  const unrelated = { target: { kind: "owned" as const, sessionId: firstId }, aliases: [], title: "同名但不同来源" };
+  assert.equal(assignedObservedSession(assignment({ target: alias }), projectId, taskId, [unrelated, observed]), observed);
+  assert.equal(assignedObservedSession(assignment({ target: alias, projectId: secondId }), projectId, taskId, [observed]), undefined);
+  assert.equal(assignedObservedSession(assignment({ target: alias, taskId: secondId }), projectId, taskId, [observed]), undefined);
 });

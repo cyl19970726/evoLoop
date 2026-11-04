@@ -28,6 +28,7 @@
     "./session-work": "./dist/session-work.js",
     "./session-observation": "./dist/session-observation.js",
     "./session-assignments": "./dist/session-assignments.js",
+    "./session-identity": "./dist/session-identity.js",
     "./session-messages": "./dist/session-messages.js",
     "./allocation-relations": "./dist/allocation-relations.js",
     "./session-recovery": "./dist/session-recovery.js",
