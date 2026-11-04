@@ -16,7 +16,10 @@ import { assignmentSessionKey, assignmentStatusLabel, isClosedTask, isMyCurrentW
 import { useTaskProjections } from "./useTaskProjections";
 import { TaskPreview } from "./TaskPreview";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { latestProgressPresentation, taskTimestamp, taskType } from "./taskWorkspacePresentation";
+import type { TaskAttentionItem } from "@evoloop/contracts";
+import { request } from "../api";
+import { latestProgressPresentation, taskType } from "./taskWorkspacePresentation";
+import { timingDate, timingDuration, timingStageLabel, timingWaitingFor } from "./LeaderTaskFacts";
 import {
   appendLeaderWorkPage, leaderPhaseLabel, leaderSessionDisplayName, leaderWorkItemPresentation,
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
@@ -88,6 +91,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [leaderDocumentCoverage, setLeaderDocumentCoverage] = useState<"idle" | "loading" | "complete" | "partial">("idle");
   const [leaderWorkBusy, setLeaderWorkBusy] = useState(false);
   const [leaderWorkError, setLeaderWorkError] = useState("");
+  const [attentionRead, setAttentionRead] = useState<{ projectId: string; items: TaskAttentionItem[]; complete: boolean; error: string } | null>(null);
   const [leaderStatuses, setLeaderStatuses] = useState<Record<string, WorkTaskStatus>>({});
   const [leaderStatusReading, setLeaderStatusReading] = useState(false);
   const [leaderStatusError, setLeaderStatusError] = useState("");
@@ -160,6 +164,28 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     });
     return () => { active = false; };
   }, [token, projectId, refresh, recheck, view, loading, visibleDocumentSignature, documentStatus]);
+  useEffect(() => {
+    let active = true;
+    setAttentionRead(null);
+    if (view !== "work") return () => { active = false; };
+    void (async () => {
+      const items: TaskAttentionItem[] = [];
+      let cursor: string | null = null;
+      const seen = new Set<string>();
+      for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
+        const path = `/api/projects/${encodeURIComponent(projectId)}/task-attention/items?state=open&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+        const page: { items: TaskAttentionItem[]; nextCursor: string | null } = await request(token, path, 15000);
+        if (!Array.isArray(page.items) || page.items.some(item => item.state !== "open")) throw new Error("关注列表响应无效");
+        items.push(...page.items);
+        cursor = page.nextCursor;
+        if (!cursor) break;
+        if (seen.has(cursor)) throw new Error("关注列表分页游标重复");
+        seen.add(cursor);
+      }
+      if (active) setAttentionRead({ projectId, items, complete: !cursor, error: "" });
+    })().catch(cause => { if (active) setAttentionRead({ projectId, items: [], complete: false, error: errorText(cause) }); });
+    return () => { active = false; };
+  }, [token, projectId, view, refresh, recheck]);
   const leaderStatusSignature = leaderWork?.items.map(item => item.taskId).join(",") ?? "";
   const ordinaryStatusSignature = Object.keys(statuses).sort().join(",");
   const leaderStatusKnownSignature = Object.keys(leaderStatuses).sort().join(",");
@@ -340,6 +366,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     try { sessionStorage.setItem(`evoloop:list:${projectId}`, listRoute); } catch { /* optional return state */ }
   }, [view, projectId, listRoute]);
   const listProps = { projections: projections.items, sessionNames: leaderSessionNames, actorId: context.principal.actorId,
+    attentionItems: attentionRead?.projectId === projectId ? attentionRead.items : [],
     returnTo: listRoute, selected: selectedTask, onSelect: setSelectedTask, optionalColumns };
   const pending = impacts.filter(i => i.state === "pending");
   const visibleTasks = projectionTasks.filter(t => (scope !== "mine" || !!projections.items[t.id] && isMyCurrentWork(projections.items[t.id]!, context.principal.actorId)))
@@ -439,6 +466,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
         <button className="quiet" aria-label="重新读取列表" onClick={context.onChanged}><RefreshCw size={16} /></button>
       </div>
     </section>}
+    {view === "work" && attentionRead?.projectId === projectId && (attentionRead.error || !attentionRead.complete) &&
+      <p className="task-attention-list-status" role="status">{attentionRead.error ? `关注项暂不可读：${attentionRead.error}` : "关注项超过当前已读范围；未显示的任务仍需到详情核对。"}</p>}
     {view === "inbox" && <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")} >任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current="page">依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>}
     {view === "documents" && <nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")} aria-current="page">过程文档</a><a href={href(projectId, "knowledge")}>知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav>}
     {view === "documents" && leaderDocumentCoverage === "partial" &&
@@ -526,7 +555,7 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatu
           {item.plan?.priority?` · P${item.plan.priority}`:""}
           {item.dependencies.length?` · ${item.dependencies.length} 项依赖`:""}
           {item.plan?.dueAt?` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}`:" · 截止未设置"}</small>
-        <small>创建 {new Date(item.dates.createdAt).toLocaleString("zh-CN")} · 业务变化 {new Date(item.dates.businessChangedAt).toLocaleString("zh-CN")}
+        <small>创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? timingStageLabel[item.timing.current.stage] : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)} · 等待 {item.timing ? timingWaitingFor(item.timing) : "责任未知"}
           {item.plan?.plannedStartAt?` · 计划开始 ${new Date(item.plan.plannedStartAt).toLocaleString("zh-CN")}`:""}
           {item.dates.startedAt?` · 实际开始 ${new Date(item.dates.startedAt).toLocaleString("zh-CN")}`:""}
           {item.dates.completedAt?` · 完成 ${new Date(item.dates.completedAt).toLocaleString("zh-CN")}`:""}
@@ -546,11 +575,11 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatu
 
 function FileEmpty() { return <Search size={27} strokeWidth={1.4} aria-hidden="true" />; }
 
-function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projections = {}, sessionNames = {}, actorId = "",
+function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projections = {}, sessionNames = {}, attentionItems = [], actorId = "",
   returnTo, selected, onSelect, optionalColumns = defaultOptionalTaskColumns }: {
   tasks: Task[]; statuses: Record<string, WorkTaskStatus>;
   projectId: string; pending: Impact[]; ownerNames: Record<string, OwnerName>;
-  projections?: Record<string, LeaderWorkTask>; sessionNames?: Record<string, LeaderSessionName>; actorId?: string;
+  projections?: Record<string, LeaderWorkTask>; sessionNames?: Record<string, LeaderSessionName>; attentionItems?: TaskAttentionItem[]; actorId?: string;
   returnTo?: string; selected?: string; onSelect?: (id: string) => void;
   optionalColumns?: Record<OptionalTaskColumn, boolean>;
 }) {
@@ -585,6 +614,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
       const taskLink = `${href(projectId, "task", t.id)}${returnTo ? `?list=${encodeURIComponent(returnTo)}` : ""}`;
       const sessionLink = sessionKey ? `${href(projectId, "sessions")}?session=${encodeURIComponent(sessionKey)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
       const progress = latestProgressPresentation(projection);
+      const attentionCount = attentionItems.filter(item => item.taskId === t.id && item.taskRevisionId === t.currentRevisionId).length;
       const ownerName = ownerNames[t.owner]?.title;
       const ownerUnavailable = ownerNames[t.owner]?.error;
       return <tr key={t.id} className={selected === t.id ? "selected-task-row" : undefined}>
@@ -597,12 +627,14 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
           <small>{pending.some(i => i.taskId === t.id) && <span className="impact-marker">依据待复核 · </span>}
             {cognition && <>判断接续记录 · <a href={href(projectId, "task", t.id)}>查看来源</a></>}
             {!cognition && t.legacyDecision && legacyDecisionLabel(t.legacyDecision)}</small>
+          {attentionCount > 0 && <div className="task-attention-row"><a className="task-attention-list-link" href={`${taskLink}${taskLink.includes("?") ? "&" : "?"}tab=overview&section=attention`}>{attentionCount} 项待关注</a></div>}
           {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}
         </td>
         <td className="task-list-kind" data-label="工作类型"><span className="mobile-field-label">工作类型</span><span>{taskType(projection?.taskKind ?? t.kind)}</span></td>
         <td className="task-list-state" data-label="当前进展"><span className="mobile-field-label">当前进展</span>
           <span className={`task-state-display task-state-${t.state} phase-${projection?.phase ?? "unknown"}`}><PhaseIcon size={16} aria-hidden="true" />{phaseLabel}</span>
           {(cognition || projection && !isClosedTask(t.state) && leaderPhaseLabel[projection.phase] !== states[t.state]) && <small>任务状态 · {states[t.state]}</small>}
+          {projection?.timing && <small className="task-list-stage-time">本阶段 {timingDuration(projection.timing.current.elapsedMs)} · 等待 {timingWaitingFor(projection.timing)}</small>}
         </td>
         <td className="task-list-owner" data-label="承接者"><span className="mobile-field-label">{isClosedTask(t.state) ? "历史承接" : "承接者"}</span>
           {sessionLink ? <><a href={sessionLink}>{sessionNames[sessionKey!]?.title ?? `Session ${projection!.assignment!.targetId.slice(0, 8)}`}</a><small>{assignmentStatusLabel(projection!)}</small></>
@@ -610,7 +642,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
               {ownerName ? <small>负责职责 · {ownerName}</small> : ownerUnavailable ? <small>{ownerUnavailable}</small> : <small>负责职责待核对</small>}</>}
         </td>
         <td className="task-list-created" data-label="创建时间"><span className="mobile-field-label">创建时间</span>
-          {projection ? <><time dateTime={projection.dates.createdAt}>{taskTimestamp(projection.dates.createdAt)}</time><small>首次任务修订</small></> : <span>创建时间尚未读回</span>}
+          {projection ? <><time dateTime={projection.timing?.createdAt ?? undefined}>{timingDate(projection.timing?.createdAt)}</time><small>首次任务修订</small></> : <span>创建时间尚未读回</span>}
         </td>
         <td className={`task-list-progress-time${progress.missing ? " is-missing" : ""}`} data-label="最近进展"><span className="mobile-field-label">最近进展</span>
           <strong>{progress.name}</strong><small>{progress.time || progress.source}</small>

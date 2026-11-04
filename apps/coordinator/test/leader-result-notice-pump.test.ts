@@ -38,6 +38,7 @@ function fixture(initial=notice()){
   const commands:unknown[]=[],errors:unknown[]=[],diagnostics:string[]=[];
   let saved:SessionMessageRecord|null=null;
   let operation:Record<string,unknown>|null=null;
+  let attentionCurrent=true,attentionDispositions=0;
   let loseAcknowledgement=false,linkFails=false,postRejection:string|null=null;
   let firstPage:LeaderResultNotice[]|null=null;
   const cursors:Array<string|undefined>=[];
@@ -71,6 +72,8 @@ function fixture(initial=notice()){
       if(taskFacts.state==="todo"&&!taskFacts.assigned)refreshes++;
       return "disposed" as const;
     },
+    attentionSourceCurrent:async()=>attentionCurrent,
+    disposeStaleAttention:async()=>{attentionDispositions++;row={...row,state:"blocked"};return false;},
     hasInFlightOnOtherSession:async()=>inFlight,
     notePendingReason:async(_project:string,_id:string,reason:string|null)=>{pendingReason=reason;},
     block:async(_project:string,_id:string,reason:string)=>{blocks++;row={...row,state:"blocked"};pendingReason=reason;},
@@ -115,6 +118,8 @@ function fixture(initial=notice()){
     get taskReads(){return taskReads;},get blocks(){return blocks;},
     get dispositions(){return dispositions;},get pendingDispositions(){return pendingDispositions;},
     get refreshes(){return refreshes;},
+    get attentionDispositions(){return attentionDispositions;},
+    setAttentionCurrent(value:boolean){attentionCurrent=value;},
     setConfig(value:LeaderResultNoticeConfig|undefined){configured=value;},
     setPrincipals(value:Principal[]){principals=value;},
     setNotice(value:LeaderResultNotice){row=value;},
@@ -130,6 +135,14 @@ function fixture(initial=notice()){
     setOperation(value:Record<string,unknown>|null){operation=value;},setMessage(value:SessionMessageRecord|null){saved=value;},
     get message(){return saved;}};
 }
+
+test("attention notice checks the current phase and source before dispatch",async()=>{
+  const f=fixture(notice("task_attention"));
+  f.setAttentionCurrent(false);
+  await f.pump.tick();
+  assert.equal(f.commands.length,0);
+  assert.equal(f.attentionDispositions,1);
+});
 
 test("only an explicitly configured unique ready managed Lead gets a result message",async()=>{
   const f=fixture();

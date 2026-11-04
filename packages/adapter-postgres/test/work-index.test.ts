@@ -571,6 +571,132 @@ test("a newer completed Run waits for its own Delivery instead of reviving an ol
   assert.equal(observedFailure.phase, "rework");
 });
 
+test("timing keeps assignment, Run, submission and acceptance in separate sourced intervals", () => {
+  const row = {
+    task_id: "task", version: 5, current_revision_id: "revision", title: "Timeline",
+    kind: "implementation", owner: "owner", state: "in_progress",
+    created_at: "2026-10-28T00:00:00Z", business_changed_at: "2026-10-28T00:01:00Z",
+    assignment_state: "accepted", assignment_target_kind: "owned", assignment_target_id: "session",
+    latest_run_id: "run", latest_run_state: "completed", run_updated_at: "2026-10-28T02:00:00Z",
+    delivery_id: "delivery", delivery_task_revision_id: "revision", delivery_result: "passed",
+    delivery_created_at: "2026-10-28T02:30:00Z", pending_impact_count: 0,
+    dependency_facts: [], plan_version: null, has_closure: false,
+    timing_events: [
+      { kind: "task", id: "revision", at: "2026-10-28T00:00:00Z", state: "todo" },
+      { kind: "assignment", id: "session", at: "2026-10-28T00:10:00Z", state: "assigned" },
+      { kind: "ack", id: "session", at: "2026-10-28T00:25:00Z", state: "accepted" },
+      { kind: "run_reserved", id: "run", at: "2026-10-28T01:00:00Z" },
+      { kind: "run_bound", id: "run", at: "2026-10-28T01:05:00Z" },
+      { kind: "run_terminal", id: "run", at: "2026-10-28T02:00:00Z", state: "completed" },
+      { kind: "submission", id: "submission", at: "2026-10-28T02:10:00Z", state: "submitted" },
+      { kind: "delivery", id: "delivery", at: "2026-10-28T02:30:00Z", state: "passed" },
+      { kind: "review", id: "review", at: "2026-10-28T02:40:00Z", state: "deferred" },
+    ],
+  };
+  const value = leaderWorkTaskFromRow(row as never, "2026-10-28T03:00:00Z");
+  assert.equal(value.timing.publication.source, "unknown");
+  assert.equal(value.timing.current.stage, "awaiting_acceptance");
+  assert.equal(value.timing.current.startedAt, "2026-10-28T02:30:00.000Z");
+  assert.equal(value.timing.current.waitingFor.kind, "leader");
+  assert.deepEqual(value.timing.rounds[0]?.intervals.map(i => i.stage),
+    ["unassigned", "awaiting_ack", "awaiting_run", "run_reserved", "running",
+      "awaiting_submission", "awaiting_delivery", "awaiting_acceptance"]);
+  assert.equal(value.timing.latestEffectiveProgress?.kind, "delivery");
+  assert.equal(value.timing.executionActivity, null);
+});
+
+test("a current native observation belongs only to its exact Task and Run", () => {
+  const row = {
+    task_id: "task", version: 1, current_revision_id: "revision", title: "Activity", kind: null,
+    owner: "owner", state: "in_progress", created_at: now, business_changed_at: now,
+    latest_run_id: "run", latest_run_state: "running", latest_run_native_turn_id: "turn", pending_impact_count: 0,
+    dependency_facts: [], plan_version: null, has_closure: false,
+    native_observation: { observedAt: "2026-10-28T02:30:00Z", lastEventAt: "2026-10-28T02:29:00Z",
+      freshness: "live", currentTurn: { id: "turn", source: { kind: "run", runId: "run", taskId: "other" } } },
+  };
+  assert.equal(leaderWorkTaskFromRow(row as never, "2026-10-28T02:31:00Z").timing.executionActivity, null);
+  const matched = leaderWorkTaskFromRow({ ...row, native_observation: { ...row.native_observation,
+    currentTurn: { id: "turn", source: { kind: "run", runId: "run", taskId: "task" } } } } as never,
+  "2026-10-28T02:31:00Z");
+  assert.equal(matched.timing.executionActivity?.runId, "run");
+  assert.equal(matched.timing.executionActivity?.freshness, "live");
+});
+
+test("conflicting event order keeps the new attempt but leaves its elapsed time unknown", () => {
+  const row = {
+    task_id: "task", version: 2, current_revision_id: "revision", title: "Late old Delivery",
+    kind: null, owner: "owner", state: "in_progress", created_at: "2026-10-28T00:00:00Z",
+    business_changed_at: "2026-10-28T00:00:00Z", latest_run_id: "new-run",
+    latest_run_state: "completed", run_updated_at: "2026-10-28T02:00:00Z",
+    delivery_id: "old-delivery", delivery_run_id: "old-run", delivery_task_revision_id: "revision",
+    delivery_result: "passed", delivery_created_at: "2026-10-28T03:00:00Z",
+    pending_impact_count: 0, dependency_facts: [], plan_version: null, has_closure: false,
+    timing_events: [
+      { kind: "task", id: "revision", at: "2026-10-28T00:00:00Z", state: "in_progress" },
+      { kind: "run_reserved", id: "new-run", at: "2026-10-28T01:00:00Z" },
+      { kind: "run_terminal", id: "new-run", at: "2026-10-28T02:00:00Z", state: "completed" },
+      { kind: "delivery", id: "old-delivery", at: "2026-10-28T03:00:00Z", state: "passed" },
+    ],
+  };
+  const value = leaderWorkTaskFromRow(row as never, "2026-10-28T04:00:00Z");
+  assert.equal(value.phase, "awaiting_delivery");
+  assert.equal(value.timing.current.stage, "awaiting_submission");
+  assert.equal(value.timing.current.startedAt, null);
+  assert.equal(value.timing.current.elapsedMs, null);
+  assert.ok(value.timing.rounds[0]?.intervals.every(interval =>
+    !interval.startedAt || !interval.endedAt || Date.parse(interval.endedAt) >= Date.parse(interval.startedAt)));
+});
+
+test("an explicit release handoff after closure waits for publication without extending closure duration", () => {
+  const row = {
+    task_id: "task", version: 3, current_revision_id: "revision", title: "Released after close",
+    kind: null, owner: "owner", state: "done", has_closure: true,
+    created_at: "2026-10-28T00:00:00Z", business_changed_at: "2026-10-28T01:00:00Z",
+    completed_at: "2026-10-28T01:00:00Z", pending_impact_count: 0,
+    dependency_facts: [], plan_version: null,
+    follow_up_task_revision_id: "revision", current_release_handoff: { recipient: "maintainer" },
+    follow_up_updated_at: "2026-10-28T02:00:00Z", follow_up_version: 1,
+    timing_events: [
+      { kind: "task", id: "first", at: "2026-10-28T00:00:00Z", state: "todo" },
+      { kind: "closure", id: "closure", at: "2026-10-28T01:00:00Z" },
+      { kind: "publication_ready", id: "artifact", at: "2026-10-28T02:00:00Z", targetId: "maintainer" },
+    ],
+  };
+  const value = leaderWorkTaskFromRow(row as never, "2026-10-28T03:00:00Z");
+  assert.equal(value.timing.rounds[0]?.endedAt, "2026-10-28T01:00:00.000Z");
+  assert.equal(value.timing.rounds[0]?.elapsedMs, 3_600_000);
+  assert.equal(value.timing.current.stage, "awaiting_publication");
+  assert.equal(value.timing.current.startedAt, "2026-10-28T02:00:00.000Z");
+  assert.deepEqual(value.timing.current.waitingFor, { kind: "publisher", id: "maintainer" });
+  const withdrawn = leaderWorkTaskFromRow({ ...row, current_release_handoff: null,
+    follow_up_updated_at: "2026-10-28T02:30:00Z", follow_up_version: 2 } as never,
+  "2026-10-28T03:00:00Z");
+  assert.equal(withdrawn.timing.current.stage, "unknown");
+  assert.equal(withdrawn.timing.current.source?.kind, "release_handoff_withdrawn");
+  assert.equal(withdrawn.timing.rounds[0]?.endedAt, "2026-10-28T01:00:00.000Z");
+});
+
+test("repeated same-result Observation and deferred review do not refresh effective progress", () => {
+  const row = {
+    task_id: "task", version: 3, current_revision_id: "revision", title: "Repeated checks",
+    kind: null, owner: "owner", state: "in_progress", created_at: "2026-10-28T00:00:00Z",
+    business_changed_at: "2026-10-28T00:00:00Z", pending_impact_count: 0,
+    dependency_facts: [], plan_version: null, has_closure: false,
+    delivery_id: "delivery", delivery_result: "passed", observation_result: "used",
+    timing_events: [
+      { kind: "task", id: "revision", at: "2026-10-28T00:00:00Z", state: "in_progress" },
+      { kind: "delivery", id: "delivery", at: "2026-10-28T01:00:00Z", state: "passed" },
+      { kind: "observation", id: "first", deliveryId: "delivery", at: "2026-10-28T02:00:00Z", state: "used" },
+      { kind: "observation", id: "repeat", deliveryId: "delivery", at: "2026-10-28T03:00:00Z", state: "used" },
+      { kind: "review", id: "deferred", at: "2026-10-28T04:00:00Z", state: "deferred" },
+    ],
+  };
+  const value = leaderWorkTaskFromRow(row as never, "2026-10-28T05:00:00Z");
+  assert.deepEqual(value.timing.latestEffectiveProgress,
+    { kind: "observation", sourceId: "first", at: "2026-10-28T02:00:00.000Z" });
+  assert.equal(value.timing.current.waitingFor.kind, "leader");
+});
+
 test("latest progress is a direct business event rather than a renamed Task revision time", () => {
   const row = {
     task_id: "task", version: 4, current_revision_id: "revision", title: "Delivered work",
@@ -678,6 +804,8 @@ test("closure may advance the Task revision without hiding the Delivery it accep
   assert.equal(nextCycle.delivery, null, "the previous closure cannot attach its Delivery to the new cycle");
   assert.equal(nextCycle.latestRun, null, "the accepted Run belongs to the completed cycle");
   assert.equal(nextCycle.dates.completedAt, null);
+  assert.equal(nextCycle.timing.rounds.length, 2,
+    "same timestamp closure and reopen still form separate sourced rounds");
 
   const updated = await workflow.execute(who, { type: "task.update", projectId: fixture.project.id,
     operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: reopened.version!,
@@ -696,6 +824,167 @@ test("closure may advance the Task revision without hiding the Delivery it accep
   assert.equal(activeCycle.delivery, null);
   assert.equal(activeCycle.latestRun, null);
   assert.notEqual(activeCycle.currentRevisionId, nextCycle.currentRevisionId);
+});
+
+test("a new Run after an attributed Delivery remains the current attempt", async () => {
+  const fixture = await seedProject();
+  const sessionId = randomUUID(), oldRunId = randomUUID(), newRunId = randomUUID();
+  await uow.transaction(fixture.project.id, async tx => {
+    await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+    await tx.insertRuntimeRun({ projectId: fixture.project.id, id: oldRunId,
+      taskId: fixture.prerequisite.head.id, taskRevisionId: fixture.prerequisite.revision.id,
+      basisSetId: fixture.prerequisite.basis.id, sessionId, operationId: randomUUID(), input: "first attempt",
+      inputHash: hash("first attempt"), state: "completed", version: 1,
+      nativeTurnId: `turn-${oldRunId}`, interruptRequested: false, resultSummary: "First completed",
+      actorId: actor, createdAt: now, updatedAt: now });
+  });
+  const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const who = { actorId: actor, projectIds: [fixture.project.id],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const delivered = await workflow.execute(who, { type: "delivery.record", projectId: fixture.project.id,
+    operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
+    runId: oldRunId, artifactRef: "fixture://first", artifactRevision: "v1", contentHash: hash("first"),
+    technicalResult: "passed", technicalEvidence: "First result", reason: "Record first attempt" });
+  assert.equal(delivered.status, "applied", JSON.stringify(delivered));
+  const current = (await pool.query(`SELECT t.current_revision_id,r.basis_set_id FROM task t
+    JOIN task_revision r ON r.project_id=t.project_id AND r.revision_id=t.current_revision_id
+    WHERE t.project_id=$1 AND t.task_id=$2`, [fixture.project.id, fixture.prerequisite.head.id])).rows[0];
+  await pool.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,
+    session_id,operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'second attempt',$8,'completed',1,$9,$10,
+      '2026-10-28T01:00:00Z','2026-10-28T01:30:00Z')`,
+    [fixture.project.id,newRunId,fixture.prerequisite.head.id,current.current_revision_id,
+      current.basis_set_id,sessionId,randomUUID(),hash("second attempt"),`turn-${newRunId}`,actor]);
+  const projected = await readLeaderWorkTask(pool, fixture.project.id, fixture.prerequisite.head.id);
+  assert.equal(projected?.latestRun?.runId, newRunId);
+  assert.equal(projected?.phase, "awaiting_delivery");
+  assert.equal(projected?.timing.current.stage, "awaiting_submission");
+  assert.equal(projected?.timing.current.source?.id, newRunId);
+  assert.equal(projected?.timing.executionActivity, null);
+  const nativeAt = "2026-10-28T01:20:00Z", observedAt = "2026-10-28T01:21:00Z";
+  const source = (runId: string) => ({ currentTurn: { id: `turn-${runId}`,
+    source: { kind: "run", taskId: fixture.prerequisite.head.id, runId } } });
+  await pool.query(`INSERT INTO session_native_observation(project_id,session_id,thread_id,connection_id,
+    version,observed_at,last_event_at,freshness,projection)
+    VALUES($1,$2,$3,$4,1,$5,$6,'live',$7::jsonb)`, [fixture.project.id, sessionId,
+      `thread-${sessionId}`, randomUUID(), observedAt, nativeAt, JSON.stringify(source(oldRunId))]);
+  assert.equal((await readLeaderWorkTask(pool, fixture.project.id,
+    fixture.prerequisite.head.id))?.timing.executionActivity, null,
+  "the same Session's older Run must not refresh the new attempt");
+  await pool.query(`UPDATE session_native_observation SET version=2,projection=$3::jsonb
+    WHERE project_id=$1 AND session_id=$2`, [fixture.project.id, sessionId, JSON.stringify(source(newRunId))]);
+  const active = await readLeaderWorkTask(pool, fixture.project.id, fixture.prerequisite.head.id);
+  assert.equal(active?.timing.executionActivity?.runId, newRunId);
+  assert.equal(active?.timing.executionActivity?.at, "2026-10-28T01:20:00.000Z");
+  assert.equal(active?.timing.executionActivity?.observedAt, "2026-10-28T01:21:00.000Z");
+  assert.equal(active?.timing.executionActivity?.freshness, "live");
+});
+
+test("publication stage requires a structured handoff and publication evidence", async () => {
+  const fixture = await seedProject();
+  const handoff = { recipient: "release-maintainer", artifactRef: "fixture://release",
+    note: "Ready for release", readyForPublicationAt: "2026-10-28T04:00:00Z" };
+  const insert = `INSERT INTO task_attention_follow_up_revision(project_id,task_id,task_revision_id,
+    version,decision,action_taken,release_handoff,publication,actor_id,reason,created_at)
+    VALUES($1,$2,$3,$4,'waiting','Publish after use',$5::jsonb,$6::jsonb,$7,'Explicit handoff',$8)`;
+  await pool.query(`INSERT INTO task_attention_follow_up(project_id,task_id,task_revision_id,version,
+    decision,action_taken,release_handoff,actor_id,reason,updated_at)
+    VALUES($1,$2,$3,1,'waiting','Publish after use',$4::jsonb,$5,'Explicit handoff',$6)`,
+    [fixture.project.id, fixture.prerequisite.head.id, fixture.prerequisite.revision.id,
+      JSON.stringify(handoff), actor, handoff.readyForPublicationAt]);
+  await pool.query(insert, [fixture.project.id, fixture.prerequisite.head.id,
+    fixture.prerequisite.revision.id, 1, JSON.stringify(handoff), null, actor, handoff.readyForPublicationAt]);
+  const ready = await readLeaderWorkTask(pool, fixture.project.id, fixture.prerequisite.head.id);
+  assert.equal(ready?.timing.current.stage, "awaiting_publication");
+  assert.equal(ready?.timing.current.startedAt, "2026-10-28T04:00:00.000Z");
+  assert.deepEqual(ready?.timing.current.waitingFor, { kind: "publisher", id: "release-maintainer" });
+  assert.deepEqual(ready?.timing.publication, { at: null, source: "unknown" });
+  const publication = { publishedAt: "2026-10-28T05:00:00Z", publicationRef: "fixture://published" };
+  await pool.query(`UPDATE task_attention_follow_up SET version=2,publication=$3::jsonb
+    WHERE project_id=$1 AND task_id=$2`, [fixture.project.id, fixture.prerequisite.head.id, JSON.stringify(publication)]);
+  await pool.query(insert, [fixture.project.id, fixture.prerequisite.head.id,
+    fixture.prerequisite.revision.id, 2, JSON.stringify(handoff), JSON.stringify(publication), actor,
+    publication.publishedAt]);
+  const published = await readLeaderWorkTask(pool, fixture.project.id, fixture.prerequisite.head.id);
+  assert.deepEqual(published?.timing.publication,
+    { at: "2026-10-28T05:00:00.000Z", source: "explicit" });
+  assert.equal(published?.timing.latestEffectiveProgress?.kind, "publication_published");
+  assert.equal(published?.timing.current.stage, "unknown",
+    "publication alone does not establish Delivery acceptance or Task closure");
+});
+
+test("current publication responsibility follows the latest handoff even when its ready time is older", async () => {
+  const fixture = await seedProject();
+  const taskId = fixture.prerequisite.head.id;
+  const revisionId = fixture.prerequisite.revision.id;
+  const first = { recipient: "publisher-a", artifactRef: "fixture://artifact-a",
+    note: "First", readyForPublicationAt: "2026-10-28T10:00:00Z" };
+  const next = { recipient: "publisher-b", artifactRef: "fixture://artifact-b",
+    note: "Correction", readyForPublicationAt: "2026-10-28T09:00:00Z" };
+  await pool.query(`INSERT INTO task_attention_follow_up(project_id,task_id,task_revision_id,version,
+    decision,action_taken,release_handoff,actor_id,reason,updated_at)
+    VALUES($1,$2,$3,1,'waiting','Assign publisher',$4::jsonb,$5,'First handoff',$6)`,
+    [fixture.project.id, taskId, revisionId, JSON.stringify(first), actor, "2026-10-28T10:00:00Z"]);
+  for (const [version, handoff, at] of [[1, first, "2026-10-28T10:00:00Z"],
+    [2, next, "2026-10-28T11:00:00Z"]] as const)
+    await pool.query(`INSERT INTO task_attention_follow_up_revision(project_id,task_id,task_revision_id,
+      version,decision,action_taken,release_handoff,actor_id,reason,created_at)
+      VALUES($1,$2,$3,$4,'waiting','Assign publisher',$5::jsonb,$6,'Handoff',$7)`,
+      [fixture.project.id, taskId, revisionId, version, JSON.stringify(handoff), actor, at]);
+  await pool.query(`UPDATE task_attention_follow_up SET version=2,release_handoff=$3::jsonb,
+    updated_at='2026-10-28T11:00:00Z' WHERE project_id=$1 AND task_id=$2`,
+    [fixture.project.id, taskId, JSON.stringify(next)]);
+  const current = await readLeaderWorkTask(pool, fixture.project.id, taskId);
+  assert.equal(current?.timing.current.stage, "awaiting_publication");
+  assert.deepEqual(current?.timing.current.source, {kind:"release_handoff",id:next.artifactRef});
+  assert.deepEqual(current?.timing.current.waitingFor, {kind:"publisher",id:next.recipient});
+  assert.equal(current?.timing.current.startedAt, "2026-10-28T11:00:00.000Z");
+});
+
+test("ordinary submission changes advance the persisted Leader cursor", async () => {
+  const fixture = await seedProject();
+  const sessionId = randomUUID(), runId = randomUUID(), submissionId = randomUUID();
+  await uow.transaction(fixture.project.id, async tx => {
+    await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+    await tx.insertRuntimeRun({ projectId: fixture.project.id, id: runId,
+      taskId: fixture.prerequisite.head.id, taskRevisionId: fixture.prerequisite.revision.id,
+      basisSetId: fixture.prerequisite.basis.id, sessionId, operationId: randomUUID(), input: "submitted work",
+      inputHash: hash("submitted work"), state: "completed", version: 1, nativeTurnId: `turn-${runId}`,
+      interruptRequested: false, resultSummary: "Done", actorId: actor, createdAt: now, updatedAt: now });
+  });
+  const before = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const intent = { artifactRef: "fixture://submitted", artifactRevision: "v1", contentHash: hash("artifact"),
+    technicalResult: "passed", technicalEvidence: "Checks", reason: "Submitted" };
+  await pool.query(`INSERT INTO ordinary_run_submission(project_id,submission_id,run_id,task_id,
+    session_id,task_revision_id,run_input_hash,operation_id,command_hash,delivery_operation_id,
+    delivery_intent,submitted_by,state,version,created_at_utc,updated_at_utc)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'submitted',1,$13,$13)`,
+    [fixture.project.id, submissionId, runId, fixture.prerequisite.head.id, sessionId,
+      fixture.prerequisite.revision.id, hash("submitted work"), randomUUID(), hash("submission command"),
+      randomUUID(), JSON.stringify(intent), actor, now]);
+  const after = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  const beforeTask = before.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  const afterTask = after.items.find(item => item.taskId === fixture.prerequisite.head.id)!;
+  assert.ok(after.changeSequence > before.changeSequence);
+  assert.ok(afterTask.workChangeSequence > beforeTask.workChangeSequence);
+  assert.equal(afterTask.latestProgress?.entityKind, "submission");
+  assert.equal(afterTask.timing.current.stage, "awaiting_delivery");
+  assert.equal(afterTask.timing.current.source?.id, submissionId);
+  assert.equal(afterTask.timing.latestEffectiveProgress?.kind, "submission");
+  await pool.query(`UPDATE ordinary_run_submission SET state='blocked',version=2,
+    reason='Seal preflight needs review',updated_at_utc='2026-10-28T00:10:00Z'
+    WHERE project_id=$1 AND run_id=$2`, [fixture.project.id, runId]);
+  const blocked = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
+  assert.ok(blocked.changeSequence > after.changeSequence);
+  assert.equal(blocked.items.find(item => item.taskId === fixture.prerequisite.head.id)?.latestProgress?.entityKind,
+    "submission");
 });
 
 test("the Leader index can page beyond the former 5000-row ceiling", async () => {

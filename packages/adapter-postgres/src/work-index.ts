@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Pool, PoolClient, QueryResultRow } from "pg";
+import pg, { type Pool, type PoolClient, type QueryResultRow } from "pg";
 import type { CommandResult, Principal } from "@evoloop/contracts";
 import type {
   LeaderWorkChange, LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPhase, LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
+  LeaderWorkTaskTiming, LeaderWorkTimingInterval, LeaderWorkTimingStage, LeaderWorkWaitingFor,
 } from "@evoloop/contracts/work-index";
 import {
   leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
@@ -87,8 +88,9 @@ function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if ((row.dependency_facts ?? []).some((dependency: { acceptanceSatisfied: boolean }) => !dependency.acceptanceSatisfied)) return "blocked";
   if (row.queue_hold && row.queue_hold !== "awaiting_acceptance") return "blocked";
   if (row.state === "in_progress" && row.latest_run_state === "completed" &&
-    (!row.delivery_id || !row.run_updated_at || !row.delivery_created_at ||
-      Date.parse(String(row.delivery_created_at)) < Date.parse(String(row.run_updated_at)))) return "awaiting_delivery";
+    (!row.delivery_id || row.delivery_run_id && row.delivery_run_id !== row.latest_run_id ||
+      !row.delivery_run_id && (!row.run_updated_at || !row.delivery_created_at ||
+        Date.parse(String(row.delivery_created_at)) < Date.parse(String(row.run_updated_at))))) return "awaiting_delivery";
   if (row.observation_result === "failed" &&
     (!row.run_updated_at || !row.observation_created_at ||
       Date.parse(String(row.observation_created_at)) >= Date.parse(String(row.run_updated_at)))) return "rework";
@@ -111,9 +113,11 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       assignment.state AS assignment_state,assignment.target_kind AS assignment_target_kind,
       assignment.target_id AS assignment_target_id,assignment.recipient_actor_id AS assignment_recipient_actor_id,
       effective_run.run_id AS latest_run_id,effective_run.state AS latest_run_state,
+      effective_run.session_id AS latest_run_session_id,effective_run.native_turn_id AS latest_run_native_turn_id,
       effective_run.updated_at AS run_updated_at,
       effective_delivery.delivery_id,effective_delivery.task_revision_id AS delivery_task_revision_id,
       effective_delivery.technical_result AS delivery_result,effective_delivery.created_at AS delivery_created_at,
+      effective_delivery.run_id AS delivery_run_id,
       observation.result AS observation_result,observation.observer AS observation_actor_id,
       observation.observer_kind AS observation_kind,observation.created_at AS observation_created_at,
       pending_impact.pending_impact_count,queue_gate.hold_code AS queue_hold,
@@ -138,8 +142,10 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
         WHEN dependency_gate.blocked THEN 'blocked'
         WHEN queue_gate.hold_code IS NOT NULL AND queue_gate.hold_code<>'awaiting_acceptance' THEN 'blocked'
         WHEN t.state='in_progress' AND effective_run.state='completed' AND
-          (effective_delivery.delivery_id IS NULL OR effective_run.updated_at IS NULL OR
-           effective_delivery.created_at IS NULL OR effective_delivery.created_at<effective_run.updated_at) THEN 'awaiting_delivery'
+          (effective_delivery.delivery_id IS NULL OR
+           (effective_delivery.run_id IS NOT NULL AND effective_delivery.run_id<>effective_run.run_id) OR
+           (effective_delivery.run_id IS NULL AND (effective_run.updated_at IS NULL OR
+            effective_delivery.created_at IS NULL OR effective_delivery.created_at<effective_run.updated_at))) THEN 'awaiting_delivery'
         WHEN observation.result='failed' AND
           (effective_run.updated_at IS NULL OR observation.created_at IS NULL OR
            observation.created_at>=effective_run.updated_at) THEN 'rework'
@@ -173,12 +179,15 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
         ((closure.delivery_id IS NOT NULL AND d.delivery_id=closure.delivery_id) OR
          (closure.delivery_id IS NULL AND d.task_revision_id=t.current_revision_id))
       ORDER BY d.created_at DESC,d.delivery_id DESC LIMIT 1) effective_delivery ON true
-    LEFT JOIN LATERAL (SELECT r.run_id,r.state,r.updated_at FROM runtime_run r
+    LEFT JOIN LATERAL (SELECT r.run_id,r.session_id,r.native_turn_id,r.state,r.created_at,r.updated_at FROM runtime_run r
       WHERE r.project_id=t.project_id AND r.task_id=t.task_id AND
-        ((effective_delivery.run_id IS NOT NULL AND r.run_id=effective_delivery.run_id) OR
-         (effective_delivery.delivery_id IS NULL AND r.task_revision_id=t.current_revision_id))
+        (r.task_revision_id=t.current_revision_id OR r.run_id=effective_delivery.run_id OR
+         (effective_delivery.delivery_id IS NOT NULL AND r.created_at<=effective_delivery.created_at
+          AND NOT EXISTS (SELECT 1 FROM task_revision newer_revision
+            WHERE newer_revision.project_id=t.project_id AND newer_revision.task_id=t.task_id
+              AND newer_revision.created_at>r.created_at AND newer_revision.state='todo')))
         AND r.state IN ('requested','dispatching','running','unknown','completed','failed','interrupted')
-      ORDER BY r.updated_at DESC,r.run_id DESC LIMIT 1) effective_run ON true
+      ORDER BY r.created_at DESC,r.run_id DESC LIMIT 1) effective_run ON true
     LEFT JOIN LATERAL (SELECT o.result,o.observer,o.observer_kind,o.created_at FROM consumer_observation o
       WHERE o.project_id=t.project_id AND o.delivery_id=effective_delivery.delivery_id
       ORDER BY o.sequence DESC LIMIT 1) observation ON true
@@ -295,6 +304,7 @@ function latestProgressEventName(row: QueryResultRow): string {
     case "observation": return "使用观察已登记";
     case "closure": return "任务已关闭";
     case "run": return "运行状态已更新";
+    case "submission": return "作者已提交封存意图";
     case "impact": return "依据影响已更新";
     case "queue": return "队列状态已更新";
     case "plan": return "工作计划已更新";
@@ -303,6 +313,237 @@ function latestProgressEventName(row: QueryResultRow): string {
       return row.review_decision === "acknowledged" ? "负责人已核对" : "负责人已暂缓";
     default: return "业务事件已更新";
   }
+}
+
+interface TimingEvent {
+  kind: string; id: string; at: string; state?: string | null;
+  targetId?: string | null; runId?: string | null; deliveryId?: string | null;
+  sequence?: number | null; taskVersion?: number | null;
+}
+const eventOrder: Record<string, number> = {
+  task: 0, assignment: 1, ack: 2, run_reserved: 3, run_bound: 4,
+  run_terminal: 5, submission: 6, delivery: 7, observation: 8,
+  publication_ready: 9, publication_published: 10, closure: 11, review: 12,
+};
+function validTime(value: unknown): string | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
+  if (typeof value !== "string") return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+function duration(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+  const ms = Date.parse(end) - Date.parse(start);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+function timingWaitingFor(stage: LeaderWorkTimingStage, row: QueryResultRow,
+  targetId: string | null, observationUsed = false): LeaderWorkWaitingFor {
+  if (["awaiting_ack", "awaiting_run", "run_reserved", "running", "awaiting_submission", "awaiting_delivery"].includes(stage))
+    return targetId ? { kind: "session", id: targetId } : { kind: "unknown", id: null };
+  if (stage === "awaiting_acceptance" && observationUsed)
+    return { kind: "leader", id: row.owner ?? null };
+  if (stage === "awaiting_acceptance") return row.use_required && row.consumer
+    ? { kind: "consumer", id: String(row.consumer) } : { kind: "leader", id: row.owner ?? null };
+  if (stage === "awaiting_publication") return { kind: "publisher", id: targetId ?? row.publication_owner ?? null };
+  if (stage === "blocked") {
+    const blocked = (row.dependency_facts as Array<{ taskId: string; acceptanceSatisfied: boolean }> | undefined)
+      ?.find(item => !item.acceptanceSatisfied);
+    if (blocked) return { kind: "task", id: blocked.taskId };
+  }
+  if (["unassigned", "rework"].includes(stage)) return { kind: "leader", id: row.owner ?? null };
+  return { kind: "unknown", id: null };
+}
+
+function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTiming {
+  const observed = validTime(observedAt) ?? new Date().toISOString();
+  const raw = Array.isArray(row.timing_events) ? row.timing_events as TimingEvent[] : [];
+  const events = raw.map(event => ({ ...event, at: validTime(event.at) }))
+    .filter((event): event is TimingEvent => event.at !== null && typeof event.id === "string")
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at) ||
+      (a.taskVersion == null || b.taskVersion == null ? 0 : Number(a.taskVersion) - Number(b.taskVersion)) ||
+      (a.sequence == null && b.sequence == null ? 0 :
+        a.sequence == null || b.sequence == null ? 0 : Number(a.sequence) - Number(b.sequence)) ||
+      (eventOrder[a.kind] ?? 99) - (eventOrder[b.kind] ?? 99) || a.id.localeCompare(b.id));
+  const seenPublication = new Set<string>();
+  const uniqueEvents = events.filter(event => {
+    if (event.kind !== "publication_ready" && event.kind !== "publication_published") return true;
+    const key = `${event.kind}:${event.id}:${event.at}:${event.targetId ?? ""}`;
+    if (seenPublication.has(key)) return false;
+    seenPublication.add(key);
+    return true;
+  });
+  const createdAt = uniqueEvents.find(event => event.kind === "task")?.at ?? validTime(row.created_at);
+  const rounds: LeaderWorkTaskTiming["rounds"] = [];
+  let round: LeaderWorkTaskTiming["rounds"][number] | null = null;
+  let active: LeaderWorkTimingInterval | null = null;
+  const getRound = () => round;
+  const getActive = () => active;
+  let targetId: string | null = null;
+  let latestEffectiveProgress: LeaderWorkTaskTiming["latestEffectiveProgress"] = null;
+  let priorObservation: string | null = null;
+  let observationUsed = false;
+  const begin = (stage: LeaderWorkTimingStage, at: string | null, source: { kind: string; id: string } | null) => {
+    if (!round) {
+      round = { number: rounds.length + 1, startedAt: at, endedAt: null, elapsedMs: null, intervals: [] };
+      rounds.push(round);
+    }
+    if (active?.stage === stage && active.source?.id === source?.id) return;
+    if (active) active.endedAt = at && active.startedAt && Date.parse(at) >= Date.parse(active.startedAt) ? at : null;
+    active = { stage, startedAt: at, endedAt: null, source,
+      waitingFor: timingWaitingFor(stage, row, targetId, observationUsed) };
+    round.intervals.push(active);
+  };
+  const progress = (event: TimingEvent) => {
+    if (Date.parse(event.at) <= Date.parse(observed) &&
+      (!latestEffectiveProgress || Date.parse(event.at) >= Date.parse(latestEffectiveProgress.at)))
+      latestEffectiveProgress = { kind: event.kind, sourceId: event.id, at: event.at };
+  };
+  for (const event of uniqueEvents) {
+    if (event.kind === "task") {
+      if (!getRound() || getRound()?.endedAt && event.state !== "done" && event.state !== "cancelled") {
+        round = null; active = null; targetId = null;
+        begin(event.state === "todo" ? "unassigned" : "awaiting_run", event.at,
+          { kind: "task_revision", id: event.id });
+        progress(event);
+      } else if (event.state === "cancelled") begin("cancelled", event.at, { kind: "task_revision", id: event.id });
+      else if (event.state === "in_progress" && getActive()?.stage === "unassigned")
+        begin("awaiting_run", event.at, { kind: "task_revision", id: event.id });
+      continue;
+    }
+    if (!getRound()) continue;
+    if (getRound()?.endedAt) {
+      if (event.kind === "publication_ready" || event.kind === "publication_published") progress(event);
+      continue;
+    }
+    if (event.kind === "assignment") {
+      targetId = event.targetId ?? null;
+      begin(event.state === "released" ? "unassigned" : event.state === "accepted" ? "awaiting_run" : "awaiting_ack",
+        event.at, { kind: "assignment", id: event.id });
+      progress(event);
+    } else if (event.kind === "ack") {
+      targetId = event.targetId ?? targetId;
+      begin("awaiting_run", event.at, { kind: "assignment", id: event.id });
+      progress(event);
+    } else if (event.kind === "run_reserved") {
+      targetId = event.targetId ?? targetId;
+      begin("run_reserved", event.at, { kind: "run", id: event.id });
+      progress(event);
+    } else if (event.kind === "run_bound") {
+      begin("running", event.at, { kind: "run", id: event.id });
+      progress(event);
+    } else if (event.kind === "run_terminal") {
+      begin(event.state === "completed" ? "awaiting_submission" : event.state === "unknown" ? "unknown" : "rework",
+        event.at, { kind: "run", id: event.id });
+      progress(event);
+    } else if (event.kind === "submission") {
+      begin("awaiting_delivery", event.at, { kind: "submission", id: event.id });
+      progress(event);
+    } else if (event.kind === "delivery") {
+      observationUsed = false;
+      begin(event.state === "failed" ? "rework" : "awaiting_acceptance", event.at,
+        { kind: "delivery", id: event.id });
+      progress(event);
+    } else if (event.kind === "observation") {
+      observationUsed = event.state === "used";
+      begin(event.state === "failed" || event.state === "notUsed" ? "rework" : "awaiting_acceptance",
+        event.at, { kind: "observation", id: event.id });
+      const key = `${event.deliveryId}:${event.state}`;
+      if (key !== priorObservation) progress(event);
+      priorObservation = key;
+    } else if (event.kind === "publication_ready") {
+      targetId = event.targetId ?? null;
+      begin("awaiting_publication", event.at, { kind: "release_handoff", id: event.id });
+      progress(event);
+    } else if (event.kind === "publication_published") {
+      begin(row.delivery_id ? "awaiting_acceptance" : "unknown", event.at,
+        { kind: "publication", id: event.id });
+      progress(event);
+    } else if (event.kind === "closure") {
+      begin("closed", event.at, { kind: "closure", id: event.id });
+      const completedRound = getRound();
+      if (completedRound) completedRound.endedAt = event.at;
+      progress(event);
+    }
+  }
+  if (!getRound()) begin(row.state === "todo" ? "unassigned" : "unknown", createdAt, null);
+  // A current gate can supersede a past interval, but without its own time source its age is unknown.
+  const phase = taskPhase(row);
+  if (phase === "blocked" && getActive()?.stage !== "blocked") begin("blocked", null, null);
+  if (phase === "unknown" && getActive()?.stage !== "unknown") begin("unknown", null, null);
+  if (phase === "cancelled" && getActive()?.stage !== "cancelled") begin("cancelled", validTime(row.business_changed_at), null);
+  if (phase === "closed" && getActive()?.stage !== "closed") begin("closed", validTime(row.completed_at), null);
+  if (phase === "awaiting_delivery" && getActive()?.stage === "awaiting_acceptance") {
+    const runEvent = [...uniqueEvents].reverse().find(event => event.kind === "run_terminal" && event.id === row.latest_run_id);
+    const candidate = runEvent?.at ?? validTime(row.run_updated_at);
+    const start = candidate && getActive()?.startedAt && Date.parse(candidate) < Date.parse(getActive()!.startedAt!)
+      ? null : candidate;
+    if (start === null && getActive()) getActive()!.endedAt = getActive()!.startedAt;
+    begin("awaiting_submission", start,
+      row.latest_run_id ? { kind: "run", id: row.latest_run_id } : null);
+  }
+  let current = getActive()!;
+  const closedAt = getRound()?.endedAt;
+  // An explicit release handoff may follow Task closure. It is a current external
+  // wait, while the Task round's total still ends at the immutable closure time.
+  const postClosurePublication = closedAt ? [...uniqueEvents].reverse().find(event =>
+    (event.kind === "publication_ready" || event.kind === "publication_published") &&
+    Date.parse(event.at) >= Date.parse(closedAt)) : null;
+  if (postClosurePublication?.kind === "publication_ready") current = {
+    stage: "awaiting_publication", startedAt: postClosurePublication.at, endedAt: null,
+    source: { kind: "release_handoff", id: postClosurePublication.id },
+    waitingFor: { kind: "publisher", id: postClosurePublication.targetId ?? null },
+  };
+  // Keep the historical handoff interval, but a withdrawn or superseded handoff
+  // cannot remain the current publication wait or keep its attention notice alive.
+  const currentHandoff = row.current_release_handoff as {
+    artifactRef?: string; recipient?: string; readyForPublicationAt?: string
+  } | null;
+  const currentArtifactRef = currentHandoff?.artifactRef;
+  if (current.stage === "awaiting_publication" &&
+    row.follow_up_task_revision_id === row.current_revision_id && currentHandoff && currentArtifactRef &&
+    (current.source?.id !== currentArtifactRef ||
+      current.waitingFor?.id !== currentHandoff.recipient ||
+      current.startedAt !== validTime(currentHandoff.readyForPublicationAt))) {
+    // The revision head, rather than a backdated event's sort order, owns the
+    // current publishing responsibility. Keep the superseded interval as history.
+    current = { stage: "awaiting_publication",
+      startedAt: validTime(row.follow_up_updated_at), endedAt: null,
+      source: { kind: "release_handoff", id: currentArtifactRef },
+      waitingFor: { kind: "publisher", id: currentHandoff.recipient ?? null } };
+  }
+  if (current.stage === "awaiting_publication" &&
+    (row.follow_up_task_revision_id !== row.current_revision_id || !currentArtifactRef)) {
+    const sameRevision = row.follow_up_task_revision_id === row.current_revision_id;
+    const at = sameRevision ? validTime(row.follow_up_updated_at) : null;
+    const source = sameRevision && row.follow_up_version
+      ? { kind: "release_handoff_withdrawn", id: `${row.task_id}:v${row.follow_up_version}` } : null;
+    if (current === getActive()) {
+      begin("unknown", at, source);
+      current = getActive()!;
+    } else current = { stage: "unknown", startedAt: at, endedAt: null, source,
+      waitingFor: { kind: "unknown", id: null } };
+  }
+  const published = [...uniqueEvents].reverse().find(event => event.kind === "publication_published" &&
+    (!getRound()?.startedAt || Date.parse(event.at) >= Date.parse(getRound()!.startedAt!)));
+  for (const item of rounds) item.elapsedMs = duration(item.startedAt, item.endedAt ?? observed);
+  const native = row.native_observation as {
+    observedAt?: unknown; lastEventAt?: unknown; freshness?: unknown;
+    currentTurn?: { source?: { kind?: unknown; taskId?: unknown; runId?: unknown } | null } | null;
+  } | undefined;
+  const nativeAt = validTime(native?.lastEventAt), nativeObservedAt = validTime(native?.observedAt);
+  const source = native?.currentTurn?.source;
+  const executionActivity = source?.kind === "run" && source.taskId === row.task_id &&
+    source.runId === row.latest_run_id && native?.currentTurn &&
+    (native.currentTurn as { id?: string }).id === row.latest_run_native_turn_id && nativeAt && nativeObservedAt &&
+    Date.parse(nativeAt) <= Date.parse(nativeObservedAt) && Date.parse(nativeObservedAt) <= Date.parse(observed)
+    ? { runId: String(source.runId), kind: "native_turn" as const, at: nativeAt, observedAt: nativeObservedAt,
+      freshness: native?.freshness === "live" ? "live" as const : native?.freshness === "stale" ? "stale" as const : "unknown" as const }
+    : null;
+  return {
+    createdAt, publication: published ? { at: published.at, source: "explicit" } : { at: null, source: "unknown" },
+    current: { ...current, elapsedMs: duration(current.startedAt, current.endedAt ?? observed) },
+    rounds, latestEffectiveProgress, executionActivity, observedAt: observed,
+  };
 }
 
 export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): LeaderWorkTask {
@@ -352,6 +593,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
       eventName: latestProgressEventName(row),
       changedAt: iso(row.latest_change_at),
     },
+    timing: taskTiming(row, observedAt),
     actionKey: `task:${row.task_id}:v${int(row.version)}:${phase}:${int(row.work_change_sequence ?? 0)}`,
   };
 }
@@ -361,10 +603,108 @@ async function currentChangeSequence(db: Database, projectId: string): Promise<n
   return int(result.rows[0]?.sequence ?? 0);
 }
 
+/** Fetch only the page's Task-owned source records; history stays in its original tables. */
+async function readTimingEvents(db: Database, projectId: string, taskIds: string[]): Promise<Map<string, TimingEvent[]>> {
+  const result = new Map<string, TimingEvent[]>();
+  if (!taskIds.length) return result;
+  const rows = await db.query(`
+    SELECT timeline.task_id,timeline.event || jsonb_build_object('sequence',source_change.sequence,
+      'taskVersion',source_revision.version) AS event FROM (
+      SELECT r.task_id,jsonb_build_object('kind','task','id',r.revision_id,'at',r.created_at,
+        'state',r.state,'version',r.version,'taskRevisionId',r.revision_id) AS event
+        FROM task_revision r WHERE r.project_id=$1 AND r.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT a.task_id,jsonb_build_object('kind','assignment','id',a.task_id::text||':v'||a.version,'at',a.updated_at,
+        'state',a.state,'targetId',a.target_id,'version',a.version,'taskRevisionId',a.task_revision_id)
+        FROM task_session_assignment_revision a
+        WHERE a.project_id=$1 AND a.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT a.task_id,jsonb_build_object('kind','ack','id',a.task_id::text||':v'||a.version,'at',a.ack_at,
+        'state','accepted','targetId',a.target_id,'version',a.version,'taskRevisionId',a.task_revision_id)
+        FROM task_session_assignment_revision a
+        WHERE a.project_id=$1 AND a.task_id=ANY($2::uuid[]) AND a.ack_at IS NOT NULL
+      UNION ALL
+      SELECT r.task_id,jsonb_build_object('kind','run_reserved','id',r.run_id,'at',r.created_at,
+        'targetId',r.session_id,'version',1,'taskRevisionId',r.task_revision_id) FROM runtime_run r
+        WHERE r.project_id=$1 AND r.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT r.task_id,jsonb_build_object('kind','run_bound','id',r.run_id,'at',e.created_at,
+        'taskRevisionId',r.task_revision_id)
+        FROM runtime_record_event e JOIN runtime_run r ON r.project_id=e.project_id AND r.run_id=e.run_id
+        WHERE e.project_id=$1 AND r.task_id=ANY($2::uuid[]) AND e.kind='run.bound'
+      UNION ALL
+      SELECT r.task_id,jsonb_build_object('kind','run_terminal','id',r.run_id,'at',e.created_at,
+        'state',CASE WHEN e.kind='run.unknown' THEN 'unknown'
+          WHEN e.detail LIKE 'completed%' THEN 'completed'
+          WHEN e.detail LIKE 'failed%' THEN 'failed' ELSE 'interrupted' END,
+        'taskRevisionId',r.task_revision_id)
+        FROM runtime_record_event e JOIN runtime_run r ON r.project_id=e.project_id AND r.run_id=e.run_id
+        WHERE e.project_id=$1 AND r.task_id=ANY($2::uuid[]) AND
+          (e.kind='run.unknown' OR e.kind='run.status' AND
+            (e.detail LIKE 'completed%' OR e.detail LIKE 'failed%' OR e.detail LIKE 'interrupted%'))
+      UNION ALL
+      SELECT r.task_id,jsonb_build_object('kind','run_terminal','id',r.run_id,'at',r.updated_at,
+        'state',r.state,'taskRevisionId',r.task_revision_id)
+        FROM runtime_run r WHERE r.project_id=$1 AND r.task_id=ANY($2::uuid[])
+          AND r.state IN ('completed','failed','interrupted','unknown')
+          AND NOT EXISTS (SELECT 1 FROM runtime_record_event e WHERE e.project_id=r.project_id
+            AND e.run_id=r.run_id AND e.kind IN ('run.status','run.unknown'))
+      UNION ALL
+      SELECT s.task_id,jsonb_build_object('kind','submission','id',s.submission_id,'at',s.created_at_utc,
+        'state',s.state,'runId',s.run_id,'version',1,'taskRevisionId',s.task_revision_id)
+        FROM ordinary_run_submission s
+        WHERE s.project_id=$1 AND s.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT d.task_id,jsonb_build_object('kind','delivery','id',d.delivery_id,'at',d.created_at,
+        'state',d.technical_result,'runId',d.run_id,'taskRevisionId',d.task_revision_id) FROM delivery d
+        WHERE d.project_id=$1 AND d.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT o.task_id,jsonb_build_object('kind','observation','id',o.observation_id,'at',o.created_at,
+        'state',o.result,'deliveryId',o.delivery_id,'taskRevisionId',d.task_revision_id)
+        FROM consumer_observation o JOIN delivery d ON d.project_id=o.project_id AND d.delivery_id=o.delivery_id
+        WHERE o.project_id=$1 AND o.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT c.task_id,jsonb_build_object('kind','closure','id',c.closure_id,'at',c.created_at,
+        'taskRevisionId',c.task_revision_id)
+        FROM task_closure c WHERE c.project_id=$1 AND c.task_id=ANY($2::uuid[])
+      UNION ALL
+      SELECT f.task_id,jsonb_build_object('kind','publication_ready','id',f.release_handoff->>'artifactRef',
+        'at',f.release_handoff->>'readyForPublicationAt','targetId',f.release_handoff->>'recipient',
+        'taskRevisionId',f.task_revision_id)
+        FROM task_attention_follow_up_revision f WHERE f.project_id=$1 AND f.task_id=ANY($2::uuid[])
+          AND f.release_handoff IS NOT NULL
+      UNION ALL
+      SELECT f.task_id,jsonb_build_object('kind','publication_published','id',f.publication->>'publicationRef',
+        'at',f.publication->>'publishedAt','taskRevisionId',f.task_revision_id)
+        FROM task_attention_follow_up_revision f
+        WHERE f.project_id=$1 AND f.task_id=ANY($2::uuid[]) AND f.publication IS NOT NULL
+    ) timeline LEFT JOIN task_revision source_revision ON source_revision.project_id=$1
+      AND source_revision.task_id=timeline.task_id
+      AND source_revision.revision_id=(timeline.event->>'taskRevisionId')::uuid
+    LEFT JOIN LATERAL (
+      SELECT c.sequence FROM leader_work_change c WHERE c.project_id=$1 AND c.task_id=timeline.task_id
+        AND c.entity_kind=CASE timeline.event->>'kind'
+          WHEN 'task' THEN 'task' WHEN 'assignment' THEN 'assignment' WHEN 'ack' THEN 'assignment'
+          WHEN 'run_reserved' THEN 'run' WHEN 'run_bound' THEN 'run'
+          WHEN 'run_terminal' THEN 'run' WHEN 'submission' THEN 'submission'
+          WHEN 'delivery' THEN 'delivery' WHEN 'observation' THEN 'observation'
+          WHEN 'closure' THEN 'closure' END
+        AND (CASE WHEN timeline.event->>'kind' IN ('task','assignment','ack') THEN
+          c.version=(timeline.event->>'version')::integer ELSE c.entity_id::text=timeline.event->>'id' END)
+      ORDER BY CASE WHEN timeline.event->>'kind'='run_terminal' THEN -c.sequence ELSE c.sequence END LIMIT 1
+    ) source_change ON true
+    ORDER BY timeline.task_id,(timeline.event->>'at')::timestamptz`, [projectId, taskIds]);
+  for (const row of rows.rows) {
+    const list = result.get(row.task_id) ?? [];
+    list.push(row.event as TimingEvent);
+    result.set(row.task_id, list);
+  }
+  return result;
+}
+
 async function withReadSnapshot<T>(db: Database, action: (snapshot: Database) => Promise<T>): Promise<T> {
-  const maybePool = db as Partial<Pool>;
-  if (typeof maybePool.connect !== "function") return action(db);
-  const client = await maybePool.connect();
+  if (!(db instanceof pg.Pool)) return action(db);
+  const client = await db.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const result = await action(client);
@@ -385,7 +725,8 @@ function assertSnapshot(cursor: SnapshotCursor | null, view: LeaderWorkView, pro
     throw new DomainError("WORK_INDEX_CHANGED", "待处理工作已变化；请从第一页重新核对，不能把旧页当成完整快照");
 }
 
-export async function readLeaderWorkTasks(db: Database, projectId: string, query: LeaderWorkQuery): Promise<LeaderWorkPage<LeaderWorkTask>> {
+export async function readLeaderWorkTasks(db: Database, projectId: string, query: LeaderWorkQuery,
+  observedAtOverride?: string): Promise<LeaderWorkPage<LeaderWorkTask>> {
   return withReadSnapshot(db, async snapshot => {
     const sequence = await currentChangeSequence(snapshot, projectId);
     const cursor = decodeCursor(query.cursor, "tasks") as SnapshotCursor | null;
@@ -404,7 +745,17 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
       SELECT facts.*,proposal.consumer,proposal.use_required,
         stage.stage_id,stage.deliverable AS stage_deliverable,
         goal.goal_id,goal.outcome AS goal_outcome,
-        COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts
+        COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts,
+        CASE WHEN native_observation.session_id IS NULL THEN NULL ELSE
+          native_observation.projection || jsonb_build_object('observedAt',native_observation.observed_at,
+            'lastEventAt',native_observation.last_event_at,'freshness',native_observation.freshness)
+        END AS native_observation,
+        CASE WHEN follow_up.task_revision_id=facts.current_revision_id THEN
+          follow_up.release_handoff->>'recipient' END AS publication_owner,
+        follow_up.task_revision_id AS follow_up_task_revision_id,
+        follow_up.release_handoff AS current_release_handoff,
+        follow_up.updated_at AS follow_up_updated_at,
+        follow_up.version AS follow_up_version
       FROM facts
       LEFT JOIN LATERAL (SELECT p.consumer,p.use_required,p.stage_id FROM task_proposal p
         JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
@@ -413,6 +764,10 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         ORDER BY r.version DESC LIMIT 1) proposal ON true
       LEFT JOIN project_stage stage ON stage.project_id=facts.project_id AND stage.stage_id=proposal.stage_id
       LEFT JOIN project_goal goal ON goal.project_id=stage.project_id AND goal.goal_id=stage.goal_id
+      LEFT JOIN session_native_observation native_observation ON
+        native_observation.project_id=facts.project_id AND native_observation.session_id=facts.latest_run_session_id
+      LEFT JOIN task_attention_follow_up follow_up ON follow_up.project_id=facts.project_id
+        AND follow_up.task_id=facts.task_id
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(jsonb_build_object('taskId',d.depends_on_task_id,'title',dt.title,'state',dt.state,
           'currentRevisionId',dt.current_revision_id,'actorId',d.actor_id,'reason',d.reason,'createdAt',d.created_at,
@@ -428,8 +783,10 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         WHERE d.project_id=facts.project_id AND d.task_id=facts.task_id) dependencies ON true
       ORDER BY ${taskOrderSql}
       LIMIT $2 OFFSET $3`, query.taskId ? [projectId, query.limit, offset, query.taskId] : [projectId, query.limit, offset]);
-    const observedAt = new Date().toISOString();
-    const items = pageResult.rows.map(row => leaderWorkTaskFromRow(row, observedAt));
+    const observedAt = observedAtOverride ?? new Date().toISOString();
+    const events = await readTimingEvents(snapshot, projectId, pageResult.rows.map(row => row.task_id as string));
+    const items = pageResult.rows.map(row => leaderWorkTaskFromRow({ ...row,
+      timing_events: events.get(row.task_id) ?? [] }, observedAt));
     const nextOffset = offset + items.length;
     const counts = Object.fromEntries(Object.keys(phaseOrder).map(phase =>
       [phase, int(summary.rows[0]?.[phase] ?? 0)]));
@@ -448,10 +805,11 @@ export async function readLeaderWorkTask(
   db: Database,
   projectId: string,
   taskId: string,
+  observedAt?: string,
 ): Promise<LeaderWorkTask | null> {
   const page = await readLeaderWorkTasks(db, projectId, {
     view: "tasks", limit: 1, includeClosed: true, taskId,
-  });
+  }, observedAt);
   return page.items[0] ?? null;
 }
 

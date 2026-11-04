@@ -10,7 +10,7 @@ export const leaderNoticeRecoverySchema = z.strictObject({
 }).refine(value => new Set([value.expectedOperationId, value.newNoticeId,
   value.newMessageId, value.newOperationId]).size === 4, "Recovery IDs must be distinct");
 
-export type LeaderNoticeKind = "task_todo" | "delivery" | "observation" | "task_question" | "task_blocker" | "run_without_submission" | "run_submission_blocked";
+export type LeaderNoticeKind = "task_todo" | "delivery" | "observation" | "task_question" | "task_blocker" | "run_without_submission" | "run_submission_blocked" | "task_attention";
 export type LeaderNoticeState = "pending" | "linked" | "blocked";
 export interface LeaderNoticeRecoveryLink {
   parentNoticeId: string | null;
@@ -53,7 +53,8 @@ export function leaderNoticePostCommand(notice: Pick<LeaderNotice,"projectId"|"k
     delivery:"A fixed Delivery was recorded",observation:"An independent use observation was recorded",
     task_question:"A Task recipient asked a question",task_blocker:"A Task recipient reported a blocker",
     run_without_submission:"A terminal Run has no signed submission",
-    run_submission_blocked:"A signed Run submission cannot be sealed"};
+    run_submission_blocked:"A signed Run submission cannot be sealed",
+    task_attention:"A current Task attention item needs a Leader follow-up"};
   const content=`${label[notice.kind]}.\nSource event: ${notice.sourceEventId} at ${notice.occurredAt}`+
     `\nSource Task revision: ${notice.taskId}@${notice.taskRevisionId}`+
     `\nSource actor: ${notice.sourceActorId ?? "unverified"}; source Session: ${notice.sourceSessionId ?? "unverified"}`+

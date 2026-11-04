@@ -11,7 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
-import { PostgresUnitOfWork } from "@evoloop/adapter-postgres";
+import { PostgresUnitOfWork, taskAttentionNoticeCurrent, disposeStaleTaskAttentionNotice } from "@evoloop/adapter-postgres";
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
@@ -72,6 +72,7 @@ import { materialCliRecipientMatches, requireOrdinaryRecipient } from "./runtime
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
+import { TaskAttentionPump } from "./task-attention/pump.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -469,6 +470,8 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
     getByMessageId: (projectId, messageId) => getLeaderNoticeByMessageId(pool, projectId, messageId),
     disposeStalePendingTodo: (projectId, noticeId) => disposeStalePendingTodo(pool, projectId, noticeId),
     disposeStaleTodo: (projectId, noticeId, messageId) => disposeStaleTodoMessage(pool, projectId, noticeId, messageId),
+    attentionSourceCurrent: (projectId,noticeId) => taskAttentionNoticeCurrent(pool,projectId,noticeId),
+    disposeStaleAttention: (projectId,noticeId) => disposeStaleTaskAttentionNotice(pool,projectId,noticeId),
     hasInFlightOnOtherSession: (projectId, sessionId) => hasInFlightLeaderNoticeMessage(pool, projectId, sessionId),
     notePendingReason: async (projectId, noticeId, reason) => {
       await setLeaderNoticePendingReason(pool, projectId, noticeId, reason);
@@ -504,6 +507,10 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
   onError: () => console.error("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
   onDiagnostic: (projectId, noticeId, reason) => console.error(`Leader result notice ${noticeId} in project ${projectId} waits: ${reason}`),
 });
+const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,now:clock.now,
+  projects:async()=> (await currentIdentity()).filter(p=>p.permissions.includes("read")&&
+    p.permissions.includes("write")&&p.permissions.includes("review")).flatMap(p=>p.projectIds),
+  pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
@@ -585,6 +592,7 @@ if (runner) {
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
+  taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
   leaderNotices: {
@@ -692,7 +700,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
+  try { taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.
@@ -702,5 +710,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); leaderResultNoticePump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }
