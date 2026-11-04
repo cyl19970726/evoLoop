@@ -654,7 +654,8 @@ test("an explicit release handoff after closure waits for publication without ex
     created_at: "2026-10-28T00:00:00Z", business_changed_at: "2026-10-28T01:00:00Z",
     completed_at: "2026-10-28T01:00:00Z", pending_impact_count: 0,
     dependency_facts: [], plan_version: null,
-    follow_up_task_revision_id: "revision", current_release_handoff: { recipient: "maintainer" },
+    follow_up_task_revision_id: "revision", current_release_handoff: {
+      recipient: "maintainer", artifactRef: "artifact", readyForPublicationAt: "2026-10-28T02:00:00Z" },
     follow_up_updated_at: "2026-10-28T02:00:00Z", follow_up_version: 1,
     timing_events: [
       { kind: "task", id: "first", at: "2026-10-28T00:00:00Z", state: "todo" },
