@@ -27,10 +27,16 @@ const PINNED_PROTOCOLS = {
     standard: "3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d",
     experimental: "ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541",
   },
+  "codex-cli 0.166.0-alpha.6": {
+    standard: "e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465",
+    experimental: "f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0",
+  },
 } as const;
 type PinnedProtocolVersion = keyof typeof PINNED_PROTOCOLS;
 const supportsModernProtocol = (version: PinnedProtocolVersion): boolean =>
   version !== "codex-cli 0.154.0";
+const supportsExperimentalWorkspace = (version: PinnedProtocolVersion): boolean =>
+  version === "codex-cli 0.166.0-alpha.5.1" || version === "codex-cli 0.166.0-alpha.6";
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
 // The App Server and its probes must not inherit coordinator credentials or Node execution flags.
@@ -225,7 +231,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private events = new Set<(event: RuntimeEvent) => void>();
   private workspaceUpdates = new Set<(event: WorkspaceRuntimeUpdate) => void>();
   private readonly workspaceReader = new WorkspaceHistoryReader((method, params) => this.request(method, params),
-    () => this.experimental && this.options.workspaceExperimental === true && this.expectedVersion === "codex-cli 0.166.0-alpha.5.1");
+    () => this.experimental && this.options.workspaceExperimental === true && supportsExperimentalWorkspace(this.expectedVersion));
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   private declaredTools = new Map<string, Set<string>>();
   private profileTransitionThreads = new Set<string>();
@@ -267,7 +273,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('nativeUserInput requires a pinned modern Codex CLI protocol');
     if(options.workspaceExperimental!==undefined&&typeof options.workspaceExperimental!=='boolean')
       throw new RuntimeProtocolError('workspaceExperimental must be boolean');
-    if(options.workspaceExperimental&&this.expectedVersion!=="codex-cli 0.166.0-alpha.5.1")
+    if(options.workspaceExperimental&&!supportsExperimentalWorkspace(this.expectedVersion))
       throw new RuntimeProtocolError('workspaceExperimental requires the pinned 0.166 experimental protocol');
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
