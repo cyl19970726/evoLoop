@@ -597,7 +597,7 @@ test("timing keeps assignment, Run, submission and acceptance in separate source
   assert.equal(value.timing.publication.source, "unknown");
   assert.equal(value.timing.current.stage, "awaiting_acceptance");
   assert.equal(value.timing.current.startedAt, "2026-10-28T02:30:00.000Z");
-  assert.equal(value.timing.current.waitingFor.kind, "leader");
+  assert.equal(value.timing.current.waitingFor.kind, "role");
   assert.deepEqual(value.timing.rounds[0]?.intervals.map(i => i.stage),
     ["unassigned", "awaiting_ack", "awaiting_run", "run_reserved", "running",
       "awaiting_submission", "awaiting_delivery", "awaiting_acceptance"]);
@@ -695,7 +695,7 @@ test("repeated same-result Observation and deferred review do not refresh effect
   const value = leaderWorkTaskFromRow(row as never, "2026-10-28T05:00:00Z");
   assert.deepEqual(value.timing.latestEffectiveProgress,
     { kind: "observation", sourceId: "first", at: "2026-10-28T02:00:00.000Z" });
-  assert.equal(value.timing.current.waitingFor.kind, "leader");
+  assert.equal(value.timing.current.waitingFor.kind, "role");
 });
 
 test("latest progress is a direct business event rather than a renamed Task revision time", () => {
@@ -986,6 +986,151 @@ test("ordinary submission changes advance the persisted Leader cursor", async ()
   assert.ok(blocked.changeSequence > after.changeSequence);
   assert.equal(blocked.items.find(item => item.taskId === fixture.prerequisite.head.id)?.latestProgress?.entityKind,
     "submission");
+});
+
+test("the SQL timing query keeps four reserved Runs through their automatic assignment revisions", async () => {
+  const fixture = await seedProject();
+  const projectId = fixture.project.id, taskId = fixture.prerequisite.head.id;
+  const sessionId = randomUUID();
+  const target = { kind: "owned" as const, sessionId };
+  const clockAt = (minute: number) => new Date(Date.parse("2026-10-28T01:00:00Z") + minute * 60_000).toISOString();
+  let clock = clockAt(0);
+  const workflow = new WorkflowService({ uow, clock: { now: () => clock }, ids: { next: randomUUID },
+    hasher: { hash } });
+  const who = { actorId: actor, projectIds: [projectId],
+    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  await uow.transaction(projectId, async tx => {
+    await tx.insertRuntimeSession({ projectId, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor,
+      createdAt: clock, updatedAt: clock });
+    await tx.sessionAssignments!.saveTaskSessionAssignment({ projectId, taskId, version: 1,
+      taskRevisionId: fixture.prerequisite.revision.id, target, recipientActorId: actor,
+      state: "assigned", ack: null, actorId: actor, reason: "Assign this Task", updatedAt: clock }, 0);
+  });
+  const rounds: Array<{ runId: string; submissionId: string; deliveryId: string;
+    submittedAt: string; terminalAt: string }> = [];
+  let taskVersion = 1, assignmentVersion = 1;
+  for (let round = 0; round < 4; round++) {
+    const base = round * 20, runId = randomUUID(), submissionId = randomUUID(), deliveryId = randomUUID();
+    clock = clockAt(base + 1);
+    const revisionId = randomUUID(), basisSetId = randomUUID(), reserveOperationId = randomUUID();
+    // Reproduce reserveRuntime's persisted transaction shape, including trigger sequence.
+    await uow.transaction(projectId, async tx => {
+      const head = (await tx.getTask(taskId))!;
+      const previous = (await tx.getTaskRevision(taskId, head.currentRevisionId))!;
+      const assignment = (await tx.sessionAssignments!.getTaskSessionAssignment(taskId))!;
+      await tx.insertTaskRevision({ ...previous, id: revisionId, version: head.version + 1,
+        basisSetId, state: "in_progress", reason: "Runtime dispatch reserved", createdAt: clock });
+      await tx.insertSealedBasisSet({ ...fixture.prerequisite.basis, id: basisSetId,
+        taskRevisionId: revisionId });
+      await tx.updateTask({ ...head, version: head.version + 1,
+        currentRevisionId: revisionId }, head.version);
+      await tx.insertRuntimeRun({ projectId, id: runId, taskId, taskRevisionId: revisionId,
+        basisSetId, sessionId, operationId: reserveOperationId, input: `Fixed attempt ${round + 1}`,
+        inputHash: hash(`Fixed attempt ${round + 1}`), state: "requested", version: 1,
+        nativeTurnId: null, interruptRequested: false, resultSummary: null, actorId: actor,
+        createdAt: clock, updatedAt: clock });
+      await tx.sessionAssignments!.saveTaskSessionAssignment({ ...assignment,
+        version: assignment.version + 1, taskRevisionId: revisionId, state: "assigned", ack: null,
+        reason: "Runtime dispatch reserved with unchanged Task input", updatedAt: clock }, assignment.version);
+      await tx.insertOperation({ projectId, id: reserveOperationId, actorId: actor,
+        commandHash: hash(`reserve-${round}`), commandType: "runtime.run.reserve",
+        result: { status: "applied", operationId: reserveOperationId, entityId: runId,
+          version: 1, revisionId }, createdAt: clock });
+      for (const [kind, entityId, version] of [
+        ["task.assignment.set", taskId, assignment.version + 1],
+        ["runtime.run.requested", runId, 1],
+      ] as const) await tx.appendOutbox({ projectId, id: randomUUID(), operationId: reserveOperationId,
+        effectKey: `${projectId}:${kind}:${entityId}`, kind, entityId, version, createdAt: clock });
+    });
+    taskVersion++;
+    assignmentVersion++;
+    const auto = await pool.query(`SELECT a.updated_at,r.created_at,ac.sequence AS assignment_sequence,
+      rc.sequence AS run_sequence,op.command_type FROM task_session_assignment_revision a
+      JOIN runtime_run r ON r.project_id=a.project_id AND r.task_id=a.task_id
+        AND r.task_revision_id=a.task_revision_id AND r.session_id=a.target_id
+      JOIN leader_work_change ac ON ac.project_id=a.project_id AND ac.task_id=a.task_id
+        AND ac.entity_kind='assignment' AND ac.version=a.version
+      JOIN leader_work_change rc ON rc.project_id=r.project_id AND rc.task_id=r.task_id
+        AND rc.entity_kind='run' AND rc.entity_id=r.run_id AND rc.version=1
+      JOIN operation_journal op ON op.project_id=r.project_id AND op.operation_id=r.operation_id
+      JOIN outbox_event ae ON ae.project_id=op.project_id AND ae.operation_id=op.operation_id
+        AND ae.kind='task.assignment.set' AND ae.entity_id=a.task_id AND ae.version=a.version
+      JOIN outbox_event re ON re.project_id=op.project_id AND re.operation_id=op.operation_id
+        AND re.kind='runtime.run.requested' AND re.entity_id=r.run_id AND re.version=1
+      WHERE a.project_id=$1 AND a.task_id=$2 AND a.version=$3`, [projectId, taskId, assignmentVersion]);
+    assert.equal(auto.rows[0]?.updated_at?.toISOString(), auto.rows[0]?.created_at?.toISOString());
+    assert.equal(Number(auto.rows[0]?.assignment_sequence), Number(auto.rows[0]?.run_sequence) + 1);
+    assert.equal(auto.rows[0]?.command_type, "runtime.run.reserve");
+    const boundAt = clockAt(base + 2), submittedAt = clockAt(base + 4), terminalAt = clockAt(base + 5);
+    await pool.query(`INSERT INTO runtime_record_event(project_id,event_id,run_id,session_id,kind,detail,
+      native_turn_id,actor_id,created_at) VALUES($1,$2,$3,$4,'run.bound','Native Turn bound',$5,$6,$7)`,
+      [projectId,randomUUID(),runId,sessionId,`turn-${runId}`,actor,boundAt]);
+    clock = clockAt(base + 3);
+    const ack = await workflow.execute(who, { type: "task.assignment.acknowledge", projectId,
+      operationId: randomUUID(), taskId, expectedVersion: assignmentVersion,
+      expectedTaskVersion: taskVersion, evidence: "Accepted fixed Run" });
+    assert.equal(ack.status, "applied", JSON.stringify(ack));
+    assignmentVersion++;
+    await pool.query(`INSERT INTO ordinary_run_submission(project_id,submission_id,run_id,task_id,
+      session_id,task_revision_id,run_input_hash,operation_id,command_hash,delivery_operation_id,
+      delivery_intent,submitted_by,state,version,created_at_utc,updated_at_utc)
+      SELECT project_id,$2,run_id,task_id,session_id,task_revision_id,input_hash,$3,$4,$5,
+      $6::jsonb,$7,'submitted',1,$8,$8 FROM runtime_run WHERE project_id=$1 AND run_id=$9`,
+      [projectId,submissionId,randomUUID(),hash(`command-${round}`),randomUUID(),
+        JSON.stringify({artifactRef:"fixture://timing",artifactRevision:"v1",contentHash:hash("artifact"),
+          technicalResult:"passed",technicalEvidence:"Fixture",reason:"Fixture"}),actor,submittedAt,runId]);
+    await pool.query(`UPDATE runtime_run SET state='completed',native_turn_id=$3,version=2,updated_at=$4
+      WHERE project_id=$1 AND run_id=$2`, [projectId,runId,`turn-${runId}`,terminalAt]);
+    await pool.query(`INSERT INTO runtime_record_event(project_id,event_id,run_id,session_id,kind,detail,
+      native_turn_id,actor_id,created_at) VALUES($1,$2,$3,$4,'run.status','completed after submission',$5,$6,$7)`,
+      [projectId,randomUUID(),runId,sessionId,`turn-${runId}`,actor,terminalAt]);
+    await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,
+      artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at,run_id)
+      VALUES($1,$2,$3,$4,'fixture://timing','v1',$5,'passed','Fixture','Fixture',$6,$7,$8)`,
+      [projectId,deliveryId,taskId,revisionId,hash("artifact"),actor,clockAt(base + 6),runId]);
+    rounds.push({runId,submissionId,deliveryId,submittedAt,terminalAt});
+    if (round < 3) {
+      clock = clockAt(base + 19);
+      await uow.transaction(projectId, async tx => {
+        const previous = (await tx.sessionAssignments!.getTaskSessionAssignment(taskId))!;
+        const operationId = randomUUID();
+        await tx.sessionAssignments!.saveTaskSessionAssignment({ ...previous,
+          version: previous.version + 1, state: "assigned", ack: null,
+          reason: "Distinct later assignment after completed Run", updatedAt: clock }, previous.version);
+        await tx.insertOperation({ projectId, id: operationId, actorId: actor,
+          commandHash: hash(`reassign-${round}`), commandType: "task.assignment.set",
+          result: { status: "applied", operationId, entityId: taskId, version: previous.version + 1 },
+          createdAt: clock });
+        await tx.appendOutbox({ projectId, id: randomUUID(), operationId,
+          effectKey: `${projectId}:task.assignment.set:${taskId}`, kind: "task.assignment.set",
+          entityId: taskId, version: previous.version + 1, createdAt: clock });
+      });
+      assignmentVersion++;
+    }
+  }
+  const value = await readLeaderWorkTask(pool, projectId, taskId, clockAt(85));
+  assert.equal(value?.phase, "awaiting_acceptance");
+  assert.equal(value?.timing.current.stage, "awaiting_acceptance");
+  for (const round of rounds) {
+    const intervals = value!.timing.rounds.flatMap(item => item.intervals);
+    assert.equal(intervals.find(item => item.stage === "running" && item.source?.id === round.runId)?.endedAt,
+      round.submittedAt);
+    assert.equal(intervals.find(item => item.stage === "awaiting_delivery" && item.source?.id === round.submissionId)?.endedAt,
+      clockAt(rounds.indexOf(round) * 20 + 6));
+    assert.ok(!intervals.some(item => item.stage === "awaiting_run" && item.startedAt === clockAt(rounds.indexOf(round) * 20 + 3)));
+    assert.ok(!intervals.some(item => item.stage === "awaiting_submission" && item.startedAt === round.terminalAt));
+  }
+  for (let round = 0; round < 3; round++) {
+    const laterAssignmentAt = clockAt(round * 20 + 19);
+    assert.ok(value!.timing.rounds.flatMap(item => item.intervals).some(item =>
+      item.stage === "awaiting_ack" && item.startedAt === laterAssignmentAt),
+    "a distinct assignment after a completed Run must still create a new waiting interval");
+  }
+  assert.deepEqual(value?.timing.current.waitingFor, { kind: "role", id: actor });
+  assert.equal(value?.timing.latestEffectiveProgress?.sourceId, rounds.at(-1)?.deliveryId);
 });
 
 test("the Leader index can page beyond the former 5000-row ceiling", async () => {
