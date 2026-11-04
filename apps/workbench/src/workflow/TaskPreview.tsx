@@ -11,12 +11,13 @@ import { observationResultLabel, observationsForDelivery, observerKindLabel } fr
 import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskExperience";
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
 import { TaskTiming } from "./LeaderTaskFacts";
+import { taskPreviewResponsibility } from "./taskPreviewResponsibility";
 
 const empty: NonNullable<TaskDetail["deliveries"]> = [];
 
-export function TaskPreview({ token, projectId, id, item, returnTo, sessionName, roleName, outsideFilter = false }: {
+export function TaskPreview({ token, projectId, id, item, returnTo, sessionName, roleName, roleNameId, outsideFilter = false }: {
   token: string; projectId: string; id: string; item?: LeaderWorkTask; actorId: string; returnTo: string;
-  sessionName?: string | null; roleName?: string | null; outsideFilter?: boolean;
+  sessionName?: string | null; roleName?: string | null; roleNameId?: string | null; outsideFilter?: boolean;
 }) {
   const [read, setRead] = useState<{ projectId: string; taskId: string; detail: TaskDetail | null; problem: string } | null>(null);
   const selectedRead = read?.projectId === projectId && read.taskId === id ? read : null;
@@ -42,11 +43,9 @@ export function TaskPreview({ token, projectId, id, item, returnTo, sessionName,
   const visibleAcceptance = acceptance?.slice(0, 2) ?? [];
   const hiddenAcceptance = acceptance?.slice(2) ?? [];
   const fullHref = `${href(projectId, "task", id)}?list=${encodeURIComponent(returnTo)}`;
-  const responsibility = projection?.assignment
-    ? `${projection.assignment.targetKind === "owned" ? "受管 Session" : "外部 HostLink"} · ${sessionName || "名称待核对"}`
-    : projection?.responsible.kind === "role"
-      ? `负责职责 · ${roleName || "名称待核对"}`
-      : projection?.responsible.label ?? "承接尚未读回";
+  const responsibility = projection
+    ? taskPreviewResponsibility(projection, sessionName, roleName, roleNameId ?? null)
+    : "承接尚未读回";
 
   return <aside className="task-selection task-summary" aria-label="所选任务摘要">
     <div className="task-selection-top">

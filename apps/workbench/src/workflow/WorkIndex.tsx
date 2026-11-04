@@ -505,6 +505,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       item={projections.items[selectedTask]} actorId={context.principal.actorId} returnTo={listRoute}
       sessionName={(() => { const item = projections.items[selectedTask]; const key = item && assignmentSessionKey(item); return key ? leaderSessionNames[key]?.title ?? null : null; })()}
       roleName={(() => { const task = tasks.items.find(task => task.id === selectedTask); return task ? resolvedOwners[task.owner]?.title : null; })()}
+      roleNameId={tasks.items.find(task => task.id === selectedTask)?.owner ?? null}
       outsideFilter={!visibleTasks.some(task => task.id === selectedTask)} />}</div>
     {view === "work" && leaderWork && <details className="leader-work-disclosure"><summary>查看全项目 Leader 对账 <span>按项目全部未关闭工作核对</span></summary><LeaderWorkOverview page={leaderWork} projectId={projectId}
       ownerNames={resolvedOwners} statuses={statuses} leaderStatuses={leaderStatuses}

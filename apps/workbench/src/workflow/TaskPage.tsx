@@ -305,7 +305,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const goal = taskGoal(leaderTask, detail.task);
   const progressLabel = leaderTask ? leaderPhaseLabel[leaderTask.phase] : taskStateLabel[detail.task.state];
   const responsibilityLabel = !leaderTask ? "职责尚未读回"
-    : leaderTask.responsible.kind === "role"
+    : leaderTask.responsible.kind === "role" && leaderTask.responsible.id === detail.task.owner
       ? responsibleName ? `负责职责：${responsibleName}` : "负责职责待核对"
       : leaderTask.responsible.label;
   const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的 Agent 使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
