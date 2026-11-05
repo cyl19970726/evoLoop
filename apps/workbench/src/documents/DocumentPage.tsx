@@ -36,6 +36,7 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
   const [relatedError, setRelatedError] = useState("");
   const [relatedPartial, setRelatedPartial] = useState(false);
   const [asideCollapsed, setAsideCollapsed] = useState(readStoredAsideCollapsed);
+  const [htmlAsideOpen, setHtmlAsideOpen] = useState(false);
   const toggleAside = () => {
     const next = !asideCollapsed;
     setAsideCollapsed(next);
@@ -111,9 +112,27 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
   const taskOwned = detail.document.kind === "task";
   const archived = detail.document.status === "archived";
   const continuousHtml = revision.format === "html" && detail.document.kind !== "organization_review";
+  const readerAsideCollapsed = continuousHtml ? !htmlAsideOpen : asideCollapsed;
+  const editor = !taskOwned && <details className="workflow-detail doc-reading-editor"><summary>修订与发布</summary>{!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订" fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]} build={v => ({ type: "document.revise", documentId: id, expectedVersion: detail.document.version, ...v })} />}
+      {!archived && <>
+      {uploadStale && <Alert kind="error">上传表单仍使用打开时的文档版本 v{uploadBaselineVersion}；当前为 v{detail.document.version}。
+        请先核对新修订，再明确重新选择文件。<button onClick={() => {
+          if (!window.confirm("重新选择文件会清空当前上传表单，确定继续？")) return;
+          setUploadBaselineVersion(detail.document.version); setUploadGeneration(value => value + 1);
+        }}>以当前版重新开始上传</button></Alert>}
+      <UploadDocument key={`${id}:${uploadGeneration}`} context={{ ...formContext, blocked: formContext.blocked || uploadStale }} mode="revise"
+        documentId={id} expectedVersion={uploadBaselineVersion ?? detail.document.version} />
+      {detail.current.id === detail.adopted?.id
+        ? <p className="muted">当前修订已发布；如需更新，请先保存新修订。</p>
+        : <ActionForm context={formContext} review title="发布当前修订" fields={[{ name: "reason", label: "发布依据", kind: "textarea" }]} build={v => ({ type: "document.publish", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} />}</>}
+      <ActionForm context={formContext} review title={archived ? "恢复文档" : "归档文档"} fields={[{ name: "reason", label: archived ? "恢复理由" : "归档理由", kind: "textarea" }]} build={v => ({ type: archived ? "document.restore" : "document.archive", documentId: id, expectedVersion: detail.document.version, ...v })} /></details>;
   return <div className={`content reading document-reading-page${continuousHtml ? " html-continuous-reading" : ""}`}>
     <div className="document-reading-toolbar">
       <div className="document-reading-backlinks"><a className="back doc-back" href={documentReturnHref(projectId)}>← 返回来源</a><a className="doc-list-link" href={href(projectId, "documents")}>全部文档</a></div>
+      {continuousHtml && <button type="button" className="doc-html-aside-button" aria-expanded={htmlAsideOpen}
+        aria-controls="document-reading-aside" onClick={() => setHtmlAsideOpen(value => !value)}>
+        {htmlAsideOpen ? "收起版本与来源" : "查看版本与来源"}
+      </button>}
       <div className="doc-read-status"><span>{loading ? "正在核对当前文档…" : observedAt ? `当前文档读于 ${observedAt.toLocaleString("zh-CN")}` : "当前文档尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前文档</button></div>
     </div>
     {loading && <Alert>正在核对当前修订；保存与采纳暂不可用。</Alert>}
@@ -125,27 +144,27 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
         ? <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a> : "所属任务页"}修改正文。</Alert>}
       {revision.id !== detail.current.id && <Alert>所读为固定历史版。当前版已更新；请核对任务实际采用的修订。</Alert>}
       {revision.id !== detail.adopted?.id && <p className="muted">所读修订不是已发布版；引用它时请核对任务固定依据。</p>}
-      <div className="actions doc-version-actions">
+      {(revision.id !== detail.current.id || detail.adopted && revision.id !== detail.adopted.id || revision.previousRevisionId) && <div className="actions doc-version-actions">
         {revision.id !== detail.current.id && <a className="button-link" href={href(projectId, "document", id, detail.current.id)}>阅读当前版</a>}
         {detail.adopted && revision.id !== detail.adopted.id && <a className="button-link" href={href(projectId, "document", id, detail.adopted.id)}>阅读已发布版</a>}
         {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
-      </div>
+      </div>}
     </header>
     {revision.organizationReview && <p className="doc-review-period">观察期间：{new Date(revision.organizationReview.observedFrom).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} 至 {new Date(revision.organizationReview.observedTo).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} · {revision.organizationReview.timeZone}
       {revision.organizationReview.previous && <> · <a href={href(projectId, "document", revision.organizationReview.previous.documentId, revision.organizationReview.previous.revisionId)}>上一轮复盘</a></>}</p>}
     {revision.format === "markdown" && <details className="document-outline-mobile"><summary>文档目录</summary><DocumentOutline body={outlineBody} revision={revision.id} compact /></details>}
-    <div className={`document-read-layout${detail.document.kind === "organization_review" ? " organization-review-reading" : ""}${asideCollapsed ? " aside-collapsed" : ""}`}>
+    <div className={`document-read-layout${detail.document.kind === "organization_review" ? " organization-review-reading" : ""}${readerAsideCollapsed ? " aside-collapsed" : ""}`}>
       <article className="document-read-main" ref={outlineBody}>
         <section className="doc-primary-body" aria-label="文档完整正文">
           {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={detail.document.title} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
             : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} readingMode={detail.document.kind === "organization_review"} continuous={continuousHtml} />}
         </section>
       </article>
-      {detail.document.kind !== "organization_review" &&
+      {detail.document.kind !== "organization_review" && !continuousHtml &&
         <button type="button" className="doc-aside-toggle" aria-expanded={!asideCollapsed}
           aria-label={asideCollapsed ? "展开版本、来源与关联" : "收起版本、来源与关联"}
           onClick={toggleAside}>{asideCollapsed ? "›" : "‹"}</button>}
-      <aside className="document-read-aside" aria-label="文档版本、来源与关联">
+      <aside id="document-reading-aside" className="document-read-aside" aria-label="文档版本、来源与关联">
         {revision.format === "markdown" && <div className="document-outline-desktop"><DocumentOutline body={outlineBody} revision={revision.id} /></div>}
         <details className="doc-reading-details" open={detail.document.kind !== "organization_review"}><summary>版本、原件与来源</summary>
           <div className="doc-version-status" aria-label="文档修订状态">
@@ -161,20 +180,9 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
         <section className="doc-related-tasks"><h2>引用此文档的任务</h2>{relatedLoading && <p role="status">正在读取当前关联任务；已显示关联来自上次读取。</p>}{relatedError && <Alert kind="error">任务关联本次未读完整：{relatedError}。下列可能包含上次读回的任务，不能视为当前完整结果。</Alert>}{relatedPartial && <Alert>已达 20 页或 1000 项读取上限；下列任务未必完整。</Alert>}
           {relatedScope === taskScope && relatedTasks.length ? <ul>{relatedTasks.map(task => <li key={task.id}><a href={href(projectId, "task", task.id)}>{task.title}</a><span>{task.relations.map(relation => relationLabel[relation]).join(" · ")} · {task.state === "todo" ? "待办" : task.state === "in_progress" ? "进行中" : task.state === "done" ? "已完成" : "已取消"} · 责任者 {task.owner}</span></li>)}</ul> : !relatedLoading && !relatedError && !relatedPartial && <p className="empty">当前没有任务引用此文档。</p>}
         </section>
+        {continuousHtml && editor}
       </aside>
     </div>
-    {!taskOwned && <details className="workflow-detail doc-reading-editor"><summary>修订与发布</summary>{!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订" fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]} build={v => ({ type: "document.revise", documentId: id, expectedVersion: detail.document.version, ...v })} />}
-      {!archived && <>
-      {uploadStale && <Alert kind="error">上传表单仍使用打开时的文档版本 v{uploadBaselineVersion}；当前为 v{detail.document.version}。
-        请先核对新修订，再明确重新选择文件。<button onClick={() => {
-          if (!window.confirm("重新选择文件会清空当前上传表单，确定继续？")) return;
-          setUploadBaselineVersion(detail.document.version); setUploadGeneration(value => value + 1);
-        }}>以当前版重新开始上传</button></Alert>}
-      <UploadDocument key={`${id}:${uploadGeneration}`} context={{ ...formContext, blocked: formContext.blocked || uploadStale }} mode="revise"
-        documentId={id} expectedVersion={uploadBaselineVersion ?? detail.document.version} />
-      {detail.current.id === detail.adopted?.id
-        ? <p className="muted">当前修订已发布；如需更新，请先保存新修订。</p>
-        : <ActionForm context={formContext} review title="发布当前修订" fields={[{ name: "reason", label: "发布依据", kind: "textarea" }]} build={v => ({ type: "document.publish", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} />}</>}
-      <ActionForm context={formContext} review title={archived ? "恢复文档" : "归档文档"} fields={[{ name: "reason", label: archived ? "恢复理由" : "归档理由", kind: "textarea" }]} build={v => ({ type: archived ? "document.restore" : "document.archive", documentId: id, expectedVersion: detail.document.version, ...v })} /></details>}
+    {!continuousHtml && editor}
   </div>;
 }
