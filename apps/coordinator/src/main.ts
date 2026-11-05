@@ -11,7 +11,8 @@ import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
-import { PostgresUnitOfWork, taskAttentionNoticeCurrent, disposeStaleTaskAttentionNotice } from "@evoloop/adapter-postgres";
+import { PostgresUnitOfWork, PgConnectorRoutes, taskAttentionNoticeCurrent,
+  disposeStaleTaskAttentionNotice } from "@evoloop/adapter-postgres";
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
@@ -592,6 +593,7 @@ if (runner) {
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
+  connectorRoutes: new PgConnectorRoutes(pool),
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),

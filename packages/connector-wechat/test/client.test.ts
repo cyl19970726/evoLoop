@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { GatewayInputError, WechatGatewayClient } from "../src/index.ts";
+import { GatewayInputError, WechatGatewayClient, type GatewayMethod } from "../src/index.ts";
 
 const executable = fileURLToPath(new URL("./gateway-fixture.mjs", import.meta.url));
 chmodSync(executable, 0o755);
 const cid = "0123456789abcdef0123456789abcdef";
-const client = (allowedMethods: Array<"binding" | "inbox_claim" | "events" | "complete" | "send_text" | "result"> = ["send_text", "result"], timeoutMs = 1000, mode = "ok") =>
+const client = (allowedMethods: GatewayMethod[] = ["send_text", "result"], timeoutMs = 1000, mode = "ok") =>
   new WechatGatewayClient({ executable, configPath: `/synthetic/private/client-${mode}.json`, allowedMethods, timeoutMs });
 
 test("allowlisted send and same original key result query", async () => {
@@ -92,4 +92,61 @@ test("a process start failure is unknown and retains the query key", async () =>
   const gateway = new WechatGatewayClient({ executable: "/synthetic/missing-gateway-client", configPath: "/synthetic/private/client.json", allowedMethods: ["result"] });
   const outcome = await gateway.call("result", { conversation_id: cid, request_id: "notice-001" });
   assert.deepEqual(outcome, { state: "unknown", method: "result", businessRequestId: "notice-001", correlationId: null, reason: "process_error" });
+});
+
+test("transport status retains scoped owner, epoch, token and turn identity", async () => {
+  for (const mode of ["ok", "recorded"]) {
+    const outcome = await client(["transport_status"], 1000, mode).call("transport_status", { conversation_id: cid });
+    assert.equal(outcome.state, "ok", mode);
+    if (outcome.state !== "ok") continue;
+    const row = (outcome.result.deliveries as Array<Record<string, unknown>>)[0];
+    assert.equal(row.owner, "fixture-owner");
+    assert.equal(row.epoch, 2);
+    assert.equal(row.delivery_id, 4);
+    assert.equal(row.transport_token, "private-transport-token");
+    assert.equal(row.turn_id, mode === "recorded" ? "turn-1" : null);
+  }
+  for (const mode of ["wrong_conversation", "missing_owner", "bad_epoch", "missing_transport_token", "bad_turn_identity", "duplicate_delivery"]) {
+    const outcome = await client(["transport_status"], 1000, mode).call("transport_status", { conversation_id: cid });
+    assert.equal(outcome.state, "unknown", mode);
+    assert.equal(outcome.state === "unknown" && outcome.reason, "response_unknown", mode);
+  }
+});
+
+test("turn receipts require the requested delivery, turn and terminal state", async () => {
+  const reserve = { conversation_id: cid, delivery_id: 4, token: "private-claim-token" };
+  const recorded = { ...reserve, turn_id: "turn-1" };
+  const finish = { ...reserve, status: "completed" as const };
+  assert.equal((await client(["reserve_turn"]).call("reserve_turn", reserve)).state, "ok");
+  assert.equal((await client(["reserve_turn"], 1000, "already_recorded").call("reserve_turn", reserve)).state, "ok");
+  assert.equal((await client(["record_turn"]).call("record_turn", recorded)).state, "ok");
+  assert.equal((await client(["finish_turn"]).call("finish_turn", finish)).state, "ok");
+  for (const [method, params, mode] of [
+    ["reserve_turn", reserve, "wrong_delivery"], ["reserve_turn", reserve, "missing_session"],
+    ["reserve_turn", reserve, "bad_reservation"], ["record_turn", recorded, "wrong_delivery"],
+    ["record_turn", recorded, "wrong_turn"], ["record_turn", recorded, "missing_thread"],
+    ["finish_turn", finish, "wrong_delivery"], ["finish_turn", finish, "wrong_status"]
+  ] as const) {
+    const outcome = await client([method], 1000, mode).call(method, params);
+    assert.equal(outcome.state, "unknown", `${method}/${mode}`);
+    assert.equal(outcome.state === "unknown" && outcome.reason, "response_unknown", `${method}/${mode}`);
+  }
+});
+
+test("turn methods reject invalid local fields and preserve unknown mutations", async () => {
+  const reserve = { conversation_id: cid, delivery_id: 4, token: "private-claim-token" };
+  await assert.rejects(client(["reserve_turn"], 1000, "error").call("reserve_turn", { ...reserve, owner: "extra" } as never), GatewayInputError);
+  await assert.rejects(client(["reserve_turn"], 1000, "error").call("reserve_turn", { ...reserve, token: "" }), GatewayInputError);
+  await assert.rejects(client(["record_turn"], 1000, "error").call("record_turn", { ...reserve, turn_id: "bad turn" }), GatewayInputError);
+  await assert.rejects(client(["finish_turn"], 1000, "error").call("finish_turn", { ...reserve, status: "pending" } as never), GatewayInputError);
+  await assert.rejects(client(["result"], 1000, "error").call("reserve_turn", reserve), GatewayInputError);
+  for (const method of ["reserve_turn", "record_turn", "finish_turn"] as const) {
+    const params = method === "record_turn" ? { ...reserve, turn_id: "turn-1" }
+      : method === "finish_turn" ? { ...reserve, status: "completed" as const } : reserve;
+    for (const mode of ["timeout", "unknown"]) {
+      const outcome = await client([method], 100, mode).call(method, params);
+      assert.equal(outcome.state, "unknown", `${method}/${mode}`);
+      assert.equal(outcome.businessRequestId, null);
+    }
+  }
 });

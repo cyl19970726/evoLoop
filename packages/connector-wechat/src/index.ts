@@ -14,10 +14,15 @@ const text = z.string().refine(value => {
 }, "Invalid wx-cli text");
 const common = { conversation_id: conversationId };
 const withDelivery = { ...common, delivery_id: positive };
+const transportToken = z.string().min(1).max(512);
 const schemas = {
   binding: z.strictObject(common),
   inbox_status: z.strictObject(common),
   inbox_claim: z.strictObject({ ...common, lease_seconds: z.number().int().min(30).max(3600).optional() }),
+  transport_status: z.strictObject(common),
+  reserve_turn: z.strictObject({ ...withDelivery, token: transportToken }),
+  record_turn: z.strictObject({ ...withDelivery, token: transportToken, turn_id: identifier }),
+  finish_turn: z.strictObject({ ...withDelivery, token: transportToken, status: z.enum(["completed", "interrupted", "failed"]) }),
   inbox_show: z.strictObject(withDelivery),
   events: z.strictObject({ ...withDelivery, after: z.number().int().min(0).safe().optional(), limit: z.number().int().min(1).max(100).optional() }),
   complete: z.strictObject({ ...withDelivery, token: identifier, decision: z.enum(["skip", "defer", "draft", "reply"]),
@@ -52,6 +57,54 @@ const isSafeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value);
 const isPositive = (value: unknown): value is number => isSafeInteger(value) && value > 0;
 const isNonnegative = (value: unknown): value is number => isSafeInteger(value) && value >= 0;
+
+// These are the fixed gateway's projected transport rows and Rust turn receipts.
+const transportRow = z.strictObject({
+  delivery_id: positive, conversation_id: conversationId, owner: identifier, epoch: positive,
+  status: z.enum(["pending", "claimed", "replied", "skipped", "deferred", "draft"]),
+  turn_state: z.enum(["reserved", "recorded"]), session_ref: identifier,
+  thread_id: identifier.nullable(), turn_id: identifier.nullable(), transport_token: transportToken
+}).superRefine((row, context) => {
+  if (row.turn_state === "recorded" ? row.thread_id === null || row.turn_id === null
+    : row.thread_id !== null || row.turn_id !== null) {
+    context.addIssue({ code: "custom", message: "inconsistent turn identity" });
+  }
+});
+const transportStatus = z.strictObject({ conversation_id: conversationId, deliveries: z.array(transportRow).max(16) });
+const reserveReceipt = z.strictObject({ delivery_id: positive,
+  turn_state: z.enum(["reserved", "recorded", "completed", "interrupted", "failed"]),
+  session_ref: identifier, already_reserved: z.boolean() });
+const recordReceipt = z.strictObject({ delivery_id: positive, turn_state: z.literal("recorded"),
+  thread_id: identifier, turn_id: identifier });
+const finishReceipt = z.strictObject({ delivery_id: positive,
+  turn_state: z.enum(["completed", "interrupted", "failed"]) });
+
+function validTransportResult(method: GatewayMethod, params: Record<string, unknown>, result: Record<string, unknown>): boolean {
+  if (method === "transport_status") {
+    const parsed = transportStatus.safeParse(result);
+    if (!parsed.success || parsed.data.conversation_id !== params.conversation_id) return false;
+    const seen = new Set<number>();
+    for (const row of parsed.data.deliveries) {
+      if (row.conversation_id !== params.conversation_id || seen.has(row.delivery_id)) return false;
+      seen.add(row.delivery_id);
+    }
+    return true;
+  }
+  if (method === "reserve_turn") {
+    const parsed = reserveReceipt.safeParse(result);
+    return parsed.success && parsed.data.delivery_id === params.delivery_id
+      && (parsed.data.already_reserved || parsed.data.turn_state === "reserved");
+  }
+  if (method === "record_turn") {
+    const parsed = recordReceipt.safeParse(result);
+    return parsed.success && parsed.data.delivery_id === params.delivery_id && parsed.data.turn_id === params.turn_id;
+  }
+  if (method === "finish_turn") {
+    const parsed = finishReceipt.safeParse(result);
+    return parsed.success && parsed.data.delivery_id === params.delivery_id && parsed.data.turn_state === params.status;
+  }
+  return true;
+}
 
 /** A successful envelope is not enough to consume a lease or an event page. */
 function validInboxResult(method: GatewayMethod, params: Record<string, unknown>, result: Record<string, unknown>): boolean {
@@ -185,6 +238,7 @@ export class WechatGatewayClient {
           if (item.result.conversation_id !== undefined && item.result.conversation_id !== parsed.data.conversation_id
               || "delivery_id" in parsed.data && item.result.delivery_id !== undefined && item.result.delivery_id !== parsed.data.delivery_id
               || !validInboxResult(method, parsed.data, item.result)
+              || !validTransportResult(method, parsed.data, item.result)
               || (method === "send_text" || method === "result")
                 && (item.result.conversation_id !== parsed.data.conversation_id
                     || typeof item.result.application_id !== "string"

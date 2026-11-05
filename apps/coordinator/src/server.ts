@@ -18,6 +18,7 @@ import type { AllocationRelationsService } from "@evoloop/core/allocation-relati
 import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
+import { registerConnectorRouteReads, type ConnectorRouteReader } from "./message-connectors/routes.js";
 import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
@@ -54,6 +55,7 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  connectorRoutes?: ConnectorRouteReader;
   sessionTimeline?: SessionTimelineService;
   nativeInputs?: NativeInputBridge;
   nativeObservation?: NativeObservationBridge;
@@ -451,6 +453,7 @@ export async function buildServer(options: {
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });
+  if (options.connectorRoutes) registerConnectorRouteReads(app, options.service, options.connectorRoutes, options.canWrite ?? (() => true));
   app.get("/api/projects/:projectId/session-messages/:id/manual-stop-preview", async request => {
     const {projectId,id}=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
     const principal=who(request.principal);

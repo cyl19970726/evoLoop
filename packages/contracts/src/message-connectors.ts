@@ -29,6 +29,17 @@ export const connectorRouteSchema = z.strictObject({
 });
 export type ConnectorRoute = z.infer<typeof connectorRouteSchema>;
 
+/** Storage version is advanced by one on every successful route change. */
+export const versionedConnectorRouteSchema = connectorRouteSchema.extend({
+  version: z.number().int().positive(),
+});
+export type VersionedConnectorRoute = z.infer<typeof versionedConnectorRouteSchema>;
+export const connectorRouteRecordSchema = versionedConnectorRouteSchema.extend({
+  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
+});
+export type ConnectorRouteRecord = z.infer<typeof connectorRouteRecordSchema>;
+export type ConnectorRoutePage = { items: ConnectorRouteRecord[]; nextCursor: string | null };
+
 export const connectorSourceSchema = z.strictObject({
   source: connectorConversationSchema,
   deliveryId: z.number().int().positive(),
