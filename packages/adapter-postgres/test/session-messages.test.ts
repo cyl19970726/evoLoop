@@ -383,11 +383,20 @@ test('raising one ordinary message grant from 100 to 200 preserves all billed tu
   await seedBilled(99);
   const exhausted={...item(),senderActorId:sender};
   await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(exhausted));
-  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),200);
-  await assert.rejects(()=>guarded.preflightDispatch(projectId,exhausted.id),/grant is exhausted/);
-  await assert.rejects(()=>guarded.beginDispatch(projectId,exhausted.id,randomUUID(),randomUUID(),qualified),
-    /grant is exhausted/);
-  assert.equal((await guarded.detail(projectId,exhausted.id)).processing,null);
+  try {
+    assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),200);
+    await assert.rejects(()=>guarded.preflightDispatch(projectId,exhausted.id),/grant is exhausted/);
+    await assert.rejects(()=>guarded.beginDispatch(projectId,exhausted.id,randomUUID(),randomUUID(),qualified),
+      /grant is exhausted/);
+    assert.equal((await guarded.detail(projectId,exhausted.id)).processing,null);
+  } finally {
+    const pending=await guarded.get(projectId,exhausted.id);
+    if(pending.state==='queued')await uow.transaction(projectId,tx=>applySessionMessage(tx,
+      {actorId:sender,projectIds:[projectId],permissions:['write']},
+      {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:exhausted.id,
+        expectedVersion:pending.version,reason:'End isolated budget test'},now));
+  }
+  assert.equal((await guarded.get(projectId,exhausted.id)).state,'cancelled');
 });
 
 test('pending scanning can pass the old ten-thousand offset while each page stays bounded',async()=>{
