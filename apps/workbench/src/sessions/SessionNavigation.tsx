@@ -18,10 +18,8 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   const [search, setSearch] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [showAllCurrent, setShowAllCurrent] = useState(!selectedId);
   const [retries, setRetries] = useState<Record<DirectoryMembership, number>>({ current: 0, historical: 0, unclassified: 0 });
   useEffect(() => { const timer = window.setTimeout(() => setSearch(query.trim()), 250); return () => window.clearTimeout(timer); }, [query]);
-  useEffect(() => setShowAllCurrent(!selectedId), [selectedId]);
   const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, true);
   const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen);
   const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen);
@@ -49,15 +47,10 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
       {classOrder.map(groupName => {
         const entries = grouped[groupName];
         if (!entries.length) return null;
-        const limit = groupName === "unclassified" ? 1 : 2;
-        const selected = selectedId ? entries.find(entry => entry.key === selectedId) : undefined;
-        const visible = search || showAllCurrent ? entries : selected
-          ? [selected, ...entries.filter(entry => entry.key !== selected.key).slice(0, limit - 1)]
-          : entries.slice(0, limit);
-        return <div className="session-nav-class" key={groupName}><span>{sessionClassLabel[groupName]} · {entries.length}</span>{visible.map(item)}</div>;
+        return <div className="session-nav-class" key={groupName}><span>{sessionClassLabel[groupName]} · 已加载 {entries.length}</span>{entries.map(item)}</div>;
       })}
     </div>
-    {showAllCurrent && current.hasMore && <button className="session-nav-more" type="button" disabled={current.moreBusy || current.loading} onClick={() => void current.more()}>{current.moreBusy ? "加载中…" : "加载更多当前 Session"}</button>}
+    {current.hasMore && <button className="session-nav-more" type="button" disabled={current.moreBusy || current.loading} onClick={() => void current.more()}>{current.moreBusy ? "加载中…" : "加载更多当前 Session"}</button>}
     <a className="session-nav-directory-link" href={href(projectId, "sessions")} onClick={onNavigate}>查看全部 Session <ArrowRight size={14} aria-hidden="true" /></a>
     <div className="session-nav-group">
       <button type="button" className="session-nav-history" onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}><ChevronDown size={13} aria-hidden="true" className={historyOpen ? "" : "collapsed"} /> 历史与待归类 {totals && `· ${historicalCount}`}</button>

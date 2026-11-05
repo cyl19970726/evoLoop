@@ -5,19 +5,32 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { timelinePage } from "./session-timeline-fixtures";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const dist = resolve(import.meta.dirname, "../dist");
 const projectId = "30000001-0000-4000-8000-000000000001";
 const stamp = "2026-10-27T00:00:00.000Z";
 const totals = { current: 51, historical: 37, unclassified: 14 };
+const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
+const unavailable = { available: false, reason: "fixture unavailable" };
+const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"]
+  .map(key => [key, { value: null, unit: "", source: null, scope: "session", observedAt: null, interval: null, unavailableReason: "未记录" }]));
 const entries = {
-  current: Array.from({ length: 51 }, (_, i) => ({ key: `external:current-${i}`, title: `当前成员 ${i + 1}`, membership: "current" })),
+  current: Array.from({ length: 51 }, (_, i) => ({ key: `external:current-${i}`, title: `当前成员 ${i + 1}`, membership: "current",
+    roles: i < 6 ? [{ title: "业务", roleClass: "business" }] : i === 6 ? [{ title: "System", roleClass: "system" }] : [] })),
   historical: Array.from({ length: 37 }, (_, i) => ({ key: `external:historical-${i}`, title: `历史会话 ${i + 1}`, membership: "historical" })),
   unclassified: Array.from({ length: 14 }, (_, i) => ({ key: `external:unclassified-${i}`, title: `待归类会话 ${i + 1}`, membership: "unclassified" })),
 };
+function observed(item: { key: string; title: string; membership: string; roles?: { title: string; roleClass: string }[] }) {
+  return { ...item, kind: "external", roles: item.roles ?? [],
+    target: { kind: "external", linkId: "30000002-0000-4000-8000-000000000001" }, aliases: [], profile: null, identity: null,
+    membershipReason: "fixture", runtimeState: null, currentTask: null, latestBusinessRun: null, lastProgressAt: null, busy: null,
+    capabilities: { observe: unavailable, send: { ...unavailable, mode: "unavailable" }, open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
+    source: { kind: "host-link", id: "30000002-0000-4000-8000-000000000001", revision: null, evidence: "project-record", href: "" }, metadata };
+}
 
-test("retrying one Session category preserves another category's loaded pages", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+test("Session navigation retains order, pages and filters across selection, back navigation and category retry", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let unclassifiedUnavailable = true;
   const reads: Array<{ membership: string; cursor: string | null }> = [];
@@ -41,10 +54,22 @@ test("retrying one Session category preserves another category's loaded pages", 
           const start = cursor ? Number(cursor.split(":")[1]) : 0;
           const limit = Number(url.searchParams.get("limit") ?? "20");
           const pageLimit = membership === "current" && start === 0 ? 5 : limit;
-          value = { items: rows.slice(start, start + pageLimit).map(item => ({ ...item, kind: "external", roles: [], currentTask: null, busy: null })),
+          value = { items: rows.slice(start, start + pageLimit).map(observed),
             nextCursor: start + pageLimit < rows.length ? `${membership}:${start + pageLimit}` : null, totals, observationCursor: "0",
-            metadata: { generatedAt: stamp, sourceObservedAt: null, partial: false, limitations: [] },
+            metadata,
             attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: null, unclassifiedSessions: 14 } };
+        }
+      }
+      else if (url.pathname.startsWith(`${root}/session-work/`)) {
+        const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length));
+        if (key.endsWith("/timeline/updates")) value = { cursor: "1", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] };
+        else if (key.endsWith("/timeline")) value = timelinePage(key.slice(0, -"/timeline".length), { title: "当前成员" });
+        else if (key.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
+        else if (key === "changes") value = { items: [], nextCursor: "1", hasMore: false, resetRequired: false, metadata };
+        else {
+          const item = Object.values(entries).flat().find(entry => entry.key === key);
+          if (item) value = { session: observed(item), observationCursor: "0", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [], activity: [], resources, metadata, nativeObservation: null };
+          else { status = 404; value = { message: "fixture session not found" }; }
         }
       }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
@@ -68,9 +93,25 @@ test("retrying one Session category preserves another category's loaded pages", 
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator(".project-sidebar .session-navigation");
   const current = sidebar.locator(".session-nav-current");
-  await current.getByText("待归类 · 5", { exact: true }).waitFor();
+  await current.getByText("业务 Session · 已加载 5", { exact: true }).waitFor();
   assert.equal(await current.locator(".session-nav-item").count(), 5,
     "the Sessions root shows all five rows in its first current page");
+  const firstPageOrder = await current.locator(".session-nav-item").evaluateAll(nodes => nodes.map(node => node.getAttribute("href")));
+  await current.locator(".session-nav-item").nth(2).click();
+  await page.waitForURL(/session=external%3Acurrent-2/);
+  await current.locator('.session-nav-item[aria-current="page"]').waitFor();
+  await page.getByRole("heading", { name: "当前成员 3" }).waitFor();
+  assert.deepEqual(await current.locator(".session-nav-item").evaluateAll(nodes => nodes.map(node => node.getAttribute("href"))), firstPageOrder,
+    "opening a detail keeps every loaded Session in its original position");
+  assert.equal(await current.locator(".session-nav-item[aria-current=page]").count(), 1);
+  await current.locator(".session-nav-item").nth(0).click();
+  await page.waitForURL(/session=external%3Acurrent-0/);
+  await current.locator('.session-nav-item[aria-current="page"][href*="current-0"]').waitFor();
+  await page.getByRole("heading", { name: "当前成员 1" }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: "当前成员 3" }).count(), 0,
+    "the previous Session detail is no longer visible");
+  assert.deepEqual(await current.locator(".session-nav-item").evaluateAll(nodes => nodes.map(node => node.getAttribute("href"))), firstPageOrder,
+    "switching Session changes selection without reordering the directory");
   await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
   await current.getByText("当前成员 25", { exact: true }).waitFor();
   await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
@@ -79,9 +120,80 @@ test("retrying one Session category preserves another category's loaded pages", 
   await current.getByText("当前成员 51", { exact: true }).waitFor();
   assert.equal(await current.locator(".session-nav-item").count(), 51,
     "the Sessions root continues until all 51 current rows are loaded");
-  assert.equal(await page.locator(".sessions-directory-page").count(), 0,
-    "the root keeps the directory in navigation instead of adding a second catalog page");
+  assert.deepEqual(await current.locator(".session-nav-class > span").allTextContents(),
+    ["业务 Session · 已加载 6", "System Session · 已加载 1", "待归类 · 已加载 44"]);
+  await current.locator(".session-nav-item").first().click();
+  await page.waitForURL(/session=external%3Acurrent-0/);
+  await page.setViewportSize({ width: 1920, height: 1200 });
+  if (process.env.EVOLOOP_SESSION_NAV_SCREENSHOT) await page.screenshot({ path: process.env.EVOLOOP_SESSION_NAV_SCREENSHOT });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await sidebar.locator(".session-nav-history").click();
+  await current.locator(".session-nav-item").nth(44).scrollIntoViewIfNeeded();
+  const priorScroll = await sidebar.evaluate(element => element.scrollTop);
+  await current.locator(".session-nav-item").nth(44).click();
+  await page.waitForURL(/session=external%3Acurrent-44/);
+  await page.getByRole("heading", { name: "当前成员 45" }).waitFor();
+  assert.equal(await sidebar.evaluate(element => element.scrollTop), priorScroll,
+    "selection keeps the Session sidebar scroll position");
+  assert.equal(await sidebar.locator(".session-nav-history").getAttribute("aria-expanded"), "true",
+    "history expansion survives a Session switch");
+  assert.equal(await current.locator(".session-nav-item").count(), 51,
+    "loaded pages remain accessible in a Session detail");
+  assert.equal(await page.locator(".sessions-directory-page:visible").count(), 0,
+    "the selected Session keeps the directory in navigation instead of adding a second visible catalog");
+  await page.goBack();
+  await page.waitForURL(/session=external%3Acurrent-0/);
+  assert.equal(await current.locator(".session-nav-item").count(), 51, "browser back preserves loaded pages");
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.getByRole("button", { name: "打开项目导航" }).click();
+  await page.locator('.mobile-navigation[data-state="open"]').waitFor();
+  const mobileCurrent = page.locator(".mobile-navigation .session-nav-current");
+  await mobileCurrent.getByText("当前成员 5", { exact: true }).waitFor();
+  for (const member of [25, 45, 51]) {
+    await page.locator(".mobile-navigation").getByRole("button", { name: "加载更多当前 Session" }).click();
+    await mobileCurrent.getByText(`当前成员 ${member}`, { exact: true }).waitFor();
+  }
+  await mobileCurrent.getByText("当前成员 51", { exact: true }).scrollIntoViewIfNeeded();
+  assert.ok(await mobileCurrent.getByText("当前成员 51", { exact: true }).isVisible(),
+    "the last loaded Session remains reachable in the narrow navigation drawer");
+  await mobileCurrent.locator(".session-nav-item").last().click();
+  await page.waitForURL(/session=external%3Acurrent-50/);
+  await page.getByRole("button", { name: "打开项目导航" }).click();
+  await page.locator('.mobile-navigation[data-state="open"]').waitFor();
+  await mobileCurrent.getByText("当前成员 51", { exact: true }).waitFor();
+  assert.equal(await mobileCurrent.locator(".session-nav-item").count(), 51,
+    "closing the drawer to select a Session preserves its loaded pages");
+  await page.waitForFunction(() => { const box = document.querySelector('.mobile-navigation[data-state="open"]')?.getBoundingClientRect();
+    return !!box && box.x >= -1 && box.right > 0; });
+  const drawerBox = await page.locator('.mobile-navigation[data-state="open"]').boundingBox();
+  assert.ok(drawerBox && drawerBox.x >= -1 && drawerBox.x + drawerBox.width > 0,
+    "reopened navigation drawer is on screen");
+  if (process.env.EVOLOOP_SESSION_NAV_NARROW_SCREENSHOT) await page.screenshot({ path: process.env.EVOLOOP_SESSION_NAV_NARROW_SCREENSHOT });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true,
+    "the narrow Session detail has no page-wide horizontal overflow");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("当前成员 24");
+  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 1);
+  await current.getByText("当前成员 24", { exact: true }).waitFor();
+  assert.equal(await current.locator(".session-nav-item").count(), 1, "search narrows the loaded directory without changing the selected route");
+  await current.locator(".session-nav-item").click();
+  await page.waitForURL(/session=external%3Acurrent-23/);
+  assert.equal(await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).inputValue(), "当前成员 24",
+    "the search term survives navigation to its matching Session");
+  await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("");
+  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 5);
+  assert.equal(await current.locator(".session-nav-item").count(), 5, "clearing search restores the first bounded page");
+  const deepLink = await browser.newPage({ viewport: { width: 1920, height: 1200 } });
+  await deepLink.goto(`${base}/#/p/${projectId}/sessions?session=external%3Acurrent-4`);
+  await deepLink.getByLabel("访问令牌").fill("fixture-token");
+  await deepLink.getByRole("button", { name: "进入", exact: true }).click();
+  const deepCurrent = deepLink.locator(".project-sidebar .session-nav-current");
+  await deepCurrent.getByText("当前成员 5", { exact: true }).waitFor();
+  assert.equal(await deepCurrent.locator(".session-nav-item").count(), 5, "direct entry keeps the bounded directory available");
+  assert.equal(await deepCurrent.locator('.session-nav-item[aria-current="page"][href*="current-4"]').count(), 1);
+  await deepLink.close();
+  if (await sidebar.locator(".session-nav-history").getAttribute("aria-expanded") !== "true") await sidebar.locator(".session-nav-history").click();
   await sidebar.locator(".session-nav-error").waitFor();
   await sidebar.getByRole("button", { name: "加载更多历史 Session" }).click();
   await sidebar.locator(".session-nav-item").filter({ hasText: "历史会话 37" }).waitFor();
