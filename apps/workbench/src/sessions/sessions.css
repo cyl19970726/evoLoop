@@ -22,6 +22,8 @@
 .nav-resources{margin-top:auto;flex:0 0 auto;background:#f9faff}
 .session-connect-sheet{background:#fff;overflow:auto}.session-connect-options{display:grid;grid-template-columns:1fr;gap:12px;margin-top:22px}.session-connect-options article{border:1px solid var(--border);border-radius:8px;padding:14px}.session-connect-options h3{font-size:14px}.session-connect-options p{font-size:12px;line-height:1.55;color:#6d778a}
 @media(max-width:760px){.mobile-navigation .project-functions{padding:12px 0}.mobile-navigation .session-navigation{overflow:visible}.session-connect-options{grid-template-columns:1fr}}
+.mobile-navigation[data-state="closed"]{visibility:hidden;pointer-events:none}
+.mobile-nav-backdrop{position:fixed;inset:0;z-index:49;background:rgba(15,23,42,.45)}
 
 /* Sessions is the sole Session catalog. Work keeps project navigation and no Session shortcut list. */
 .session-nav-head{min-height:38px;padding:4px 2px;gap:8px}
