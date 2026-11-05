@@ -82,6 +82,28 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
   await pump.tick();assert.equal(failed,1);assert.equal(unknown,0);
 });
 
+test('restricted Connector without native tool proof stays queued and cannot use the full Turn path',async()=>{
+  const target=randomUUID(),bindingId=randomUUID(),m=message(randomUUID(),target,'queued');
+  let restricted=0,full=0,started=0,dispatched=0,blocked='';
+  const restrictedSession={...session(target),authorizationScope:`connector-receiver:${bindingId}`,
+    sandbox:'read-only' as const};
+  const service={pending:async()=>[m],session:async()=>restrictedSession,processing:async()=>null,
+    preflightDispatch:async()=>{},beginDispatch:async()=>{dispatched++;throw new Error('must not dispatch');},
+    noteBlocked:async(_project:string,_id:string,reason:string)=>{blocked=reason;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConnectorReceiver:async(_binding:unknown,id:string)=>{restricted++;assert.equal(id,bindingId);
+      return{available:false,reason:'Native shell isolation unverified',fingerprint:null};},
+    qualifyConversationThread:async()=>{full++;throw new Error('full qualifier must not run');},
+    startConnectorTurn:async()=>{started++;throw new Error('must not start');},
+    startConversationTurn:async()=>{full++;throw new Error('full Turn must not start');},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.deepEqual([restricted,full,started,dispatched],[1,0,0,0]);
+  assert.equal(blocked,'Native shell isolation unverified');
+});
+
 test('an exact live bound Turn prevents a transient history miss and settles when history appears',async()=>{
   const target=randomUUID(),m=message(randomUUID(),target,'processing');
   let unknown=0,settled=0,history:[{id:string;status:string;completedAtUtc:string}]|[]=[];

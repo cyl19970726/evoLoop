@@ -51,6 +51,35 @@ export const connectorSourceSchema = z.strictObject({
 });
 export type ConnectorSource = z.infer<typeof connectorSourceSchema>;
 
+/** Persisted in the same transaction as the original platform message. */
+export const connectorMessageAdmissionSchema = z.strictObject({
+  projectId: z.uuid(), bindingId: z.uuid(), routeVersion: z.number().int().positive(),
+  source: connectorSourceSchema,
+  messageId: z.uuid(), messageOperationId: z.uuid(), decisionId: z.uuid(),
+});
+export type ConnectorMessageAdmission = z.infer<typeof connectorMessageAdmissionSchema>;
+export const connectorTrustedAdmissionSchema = connectorMessageAdmissionSchema.extend({
+  content: z.string().trim().min(1).max(16000),
+  gateway: z.strictObject({owner:key,epoch:z.number().int().positive(),sessionRef:key}),
+});
+export type ConnectorTrustedAdmission = z.infer<typeof connectorTrustedAdmissionSchema>;
+
+/** Processing and Turn fields are read from the platform's original message processing row. */
+export type ConnectorMessageLink = ConnectorMessageAdmission & {
+  decision: "admitted";
+  routeOwner: string;
+  routeEpoch: number;
+  routeSessionRef: string;
+  routePolicyHash: string;
+  createdAt: string;
+  processingId: string | null;
+  processingOperationId: string | null;
+  processingState: "dispatching" | "running" | "unknown" | "completed" | "failed" | null;
+  nativeTurnId: string | null;
+  messageState: "queued" | "processing" | "replied" | "completed_without_reply" |
+    "failed" | "unknown" | "cancelled" | "manual_pending";
+};
+
 /** A route is invalid when another conversation can share its native Session context. */
 export function assertIsolatedConnectorRoutes(routes: readonly ConnectorRoute[]): void {
   const sourceKeys = new Set<string>();

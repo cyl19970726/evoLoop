@@ -26,8 +26,19 @@ flowchart LR
 
 迁移 055 的 `connector_route` 保存精确来源、接收 Session、owner/epoch、能力、策略哈希和版本。项目 reviewer 可通过 `/api/projects/:projectId/message-connectors/routes` 保存 disabled 配置并以版本 CAS 更新；请求须带固定 `operationId`，事务内的 `connector_route_operation` 保存 actor、意图哈希与回执。写响应未知时查询 `/api/projects/:projectId/message-connectors/operations/:operationId`；暂未查到记录仍是未确认，保留原 ID 和意图，仅用相同请求重放。项目 reader 可经路由 API 或 `work connectors`、`work connector BINDING_UUID`、`work connector-operation OPERATION_UUID` 读取。数据库和 adapter 同时拒绝 active/paused；disabled 配置本身不启动订阅、Turn 或发送。`targetActorId`、wx `sessionRef` 与原生受限执行的真实身份仍需后续证据，不能把已保存配置当激活证明。
 
-当前 `SessionMessageService.admission`、`SessionMessagePump` 和 Codex App Server adapter 的普通 Turn 路径要求 `danger-full-access/never`，且运行配置含原项目工程能力。隔离原生探针在 Codex App Server `0.166.0-alpha.6` 上看到 `thread/start` 报告 `readOnly` 或 `workspaceWrite`、`config/read` 报告 `features.shell_tool=false`；无凭据的探针没有启动模型 Turn，`thread/read` 也不返回有效工具清单。启用前须扩展并实际验证受限宿主：独立的文件/凭据边界、无通用 shell/管理员 SSH、精确动态工具与接收人限制、原 Thread 执行配置回读及旧消息/未知 Turn 对账。不能靠提示词、只传 sandbox 字段或进程配置回执代替。原工程 Session 的 full-access 路径保持原权限。
+迁移 056 增加来源关联。可信入口把 wx delivery/event cursor、原消息和 operation journal 一次写入；消息泵仍使用原平台队列，按关联在事务内重验路由、Session、执行 profile 和授权。只对精确 `connector-receiver:<bindingId>` 增加 `read-only/never` 候选；普通 Session 的 full 权限合同不变。候选入口泵在协调器租约及显式 `messageConnectors.enabled` 下运行，先核原 binding/delivery，再核原生接收者。未知 claim 不自动重领；来源关联用于回查原消息，不等于回复或微信收件。
 
-微信客户端已支持原 `transport_status`、`reserve_turn`、`record_turn`、`finish_turn` 请求。网关 mutation 回执没有全部 owner/epoch/token 字段；`transport_status` 用原 conversation 查询尚为 reserved/recorded 的 delivery，并核对原 delivery ID。`finish_turn` 后该列表可能不再包含此行，缺行不能证明完成；结果 unknown 时保留原 delivery/token/Turn，用网关原状态与事件对账，不换 ID 盲重试。此客户端尚未接平台消息泵，故不代表消息已到 Session、同会话已回复或独立收件已发生。
+**自动入站仍关闭。** 迁移 055 仍禁止路由激活；alpha.6 的 `thread/read` 不提供足以证明内置 shell 已移除的工具清单，因此适配器的受限资格返回 unavailable，在任何受限 `turn/start` 前拒绝。此前无凭据隔离探针的 `thread/start` 报告 `readOnly`／`workspaceWrite`、`config/read` 报告 `features.shell_tool=false`，均不能替代有认证模型 Turn 的工具隔离证明。不能靠提示词、sandbox 字段或进程配置回执代替。原工程 Session 的 full 路径保持原权限。
+
+微信客户端已支持原 `transport_status`、`reserve_turn`、`record_turn`、`finish_turn` 请求。网关 mutation 回执没有全部 owner/epoch/token 字段；`transport_status` 用原 conversation 查询尚为 reserved/recorded 的 delivery，并核对原 delivery ID。`finish_turn` 后该列表可能不再包含此行，缺行不能证明完成；结果 unknown 时保留原 delivery/token/Turn，用网关原状态与事件对账，不换 ID 盲重试。入口已接原平台消息队列，但上述资格和激活围栏仍阻止自动实连，故不代表消息已到 Session、同会话已回复或独立收件已发生。
+
+## 受限承载准备与预检
+
+1. 在宿主维护窗口为每个获准 conversation 准备固定 OS 身份、私有 HOME/cwd 与独立原生 Thread；文件和网络只能访问该 conversation 所需范围。认证材料由可信 broker 持有，以私有路径引用，不写入仓库、模型输入或报告。业务工程 HOME、管理员 CLI/SSH 和通用 shell 不进入接收者。
+2. 固定项目、binding、接收 Session/actor/Role、`connector-receiver:<bindingId>`、`read-only/never`、模型、预算、policy hash 与 wx owner/epoch/session_ref。接收者与允许的内部转交目标分别授权；full 目标默认拒绝自动转交。
+3. 在**隔离** PostgreSQL 执行 055、056 迁移，用真实 alpha.6 的 `thread/read` 和有认证隔离 Turn 核工具清单及允许/拒绝调用、文件/网络/凭据边界。当前适配器在 `qualifyConnectorReceiver` 返回 unavailable；必须先增加可核的原生或 OS 隔离证明和可回读的资格状态，才可修改 055 的激活围栏。之后分别验证允许链、越权拒绝、原消息/原 operation 恢复、busy、撤权和停订。
+4. 维护者再在受保护窗口登记真实路由并启用入口。诊断依次读原 wx binding/inbox_status/transport_status、`connector_route_operation`、`connector_message_link`、`session_message`/processing/Turn；未知写入只按原 ID 对账。回退先停 `messageConnectors.enabled`、暂停路由，保留原 delivery 和全部关联，核没有在途原生 Turn 后再清理隔离宿主。正式服务迁移、配置与重启由 Root 安排。
+
+上述步骤中的 1、2 是待授权的宿主准备，3 的原生工具隔离证明和可激活受限路由仍是代码与实测缺口。当前实现与夹具测试不证明微信实机入站、回复、转交或独立收件。
 
 固定接口依据：wx-cli `cc30d03a` 的 `docs/architecture.md`、`docs/CHANNEL_SUBSCRIPTIONS.md`、`docs/APPLICATION_CLIENT.md`；当前 checkout 的这三份正文与固定版相同。接入实测须另核实际网关授权、宿主版本、专用测试会话和独立收件，不以这些文档的旧样本代替。

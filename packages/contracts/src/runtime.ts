@@ -11,7 +11,10 @@ const text = z.string().trim().min(1).max(4000);
 const common = { projectId: id, operationId: id };
 export const runtimeCommands = [
   z.strictObject({ ...common, type:z.literal("runtime.handoff.record"),runId:id,stage:z.enum(["received","read","adopted","effect"]),evidence:text }),
-  z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(), sandbox: z.literal("danger-full-access").default("danger-full-access"), approvalPolicy: z.literal("never").default("never") }),
+  z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(),
+    /** Only a separately granted, private receiver may use the restricted profile. */
+    connectorBindingId: id.optional(),
+    sandbox: z.enum(["danger-full-access", "read-only"]).default("danger-full-access"), approvalPolicy: z.literal("never").default("never") }),
   z.strictObject({ ...common, type: z.literal("runtime.session.close"), sessionId: id, expectedVersion: z.number().int().positive(), reason: text }),
   z.strictObject({ ...common, type: z.literal("runtime.run.reserve"), runId: id, taskId: id, sessionId: id, expectedVersion: z.number().int().positive(), input: text,
     evaluation: z.strictObject({ evaluationId: id, revisionId: id, caseId: id, conditionId: id }).optional() }),

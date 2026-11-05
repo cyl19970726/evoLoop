@@ -65,6 +65,27 @@ function fixture() {
   return { state, tx };
 }
 
+test("new restricted Session reservation requires one exact Connector receiver scope", async () => {
+  const { state, tx } = fixture();
+  Object.assign(tx, { insertRuntimeSession: async (session: any) => { state.sessions.push(session); } });
+  const bindingId = id(120);
+  const reserve = (overrides: Record<string, unknown>) => reserveRuntime({ tx, principal,
+    command: { type: "runtime.session.reserve", projectId, operationId: id(121), sessionId: id(122),
+      roleId: "receiver", cwd: "/tmp/private-receiver", authorizationScope: `connector-receiver:${bindingId}`,
+      connectorBindingId: bindingId, sandbox: "read-only", approvalPolicy: "never", ...overrides },
+    now: "2026-10-21T01:00:00Z", nextId: () => id(123), hash: () => hash });
+  for (const invalid of [
+    { connectorBindingId: undefined }, { authorizationScope: "project" },
+    { sandbox: "danger-full-access" }, { approvalPolicy: "on-request" },
+  ]) {
+    await assert.rejects(reserve(invalid), error => (error as { code?: string }).code === "EXECUTION_PROFILE_NOT_ALLOWED");
+    assert.equal(state.sessions.length, 1);
+  }
+  await reserve({});
+  assert.equal(state.sessions.at(-1)?.authorizationScope, `connector-receiver:${bindingId}`);
+  assert.equal(state.sessions.at(-1)?.sandbox, "read-only");
+});
+
 test("session close admits only an idle bound session and blocks later Run reservation", async () => {
   const { state, tx } = fixture();
   const close = () => reserveRuntime({ tx, principal, command: { type: "runtime.session.close", projectId,

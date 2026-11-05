@@ -3,7 +3,10 @@ import type { Pool, PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
 import { canonicalJson } from "@evoloop/core";
 import { connectorRouteSchema, connectorCapabilitiesSchema, connectorRouteRecordSchema,
+  connectorMessageAdmissionSchema, connectorTrustedAdmissionSchema, connectorSourceKey,
   versionedConnectorRouteSchema,
+  type ConnectorMessageAdmission, type ConnectorMessageLink, type ConnectorSource,
+  type ConnectorTrustedAdmission,
   type ConnectorRoute, type ConnectorRoutePage, type ConnectorRouteRecord,
   type VersionedConnectorRoute } from "@evoloop/contracts/message-connectors";
 
@@ -165,12 +168,177 @@ export class PgConnectorRoutes {
     const receiver = result.rows[0];
     if (!receiver || receiver.state !== "ready" || !receiver.native_thread_id || !receiver.native_session_id ||
       receiver.activation_state !== "active" || receiver.revision_id !== receiver.active_revision_id ||
-      !["read-only","workspace-write"].includes(receiver.sandbox) ||
-      !["on-request","untrusted"].includes(receiver.approval_policy) ||
+      receiver.sandbox !== "read-only" || receiver.approval_policy !== "never" ||
       receiver.profile_sandbox !== receiver.sandbox || receiver.profile_approval !== receiver.approval_policy)
       throw new DomainError("CONNECTOR_RECEIVER_NOT_RESTRICTED", "Exact owned Session lacks an active restricted profile");
     // Database configuration alone cannot prove gateway tool/credential isolation,
     // native Thread configuration, or recovery of earlier unknown Turns.
     throw new DomainError("CONNECTOR_RECEIVER_UNPROVEN", "Restricted receiver proof is not persisted");
+  }
+}
+
+const linkQuery = `SELECT l.*,m.state AS message_state,
+  p.processing_id,p.operation_id AS processing_operation_id,
+  p.state AS processing_state,p.native_turn_id
+  FROM connector_message_link l
+  JOIN session_message m ON m.project_id=l.project_id AND m.message_id=l.message_id
+  LEFT JOIN session_message_processing p ON p.project_id=l.project_id AND p.message_id=l.message_id`;
+const linkOf = (r: Row): ConnectorMessageLink => ({
+  projectId:r.project_id,bindingId:r.binding_id,routeVersion:r.route_version,
+  routeOwner:r.route_owner,routeEpoch:r.route_epoch,routeSessionRef:r.route_session_ref,
+  routePolicyHash:r.route_policy_hash,
+  source:{source:{provider:r.provider,connectionId:r.connection_id,conversationId:r.conversation_id},
+    deliveryId:Number(r.delivery_id),cursorStart:Number(r.cursor_start),cursorEnd:Number(r.cursor_end),
+    eventCursor:Number(r.event_cursor),participantId:r.participant_id,
+    replyToEventCursor:r.reply_to_event_cursor===null?null:Number(r.reply_to_event_cursor)},
+  messageId:r.message_id,messageOperationId:r.message_operation_id,decisionId:r.decision_id,
+  decision:r.decision,createdAt:iso(r.created_at),messageState:r.message_state,
+  processingId:r.processing_id??null,processingOperationId:r.processing_operation_id??null,
+  processingState:r.processing_state??null,nativeTurnId:r.native_turn_id??null,
+});
+const fixedLink = (link: ConnectorMessageLink): ConnectorMessageAdmission => ({
+  projectId:link.projectId,bindingId:link.bindingId,routeVersion:link.routeVersion,
+  source:link.source,messageId:link.messageId,
+  messageOperationId:link.messageOperationId,decisionId:link.decisionId,
+});
+const fixedLinkFromTrusted = (intent: ConnectorTrustedAdmission): ConnectorMessageAdmission => ({
+  projectId:intent.projectId,bindingId:intent.bindingId,routeVersion:intent.routeVersion,
+  source:intent.source,messageId:intent.messageId,
+  messageOperationId:intent.messageOperationId,decisionId:intent.decisionId,
+});
+
+/** Narrow, trusted ingress into the existing platform message queue. */
+export class PgConnectorMessageLinks {
+  constructor(private readonly db: Pool) {}
+
+  private async recordAdmission(client: PoolClient, input: ConnectorMessageAdmission): Promise<ConnectorMessageLink> {
+    const admission = connectorMessageAdmissionSchema.parse(input);
+    const sourceKey = connectorSourceKey(admission.source);
+    const s = admission.source;
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 55199))",[sourceKey]);
+    const prior = await client.query(`${linkQuery} WHERE l.provider=$1 AND l.connection_id=$2
+      AND l.conversation_id=$3 AND l.delivery_id=$4 AND l.event_cursor=$5`,
+      [s.source.provider,s.source.connectionId,s.source.conversationId,s.deliveryId,s.eventCursor]);
+    if (prior.rows[0]) {
+      const saved = linkOf(prior.rows[0]);
+      if (canonicalJson(fixedLink(saved)) !== canonicalJson(admission))
+        throw new DomainError("CONNECTOR_SOURCE_CONFLICT", "Channel event already has a different admission");
+      return saved;
+    }
+    const route = await client.query(`SELECT owner,epoch,session_ref,policy_hash FROM connector_route
+      WHERE project_id=$1 AND binding_id=$2 FOR SHARE`,[admission.projectId,admission.bindingId]);
+    if (!route.rows[0]) throw new DomainError("CONNECTOR_ADMISSION_REFUSED", "Exact route does not exist");
+    try {
+      const inserted = await client.query(`INSERT INTO connector_message_link(project_id,binding_id,route_version,
+        route_owner,route_epoch,route_session_ref,route_policy_hash,
+        provider,connection_id,conversation_id,delivery_id,cursor_start,cursor_end,event_cursor,
+        participant_id,reply_to_event_cursor,message_id,message_operation_id,decision_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+        RETURNING message_id`,[admission.projectId,admission.bindingId,admission.routeVersion,
+        route.rows[0].owner,route.rows[0].epoch,route.rows[0].session_ref,route.rows[0].policy_hash,
+        s.source.provider,s.source.connectionId,s.source.conversationId,s.deliveryId,s.cursorStart,
+        s.cursorEnd,s.eventCursor,s.participantId,s.replyToEventCursor,
+        admission.messageId,admission.messageOperationId,admission.decisionId]);
+      const result = await client.query(`${linkQuery} WHERE l.project_id=$1 AND l.message_id=$2`,
+        [admission.projectId,inserted.rows[0]!.message_id]);
+      return linkOf(result.rows[0]!);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error) {
+        if (error.code === "23505")
+          throw new DomainError("CONNECTOR_LINK_CONFLICT", "Message, decision, or channel event already belongs to another admission");
+        if (error.code === "23514" || error.code === "23503")
+          throw new DomainError("CONNECTOR_ADMISSION_REFUSED", "Route or platform message failed the exact admission check");
+      }
+      throw error;
+    }
+  }
+
+  /** Trusted gateway ingress. One source event, platform message, and link commit together. */
+  async admitTrusted(input: ConnectorTrustedAdmission): Promise<ConnectorMessageLink> {
+    const intent = connectorTrustedAdmissionSchema.parse(input);
+    const s = intent.source;
+    const client = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 55199))",
+        [connectorSourceKey(s)]);
+      const prior = await client.query(`${linkQuery} WHERE l.provider=$1 AND l.connection_id=$2
+        AND l.conversation_id=$3 AND l.delivery_id=$4 AND l.event_cursor=$5`,
+        [s.source.provider,s.source.connectionId,s.source.conversationId,s.deliveryId,s.eventCursor]);
+      if (prior.rows[0]) {
+        const saved = linkOf(prior.rows[0]);
+        const original = await client.query(`SELECT content FROM session_message
+          WHERE project_id=$1 AND message_id=$2`,[saved.projectId,saved.messageId]);
+        if (canonicalJson(fixedLink(saved)) !== canonicalJson(fixedLinkFromTrusted(intent)) ||
+          saved.routeOwner !== intent.gateway.owner || saved.routeEpoch !== intent.gateway.epoch ||
+          saved.routeSessionRef !== intent.gateway.sessionRef || original.rows[0]?.content !== intent.content)
+          throw new DomainError("CONNECTOR_SOURCE_CONFLICT", "Channel event already has a different admission intent");
+        await client.query("COMMIT");
+        return saved;
+      }
+      const route = await client.query(`SELECT r.*,s.state AS session_state,s.actor_id AS session_actor_id,
+        s.native_thread_id,s.native_session_id,
+        s.sandbox,s.approval_policy,s.authorization_scope,
+        p.activation_state,p.revision_id,p.active_revision_id,
+        pr.sandbox AS profile_sandbox,pr.approval_policy AS profile_approval,
+        pr.authorization_scope AS profile_scope
+        FROM connector_route r JOIN runtime_session s
+          ON s.project_id=r.project_id AND s.session_id=r.target_session_id
+        LEFT JOIN session_execution_profile p
+          ON p.project_id=s.project_id AND p.session_id=s.session_id
+        LEFT JOIN session_execution_profile_revision pr
+          ON pr.project_id=p.project_id AND pr.session_id=p.session_id AND pr.revision_id=p.revision_id
+        WHERE r.project_id=$1 AND r.binding_id=$2 FOR SHARE OF r,s`,
+        [intent.projectId,intent.bindingId]);
+      const r = route.rows[0];
+      if (!r || r.state !== "active" || r.version !== intent.routeVersion ||
+        r.provider !== s.source.provider || r.connection_id !== s.source.connectionId ||
+        r.conversation_id !== s.source.conversationId ||
+        r.owner !== intent.gateway.owner || r.epoch !== intent.gateway.epoch ||
+        r.session_ref !== intent.gateway.sessionRef ||
+        r.target_actor_id !== r.session_actor_id ||
+        r.session_state !== "ready" || !r.native_thread_id || !r.native_session_id ||
+        r.sandbox !== "read-only" || r.approval_policy !== "never" ||
+        r.authorization_scope !== `connector-receiver:${intent.bindingId}` ||
+        r.activation_state !== "active" || r.revision_id !== r.active_revision_id ||
+        r.profile_sandbox !== r.sandbox || r.profile_approval !== r.approval_policy ||
+        r.profile_scope !== r.authorization_scope)
+        throw new DomainError("CONNECTOR_ADMISSION_REFUSED", "Exact active source and restricted ready receiver are required");
+      await client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,
+        session_id,link_id,sender_actor_id,content,context_task_id,context_task_revision_id,
+        reply_to_message_id,state,version,blocked_reason,created_at,updated_at)
+        VALUES($1,$2,$3,'owned',$4,NULL,$5,$6,NULL,NULL,NULL,'queued',1,NULL,now(),now())`,
+        [intent.projectId,intent.messageId,intent.messageOperationId,r.target_session_id,
+          r.sender_actor_id,intent.content]);
+      const saved = await this.recordAdmission(client,fixedLinkFromTrusted(intent));
+      const commandHash = createHash("sha256").update(canonicalJson(intent)).digest("hex");
+      await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,
+        command_hash,command_type,result,created_at)
+        VALUES($1,$2,$3,$4,'connector.message.admit',$5::jsonb,now())`,
+        [intent.projectId,intent.messageOperationId,r.sender_actor_id,commandHash,
+          JSON.stringify({status:"applied",operationId:intent.messageOperationId,
+            entityId:intent.messageId,version:1})]);
+      await client.query("COMMIT");
+      return saved;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* Keep the original error or uncertain commit result. */ }
+      if (error && typeof error === "object" && "code" in error && error.code === "23505")
+        throw new DomainError("CONNECTOR_LINK_CONFLICT", "Original message or operation ID already belongs to another intent");
+      throw error;
+    } finally { client.release(); }
+  }
+
+  async getByMessageId(projectId: string, messageId: string): Promise<ConnectorMessageLink | null> {
+    const result = await this.db.query(`${linkQuery} WHERE l.project_id=$1 AND l.message_id=$2`,[projectId,messageId]);
+    return result.rows[0] ? linkOf(result.rows[0]) : null;
+  }
+
+  async getBySource(projectId: string, source: ConnectorSource): Promise<ConnectorMessageLink | null> {
+    connectorSourceKey(source);
+    const s = source.source;
+    const result = await this.db.query(`${linkQuery} WHERE l.project_id=$1 AND l.provider=$2 AND l.connection_id=$3
+      AND l.conversation_id=$4 AND l.delivery_id=$5 AND l.event_cursor=$6`,
+      [projectId,s.provider,s.connectionId,s.conversationId,source.deliveryId,source.eventCursor]);
+    return result.rows[0] ? linkOf(result.rows[0]) : null;
   }
 }

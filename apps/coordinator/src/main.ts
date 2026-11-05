@@ -11,7 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
-import { PostgresUnitOfWork, PgConnectorRoutes, taskAttentionNoticeCurrent,
+import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, taskAttentionNoticeCurrent,
   disposeStaleTaskAttentionNotice } from "@evoloop/adapter-postgres";
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
@@ -22,6 +22,7 @@ import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
 import { FeishuBitableConnector } from "@evoloop/connector-feishu";
+import { WechatGatewayClient } from "@evoloop/connector-wechat";
 import { PgOutboxDeliveryStore } from "@evoloop/adapter-postgres/delivery";
 import { CollaborationRunner } from "./collaboration/runner.js";
 import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
@@ -74,6 +75,8 @@ import { createMessageExecutionReader } from "./session-messages/execution-capab
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
 import { TaskAttentionPump } from "./task-attention/pump.js";
+import { ConnectorIngressPump } from "./message-connectors/pump.js";
+import { bindingOf } from "./runtime/runner.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -337,7 +340,8 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     return current.runtime?.enabled ? runtimeThreadConfigForSession(current.runtime.grants,spec,sessionOrigin) : undefined;
   },
-  ...(browserRead ? {dynamicTools:(spec:import("@evoloop/contracts/runtime").RuntimeSessionSpec)=>browserRead.tools(spec),
+  ...(browserRead ? {dynamicTools:(spec:import("@evoloop/contracts/runtime").RuntimeSessionSpec)=>
+    spec.authorizationScope.startsWith("connector-receiver:") ? Promise.resolve(undefined) : browserRead.tools(spec),
     callDynamicTool:(call:DynamicToolCall,binding:RuntimeBinding)=>browserRead.call(call,binding),
     cancelDynamicTool:()=>browserRead.close()} : {}),
   });
@@ -456,10 +460,30 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canW
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });
 try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
+const connectorLinks = new PgConnectorMessageLinks(pool);
+const connectorRoutes = new PgConnectorRoutes(pool);
 const messageService = new SessionMessageService({ uow, clock, ids, grantFor: async (message, session) => {
   const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
-  if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)||
-    !await currentSessionExecutionAuthority(session)) return null;
+  if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)) return null;
+  const link=await connectorLinks.getByMessageId(message.projectId,message.id);
+  if (link) {
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const grant=current.connectorReceivers.find(g=>g.enabled&&g.projectId===message.projectId&&
+      g.bindingId===link.bindingId&&g.sessionId===session.id&&g.senderActorId===message.senderActorId&&
+      g.receiverActorId===session.actorId&&g.receiverRoleId===session.roleId&&g.cwd===session.cwd&&
+      g.policyHash===link.routePolicyHash);
+    if(!grant||session.sandbox!=="read-only"||session.approvalPolicy!=="never"||
+      session.authorizationScope!==`connector-receiver:${link.bindingId}`||
+      !await currentProjectWriter(message.projectId,grant.receiverActorId)||
+      !configured.runtime?.enabled||!await configured.allowedRuntimeCwd(session.projectId,session.cwd)||
+      !await currentSessionGrant(pool,session,()=>configured.hasRuntimeGrant({projectId:session.projectId,
+        actorId:session.actorId,roleId:session.roleId,authorizationScope:session.authorizationScope,
+        cwd:session.cwd,sandbox:session.sandbox,model:session.model,approvalPolicy:session.approvalPolicy}))) return null;
+    try { if(await realpath(session.cwd)!==session.cwd) return null; } catch { return null; }
+    return {...grant,connector:{bindingId:link.bindingId,routeVersion:link.routeVersion,
+      epoch:link.routeEpoch,policyHash:link.routePolicyHash}};
+  }
+  if (!await currentSessionExecutionAuthority(session)) return null;
   const grant = current.grants.find(g => g.enabled && g.projectId === message.projectId && g.sessionId === session.id &&
     g.senderActorId === message.senderActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd);
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
@@ -538,6 +562,47 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
     }
     return businessBeforeMessage(message);
   }, onError: () => console.error("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
+const connectorIngress = runner && integrations.messageConnectors ? new ConnectorIngressPump({
+  gateway: new WechatGatewayClient({
+    executable: integrations.messageConnectors.gateway.executable,
+    configPath: integrations.messageConnectors.gateway.configPath,
+    allowedMethods: ["binding", "inbox_status", "inbox_claim", "inbox_show", "events"],
+  }),
+  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
+  routes: connectorRoutes, links: connectorLinks,
+  canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
+  enabled: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).messageConnectors?.enabled === true,
+  qualifyReceiver: async route => {
+    const configured = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const grant = configured.sessionMessages?.connectorReceivers.find(value =>
+      value.enabled && value.projectId === route.projectId && value.bindingId === route.bindingId &&
+      value.sessionId === route.targetSessionId && value.senderActorId === route.senderActorId &&
+      value.receiverActorId === route.targetActorId && value.policyHash === route.policyHash);
+    if (!configured.messageConnectors?.enabled || !configured.sessionMessages?.enabled || !configured.runtime?.enabled ||
+        !grant || !await currentProjectWriter(route.projectId, route.senderActorId) ||
+        !await currentProjectWriter(route.projectId, route.targetActorId)) return false;
+    const session = await uow.read(route.projectId, reader => reader.getRuntimeSession(route.targetSessionId));
+    if (!session || session.state !== "ready" || session.actorId !== route.targetActorId ||
+        session.roleId !== grant.receiverRoleId || session.cwd !== grant.cwd ||
+        session.sandbox !== "read-only" || session.approvalPolicy !== "never" ||
+        session.authorizationScope !== `connector-receiver:${route.bindingId}` ||
+        !session.nativeThreadId || !session.nativeSessionId) return false;
+    if (!await configured.allowedRuntimeCwd(route.projectId, session.cwd) ||
+        !await currentSessionGrant(pool, session, () => configured.hasRuntimeGrant({
+          projectId: session.projectId, actorId: session.actorId, roleId: session.roleId,
+          authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox,
+          model: session.model, approvalPolicy: session.approvalPolicy,
+        }))) return false;
+    try { if (await realpath(session.cwd) !== session.cwd) return false; } catch { return false; }
+    const native = runner.nativeAdapter() as CodexAppServerAdapter;
+    if (!native.isReady()) return false;
+    const binding = bindingOf(session);
+    await native.registerBinding(binding);
+    return (await native.qualifyConnectorReceiver(binding, route.bindingId)).available;
+  },
+  pollIntervalMs: integrations.messageConnectors.pollIntervalMs,
+  onError: () => console.error("Connector ingress needs reconciliation; inspect the original wx delivery and saved source link."),
+}) : null;
 const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.canWrite,
   messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
@@ -593,7 +658,7 @@ if (runner) {
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
-  connectorRoutes: new PgConnectorRoutes(pool),
+  connectorRoutes,
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
@@ -702,7 +767,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
+  try { connectorIngress?.stop(); taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.
@@ -712,5 +777,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }
