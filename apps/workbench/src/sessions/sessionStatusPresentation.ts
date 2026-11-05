@@ -1,7 +1,8 @@
 import type { ObservedSession, ObservedTask, SessionResult } from "@evoloop/contracts/session-observation";
+import type { NativeProgressView } from "./NativeSessionPanel";
 
 type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
-  latestBusinessRun?: { state: string } | null;
+  latestBusinessRun?: { id?: string; state: string } | null;
 };
 
 const lifecycle: Record<string, string> = {
@@ -22,22 +23,45 @@ export function sessionLifecycleLabel(session: StatusSource): string {
 
 export function sessionStatusLabel(session: StatusSource): string {
   if (session.kind === "owned") {
-    if (session.runtimeState !== "ready") return sessionLifecycleLabel(session);
-    if (session.busy === true) {
-      const state = session.latestBusinessRun?.state;
-      if (state === "running") return "运行中";
-      if (state === "dispatching") return "启动中";
-      if (state === "requested") return "待启动";
-      return "结果待核对";
-    }
-    return session.busy === false ? "空闲" : "活动状态未知";
+    if (session.runtimeState !== "ready") return `PG记录：${sessionLifecycleLabel(session)} · 原生状态待核`;
+    return session.busy === true ? "PG记录：有在途占用 · 原生状态待核"
+      : session.busy === false ? "PG记录：无在途占用 · 原生状态待核"
+        : "PG记录：占用状态未知 · 原生状态待核";
   }
   return session.busy === true ? "有活动" : session.busy === false ? "空闲" : "状态未知";
 }
 
-export function sessionHeaderStatusLabel(session: StatusSource, messageRunning: boolean): string {
-  return session.kind === "owned" && session.runtimeState === "ready" && session.busy === true && messageRunning
-    ? "消息执行状态待核对" : sessionStatusLabel(session);
+/** The header may describe an exact native Turn, but never promote the latest PG Run to live work. */
+export function sessionHeaderStatusLabel(session: StatusSource, progress: NativeProgressView | null,
+  currentRead: boolean, runtimeAvailable: boolean | null): string {
+  if (session.kind !== "owned") return sessionStatusLabel(session);
+  if (session.runtimeState !== "ready") return sessionLifecycleLabel(session);
+  if (runtimeAvailable === false) return session.busy === true
+    ? "原生连接不可用 · PG有在途记录" : "原生连接不可用 · PG状态待核";
+  if (!currentRead || runtimeAvailable !== true || progress?.freshness !== "live") return sessionStatusLabel(session);
+  const turn = progress.turn;
+  if (progress.status === "active" && turn?.status === "inProgress") {
+    if (session.busy !== true) return "原生 Turn 与 PG 占用不一致，待核对";
+    if (turn.source?.kind === "message") return "原生宿主回报消息 Turn 进行中";
+    if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id
+      && session.latestBusinessRun.state === "running"
+      ? "原生宿主回报 Run Turn 进行中" : "原生 Turn 进行中 · Run 记录待核";
+    return "原生 Turn 进行中 · 来源待核";
+  }
+  if (session.busy === true) return "PG有在途记录 · 原生执行待核";
+  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return "原生宿主回报空闲";
+  return "原生执行状态待核对";
+}
+
+/** The activity feed needs an exact live binding; busy and latest Run alone are insufficient. */
+export function currentNativeRunId(session: StatusSource, progress: NativeProgressView | null,
+  currentRead: boolean, runtimeAvailable: boolean | null): string | null {
+  const turn = progress?.turn;
+  return currentRead && runtimeAvailable === true && session.kind === "owned" && session.runtimeState === "ready" && session.busy === true
+    && progress?.freshness === "live" && progress.status === "active" && turn?.status === "inProgress"
+    && turn.source?.kind === "run" && turn.source.id === session.latestBusinessRun?.id
+    && session.latestBusinessRun.state === "running"
+    ? turn.source.id : null;
 }
 
 export function currentWorkRelationLabel(work: ObservedTask, session: StatusSource & Pick<ObservedSession, "latestBusinessRun">,
@@ -48,9 +72,9 @@ export function currentWorkRelationLabel(work: ObservedTask, session: StatusSour
   if (work.relation !== "claimed") return "角色责任，不代表已接手";
   const run = session.latestBusinessRun?.taskId === work.id ? session.latestBusinessRun : null;
   if (!run) return "Run／队列已认领或占用；当前运行待核对";
-  if (run.state === "requested") return "Run 已认领，本次运行待启动";
-  if (run.state === "dispatching") return "Run 已认领，本次运行启动中";
-  if (run.state === "running") return "Run 已认领，本次运行中";
+  if (run.state === "requested") return "最近 Run 记录待启动；当前执行待核";
+  if (run.state === "dispatching") return "最近 Run 记录启动中；当前执行待核";
+  if (run.state === "running") return "最近 Run 记录运行中；当前执行待核";
   if (run.state === "completed") {
     if (recoveryPhase === "reworking") return "前次执行已结束，同任务返工待运行";
     if (recoveryPhase === "retrying") return "前次执行已结束，已批准重试待运行";
@@ -82,5 +106,5 @@ export function sessionResultUseLabel(result: SessionResult): string {
 export function sessionIdleSummary(session: StatusSource): string {
   if (session.kind === "external") return session.busy === false ? "外部观察为空闲" : "外部会话状态需核对";
   if (session.runtimeState !== "ready" || session.busy !== false) return sessionStatusLabel(session);
-  return "当前空闲";
+  return "PG记录无在途占用，原生状态待核";
 }

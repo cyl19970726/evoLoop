@@ -105,6 +105,12 @@ export class PgRuntimeStore {
     const result = await this.client.query("SELECT * FROM runtime_record_event WHERE project_id=$1 AND session_id=$2 ORDER BY sequence LIMIT $3", [this.projectId, sessionId, limit + 1]);
     return bounded(result.rows.map(event), "runtime session events");
   }
+  async listRuntimeHostEvents(count: number): Promise<RuntimeRecordEvent[]> {
+    if(!Number.isSafeInteger(count)||count<1||count>32)throw new RangeError('runtime host event limit must be 1..32');
+    const result=await this.client.query(`SELECT * FROM runtime_record_event WHERE project_id=$1 AND run_id IS NULL AND kind='native.childDiagnostic'
+      ORDER BY sequence DESC LIMIT $2`,[this.projectId,count]);
+    return result.rows.map(event);
+  }
   async insertRuntimeSession(item: RuntimeSessionRecord): Promise<void> {
     this.scope(item.projectId);
     await this.client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)

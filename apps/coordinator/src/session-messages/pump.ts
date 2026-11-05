@@ -4,7 +4,7 @@ import type { NativeObservationRecord } from '@evoloop/contracts/native-observat
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
-import { RuntimeProtocolError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
+import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
 import { bindingOf, finalMessages } from '../runtime/runner.js';
 
 type MessageRuntime={isReady():boolean;registerBinding(binding:RuntimeBinding):Promise<void>;
@@ -103,7 +103,10 @@ export class SessionMessagePump {
       try{const turn=await runtime.startConversationTurn(binding,input,record.operationId);
         await this.deps.service.bindTurn(message.projectId,message.id,turn);}
       catch(error){
-        if(error instanceof RuntimeProtocolError && !(error instanceof RuntimeUnknownError))
+        if(error instanceof RuntimeServerError&&error.method==='thread/resume'&&error.category==='writer_conflict')
+          await this.deps.service.markUnknown(message.projectId,message.id,
+            'Native writer conflict before ordinary turn/start; original operation awaits exact reconciliation and authorized handoff');
+        else if(error instanceof RuntimeProtocolError && !(error instanceof RuntimeUnknownError))
           await this.deps.service.failBeforeStart(message.projectId,message.id,`Native pre-turn rejection: ${error.message}`);
         else await this.deps.service.markUnknown(message.projectId,message.id,'Native start acknowledgement unavailable; reconcile original marker before any retry');
       }

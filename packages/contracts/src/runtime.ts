@@ -67,7 +67,7 @@ export interface RuntimeRecordEvent {
     "run.reviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
-    "runtime.approvalDeclined" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
+    "runtime.approvalDeclined" | "native.childDiagnostic" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
   detail: string; nativeTurnId: string | null; cursor: string | null; itemsDigest: string | null;
   actorId: string; createdAt: string;
 }

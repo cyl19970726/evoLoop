@@ -108,6 +108,16 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal((await runtime.bindSession(projectId, sessionId, binding)).state, "ready");
   await assert.rejects(runtime.recordSessionApprovalDeclined(projectId, sessionId, "foreign-thread", null, "Invalid"), /owned thread/);
   assert.equal((await workflow.getRuntimeSession(principal, projectId, sessionId)).nativeThreadId, "owned-thread-1");
+  const childStartId=randomUUID();
+  await runtime.recordNativeChildDiagnostic(projectId,{
+    startId:childStartId,pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
+    observedAtUtc:'2026-11-06T00:01:00.000Z',firstLossAtUtc:'2026-11-06T00:01:00.000Z',
+    firstLossReason:'stdout_closed',stopReason:'process_exited',exitObserved:true,
+    exitedAtUtc:'2026-11-06T00:01:01.000Z',exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown'});
+  const childEvents=await runtime.recentNativeChildDiagnostics(projectId);
+  assert.equal(childEvents[0]?.kind,'native.childDiagnostic');
+  assert.equal(childEvents[0]?.sessionId,sessionId);
+  assert.equal(JSON.parse(childEvents[0]!.detail).startId,childStartId);
   const observed=await workflow.getRuntimeSession(principal,projectId,sessionId);
   assert.equal(observed.model,null,"configured default remains distinct from native observation");
   assert.equal(observed.observedModel,"gpt-6-sol");

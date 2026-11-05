@@ -25,6 +25,34 @@ const canonicalUtc = (value: string): boolean => {
 export class RuntimeWorkflowService {
   constructor(private readonly deps: RuntimeWorkflowDependencies) {}
 
+  /** Append a bounded, source-free child observation; loss and exit are separate snapshots. */
+  async recordNativeChildDiagnostic(projectId:string, diagnostic:{startId:string;pid:number|null;
+    startedAtUtc:string;observedAtUtc:string;firstLossAtUtc:string;firstLossReason:string;
+    stopReason:string;exitObserved:boolean;exitedAtUtc:string|null;exitCode:number|null;
+    exitSignal:string|null;nativeTurnOutcome:'unknown'}):Promise<void>{
+    if(!canonicalUtc(diagnostic.startedAtUtc)||!canonicalUtc(diagnostic.observedAtUtc)||
+      !canonicalUtc(diagnostic.firstLossAtUtc)||
+      diagnostic.exitedAtUtc!==null&&!canonicalUtc(diagnostic.exitedAtUtc)||
+      !/^[a-f0-9-]{36}$/.test(diagnostic.startId)||
+      !['adapter_closed','stdout_closed','process_exited','spawn_error','protocol_error'].includes(diagnostic.stopReason)||
+      !['adapter_closed','stdout_closed','process_exited','spawn_error','protocol_error'].includes(diagnostic.firstLossReason)||
+      diagnostic.nativeTurnOutcome!=='unknown')
+      throw new DomainError('INVALID_NATIVE_DIAGNOSTIC','native child diagnostic has invalid bounded fields');
+    await this.deps.uow.transaction(projectId,async tx=>{
+      const detail=JSON.stringify(diagnostic);
+      const sessions=await tx.listRuntimeSessions();
+      // The event table requires a Session foreign key. Anchor each host snapshot
+      // once per project, including when only reserved Sessions exist. No fanout:
+      // two snapshots per child keep the last 16 starts within a 32-row read.
+      const anchor=sessions.find(session=>!!session.nativeThreadId&&['ready','closing'].includes(session.state))??sessions[0];
+      if(anchor)await this.emit(tx,null,anchor.id,'native.childDiagnostic',detail,null,projectId);
+    });
+  }
+
+  async recentNativeChildDiagnostics(projectId:string):Promise<RuntimeRecordEvent[]>{
+    return this.deps.uow.read(projectId,async reader=>await reader.listRuntimeHostEvents?.(32)??[]);
+  }
+
   async verifyBinding(projectId: string, binding: RuntimeBinding): Promise<RuntimeSessionRecord> {
     return this.deps.uow.read(projectId, async reader => {
       const saved = required(await reader.getRuntimeSession(binding.sessionId), "runtime session");

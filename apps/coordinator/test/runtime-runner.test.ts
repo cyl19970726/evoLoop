@@ -55,6 +55,109 @@ class FakeRuntime {
   async startTurn() { this.starts++; throw Error("unknown start must not replay"); }
 }
 
+test('runtime status exposes bounded native child loss without treating it as a Turn result',()=>{
+  const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
+    observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'stdout_closed' as const,
+    exitObserved:false,exitCode:null,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+  const native=Object.assign(new FakeRuntime(),{listChildDiagnostics:()=>[diagnostic]});
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&typeof native,
+    workflow:{} as WorkflowService,trusted:{} as RuntimeWorkflowService,principals:[],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  assert.equal(runner.status(projectId).available,false);
+  assert.deepEqual(runner.status(projectId).nativeChildDiagnostics,[diagnostic]);
+});
+
+test('native child diagnostic survives replacement of its adapter',async()=>{
+  const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
+    observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'process_exited' as const,
+    exitObserved:true,exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+  let created=0;
+  const runner=new RuntimeRunner({runtimeFactory:()=>{
+    created++;
+    return Object.assign(new FakeRuntime(),{listChildDiagnostics:()=>created===1?[diagnostic]:[]});
+  },workflow:{} as WorkflowService,trusted:{} as RuntimeWorkflowService,principals:[],
+  canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.recover();
+    assert.equal(created,2);
+    assert.deepEqual(runner.status(projectId).nativeChildDiagnostics,[diagnostic]);
+  }finally{await runner.stop();}
+});
+
+test('runtime status reloads persisted child loss after coordinator restart',async()=>{
+  const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
+    observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'process_exited' as const,
+    firstLossAtUtc:'2026-11-06T00:00:59.000Z',firstLossReason:'stdout_closed' as const,
+    exitObserved:true,exitedAtUtc:'2026-11-06T00:01:00.000Z',exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],
+    listRuntimeRuns:async()=>[]} as unknown as WorkflowService;
+  const earlier={...diagnostic,observedAtUtc:diagnostic.firstLossAtUtc,
+    stopReason:'stdout_closed' as const,exitObserved:false,exitedAtUtc:null,exitCode:null};
+  const trusted={recentNativeChildDiagnostics:async()=>[
+    {detail:JSON.stringify(diagnostic)},{detail:JSON.stringify(earlier)}],
+    recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>new FakeRuntime(),workflow,trusted,
+    principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).nativeChildDiagnostics,[diagnostic]);
+  }finally{await runner.stop();}
+});
+
+test('runtime status retains confirmed exit when projects saved equal-time loss snapshots',async()=>{
+  const otherProjectId=randomUUID();
+  const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
+    observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'process_exited' as const,
+    firstLossAtUtc:'2026-11-06T00:01:00.000Z',firstLossReason:'stdout_closed' as const,
+    exitObserved:true,exitedAtUtc:'2026-11-06T00:01:01.000Z',exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+  const loss={...diagnostic,stopReason:'stdout_closed' as const,exitObserved:false,
+    exitedAtUtc:null,exitCode:null};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],
+    listRuntimeRuns:async()=>[]} as unknown as WorkflowService;
+  const trusted={recentNativeChildDiagnostics:async(project:string)=>
+    project===otherProjectId?[{detail:JSON.stringify(loss)}]:[{detail:JSON.stringify(diagnostic)}],
+    recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>new FakeRuntime(),workflow,trusted,
+    principals:[{actorId,projectIds:[otherProjectId,projectId],permissions:['read','write','review']}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();
+    assert.deepEqual(runner.status(projectId).nativeChildDiagnostics,[diagnostic]);
+  }finally{await runner.stop();}
+});
+
+test('native loss callback persists a diagnostic before replacing the child',async()=>{
+  const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
+    observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'process_exited' as const,
+    firstLossAtUtc:'2026-11-06T00:00:59.000Z',firstLossReason:'stdout_closed' as const,
+    exitObserved:true,exitedAtUtc:'2026-11-06T00:01:00.000Z',exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+  let created=0,persisted=0,flushed=0;
+  let notify:((value:typeof diagnostic)=>void|Promise<void>)|null=null;
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],
+    listRuntimeRuns:async()=>[]} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+    recordNativeChildDiagnostic:async(_project:string,value:typeof diagnostic)=>{
+      assert.equal(_project,projectId);assert.deepEqual(value,diagnostic);persisted++;}
+  } as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>{
+    created++;
+    return Object.assign(new FakeRuntime(),{
+      onChildDiagnostic:(listener:typeof notify)=>{notify=listener;return()=>{notify=null;}},
+      flushChildDiagnostics:async()=>{flushed++;},listChildDiagnostics:()=>created===1?[diagnostic]:[]});
+  },workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+  canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  try{
+    await runner.start();
+    await notify?.(diagnostic);
+    assert.equal(persisted,1);
+    runner.nativeAdapter().isReady = () => false;
+    await runner.recover();
+    assert.equal(flushed,1);
+    assert.deepEqual(runner.status(projectId).nativeChildDiagnostics,[diagnostic]);
+  }finally{await runner.stop();}
+});
+
 test("owned Session names follow the newest business profile across creation, edits and native failures", async () => {
   const owned: RuntimeSessionRecord = { ...session, id: randomUUID(), state: "reserved",
     nativeThreadId: null, nativeSessionId: null };
@@ -1165,6 +1268,33 @@ for (const failure of ['resume_rejected','turn_start_unknown','binding_failed'] 
     }finally{await runner.stop();}
   });
 }
+
+test('a competing native writer does not turn a reserved Task Run into a business failure',async()=>{
+  const requested:RuntimeRunRecord={...run,id:randomUUID(),operationId:randomUUID(),state:'requested',nativeTurnId:null};
+  const writerThreadId=randomUUID(),ownedSession={...session,nativeThreadId:writerThreadId};
+  const native=new FakeRuntime();let resumes=0,permits=0,rejections=0,unknowns=0,reason='';
+  native.resume=async()=>{resumes++;throw new RuntimeServerError('thread/resume',7,-32600,
+    `thread ${writerThreadId} already has an active writer`);};
+  const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[ownedSession],
+    listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>ownedSession} as unknown as WorkflowService;
+  const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),canStartRecoveredRun:async()=>true,
+    beginDispatch:async()=>{permits++;requested.state='dispatching';},
+    rejectDispatch:async()=>{rejections++;requested.state='failed';},
+    markRunUnknown:async(_p:string,_id:string,value:string)=>{unknowns++;reason=value;requested.state='unknown';}
+  } as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: 'evoloop-lightweight-v1', contentHash: 'a'.repeat(64), byteLength: 16 });
+  try{
+    await runner.start();
+    assert.deepEqual([permits,resumes,native.starts,rejections,unknowns],[1,1,0,0,1]);
+    assert.match(reason,/writer/i);
+    await runner.pump();
+    assert.deepEqual([permits,resumes,native.starts,rejections,unknowns],[1,1,0,0,1]);
+    assert.equal(requested.state,'unknown');
+  }finally{await runner.stop();}
+});
 
 test("rehydration of a bound dynamic Session ignores a colliding static grant until current dynamic authority returns",async()=>{
   const dispatchId=randomUUID(),dynamicSession={...session,id:loopIntentId(dispatchId,"session"),

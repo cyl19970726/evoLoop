@@ -12,6 +12,7 @@ let turnListReads = 0;
 let archived = mode === "already-archived";
 let turnStarts = 0;
 let observedResumes = 0;
+let writerConflicts = 0;
 let lastTurnModel = null;
 let threadName = null;
 let modelListReads = 0;
@@ -23,6 +24,10 @@ for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") {
     initialized = true;
+    if(mode==='exit-private-stderr'){
+      process.stderr.write('private fixture credential and user body\n');
+      process.exit(23);
+    }
     if(mode==='stdout-eof-live'){
       process.on('SIGTERM',()=>{});
       process.stdout.end();
@@ -141,6 +146,11 @@ for await (const line of lines) {
     if (params.dynamicTools !== undefined) {send({id,error:{code:-32602,message:"resume must not redeclare native tools"}});continue;}
   }
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
+  if (method === "thread/resume" && mode === "resume-writer-conflict") {
+    if(writerConflicts++===0){
+      send({id,error:{code:-32600,message:'thread 01a19c3b-2123-74d1-918e-0add8d529455 already has an active writer'}});continue;
+    }
+  }
   if (method === "thread/resume" && mode.startsWith("profile-transition")) {
     observedResumes++;
     if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.model!=="new-model"||
@@ -221,7 +231,7 @@ for await (const line of lines) {
       ARBITRARY_SECRET: process.env.ARBITRARY_SECRET ?? null,
     } : null;
     const networkFailure=mode.startsWith('full-network-')&&turnStarts===0;
-    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode.startsWith('zero-turn')||mode==='full-sequence'?{model:mode==='zero-turn-not-loaded'?null:mode==='full-network-model-mismatch'?'other-model':mode==='full-network-model-missing'||unloaded?null:'gpt-6-sol'}:{}),status:{type:mode==='zero-turn-not-loaded'&&turnStarts===0?'notLoaded':networkFailure?(mode==='full-network-active'?'active':mode==='full-network-unknown-status'?'unknown':'systemError'):unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
+    const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode.startsWith('zero-turn')||mode==='full-sequence'||mode==='resume-writer-conflict'?{model:mode==='zero-turn-not-loaded'?null:mode==='full-network-model-mismatch'?'other-model':mode==='full-network-model-missing'||unloaded?null:'gpt-6-sol'}:{}),status:{type:mode==='zero-turn-not-loaded'&&turnStarts===0?'notLoaded':networkFailure?(mode==='full-network-active'?'active':mode==='full-network-unknown-status'?'unknown':'systemError'):unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
       ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;

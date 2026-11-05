@@ -80,6 +80,94 @@ test("work status keeps native connection, activity and persistent processing se
     /target does not match/);
 });
 
+test("work status labels the latest PG Run as history and keeps a stale or unbound Turn separate", () => {
+  const recentRun = { id: "run-old", taskId: id, state: "running", updatedAt: "2026-11-03T00:47:30Z" };
+  const snapshot = { session: { key: `owned:${id}`, runtimeState: "ready", busy: true,
+    latestBusinessRun: recentRun, lastProgressAt: recentRun.updatedAt },
+    nativeObservation: { freshness: "stale", staleReason: "disconnected", status: "active",
+      observedAt: "2026-11-03T03:42:00Z", lastEventAt: "2026-11-03T00:54:15Z",
+      currentTurn: { id: "turn-old", status: "inProgress", source: { kind: "run", runId: "run-old", taskId: id } } } };
+  const stale = sessionStatus(snapshot, undefined, undefined, { state: "ok", value: { available: true, error: null } }) as {
+    session: { latestBusinessRun: { id: string; scope: string } };
+    native: { freshness: string; staleReason: string; turnSource: { id: string } };
+    runtime: { available: boolean; readStatus: string }; guidance: string };
+  assert.deepEqual(stale.session.latestBusinessRun, { ...recentRun, scope: "latest_persisted_run" });
+  assert.equal(stale.native.staleReason, "disconnected");
+  assert.equal(stale.native.turnSource.id, "run-old");
+  assert.deepEqual(stale.runtime, { available: true, readStatus: "confirmed", latestChildDiagnostic: null });
+  assert.match(stale.guidance, /do not prove current execution/);
+  const disconnected = sessionStatus(snapshot, undefined, undefined, { state: "ok", value: { available: false } }) as {
+    runtime: { available: boolean; readStatus: string }; guidance: string };
+  assert.equal(disconnected.runtime.available, false);
+  assert.match(disconnected.guidance, /HTTP Session snapshot is readable, but native runtime reports unavailable/);
+  const failedRead = sessionStatus(snapshot, undefined, undefined, { state: "failed" }) as {
+    runtime: { available: null; readStatus: string }; guidance: string };
+  assert.equal(failedRead.runtime.available, null);
+  assert.equal(failedRead.runtime.readStatus, "failed");
+  assert.match(failedRead.guidance, /availability is unknown/);
+  const invalidRead = sessionStatus(snapshot, undefined, undefined, { state: "ok", value: { available: "false" } }) as {
+    runtime: { available: null; readStatus: string } };
+  assert.equal(invalidRead.runtime.available, null);
+  assert.equal(invalidRead.runtime.readStatus, "invalid");
+  const unbound = sessionStatus({ ...snapshot, session: { ...snapshot.session, latestBusinessRun: null },
+    nativeObservation: { ...snapshot.nativeObservation, freshness: "live",
+      currentTurn: { id: "turn-new", status: "inProgress", source: null } } }, undefined, undefined,
+    { state: "ok", value: { available: true } }) as {
+      session: { latestBusinessRun: null }; native: { turnSource: null }; guidance: string };
+  assert.equal(unbound.session.latestBusinessRun, null);
+  assert.equal(unbound.native.turnSource, null);
+  assert.match(unbound.guidance, /latest Run is historical/);
+});
+
+test("work status reads runtime availability and keeps a failed status request unknown", async () => {
+  const { mock } = await import("node:test");
+  let statusFails = false;
+  const paths: string[] = [];
+  const diagnostic = { startId: id, pid: 1234, startedAtUtc: "2026-11-03T00:00:00.000Z",
+    observedAtUtc: "2026-11-03T00:54:15.000Z", firstLossAtUtc: "2026-11-03T00:54:10.000Z",
+    firstLossReason: "stdout_closed", stopReason: "process_exited", exitObserved: true,
+    exitedAtUtc: "2026-11-03T00:54:15.000Z", exitCode: 23, exitSignal: null,
+    nativeTurnOutcome: "unknown", stderr: "private fixture credential", message: "private native text" };
+  const intercepted = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    const path = new URL(String(url)).pathname;
+    paths.push(path);
+    if (path.endsWith("/runtime")) return new Response(JSON.stringify(statusFails
+      ? { code: "RUNTIME_STATUS_UNAVAILABLE" } : { available: false, error: "native child disconnected",
+        nativeChildDiagnostics: [diagnostic, { ...diagnostic, startId: "00000000-0000-4000-8000-000000000002" }] }),
+    { status: statusFails ? 503 : 200 });
+    if (path.includes("/session-work/")) return new Response(JSON.stringify({ session: {
+      key: `owned:${id}`, runtimeState: "ready", busy: true,
+      latestBusinessRun: { id: "run-old", taskId: id, state: "running" } },
+      nativeObservation: { freshness: "stale", currentTurn: { id: "turn-old", status: "inProgress" } } }),
+    { status: 200 });
+    return new Response(JSON.stringify({ code: "NOT_FOUND" }), { status: 404 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture-token", EVOLOOP_PROJECT: id, EVOLOOP_API_URL: "http://127.0.0.1:4318" };
+  const run = async () => { let stdout = "", stderr = "";
+    const code = await runCli(["work", "status", `owned:${id}`], env,
+      { stdout: value => { stdout += value; }, stderr: value => { stderr += value; } });
+    return { code, value: JSON.parse(stdout), stderr }; };
+  try {
+    const down = await run();
+    assert.equal(down.code, 0);
+    assert.deepEqual(down.value.runtime, { available: false, readStatus: "confirmed",
+      latestChildDiagnostic: { scope: "last_recorded_child_loss", startId: id, pid: 1234,
+        startedAtUtc: diagnostic.startedAtUtc, observedAtUtc: diagnostic.observedAtUtc,
+        firstLossAtUtc: diagnostic.firstLossAtUtc, firstLossReason: "stdout_closed",
+        stopReason: "process_exited", exitObserved: true, exitedAtUtc: diagnostic.exitedAtUtc,
+        exitCode: 23, exitSignal: null, nativeTurnOutcome: "unknown" } });
+    assert.doesNotMatch(JSON.stringify(down.value), /private fixture credential|private native text/);
+    assert.match(down.value.guidance, /native runtime reports unavailable/);
+    statusFails = true;
+    const unknown = await run();
+    assert.equal(unknown.code, 0);
+    assert.deepEqual(unknown.value.runtime, { available: null, readStatus: "failed", latestChildDiagnostic: null });
+    assert.deepEqual(paths, Array.from({ length: 2 }, () => [
+      `/api/projects/${id}/session-work/owned%3A${id}`, `/api/projects/${id}/runtime`,
+    ]).flat());
+  } finally { intercepted.mock.restore(); }
+});
+
 test('timeline, selected Item and live update paths encode independent positions and native IDs', () => {
   const timeline=new URL(sessionWorkPath(['timeline',key],new Map([
     ['source','native'],['cursor','native+/='],['messages-cursor','messages?&='],['limit','25'],

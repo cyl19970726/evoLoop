@@ -41,6 +41,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listRuntimeRuns(taskId?: string): Promise<RuntimeRunRecord[]>;
   listRuntimeEvents(runId: string): Promise<RuntimeRecordEvent[]>;
   listRuntimeSessionEvents(sessionId: string): Promise<RuntimeRecordEvent[]>;
+  /** Recent project-scoped host diagnostics; no raw native output or Session content. */
+  listRuntimeHostEvents?(limit: number): Promise<RuntimeRecordEvent[]>;
   getGoal(id: string): Promise<Goal | null>;
   listGoals(limit: number, cursor?: string): Promise<Page<Goal>>;
   listGoalRevisions(goalId: string): Promise<GoalRevision[]>;

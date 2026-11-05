@@ -223,6 +223,7 @@ class PgReader implements Reader {
   listRuntimeRuns(taskId?: string) { return this.runtime.listRuntimeRuns(taskId); }
   listRuntimeEvents(runId: string) { return this.runtime.listRuntimeEvents(runId); }
   listRuntimeSessionEvents(sessionId: string) { return this.runtime.listRuntimeSessionEvents(sessionId); }
+  listRuntimeHostEvents(limit: number) { return this.runtime.listRuntimeHostEvents(limit); }
   async getGoal(id: string): Promise<Goal | null> {
     const r=await this.client.query("SELECT * FROM project_goal WHERE project_id=$1 AND goal_id=$2",[this.projectId,id]); return r.rows[0]?rowGoal(r.rows[0]):null;
   }

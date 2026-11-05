@@ -87,6 +87,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
+      else if (url.pathname === `${root}/runtime`) value = { available: true, error: null, allowedCwds: [], grants: [] };
       else if (url.pathname === `${root}/session-work`) value = { items: [snapshot.session], nextCursor: null, observationCursor: "1", metadata,
         totals: { current: 1, historical: 0, unclassified: 0 }, attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: 0, unclassifiedSessions: 0 } };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) {
@@ -166,15 +167,15 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     const audit = page.locator(".session-workspace:visible .session-project-activity");
     if (await audit.getAttribute("open") === null) await audit.locator("> summary").click();
   }
-  await page.locator(".session-workspace:visible .session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
+  await page.locator(".session-workspace:visible .session-current-work").getByText("最近 Run 记录运行中；当前执行待核", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/ready-message`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await page.locator(".session-workspace:visible .session-status-badge").getByText("消息处理中").waitFor();
+  await page.locator(".session-workspace:visible .session-status-badge").getByText("原生宿主回报消息 Turn 进行中").waitFor();
   await page.locator(".session-workspace:visible .session-current-work").getByText("正在回复消息").waitFor();
   await fetch(`${base}/__fixture/closing`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await page.locator(".session-workspace:visible .session-status-badge").getByText("关闭中").waitFor();
-  assert.equal(await page.locator(".session-workspace:visible .session-detail-header").getByText("消息处理中").count(), 0, "late message does not mask closing");
+  assert.equal(await page.locator(".session-workspace:visible .session-detail-header").getByText("原生宿主回报消息 Turn 进行中").count(), 0, "late message does not mask closing");
   await fetch(`${base}/__fixture/closed`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await page.locator(".session-workspace:visible .session-status-badge").getByText("已关闭").waitFor();
@@ -186,7 +187,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.locator(".session-activity-list").getByText("历史记录：已结束", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/active-run`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await page.locator(".session-workspace:visible .session-current-work").getByText("Run 已认领，本次运行中", { exact: false }).waitFor();
+  await page.locator(".session-workspace:visible .session-current-work").getByText("最近 Run 记录运行中；当前执行待核", { exact: false }).waitFor();
   assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
   async function showTool(index: number) { const tool = page.locator(".session-feed:visible .session-trace-item").nth(index); await tool.locator("summary").waitFor(); if (await tool.getAttribute("open") === null) await tool.locator("summary").click(); }
