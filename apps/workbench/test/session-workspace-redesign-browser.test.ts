@@ -185,9 +185,9 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator(".project-sidebar .session-navigation");
   await sidebar.locator(`.session-nav-item[href*="${sessionId}"] .session-identity-violet`).waitFor();
-  await sidebar.getByText("业务 Session · 1", { exact: true }).waitFor();
-  await sidebar.getByText("System Session · 1", { exact: true }).waitFor();
-  await sidebar.getByText("待归类 · 1", { exact: true }).waitFor();
+  await sidebar.getByText("业务 Session · 已加载 1", { exact: true }).waitFor();
+  await sidebar.getByText("System Session · 已加载 1", { exact: true }).waitFor();
+  await sidebar.getByText("待归类 · 已加载 1", { exact: true }).waitFor();
   const workPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const workPageErrors: string[] = [];
   workPage.on("pageerror", error => workPageErrors.push(error.message));
