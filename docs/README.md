@@ -88,6 +88,7 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | [接口与协作合同](architecture/contracts.md) | 任务、知识、会话如何交换，失败后怎样恢复 | 接口双方与整体验收负责人 |
 | [存储逻辑](architecture/storage.md) | 表、固定版本、外键、事务、外置原件和恢复怎么设计 | 数据与架构责任者 |
 | [Codex 接入](architecture/codex-integration.md) | 线程/轮次如何承接任务、回收和恢复，与桌面入口如何衔接 | 运行时适配责任者 |
+| [消息 Connector 候选边界](architecture/message-connectors.md) | 微信网关、会话隔离及本期尚未开放的受限执行路径 | 消息集成与运行时责任者 |
 | [前端架构](frontend/architecture.md) | 工作台技术、路由、查询/命令、会话衔接与部署边界，正文位于前端目录 | 前端与核心接口责任者 |
 | [Wiki 维护机制](architecture/wiki-maintenance.md) | 参考哪些编纂机制，如何形成候选、审阅发布和纠正旧认识 | 认知与知识集成责任者 |
 | [Wiki 工作区架构](architecture/wiki-workspace.md) | 参考 nashsu 怎样做知识点、专题、双链、来源、图谱与 Review 前端 | Wiki 产品与前端责任者 |
