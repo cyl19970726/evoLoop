@@ -368,33 +368,38 @@ test('raising one ordinary message grant from 100 to 200 preserves all billed tu
       [projectId,sessionId,sender,now,count,qualified]);
     assert.equal(result.rowCount,count);
   }
-  await seedBilled(100);
   const next={...item(),senderActorId:sender};
-  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(next));
-  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),100);
-  await assert.rejects(()=>guarded.preflightDispatch(projectId,next.id),/grant is exhausted/);
-  current={...current,maxTurns:200};
-  await guarded.preflightDispatch(projectId,next.id);
-  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),100);
-  await guarded.beginDispatch(projectId,next.id,randomUUID(),randomUUID(),qualified);
-  await guarded.bindTurn(projectId,next.id,{id:`budget-turn-${next.id}`,status:'inProgress'});
-  await guarded.settle(projectId,next.id,{id:`budget-turn-${next.id}`,status:'completed',completedAtUtc:now},null);
-  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),101);
-  await seedBilled(99);
   const exhausted={...item(),senderActorId:sender};
-  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(exhausted));
+  const inserted:string[]=[];
   try {
+    await seedBilled(100);
+    await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(next));
+    inserted.push(next.id);
+    assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),100);
+    await assert.rejects(()=>guarded.preflightDispatch(projectId,next.id),/grant is exhausted/);
+    current={...current,maxTurns:200};
+    await guarded.preflightDispatch(projectId,next.id);
+    assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),100);
+    await guarded.beginDispatch(projectId,next.id,randomUUID(),randomUUID(),qualified);
+    await guarded.bindTurn(projectId,next.id,{id:`budget-turn-${next.id}`,status:'inProgress'});
+    await guarded.settle(projectId,next.id,{id:`budget-turn-${next.id}`,status:'completed',completedAtUtc:now},null);
+    assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),101);
+    await seedBilled(99);
+    await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(exhausted));
+    inserted.push(exhausted.id);
     assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),200);
     await assert.rejects(()=>guarded.preflightDispatch(projectId,exhausted.id),/grant is exhausted/);
     await assert.rejects(()=>guarded.beginDispatch(projectId,exhausted.id,randomUUID(),randomUUID(),qualified),
       /grant is exhausted/);
     assert.equal((await guarded.detail(projectId,exhausted.id)).processing,null);
   } finally {
-    const pending=await guarded.get(projectId,exhausted.id);
-    if(pending.state==='queued')await uow.transaction(projectId,tx=>applySessionMessage(tx,
-      {actorId:sender,projectIds:[projectId],permissions:['write']},
-      {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:exhausted.id,
-        expectedVersion:pending.version,reason:'End isolated budget test'},now));
+    for(const messageId of inserted){
+      const pending=await guarded.get(projectId,messageId);
+      if(pending.state==='queued')await uow.transaction(projectId,tx=>applySessionMessage(tx,
+        {actorId:sender,projectIds:[projectId],permissions:['write']},
+        {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId,
+          expectedVersion:pending.version,reason:'End isolated budget test'},now));
+    }
   }
   assert.equal((await guarded.get(projectId,exhausted.id)).state,'cancelled');
 });
