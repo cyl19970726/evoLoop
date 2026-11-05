@@ -148,14 +148,13 @@ test("Session navigation retains order, pages and filters across selection, back
   await page.getByRole("button", { name: "打开项目导航" }).click();
   await page.locator('.mobile-navigation[data-state="open"]').waitFor();
   const mobileCurrent = page.locator(".mobile-navigation .session-nav-current");
-  await mobileCurrent.getByText("当前成员 5", { exact: true }).waitFor();
-  for (const member of [25, 45, 51]) {
-    await page.locator(".mobile-navigation").getByRole("button", { name: "加载更多当前 Session" }).click();
-    await mobileCurrent.getByText(`当前成员 ${member}`, { exact: true }).waitFor();
-  }
+  await mobileCurrent.getByText("当前成员 51", { exact: true }).waitFor();
+  assert.equal(await mobileCurrent.locator(".session-nav-item").count(), 51,
+    "the narrow drawer reads the same loaded page range as the desktop navigation");
   await mobileCurrent.getByText("当前成员 51", { exact: true }).scrollIntoViewIfNeeded();
   assert.ok(await mobileCurrent.getByText("当前成员 51", { exact: true }).isVisible(),
     "the last loaded Session remains reachable in the narrow navigation drawer");
+  const mobileScroll = await page.locator(".mobile-navigation").evaluate(element => element.scrollTop);
   await mobileCurrent.locator(".session-nav-item").last().click();
   await page.waitForURL(/session=external%3Acurrent-50/);
   await page.getByRole("button", { name: "打开项目导航" }).click();
@@ -163,6 +162,7 @@ test("Session navigation retains order, pages and filters across selection, back
   await mobileCurrent.getByText("当前成员 51", { exact: true }).waitFor();
   assert.equal(await mobileCurrent.locator(".session-nav-item").count(), 51,
     "closing the drawer to select a Session preserves its loaded pages");
+  await page.waitForFunction(expected => Math.abs((document.querySelector(".mobile-navigation")?.scrollTop ?? 0) - expected) < 3, mobileScroll);
   await page.waitForFunction(() => { const box = document.querySelector('.mobile-navigation[data-state="open"]')?.getBoundingClientRect();
     return !!box && box.x >= -1 && box.right > 0; });
   const drawerBox = await page.locator('.mobile-navigation[data-state="open"]').boundingBox();

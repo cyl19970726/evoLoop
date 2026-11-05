@@ -26,7 +26,7 @@ export async function readSessionDirectoryPages(client: ReturnType<typeof sessio
 }
 
 export function useSessionDirectoryGroup(token: string, projectId: string, membership: DirectoryMembership,
-  search: string, retry: number, enabled: boolean) {
+  search: string, retry: number, enabled: boolean, initialPages = 1, onPagesLoaded?: (count: number) => void) {
   const [page, setPage] = useState<SessionDirectory | null>(null);
   const [items, setItems] = useState<ObservedSession[]>([]);
   const [error, setError] = useState("");
@@ -34,7 +34,7 @@ export function useSessionDirectoryGroup(token: string, projectId: string, membe
   const [moreBusy, setMoreBusy] = useState(false);
   const generation = useRef(0);
   const nextCursor = useRef<string | null>(null);
-  const pagesLoaded = useRef(1);
+  const pagesLoaded = useRef(initialPages);
   const reading = useRef(false);
   const loadingMore = useRef(false);
   const moreController = useRef<AbortController | null>(null);
@@ -43,7 +43,7 @@ export function useSessionDirectoryGroup(token: string, projectId: string, membe
     const myGeneration = ++generation.current;
     const controller = new AbortController();
     moreController.current?.abort(); moreController.current = null;
-    reading.current = false; loadingMore.current = false; nextCursor.current = null; pagesLoaded.current = 1;
+    reading.current = false; loadingMore.current = false; nextCursor.current = null; pagesLoaded.current = initialPages;
     setPage(null); setItems([]); setError(""); setLoading(false); setMoreBusy(false);
     if (!enabled) return () => { generation.current++; controller.abort(); };
     const client = sessionClient(token, projectId);
@@ -79,6 +79,7 @@ export function useSessionDirectoryGroup(token: string, projectId: string, membe
       if (result.nextCursor === cursor) throw new Error("会话目录分页没有前进，请重新读取。");
       setItems(old => [...new Map([...old, ...result.items].map(item => [item.key, item])).values()]);
       nextCursor.current = result.nextCursor; setPage(result); setError(""); pagesLoaded.current++;
+      onPagesLoaded?.(pagesLoaded.current);
     } catch (cause) { if (!controller.signal.aborted && generation.current === myGeneration) setError(errorText(cause)); }
     finally { if (generation.current === myGeneration) { loadingMore.current = false; setMoreBusy(false); moreController.current = null; } }
   }

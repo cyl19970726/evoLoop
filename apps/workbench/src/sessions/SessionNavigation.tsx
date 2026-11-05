@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ListFilter, Plus, Search } from "lucide-react";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../ui/shared";
@@ -12,17 +12,49 @@ import "./sessions.css";
 export const sessionHref = (projectId: string, key: string) => `${href(projectId, "sessions")}?session=${encodeURIComponent(key)}`;
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
+export interface SessionNavigationState {
+  query: string;
+  historyOpen: boolean;
+  pages: Record<DirectoryMembership, number>;
+  scrollTop: number;
+}
+export const emptySessionNavigationState = (): SessionNavigationState => ({
+  query: "", historyOpen: false, pages: { current: 1, historical: 1, unclassified: 1 }, scrollTop: 0,
+});
 
-export function SessionNavigation({ token, projectId, selectedId, onNavigate }: { token: string; projectId: string; selectedId?: string; onNavigate(): void }) {
-  const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
+export function SessionNavigation({ token, projectId, selectedId, onNavigate, state, onState }: {
+  token: string; projectId: string; selectedId?: string; onNavigate(): void;
+  state: SessionNavigationState; onState(update: (state: SessionNavigationState) => SessionNavigationState): void;
+}) {
+  const { query, historyOpen } = state;
+  const root = useRef<HTMLElement>(null);
+  const onStateRef = useRef(onState);
+  onStateRef.current = onState;
+  const scrollRestored = useRef(false);
+  const [search, setSearch] = useState(query.trim());
   const [connectOpen, setConnectOpen] = useState(false);
   const [retries, setRetries] = useState<Record<DirectoryMembership, number>>({ current: 0, historical: 0, unclassified: 0 });
   useEffect(() => { const timer = window.setTimeout(() => setSearch(query.trim()), 250); return () => window.clearTimeout(timer); }, [query]);
-  const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, true);
-  const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen);
-  const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen);
+  const rememberPages = (membership: DirectoryMembership) => (count: number) => onState(previous => ({ ...previous,
+    pages: { ...previous.pages, [membership]: count },
+  }));
+  const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, true, state.pages.current, rememberPages("current"));
+  const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen, state.pages.historical, rememberPages("historical"));
+  const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen, state.pages.unclassified, rememberPages("unclassified"));
+  useEffect(() => {
+    const host = root.current?.closest<HTMLElement>(".mobile-navigation") ?? root.current;
+    if (!host) return;
+    const remember = () => onStateRef.current(previous => previous.scrollTop === host.scrollTop ? previous : { ...previous, scrollTop: host.scrollTop });
+    host.addEventListener("scroll", remember, { passive: true });
+    return () => host.removeEventListener("scroll", remember);
+  }, []);
+  useEffect(() => {
+    if (!current.page || scrollRestored.current) return;
+    const host = root.current?.closest<HTMLElement>(".mobile-navigation") ?? root.current;
+    if (!host) return;
+    host.scrollTop = state.scrollTop;
+    scrollRestored.current = true;
+  }, [current.page, state.scrollTop]);
   const totals = current.page?.totals;
   const grouped = groupSessionsByClass(current.items);
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
@@ -37,9 +69,11 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
   function groupError(membership: DirectoryMembership, message: string) {
     return <p role="alert" className="session-nav-error">Session 目录暂不可读取：{message}。<button type="button" onClick={() => setRetries(value => ({ ...value, [membership]: value[membership] + 1 }))}>重试</button></p>;
   }
-  return <section className="session-navigation" aria-label="Session 目录">
+  return <section ref={root} className="session-navigation" aria-label="Session 目录">
     <div className="session-nav-head"><a href={href(projectId, "sessions")} onClick={onNavigate}>Session 目录</a>{totals && <span>{totals.current + totals.historical + totals.unclassified}</span>}<button type="button" className="quiet" onClick={() => setConnectOpen(true)} aria-label="连接已有或建立受管会话"><Plus size={17} aria-hidden="true" /></button></div>
-    <label className="session-nav-search"><Search size={15} aria-hidden="true" /><input aria-label="搜索 Session 名称或职责" placeholder="搜索 Session…" value={query} onChange={event => setQuery(event.target.value)} /><ListFilter size={15} aria-hidden="true" /></label>
+    <label className="session-nav-search"><Search size={15} aria-hidden="true" /><input aria-label="搜索 Session 名称或职责" placeholder="搜索 Session…" value={query} onChange={event => onState(previous => ({ ...previous, query: event.target.value,
+      pages: { current: 1, historical: 1, unclassified: 1 },
+    }))} /><ListFilter size={15} aria-hidden="true" /></label>
     {current.error && groupError("current", current.error)}
     {current.loading && !current.page && <p className="session-nav-muted">正在读取 Session 目录…</p>}
     <div className="session-nav-group session-nav-current">
@@ -53,7 +87,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate }: 
     {current.hasMore && <button className="session-nav-more" type="button" disabled={current.moreBusy || current.loading} onClick={() => void current.more()}>{current.moreBusy ? "加载中…" : "加载更多当前 Session"}</button>}
     <a className="session-nav-directory-link" href={href(projectId, "sessions")} onClick={onNavigate}>查看全部 Session <ArrowRight size={14} aria-hidden="true" /></a>
     <div className="session-nav-group">
-      <button type="button" className="session-nav-history" onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}><ChevronDown size={13} aria-hidden="true" className={historyOpen ? "" : "collapsed"} /> 历史与待归类 {totals && `· ${historicalCount}`}</button>
+      <button type="button" className="session-nav-history" onClick={() => onState(previous => ({ ...previous, historyOpen: !previous.historyOpen }))} aria-expanded={historyOpen}><ChevronDown size={13} aria-hidden="true" className={historyOpen ? "" : "collapsed"} /> 历史与待归类 {totals && `· ${historicalCount}`}</button>
       {historyOpen && <>
         <span>历史 · {totals?.historical ?? 0}</span>
         {historical.error && groupError("historical", historical.error)}
