@@ -317,11 +317,11 @@ test("the CLI entry point reads resident queue attempts and preserves ordinary r
 });
 
 
-test("CLI discovers the single full execution policy and rejects new restricted Sessions",async()=>{
+test("CLI discovers full default and the restricted profile option for core authorization",async()=>{
   const discovery=await run(["command","schema","runtime.session.reserve"]);
   assert.equal(discovery.code,0);
   const schema=JSON.parse(discovery.stdout);
-  assert.equal(schema.properties.sandbox.const,"danger-full-access");
+  assert.deepEqual(schema.properties.sandbox.enum,["danger-full-access","read-only"]);
   assert.equal(schema.properties.sandbox.default,"danger-full-access");
   assert.equal(schema.properties.approvalPolicy.const,"never");
   const input={type:"runtime.session.reserve",projectId:"00000000-0000-4000-8000-000000000001",
@@ -332,7 +332,11 @@ test("CLI discovers the single full execution policy and rejects new restricted 
   if(parsed.type==="runtime.session.reserve"){
     assert.equal(parsed.sandbox,"danger-full-access");assert.equal(parsed.approvalPolicy,"never");
   }
-  for(const sandbox of ["read-only","workspace-write"])
-    assert.equal(commandSchema.safeParse({...input,sandbox}).success,false);
+  assert.equal(commandSchema.safeParse({...input,sandbox:"read-only"}).success,true);
+  assert.equal(commandSchema.safeParse({...input,sandbox:"workspace-write"}).success,false);
+  assert.equal(commandSchema.safeParse({...input,sandbox:"read-only",
+    authorizationScope:"connector-receiver:00000000-0000-4000-8000-000000000004"}).success,true);
+  // Scope and grant pairing are checked by core and the server, beyond this
+  // field-level CLI schema; CLI parsing alone does not authorize a Session.
   assert.equal(commandSchema.safeParse({...input,approvalPolicy:"on-request"}).success,false);
 });
