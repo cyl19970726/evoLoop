@@ -3,7 +3,7 @@ import { BookOpen, BriefcaseBusiness, CalendarDays, ChevronLeft, ChevronRight, F
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger } from "../components/ui/sheet";
 import { Button } from "../components/ui/button";
 import { href, type Route, type Section } from "./shared";
-import { SessionNavigation } from "../sessions/SessionNavigation";
+import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../sessions/SessionNavigation";
 
 export const sectionNames: Record<Section, string> = { overview: "项目总览", work: "任务", "create-task": "创建任务", inbox: "待判断与复核", task: "任务详情", documents: "文档与知识", document: "文档阅读", knowledge: "知识空间", sessions: "Sessions", journey: "目标与阶段", discussions: "团队分工", reviews: "组织复盘", collaboration: "协作回执", runtime: "团队分工", schedules: "日程", roles: "团队分工", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果", settings: "项目设置" };
 const workFunctions = [
@@ -19,6 +19,7 @@ type Module = "work" | "sessions";
 export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token, logout, children }: { route: Route; projectTitle: string; actor: string; receiptCount: number; token: string; logout(): void; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1180);
   const [open, setOpen] = useState(false);
+  const [navigationStates, setNavigationStates] = useState<Record<string, SessionNavigationState>>({});
   const navigationFromMenu = useRef(false);
   const widthRef = useRef(window.innerWidth);
   const manualCollapse = useRef(false);
@@ -59,6 +60,12 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
     }
   };
   const projectId = route.projectId!;
+  const navigationScope = `${actor}:${projectId}`;
+  const navigationState = navigationStates[navigationScope] ?? emptySessionNavigationState();
+  const updateNavigationState = (update: (state: SessionNavigationState) => SessionNavigationState) =>
+    setNavigationStates(previous => ({ ...previous,
+      [navigationScope]: update(previous[navigationScope] ?? emptySessionNavigationState()),
+    }));
   const sessionRoute = route.section === "sessions" || route.section === "runtime" && !!route.session;
   const currentModule: Module = sessionRoute ? "sessions" : "work";
   const selectedSession = route.session ? route.session.includes(":") ? route.session : `owned:${route.session}` : undefined;
@@ -75,7 +82,7 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
   const sidebar = <>
     <a className="project-switch" href="#/" onClick={closeAfterNavigation}><span className="project-monogram">E</span><span><small>当前项目</small><strong title={projectTitle}>{projectTitle || "读取项目…"}</strong></span><ChevronRight size={15} aria-hidden="true" /></a>
     {functions.length > 0 && <nav className="project-functions" aria-label="项目功能">{functions.map(item => link(item.section, item.title, item.Icon))}</nav>}
-    {currentModule === "sessions" && <SessionNavigation token={token} projectId={projectId} selectedId={selectedSession} onNavigate={closeAfterNavigation} />}
+    {currentModule === "sessions" && <SessionNavigation key={navigationScope} token={token} projectId={projectId} selectedId={selectedSession} onNavigate={closeAfterNavigation} state={navigationState} onState={updateNavigationState} />}
     <div className="nav-resources"><a aria-current={route.section === "operations" ? "page" : undefined} href={href(projectId, "operations")} onClick={closeAfterNavigation}><TriangleAlert size={17} />待核对操作{receiptCount > 0 && <span className="nav-count">{receiptCount}</span>}</a><a aria-current={route.section === "repository" ? "page" : undefined} href={href(projectId, "repository")} onClick={closeAfterNavigation}><FolderOpen size={17} />仓库规范</a><a aria-current={route.section === "settings" ? "page" : undefined} href={href(projectId, "settings")} onClick={closeAfterNavigation}><Settings size={17} />项目设置</a></div>
   </>;
   return <div className={`workbench-layout ${collapsed ? "sidebar-collapsed" : ""}`} data-session-reader={!!route.session && (route.section === "sessions" || route.section === "runtime" && route.session.includes(":"))}>
