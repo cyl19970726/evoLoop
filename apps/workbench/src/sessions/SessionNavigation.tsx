@@ -32,15 +32,15 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   onStateRef.current = onState;
   const scrollRestored = useRef(false);
   const [search, setSearch] = useState(query.trim());
+  const searchPending = query.trim() !== search;
   const [connectOpen, setConnectOpen] = useState(false);
   const [retries, setRetries] = useState<Record<DirectoryMembership, number>>({ current: 0, historical: 0, unclassified: 0 });
   useEffect(() => { const timer = window.setTimeout(() => setSearch(query.trim()), 250); return () => window.clearTimeout(timer); }, [query]);
-  const rememberPages = (membership: DirectoryMembership) => (count: number) => onState(previous => ({ ...previous,
-    pages: { ...previous.pages, [membership]: count },
-  }));
-  const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, true, state.pages.current, rememberPages("current"));
-  const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen, state.pages.historical, rememberPages("historical"));
-  const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen, state.pages.unclassified, rememberPages("unclassified"));
+  const rememberPages = (membership: DirectoryMembership) => (count: number) => onState(previous =>
+    previous.query.trim() !== search ? previous : { ...previous, pages: { ...previous.pages, [membership]: count } });
+  const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, !searchPending, state.pages.current, rememberPages("current"));
+  const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen && !searchPending, state.pages.historical, rememberPages("historical"));
+  const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen && !searchPending, state.pages.unclassified, rememberPages("unclassified"));
   useEffect(() => {
     const host = root.current?.closest<HTMLElement>(".mobile-navigation") ?? root.current;
     if (!host) return;
@@ -75,7 +75,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       pages: { current: 1, historical: 1, unclassified: 1 },
     }))} /><ListFilter size={15} aria-hidden="true" /></label>
     {current.error && groupError("current", current.error)}
-    {current.loading && !current.page && <p className="session-nav-muted">正在读取 Session 目录…</p>}
+    {(searchPending || current.loading && !current.page) && <p className="session-nav-muted">正在读取 Session 目录…</p>}
     <div className="session-nav-group session-nav-current">
       {!current.loading && current.page && current.items.length === 0 && <p className="session-nav-muted">没有匹配的当前 Session。</p>}
       {classOrder.map(groupName => {

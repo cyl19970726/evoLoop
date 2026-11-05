@@ -33,11 +33,16 @@ function observed(item: { key: string; title: string; membership: string; roles?
 test("Session navigation retains order, pages and filters across selection, back navigation and category retry", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let unclassifiedUnavailable = true;
-  const reads: Array<{ membership: string; cursor: string | null }> = [];
+  let holdCurrentPage = false;
+  let releaseCurrentPage: (() => void) | null = null;
+  const reads: Array<{ membership: string; cursor: string | null; search: string }> = [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/__fixture/restore") { unclassifiedUnavailable = false; res.end("ok"); return; }
     if (url.pathname === "/__fixture/reads") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(reads)); return; }
+    if (url.pathname === "/__fixture/hold") { holdCurrentPage = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/release") { releaseCurrentPage?.(); holdCurrentPage = false; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/pending") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ pending: !!releaseCurrentPage })); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
@@ -46,7 +51,11 @@ test("Session navigation retains order, pages and filters across selection, back
       else if (url.pathname === `${root}/session-work`) {
         const membership = url.searchParams.get("membership") ?? "current";
         const cursor = url.searchParams.get("cursor");
-        reads.push({ membership, cursor });
+        reads.push({ membership, cursor, search: url.searchParams.get("search") ?? "" });
+        if (membership === "current" && cursor === "current:45" && holdCurrentPage) {
+          await new Promise<void>(resolve => { releaseCurrentPage = resolve; });
+          releaseCurrentPage = null;
+        }
         if (membership === "unclassified" && unclassifiedUnavailable) { status = 503; value = { message: "temporary fixture failure" }; }
         else {
           const search = url.searchParams.get("search") ?? "";
@@ -112,6 +121,24 @@ test("Session navigation retains order, pages and filters across selection, back
     "the previous Session detail is no longer visible");
   assert.deepEqual(await current.locator(".session-nav-item").evaluateAll(nodes => nodes.map(node => node.getAttribute("href"))), firstPageOrder,
     "switching Session changes selection without reordering the directory");
+  await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
+  await current.getByText("当前成员 25", { exact: true }).waitFor();
+  await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
+  await current.getByText("当前成员 45", { exact: true }).waitFor();
+  await fetch(`${base}/__fixture/hold`);
+  await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
+  await page.waitForFunction(async base => (await (await fetch(`${base}/__fixture/pending`)).json()).pending, base);
+  await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("当前成员 24");
+  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 0);
+  await fetch(`${base}/__fixture/release`);
+  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 1);
+  await current.getByText("当前成员 24", { exact: true }).waitFor();
+  await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("");
+  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 5);
+  assert.equal(await current.locator(".session-nav-item").count(), 5,
+    "a stale page response during the search debounce must not restore the old page count");
+  const afterSearchReads = await (await fetch(`${base}/__fixture/reads`)).json() as typeof reads;
+  assert.equal(afterSearchReads.at(-1)?.cursor, null, "clearing search reads only the bounded first page");
   await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
   await current.getByText("当前成员 25", { exact: true }).waitFor();
   await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
