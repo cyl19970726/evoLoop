@@ -37,6 +37,15 @@ export interface ConnectorIngressPumpDeps {
 }
 
 type Delivery = { id: number; start: number; end: number; cursor: number; routeVersion: number; finished: boolean };
+const decidedFor = (rows: Array<Row | null>, delivery: Delivery, route: ConnectorRouteRecord): boolean => {
+  const matches = rows.filter(row => row?.delivery_id === delivery.id);
+  if (matches.length !== 1 || delivery.routeVersion !== route.version) return false;
+  const row = matches[0]!;
+  return row.owner === route.owner && row.epoch === route.epoch &&
+    row.cursor_start === delivery.start && row.cursor_end === delivery.end &&
+    (row.conversation_id === undefined || row.conversation_id === route.source.conversationId) &&
+    ["replied", "skipped", "deferred", "draft"].includes(String(row.status));
+};
 
 /** Reads bounded wx pages into the original SessionMessage queue. It never starts a native Turn. */
 export class ConnectorIngressPump {
@@ -129,8 +138,7 @@ export class ConnectorIngressPump {
     if (this.uncertain.has(route.bindingId)) {
       if (claimedRow) await this.reconcile(route, claimedRow);
       else if (prior) {
-        const decided = rows.find(row => row?.delivery_id === prior.id);
-        if (decided && ["replied", "skipped", "deferred", "draft"].includes(String(decided.status))) {
+        if (decidedFor(rows, prior, route)) {
           // The original wx decision, rather than a timeout or absent row,
           // releases this in-process uncertainty for a later tick.
           this.deliveries.delete(route.bindingId);
@@ -156,8 +164,7 @@ export class ConnectorIngressPump {
       return;
     }
     if (prior) {
-      const decided = rows.find(row => row?.delivery_id === prior.id);
-      if (!decided || !["replied", "skipped", "deferred", "draft"].includes(String(decided.status))) {
+      if (!decidedFor(rows, prior, route)) {
         this.uncertain.add(route.bindingId);
         return;
       }

@@ -17,6 +17,7 @@ const route: ConnectorRouteRecord = {projectId: id(1), bindingId: id(2),
 function fixture(total = 2, alreadyClaimed = false) {
   let current = route, qualified = true, enabled = true, write = true;
   let claimed = alreadyClaimed, decision: string | null = null, nextPending = false, nextClaimed = false;
+  let decisionRowPatch: Record<string, unknown> = {};
   const calls: string[] = [], admissions: ConnectorTrustedAdmission[] = [], errors: unknown[] = [];
   const saved = new Map<number, ConnectorMessageLink>();
   let failAdmission = false, failEvents = false;
@@ -29,7 +30,8 @@ function fixture(total = 2, alreadyClaimed = false) {
       owner: "owner", epoch: 7, control: "active", owner_session_ref: null}};
     if (method === "inbox_status") return {...common, state: "ok", result: {conversation_id: conversationId,
       owner: "owner", epoch: 7, deliveries: [{delivery_id: 12, owner: "owner", epoch: 7,
-        cursor_start: 2, cursor_end: total + 1, status: decision ?? (claimed ? "claimed" : "pending")},
+        cursor_start: 2, cursor_end: total + 1, status: decision ?? (claimed ? "claimed" : "pending"),
+        ...(decision ? decisionRowPatch : {})},
       ...(nextPending ? [{delivery_id: 13, owner: "owner", epoch: 7, cursor_start: total + 2,
         cursor_end: total + 2, status: nextClaimed ? "claimed" : "pending"}] : [])]}};
     if (method === "inbox_claim") {
@@ -81,6 +83,7 @@ function fixture(total = 2, alreadyClaimed = false) {
     setEnabled: (value: boolean) => { enabled = value; },
     setWrite: (value: boolean) => { write = value; },
     setDecision: (value: string) => { decision = value; },
+    setDecisionRowPatch: (value: Record<string, unknown>) => { decisionRowPatch = value; },
     setNextPending: () => { nextPending = true; },
     setOnCall: (callback: (method: string) => void) => { onCall = callback; },
     failAdmission: () => { failAdmission = true; }, failEvents: () => { failEvents = true; },
@@ -157,6 +160,22 @@ test("an explicit decision on the original unknown delivery releases only a late
   assert.deepEqual(f.admissions.map(value => value.source.deliveryId), [13]);
   await f.pump.tick();
   assert.equal(f.calls.filter(method => method === "inbox_claim").length, 2);
+});
+
+test("a terminal row with changed source identity cannot release an unknown claim", async () => {
+  for (const changed of [{owner: "other"}, {epoch: 8}, {cursor_start: 3}, {cursor_end: 4}]) {
+    const f = fixture();
+    f.failEvents();
+    await f.pump.tick();
+    f.restoreEvents();
+    f.setDecision("skipped");
+    f.setDecisionRowPatch(changed);
+    f.setNextPending();
+    await f.pump.tick();
+    await f.pump.tick();
+    assert.equal(f.calls.filter(method => method === "inbox_claim").length, 1,
+      `changed ${Object.keys(changed)[0]} must retain the original uncertainty`);
+  }
 });
 
 test("large frozen delivery advances across bounded pages and ticks without another claim", async () => {
