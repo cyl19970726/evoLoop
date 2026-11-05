@@ -334,6 +334,12 @@ test('preflight is side-effect-free for missing or exhausted grants and dispatch
   await assert.rejects(()=>guarded.preflightDispatch(projectId,second.id),/grant is exhausted/);
   assert.equal((await guarded.detail(projectId,second.id)).message.state,'queued');
   assert.equal((await guarded.detail(projectId,second.id)).processing,null);
+  current={...grant,senderActorId:sender,maxTurns:200};
+  await guarded.preflightDispatch(projectId,second.id);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),1,
+    'raising the explicit grant keeps the prior consumed turn');
+  current={...grant,senderActorId:sender,maxTurns:1};
+  await assert.rejects(()=>guarded.preflightDispatch(projectId,second.id),/grant is exhausted/);
   await uow.transaction(projectId,tx=>applySessionMessage(tx,
     {actorId:sender,projectIds:[projectId],permissions:['write']},
     {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:second.id,
