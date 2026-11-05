@@ -334,10 +334,60 @@ test('preflight is side-effect-free for missing or exhausted grants and dispatch
   await assert.rejects(()=>guarded.preflightDispatch(projectId,second.id),/grant is exhausted/);
   assert.equal((await guarded.detail(projectId,second.id)).message.state,'queued');
   assert.equal((await guarded.detail(projectId,second.id)).processing,null);
+  current={...grant,senderActorId:sender,maxTurns:200};
+  await guarded.preflightDispatch(projectId,second.id);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),1,
+    'raising the explicit grant keeps the prior consumed turn');
+  current={...grant,senderActorId:sender,maxTurns:1};
+  await assert.rejects(()=>guarded.preflightDispatch(projectId,second.id),/grant is exhausted/);
   await uow.transaction(projectId,tx=>applySessionMessage(tx,
     {actorId:sender,projectIds:[projectId],permissions:['write']},
     {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:second.id,
       expectedVersion:1,reason:'End isolated grant test'},now));
+});
+
+test('raising one ordinary message grant from 100 to 200 preserves all billed turns',async()=>{
+  const sender=`budget-${randomUUID()}`;
+  let current={...grant,senderActorId:sender,maxTurns:100};
+  const guarded=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>current});
+  // Seed completed historical records in the same project, Session and sender;
+  // no native model is needed to test the durable quota count.
+  async function seedBilled(count:number):Promise<void>{
+    const result=await pool.query(`WITH messages AS (
+      INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,link_id,
+        sender_actor_id,content,context_task_id,context_task_revision_id,reply_to_message_id,
+        state,version,created_at,updated_at)
+      SELECT $1,gen_random_uuid(),gen_random_uuid(),'owned',$2,NULL,$3,'Prior reply',NULL,NULL,NULL,
+        'replied',2,$4::timestamptz,$4::timestamptz FROM generate_series(1,$5::integer)
+      RETURNING message_id
+    ) INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,
+      receiver_actor_id,state,native_turn_id,response,failure,read_only_policy_fingerprint,version,started_at,updated_at)
+      SELECT $1,gen_random_uuid(),message_id,$2,gen_random_uuid(),'receiver','completed',message_id::text,
+        'Prior reply',NULL,$6,3,$4::timestamptz,$4::timestamptz FROM messages`,
+      [projectId,sessionId,sender,now,count,qualified]);
+    assert.equal(result.rowCount,count);
+  }
+  await seedBilled(100);
+  const next={...item(),senderActorId:sender};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(next));
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),100);
+  await assert.rejects(()=>guarded.preflightDispatch(projectId,next.id),/grant is exhausted/);
+  current={...current,maxTurns:200};
+  await guarded.preflightDispatch(projectId,next.id);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),100);
+  await guarded.beginDispatch(projectId,next.id,randomUUID(),randomUUID(),qualified);
+  await guarded.bindTurn(projectId,next.id,{id:`budget-turn-${next.id}`,status:'inProgress'});
+  await guarded.settle(projectId,next.id,{id:`budget-turn-${next.id}`,status:'completed',completedAtUtc:now},null);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),101);
+  await seedBilled(99);
+  const exhausted={...item(),senderActorId:sender};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(exhausted));
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),200);
+  await assert.rejects(()=>guarded.preflightDispatch(projectId,exhausted.id),/grant is exhausted/);
+  await assert.rejects(()=>guarded.beginDispatch(projectId,exhausted.id,randomUUID(),randomUUID(),qualified),
+    /grant is exhausted/);
+  assert.equal((await guarded.detail(projectId,exhausted.id)).processing,null);
 });
 
 test('pending scanning can pass the old ten-thousand offset while each page stays bounded',async()=>{
