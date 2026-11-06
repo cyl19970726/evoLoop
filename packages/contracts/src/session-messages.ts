@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sessionTargetSchema, type SessionTarget } from "./session-work.js";
+import type { PreTurnProof } from "./runtime.js";
 
 const id = z.uuid();
 const note = z.string().trim().min(1).max(4000);
@@ -48,6 +49,7 @@ export interface SessionMessageProcessing {
   failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
   /** Fixed by the same transaction as the original processing's native-start permit. */
   nativeEnvironmentEpoch?: number | null;
+  preTurnProof?: PreTurnProof | null;
   /** Durable one-shot request. An attempted native interrupt is never replayed after a lost response. */
   interruptOperationId?: string | null; interruptActorId?: string | null;
   interruptReason?: string | null; interruptRequestedAt?: string | null; interruptAttemptedAt?: string | null;

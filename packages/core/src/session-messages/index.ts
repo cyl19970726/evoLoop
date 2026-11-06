@@ -1,8 +1,9 @@
 import type { AppliedResult, Principal } from "@evoloop/contracts";
 import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
-import type { RuntimeTurn, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
+import { priorReviewDecision, reviewIntentJson } from "../runtime/pre-turn-review.js";
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -232,20 +233,106 @@ export class SessionMessageService {
       const store=tx.sessionMessages!;const p=required(await store.getSessionMessageProcessing(messageId),'processing');
       if(!['dispatching','unknown'].includes(p.state)||!turn.id)throw new DomainError('PROCESSING_STATE','message cannot bind Turn');
       if(p.nativeTurnId&&p.nativeTurnId!==turn.id)throw new DomainError('TURN_CONFLICT','message already bound to another Turn');
-      await store.updateSessionMessageProcessing({...p,state:'running',nativeTurnId:turn.id,version:p.version+1,updatedAt:this.deps.clock.now()},p.version);
+      await store.updateSessionMessageProcessing({...p,state:'running',nativeTurnId:turn.id,
+        preTurnProof:p.preTurnProof?{...p.preTurnProof,status:'consumed'}:null,
+        version:p.version+1,updatedAt:this.deps.clock.now()},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
       if(m.state==='unknown')await store.updateSessionMessage({...m,state:'processing',version:m.version+1,updatedAt:this.deps.clock.now()},m.version);
     });
   }
-  async markUnknown(projectId:string,messageId:string,reason:string):Promise<void>{
+  async markUnknown(projectId:string,messageId:string,reason:string,
+    writerProof?:Pick<PreTurnProof,'threadId'|'operationId'|'requestId'|'code'|'inputHash'>):Promise<void>{
     await this.deps.uow.transaction(projectId,async tx=>{
       const store=tx.sessionMessages!;const p=required(await store.getSessionMessageProcessing(messageId),'processing');
       if(['completed','failed'].includes(p.state))return;
       const m=required(await store.getSessionMessage(messageId),'message');
-      if(p.state==='unknown'&&p.failure===reason&&m.state==='unknown')return;
+      if(writerProof){
+        const session=required(await tx.getRuntimeSession(p.sessionId),'Session');
+        if(writerProof.threadId!==session.nativeThreadId||writerProof.operationId!==p.operationId||
+          writerProof.code!==-32600||!Number.isSafeInteger(writerProof.requestId)||writerProof.requestId<1||
+          p.nativeTurnId||!(p.state==='dispatching'||p.state==='unknown'&&p.preTurnProof?.status==='attempting'))
+          throw new DomainError('PRE_TURN_PROOF_INVALID','writer refusal does not match original message processing');
+      }
+      if(p.state==='unknown'&&p.failure===reason&&m.state==='unknown'&&!writerProof&&p.preTurnProof?.status!=='attempting')return;
       const now=this.deps.clock.now();
-      await store.updateSessionMessageProcessing({...p,state:'unknown',failure:reason.slice(0,4000),version:p.version+1,updatedAt:now},p.version);
+      const preTurnProof:PreTurnProof|null=writerProof?preTurnProofSchema.parse({...writerProof,
+        observedAtUtc:now,status:'observed',decisionOperationId:null,reviewerActorId:null,evidenceRef:null}):
+        p.preTurnProof?.status==='attempting'?{...p.preTurnProof,status:'consumed'}:p.preTurnProof??null;
+      await store.updateSessionMessageProcessing({...p,state:'unknown',failure:reason.slice(0,4000),preTurnProof,
+        version:p.version+1,updatedAt:now},p.version);
       if(m.state!=='unknown')await store.updateSessionMessage({...m,state:'unknown',version:m.version+1,updatedAt:now},m.version);
+    });
+  }
+  async approvePreTurnContinuation(projectId:string,messageId:string,principal:Principal,
+    command:{operationId:string;sessionId:string;originalOperationId:string;expectedVersion:number;
+      expectedMessageVersion:number;expectedGateVersion:number;evidenceRef:string;reason:string}):Promise<SessionMessageProcessing>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+      throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
+    return this.deps.uow.transaction(projectId,async tx=>{
+      const intentJson=reviewIntentJson(principal.actorId,'message',messageId,command);
+      const prior=await priorReviewDecision<SessionMessageProcessing>(tx,command.operationId,
+        principal.actorId,'message',messageId,intentJson);
+      if(prior)return prior;
+      const store=required(tx.sessionMessages??null,'message store');
+      const message=required(await store.getSessionMessage(messageId),'message');
+      const processing=required(await store.getSessionMessageProcessing(messageId),'processing');
+      const session=required(await tx.getRuntimeSession(processing.sessionId),'Session');
+      const gate=required(await tx.recovery?.lockRecoveryGate(session.id)??null,'recovery gate');
+      const proof=processing.preTurnProof;
+      const grant=await this.deps.grantFor(message,session);
+      if(message.version!==command.expectedMessageVersion||processing.version!==command.expectedVersion||
+        message.state!=='unknown'||processing.state!=='unknown'||processing.nativeTurnId||
+        processing.sessionId!==command.sessionId||processing.operationId!==command.originalOperationId||
+        message.target.kind!=='owned'||message.target.sessionId!==session.id||
+        !proof||proof.status!=='observed'||proof.threadId!==session.nativeThreadId||proof.operationId!==processing.operationId||
+        gate.version!==command.expectedGateVersion||gate.phase!=='blocked'||gate.causeKind!=='message'||gate.causeId!==message.id||
+        session.state!=='ready'||session.executionProfile?.activationState!=='active'||
+        !grant?.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||grant.cwd!==session.cwd||
+        grant.receiverActorId!==processing.receiverActorId||grant.senderActorId!==message.senderActorId)
+        throw new DomainError('PRE_TURN_CONTINUATION_CHANGED','original refusal, grant, profile or gate changed');
+      const next={...processing,version:processing.version+1,updatedAt:this.deps.clock.now(),
+        preTurnProof:preTurnProofSchema.parse({...proof,status:'approved',decisionOperationId:command.operationId,
+          reviewerActorId:principal.actorId,evidenceRef:command.evidenceRef,
+          decisionReason:command.reason,gateVersionAtApproval:gate.version})};
+      await tx.appendRuntimeEvent({projectId,id:this.deps.ids.next(),runId:null,sessionId:session.id,
+        kind:'message.preTurnReviewed',detail:JSON.stringify({messageId:message.id,
+          decisionOperationId:command.operationId,originalOperationId:processing.operationId,
+          requestId:proof.requestId,observedAtUtc:proof.observedAtUtc,
+          evidenceRef:command.evidenceRef,reason:command.reason}),
+        nativeTurnId:null,cursor:null,itemsDigest:null,actorId:principal.actorId,createdAt:this.deps.clock.now()});
+      await store.updateSessionMessageProcessing(next,processing.version);
+      await tx.insertPreTurnReviewDecision({operationId:command.operationId,actorId:principal.actorId,
+        kind:'message',subjectId:messageId,intentJson,result:next});
+      return next;
+    });
+  }
+  async readPreTurnContinuationDecision(projectId:string,messageId:string,principal:Principal,
+    command:Parameters<SessionMessageService['approvePreTurnContinuation']>[3]):Promise<SessionMessageProcessing|null>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+      throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
+    return this.deps.uow.read(projectId,reader=>priorReviewDecision<SessionMessageProcessing>(reader,
+      command.operationId,principal.actorId,'message',messageId,
+      reviewIntentJson(principal.actorId,'message',messageId,command)));
+  }
+  async claimPreTurnContinuation(projectId:string,messageId:string):Promise<SessionMessageProcessing|null>{
+    return this.deps.uow.transaction(projectId,async tx=>{
+      const store=required(tx.sessionMessages??null,'message store');
+      const p=required(await store.getSessionMessageProcessing(messageId),'processing');
+      if(p.state!=='unknown'||p.preTurnProof?.status!=='approved'||p.nativeTurnId)return null;
+      const message=required(await store.getSessionMessage(messageId),'message');
+      const session=required(await tx.getRuntimeSession(p.sessionId),'Session');
+      const gate=required(await tx.recovery?.lockRecoveryGate(session.id)??null,'recovery gate');
+      const grant=await this.deps.grantFor(message,session);
+      if(message.state!=='unknown'||gate.phase!=='blocked'||gate.causeKind!=='message'||gate.causeId!==message.id||
+        gate.version!==p.preTurnProof.gateVersionAtApproval||
+        session.state!=='ready'||session.nativeThreadId!==p.preTurnProof.threadId||
+        session.executionProfile?.activationState!=='active'||!grant?.enabled||grant.projectId!==projectId||
+        grant.cwd!==session.cwd||grant.receiverActorId!==p.receiverActorId||
+        grant.senderActorId!==message.senderActorId||grant.sessionId!==session.id)return null;
+      const next={...p,version:p.version+1,updatedAt:this.deps.clock.now(),
+        preTurnProof:preTurnProofSchema.parse({...p.preTurnProof,status:'attempting'})};
+      await store.updateSessionMessageProcessing(next,p.version);
+      return next;
     });
   }
   /** An explicit native rejection or pre-turn policy drift proves no Turn was accepted. */

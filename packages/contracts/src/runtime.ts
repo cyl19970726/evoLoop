@@ -5,6 +5,25 @@ import type { NativeInputEvent } from "./native-input.js";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "./session-timeline.js";
 
 export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000), turnCursor: z.string().min(1).max(2048).optional() });
+export const preTurnContinueSchema = z.strictObject({
+  operationId: z.uuid(), sessionId: z.uuid(), originalOperationId: z.uuid(),
+  expectedVersion: z.number().int().positive(), expectedGateVersion: z.number().int().positive(),
+  evidenceRef: z.string().trim().min(1).max(4000), reason: z.string().trim().min(1).max(4000),
+});
+export const messagePreTurnContinueSchema = preTurnContinueSchema.extend({
+  expectedMessageVersion: z.number().int().positive(),
+});
+export const preTurnProofSchema = z.strictObject({
+  threadId: z.uuid(), operationId: z.uuid(), requestId: z.number().int().positive(),
+  code: z.literal(-32600), inputHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  observedAtUtc: z.string().datetime({ offset: true }),
+  status: z.enum(["observed", "approved", "attempting", "consumed"]),
+  decisionOperationId: z.uuid().nullable(), reviewerActorId: z.string().min(1).max(240).nullable(),
+  evidenceRef: z.string().min(1).max(4000).nullable(),
+  decisionReason: z.string().min(1).max(4000).nullable().optional(),
+  gateVersionAtApproval: z.number().int().positive().optional(),
+});
+export type PreTurnProof = z.infer<typeof preTurnProofSchema>;
 
 const id = z.uuid();
 const text = z.string().trim().min(1).max(4000);
@@ -49,6 +68,8 @@ export interface RuntimeRunRecord {
   evaluationPacket?: EvaluationPacketBinding | null;
   /** Immutable configured launch profile; this is not provider-reported actual model telemetry. */
   executionProfile?: ExecutionProfileSnapshot | null;
+  /** Exact native pre-turn refusal and one-shot reviewed continuation for this original operation. */
+  preTurnProof?: PreTurnProof | null;
 }
 /** Trusted caller proof that thread/resume explicitly failed before any turn/start call. */
 export interface NativeResumeRejection {
@@ -67,13 +88,28 @@ export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.preflightRejected" | "run.dispatchRejected" | "run.bound" | "run.status" | "run.unknown" |
-    "run.reviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" |
+    "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
-    "runtime.approvalDeclined" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
+    "runtime.approvalDeclined" | "native.childDiagnostic" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
   detail: string; nativeTurnId: string | null; cursor: string | null; itemsDigest: string | null;
   actorId: string; createdAt: string;
 }
+
+/** Only bounded transport facts may cross the native child diagnostic boundary. */
+const nativeDiagnosticUtc = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value);
+const nativeStopReason = z.enum(["adapter_closed", "stdout_closed", "process_exited", "spawn_error", "protocol_error"]);
+export const nativeChildDiagnosticSchema = z.strictObject({
+  startId: z.uuid(), pid: z.number().int().positive().refine(Number.isSafeInteger).nullable(),
+  startedAtUtc: nativeDiagnosticUtc, observedAtUtc: nativeDiagnosticUtc,
+  firstLossAtUtc: nativeDiagnosticUtc, firstLossReason: nativeStopReason,
+  stopReason: nativeStopReason, exitObserved: z.boolean(), exitedAtUtc: nativeDiagnosticUtc.nullable(),
+  exitCode: z.number().int().nonnegative().refine(Number.isSafeInteger).nullable(),
+  exitSignal: z.string().regex(/^SIG[A-Z0-9]{1,20}$/).nullable(), nativeTurnOutcome: z.literal("unknown"),
+}).refine(value => value.exitObserved ? value.exitedAtUtc !== null :
+  value.exitedAtUtc === null && value.exitCode === null && value.exitSignal === null);
+export type NativeChildDiagnosticRecord = z.infer<typeof nativeChildDiagnosticSchema>;
 
 /** A runtime session is a project-owned binding, never an arbitrary native thread ID. */
 export interface RuntimeBinding {

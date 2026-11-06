@@ -122,8 +122,12 @@ export class RuntimeUnknownError extends Error {
 export class RuntimeProtocolError extends Error {
   constructor(message: string) { super(message); this.name = "RuntimeProtocolError"; }
 }
-export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "invalid_params" | "method_not_found" | "permission_denied" | "server_rejected";
-const serverErrorCategory = (code: number, message: string): RuntimeServerErrorCategory => {
+export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "writer_conflict" | "invalid_params" | "method_not_found" | "permission_denied" | "server_rejected";
+const serverErrorCategory = (method: string, code: number, message: string): RuntimeServerErrorCategory => {
+  // The pinned native writer-lock rejection occurs before this resume can start a Turn.
+  if (method === 'thread/resume' && code === -32600 &&
+    /^thread [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} already has an active writer$/.test(message))
+    return "writer_conflict";
   if (/rollout.{0,60}not found|not found.{0,60}rollout|no rollout found/i.test(message)) return "rollout_not_found";
   if (/permission|unauthorized|forbidden/i.test(message)) return "permission_denied";
   if (/thread.{0,60}(read|load)|(read|load).{0,60}thread/i.test(message)) return "thread_unavailable";
@@ -134,12 +138,34 @@ const serverErrorCategory = (code: number, message: string): RuntimeServerErrorC
 /** Stable protocol evidence only. The native error message can contain private paths or session material. */
 export class RuntimeServerError extends RuntimeProtocolError {
   readonly category: RuntimeServerErrorCategory;
-  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string) {
-    const category = serverErrorCategory(code, nativeMessage);
+  readonly preTurnWriterConflict: boolean;
+  readonly rejectedThreadId: string | null;
+  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string, requestedThreadId?: string) {
+    const category = serverErrorCategory(method, code, nativeMessage);
     super(`${method}: App Server rejected request (${category}, code ${code})`);
     this.name = "RuntimeServerError";
     this.category = category;
+    const rejectedThreadId = category === 'writer_conflict' ? nativeMessage.match(/^thread ([0-9a-f-]{36}) already has an active writer$/)?.[1] ?? null : null;
+    this.rejectedThreadId = rejectedThreadId ?? null;
+    this.preTurnWriterConflict = category === 'writer_conflict' && rejectedThreadId === requestedThreadId;
   }
+}
+
+export type NativeChildStopReason = 'adapter_closed' | 'stdout_closed' | 'process_exited' | 'spawn_error' | 'protocol_error';
+/** Transport loss and child exit are separate observations. Neither proves a native Turn result. */
+export interface NativeChildDiagnostic {
+  startId: string;
+  pid: number | null;
+  startedAtUtc: string;
+  observedAtUtc: string;
+  firstLossAtUtc: string;
+  firstLossReason: NativeChildStopReason;
+  stopReason: NativeChildStopReason;
+  exitObserved: boolean;
+  exitedAtUtc: string | null;
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  nativeTurnOutcome: 'unknown';
 }
 
 export interface CodexAppServerOptions {
@@ -181,7 +207,8 @@ export interface DynamicToolSpec { type: "function"; name: string; description: 
 export interface DynamicToolCall { threadId: string; turnId: string; callId: string; tool: string; arguments: Record<string, unknown>; signal?: AbortSignal }
 export interface DynamicToolResult { contentItems: ({type:"inputText";text:string}|{type:"inputImage";imageUrl:string})[]; success: boolean }
 
-interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+interface Pending { method: string; threadId: string | null; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+const MAX_CHILD_DIAGNOSTICS = 16;
 type ModelListResult = {status:"available"|"empty"|"unavailable";models:string[];
   options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
   error:string|null;observedAtUtc:string};
@@ -248,6 +275,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   /** Ephemeral thread/start proof; never reconstructed from a persisted binding or history. */
   private freshThreads = new Map<string,{connectionId:string;binding:RuntimeBinding;config:string;tools:string;claimed:boolean}>();
   private fullTurnAttempts = new Map<string,Set<string>>();
+  private conversationTurnInFlight = new Set<string>();
   private seenToolCalls = new Set<string>();
   private disconnects = new Set<(reason: string) => void>();
   private nativeInputListeners = new Set<(event:NativeInputEvent)=>void|Promise<void>>();
@@ -255,6 +283,11 @@ export class CodexAppServerAdapter implements RuntimePort {
   private nativeRequestHandles = new Map<string,string>();
   private seenNativeRequestIds = new Set<string>();
   private connectionId: string | null = null;
+  private childStartedAtUtc: string | null = null;
+  private childDiagnostics: NativeChildDiagnostic[] = [];
+  private childDiagnosticListeners = new Set<(diagnostic:NativeChildDiagnostic)=>void|Promise<void>>();
+  private diagnosticDelivery:Promise<void> = Promise.resolve();
+  private diagnosticDeliveryFailed = false;
   private experimental = false;
   private closed = false;
   private ready = false;
@@ -290,6 +323,36 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
   isReady(): boolean { return this.ready && !!this.child; }
   hasProcessHandle():boolean{return this.ownedProcess!==null;}
+  /** Last loss of the owned native connection, retained after close or a later open. */
+  lastChildDiagnostic(): NativeChildDiagnostic | null {
+    const last=this.childDiagnostics.at(-1);
+    return last ? {...last} : null;
+  }
+  /** Bounded newest-first history for an owner status projection. */
+  listChildDiagnostics(): NativeChildDiagnostic[] {
+    return this.childDiagnostics.toReversed().map(entry=>({...entry}));
+  }
+  /** Receives first loss and confirmed exit as ordered snapshots of the same startId. */
+  onChildDiagnostic(listener:(diagnostic:NativeChildDiagnostic)=>void|Promise<void>):()=>void{
+    this.childDiagnosticListeners.add(listener);
+    return ()=>this.childDiagnosticListeners.delete(listener);
+  }
+  /** A caller can await this before claiming that its diagnostic observer persisted the snapshots. */
+  async flushChildDiagnostics():Promise<void>{
+    await this.diagnosticDelivery;
+    if(this.diagnosticDeliveryFailed)
+      throw new RuntimeUnknownError('child-diagnostic',null,'diagnostic observer failed');
+  }
+  private emitChildDiagnostic(diagnostic:NativeChildDiagnostic):void{
+    const snapshot={...diagnostic};
+    const listeners=[...this.childDiagnosticListeners];
+    this.diagnosticDelivery=this.diagnosticDelivery.then(async()=>{
+      for(const listener of listeners){
+        try{await listener({...snapshot});}
+        catch{this.diagnosticDeliveryFailed=true;}
+      }
+    });
+  }
   nativeInputConnectionId():string|null{return this.isReady()?this.connectionId:null;}
   onNativeInput(listener:(event:NativeInputEvent)=>void|Promise<void>):()=>void{
     this.nativeInputListeners.add(listener);
@@ -417,6 +480,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     });
     this.child = child;
     this.connectionId=randomUUID();
+    this.childStartedAtUtc=new Date().toISOString();
+    const startId=this.connectionId;
     this.seenNativeRequestIds.clear();
     this.ownedProcess=child;
     this.processExit=new Promise<void>(resolveExit=>{
@@ -424,17 +489,26 @@ export class CodexAppServerAdapter implements RuntimePort {
       child.once('error',()=>{if(!child.pid)resolveExit();});
     });
     child.stderr.resume(); // Do not persist stderr: it may contain private paths or content.
-    child.on("error", error => {if(this.child===child)this.disconnect(error.message);});
+    child.on("error", () => {if(this.child===child)this.disconnect('child process error','spawn_error');});
     child.on("exit", (code, signal) => {
       if(Number.isSafeInteger(child.pid)&&this.options.onExited){
         this.exitDelivery=Promise.resolve().then(()=>this.options.onExited!({pid:child.pid!,code,signal}));
         void this.exitDelivery.catch(()=>undefined);
       }
-      if(this.child===child)this.disconnect(`process exited (${code ?? signal ?? "unknown"})`);
+      if(this.child===child)this.disconnect(`process exited (${code ?? signal ?? "unknown"})`,'process_exited');
+      const diagnostic=this.childDiagnostics.find(entry=>entry.startId===startId);
+      if(diagnostic){
+        diagnostic.stopReason=diagnostic.firstLossReason==='adapter_closed'?'adapter_closed':'process_exited';
+        diagnostic.exitObserved=true;
+        diagnostic.exitedAtUtc=new Date().toISOString();
+        diagnostic.exitCode=code;
+        diagnostic.exitSignal=signal;
+        this.emitChildDiagnostic(diagnostic);
+      }
     });
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on("line", line => this.receive(line));
-    lines.on("close", () => {if(this.child===child)this.disconnect("stdout closed");});
+    lines.on("close", () => {if(this.child===child)this.disconnect("stdout closed",'stdout_closed');});
     try {
       const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" },
         ...(this.experimental ?
@@ -491,7 +565,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, "response timeout"));
       }, timeoutMs);
-      this.pending.set(id, { method, resolve: value => {
+      this.pending.set(id, { method, threadId: nonempty(threadId) ? threadId : null, resolve: value => {
         const result=object(value),thread=object(result?.thread);
         const saved=nonempty(threadId)?this.bindings.get(threadId):undefined;
         // notLoaded and missing rollout are legal zero-Turn read observations.
@@ -547,7 +621,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const error = object(message.error);
       const code = typeof error?.code === "number" && Number.isInteger(error.code) ? error.code : -32000;
       const nativeMessage = typeof error?.message === "string" ? error.message : "";
-      pending.reject(new RuntimeServerError(pending.method, message.id, code, nativeMessage));
+      pending.reject(new RuntimeServerError(pending.method, message.id, code, nativeMessage, pending.threadId ?? undefined));
     }
     else if ("result" in message) pending.resolve(message.result);
     else { pending.reject(new RuntimeProtocolError(`${pending.method}: response lacks result`)); this.disconnect("malformed response"); }
@@ -721,8 +795,18 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.send({ id, result: { decision: legacy ? decision === "accept" ? "approved" : "denied" : decision } });
   }
 
-  private disconnect(reason: string): void {
+  private disconnect(reason: string, stopReason: NativeChildStopReason = 'protocol_error'): void {
     const wasConnected = this.ready || !!this.child;
+    if(this.child&&this.connectionId&&this.childStartedAtUtc){
+      const observedAtUtc=new Date().toISOString();
+      this.childDiagnostics.push({startId:this.connectionId,
+        pid:Number.isSafeInteger(this.child.pid)?this.child.pid!:null,
+        startedAtUtc:this.childStartedAtUtc,observedAtUtc,firstLossAtUtc:observedAtUtc,
+        firstLossReason:stopReason,stopReason,exitObserved:false,exitedAtUtc:null,
+        exitCode:null,exitSignal:null,nativeTurnOutcome:'unknown'});
+      if(this.childDiagnostics.length>MAX_CHILD_DIAGNOSTICS)this.childDiagnostics.shift();
+      this.emitChildDiagnostic(this.childDiagnostics.at(-1)!);
+    }
     if(wasConnected)for(const binding of this.bindings.values()){
       const update:WorkspaceRuntimeUpdate={kind:'reset',projectId:binding.projectId,sessionId:binding.sessionId,
         threadId:binding.nativeThreadId,turnId:null,observedAt:new Date().toISOString(),reason:'owner connection changed'};
@@ -1139,40 +1223,54 @@ export class CodexAppServerAdapter implements RuntimePort {
     const prior=this.conversationQualifications.get(binding.nativeThreadId);
     if(!prior||Date.now()-prior.observedAt>5000)
       throw new RuntimeProtocolError('ordinary Turn requires fresh owned full-profile admission');
-    const attempts=this.fullTurnAttempts.get(binding.nativeThreadId)??new Set<string>();
-    if(attempts.has(operationId))throw new RuntimeProtocolError('original ordinary Turn operation cannot be replayed');
-    const rechecked=await this.qualifyConversationThread(binding);
-    if(!rechecked.available||rechecked.fingerprint!==prior.fingerprint)
-      throw new RuntimeProtocolError('owned full-profile Thread changed before ordinary Turn');
-    this.conversationQualifications.delete(binding.nativeThreadId);
-    attempts.add(operationId);this.fullTurnAttempts.set(binding.nativeThreadId,attempts);
-    const profile=binding.resumeProfile;
-    const resumed=await this.resumeBinding(binding,{
-      actorId:profile.actorId,sessionId:binding.sessionId,roleId:binding.roleId,
-      projectId:binding.projectId,cwd:binding.cwd,authorizationScope:binding.authorizationScope,
-      ...(profile.model?{model:profile.model}:{}),sandbox:FULL_SANDBOX,approvalPolicy:'never',
-      reasoningEffort:profile.reasoningEffort??null,
-      ...(profile.executionProfileRevisionId?{executionProfileRevisionId:profile.executionProfileRevisionId}:{}),
-    });
-    if(prior.status==='systemError'){
-      // Pinned App Server reattaches a loaded failed Thread without clearing
-      // systemError. Its next turn/start clears that flag. Recheck the exact
-      // failed Turn and profile after resume, before the one native start.
-      const afterResume=await this.qualifyConversationThread(binding);
-      if(!afterResume.available||afterResume.fingerprint!==prior.fingerprint)
-        throw new RuntimeUnknownError('thread/resume',null,'owned failed Thread changed after exact full resume');
-      this.conversationQualifications.delete(binding.nativeThreadId);
-    }else if(!await this.nativeThreadIdle(binding,resumed.usedStartProof,prior.model??undefined))
-      throw new RuntimeUnknownError('thread/resume',null,'owned Thread did not become idle after exact full resume');
-    const started=object(await this.request('turn/start',{
-      threadId:binding.nativeThreadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
-      cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),
-      ...(profile.reasoningEffort?{effort:profile.reasoningEffort}:{}),
-      sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
-    }));
-    const turn=runtimeTurn(started?.turn);
-    if(!turn)throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
-    return turn;
+    const threadId=binding.nativeThreadId;
+    if(this.conversationTurnInFlight.has(threadId))
+      throw new RuntimeProtocolError('ordinary Turn start is already in flight on this Thread');
+    if(this.fullTurnAttempts.get(threadId)?.has(operationId))
+      throw new RuntimeProtocolError('original ordinary Turn operation cannot be replayed');
+    this.conversationTurnInFlight.add(threadId);
+    try{
+      const rechecked=await this.qualifyConversationThread(binding);
+      if(!rechecked.available||rechecked.fingerprint!==prior.fingerprint)
+        throw new RuntimeProtocolError('owned full-profile Thread changed before ordinary Turn');
+      this.conversationQualifications.delete(threadId);
+      const profile=binding.resumeProfile;
+      const resumed=await this.resumeBinding(binding,{
+        actorId:profile.actorId,sessionId:binding.sessionId,roleId:binding.roleId,
+        projectId:binding.projectId,cwd:binding.cwd,authorizationScope:binding.authorizationScope,
+        ...(profile.model?{model:profile.model}:{}),sandbox:FULL_SANDBOX,approvalPolicy:'never',
+        reasoningEffort:profile.reasoningEffort??null,
+        ...(profile.executionProfileRevisionId?{executionProfileRevisionId:profile.executionProfileRevisionId}:{}),
+      });
+      if(prior.status==='systemError'){
+        // Pinned App Server reattaches a loaded failed Thread without clearing
+        // systemError. Its next turn/start clears that flag. Recheck the exact
+        // failed Turn and profile after resume, before the one native start.
+        const afterResume=await this.qualifyConversationThread(binding);
+        if(!afterResume.available||afterResume.fingerprint!==prior.fingerprint)
+          throw new RuntimeUnknownError('thread/resume',null,'owned failed Thread changed after exact full resume');
+        this.conversationQualifications.delete(threadId);
+      }else if(!await this.nativeThreadIdle(binding,resumed.usedStartProof,prior.model??undefined))
+        throw new RuntimeUnknownError('thread/resume',null,'owned Thread did not become idle after exact full resume');
+      // Only the native start can consume this operation. Reserve immediately before
+      // sending; a lost acknowledgement must still prohibit replay.
+      const attempts=this.fullTurnAttempts.get(threadId)??new Set<string>();
+      if(attempts.has(operationId))throw new RuntimeProtocolError('original ordinary Turn operation cannot be replayed');
+      attempts.add(operationId);this.fullTurnAttempts.set(threadId,attempts);
+      const started=object(await this.request('turn/start',{
+        threadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
+        cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),
+        ...(profile.reasoningEffort?{effort:profile.reasoningEffort}:{}),
+        sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
+      }));
+      const turn=runtimeTurn(started?.turn);
+      if(!turn)throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
+      return turn;
+    }finally{
+      // A changed readback must not leave an implicit admission for another start.
+      this.conversationQualifications.delete(threadId);
+      this.conversationTurnInFlight.delete(threadId);
+    }
   }
 
   async inspect(binding: RuntimeBinding): Promise<unknown> {
@@ -1327,17 +1425,18 @@ export class CodexAppServerAdapter implements RuntimePort {
   async close(): Promise<void> {
     this.closed = true;
     const child = this.ownedProcess ?? this.child;
-    if (!child) return;
+    if (!child){await this.flushChildDiagnostics();return;}
     const exited = this.processExit ?? Promise.resolve();
     const waitExit = (): Promise<boolean> => new Promise(resolveWait => {
       const timer = setTimeout(() => resolveWait(false), 2_000);
       void exited.then(() => { clearTimeout(timer); resolveWait(true); });
     });
-    this.disconnect("adapter closed");
+    this.disconnect("adapter closed",'adapter_closed');
     if(!await waitExit()){
       child.kill('SIGKILL');
       if(!await waitExit())throw new RuntimeUnknownError('close',null,'child process did not exit');
     }
+    await this.flushChildDiagnostics();
     if(this.exitDelivery){
       try{await this.exitDelivery;}
       catch{throw new RuntimeUnknownError('close',null,'child exit receipt unavailable');}

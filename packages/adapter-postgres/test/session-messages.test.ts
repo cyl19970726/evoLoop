@@ -39,11 +39,11 @@ async function seedManualStopPreflight(messageId:string,processingId:string,targ
       '/private/test-preflight.json','a'.repeat(64)]);
   return preflightId;
 }
-async function seedFullSession(id:string):Promise<void>{
+async function seedFullSession(id:string,threadId=`thread-${id}`):Promise<void>{
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
     VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8)`,
-    [projectId,id,roleId,grant.cwd,'thread-'+id,'native-'+id,randomUUID(),now]);
+    [projectId,id,roleId,grant.cwd,threadId,'native-'+id,randomUUID(),now]);
 }
 async function reviewBlockedMessage(messageId:string,targetSessionId=sessionId):Promise<void>{
   await uow.transaction(projectId,async tx=>{
@@ -65,6 +65,72 @@ before(async()=>{
     state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
     VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8)`,
     [projectId,sessionId,roleId,grant.cwd,'thread-'+sessionId,'native-'+sessionId,randomUUID(),now]);
+});
+
+test('migrated message proof survives readback and grants one reviewed original processing continuation',async()=>{
+  const targetSessionId=randomUUID(),threadId=randomUUID();
+  await seedFullSession(targetSessionId,threadId);
+  const original={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(original));
+  const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,sessionId:targetSessionId})});
+  const processingId=randomUUID(),operationId=randomUUID();
+  await local.beginDispatch(projectId,original.id,processingId,operationId,qualified);
+  await local.markUnknown(projectId,original.id,'Exact native writer refusal',{
+    threadId,operationId,requestId:17,code:-32600,inputHash:'a'.repeat(64),
+  });
+  const before=await local.detail(projectId,original.id);
+  assert.equal(before.processing?.preTurnProof?.status,'observed');
+  await assert.rejects(pool.query(`UPDATE session_message_processing SET
+    pre_turn_proof=jsonb_set(pre_turn_proof,'{status}','"approved"'),version=version+1
+    WHERE project_id=$1 AND message_id=$2`,[projectId,original.id]),/blocked gate|durable review/);
+  const gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.phase,'blocked');
+  const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  await local.approvePreTurnContinuation(projectId,original.id,reviewer,{
+    operationId:randomUUID(),sessionId:targetSessionId,originalOperationId:operationId,
+    expectedVersion:before.processing!.version,expectedMessageVersion:before.message.version,
+    expectedGateVersion:gate!.version,evidenceRef:'fixture://writer-released',reason:'Same native Thread released',
+  });
+  const approved=await local.detail(projectId,original.id);
+  assert.equal(approved.processing?.id,processingId);
+  assert.equal(approved.processing?.preTurnProof?.decisionReason,'Same native Thread released');
+  const reviewEvents=await pool.query(`SELECT actor_id FROM runtime_record_event WHERE project_id=$1
+    AND session_id=$2 AND kind='message.preTurnReviewed'`,[projectId,targetSessionId]);
+  assert.deepEqual(reviewEvents.rows.map(row=>row.actor_id),['reviewer']);
+  const [a,b]=await Promise.all([
+    local.claimPreTurnContinuation(projectId,original.id),
+    local.claimPreTurnContinuation(projectId,original.id),
+  ]);
+  assert.equal([a,b].filter(Boolean).length,1);
+  await local.markUnknown(projectId,original.id,'Same Thread still had an external writer',{
+    threadId,operationId,requestId:18,code:-32600,inputHash:'a'.repeat(64),
+  });
+  const secondRefusal=await local.detail(projectId,original.id);
+  assert.equal(secondRefusal.processing?.preTurnProof?.status,'observed');
+  assert.equal(secondRefusal.processing?.preTurnProof?.requestId,18);
+  await assert.rejects(pool.query(`UPDATE session_message_processing SET
+    pre_turn_proof=$3::jsonb,version=version+1 WHERE project_id=$1 AND message_id=$2`,
+    [projectId,original.id,JSON.stringify({...secondRefusal.processing!.preTurnProof,
+      status:'approved',decisionOperationId:approved.processing!.preTurnProof!.decisionOperationId,
+      reviewerActorId:'reviewer',evidenceRef:'fixture://writer-released',
+      decisionReason:'Same native Thread released',gateVersionAtApproval:gate!.version})]),
+    /durable review/,'an earlier review cannot approve a later native refusal');
+  await local.approvePreTurnContinuation(projectId,original.id,reviewer,{
+    operationId:randomUUID(),sessionId:targetSessionId,originalOperationId:operationId,
+    expectedVersion:secondRefusal.processing!.version,expectedMessageVersion:secondRefusal.message.version,
+    expectedGateVersion:gate!.version,evidenceRef:'fixture://writer-finally-released',reason:'Second reviewed handoff',
+  });
+  assert.equal((await local.claimPreTurnContinuation(projectId,original.id))?.preTurnProof?.status,'attempting');
+  await local.bindTurn(projectId,original.id,{id:'original-message-turn',status:'inProgress'});
+  const resumed=await local.detail(projectId,original.id);
+  assert.equal(resumed.processing?.id,processingId);
+  assert.equal(resumed.processing?.operationId,operationId);
+  assert.equal(resumed.processing?.preTurnProof?.status,'consumed');
+  const allReviews=await pool.query(`SELECT detail::jsonb->>'evidenceRef' AS ref FROM runtime_record_event
+    WHERE project_id=$1 AND session_id=$2 AND kind='message.preTurnReviewed' ORDER BY sequence`,[projectId,targetSessionId]);
+  assert.deepEqual(allReviews.rows.map(row=>row.ref),['fixture://writer-released','fixture://writer-finally-released']);
+  assert.equal(await local.claimPreTurnContinuation(projectId,original.id),null);
 });
 after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();
   try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});

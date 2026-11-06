@@ -37,6 +37,7 @@ import type {
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
 import type { DeliveryIntent } from "@evoloop/contracts/orchestration";
 import { DomainError, type CognitiveClosureFact, type WaitingHandoffFact, type ChildHandoffFact, type Reader, type Transaction, type UnitOfWork } from "@evoloop/contracts/ports";
+import type { PreTurnReviewDecision } from "@evoloop/contracts/ports";
 
 const { Pool } = pg;
 export interface QueueAuthority {
@@ -114,6 +115,7 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 }
 
 class PgReader implements Reader {
+  getPreTurnReviewDecision(id:string){return this.runtime.getPreTurnReviewDecision(id);}
   readonly attention: PgTaskAttention;
   sessionObservation(scope: string) { return new PgSessionObservation(this.client, this.projectId, scope); }
   allocationRelations(scope: string) { return new PgAllocationRelations(this.client, this.projectId, scope); }
@@ -225,6 +227,7 @@ class PgReader implements Reader {
   listRuntimeRuns(taskId?: string) { return this.runtime.listRuntimeRuns(taskId); }
   listRuntimeEvents(runId: string) { return this.runtime.listRuntimeEvents(runId); }
   listRuntimeSessionEvents(sessionId: string) { return this.runtime.listRuntimeSessionEvents(sessionId); }
+  listRuntimeHostEvents(limit: number) { return this.runtime.listRuntimeHostEvents(limit); }
   async getGoal(id: string): Promise<Goal | null> {
     const r=await this.client.query("SELECT * FROM project_goal WHERE project_id=$1 AND goal_id=$2",[this.projectId,id]); return r.rows[0]?rowGoal(r.rows[0]):null;
   }
@@ -571,6 +574,7 @@ class PgReader implements Reader {
 }
 
 class PgTransaction extends PgReader implements Transaction {
+  insertPreTurnReviewDecision(value:PreTurnReviewDecision){return this.runtime.insertPreTurnReviewDecision(value);}
   async assertCoordinatorLeaseEpoch(nonce:string):Promise<void>{
     const row=await this.client.query<{nonce:string}>(
       'SELECT nonce FROM coordinator_lease_epoch WHERE singleton=true FOR SHARE');

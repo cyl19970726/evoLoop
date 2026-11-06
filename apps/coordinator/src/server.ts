@@ -25,7 +25,7 @@ import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
 import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
-import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
+import { runtimeReconcileSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
 import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
 import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
@@ -150,7 +150,8 @@ export async function buildServer(options: {
     return reply.code(503).send({ code: "RESULT_UNCONFIRMED", message: "暂时无法确认结果。写操作请保留原操作 ID 并查询记录。", requestId: request.id });
   });
   const who = (p: Principal | null) => { if (!p) throw new DomainError("FORBIDDEN", "未认证"); return p; };
-  const messageRecoverySession = async (principal:Principal,projectId:string,sessionId:string) => {
+  const messageRecoverySession = async (principal:Principal,projectId:string,sessionId:string,
+    allowInactive=false) => {
     if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review"))
       throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目复核权限。");
     const session = await options.service.getRuntimeSession(principal, projectId, sessionId);
@@ -159,7 +160,7 @@ export async function buildServer(options: {
       await options.hasRuntimeGrant?.({ projectId, actorId:principal.actorId, roleId:session.roleId,
         authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
         model:session.model,approvalPolicy:session.approvalPolicy });
-    if (session.state !== "ready" || !granted)
+    if ((!allowInactive && session.state !== "ready") || !granted)
       throw new DomainError("FORBIDDEN", "当前身份没有此原会话的精确执行恢复授权。");
     return session;
   };
@@ -548,6 +549,33 @@ export async function buildServer(options: {
     const p = params(request.params);
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用；已保存的运行状态仍可读取。");
     return options.runtime.result(who(request.principal), p.projectId!, p.id!);
+  });
+  app.post("/api/projects/:projectId/runtime/runs/:id/pre-turn-continue",async request=>{
+    const p=params(request.params),principal=who(request.principal);
+    const body=preTurnContinueSchema.parse(request.body);
+    const session=await options.service.getRuntimeSession(principal,p.projectId!,body.sessionId);
+    if(!principal.permissions.includes("review")||!principal.projectIds.includes(p.projectId!)||
+      !await options.hasRuntimeGrant?.({projectId:p.projectId!,actorId:principal.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
+        model:session.model,approvalPolicy:session.approvalPolicy}))
+      throw new DomainError("FORBIDDEN","exact Session execution review grant required");
+    const prior=await options.runtime?.readPreTurnContinuationDecision(p.projectId!,p.id!,principal,body);
+    if(prior)return prior;
+    if(!options.runtime?.nativeStartsAvailable())throw new DomainError("RUNTIME_UNAVAILABLE","native owner unavailable");
+    return options.runtime.approvePreTurnContinuation(p.projectId!,p.id!,principal,body);
+  });
+  app.post("/api/projects/:projectId/session-messages/:id/pre-turn-continue",async request=>{
+    const p=params(request.params),principal=who(request.principal);
+    const body=messagePreTurnContinueSchema.parse(request.body);
+    if(!options.sessionMessages)
+      throw new DomainError("RUNTIME_UNAVAILABLE","message service unavailable");
+    await messageRecoverySession(principal,p.projectId!,body.sessionId,true);
+    const prior=await options.sessionMessages.readPreTurnContinuationDecision(p.projectId!,p.id!,principal,body);
+    if(prior)return prior;
+    if(!options.runtime?.nativeStartsAvailable())
+      throw new DomainError("RUNTIME_UNAVAILABLE","native owner unavailable");
+    await messageRecoverySession(principal,p.projectId!,body.sessionId);
+    return options.sessionMessages.approvePreTurnContinuation(p.projectId!,p.id!,principal,body);
   });
   app.get("/api/projects/:projectId/runtime/runs/:id/trace", async request => {
     const p = params(request.params);

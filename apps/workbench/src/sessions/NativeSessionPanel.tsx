@@ -121,7 +121,7 @@ function NativeProgressCard({ progress, currentRead, waiting, taskHref }: {
     : turn?.status === "interrupted" ? "Turn 已中断"
     : waiting ? "等待回答"
     : progress.status === "active" && turn?.status === "inProgress" ? "运行中"
-    : progress.status === "idle" && turn?.status !== "inProgress" ? "当前空闲" : "状态待核对";
+    : progress.status === "idle" && turn?.status !== "inProgress" ? "原生活动空闲 · writer待核" : "状态待核对";
   const tool = fresh && progress.status === "active" && turn?.status === "inProgress"
     ? progress.items.filter(item => item.status === "inProgress").at(-1) ?? progress.items.at(-1)
     : progress.items.at(-1);
@@ -136,6 +136,7 @@ function NativeProgressCard({ progress, currentRead, waiting, taskHref }: {
   return <section className="native-progress-card">
     <div className="native-panel-heading"><div><span className="native-panel-kicker">原生事件的有界观察</span><h2>原生执行进度</h2></div><span className="native-panel-state">{stateLabel}</span></div>
     <p className="native-panel-context">最近事件 {date(progress.lastEventAt)} · 记录于 {date(progress.observedAt)} · {partial ? "仅展示最近有界范围" : "仅展示已观察到的事件"}</p>
+    {fresh && progress.status === "idle" && <p className="native-panel-warning">此处只确认原生会话当时没有活动 Turn；当前 Thread 的 writer 控制权仍待核对。</p>}
     {fresh && turn?.status === "inProgress" && <p className="native-panel-warning">原生宿主回报 Turn 进行中，连接与绑定仍匹配；最近事件时间单独列示，不能据此确认仍在有效推进，也不能仅凭无新事件判定失败。</p>}
     {!fresh && <p className="native-panel-warning">{!currentRead ? "当前工作区尚未重新读到进度。" : "原生连接的观察已过期。"}{staleReason ? ` 原因：${staleReason}。` : ""}以下是上次记录，不能代表当前仍在执行。</p>}
     {fresh && progress.status === "systemError" && <p className="native-panel-warning">原生状态报告异常；请结合固定 Run 和原生终态核对。</p>}
