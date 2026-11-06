@@ -1,6 +1,6 @@
 -- Existing candidate databases have already applied 055. Keep the immutable
 -- operation binding in its own migration so those databases upgrade safely.
-CREATE TABLE pre_turn_review_decision (
+CREATE TABLE IF NOT EXISTS pre_turn_review_decision (
   project_id uuid NOT NULL REFERENCES project(project_id),
   operation_id uuid NOT NULL,
   actor_id text NOT NULL,

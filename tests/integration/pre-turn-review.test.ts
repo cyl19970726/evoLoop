@@ -13,15 +13,23 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))throw Error('dedicated isolated database required');
 const schema=`qa_host_${randomUUID().replaceAll('-','').slice(0,12)}`;
 await migrate(url,schema);
-// Recreate a database that had already applied the old 055 before this fix.
+// An intermediate candidate had already created the table inside 055. Its
+// migration record is immutable, so 056 must also accept that layout.
 const upgrade=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
 await upgrade.connect();
 try{
   const applied=await upgrade.query("SELECT name FROM pgmigrations WHERE name IN ('055_pre_turn_continuation','056_pre_turn_review_decision')");
   assert.equal(applied.rowCount,2);
-  await upgrade.query('DROP TABLE pre_turn_review_decision');
   await upgrade.query("DELETE FROM pgmigrations WHERE name='056_pre_turn_review_decision'");
 }finally{await upgrade.end()}
+await migrate(url,schema);
+// Also cover databases that applied the original 055 with no decision table.
+const original055=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
+await original055.connect();
+try{
+  await original055.query('DROP TABLE pre_turn_review_decision');
+  await original055.query("DELETE FROM pgmigrations WHERE name='056_pre_turn_review_decision'");
+}finally{await original055.end()}
 await migrate(url,schema);
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 assert.equal((await pool.query("SELECT to_regclass('pre_turn_review_decision') AS name")).rows[0]?.name,
