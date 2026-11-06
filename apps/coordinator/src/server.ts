@@ -18,6 +18,8 @@ import type { AllocationRelationsService } from "@evoloop/core/allocation-relati
 import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
+import { registerDirectInputRoutes } from "./direct-input/routes.js";
+import type { DirectInputService } from "./direct-input/service.js";
 import { registerConnectorRouteReads, type ConnectorRouteReader, type ConnectorDeliveryReader,
   type ConnectorSourceReader } from "./message-connectors/routes.js";
 import type { VersionedConnectorRoute } from "@evoloop/contracts/message-connectors";
@@ -57,6 +59,7 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  directInput?: DirectInputService;
   connectorRoutes?: ConnectorRouteReader;
   connectorDeliveries?: ConnectorDeliveryReader;
   connectorSources?: ConnectorSourceReader;
@@ -459,6 +462,7 @@ export async function buildServer(options: {
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });
+  if (options.directInput) registerDirectInputRoutes(app, options.directInput);
   if (options.connectorRoutes) registerConnectorRouteReads(app, options.service, options.connectorRoutes,
     options.canWrite ?? (() => true), options.connectorDeliveries, options.connectorSources,
     options.canActivateConnectorRoute);

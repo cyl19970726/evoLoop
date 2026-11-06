@@ -5,6 +5,7 @@ import type { RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { delegationTemplateSchema, type DelegationTemplate } from "@evoloop/contracts/division";
 import type { Principal } from "@evoloop/contracts";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
+import { directInputConfigurationSchema } from "./direct-input/configuration.js";
 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
@@ -60,6 +61,7 @@ export async function runtimeThreadConfigForSession(grants: RuntimeGrant[], spec
   return runtimeThreadConfig(grants,spec);
 }
 const integrationSchema = z.strictObject({
+  directInputs: directInputConfigurationSchema.optional(),
   repositories: z.array(z.strictObject({ projectId:z.uuid(), repositoryId:z.string().min(1).max(100), root:absolute, allowedPaths:z.array(z.string().min(1).max(1024)).min(1).max(200) })).max(200).default([]),
   feishu: z.strictObject({
     enabled: z.boolean(), appId: z.string().min(1), appSecret: z.string().min(1), appToken: z.string().min(1), tableId: z.string().min(1),
@@ -193,5 +195,5 @@ export async function loadIntegrations(path?: string) {
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
     return { template, hash: delegationTemplateHash(template) };
   };
-  return { runtime, sessionMessages: configuration.sessionMessages, messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
+  return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs, messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
 }

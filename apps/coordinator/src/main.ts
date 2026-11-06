@@ -66,6 +66,8 @@ import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { createDirectInputService } from "./direct-input/integration.js";
+import { requireDirectInputRuntime } from "./direct-input/service.js";
 import { previewManualStop, verifyManualStop } from "./session-messages/manual-stop.js";
 import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
@@ -327,6 +329,7 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   expectedVersion: `codex-cli ${runtimeConfig.protocolVersion}`,
   nativeUserInput: runtimeConfig.nativeUserInput,
+  workspaceExperimental: runtimeConfig.protocolVersion === "0.166.0-alpha.6",
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
@@ -657,6 +660,18 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
 managedCliBroker = managed?.broker ?? null;
 const sessionWork = new SessionObservationService({ uow });
 const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,...(runner?{runner}:{})});
+const directInput = runner && integrations.runtime?.enabled ? createDirectInputService({
+  pool, uow,
+  runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
+  canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
+  configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+  currentProjectWriter, currentSessionExecutionAuthority,
+  allowedCwd: async (projectId,cwd) => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    try { return await realpath(cwd) === cwd && await current.allowedRuntimeCwd(projectId,cwd); }
+    catch { return false; }
+  },
+}) : undefined;
 if (runner) {
   try { await runner.start(); }
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
@@ -678,7 +693,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
         newMessageId:recovered.messageId,newOperationId:recovered.operationId,recovery:recovered.recovery};
     },
   },
-  sessionWork, sessionTimeline,
+  sessionWork, sessionTimeline, ...(directInput ? {directInput} : {}),
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
   ...(runner ? {manualStop: {

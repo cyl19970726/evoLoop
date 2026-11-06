@@ -210,6 +210,15 @@
 .session-workspace .session-composer-host .workflow-form > button { flex-shrink: 0; min-height: 40px; padding: 8px 16px; color: #fff; border: 1px solid #1556e7; border-radius: 5px; background: #1556e7; font-size: 13px; }
 .session-workspace .session-composer-host .workflow-form > .notice { flex-basis: 100%; margin: 0; padding: 8px 10px; font-size: 12px; }
 .workspace-composer-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 6px 1px 0; color: #8292ad; font-size: 11px; }
+.session-direct-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 0; }
+.session-direct-form label { flex-basis: 100%; color: #31506f; font-size: 12px; font-weight: 650; }
+.session-direct-form textarea { flex: 1 1 220px; min-width: 0; min-height: 40px; max-height: min(24dvh,200px); padding: 9px 13px; border: 1px solid #ccdafa; border-radius: 5px; font: inherit; line-height: 1.5; resize: vertical; }
+.session-direct-form button { min-height: 40px; padding: 8px 16px; color: #fff; background: #1556e7; border: 1px solid #1556e7; border-radius: 5px; }
+.session-direct-form button:disabled { opacity: .55; cursor: not-allowed; }
+.session-direct-form small { flex-basis: 100%; color: #667891; overflow-wrap: anywhere; }
+.session-direct-receipt { display: grid; gap: 4px; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #cad8eb; border-radius: 5px; background: #f5f8fd; font-size: 12px; overflow-wrap: anywhere; }
+.session-direct-receipt button { justify-self: start; }
+.session-direct-error { color: #a12727; font-size: 12px; }
 .workspace-composer-meta > small { font-size: 11px; }
 .workspace-reading-scope { font-size: 11px; flex-shrink: 0; }
 .workspace-reading-scope > summary { cursor: pointer; color: #7288aa; }
@@ -356,6 +365,7 @@
   .workspace-system-strip a { white-space: normal; }
 }
 @media(max-width:420px) { .session-execution-facts { padding: 7px 10px; margin: 4px 0; }.session-execution-facts h2 { margin-bottom: 5px; font-size: 13px; }.session-execution-facts dl { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 5px 8px; }.session-execution-facts dl>div+div { border: 0; padding: 0; }.session-execution-facts dl>div:last-child { grid-column: 1 / -1; }.session-execution-facts dd { margin-top: 1px; }.session-execution-facts p { margin-top: 5px; line-height: 1.4; } }
+@media(max-width:420px) { .session-workspace .session-workspace-actions { margin-top: 0; }.session-workspace .session-current-work { padding: 3px 9px; }.session-execution-facts { padding-block: 5px; margin-block: 2px; }.session-execution-facts p { margin-top: 2px; } }
 @media(prefers-reduced-motion:reduce) { .workspace-tool-inline, .workspace-system-strip, .workspace-tools-toggle > svg:first-child { animation: none; transition: none; } }
 @media(min-width:761px) and (max-height:640px) { .session-execution-facts { padding: 6px 10px; margin: 4px 0; }.session-execution-facts h2, .session-execution-facts p, .session-execution-facts dt { display: none; }.session-execution-facts dd { margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } }
 @media(min-width:761px) and (max-height:640px) { .workspace-current-strip { min-height: 0; padding: 4px 9px; gap: 6px; }.workspace-current-strip span { -webkit-line-clamp: 1; } }

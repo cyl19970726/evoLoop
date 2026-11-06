@@ -50,6 +50,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   let denyUpdates = false;
   let denyNativeHistoryB = false;
   let holdMessagePage = false, messagePageHeld = false, releaseMessagePage: (() => void) | undefined;
+  let directEnabled = false, directPostCount = 0;
+  let directReceipt: Record<string, unknown> | null = null;
   const nativeCurrent = Array.from({ length: 25 }, (_, index) => timelineAssistant(`current-${index}`, `当前会话内容 ${index}`, {
     turnId: `turn-${index}`, nativeItemId: `native-${index}`, occurredAt: new Date(Date.parse(stamp) + index * 1000).toISOString(),
   }));
@@ -62,7 +64,27 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      const directBase = `${root}/sessions/${sessionId}`;
+      if (url.pathname === `${directBase}/direct-input-capability`) {
+        value = { available: directEnabled, mode: directEnabled ? "start" : null, expectedTurnId: null,
+          reasonCode: directEnabled ? "READY_TO_START" : "DIRECT_GRANT_MISSING", observedAt: stamp };
+      } else if (url.pathname === `${directBase}/direct-inputs` && req.method === "POST") {
+        directPostCount++;
+        const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
+        const command = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        directReceipt = { projectId, sessionId, inputId: command.inputId, operationId: command.operationId,
+          actorId: "reader", mode: "start", source: { kind: "message", id: command.inputId, processingId: "fixture-processing" },
+          expectedTurnId: null, actualTurnId: null, nativeItemId: null, state: "unknown", reason: "lost acknowledgement",
+          version: 2, createdAt: stamp, updatedAt: stamp };
+        res.writeHead(200, { "content-type": "application/json" }); res.end("{"); return;
+      } else if (url.pathname.startsWith(`${directBase}/direct-inputs/`)) {
+        if (!directReceipt || !url.pathname.includes(String(directReceipt.inputId))) { status = 404; value = { message: "Not found" }; }
+        else {
+          if (url.pathname.endsWith("/reconcile")) directReceipt = { ...directReceipt, state: "accepted", actualTurnId: "fixture-turn", nativeItemId: "fixture-item", version: 3 };
+          value = directReceipt;
+        }
+      }
+      else if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) {
         const membership = url.searchParams.get("membership") ?? "current";
@@ -192,6 +214,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     if (url.pathname === "/__fixture/update") { updated = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/direct-enable") { directEnabled = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/direct-count") { res.end(String(directPostCount)); return; }
     if (["short", "auto-cap", "auto-fill", "manual"].some(mode => url.pathname === `/__fixture/session-b-${mode}`)) {
       sessionBMode = url.pathname.endsWith("-short") ? "short" : url.pathname.endsWith("-auto-cap") ? "auto-cap"
         : url.pathname.endsWith("-auto-fill") ? "auto-fill" : "manual";
@@ -647,6 +671,30 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await new Promise(resolve => setTimeout(resolve, 120));
   assert.equal(await switchPage.getByText("STALE A PAGE", { exact: true }).count(), 0,
     "a response from the prior Session scope cannot enter the new timeline");
+  await fetch(`${base}/__fixture/direct-enable`);
+  const directPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await directPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await directPage.getByLabel("访问令牌").fill("fixture-token");
+  await directPage.getByRole("button", { name: "进入", exact: true }).click();
+  await directPage.getByLabel("即时发送到原 Session").waitFor();
+  assert.equal(await directPage.getByRole("button", { name: "保存待处理" }).count(), 0,
+    "a real direct capability selects the direct composer");
+  await directPage.getByLabel("即时发送到原 Session").fill("请核对这一条独立输入");
+  await directPage.getByRole("button", { name: "开始一轮对话" }).click();
+  await directPage.getByText("结果未知，请按原输入核对").waitFor();
+  assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1");
+  const originalInputId = String(directReceipt?.inputId);
+  await directPage.reload();
+  await directPage.getByLabel("访问令牌").fill("fixture-token");
+  await directPage.getByRole("button", { name: "进入", exact: true }).click();
+  await directPage.getByText("结果未知，请按原输入核对").waitFor();
+  assert.ok((await directPage.locator(".session-direct-receipt").innerText()).includes(originalInputId));
+  assert.equal(await directPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true);
+  await directPage.getByRole("button", { name: "按原输入核对" }).click();
+  await directPage.getByRole("button", { name: "开始一轮对话" }).waitFor();
+  assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1",
+    "lost acknowledgement and reload never repost the original input");
+  await directPage.close();
 });
 
 test("a reset survives a busy read, unavailable history and stale pagination responses", {

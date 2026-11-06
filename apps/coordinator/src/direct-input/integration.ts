@@ -10,7 +10,7 @@ import type { DirectInputConfiguration } from "./configuration.js";
 import { DirectInputService } from "./service.js";
 
 type CurrentConfiguration=Pick<Awaited<ReturnType<typeof loadIntegrations>>,"sessionMessages">&{
-  directInputs?:DirectInputConfiguration;
+  directInputs:DirectInputConfiguration|undefined;
 };
 
 /** One composition point for capability and submission; direct grants never replace ordinary grants. */
