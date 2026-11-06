@@ -18,6 +18,7 @@ import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskListReturn, taskRunFromHash, taskSectionFromHash, taskSessionReturn } from "../orchestration/navigation";
 import { LeaderTaskFacts, TaskAttention, TaskTiming } from "./LeaderTaskFacts";
+import { TaskSchedulePanel } from "./TaskSchedulePanel";
 import { leaderPhaseLabel, leaderProjectionMatchesTask } from "./leaderWorkLoad";
 import "./task-page.css";
 import "./task-experience.css";
@@ -204,10 +205,12 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     return () => window.cancelAnimationFrame(frame);
   }, [detail, id, projectId, selectedRevision, tab, landingVersion]);
   useEffect(() => {
-    if (!active || !leaderTask || !detail || detail.task.id !== id || selectedRevision) return;
+    if (!active || !detail || detail.task.id !== id || selectedRevision) return;
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-    if (params.get("section") !== "attention" || window.location.hash.split("?")[0] !== href(projectId, "task", id)) return;
-    const frame = window.requestAnimationFrame(() => document.getElementById("task-attention")?.scrollIntoView({ block: "start" }));
+    const section = params.get("section");
+    if ((section !== "attention" && section !== "task-schedule") || window.location.hash.split("?")[0] !== href(projectId, "task", id)) return;
+    if (section === "attention" && !leaderTask) return;
+    const frame = window.requestAnimationFrame(() => document.getElementById(section === "attention" ? "task-attention" : "task-schedule")?.scrollIntoView({ block: "start" }));
     return () => window.cancelAnimationFrame(frame);
   }, [active, leaderTask, detail, id, projectId, selectedRevision]);
   useEffect(() => {
@@ -278,7 +281,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const deliveryNames = useDeliveryNames(token, projectId, detail?.deliveries ?? emptyDeliveries);
   if (error && !detail) return <div className="content"><Alert kind="error">{error}</Alert></div>;
   if (!detail || detail.task.id !== id) return <div className="content"><p>正在读取任务…</p></div>;
-  const taskContext = { ...context, blocked: context.blocked || reading || !!error,
+  const taskContext = { ...context, blocked: context.blocked || reading || !!error || !!selectedRevision,
     draftScope: `task:${id}`, draftBaseline: detail.revision.id };
   const pending = detail.impacts.filter(i => i.state === "pending");
   const selected = detail.impacts.find(i => i.id === selectedImpactId);
@@ -375,6 +378,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <section className="panel task-focus"><h2>关联过程文档</h2>{detail.links.length ? <ul className="basis-list task-basis-list">{detail.links.map(link => <li key={link.id}><a href={href(projectId, "document", link.documentId)}>{basisDocuments[link.documentId]?.document.title ?? `文档 ${link.documentId.slice(0, 8)}`} →</a></li>)}</ul> : <p className="empty">此任务没有另行关联的过程文档。</p>}{basisError && <Alert kind="error">部分关联文档名称暂不可读，仍可按链接打开：{basisError}</Alert>}</section>
 
         </aside>
+        <TaskSchedulePanel context={taskContext} detail={detail} refresh={refresh + readVersion} />
         {leaderTask && <div id="task-attention"><TaskAttention key={`${projectId}:${id}:${detail.task.currentRevisionId}`} token={token} projectId={projectId} detail={detail} leader={leaderTask}
           canWrite={canReview && context.principal.permissions.includes("write")} blocked={blockedByUnknown || reading || !!error || !!context.blocked}
           onAttempt={onAttempt} onKnown={onKnown} onChanged={onChanged} /></div>}
@@ -416,6 +420,9 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     </section>
     </section>
     <section role="tabpanel" id={panelId("actions")} aria-labelledby={tabId("actions")} hidden={tab !== "actions"}>
+      <p className="task-fineprint">“更新任务内容”默认只改本次。重复任务若需修改本次及后续或仅后续要求，
+        <button type="button" className="quiet" onClick={() => { selectTab("overview"); window.requestAnimationFrame(() => document.getElementById("task-schedule")?.scrollIntoView({ block: "start" })); }}>打开执行时间与重复设置 →</button>
+      </p>
       <TaskWorkflow key={detail.task.id} context={taskContext} detail={detail} documents={basisDocuments}
         leader={leaderTask} mode="actions" />
     </section>

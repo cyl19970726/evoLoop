@@ -273,18 +273,18 @@ export class PgTaskTimingQueries implements TaskTimingQueries {
     const previous = current.previous_task_id ? await this.client.query(`SELECT state FROM task
       WHERE project_id=$1 AND task_id=$2`,[this.projectId,current.previous_task_id]) : null;
     let waitingReason = previous?.rows[0] && !["done", "cancelled"].includes(previous.rows[0].state)
-      ? `Previous Task ${current.previous_task_id} is ${previous.rows[0].state}` : null;
+      ? `上一份任务 ${current.previous_task_id} 仍为${previous.rows[0].state === "todo" ? "待办" : "进行中"}` : null;
     if (!waitingReason && current.previous_task_id) {
       const unsettled = await this.client.query(`SELECT 1 FROM runtime_run WHERE project_id=$1
         AND task_id=$2 AND state IN ('requested','dispatching','running','unknown') LIMIT 1`,
         [this.projectId,current.previous_task_id]);
-      if (unsettled.rows.length) waitingReason = `Previous Task ${current.previous_task_id} has an unsettled Run`;
+      if (unsettled.rows.length) waitingReason = `上一份任务 ${current.previous_task_id} 的运行尚未结算`;
     }
     const recent = await this.client.query(`SELECT o.task_id,o.planned_at_utc,t.state
       FROM task_timing_occurrence o JOIN task t ON t.project_id=o.project_id AND t.task_id=o.task_id
       WHERE o.project_id=$1 AND o.series_id=$2 ORDER BY o.planned_at_utc DESC LIMIT 100`,
       [this.projectId,row.series_id]);
-    return { projectId: this.projectId, taskId, seriesId: row.series_id, version: row.version,
+    return { projectId: this.projectId, taskId, seriesId: row.series_id, rootTaskId: row.root_task_id, version: row.version,
       seriesState: row.state, executeAtUtc: iso(current.planned_at_utc), timezone: row.timezone,
       repeat: row.repeat, previousTaskId: current.previous_task_id ?? null,
       nextTaskId: next?.task_id ?? null, nextAtUtc: next ? iso(next.planned_at_utc) : nextAt,
@@ -404,9 +404,11 @@ export class PgTaskTimingQueries implements TaskTimingQueries {
     return (await this.get(command.taskId))!;
   }
 
-  async updateFuture(taskId: string, update: {title:string;content:string;acceptance:string}, actorId: string, nowUtc: string): Promise<void> {
+  async updateFuture(taskId: string, update: {title:string;content:string;acceptance:string}, expectedTimingVersion: number, actorId: string, nowUtc: string): Promise<void> {
     const row = await seriesForTask(this.client,this.projectId,taskId,true);
     if (!row || row.state !== "active") throw new TaskTimingConflict("Active timing series required");
+    if (row.version !== expectedTimingVersion)
+      throw new TaskTimingConflict("Task timing version changed","VERSION_CONFLICT",row.version);
     const current = await templateFromTask(this.client,this.projectId,taskId);
     const template = {...current,...update};
     await validateTemplate(this.client,this.projectId,template);
@@ -447,7 +449,7 @@ export class PgTaskTimingStore {
     const client = await this.pool.connect();
     try { return await loadSeries(client,projectId,seriesId); } finally { client.release(); }
   }
-  async tick(projectId: string, nowUtc: string, actorId: string, roleId: string): Promise<TaskTimingTickResult[]> {
+  async tick(projectId: string, nowUtc: string, actorId: string, roleId: string, scopeId: string): Promise<TaskTimingTickResult[]> {
     if (!uuid.test(roleId)) throw new TaskTimingConflict("tick requires a real Role");
     const client = await this.pool.connect();
     const created: TaskTimingTickResult[] = [];
@@ -456,7 +458,8 @@ export class PgTaskTimingStore {
       await client.query("BEGIN");
       const matching = await client.query(`SELECT series_id FROM task_timing_series
         WHERE project_id=$1 AND authorized_actor_id=$2 AND authorized_role_id=$3 AND state='active'
-        ORDER BY series_id FOR UPDATE SKIP LOCKED`,[projectId,actorId,roleId]);
+          AND ($4 = 'task-timing:' || root_task_id::text)
+        ORDER BY series_id FOR UPDATE SKIP LOCKED`,[projectId,actorId,roleId,scopeId]);
       for (const item of matching.rows) {
         const completedBefore = created.length;
         await client.query("SAVEPOINT task_timing_series_tick");

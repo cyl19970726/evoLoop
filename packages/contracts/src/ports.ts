@@ -4,6 +4,7 @@ import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageRev
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "./runtime.js";
 import type { RoleReader, RoleTransaction } from "./roles.js";
 import type { SchedulingReader, SchedulingTransaction } from "./scheduling.js";
+import type { TaskTimingQueries } from "./task-timing.js";
 import type { DocumentPayloadReader, DocumentPayloadTransaction } from "./process-documents.js";
 import type { DiscussionRecord, DiscussionEvent } from "./discussions.js";
 import type { AllocationRelationsReader } from "./allocation-relations.js";
@@ -19,6 +20,7 @@ import type { DeliveryIntent } from "./orchestration.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
+  taskTiming?: Pick<TaskTimingQueries, "get">;
   recovery?: import('./session-recovery.js').SessionRecoveryReader;
   /** Queue capability is optional for legacy in-memory adapters; commands reject its absence. */
   queue?: QueueReader;
@@ -111,6 +113,7 @@ export interface ChildHandoffFact {
   division?: { bindingId: string; waitingDecisionId: string; acknowledgedRunId: string };
 }
 export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "getRuntimeSession">, ResidentTransaction, SchedulingTransaction, DocumentPayloadTransaction, ReferenceTransaction, EvaluationTransaction {
+  taskTiming?: TaskTimingQueries;
   /** Lock the current coordinator generation until commit for an externally reviewed stop. */
   assertCoordinatorLeaseEpoch?(nonce: string): Promise<void>;
   /** Row lock before Session gate admission; never requires an empty Run queue. */

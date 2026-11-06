@@ -393,6 +393,11 @@
       "group": "开发与维护"
     },
     {
+      "path": "docs/development/task-timing-copy.md",
+      "title": "普通 Task 定时与复制",
+      "group": "开发与维护"
+    },
+    {
       "path": "docs/development/task-stage-attention.md",
       "title": "Task 阶段时间与关注",
       "group": "开发与维护"
