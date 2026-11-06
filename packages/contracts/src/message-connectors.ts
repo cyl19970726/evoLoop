@@ -18,19 +18,26 @@ export const connectorCapabilitiesSchema = z.strictObject({
 export type ConnectorCapabilities = z.infer<typeof connectorCapabilitiesSchema>;
 
 /** One native Thread is bound to one external conversation to prevent cross-conversation context reuse. */
+const uniqueTargets = <T extends string>(values: T[]) => new Set(values).size === values.length;
 export const connectorRouteSchema = z.strictObject({
   projectId: z.uuid(), bindingId: z.uuid(), source: connectorConversationSchema,
   targetSessionId: z.uuid(), targetActorId: key, senderActorId: key,
   owner: key, epoch: z.number().int().positive(), sessionRef: key,
+  mode: z.enum(["standard", "restricted"]),
+  /** Channel conversation IDs this route may send to, including replies. */
+  sendTargets: z.array(key).max(100).refine(uniqueTargets, "Duplicate send target"),
+  /** Owned Session IDs this route may address internally. Empty denies internal sends. */
+  internalTargets: z.array(z.uuid()).max(100).refine(uniqueTargets, "Duplicate internal target"),
   state: z.enum(["disabled", "active", "paused"]),
   capabilities: connectorCapabilitiesSchema,
   /** Hash of a reviewed, server-side authorization policy; never a credential. */
   policyHash: sha256,
-});
+}).refine(route => route.mode !== "standard" || route.sendTargets.includes(route.source.conversationId),
+  "Standard route send targets must include the source conversation");
 export type ConnectorRoute = z.infer<typeof connectorRouteSchema>;
 
 /** Storage version is advanced by one on every successful route change. */
-export const versionedConnectorRouteSchema = connectorRouteSchema.extend({
+export const versionedConnectorRouteSchema = connectorRouteSchema.safeExtend({
   version: z.number().int().positive(),
 });
 export type VersionedConnectorRoute = z.infer<typeof versionedConnectorRouteSchema>;

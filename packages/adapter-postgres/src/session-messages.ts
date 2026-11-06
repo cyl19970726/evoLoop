@@ -67,7 +67,7 @@ export class PgSessionMessages implements SessionMessageTransaction {
     // again in a write transaction and holds row locks through the state change.
     const mode=await this.client.query('SHOW transaction_read_only');
     const lock=mode.rows[0]?.transaction_read_only==='on'?'':' FOR SHARE OF l,r,m,s';
-    const result=await this.client.query(`SELECT l.*,r.state AS route_state,r.version AS current_route_version,
+    const result=await this.client.query(`SELECT l.*,r.mode AS route_mode,r.state AS route_state,r.version AS current_route_version,
       r.owner AS current_owner,r.epoch AS current_epoch,r.session_ref AS current_session_ref,
       r.policy_hash AS current_policy_hash,r.target_session_id,r.target_actor_id,r.sender_actor_id,
       r.provider AS current_provider,r.connection_id AS current_connection_id,
@@ -91,6 +91,7 @@ export class PgSessionMessages implements SessionMessageTransaction {
     const row=result.rows[0];
     if(!row || row.binding_id!==grant.bindingId || row.route_version!==grant.routeVersion ||
       row.route_epoch!==grant.epoch || row.route_policy_hash!==grant.policyHash ||
+      row.route_mode!=='standard' || grant.mode!=='standard' ||
       row.route_state!=='active' || row.current_route_version!==row.route_version ||
       row.current_owner!==row.route_owner || row.current_epoch!==row.route_epoch ||
       row.current_session_ref!==row.route_session_ref ||
@@ -102,12 +103,12 @@ export class PgSessionMessages implements SessionMessageTransaction {
       row.current_message_sender_id!==row.sender_actor_id ||
       row.target_actor_id!==row.session_actor_id ||
       row.session_state!=='ready' || !row.native_thread_id || !row.native_session_id ||
-      row.sandbox!=='read-only' || row.approval_policy!=='never' ||
-      row.authorization_scope!==`connector-receiver:${grant.bindingId}` ||
+      row.sandbox!=='danger-full-access' || row.approval_policy!=='never' ||
+      row.authorization_scope!==`connector-standard:${grant.bindingId}` ||
       row.activation_state!=='active' || row.revision_id!==row.active_revision_id ||
       row.profile_sandbox!==row.sandbox || row.profile_approval!==row.approval_policy ||
       row.profile_scope!==row.authorization_scope)
-      throw new DomainError('CONNECTOR_SOURCE_STALE','Exact connector source or restricted receiver changed');
+      throw new DomainError('CONNECTOR_SOURCE_STALE','Exact standard connector source or receiver changed');
     if(lock){
       const profile=await this.client.query(`SELECT p.revision_id,p.active_revision_id,p.activation_state,
         pr.sandbox,pr.approval_policy,pr.authorization_scope
@@ -121,7 +122,7 @@ export class PgSessionMessages implements SessionMessageTransaction {
         current.activation_state!=='active' || current.sandbox!==row.sandbox ||
         current.approval_policy!==row.approval_policy ||
         current.authorization_scope!==row.authorization_scope)
-        throw new DomainError('CONNECTOR_SOURCE_STALE','Restricted receiver profile changed');
+        throw new DomainError('CONNECTOR_SOURCE_STALE','Standard receiver profile changed');
     }
   }
   async getSessionMessage(id:string):Promise<SessionMessageRecord|null>{

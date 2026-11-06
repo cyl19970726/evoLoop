@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import type { ConnectorRoute, ConnectorTrustedAdmission } from "@evoloop/contracts/message-connectors";
-import { migrate, PgConnectorMessageLinks, PgConnectorRoutes } from "../src/index.ts";
+import { migrate, PgConnectorMessageLinks, PgConnectorRoutes, PgConnectorDeliveryDecisions } from "../src/index.ts";
 import { PgSessionMessages } from "../src/session-messages.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -19,7 +19,8 @@ const capabilities = {history:true,search:false,subscribe:true,sendText:false,se
 const route: ConnectorRoute = {projectId,bindingId:randomUUID(),
   source:{provider:"wechat",connectionId:"test-connection",conversationId:"test-conversation"},
   targetSessionId:sessionId,targetActorId:"receiver",senderActorId:"gateway",owner:"owner-a",
-  epoch:7,sessionRef:"wx-session-a",state:"disabled",capabilities,policyHash:"a".repeat(64)};
+  epoch:7,sessionRef:"wx-session-a",state:"disabled",mode:"standard",
+  sendTargets:["test-conversation"],internalTargets:[],capabilities,policyHash:"a".repeat(64)};
 let version = 1;
 const admission = (eventCursor=11): ConnectorTrustedAdmission => ({
   projectId,bindingId:route.bindingId,routeVersion:version,
@@ -32,13 +33,12 @@ const admission = (eventCursor=11): ConnectorTrustedAdmission => ({
 before(async () => {
   await migrate(url!,schema);
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Connector link',$2)",[projectId,now]);
-  // Migration 056 admits only this exact restricted receiver scope. Active
-  // routing still requires a separate, currently unavailable native proof.
+  // The standard route requires this exact full, never, owned Session scope.
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
     sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,
     created_at,updated_at)
-    VALUES($1,$2,'receiver','/tmp',$3,'read-only','never','ready',1,'thread-link','native-link',$4,'receiver',$5,$5)`,
-    [projectId,sessionId,`connector-receiver:${route.bindingId}`,randomUUID(),now]);
+    VALUES($1,$2,'receiver','/tmp',$3,'danger-full-access','never','ready',1,'thread-link','native-link',$4,'receiver',$5,$5)`,
+    [projectId,sessionId,`connector-standard:${route.bindingId}`,randomUUID(),now]);
   await routes.create(route,randomUUID(),"lead");
 });
 
@@ -57,17 +57,15 @@ after(async () => {
 
 test("disabled route refuses ingress without message, link, or journal",async () => {
   const intent=admission();
-  await assert.rejects(links.admitTrusted(intent),/Exact active source/);
+  await assert.rejects(links.admitTrusted(intent),/Exact active standard route/);
   assert.equal(await links.getByMessageId(projectId,intent.messageId),null);
   const rows=await pool.query(`SELECT count(*)::int AS n FROM operation_journal
     WHERE project_id=$1 AND operation_id=$2`,[projectId,intent.messageOperationId]);
   assert.equal(rows.rows[0].n,0);
 });
 
-test("synthetic active route admits once, joins unknown Turn, and rejects stale source",async () => {
-  await pool.query("ALTER TABLE connector_route DROP CONSTRAINT connector_route_activation_unproven");
-  await pool.query(`UPDATE connector_route SET state='active',version=version+1
-    WHERE project_id=$1 AND binding_id=$2`,[projectId,route.bindingId]);
+test("standard active route admits once, joins unknown Turn, and rejects stale source",async () => {
+  await routes.update({...route,version:2,state:"active"},1,randomUUID(),"lead");
   version=2;
   const intent=admission();
   const [first, concurrent]=await Promise.all([links.admitTrusted(intent),links.admitTrusted(intent)]);
@@ -78,6 +76,15 @@ test("synthetic active route admits once, joins unknown Turn, and rejects stale 
   assert.deepEqual(await links.getByMessageId(projectId,intent.messageId),first);
   assert.deepEqual(await links.getBySource(projectId,intent.source),first);
   assert.equal(await links.getBySource(randomUUID(),intent.source),null);
+  await assert.rejects(pool.query(`INSERT INTO connector_message_link(project_id,binding_id,route_version,
+    route_owner,route_epoch,route_session_ref,route_policy_hash,provider,connection_id,conversation_id,
+    delivery_id,cursor_start,cursor_end,event_cursor,participant_id,reply_to_event_cursor,
+    message_id,message_operation_id,decision_id)
+    SELECT project_id,binding_id,route_version,'wrong-owner',route_epoch,route_session_ref,
+      route_policy_hash,provider,connection_id,conversation_id,delivery_id,cursor_start,cursor_end,
+      event_cursor,participant_id,reply_to_event_cursor,message_id,message_operation_id,$2
+    FROM connector_message_link WHERE project_id=$1 AND message_id=$3`,
+    [projectId,randomUUID(),intent.messageId]),/not active standard at exact version\/source/);
   assert.deepEqual(await links.admitTrusted(intent),first);
   await assert.rejects(links.admitTrusted({...intent,content:"changed"}),/different admission intent/);
   await assert.rejects(links.admitTrusted({...intent,messageId:randomUUID()}),/different admission intent/);
@@ -95,16 +102,16 @@ test("synthetic active route admits once, joins unknown Turn, and rejects stale 
     await client.query("BEGIN");
     const store=new PgSessionMessages(client,projectId);
     await store.assertCurrentConnectorSource(intent.messageId,{bindingId:route.bindingId,
-      routeVersion:2,epoch:7,policyHash:route.policyHash});
+      mode:"standard",routeVersion:2,epoch:7,policyHash:route.policyHash});
     await assert.rejects(store.assertCurrentConnectorSource(intent.messageId,{bindingId:route.bindingId,
-      routeVersion:2,epoch:8,policyHash:route.policyHash}),/changed/);
+      mode:"standard",routeVersion:2,epoch:8,policyHash:route.policyHash}),/changed/);
     await client.query("COMMIT");
   } finally { client.release(); }
   const preflight=await pool.connect();
   try {
     await preflight.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     await new PgSessionMessages(preflight,projectId).assertCurrentConnectorSource(intent.messageId,
-      {bindingId:route.bindingId,routeVersion:2,epoch:7,policyHash:route.policyHash});
+      {bindingId:route.bindingId,mode:"standard",routeVersion:2,epoch:7,policyHash:route.policyHash});
     await preflight.query("COMMIT");
   } finally { preflight.release(); }
   const processingId=randomUUID(), processingOperationId=randomUUID();
@@ -126,6 +133,11 @@ test("synthetic active route admits once, joins unknown Turn, and rejects stale 
   assert.equal(unknown?.processingOperationId,processingOperationId);
   assert.equal(unknown?.processingState,"unknown");
   assert.equal(unknown?.nativeTurnId,"turn-link-1");
+  const delivery=new PgConnectorDeliveryDecisions(pool);
+  assert.deepEqual((await delivery.messages(projectId,route.bindingId,intent.source.deliveryId))
+    .map(value=>[value.eventCursor,value.messageId,value.messageState,value.nativeTurnId]),
+    [[intent.source.eventCursor,intent.messageId,'unknown','turn-link-1']]);
+  assert.equal((await delivery.listRecent(projectId,route.bindingId,10))[0]?.deliveryId,intent.source.deliveryId);
   await pool.query(`UPDATE connector_route SET state='disabled',version=version+1
     WHERE project_id=$1 AND binding_id=$2`,[projectId,route.bindingId]);
   const retry=await links.admitTrusted(intent);
@@ -135,7 +147,7 @@ test("synthetic active route admits once, joins unknown Turn, and rejects stale 
   try {
     await stale.query("BEGIN");
     await assert.rejects(new PgSessionMessages(stale,projectId).assertCurrentConnectorSource(
-      intent.messageId,{bindingId:route.bindingId,routeVersion:2,epoch:7,policyHash:route.policyHash}),/changed/);
+      intent.messageId,{bindingId:route.bindingId,mode:"standard",routeVersion:2,epoch:7,policyHash:route.policyHash}),/changed/);
     await stale.query("ROLLBACK");
   } finally { stale.release(); }
 });

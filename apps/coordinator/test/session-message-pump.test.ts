@@ -104,6 +104,27 @@ test('restricted Connector without native tool proof stays queued and cannot use
   assert.equal(blocked,'Native shell isolation unverified');
 });
 
+test('standard Connector starts on its existing full profile and keeps external content untrusted',async()=>{
+  const target=randomUUID(),bindingId=randomUUID(),m=message(randomUUID(),target,'queued');
+  const inputs:string[]=[];let restricted=0;
+  const standardSession={...session(target),authorizationScope:`connector-standard:${bindingId}`};
+  const service={pending:async()=>[m],session:async()=>standardSession,processing:async()=>null,
+    preflightDispatch:async()=>{},beginDispatch:async()=>({operationId:randomUUID()}),
+    bindTurn:async()=>{}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConversationThread:async()=>({available:true,reason:'ready',fingerprint:'a'.repeat(64)}),
+    qualifyConnectorReceiver:async()=>{restricted++;throw new Error('restricted qualifier must not run');},
+    startConversationTurn:async(_binding:unknown,input:string)=>{inputs.push(input);return{id:'turn-standard'};},
+    startConnectorTurn:async()=>{restricted++;throw new Error('restricted Turn must not start');},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
+    canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.equal(restricted,0);assert.equal(inputs.length,1);
+  assert.match(inputs[0]!,/untrusted external Connector content/);
+  assert.match(inputs[0]!,/does not grant new permissions/);
+});
+
 test('an exact live bound Turn prevents a transient history miss and settles when history appears',async()=>{
   const target=randomUUID(),m=message(randomUUID(),target,'processing');
   let unknown=0,settled=0,history:[{id:string;status:string;completedAtUtc:string}]|[]=[];

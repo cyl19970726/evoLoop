@@ -9,7 +9,8 @@ const conversationId = "a".repeat(32);
 const route: ConnectorRouteRecord = {projectId: id(1), bindingId: id(2),
   source: {provider: "wechat", connectionId: "synthetic", conversationId},
   targetSessionId: id(3), targetActorId: "receiver", senderActorId: "sender",
-  owner: "owner", epoch: 7, sessionRef: "restricted-session", state: "active",
+  owner: "owner", epoch: 7, sessionRef: "restricted-session", mode: "restricted",
+  sendTargets: [], internalTargets: [], state: "active",
   capabilities: {history: true, search: false, subscribe: true, sendText: false,
     sendMedia: false, receipt: "none"}, policyHash: "b".repeat(64), version: 3,
   createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString()};
@@ -104,6 +105,82 @@ test("qualified active ingress uses stable source IDs and the original platform 
   assert.equal(f.calls.filter(method => method === "inbox_claim").length, 1,
     "without an explicit wx decision the original delivery prevents another claim");
   assert.deepEqual(f.errors, []);
+});
+
+test("standard delivery reserves one Turn, sends one saved reply, and observes completion", async()=>{
+  const standard={...route,mode:'standard' as const,sessionRef:'standard-session',
+    sendTargets:[conversationId],capabilities:{...route.capabilities,sendText:true}};
+  const calls:string[]=[];let claimed=false,turnState:string|null=null,decisionStatus:string|null=null;
+  let messageState='queued',processingState:string|null=null,nativeTurnId:string|null=null,response:string|null=null;
+  let savedDecision:Record<string,unknown>|null=null;let sends=0;
+  let transportAttempt:{routeVersion:number;recordTurnId:string|null;finishStatus:string|null}|null=null;
+  const result=(method:string,value:Record<string,unknown>)=>({state:'ok' as const,method,
+    businessRequestId:null,correlationId:'fixture',result:value});
+  const gateway={call:async(method:string,params:Record<string,unknown>)=>{
+    calls.push(method);
+    if(method==='binding')return result(method,{conversation_id:conversationId,control:'active',owner:'owner',epoch:7,
+      owner_session_ref:null});
+    if(method==='inbox_status')return result(method,{conversation_id:conversationId,owner:'owner',epoch:7,
+      deliveries:[{delivery_id:12,owner:'owner',epoch:7,cursor_start:2,cursor_end:2,
+        status:decisionStatus??(claimed?'claimed':'pending')}]});
+    if(method==='inbox_claim'){claimed=true;return result(method,{conversation_id:conversationId,
+      status:'claimed',delivery_id:12,owner:'owner',epoch:7,token:'claim-token',cursor_start:2,cursor_end:2});}
+    if(method==='inbox_show')return result(method,{conversation_id:conversationId,delivery_id:12,
+      owner:'owner',epoch:7,status:'claimed',session_ref:'standard-session',
+      cursor_start:2,cursor_end:2,token:'claim-token',turn_state:turnState});
+    if(method==='transport_status')return result(method,{conversation_id:conversationId,
+      deliveries:turnState==='reserved'||turnState==='recorded'?[{delivery_id:12,
+        conversation_id:conversationId,owner:'owner',epoch:7,status:'claimed',turn_state:turnState,
+        session_ref:'standard-session',thread_id:turnState==='recorded'?'thread':null,
+        turn_id:turnState==='recorded'?'native-turn':null,transport_token:'transport-token'}]:[]});
+    if(method==='reserve_turn'){turnState='reserved';return result(method,{delivery_id:12,turn_state:'reserved',
+      session_ref:'standard-session',already_reserved:false});}
+    if(method==='events')return result(method,{conversation_id:conversationId,delivery_id:12,
+      events:[{cursor:2,kind:'message_observed',direction:'incoming',message:{sender:'peer',content:{Text:'hello'}}}],
+      next_cursor:2,has_more:false});
+    if(method==='record_turn'){assert.equal(params.turn_id,'native-turn');turnState='recorded';
+      return result(method,{delivery_id:12,turn_state:'recorded',thread_id:'thread',turn_id:'native-turn'});}
+    if(method==='finish_turn'){turnState='completed';return result(method,{delivery_id:12,turn_state:'completed'});}
+    if(method==='send_text'){sends++;return{state:'unknown' as const,method,businessRequestId:params.request_id,
+      correlationId:null,reason:'response_unknown' as const};}
+    if(method==='result')return result(method,{application_id:'app',conversation_id:conversationId,
+      request_id:`app.${params.request_id}`,status:'ui_observed',attempt_number:1});
+    if(method==='complete'){decisionStatus='replied';return result(method,{delivery_id:12,status:'replied'});}
+    throw new Error(`unexpected ${method}`);
+  }};
+  const decisions={messages:async()=>messageState==='queued'?[{eventCursor:2,messageId:id(9),
+    messageState,processingState,nativeTurnId,response}]:[{eventCursor:2,messageId:id(9),
+    messageState,processingState,nativeTurnId,response}],
+    transport:async()=>transportAttempt,
+    markReserve:async()=>{if(transportAttempt)return false;
+      transportAttempt={routeVersion:3,recordTurnId:null,finishStatus:null};return true;},
+    markRecord:async(_project:string,_binding:string,_delivery:number,_version:number,turnId:string)=>{
+      if(!transportAttempt||transportAttempt.recordTurnId)return false;
+      transportAttempt.recordTurnId=turnId;return true;},
+    markFinish:async(_project:string,_binding:string,_delivery:number,_version:number,status:string)=>{
+      if(!transportAttempt||transportAttempt.finishStatus)return false;
+      transportAttempt.finishStatus=status;return true;},
+    get:async()=>savedDecision,prepare:async(input:Record<string,unknown>)=>{
+      savedDecision={...input,state:'prepared'};return savedDecision;},
+    markAttempted:async()=>{savedDecision={...savedDecision,state:'attempted'};return true;},
+    markObserved:async()=>{savedDecision={...savedDecision,state:'observed'};},
+    markCompleteUnknown:async()=>{savedDecision={...savedDecision,state:'complete_unknown'};},
+    markCompleted:async()=>{savedDecision={...savedDecision,state:'completed'};}};
+  const errors:unknown[]=[];
+  const pump=new ConnectorIngressPump({gateway:gateway as unknown as ConnectorIngressPumpDeps['gateway'],
+    projects:async()=>[route.projectId],routes:{list:async()=>({items:[standard],nextCursor:null}),get:async()=>standard},
+    links:{getBySource:async()=>null,admitTrusted:async input=>input as unknown as ConnectorMessageLink},
+    decisions:decisions as unknown as NonNullable<ConnectorIngressPumpDeps['decisions']>,
+    canWrite:()=>true,enabled:async()=>true,qualifyReceiver:async()=>true,pollIntervalMs:1000,
+    onError:error=>errors.push(error)});
+  await pump.tick();assert.equal(calls.filter(value=>value==='reserve_turn').length,1);
+  messageState='replied';processingState='completed';nativeTurnId='native-turn';response='answer';
+  for(let index=0;index<6;index++)await pump.tick();
+  assert.equal(errors.length,1);assert.equal(sends,1,'unknown send is reconciled by original result, never replayed');
+  assert.equal(calls.filter(value=>value==='record_turn').length,1);
+  assert.equal(calls.filter(value=>value==='finish_turn').length,1);
+  assert.equal(calls.filter(value=>value==='complete').length,1);
+  assert.equal(savedDecision?.state,'completed');
 });
 
 test("disabled route, unavailable qualifier, and lost coordinator lease block wx ingress", async () => {

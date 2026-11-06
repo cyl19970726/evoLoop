@@ -5,6 +5,11 @@ import type { WechatGatewayClient } from "@evoloop/connector-wechat";
 
 type Gateway = Pick<WechatGatewayClient, "call">;
 type Row = Record<string, unknown>;
+type DeliveryMessage = {eventCursor:number;messageId:string;messageState:string;processingState:string|null;
+  nativeTurnId:string|null;response:string|null};
+type DeliveryDecision = {projectId:string;bindingId:string;deliveryId:number;routeVersion:number;
+  decision:'reply'|'draft'|'skip'|'defer';requestId:string|null;content:string|null;
+  state:'prepared'|'attempted'|'observed'|'complete_unknown'|'completed'};
 const object = (value: unknown): Row | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -27,6 +32,17 @@ export interface ConnectorIngressPumpDeps {
     get(projectId: string, bindingId: string): Promise<ConnectorRouteRecord | null> };
   links: { admitTrusted(input: ConnectorTrustedAdmission): Promise<ConnectorMessageLink>;
     getBySource(projectId: string, source: ConnectorSource): Promise<ConnectorMessageLink | null> };
+  decisions?: {messages(projectId:string,bindingId:string,deliveryId:number):Promise<DeliveryMessage[]>;
+    transport(projectId:string,bindingId:string,deliveryId:number):Promise<{routeVersion:number;
+      recordTurnId:string|null;finishStatus:'completed'|'interrupted'|'failed'|null}|null>;
+    markReserve(projectId:string,bindingId:string,deliveryId:number,routeVersion:number):Promise<boolean>;
+    markRecord(projectId:string,bindingId:string,deliveryId:number,routeVersion:number,turnId:string):Promise<boolean>;
+    markFinish(projectId:string,bindingId:string,deliveryId:number,routeVersion:number,
+      status:'completed'|'interrupted'|'failed'):Promise<boolean>;
+    get(projectId:string,bindingId:string,deliveryId:number):Promise<DeliveryDecision|null>;
+    prepare(input:Omit<DeliveryDecision,'state'>):Promise<DeliveryDecision>;
+    markAttempted(input:DeliveryDecision):Promise<boolean>;markObserved(input:DeliveryDecision):Promise<void>;
+    markCompleteUnknown(input:DeliveryDecision):Promise<void>;markCompleted(input:DeliveryDecision):Promise<void>};
   /** Both the coordinator lease and the explicit connector activation switch. */
   canWrite(): boolean;
   enabled(): Promise<boolean>;
@@ -83,7 +99,10 @@ export class ConnectorIngressPump {
       && current.source.provider === "wechat" && current.source.connectionId === route.source.connectionId
       && current.source.conversationId === route.source.conversationId && current.owner === route.owner
       && current.epoch === route.epoch && current.sessionRef === route.sessionRef
-      && current.targetSessionId === route.targetSessionId && current.senderActorId === route.senderActorId;
+      && current.targetSessionId === route.targetSessionId && current.senderActorId === route.senderActorId
+      && current.mode === route.mode && current.policyHash === route.policyHash
+      && JSON.stringify(current.sendTargets) === JSON.stringify(route.sendTargets)
+      && JSON.stringify(current.internalTargets) === JSON.stringify(route.internalTargets);
   }
   private async cycle(): Promise<void> {
     if (!await this.live()) return;
@@ -110,7 +129,7 @@ export class ConnectorIngressPump {
       }
     }
   }
-  private async read(method: "binding" | "inbox_status" | "inbox_claim" | "inbox_show" | "events",
+  private async read(method: "binding" | "inbox_status" | "inbox_claim" | "inbox_show" | "events" | "transport_status",
     params: {conversation_id: string; delivery_id?: number; after?: number; limit?: number}): Promise<Row> {
     const outcome = await this.deps.gateway.call(method, params as never);
     if (outcome.state !== "ok") throw new Error(`wx ingress ${method} ${outcome.state}`);
@@ -131,12 +150,24 @@ export class ConnectorIngressPump {
       throw new Error("wx ingress status identity is unconfirmed");
     const rows = status.deliveries.map(object);
     if (rows.some(row => !row)) throw new Error("wx ingress status contains an invalid delivery");
+    if(route.mode==='standard'&&this.deps.decisions){
+      for(const row of rows){
+        if(!positive(row?.delivery_id)||!['replied','skipped','deferred','draft'].includes(String(row.status))||
+          row.owner!==route.owner||row.epoch!==route.epoch)continue;
+        const saved=await this.deps.decisions.get(route.projectId,route.bindingId,row.delivery_id);
+        if(saved&&saved.state==='complete_unknown'&&saved.routeVersion===route.version)
+          await this.deps.decisions.markCompleted(saved);
+      }
+    }
     const claimed = rows.filter(row => row?.status === "claimed");
     if (claimed.length > 1) throw new Error("wx ingress has multiple unresolved claimed deliveries");
     const prior = this.deliveries.get(route.bindingId);
     const claimedRow = claimed[0];
     if (this.uncertain.has(route.bindingId)) {
-      if (claimedRow) await this.reconcile(route, claimedRow);
+      if (claimedRow) {
+        await this.reconcile(route, claimedRow);
+        if(route.mode==='standard'&&prior?.finished)await this.settle(route,prior);
+      }
       else if (prior) {
         if (decidedFor(rows, prior, route)) {
           // The original wx decision, rather than a timeout or absent row,
@@ -155,12 +186,22 @@ export class ConnectorIngressPump {
     if (claimedRow) {
       if (!prior || prior.id !== claimedRow.delivery_id || prior.start !== claimedRow.cursor_start
           || prior.end !== claimedRow.cursor_end) {
+        if(route.mode==='standard'&&!prior&&positive(claimedRow.delivery_id)&&
+          positive(claimedRow.cursor_start)&&positive(claimedRow.cursor_end)){
+          const restored:Delivery={id:claimedRow.delivery_id,start:claimedRow.cursor_start,
+            end:claimedRow.cursor_end,cursor:claimedRow.cursor_start-1,routeVersion:route.version,finished:false};
+          this.deliveries.set(route.bindingId,restored);
+          await this.processDelivery(route,restored);
+          if(restored.finished)await this.settle(route,restored);
+          return;
+        }
         this.uncertain.add(route.bindingId);
         await this.reconcile(route, claimedRow);
         return;
       }
-      if (prior.finished) return; // Only a separate wx decision may release the original delivery.
+      if (prior.finished) { if(route.mode==="standard")await this.settle(route,prior); return; }
       await this.processDelivery(route, prior);
+      if(prior.finished&&route.mode==="standard")await this.settle(route,prior);
       return;
     }
     if (prior) {
@@ -169,6 +210,8 @@ export class ConnectorIngressPump {
         return;
       }
       this.deliveries.delete(route.bindingId);
+      const decision=await this.deps.decisions?.get(route.projectId,route.bindingId,prior.id);
+      if(decision)await this.deps.decisions!.markCompleted(decision);
       return; // Observe the decision before a later tick can consider another claim.
     }
     const pending = rows.find(row => row?.status === "pending");
@@ -183,17 +226,20 @@ export class ConnectorIngressPump {
       cursor: claim.cursor_start - 1, routeVersion: route.version, finished: false};
     this.deliveries.set(route.bindingId, delivery);
     await this.processDelivery(route, delivery);
+    if(delivery.finished&&route.mode==="standard")await this.settle(route,delivery);
   }
-  private async shown(route: ConnectorRouteRecord, delivery: Delivery): Promise<void> {
+  private async shown(route: ConnectorRouteRecord, delivery: Delivery): Promise<Row> {
     const result = await this.read("inbox_show", {conversation_id: route.source.conversationId, delivery_id: delivery.id});
     if (result.delivery_id !== delivery.id || result.conversation_id !== route.source.conversationId
         || result.owner !== route.owner || result.epoch !== route.epoch || result.status !== "claimed"
         || result.session_ref !== null && result.session_ref !== route.sessionRef
         || result.cursor_start !== delivery.start || result.cursor_end !== delivery.end)
       throw new Error("wx ingress original delivery identity changed");
+    return result;
   }
   private async processDelivery(route: ConnectorRouteRecord, delivery: Delivery): Promise<void> {
-    await this.shown(route, delivery);
+    const shown = await this.shown(route, delivery);
+    if (route.mode === "standard") await this.reserve(route, delivery, shown);
     for (let pageNumber = 0; pageNumber < 10 && !delivery.finished; pageNumber++) {
       if (!await this.exact(route) || !await this.deps.qualifyReceiver(route) || !await this.live()) return;
       const page = await this.read("events", {conversation_id: route.source.conversationId,
@@ -214,6 +260,132 @@ export class ConnectorIngressPump {
         throw new Error("wx ingress page end differs from frozen delivery");
       delivery.finished = !page.has_more;
     }
+  }
+  /** Inspect the original delivery before the one transport reservation. Unknown stays on this delivery. */
+  private async reserve(route: ConnectorRouteRecord, delivery: Delivery, shown: Row): Promise<void> {
+    const store=this.deps.decisions;
+    if(!store)throw new Error("Durable Connector transport attempts are unavailable");
+    const conversation_id=route.source.conversationId;
+    const status=await this.read("transport_status", {conversation_id});
+    if (status.conversation_id!==conversation_id || !Array.isArray(status.deliveries))
+      throw new Error("wx transport status is unconfirmed");
+    const matches=status.deliveries.map(object).filter(row=>row?.delivery_id===delivery.id);
+    if (matches.length>1) throw new Error("wx transport delivery is duplicated");
+    const attempt=await store.transport(route.projectId,route.bindingId,delivery.id);
+    if(attempt&&attempt.routeVersion!==route.version)throw new Error("wx original transport route changed");
+    if (matches.length===1) {
+      const row=matches[0]!;
+      if(row.owner!==route.owner||row.epoch!==route.epoch||row.session_ref!==route.sessionRef||
+        row.conversation_id!==conversation_id||!['reserved','recorded'].includes(String(row.turn_state)))
+        throw new Error("wx transport reservation changed identity");
+      if(!attempt)await store.markReserve(route.projectId,route.bindingId,delivery.id,route.version);
+      return;
+    }
+    if(attempt)throw new Error("wx original reserve attempt is unresolved; inspect its delivery");
+    if(typeof shown.token!=="string"||!shown.token)throw new Error("wx claim token is unavailable");
+    if(!await store.markReserve(route.projectId,route.bindingId,delivery.id,route.version))
+      throw new Error("wx original reserve was attempted concurrently; read original status");
+    const outcome=await this.deps.gateway.call("reserve_turn", {conversation_id,delivery_id:delivery.id,token:shown.token});
+    if(outcome.state!=="ok"||outcome.result.delivery_id!==delivery.id)
+      throw new Error(`wx transport reserve ${outcome.state}; reconcile original delivery`);
+  }
+  private async settle(route:ConnectorRouteRecord,delivery:Delivery):Promise<void>{
+    const store=this.deps.decisions;
+    if(!store||!await this.exact(route)||!await this.live())return;
+    const messages=await store.messages(route.projectId,route.bindingId,delivery.id);
+    if(messages.some(message=>!['replied','completed_without_reply','failed','cancelled'].includes(message.messageState)))return;
+    const shown=await this.shown(route,delivery);
+    const conversation_id=route.source.conversationId;
+    const transport=await this.read("transport_status",{conversation_id});
+    const rows=Array.isArray(transport.deliveries)?transport.deliveries.map(object):[];
+    const row=rows.find(value=>value?.delivery_id===delivery.id);
+    if(row&&(row.owner!==route.owner||row.epoch!==route.epoch||row.session_ref!==route.sessionRef||
+      row.conversation_id!==conversation_id||typeof row.transport_token!=="string"))
+      throw new Error("wx transport changed identity before finish");
+    const attempt=await store.transport(route.projectId,route.bindingId,delivery.id);
+    if(!attempt||attempt.routeVersion!==route.version)
+      throw new Error("wx original transport attempt is unavailable");
+    if(shown.turn_state==='reserved'&&row?.turn_state==='reserved'){
+      const representative=messages.find(value=>value.nativeTurnId);
+      if(representative?.nativeTurnId){
+        if(attempt.recordTurnId){
+          if(attempt.recordTurnId!==representative.nativeTurnId)throw new Error("wx original recorded Turn changed");
+          return; // Unknown record result is read from transport status; never replay it.
+        }
+        if(!await store.markRecord(route.projectId,route.bindingId,delivery.id,route.version,
+          representative.nativeTurnId))return;
+        const recorded=await this.deps.gateway.call("record_turn",{conversation_id,delivery_id:delivery.id,
+          token:row.transport_token as string,turn_id:representative.nativeTurnId});
+        if(recorded.state!=="ok")throw new Error(`wx record original Turn ${recorded.state}`);
+        return; // Read back the pinned Turn before finishing it.
+      }
+      if(attempt.finishStatus)return;
+      if(!await store.markFinish(route.projectId,route.bindingId,delivery.id,route.version,'failed'))return;
+      const failed=await this.deps.gateway.call("finish_turn",{conversation_id,delivery_id:delivery.id,
+        token:row.transport_token as string,status:'failed'});
+      if(failed.state!=="ok")throw new Error(`wx finish unstarted delivery ${failed.state}`);
+      return;
+    }
+    if(shown.turn_state==='recorded'&&row?.turn_state==='recorded'){
+      const failed=messages.some(value=>value.messageState==='failed'||value.messageState==='cancelled');
+      const status=failed?'failed':'completed';
+      if(attempt.finishStatus){
+        if(attempt.finishStatus!==status)throw new Error("wx original finish status changed");
+        return;
+      }
+      if(!await store.markFinish(route.projectId,route.bindingId,delivery.id,route.version,status))return;
+      const finished=await this.deps.gateway.call("finish_turn",{conversation_id,delivery_id:delivery.id,
+        token:row.transport_token as string,status});
+      if(finished.state!=="ok")throw new Error(`wx finish original Turn ${finished.state}`);
+      return; // The terminal transport state is read from the original inbox row.
+    }
+    if(!['completed','interrupted','failed'].includes(String(shown.turn_state)))return;
+    let decision=await store.get(route.projectId,route.bindingId,delivery.id);
+    if(!decision){
+      const response=messages.map(value=>value.response?.trim()).filter((value):value is string=>!!value).join("\n\n");
+      const failed=messages.some(value=>value.messageState==='failed'||value.messageState==='cancelled');
+      const canSend=route.capabilities.sendText&&route.sendTargets.includes(conversation_id);
+      const bytes=Buffer.byteLength(response,'utf8');
+      const sendable=Array.from(response).length<=2000&&bytes<=16000&&
+        !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(response);
+      const action=failed||bytes>65536?'defer':response?(canSend&&sendable?'reply':'draft'):'skip';
+      const requestId=action==='reply'?`ev${createHash('sha256').update(JSON.stringify([
+        route.bindingId,delivery.id,route.version])).digest('hex').slice(0,48)}`:null;
+      decision=await store.prepare({projectId:route.projectId,bindingId:route.bindingId,
+        deliveryId:delivery.id,routeVersion:route.version,decision:action,requestId,
+        content:action==='reply'||action==='draft'?response:null});
+    }
+    if(decision.state==='completed'||decision.state==='complete_unknown')return;
+    if(decision.decision==='reply'){
+      if(!decision.requestId||!decision.content)throw new Error("wx original send intent is incomplete");
+      if(decision.state==='prepared'&&await store.markAttempted(decision)){
+        const sent=await this.deps.gateway.call("send_text",{conversation_id,request_id:decision.requestId,
+          text:decision.content});
+        if(sent.state==='ok'&&['pending','ui_observed','recipient_confirmed'].includes(String(sent.result.status)))
+          await store.markObserved(decision);
+        else throw new Error(`wx send ${sent.state}; inspect original request ${decision.requestId}`);
+        return;
+      }
+      const result=await this.deps.gateway.call("result",{conversation_id,request_id:decision.requestId});
+      if(result.state!=="ok")return; // No new request ID or send attempt after an unknown result.
+      if(!['pending','ui_observed','recipient_confirmed'].includes(String(result.result.status)))
+        throw new Error(`wx original request ${decision.requestId} has no sendable result`);
+      await store.markObserved(decision);
+      if(decision.state==='attempted')return;
+    }
+    if(typeof shown.token!=="string"||!shown.token)throw new Error("wx original claim token is unavailable");
+    const params=decision.decision==='reply'
+      ? {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'reply' as const,request_id:decision.requestId!}
+      : decision.decision==='draft'
+        ? {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'draft' as const,text:decision.content!}
+        : decision.decision==='defer'
+          ? {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'defer' as const,
+            reason:'One or more native messages failed; review the saved processing records'}
+          : {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'skip' as const,
+            reason:'No reply text was produced by the native Session'};
+    const completed=await this.deps.gateway.call("complete",params);
+    await store.markCompleteUnknown(decision);
+    if(completed.state!=="ok")throw new Error(`wx complete ${completed.state}; inspect original delivery`);
   }
   private async admitEvent(route: ConnectorRouteRecord, delivery: Delivery, event: Row): Promise<boolean> {
     const message = object(event.message), content = object(message?.content);

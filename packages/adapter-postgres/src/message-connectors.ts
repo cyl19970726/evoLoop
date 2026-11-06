@@ -23,14 +23,16 @@ const routeOf = (r: Row): ConnectorRouteRecord => ({
   source: { provider: r.provider, connectionId: r.connection_id, conversationId: r.conversation_id },
   targetSessionId: r.target_session_id, targetActorId: r.target_actor_id,
   senderActorId: r.sender_actor_id, owner: r.owner, epoch: r.epoch,
-  sessionRef: r.session_ref, state: r.state,
+  sessionRef: r.session_ref, state: r.state, mode: r.mode,
+  sendTargets: r.send_targets, internalTargets: r.internal_targets,
   capabilities: connectorCapabilitiesSchema.parse(r.capabilities), policyHash: r.policy_hash,
   version: r.version, createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
 });
 const operationOf = (r: Row): ConnectorRouteOperation => ({
   projectId: r.project_id, id: r.operation_id, actorId: r.actor_id,
   requestHash: r.request_hash, kind: r.kind, bindingId: r.binding_id,
-  result: connectorRouteRecordSchema.parse(r.result), createdAt: iso(r.created_at),
+  result: connectorRouteRecordSchema.parse({ mode: "restricted", sendTargets: [], internalTargets: [],
+    ...r.result }), createdAt: iso(r.created_at),
 });
 function definiteRefusal(error: unknown): never {
   if (error && typeof error === "object" && "code" in error) {
@@ -39,7 +41,7 @@ function definiteRefusal(error: unknown): never {
     if (error.code === "23503")
       throw new DomainError("CONNECTOR_ROUTE_REFERENCE", "Project or exact owned Session does not exist");
     if (error.code === "23514")
-      throw new DomainError("CONNECTOR_ROUTE_REFUSED", "Route identity, epoch, or disabled-only constraint refused the write");
+      throw new DomainError("CONNECTOR_ROUTE_REFUSED", "Route identity, policy, or Session constraint refused the write");
   }
   throw error;
 }
@@ -52,7 +54,7 @@ function requestHash(kind: "create" | "update", route: VersionedConnectorRoute |
     ...(expectedVersion === undefined ? {} : { expectedVersion }) })).digest("hex");
 }
 
-/** Route persistence only. Delivery stays closed until a restricted receiver is proven. */
+/** Route persistence with reviewed versioned policy changes. */
 export class PgConnectorRoutes {
   constructor(private readonly db: Pool) {}
 
@@ -98,9 +100,11 @@ export class PgConnectorRoutes {
         throw new DomainError("CONNECTOR_ACTOR_COLLISION", "Sender and receiver actors must differ");
       const result = await client.query(`INSERT INTO connector_route(project_id,binding_id,provider,connection_id,
         conversation_id,target_session_id,target_actor_id,sender_actor_id,owner,epoch,session_ref,state,
-        capabilities,policy_hash,version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'disabled',$12,$13,1)
+        capabilities,policy_hash,version,mode,send_targets,internal_targets)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'disabled',$12,$13,1,$14,$15,$16)
         RETURNING *`, [route.projectId,route.bindingId,...key(route),route.targetActorId,
-        route.senderActorId,route.owner,route.epoch,route.sessionRef,route.capabilities,route.policyHash]);
+        route.senderActorId,route.owner,route.epoch,route.sessionRef,route.capabilities,route.policyHash,
+        route.mode,route.sendTargets,route.internalTargets]);
       return routeOf(result.rows[0]!);
     });
   }
@@ -143,33 +147,54 @@ export class PgConnectorRoutes {
         throw new DomainError("VERSION_CONFLICT", "Route version changed");
       if (JSON.stringify(key(current)) !== JSON.stringify(key(route)))
         throw new DomainError("CONNECTOR_ROUTE_IDENTITY", "Source and receiver Session are immutable");
-      if (route.state === "active") await this.preflightActivation(client,route);
-      if (route.state !== "disabled")
-        throw new DomainError("CONNECTOR_ROUTE_UNVERIFIED", "Target actor and channel Session provenance are unverified");
+      if (route.mode !== current.mode)
+        throw new DomainError("CONNECTOR_ROUTE_IDENTITY", "Route mode is immutable");
+      const targetsChanged = JSON.stringify(route.sendTargets) !== JSON.stringify(current.sendTargets) ||
+        JSON.stringify(route.internalTargets) !== JSON.stringify(current.internalTargets);
+      if (targetsChanged && (current.state !== "disabled" || route.state !== "disabled" ||
+        route.policyHash === current.policyHash))
+        throw new DomainError("CONNECTOR_ROUTE_POLICY", "Target changes require a disabled route and new reviewed policy hash");
+      if (route.state !== "disabled") await this.preflightActivation(client,route);
       const result = await client.query(`UPDATE connector_route SET target_actor_id=$4,sender_actor_id=$5,
         owner=$6,epoch=$7,session_ref=$8,state=$9,capabilities=$10,policy_hash=$11,
-        version=$12,updated_at=now() WHERE project_id=$1 AND binding_id=$2 AND version=$3 RETURNING *`,
+        version=$12,send_targets=$13,internal_targets=$14,updated_at=now()
+        WHERE project_id=$1 AND binding_id=$2 AND version=$3 RETURNING *`,
         [route.projectId,route.bindingId,expectedVersion,route.targetActorId,route.senderActorId,
-          route.owner,route.epoch,route.sessionRef,route.state,route.capabilities,route.policyHash,route.version]);
+          route.owner,route.epoch,route.sessionRef,route.state,route.capabilities,route.policyHash,
+          route.version,route.sendTargets,route.internalTargets]);
       if (!result.rows[0]) throw new DomainError("VERSION_CONFLICT", "Route version changed");
       return routeOf(result.rows[0]);
     });
   }
 
-  private async preflightActivation(client: PoolClient, route: VersionedConnectorRoute): Promise<never> {
-    const result = await client.query(`SELECT s.state,s.native_thread_id,s.native_session_id,
-      s.sandbox,s.approval_policy,p.activation_state,p.revision_id,p.active_revision_id,
-      r.sandbox AS profile_sandbox,r.approval_policy AS profile_approval
+  private async preflightActivation(client: PoolClient, route: VersionedConnectorRoute): Promise<void> {
+    const result = await client.query(`SELECT s.state,s.actor_id,s.native_thread_id,s.native_session_id,
+      s.sandbox,s.approval_policy,s.authorization_scope,p.activation_state,p.revision_id,p.active_revision_id,
+      r.sandbox AS profile_sandbox,r.approval_policy AS profile_approval,r.authorization_scope AS profile_scope
       FROM runtime_session s LEFT JOIN session_execution_profile p
         ON p.project_id=s.project_id AND p.session_id=s.session_id
       LEFT JOIN session_execution_profile_revision r ON r.project_id=p.project_id
         AND r.session_id=p.session_id AND r.revision_id=p.revision_id
-      WHERE s.project_id=$1 AND s.session_id=$2`, [route.projectId,route.targetSessionId]);
+      WHERE s.project_id=$1 AND s.session_id=$2 FOR SHARE OF s`, [route.projectId,route.targetSessionId]);
     const receiver = result.rows[0];
+    if (route.mode === "standard") {
+      if (!receiver || receiver.state !== "ready" || receiver.actor_id !== route.targetActorId ||
+        !receiver.native_thread_id || !receiver.native_session_id ||
+        receiver.sandbox !== "danger-full-access" || receiver.approval_policy !== "never" ||
+        receiver.authorization_scope !== `connector-standard:${route.bindingId}` ||
+        receiver.activation_state !== "active" || receiver.revision_id !== receiver.active_revision_id ||
+        receiver.profile_sandbox !== receiver.sandbox || receiver.profile_approval !== receiver.approval_policy ||
+        receiver.profile_scope !== receiver.authorization_scope)
+        throw new DomainError("CONNECTOR_RECEIVER_NOT_STANDARD", "Exact owned Session lacks an active standard profile");
+      return;
+    }
     if (!receiver || receiver.state !== "ready" || !receiver.native_thread_id || !receiver.native_session_id ||
       receiver.activation_state !== "active" || receiver.revision_id !== receiver.active_revision_id ||
-      receiver.sandbox !== "read-only" || receiver.approval_policy !== "never" ||
-      receiver.profile_sandbox !== receiver.sandbox || receiver.profile_approval !== receiver.approval_policy)
+      receiver.actor_id !== route.targetActorId || receiver.sandbox !== "read-only" ||
+      receiver.approval_policy !== "never" ||
+      receiver.authorization_scope !== `connector-receiver:${route.bindingId}` ||
+      receiver.profile_sandbox !== receiver.sandbox || receiver.profile_approval !== receiver.approval_policy ||
+      receiver.profile_scope !== receiver.authorization_scope)
       throw new DomainError("CONNECTOR_RECEIVER_NOT_RESTRICTED", "Exact owned Session lacks an active restricted profile");
     // Database configuration alone cannot prove gateway tool/credential isolation,
     // native Thread configuration, or recovery of earlier unknown Turns.
@@ -298,12 +323,14 @@ export class PgConnectorMessageLinks {
         r.session_ref !== intent.gateway.sessionRef ||
         r.target_actor_id !== r.session_actor_id ||
         r.session_state !== "ready" || !r.native_thread_id || !r.native_session_id ||
-        r.sandbox !== "read-only" || r.approval_policy !== "never" ||
-        r.authorization_scope !== `connector-receiver:${intent.bindingId}` ||
+        (r.mode === "standard" ?
+          (r.sandbox !== "danger-full-access" || r.approval_policy !== "never" ||
+            r.authorization_scope !== `connector-standard:${intent.bindingId}`) :
+          true) ||
         r.activation_state !== "active" || r.revision_id !== r.active_revision_id ||
         r.profile_sandbox !== r.sandbox || r.profile_approval !== r.approval_policy ||
         r.profile_scope !== r.authorization_scope)
-        throw new DomainError("CONNECTOR_ADMISSION_REFUSED", "Exact active source and restricted ready receiver are required");
+        throw new DomainError("CONNECTOR_ADMISSION_REFUSED", "Exact active standard route and ready receiver are required");
       await client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,
         session_id,link_id,sender_actor_id,content,context_task_id,context_task_revision_id,
         reply_to_message_id,state,version,blocked_reason,created_at,updated_at)

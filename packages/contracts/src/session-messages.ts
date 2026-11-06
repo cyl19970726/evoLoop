@@ -79,8 +79,9 @@ export interface SessionMessageManualStopPreflight {
 export interface SessionMessageDispatchGrant {
   projectId: string; sessionId: string; senderActorId: string; receiverRoleId: string; receiverActorId: string;
   cwd: string; maxTurns: number; enabled: boolean;
-  /** Restricted execution is admitted only with this exact, current source binding. */
-  connector?: { bindingId: string; routeVersion: number; epoch: number; policyHash: string };
+  /** Connector execution is admitted only with this exact, current source binding and mode. */
+  connector?: { mode: "standard" | "restricted"; bindingId: string; routeVersion: number;
+    epoch: number; policyHash: string };
 }
 export interface SessionMessageReader {
   /** Recheck persisted source and route. Transaction implementations lock both rows. */

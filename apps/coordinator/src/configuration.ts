@@ -96,6 +96,7 @@ const integrationSchema = z.strictObject({
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
     /** Separate from full-access ordinary grants; each entry names one reviewed conversation route. */
     connectorReceivers: z.array(z.strictObject({projectId:z.uuid(),bindingId:z.uuid(),sessionId:z.uuid(),
+      mode:z.enum(["standard","restricted"]).default("restricted"),
       senderActorId:z.string().min(1).max(100),receiverActorId:z.string().min(1).max(100),
       receiverRoleId:z.uuid(),cwd:absolute,policyHash:z.string().regex(/^[a-f0-9]{64}$/),
       maxTurns:z.number().int().min(1).max(1000),enabled:z.boolean()})).max(200).default([])

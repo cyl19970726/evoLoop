@@ -15,7 +15,8 @@ const operationId = id(4), updateOperationId = id(5);
 const route = { projectId, bindingId,
   source: { provider: "wechat", connectionId: "test-connection", conversationId: "a".repeat(32) },
   targetSessionId: id(3), targetActorId: "restricted-receiver", senderActorId: "connector-sender",
-  owner: "test-owner", epoch: 1, sessionRef: "test-session", state: "disabled" as const,
+  owner: "test-owner", epoch: 1, sessionRef: "test-session", mode: "standard" as const,
+  sendTargets: ["a".repeat(32)], internalTargets: [], state: "disabled" as const,
   capabilities: { history: true, search: false, subscribe: true, sendText: true,
     sendMedia: false, receipt: "local_observed" as const }, policyHash: "a".repeat(64) };
 const record = { ...route, version: 1, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
@@ -26,11 +27,13 @@ test("connector route HTTP preserves project and reviewer boundaries while keepi
   app.addHook("onRequest", async request => {
     const role = request.headers.authorization;
     request.principal = role === "none" ? null : { actorId: role ?? "reader", projectIds: [projectId],
-      permissions: role === "reviewer" ? ["read", "write", "review"] : ["read"] } as Principal;
+      permissions: role === "reviewer" ? ["read", "write", "review"] : role === 'restricted-receiver'
+        ? ['read','write']: ["read"] } as Principal;
   });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof DomainError && error.code === "FORBIDDEN" ? 403 : 409)
     .send({ code: error instanceof DomainError ? error.code : "INVALID_INPUT" }));
   let writes = 0;
+  let transferred:unknown=null;
   let saved: ConnectorRouteRecord = record;
   const routes: ConnectorRouteReader = {
     get: async () => saved,
@@ -45,7 +48,12 @@ test("connector route HTTP preserves project and reviewer boundaries while keepi
       writes++; saved = { ...input, state: "disabled", createdAt: record.createdAt,
         updatedAt: record.updatedAt }; return saved; }
   };
-  registerConnectorRouteReads(app, { getProject: async () => ({}) } as unknown as WorkflowService, routes, () => true);
+  registerConnectorRouteReads(app, { getProject: async () => ({}),execute:async(principal:Principal,command:unknown)=>{
+      transferred={principal,command};return{status:'applied',operationId,entityId:id(11),version:1};}
+    } as unknown as WorkflowService, routes, () => true,
+    {listRecent:async()=>[{deliveryId:12,eventCount:1,latestMessageState:'replied',decision:null}],
+      messages:async()=>[{eventCursor:2,messageId:id(10),nativeTurnId:'native-turn'}],get:async()=>null},
+    {getByMessageId:async()=>({bindingId,source:{eventCursor:2,source:{conversationId:'a'.repeat(32)}}})});
   try {
     const path = `/api/projects/${projectId}/message-connectors/routes`;
     assert.equal((await app.inject({ method: "POST", url: path, payload: { operationId, route }, headers: { authorization: "reader" } })).statusCode, 403);
@@ -57,6 +65,9 @@ test("connector route HTTP preserves project and reviewer boundaries while keepi
     assert.equal(created.json().route.state, "disabled");
     assert.equal((await app.inject({ url: path, headers: { authorization: "reader" } })).json().items[0].bindingId, bindingId);
     assert.equal((await app.inject({ url: `${path}/${bindingId}`, headers: { authorization: "none" } })).statusCode, 403);
+    assert.equal((await app.inject({url:`${path}/${bindingId}/deliveries`,headers:{authorization:'none'}})).statusCode,403);
+    assert.equal((await app.inject({url:`${path}/${bindingId}/deliveries`,headers:{authorization:'reader'}})).json().items[0].deliveryId,12);
+    assert.equal((await app.inject({url:`${path}/${bindingId}/deliveries/12`,headers:{authorization:'reader'}})).json().messages[0].nativeTurnId,'native-turn');
     assert.equal((await app.inject({ url: `/api/projects/${projectId}/message-connectors/operations/${operationId}` })).json().result.bindingId,
       bindingId);
     const missingOperation = await app.inject({ url: `/api/projects/${projectId}/message-connectors/operations/${id(99)}` });
@@ -69,10 +80,28 @@ test("connector route HTTP preserves project and reviewer boundaries while keepi
       payload: { operationId: updateOperationId, expectedVersion: 1, route: { ...route, version: 2 } } });
     assert.equal(updated.json().route.version, 2);
     assert.equal(writes, 2);
+    const premature = await app.inject({method:'PUT',url:`${path}/${bindingId}`,headers:{authorization:'reviewer'},
+      payload:{operationId:id(15),expectedVersion:2,route:{...route,version:3,state:'active'}}});
+    assert.equal(premature.json().code,'CONNECTOR_ACTIVATION_UNAVAILABLE');
+    assert.equal(writes,2);
+    const restricted = await app.inject({ method: "PUT", url: `${path}/${bindingId}`, headers: { authorization: "reviewer" },
+      payload: { operationId: id(7), expectedVersion: 2, route: { ...route, mode: "restricted", version: 3, state: "active" } } });
+    assert.equal(restricted.json().code, "CONNECTOR_RECEIVER_UNPROVEN");
+    assert.equal(writes, 2);
     const wrong = await app.inject({ method: "PUT", url: `${path}/${bindingId}`, headers: { authorization: "reviewer" },
       payload: { operationId: id(6), expectedVersion: 2, route: { ...route, bindingId: id(8), version: 3 } } });
     assert.equal(wrong.json().code, "CONNECTOR_ROUTE_IDENTITY");
     assert.equal(writes, 2);
+    saved={...saved,state:'active',internalTargets:[id(12)]};
+    const transferPath=`${path}/${bindingId}/transfers`;
+    const transfer={operationId:id(13),sourceMessageId:id(10),newMessageId:id(11),targetSessionId:id(12),content:'Please review'};
+    assert.equal((await app.inject({method:'POST',url:transferPath,headers:{authorization:'reviewer'},payload:transfer})).json().code,
+      'CONNECTOR_TRANSFER_REFUSED');
+    assert.equal((await app.inject({method:'POST',url:transferPath,headers:{authorization:'restricted-receiver'},
+      payload:{...transfer,targetSessionId:id(20)}})).json().code,'CONNECTOR_TRANSFER_REFUSED');
+    assert.equal((await app.inject({method:'POST',url:transferPath,headers:{authorization:'restricted-receiver'},
+      payload:transfer})).json().status,'applied');
+    assert.match((transferred as {command:{content:string}}).command.content,/untrusted data/);
   } finally { await app.close(); }
 });
 

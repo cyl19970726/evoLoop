@@ -11,7 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import { canonicalTaskInputJson, taskInputSignature } from "@evoloop/core/task-input";
-import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, taskAttentionNoticeCurrent,
+import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConnectorDeliveryDecisions, taskAttentionNoticeCurrent,
   disposeStaleTaskAttentionNotice } from "@evoloop/adapter-postgres";
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
@@ -23,6 +23,7 @@ import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
 import { FeishuBitableConnector } from "@evoloop/connector-feishu";
 import { WechatGatewayClient } from "@evoloop/connector-wechat";
+import type { VersionedConnectorRoute } from "@evoloop/contracts/message-connectors";
 import { PgOutboxDeliveryStore } from "@evoloop/adapter-postgres/delivery";
 import { CollaborationRunner } from "./collaboration/runner.js";
 import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
@@ -462,25 +463,31 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canW
 try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
 const connectorLinks = new PgConnectorMessageLinks(pool);
 const connectorRoutes = new PgConnectorRoutes(pool);
+const connectorDecisions = new PgConnectorDeliveryDecisions(pool);
 const messageService = new SessionMessageService({ uow, clock, ids, grantFor: async (message, session) => {
   const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
   if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)) return null;
   const link=await connectorLinks.getByMessageId(message.projectId,message.id);
   if (link) {
     const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const route=await connectorRoutes.get(message.projectId,link.bindingId);
     const grant=current.connectorReceivers.find(g=>g.enabled&&g.projectId===message.projectId&&
       g.bindingId===link.bindingId&&g.sessionId===session.id&&g.senderActorId===message.senderActorId&&
       g.receiverActorId===session.actorId&&g.receiverRoleId===session.roleId&&g.cwd===session.cwd&&
-      g.policyHash===link.routePolicyHash);
-    if(!grant||session.sandbox!=="read-only"||session.approvalPolicy!=="never"||
-      session.authorizationScope!==`connector-receiver:${link.bindingId}`||
+      g.policyHash===link.routePolicyHash&&g.mode===route?.mode);
+    const profile=route?.mode==='standard'
+      ? session.sandbox==='danger-full-access'&&session.approvalPolicy==='never'&&
+        session.authorizationScope===`connector-standard:${link.bindingId}`
+      : route?.mode==='restricted'&&session.sandbox==='read-only'&&session.approvalPolicy==='never'&&
+        session.authorizationScope===`connector-receiver:${link.bindingId}`;
+    if(!grant||!profile||
       !await currentProjectWriter(message.projectId,grant.receiverActorId)||
       !configured.runtime?.enabled||!await configured.allowedRuntimeCwd(session.projectId,session.cwd)||
       !await currentSessionGrant(pool,session,()=>configured.hasRuntimeGrant({projectId:session.projectId,
         actorId:session.actorId,roleId:session.roleId,authorizationScope:session.authorizationScope,
         cwd:session.cwd,sandbox:session.sandbox,model:session.model,approvalPolicy:session.approvalPolicy}))) return null;
     try { if(await realpath(session.cwd)!==session.cwd) return null; } catch { return null; }
-    return {...grant,connector:{bindingId:link.bindingId,routeVersion:link.routeVersion,
+    return {...grant,connector:{mode:grant.mode,bindingId:link.bindingId,routeVersion:link.routeVersion,
       epoch:link.routeEpoch,policyHash:link.routePolicyHash}};
   }
   if (!await currentSessionExecutionAuthority(session)) return null;
@@ -562,17 +569,14 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
     }
     return businessBeforeMessage(message);
   }, onError: () => console.error("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
-const connectorIngress = runner && integrations.messageConnectors ? new ConnectorIngressPump({
-  gateway: new WechatGatewayClient({
+const connectorGateway = integrations.messageConnectors ? new WechatGatewayClient({
     executable: integrations.messageConnectors.gateway.executable,
     configPath: integrations.messageConnectors.gateway.configPath,
-    allowedMethods: ["binding", "inbox_status", "inbox_claim", "inbox_show", "events"],
-  }),
-  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
-  routes: connectorRoutes, links: connectorLinks,
-  canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
-  enabled: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).messageConnectors?.enabled === true,
-  qualifyReceiver: async route => {
+    allowedMethods: ["binding", "inbox_status", "inbox_claim", "inbox_show", "events",
+      "transport_status", "reserve_turn", "record_turn", "finish_turn", "complete", "send_text", "result"],
+  }) : null;
+const qualifyConnectorRoute = async (route:VersionedConnectorRoute):Promise<boolean> => {
+    if(!runner||!connectorGateway||!runner.nativeStartsAvailable())return false;
     const configured = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const grant = configured.sessionMessages?.connectorReceivers.find(value =>
       value.enabled && value.projectId === route.projectId && value.bindingId === route.bindingId &&
@@ -582,10 +586,14 @@ const connectorIngress = runner && integrations.messageConnectors ? new Connecto
         !grant || !await currentProjectWriter(route.projectId, route.senderActorId) ||
         !await currentProjectWriter(route.projectId, route.targetActorId)) return false;
     const session = await uow.read(route.projectId, reader => reader.getRuntimeSession(route.targetSessionId));
-    if (!session || session.state !== "ready" || session.actorId !== route.targetActorId ||
+    const profile=route.mode==='standard'
+      ? session?.sandbox==='danger-full-access'&&session.approvalPolicy==='never'&&
+        session.authorizationScope===`connector-standard:${route.bindingId}`
+      : session?.sandbox==='read-only'&&session.approvalPolicy==='never'&&
+        session.authorizationScope===`connector-receiver:${route.bindingId}`;
+    if (!session || !grant || grant.mode!==route.mode || session.state !== "ready" || session.actorId !== route.targetActorId ||
         session.roleId !== grant.receiverRoleId || session.cwd !== grant.cwd ||
-        session.sandbox !== "read-only" || session.approvalPolicy !== "never" ||
-        session.authorizationScope !== `connector-receiver:${route.bindingId}` ||
+        !profile ||
         !session.nativeThreadId || !session.nativeSessionId) return false;
     if (!await configured.allowedRuntimeCwd(route.projectId, session.cwd) ||
         !await currentSessionGrant(pool, session, () => configured.hasRuntimeGrant({
@@ -598,8 +606,23 @@ const connectorIngress = runner && integrations.messageConnectors ? new Connecto
     if (!native.isReady()) return false;
     const binding = bindingOf(session);
     await native.registerBinding(binding);
-    return (await native.qualifyConnectorReceiver(binding, route.bindingId)).available;
-  },
+    const qualified=route.mode==='standard'
+      ? (await native.qualifyConversationThread(binding)).available
+      : (await native.qualifyConnectorReceiver(binding, route.bindingId)).available;
+    if(!qualified)return false;
+    const gatewayBinding=await connectorGateway.call('binding',{conversation_id:route.source.conversationId});
+    const current=gatewayBinding.state==='ok'?gatewayBinding.result:null;
+    return !!current&&current.conversation_id===route.source.conversationId&&current.owner===route.owner&&
+      current.epoch===route.epoch&&current.control==='active'&&
+      (current.owner_session_ref===null||current.owner_session_ref===route.sessionRef);
+};
+const connectorIngress = runner && connectorGateway && integrations.messageConnectors ? new ConnectorIngressPump({
+  gateway: connectorGateway,
+  projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
+  routes: connectorRoutes, links: connectorLinks, decisions: connectorDecisions,
+  canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
+  enabled: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).messageConnectors?.enabled === true,
+  qualifyReceiver: qualifyConnectorRoute,
   pollIntervalMs: integrations.messageConnectors.pollIntervalMs,
   onError: () => console.error("Connector ingress needs reconciliation; inspect the original wx delivery and saved source link."),
 }) : null;
@@ -658,7 +681,8 @@ if (runner) {
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
-  connectorRoutes,
+  connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
+  canActivateConnectorRoute: qualifyConnectorRoute,
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),

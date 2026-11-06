@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertIsolatedConnectorRoutes, connectorSourceKey, type ConnectorRoute } from "../src/message-connectors.js";
+import { assertIsolatedConnectorRoutes, connectorRouteSchema, connectorSourceKey,
+  versionedConnectorRouteSchema, type ConnectorRoute } from "../src/message-connectors.js";
 
 const route = (conversationId: string, sessionId: string): ConnectorRoute => ({
   projectId: "11111111-1111-4111-8111-111111111111",
@@ -8,6 +9,7 @@ const route = (conversationId: string, sessionId: string): ConnectorRoute => ({
   source: { provider: "wechat", connectionId: "test-account", conversationId },
   targetSessionId: sessionId, targetActorId: "recipient", senderActorId: "connector",
   owner: "test-owner", epoch: 1, sessionRef: "test-session", state: "active",
+  mode: "standard", sendTargets: [conversationId], internalTargets: [],
   capabilities: { history: true, search: false, subscribe: true, sendText: true, sendMedia: false, receipt: "local_observed" },
   policyHash: "a".repeat(64),
 });
@@ -35,6 +37,15 @@ test("capability combinations are provider independent", () => {
   const a = route("group-a", "33333333-3333-4333-8333-333333333333");
   assert.doesNotThrow(() => assertIsolatedConnectorRoutes([{ ...a, source: { ...a.source, provider: "discord" },
     capabilities: { history: true, search: true, subscribe: false, sendText: false, sendMedia: false, receipt: "none" } }]));
+});
+
+test("standard route requires exact source send target and distinct target lists", () => {
+  const a = route("group-a", "33333333-3333-4333-8333-333333333333");
+  assert.equal(versionedConnectorRouteSchema.parse({ ...a, version: 1 }).mode,"standard");
+  assert.throws(() => connectorRouteSchema.parse({ ...a, sendTargets: ["other"] }),/source conversation/);
+  assert.throws(() => connectorRouteSchema.parse({ ...a, sendTargets: ["group-a","group-a"] }),/Duplicate/);
+  assert.throws(() => connectorRouteSchema.parse({ ...a, internalTargets: [a.targetSessionId,a.targetSessionId] }),/Duplicate/);
+  assert.equal(connectorRouteSchema.parse({ ...a, mode:"restricted", sendTargets:[] }).mode,"restricted");
 });
 
 test("source key keeps provider, connection, conversation, delivery and event distinct", () => {
