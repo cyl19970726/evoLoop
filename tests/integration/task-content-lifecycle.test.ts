@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
+import { withoutTaskTimingBeforeMigration } from "./legacy-task-timing.js";
 import { WorkflowService } from "@evoloop/core";
 import type { CommandResult, Principal } from "@evoloop/contracts";
 import { buildServer } from "../../apps/coordinator/src/server.js";
@@ -25,7 +26,10 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   t.after(async()=>{await pool.end();const admin=new pg.Client({connectionString:database});await admin.connect();
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),taskId=randomUUID(),actorId="legacy-reviewer";
-  const service=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
+  const uow=new PostgresUnitOfWork(pool);
+  let legacySchema = true;
+  withoutTaskTimingBeforeMigration(uow, () => legacySchema);
+  const service=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
   const principal:Principal={actorId,projectIds:[projectId],permissions:["read","write","review"]};
   const issue=async(command:Record<string,unknown>)=>{
@@ -58,6 +62,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname=$1 AND indexname='task_closure_once_idx'",
     [schema])).rows[0].n,1);
   await migrate(database!,schema);
+  legacySchema = false;
   await migrate(database!,schema);
   const ledger=(await pool.query("SELECT name FROM pgmigrations ORDER BY id")).rows.map(row=>row.name as string);
   assert.equal(ledger.filter(name=>name.startsWith("029_task_closure_revisions")).length,1,
