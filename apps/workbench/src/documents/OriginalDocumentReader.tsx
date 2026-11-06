@@ -151,9 +151,9 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
           : <p>{assetError === asset.path ? "图片未能解码，请下载原件核对。" : "此资源格式暂不支持页面预览，可下载原件查看。"}</p>}
       </div>}
     </li>; })}</ul></div>;
-  return <section className={`panel reading doc-original-reader${continuous ? " doc-html-continuous" : ""}`}><div className="panel-head"><h2>{readingMode ? "完整报告" : continuous ? "完整报告" : "完整原件"}</h2>
+  return <section className={`panel reading doc-original-reader${continuous ? " doc-html-continuous" : ""}`}>{!continuous && <div className="panel-head"><h2>{readingMode ? "完整报告" : "完整原件"}</h2>
     <button onClick={() => download(original.revision.originalName,
-      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
+      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>}
     {!continuous && <details className="doc-original-integrity"><summary>原件标识与校验</summary>{integrity}</details>}
     {original.revision.format === "html" ? <>{!readingMode && !continuous && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
       {preview ? <iframe className="doc-html-frame" key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
@@ -161,7 +161,8 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     {continuous ? <details className="doc-continuous-secondary">
       <summary>原件信息、HTML 原文与配套资源{original.assets.length > 0 ? ` · ${original.assets.length} 项` : ""}</summary>
-      <div className="doc-continuous-secondary-body"><div className="doc-original-integrity">{integrity}</div>{raw}{assets}</div>
+      <div className="doc-continuous-secondary-body"><button type="button" onClick={() => download(original.revision.originalName,
+        new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button><div className="doc-original-integrity">{integrity}</div>{raw}{assets}</div>
     </details> : <>{raw}{assets}</>}
   </section>;
 }
