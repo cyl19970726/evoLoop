@@ -258,6 +258,10 @@ export class RuntimeRunner {
     command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]){
     return this.deps.trusted.approvePreTurnContinuation(projectId,runId,principal,command);
   }
+  readPreTurnContinuationDecision(projectId:string,runId:string,principal:Principal,
+    command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]){
+    return this.deps.trusted.readPreTurnContinuationDecision(projectId,runId,principal,command);
+  }
   status(projectId?: string) {
     const faults = projectId ? [...this.faults.values()].filter(fault => fault.projectId === projectId) : [];
     const diagnostics = new Map<string, NativeChildDiagnostic>();

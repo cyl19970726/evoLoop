@@ -1,4 +1,4 @@
-import type { PreTurnReviewDecision, Transaction } from "@evoloop/contracts/ports";
+import type { PreTurnReviewDecision, Reader } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
 import { canonicalTaskInputJson } from "../task-input.js";
 
@@ -9,7 +9,7 @@ export function reviewIntentJson(actorId:string,kind:PreTurnReviewDecision["kind
 }
 
 export async function priorReviewDecision<T extends PreTurnReviewDecision["result"]>(
-  tx:Transaction,operationId:string,actorId:string,kind:PreTurnReviewDecision["kind"],
+  tx:Reader,operationId:string,actorId:string,kind:PreTurnReviewDecision["kind"],
   subjectId:string,intentJson:string):Promise<T|null>{
   const prior=await tx.getPreTurnReviewDecision(operationId);
   if(!prior){

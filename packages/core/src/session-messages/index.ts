@@ -293,6 +293,14 @@ export class SessionMessageService {
       return next;
     });
   }
+  async readPreTurnContinuationDecision(projectId:string,messageId:string,principal:Principal,
+    command:Parameters<SessionMessageService['approvePreTurnContinuation']>[3]):Promise<SessionMessageProcessing|null>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+      throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
+    return this.deps.uow.read(projectId,reader=>priorReviewDecision<SessionMessageProcessing>(reader,
+      command.operationId,principal.actorId,'message',messageId,
+      reviewIntentJson(principal.actorId,'message',messageId,command)));
+  }
   async claimPreTurnContinuation(projectId:string,messageId:string):Promise<SessionMessageProcessing|null>{
     return this.deps.uow.transaction(projectId,async tx=>{
       const store=required(tx.sessionMessages??null,'message store');

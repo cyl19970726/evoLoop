@@ -3,19 +3,6 @@
 ALTER TABLE runtime_run ADD COLUMN pre_turn_proof jsonb;
 ALTER TABLE session_message_processing ADD COLUMN pre_turn_proof jsonb;
 
--- A reviewer decision is consumed at most once across later refusals. The
--- project transaction lock serializes HTTP requests before this unique insert.
-CREATE TABLE pre_turn_review_decision (
-  project_id uuid NOT NULL REFERENCES project(project_id),
-  operation_id uuid NOT NULL,
-  actor_id text NOT NULL,
-  kind text NOT NULL CHECK (kind IN ('run','message')),
-  subject_id uuid NOT NULL,
-  intent_json text NOT NULL,
-  result jsonb NOT NULL,
-  PRIMARY KEY (project_id, operation_id)
-);
-
 -- Keep the proof on the original row, with a separately immutable review event.
 -- This is an invariant for trusted database writers; HTTP still authenticates
 -- reviewer and exact Session grant before creating that event.

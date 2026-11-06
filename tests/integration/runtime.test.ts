@@ -354,10 +354,14 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   const blockedGate=(await workflow.getSessionRecovery(principal,projectId,continuationSessionId)).gate!;
   assert.equal(blockedGate.phase,'blocked');
   let reviewFailure:unknown;
+  let nativeAvailable=true;
   const reviewApp=await buildServer({service:workflow,credentials:[{
     token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:['read','write','review'],
   }],hasRuntimeGrant:()=>true,runtime:{
-    nativeStartsAvailable:()=>true,
+    nativeStartsAvailable:()=>nativeAvailable,
+    readPreTurnContinuationDecision:(p:string,id:string,actor:Principal,
+      command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3])=>
+      runtime.readPreTurnContinuationDecision(p,id,actor,command),
     approvePreTurnContinuation:async(p:string,id:string,actor:Principal,command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3])=>{
       try{return await runtime.approvePreTurnContinuation(p,id,actor,command);}
       catch(error){reviewFailure=error;throw error;}
@@ -373,10 +377,15 @@ test("runtime reservations freeze task basis and recover uncertain native starts
     assert.equal(reviewed.json().preTurnProof.status,'approved');
     const reviewEvents=await workflow.listRuntimeEvents(principal,projectId,continuationRunId);
     assert.equal(reviewEvents.filter(event=>event.kind==='run.reviewed'&&event.actorId===principal.actorId).length,1);
+    nativeAvailable=false;
     const duplicate=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
       headers:{authorization:`Bearer ${ownerToken}`},payload:reviewBody});
     assert.equal(duplicate.statusCode,200,'the same decision reads its original result');
     assert.equal(duplicate.json().version,reviewed.json().version);
+    const offlineNew=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:{...reviewBody,operationId:randomUUID()}});
+    assert.equal(offlineNew.json().code,'RUNTIME_UNAVAILABLE');
+    nativeAvailable=true;
     const changedFirstIntent=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
       headers:{authorization:`Bearer ${ownerToken}`},payload:{...reviewBody,reason:'changed old review'}});
     assert.equal(changedFirstIntent.statusCode,409);

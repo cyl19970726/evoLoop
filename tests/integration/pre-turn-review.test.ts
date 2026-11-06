@@ -13,7 +13,19 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))throw Error('dedicated isolated database required');
 const schema=`qa_host_${randomUUID().replaceAll('-','').slice(0,12)}`;
 await migrate(url,schema);
+// Recreate a database that had already applied the old 055 before this fix.
+const upgrade=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
+await upgrade.connect();
+try{
+  const applied=await upgrade.query("SELECT name FROM pgmigrations WHERE name IN ('055_pre_turn_continuation','056_pre_turn_review_decision')");
+  assert.equal(applied.rowCount,2);
+  await upgrade.query('DROP TABLE pre_turn_review_decision');
+  await upgrade.query("DELETE FROM pgmigrations WHERE name='056_pre_turn_review_decision'");
+}finally{await upgrade.end()}
+await migrate(url,schema);
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+assert.equal((await pool.query("SELECT to_regclass('pre_turn_review_decision') AS name")).rows[0]?.name,
+  'pre_turn_review_decision');
 const uow=new PostgresUnitOfWork(pool);
 const projectId=randomUUID(),sessionId=randomUUID(),roleId=randomUUID(),threadId=randomUUID();
 const messageId=randomUUID(),messageOperationId=randomUUID(),processingId=randomUUID(),processingOperationId=randomUUID();
@@ -23,7 +35,7 @@ const grant={projectId,sessionId,senderActorId:'qa-sender',receiverRoleId:roleId
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
   hasher:{hash:(s:string)=>s}});
 const messages=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},grantFor:async()=>grant});
-const result:Record<string,unknown>={head:'f0c9fb8b8d672533f4c01bc407ff1ed6b93818be',schema,projectId,sessionId,threadId,
+const result:Record<string,unknown>={schema,projectId,sessionId,threadId,
   messageId,messageOperationId,processingId,processingOperationId,nativeAdapter:'controlled: no native turn/start'};
 const code=(e:unknown)=>e&&typeof e==='object'&&'code' in e?String(e.code):e instanceof Error?e.message:'unknown';
 try{
@@ -45,10 +57,11 @@ try{
     proof:observed.processing?.preTurnProof?.status,requestId:observed.processing?.preTurnProof?.requestId,
     gate:gate?.phase,gateVersion:gate?.version};
   const token='v'.repeat(40),readerToken='r'.repeat(40);
+  let nativeAvailable=true;
   const app=await buildServer({service:workflow,sessionMessages:messages,hasRuntimeGrant:scope=>scope.actorId==='qa-reviewer',
     credentials:[{token,actorId:reviewer.actorId,projectIds:[projectId],permissions:['read','write','review']},
       {token:readerToken,actorId:'qa-reader',projectIds:[projectId],permissions:['read']}],
-    runtime:{nativeStartsAvailable:()=>true,status:()=>({available:true,faults:[]})} as unknown as RuntimeRunner});
+    runtime:{nativeStartsAvailable:()=>nativeAvailable,status:()=>({available:nativeAvailable,faults:[]})} as unknown as RuntimeRunner});
   try{
     const path=`/api/projects/${projectId}/session-messages/${messageId}/pre-turn-continue`;
     const body={operationId:randomUUID(),sessionId,originalOperationId:processingOperationId,
@@ -62,8 +75,11 @@ try{
     result.wrongSession=await call({...body,sessionId:randomUUID()});
     result.wrongOperation=await call({...body,originalOperationId:randomUUID()});
     result.firstReview=await call(body);
+    nativeAvailable=false;
     result.reusedReview=await call(body);
     result.changedFirstIntent=await call({...body,evidenceRef:'qa-isolated://changed-evidence'});
+    result.offlineNewIntent=await call({...body,operationId:randomUUID()});
+    nativeAvailable=true;
     const [a,b]=await Promise.all([messages.claimPreTurnContinuation(projectId,messageId),
       messages.claimPreTurnContinuation(projectId,messageId)]);
     result.concurrentClaim=[a,b].filter(Boolean).length;
@@ -98,6 +114,7 @@ try{
   assert.equal(result.firstReview.http,200);
   assert.equal(result.reusedReview.http,200);
   assert.deepEqual(result.changedFirstIntent,{http:409,code:'PRE_TURN_DECISION_REUSED',proof:null});
+  assert.equal(result.offlineNewIntent.code,'RUNTIME_UNAVAILABLE');
   assert.equal(result.concurrentClaim,1);
   assert.equal(result.oldReviewSql,'23514');
   assert.deepEqual(result.oldReviewApi,{http:409,code:'PRE_TURN_DECISION_REUSED',proof:null});

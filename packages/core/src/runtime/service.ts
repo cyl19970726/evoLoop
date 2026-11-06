@@ -416,6 +416,14 @@ export class RuntimeWorkflowService {
       return next;
     });
   }
+  async readPreTurnContinuationDecision(projectId:string,runId:string,principal:Principal,
+    command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]):Promise<RuntimeRunRecord|null>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+      throw new DomainError("FORBIDDEN","pre-turn continuation requires project review authority");
+    return this.deps.uow.read(projectId,reader=>priorReviewDecision<RuntimeRunRecord>(reader,
+      command.operationId,principal.actorId,'run',runId,
+      reviewIntentJson(principal.actorId,'run',runId,command)));
+  }
 
   /** Consumed before native I/O. A crash or lost reply cannot acquire another permit. */
   async claimPreTurnContinuation(projectId:string,runId:string):Promise<RuntimeRunRecord|null>{
