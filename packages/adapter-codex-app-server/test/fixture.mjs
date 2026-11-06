@@ -57,7 +57,7 @@ for await (const line of lines) {
   const { id, method, params } = message;
   if (method === "initialize") {
     if ((mode.startsWith("dynamic") || mode==='full-dynamic' || mode==='workspace-timeline') && params.capabilities?.experimentalApi !== true) process.exit(2);
-    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && mode!=='workspace-timeline' && mode!=='workspace-history' && !mode.startsWith("zero-turn") && params.capabilities?.experimentalApi === true) process.exit(2);
+    if (!mode.startsWith("dynamic") && mode!=='full-dynamic' && mode!=='workspace-timeline' && mode!=='workspace-history' && mode!=='connector-host-shell' && !mode.startsWith("zero-turn") && params.capabilities?.experimentalApi === true) process.exit(2);
     send({ id, result: { userAgent: "fixture", platformFamily: "unix" } }); continue;
   }
   if (!initialized) { send({ id, error: { code: -32000, message: "not initialized" } }); continue; }
@@ -131,6 +131,16 @@ for await (const line of lines) {
         params: { threadId: thread.id, command: "echo fixture" } });
       continue;
     }
+    if(mode.startsWith('connector-')&&params.sandbox==='read-only'){
+      if(params.approvalPolicy!=='never'||params.config!==undefined||params.dynamicTools!==undefined){
+        send({id,error:{code:-32602,message:'connector launch policy mismatch'}});continue;
+      }
+      send({id,result:{thread:{...thread,model:params.model??'gpt-6-sol'},
+        model:params.model??'gpt-6-sol',modelProvider:'openai',cwd:thread.cwd,
+        approvalPolicy:mode==='connector-wrong-approval'?'on-request':'never',
+        sandbox:mode==='connector-wrong-sandbox'?{type:'dangerFullAccess'}:
+          {type:'readOnly',networkAccess:mode==='connector-wrong-network'}}});continue;
+    }
     if(params.sandbox==='danger-full-access'){
       const nativeThread={...thread,model:params.model??'gpt-6-sol'};
       send({id,result:{thread:nativeThread,model:nativeThread.model,modelProvider:'openai',cwd:thread.cwd,
@@ -142,6 +152,17 @@ for await (const line of lines) {
   if (method === "thread/resume" && mode.startsWith("zero-turn")) {
     observedResumes++;
     send({id,error:{code:-32600,message:"no rollout found for new thread"}});continue;
+  }
+  if(method==='thread/resume'&&mode.startsWith('connector-')){
+    observedResumes++;
+    if(params.threadId!==thread.id||params.cwd!==thread.cwd||params.sandbox!=='read-only'||
+      params.approvalPolicy!=='never'||params.config!==undefined||params.dynamicTools!==undefined){
+      send({id,error:{code:-32602,message:'connector resume policy mismatch'}});continue;
+    }
+    send({id,result:{thread:{...thread,model:params.model??'gpt-6-sol'},
+      model:params.model??'gpt-6-sol',modelProvider:'openai',cwd:thread.cwd,
+      approvalPolicy:'never',sandbox:mode==='connector-resume-wrong'?{type:'dangerFullAccess'}:
+        {type:'readOnly',networkAccess:false}}});continue;
   }
   if (method === "thread/resume" && mode === "dynamic-persisted-resume") {
     if (params.dynamicTools !== undefined) {send({id,error:{code:-32602,message:"resume must not redeclare native tools"}});continue;}
@@ -235,7 +256,12 @@ for await (const line of lines) {
     const nativeThread={...thread,...(mode.startsWith('name-sync')?{name:threadName}:{}),...(mode.startsWith('full-')||mode.startsWith('zero-turn')||mode==='full-sequence'||mode==='resume-writer-conflict'?{model:mode==='zero-turn-not-loaded'?null:mode==='full-network-model-mismatch'?'other-model':mode==='full-network-model-missing'||unloaded?null:'gpt-6-sol'}:{}),status:{type:mode==='zero-turn-not-loaded'&&turnStarts===0?'notLoaded':networkFailure?(mode==='full-network-active'?'active':mode==='full-network-unknown-status'?'unknown':'systemError'):unloaded?'notLoaded':mode==='full-active'?'active':'idle',activeFlags:[]}};
     send({ id, result: { thread: mode === "changed-session" ? { ...nativeThread, sessionId: "different-session" } : nativeThread,
       observedTurnStarts:turnStarts,observedResumes,lastTurnModel,
-      ...(observedEnvironment ? { observedEnvironment } : {}) } }); continue;
+      ...(observedEnvironment ? { observedEnvironment } : {}) } });
+    if(mode==='connector-host-shell'&&method==='thread/read'){
+      send({id:toolId,method:'item/tool/call',params:{threadId:thread.id,turnId:'turn-1',callId:'shell-1',tool:'shell',arguments:{command:'echo unsafe'}}});
+      send({id:approvalId,method:'item/commandExecution/requestApproval',params:{threadId:thread.id,turnId:'turn-1',command:'echo unsafe'}});
+    }
+    continue;
   }
   if (method === "thread/turns/list" && mode.startsWith("zero-turn") && turnStarts===0) {
     send({id,error:{code:-32600,message:mode==='zero-turn-generic-reject'?"unclassified native rejection":"no rollout found for new thread"}});continue;

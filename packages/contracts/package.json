@@ -30,6 +30,8 @@
     "./session-assignments": "./dist/session-assignments.js",
     "./session-identity": "./dist/session-identity.js",
     "./session-messages": "./dist/session-messages.js",
+    "./direct-input": "./dist/direct-input.js",
+    "./message-connectors": "./dist/message-connectors.js",
     "./allocation-relations": "./dist/allocation-relations.js",
     "./session-recovery": "./dist/session-recovery.js",
     "./native-input": "./dist/native-input.js",

@@ -185,6 +185,11 @@
       "group": "架构 · 运行与实现"
     },
     {
+      "path": "docs/architecture/message-connectors.md",
+      "title": "消息 Connector 候选边界",
+      "group": "架构 · 运行与实现"
+    },
+    {
       "path": "docs/architecture/frontend.md",
       "title": "前端架构旧入口",
       "group": "架构 · 界面与知识专题",
@@ -395,6 +400,11 @@
     {
       "path": "docs/development/task-stage-attention.md",
       "title": "Task 阶段时间与关注",
+      "group": "开发与维护"
+    },
+    {
+      "path": "docs/development/wechat-standard-connector.md",
+      "title": "微信 Connector 标准模式接入",
       "group": "开发与维护"
     },
     {

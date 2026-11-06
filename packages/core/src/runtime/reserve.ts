@@ -61,8 +61,13 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     return { result: applied(command.operationId, run.id, run.version + 1), effects: [{ kind: "runtime.run.interruptRequested", entityId: run.id, version: run.version + 1 }] };
   }
   if (command.type === "runtime.session.reserve") {
-    if (command.sandbox !== "danger-full-access" || command.approvalPolicy !== "never")
-      throw new DomainError("FULL_EXECUTION_REQUIRED", "New Sessions require the full execution profile");
+    const restrictedReceiver = command.connectorBindingId !== undefined &&
+      command.authorizationScope === `connector-receiver:${command.connectorBindingId}` &&
+      command.sandbox === "read-only" && command.approvalPolicy === "never";
+    const ordinary = command.connectorBindingId === undefined &&
+      command.sandbox === "danger-full-access" && command.approvalPolicy === "never";
+    if (!restrictedReceiver && !ordinary)
+      throw new DomainError("EXECUTION_PROFILE_NOT_ALLOWED", "New Sessions require full execution or an exact restricted Connector receiver binding");
     if (await tx.getRuntimeSession(command.sessionId)) throw new DomainError("ALREADY_EXISTS", "runtime session exists");
     if (command.cwd.split("/").some((segment, index) => index > 0 && (segment === "" || segment === "." || segment === ".."))) {
       throw new DomainError("INVALID_CWD", "runtime cwd must be a normalized absolute path");
