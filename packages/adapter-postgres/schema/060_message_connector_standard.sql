@@ -27,11 +27,12 @@ BEGIN
     RAISE EXCEPTION 'standard route must allow source conversation' USING ERRCODE='23514';
   END IF;
   IF TG_OP='UPDATE' THEN
-    IF NEW.mode<>OLD.mode OR
+    IF NEW.mode<>OLD.mode OR NEW.target_actor_id<>OLD.target_actor_id OR
+      NEW.sender_actor_id<>OLD.sender_actor_id OR
       ((NEW.send_targets IS DISTINCT FROM OLD.send_targets OR
         NEW.internal_targets IS DISTINCT FROM OLD.internal_targets) AND
         (OLD.state<>'disabled' OR NEW.state<>'disabled' OR NEW.policy_hash=OLD.policy_hash)) THEN
-      RAISE EXCEPTION 'route mode or reviewed targets cannot change' USING ERRCODE='23514';
+      RAISE EXCEPTION 'route mode, actors or reviewed targets cannot change' USING ERRCODE='23514';
     END IF;
   END IF;
   IF NEW.state='disabled' THEN RETURN NEW; END IF;
@@ -47,11 +48,11 @@ BEGIN
       WHERE project_id=NEW.project_id AND session_id=NEW.target_session_id
         AND revision_id=profile_row.revision_id FOR SHARE;
   END IF;
-  IF session_row.state IS DISTINCT FROM 'ready' OR session_row.actor_id IS DISTINCT FROM NEW.target_actor_id
+  IF session_row.state IS DISTINCT FROM 'ready'
     OR session_row.native_thread_id IS NULL OR session_row.native_session_id IS NULL
     OR session_row.sandbox IS DISTINCT FROM 'danger-full-access'
     OR session_row.approval_policy IS DISTINCT FROM 'never'
-    OR session_row.authorization_scope IS DISTINCT FROM ('connector-standard:'||NEW.binding_id::text)
+    OR session_row.authorization_scope IS NULL OR session_row.authorization_scope=''
     OR profile_row.activation_state IS DISTINCT FROM 'active'
     OR profile_row.revision_id IS DISTINCT FROM profile_row.active_revision_id
     OR revision_row.sandbox IS DISTINCT FROM session_row.sandbox
@@ -100,11 +101,11 @@ BEGIN
       WHERE project_id=NEW.project_id AND session_id=route_row.target_session_id
         AND revision_id=profile_row.revision_id FOR SHARE;
   END IF;
-  IF session_row.state IS DISTINCT FROM 'ready' OR session_row.actor_id IS DISTINCT FROM route_row.target_actor_id
+  IF session_row.state IS DISTINCT FROM 'ready'
     OR session_row.native_thread_id IS NULL OR session_row.native_session_id IS NULL
     OR session_row.sandbox IS DISTINCT FROM 'danger-full-access'
     OR session_row.approval_policy IS DISTINCT FROM 'never'
-    OR session_row.authorization_scope IS DISTINCT FROM ('connector-standard:'||NEW.binding_id::text)
+    OR session_row.authorization_scope IS NULL OR session_row.authorization_scope=''
     OR profile_row.activation_state IS DISTINCT FROM 'active'
     OR profile_row.revision_id IS DISTINCT FROM profile_row.active_revision_id
     OR revision_row.sandbox IS DISTINCT FROM session_row.sandbox

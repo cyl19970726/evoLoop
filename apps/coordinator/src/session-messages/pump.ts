@@ -36,6 +36,8 @@ export interface SessionMessagePumpDeps {
   now?():number;
   /** Retire a known obsolete queued source before a revoked grant can pin it at the head. */
   beforePreflight?(message:SessionMessageRecord):Promise<boolean>;
+  /** Source is a persisted Connector message link, independent of Session scope. */
+  connectorSource?(message:SessionMessageRecord):Promise<boolean>;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
   canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
@@ -89,7 +91,7 @@ export class SessionMessagePump {
       await runtime.registerBinding(binding);
       const connectorBindingId=session.authorizationScope.startsWith('connector-receiver:')
         ? session.authorizationScope.slice('connector-receiver:'.length) : null;
-      const standardConnector=session.authorizationScope.startsWith('connector-standard:');
+      const standardConnector=!!await this.deps.connectorSource?.(message);
       if(connectorBindingId ? !runtime.startConnectorTurn||!runtime.qualifyConnectorReceiver
         : !runtime.startConversationTurn||!runtime.qualifyConversationThread){
         await this.deps.service.noteBlocked(message.projectId,message.id,'Native Session execution profile verification is unavailable');return;

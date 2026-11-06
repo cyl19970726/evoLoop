@@ -107,7 +107,7 @@ test('restricted Connector without native tool proof stays queued and cannot use
 test('standard Connector starts on its existing full profile and keeps external content untrusted',async()=>{
   const target=randomUUID(),bindingId=randomUUID(),m=message(randomUUID(),target,'queued');
   const inputs:string[]=[];let restricted=0;
-  const standardSession={...session(target),authorizationScope:`connector-standard:${bindingId}`};
+  const standardSession={...session(target),authorizationScope:'resident:existing-role'};
   const service={pending:async()=>[m],session:async()=>standardSession,processing:async()=>null,
     preflightDispatch:async()=>{},beginDispatch:async()=>({operationId:randomUUID()}),
     bindTurn:async()=>{}} as unknown as SessionMessageService;
@@ -118,7 +118,7 @@ test('standard Connector starts on its existing full profile and keeps external 
     startConnectorTurn:async()=>{restricted++;throw new Error('restricted Turn must not start');},
     listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
   const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
-    canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+    connectorSource:async()=>true,canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
   await pump.tick();
   assert.equal(restricted,0);assert.equal(inputs.length,1);
   assert.match(inputs[0]!,/untrusted external Connector content/);

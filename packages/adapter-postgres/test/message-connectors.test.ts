@@ -107,7 +107,6 @@ test("global live source and project receiver indexes reserve paused rows", asyn
   const existing = (await routes.list(projectId,10)).items.find(x=>x.source.conversationId === "group-a")!;
   const sourceDuplicate = await create(route(otherProjectId,otherSessionId,"group-a"));
   const receiverDuplicate = await create(route(projectId,sessionId,"group-c"));
-  await assert.rejects(update({ ...sourceDuplicate, version:2, state:"paused" },1),/active standard profile/);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -141,13 +140,13 @@ test("restricted activation remains blocked while standard requires exact owned 
     /start disabled/);
 });
 
-test("standard activation checks scope, actor, native IDs and versioned target policy", async () => {
+test("standard activation keeps the prepared Session scope and immutable business actor", async () => {
   const receiverSession = randomUUID();
   const intent = route(projectId,receiverSession,"group-standard");
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
     sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-    VALUES($1,$2,'worker','/tmp',$3,'danger-full-access','never','ready',1,$4,$5,$6,'receiver',$7,$7)`,
-    [projectId,receiverSession,`connector-standard:${intent.bindingId}`,
+    VALUES($1,$2,'worker','/tmp',$3,'danger-full-access','never','ready',1,$4,$5,$6,'reviewer',$7,$7)`,
+    [projectId,receiverSession,'resident:existing-role',
       `thread-${receiverSession}`,`native-${receiverSession}`,randomUUID(),now]);
   const saved = await create(intent);
   await assert.rejects(update({ ...saved, version:2, sendTargets:["group-standard","other"] },1),
@@ -162,7 +161,7 @@ test("standard activation checks scope, actor, native IDs and versioned target p
   await assert.rejects(update({ ...active, version:4, sendTargets:["group-standard"],
     policyHash:"d".repeat(64) },3),/disabled route/);
   await assert.rejects(pool.query(`UPDATE connector_route SET target_actor_id='other',version=version+1
-    WHERE project_id=$1 AND binding_id=$2`,[projectId,intent.bindingId]),/exact active owned Session/);
+    WHERE project_id=$1 AND binding_id=$2`,[projectId,intent.bindingId]),/route mode, actors or reviewed targets cannot change/);
   await assert.rejects(pool.query(`UPDATE connector_route SET send_targets=ARRAY['group-standard'],version=version+1
     WHERE project_id=$1 AND binding_id=$2`,[projectId,intent.bindingId]),/reviewed targets/);
 });

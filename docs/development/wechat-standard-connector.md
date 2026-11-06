@@ -4,7 +4,7 @@
 
 ## 固定的最小材料
 
-维护者需在同一项目核定：`PROJECT_ID`、`BINDING_ID`、`RECEIVER_SESSION_ID`、`RECEIVER_ROLE_ID`、`RECEIVER_ACTOR`、`SENDER_ACTOR`、专用 `CWD`、原生 `THREAD_ID`、`CONVERSATION_ID`、wx `CONNECTION_ID/OWNER/EPOCH/SESSION_REF`、应用 ID，以及审核后的 `POLICY_HASH`。接收 Session 必须 ready、带同一原生 Thread、active execution profile，并以 `danger-full-access`、`never`、`connector-standard:BINDING_ID` 运行。项目 writer 身份、Role、cwd、scope 与 runtime grant 必须精确匹配。`SENDER_ACTOR` 是技术来源身份，不是微信发言人；原发言人和事件 cursor 保存在来源关联中。
+维护者需在同一项目核定：`PROJECT_ID`、`BINDING_ID`、`RECEIVER_SESSION_ID`、`RECEIVER_ROLE_ID`、`RECEIVER_ACTOR`、`SESSION_REQUESTER_ACTOR`、`SENDER_ACTOR`、原 Session 的 `CWD`、`AUTHORIZATION_SCOPE`、原生 `THREAD_ID`、`CONVERSATION_ID`、wx `CONNECTION_ID/OWNER/EPOCH/SESSION_REF`、应用 ID，以及审核后的 `POLICY_HASH`。接收 Session 必须 ready、带同一原生 Thread、active execution profile，并保持原有 `danger-full-access`、`never` 和 scope。`SESSION_REQUESTER_ACTOR` 是原 Session 的预留者；`RECEIVER_ACTOR` 是该 Role 的业务执行者，须与现有 Role actor 或 Session material CLI 身份绑定一致，并有此项目 writer 身份。二者可不同。项目、Role、Session、cwd、原 scope 和 runtime grant 必须精确匹配。`SENDER_ACTOR` 是技术来源身份，不是微信发言人；原发言人和事件 cursor 保存在来源关联中。
 
 微信宿主需为该 conversation 建立精确的应用 gateway 客户端：`inbox` 权限和 `session_ref/thread_id` pin；同会话回复还需 `send` 和 `result` 权限。私有客户端配置路径由运行维护者保管，不放进 Git。gateway 的允许 conversation 和 send 权限与 evoLoop 路由的 `sendTargets` 同时生效。当前项目没有已验证的专用 conversation、应用凭据或 Session 绑定；wx-cli 其他项目的群及授权不能直接沿用。
 
@@ -14,7 +14,7 @@
 {
   "runtime": {
     "enabled": true,
-    "grants": [{"projectId":"<PROJECT_ID>","actorId":"<RECEIVER_ACTOR>","roleId":"<RECEIVER_ROLE_ID>","authorizationScope":"connector-standard:<BINDING_ID>","cwd":"<CWD>","sandbox":"danger-full-access","approvalPolicy":"never","networkAccess":true}]
+    "grants": [{"projectId":"<PROJECT_ID>","actorId":"<SESSION_REQUESTER_ACTOR>","roleId":"<RECEIVER_ROLE_ID>","authorizationScope":"<AUTHORIZATION_SCOPE>","cwd":"<CWD>","sandbox":"danger-full-access","approvalPolicy":"never","networkAccess":true}]
   },
   "sessionMessages": {
     "enabled": true,
@@ -26,7 +26,7 @@
 }
 ```
 
-这是所需字段片段，实际文件还要保留已有的 coordinator、runtime 与项目配置。内部转交目标另需普通 `sessionMessages.grants`，明确 `senderActorId=RECEIVER_ACTOR`、目标 Session/Role/actor/cwd 与额度；路由 `internalTargets` 只提供第二层目标限制。先用项目现有准备流程合法 prepare/activate 接收 Session 和 profile，再通过 Workbench“微信 Connector”创建 disabled 标准路由，核对来源、目标、actor、owner/epoch/sessionRef、哈希及版本，最后使用原操作 ID 更新为 active。停订将路由更新为 paused；原消息、原 wx delivery 和在途 Turn 仍须按 ID 核对。
+这是所需字段片段，实际文件还要保留已有的 coordinator、runtime、`residentQueue.roleActors` 或当前 Session 的 `runtime.materialCli` 身份绑定及项目配置。`connectorReceivers` 的 `receiverActorId` 和路由 `targetActorId` 应为 `RECEIVER_ACTOR`，不能填写预留者。原 runtime grant 应授权 `SESSION_REQUESTER_ACTOR` 的现有 scope，不应为 Connector 改动已准备 Session 的 scope 或 Thread。内部转交目标另需普通 `sessionMessages.grants`，明确 `senderActorId=RECEIVER_ACTOR`、目标 Session/Role/actor/cwd 与额度；路由 `internalTargets` 只提供第二层目标限制。先用项目现有准备流程合法 prepare/activate 接收 Session 和 profile，再通过 Workbench“微信 Connector”创建 disabled 标准路由，核对来源、目标、actor、owner/epoch/sessionRef、哈希及版本，最后使用原操作 ID 更新为 active。停订将路由更新为 paused；原消息、原 wx delivery 和在途 Turn 仍须按 ID 核对。
 
 ## 读回与恢复
 

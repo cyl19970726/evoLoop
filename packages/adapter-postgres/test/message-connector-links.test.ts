@@ -33,12 +33,12 @@ const admission = (eventCursor=11): ConnectorTrustedAdmission => ({
 before(async () => {
   await migrate(url!,schema);
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Connector link',$2)",[projectId,now]);
-  // The standard route requires this exact full, never, owned Session scope.
+  // The Session was prepared by a reviewer for a distinct business receiver.
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
     sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,
     created_at,updated_at)
-    VALUES($1,$2,'receiver','/tmp',$3,'danger-full-access','never','ready',1,'thread-link','native-link',$4,'receiver',$5,$5)`,
-    [projectId,sessionId,`connector-standard:${route.bindingId}`,randomUUID(),now]);
+    VALUES($1,$2,'receiver','/tmp',$3,'danger-full-access','never','ready',1,'thread-link','native-link',$4,'reviewer',$5,$5)`,
+    [projectId,sessionId,'resident:existing-role',randomUUID(),now]);
   await routes.create(route,randomUUID(),"lead");
 });
 

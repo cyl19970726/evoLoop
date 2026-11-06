@@ -145,7 +145,8 @@ export class PgConnectorRoutes {
       const current = currentResult.rows[0] ? routeOf(currentResult.rows[0]) : null;
       if (!current || current.version !== expectedVersion)
         throw new DomainError("VERSION_CONFLICT", "Route version changed");
-      if (JSON.stringify(key(current)) !== JSON.stringify(key(route)))
+      if (JSON.stringify(key(current)) !== JSON.stringify(key(route)) ||
+        current.targetActorId !== route.targetActorId || current.senderActorId !== route.senderActorId)
         throw new DomainError("CONNECTOR_ROUTE_IDENTITY", "Source and receiver Session are immutable");
       if (route.mode !== current.mode)
         throw new DomainError("CONNECTOR_ROUTE_IDENTITY", "Route mode is immutable");
@@ -178,10 +179,10 @@ export class PgConnectorRoutes {
       WHERE s.project_id=$1 AND s.session_id=$2 FOR SHARE OF s`, [route.projectId,route.targetSessionId]);
     const receiver = result.rows[0];
     if (route.mode === "standard") {
-      if (!receiver || receiver.state !== "ready" || receiver.actor_id !== route.targetActorId ||
+      if (!receiver || receiver.state !== "ready" ||
         !receiver.native_thread_id || !receiver.native_session_id ||
         receiver.sandbox !== "danger-full-access" || receiver.approval_policy !== "never" ||
-        receiver.authorization_scope !== `connector-standard:${route.bindingId}` ||
+        !receiver.authorization_scope ||
         receiver.activation_state !== "active" || receiver.revision_id !== receiver.active_revision_id ||
         receiver.profile_sandbox !== receiver.sandbox || receiver.profile_approval !== receiver.approval_policy ||
         receiver.profile_scope !== receiver.authorization_scope)
@@ -321,11 +322,10 @@ export class PgConnectorMessageLinks {
         r.conversation_id !== s.source.conversationId ||
         r.owner !== intent.gateway.owner || r.epoch !== intent.gateway.epoch ||
         r.session_ref !== intent.gateway.sessionRef ||
-        r.target_actor_id !== r.session_actor_id ||
         r.session_state !== "ready" || !r.native_thread_id || !r.native_session_id ||
         (r.mode === "standard" ?
           (r.sandbox !== "danger-full-access" || r.approval_policy !== "never" ||
-            r.authorization_scope !== `connector-standard:${intent.bindingId}`) :
+            !r.authorization_scope) :
           true) ||
         r.activation_state !== "active" || r.revision_id !== r.active_revision_id ||
         r.profile_sandbox !== r.sandbox || r.profile_approval !== r.approval_policy ||

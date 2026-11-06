@@ -101,10 +101,9 @@ export class PgSessionMessages implements SessionMessageTransaction {
       row.current_message_operation_id!==row.message_operation_id ||
       row.current_message_session_id!==row.target_session_id ||
       row.current_message_sender_id!==row.sender_actor_id ||
-      row.target_actor_id!==row.session_actor_id ||
       row.session_state!=='ready' || !row.native_thread_id || !row.native_session_id ||
       row.sandbox!=='danger-full-access' || row.approval_policy!=='never' ||
-      row.authorization_scope!==`connector-standard:${grant.bindingId}` ||
+      !row.authorization_scope ||
       row.activation_state!=='active' || row.revision_id!==row.active_revision_id ||
       row.profile_sandbox!==row.sandbox || row.profile_approval!==row.approval_policy ||
       row.profile_scope!==row.authorization_scope)

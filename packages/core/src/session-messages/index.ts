@@ -150,7 +150,8 @@ export class SessionMessageService {
       throw new DomainError('MESSAGE_GRANT_MISSING','exact ordinary conversation grant is unavailable');
     const full=session.sandbox==='danger-full-access'&&session.approvalPolicy==='never'&&!grant.connector;
     const standard=grant.connector?.mode==='standard'&&session.sandbox==='danger-full-access'&&
-      session.approvalPolicy==='never'&&session.authorizationScope===`connector-standard:${grant.connector.bindingId}`&&
+      session.approvalPolicy==='never'&&!!session.authorizationScope&&
+      !session.authorizationScope.startsWith('connector-receiver:')&&
       /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
     const restricted=grant.connector?.mode==='restricted'&&session.sandbox==='read-only'&&session.approvalPolicy==='never'&&
       session.authorizationScope===`connector-receiver:${grant.connector.bindingId}`&&
