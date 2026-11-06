@@ -4,7 +4,8 @@ import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, Runt
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
+import { nativeChildDiagnosticSchema } from "@evoloop/contracts/runtime";
+import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type NativeChildDiagnostic } from "@evoloop/adapter-codex-app-server";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
@@ -56,6 +57,9 @@ const dispatchFailureDetail = (error: unknown): string => {
 
 type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
+  listChildDiagnostics?(): NativeChildDiagnostic[];
+  onChildDiagnostic?(listener:(diagnostic:NativeChildDiagnostic)=>void|Promise<void>):()=>void;
+  flushChildDiagnostics?():Promise<void>;
   hasFreshStartProof?(binding:RuntimeBinding):boolean;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
@@ -127,8 +131,11 @@ export class RuntimeRunner {
   private faults = new Map<string, RuntimeFault>();
   private available = false;
   private runtime: ManagedRuntime;
+  /** Keep the previous native child's bounded diagnostics when recover replaces its adapter. */
+  private priorNativeChildDiagnostics: NativeChildDiagnostic[] = [];
   private recovering: Promise<void> | null = null;
   private unsubscribeDisconnect: (() => void) | null = null;
+  private unsubscribeChildDiagnostic: (() => void) | null = null;
   private unsubscribeApproval: (() => void) | null = null;
   private workspaceRuntime: ManagedRuntime | null = null;
   private unsubscribeWorkspaceUpdate: (() => void) | null = null;
@@ -247,10 +254,33 @@ export class RuntimeRunner {
     }
   }
   nativeStartsAvailable():boolean { return this.available && !this.recovering && !this.stopped && this.deps.canWrite(); }
+  approvePreTurnContinuation(projectId:string,runId:string,principal:Principal,
+    command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]){
+    return this.deps.trusted.approvePreTurnContinuation(projectId,runId,principal,command);
+  }
+  readPreTurnContinuationDecision(projectId:string,runId:string,principal:Principal,
+    command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]){
+    return this.deps.trusted.readPreTurnContinuationDecision(projectId,runId,principal,command);
+  }
   status(projectId?: string) {
     const faults = projectId ? [...this.faults.values()].filter(fault => fault.projectId === projectId) : [];
+    const diagnostics = new Map<string, NativeChildDiagnostic>();
+    for (const candidate of [...this.priorNativeChildDiagnostics,...(this.runtime.listChildDiagnostics?.() ?? [])]){
+      const validated=nativeChildDiagnosticSchema.safeParse(candidate);
+      if(!validated.success)continue;
+      const item=validated.data as NativeChildDiagnostic;
+      const prior=diagnostics.get(item.startId);
+      // A child exit is terminal evidence. Loss and exit snapshots may share the
+      // first loss timestamp, and projects can persist only one of the two.
+      if(!prior||
+        (item.exitObserved&&!prior.exitObserved)||
+        (item.exitObserved===prior.exitObserved&&item.observedAtUtc>prior.observedAtUtc))
+        diagnostics.set(item.startId,item);
+    }
     return { available: this.available && this.runtime.isReady(),
-      error: this.serviceError ?? faults.at(-1)?.message ?? null, faults };
+      error: this.serviceError ?? faults.at(-1)?.message ?? null, faults,
+      nativeChildDiagnostics: [...diagnostics.values()]
+        .sort((a,b)=>b.observedAtUtc.localeCompare(a.observedAtUtc)).slice(0,16) };
   }
   private faultKey(projectId: string, phase: RuntimeFaultPhase, sessionId?: string, runId?: string) {
     return `${projectId}:${runId ? `run:${runId}` : sessionId ? `session:${sessionId}` : "project"}:${phase}`;
@@ -293,6 +323,15 @@ export class RuntimeRunner {
   }
   async start(): Promise<void> {
     if (this.stopped) throw new Error("Runner has stopped");
+    for(const projectId of this.projects()){
+      for(const item of await this.deps.trusted.recentNativeChildDiagnostics?.(projectId)??[]){
+        try{
+          const diagnostic=nativeChildDiagnosticSchema.safeParse(JSON.parse(item.detail));
+          if(diagnostic.success)this.priorNativeChildDiagnostics.push(diagnostic.data as NativeChildDiagnostic);
+        }catch{/* Older host events are not diagnostic snapshots. */}
+      }
+    }
+    this.priorNativeChildDiagnostics=this.status().nativeChildDiagnostics;
     this.attachRuntime();
     await this.runtime.open();
     await this.deps.nativeInputs?.opened();
@@ -311,6 +350,10 @@ export class RuntimeRunner {
     this.deps.nativeInputs?.attach(this.runtime);
     this.deps.nativeObservation?.attach(this.runtime);
     const runtime=this.runtime;
+    this.unsubscribeChildDiagnostic=runtime.onChildDiagnostic?.(async diagnostic=>{
+      for(const projectId of this.projects())
+        await this.deps.trusted.recordNativeChildDiagnostic?.(projectId,diagnostic);
+    })??null;
     this.workspaceRuntime=runtime;
     this.unsubscribeWorkspaceUpdate=runtime.onWorkspaceUpdate?.(event=>{
       if(this.workspaceRuntime!==runtime||this.stopped||!this.available)return;
@@ -357,8 +400,11 @@ export class RuntimeRunner {
     try {
       // A replacement must wait for proof that the previous owned child exited.
       await this.runtime.close();
+      await this.runtime.flushChildDiagnostics?.();
       await this.deps.nativeInputs?.drain();
       await this.deps.nativeObservation?.drain();
+      this.priorNativeChildDiagnostics=this.status().nativeChildDiagnostics;
+      this.unsubscribeChildDiagnostic?.(); this.unsubscribeChildDiagnostic=null;
       this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.checkedNames.clear(); this.interruptAttempted.clear();
       this.attachRuntime();
@@ -850,6 +896,7 @@ export class RuntimeRunner {
       return false;
     }
     const unstarted=original.state==="requested"&&!original.nativeTurnId;
+    const continuation=original.state==="unknown"&&!original.nativeTurnId&&original.preTurnProof?.status==="approved";
     const canStart=unstarted&&this.deps.trusted.canStartRecoveredRun ?
       await this.deps.trusted.canStartRecoveredRun(original.projectId,original.sessionId,original.id) : true;
     // A blocked gate may still need read-only reconciliation of a lost activation
@@ -859,7 +906,7 @@ export class RuntimeRunner {
     const binding = unstarted ? await this.executionBinding(session,original) : await this.readBinding(session);
     if(!binding||unstarted&&!canStart)return false;
     let run = original;
-    if (run.state === "requested" && !run.nativeTurnId) {
+    if ((run.state === "requested" || continuation) && !run.nativeTurnId) {
       let input: string;
       let inputReceipt: { protocol: string; contentHash: string; byteLength: number } | undefined;
       try {
@@ -873,11 +920,18 @@ export class RuntimeRunner {
           inputReceipt = { protocol: prepared.protocol, contentHash: prepared.contentHash, byteLength: prepared.byteLength };
         }
       }
-      catch (error) { await this.deps.trusted.rejectDispatch(run.projectId, run.id, safePreflightReport(error).summary);
+      catch (error) { if(unstarted)await this.deps.trusted.rejectDispatch(run.projectId, run.id, safePreflightReport(error).summary);
         this.recordFault(run.projectId,"run_preflight",error,run.sessionId,run.id);return false; }
+      if(continuation&&inputReceipt?.contentHash!==run.preTurnProof?.inputHash){
+        this.recordFault(run.projectId,"run_preflight",null,run.sessionId,run.id,"verification");return false;
+      }
       // Recheck after preflight, immediately before recording the external-start intent.
       if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return false;
-      await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
+      if(continuation){
+        const claimed=await this.deps.trusted.claimPreTurnContinuation(run.projectId,run.id);
+        if(!claimed)return false;
+        run=claimed;
+      }else await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
       let startBinding: RuntimeBinding;
       try {
         // Persist the original intent before resuming the same full-permission Thread
@@ -885,11 +939,22 @@ export class RuntimeRunner {
         startBinding = await this.resumeForRun(session);
       } catch (error) {
         if (error instanceof RuntimeServerError && error.method === "thread/resume") {
-          await this.deps.trusted.rejectDispatch(run.projectId, run.id,
-            "Native business-profile resume was explicitly rejected before Task turn/start", {
-              kind: "native_resume_rejected", operationId: run.operationId, code: error.code, category: error.category,
-            });
-          this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id);
+          if (error.preTurnWriterConflict) {
+            await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+              `Original Task turn/start was not called: native writer conflict on thread/resume; preserve operation ${run.operationId} for exact reconciliation and authorized handoff`,
+              {threadId:error.rejectedThreadId!,operationId:run.operationId,requestId:error.requestId,
+                code:-32600,inputHash:inputReceipt?.contentHash??null});
+            this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id,"unavailable");
+          } else {
+            if(continuation)await this.deps.trusted.markRunUnknown(run.projectId,run.id,
+              "Reviewed continuation received a different native resume rejection; no turn/start was called");
+            else await this.deps.trusted.rejectDispatch(run.projectId, run.id,
+              "Native business-profile resume was explicitly rejected before Task turn/start", {
+                kind: "native_resume_rejected", operationId: run.operationId, code: error.code,
+                category:error.category==='writer_conflict'?'server_rejected':error.category,
+              });
+            this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id);
+          }
         } else {
           await this.deps.trusted.markRunUnknown(run.projectId, run.id,
             `Business profile restoration was not confirmed; this coordinator did not call Task turn/start; ${dispatchFailureDetail(error)}; reconcile the original operation without replay`);
@@ -1125,6 +1190,8 @@ export class RuntimeRunner {
     this.workspaceDisconnected('Native runtime stopped');
     this.unsubscribeDisconnect?.(); this.unsubscribeApproval?.();
     await this.runtime.close();
+    await this.runtime.flushChildDiagnostics?.();
+    this.unsubscribeChildDiagnostic?.(); this.unsubscribeChildDiagnostic=null;
     await this.deps.nativeInputs?.drain();
     this.deps.nativeInputs?.detach();
     await this.deps.nativeObservation?.drain();

@@ -88,8 +88,9 @@ test('036 retires 035 cold admission without rewriting historical epoch or bypas
   const processingAfterMigration = (await client.query(
     'SELECT to_jsonb(p) AS row FROM session_message_processing p WHERE processing_id=$1',
     [oldProcessing])).rows[0]?.row;
-  const { interrupt_actor_id, interrupt_attempted_at, interrupt_operation_id,
+  const { pre_turn_proof, interrupt_actor_id, interrupt_attempted_at, interrupt_operation_id,
     interrupt_reason, interrupt_requested_at, ...historicalProcessing } = processingAfterMigration;
+  assert.equal(pre_turn_proof, null, 'legacy processing receives no inferred writer refusal');
   assert.deepEqual(historicalProcessing, before.processing,
     'migration preserves the original operation and epoch');
   assert.deepEqual([interrupt_actor_id, interrupt_attempted_at, interrupt_operation_id,

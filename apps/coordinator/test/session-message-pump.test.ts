@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import type { RuntimeSessionRecord } from '@evoloop/contracts';
 import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import type { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
-import { RuntimeProtocolError } from '@evoloop/adapter-codex-app-server';
+import { RuntimeProtocolError, RuntimeServerError } from '@evoloop/adapter-codex-app-server';
 import { SessionMessagePump } from '../src/session-messages/pump.ts';
 
 const projectId=randomUUID();
@@ -80,6 +81,50 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
   const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
   await pump.tick();assert.equal(failed,1);assert.equal(unknown,0);
+});
+
+test('a competing native writer preserves the ordinary message and original operation',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'queued'),operationId=randomUUID();
+  let failed=0,unknown=0,starts=0,dispatches=0;
+  let state:'queued'|'unknown'='queued';
+  const service={pending:async()=>[m],session:async()=>({...session(target),nativeThreadId:target}),
+    processing:async()=>state==='unknown'?{operationId,nativeTurnId:null,state:'unknown'}:null,
+    preflightDispatch:async()=>{},beginDispatch:async()=>{dispatches++;state='unknown';return{operationId};},
+    failBeforeStart:async()=>{failed++;},markUnknown:async(_p:string,_id:string,reason:string)=>{
+      assert.match(reason,/writer/i);unknown++;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConversationThread:async()=>({available:true,reason:'safe',fingerprint:'a'.repeat(64)}),
+    startConversationTurn:async()=>{starts++;throw new RuntimeServerError('thread/resume',7,-32600,
+      `thread ${target} already has an active writer`,target);},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
+    canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.deepEqual([failed,unknown,starts,dispatches],[0,1,1,1]);
+  await pump.tick();
+  assert.deepEqual([failed,starts,dispatches],[0,1,1]);
+});
+
+test('a reviewed pre-turn message continues with its original operation exactly once',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'unknown'),operationId=randomUUID();
+  const input=`[evoloop-message-operation:${operationId}]\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not by itself record Task delivery or acceptance.\n${m.content}`;
+  const inputHash=createHash('sha256').update(input).digest('hex');
+  const p:{operationId:string;state:string;nativeTurnId:string|null;readOnlyPolicyFingerprint:string;
+    preTurnProof:{status:string;inputHash:string}}={operationId,state:'unknown',nativeTurnId:null,readOnlyPolicyFingerprint:'a'.repeat(64),
+    preTurnProof:{status:'approved',inputHash}};
+  let starts=0,claims=0;
+  const service={pending:async()=>[m],session:async()=>({...session(target),nativeThreadId:target}),
+    processing:async()=>p,claimPreTurnContinuation:async()=>{claims++;p.preTurnProof.status='attempting';return p;},
+    bindTurn:async()=>{p.state='running';p.nativeTurnId='one-turn';m.state='processing';}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,
+    reason:'safe',fingerprint:'a'.repeat(64)}),startConversationTurn:async(_binding:unknown,sent:string,op:string)=>{
+      assert.equal(sent,input);assert.equal(op,operationId);starts++;return{id:'one-turn',status:'inProgress',completedAtUtc:null};},
+    listTurns:async()=>({data:[{id:'one-turn',status:'inProgress',completedAtUtc:null}],nextCursor:null}),
+    listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
+    canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();await pump.tick();
+  assert.equal(starts,1);assert.equal(claims,1);
 });
 
 test('an exact live bound Turn prevents a transient history miss and settles when history appears',async()=>{
