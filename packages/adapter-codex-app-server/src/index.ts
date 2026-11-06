@@ -130,12 +130,15 @@ const serverErrorCategory = (method: string, code: number, message: string): Run
 export class RuntimeServerError extends RuntimeProtocolError {
   readonly category: RuntimeServerErrorCategory;
   readonly preTurnWriterConflict: boolean;
-  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string) {
+  readonly rejectedThreadId: string | null;
+  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string, requestedThreadId?: string) {
     const category = serverErrorCategory(method, code, nativeMessage);
     super(`${method}: App Server rejected request (${category}, code ${code})`);
     this.name = "RuntimeServerError";
     this.category = category;
-    this.preTurnWriterConflict = category === 'writer_conflict';
+    const rejectedThreadId = category === 'writer_conflict' ? nativeMessage.match(/^thread ([0-9a-f-]{36}) already has an active writer$/)?.[1] ?? null : null;
+    this.rejectedThreadId = rejectedThreadId ?? null;
+    this.preTurnWriterConflict = category === 'writer_conflict' && rejectedThreadId === requestedThreadId;
   }
 }
 
@@ -195,7 +198,7 @@ export interface DynamicToolSpec { type: "function"; name: string; description: 
 export interface DynamicToolCall { threadId: string; turnId: string; callId: string; tool: string; arguments: Record<string, unknown>; signal?: AbortSignal }
 export interface DynamicToolResult { contentItems: ({type:"inputText";text:string}|{type:"inputImage";imageUrl:string})[]; success: boolean }
 
-interface Pending { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+interface Pending { method: string; threadId: string | null; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 const MAX_CHILD_DIAGNOSTICS = 16;
 type ModelListResult = {status:"available"|"empty"|"unavailable";models:string[];
   options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
@@ -553,7 +556,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, "response timeout"));
       }, timeoutMs);
-      this.pending.set(id, { method, resolve: value => {
+      this.pending.set(id, { method, threadId: nonempty(threadId) ? threadId : null, resolve: value => {
         const result=object(value),thread=object(result?.thread);
         const saved=nonempty(threadId)?this.bindings.get(threadId):undefined;
         // notLoaded and missing rollout are legal zero-Turn read observations.
@@ -609,7 +612,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const error = object(message.error);
       const code = typeof error?.code === "number" && Number.isInteger(error.code) ? error.code : -32000;
       const nativeMessage = typeof error?.message === "string" ? error.message : "";
-      pending.reject(new RuntimeServerError(pending.method, message.id, code, nativeMessage));
+      pending.reject(new RuntimeServerError(pending.method, message.id, code, nativeMessage, pending.threadId ?? undefined));
     }
     else if ("result" in message) pending.resolve(message.result);
     else { pending.reject(new RuntimeProtocolError(`${pending.method}: response lacks result`)); this.disconnect("malformed response"); }

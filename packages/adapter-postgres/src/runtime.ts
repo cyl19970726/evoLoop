@@ -1,5 +1,6 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { preTurnProofSchema } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
 
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
@@ -58,6 +59,7 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   } : null,
   evaluationPacket: r.evaluation_packet ?? null,
   executionProfile: r.execution_profile_snapshot ?? null,
+  preTurnProof: r.pre_turn_proof == null ? null : preTurnProofSchema.parse(r.pre_turn_proof),
 });
 const event = (r: QueryResultRow): RuntimeRecordEvent => ({
   projectId: r.project_id, id: r.event_id, runId: r.run_id, sessionId: r.session_id,
@@ -140,10 +142,11 @@ export class PgRuntimeStore {
   }
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
-    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb
+    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb,pre_turn_proof=$11::jsonb
       WHERE project_id=$1 AND run_id=$2 AND version=$10`,
       [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,
-        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion]);
+        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion,
+        item.preTurnProof ? JSON.stringify(preTurnProofSchema.parse(item.preTurnProof)) : null]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime run version changed", (await this.getRuntimeRun(item.id))?.version);
   }
   async appendRuntimeEvent(item: RuntimeRecordEvent): Promise<void> {

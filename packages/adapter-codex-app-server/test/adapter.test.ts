@@ -16,9 +16,11 @@ test("native thread read permission failure keeps permission category without ex
 
 test('only an exact native resume writer rejection is a pre-Turn writer conflict',()=>{
   const writer='thread 01a19c3b-2123-74d1-918e-0add8d529455 already has an active writer';
-  const conflict=new RuntimeServerError('thread/resume',9,-32600,writer);
+  const threadId='01a19c3b-2123-74d1-918e-0add8d529455';
+  const conflict=new RuntimeServerError('thread/resume',9,-32600,writer,threadId);
   assert.equal(conflict.category,'writer_conflict');
   assert.equal(conflict.preTurnWriterConflict,true);
+  assert.equal(new RuntimeServerError('thread/resume',9,-32600,writer,'01a19c3b-2123-74d1-918e-0add8d529456').preTurnWriterConflict,false);
   assert.doesNotMatch(conflict.message,/01a19c3b/);
   for(const [method,code,message] of [
     ['thread/read',-32600,writer],

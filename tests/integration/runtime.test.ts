@@ -76,6 +76,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   applied(await issue({ type: "task.start", taskId: otherTaskId, expectedVersion: 1, basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin second task" }));
 
   const sessionId = randomUUID();
+  const ownedThreadId = randomUUID();
   const sessionOperation = randomUUID();
   const reserveSession = { type: "runtime.session.reserve", sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", sandbox: "danger-full-access", approvalPolicy: "never" };
   const sessionReceipt = applied(await issue(reserveSession, sessionOperation));
@@ -99,15 +100,15 @@ test("runtime reservations freeze task basis and recover uncertain native starts
     assert.deepEqual((await workflow.getOperation(principal,projectId,sessionOperation))?.result,sessionReceipt);
   }finally{await app.close();}
   assert.equal((await runtime.beginSessionCreate(projectId, sessionId)).state, "creating");
-  await runtime.recordSessionApprovalDeclined(projectId, sessionId, "owned-thread-1", null, "Approval declined before durable native binding");
+  await runtime.recordSessionApprovalDeclined(projectId, sessionId, ownedThreadId, null, "Approval declined before durable native binding");
   assert.equal((await workflow.listRuntimeSessionEvents(principal, projectId, sessionId)).some(e => e.kind === "runtime.approvalDeclined"), true);
   await assert.rejects(runtime.beginSessionCreate(projectId, sessionId), /already attempted/);
   assert.deepEqual(await runtime.recoverDispatching(projectId), { sessions: [sessionId], runs: [] });
-  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: "owned-thread-1", nativeSessionId: "owned-session-1", observedModel:"gpt-6-sol",observedProvider:"openai" };
+  const binding = { owner: "evoloop-codex-app-server" as const, projectId, sessionId, roleId: ownerRoleId, cwd: "/tmp/evoloop-runtime-test", authorizationScope: "project-workspace", nativeThreadId: ownedThreadId, nativeSessionId: "owned-session-1", observedModel:"gpt-6-sol",observedProvider:"openai" };
   await assert.rejects(runtime.bindSession(projectId, sessionId, { ...binding, projectId: randomUUID() }), /does not match/);
   assert.equal((await runtime.bindSession(projectId, sessionId, binding)).state, "ready");
   await assert.rejects(runtime.recordSessionApprovalDeclined(projectId, sessionId, "foreign-thread", null, "Invalid"), /owned thread/);
-  assert.equal((await workflow.getRuntimeSession(principal, projectId, sessionId)).nativeThreadId, "owned-thread-1");
+  assert.equal((await workflow.getRuntimeSession(principal, projectId, sessionId)).nativeThreadId, ownedThreadId);
   const childStartId=randomUUID();
   await runtime.recordNativeChildDiagnostic(projectId,{
     startId:childStartId,pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
@@ -323,4 +324,69 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.deepEqual(await runtime.recoverDispatching(projectId), { sessions: [], runs: [unresolvedRunId] });
   rejected(await issue({ ...reserveRun, runId: randomUUID(), taskId: unresolvedTaskId,
     expectedVersion: unresolvedReady.version! + 1 }), "RECOVERY_BLOCKED");
+
+  // The same migrated PG row and HTTP review entry must permit one continuation
+  // only for an explicit, exact pre-turn native refusal. No new Run or operation is made.
+  const continuationSessionId=randomUUID(),continuationThreadId=randomUUID();
+  applied(await issue({...reserveSession,sessionId:continuationSessionId}));
+  await runtime.beginSessionCreate(projectId,continuationSessionId);
+  await runtime.bindSession(projectId,continuationSessionId,{
+    ...binding,sessionId:continuationSessionId,nativeThreadId:continuationThreadId,nativeSessionId:randomUUID(),
+  });
+  const continuationTaskId=randomUUID();
+  applied(await issue({type:'task.create',taskId:continuationTaskId,title:'Writer handoff',
+    content:'Keep the original operation',acceptance:'One reviewed continuation',owner:ownerRoleId}));
+  const continuationReady=applied(await issue({type:'task.start',taskId:continuationTaskId,expectedVersion:1,
+    reason:'Controlled native writer refusal'}));
+  const continuationRunId=randomUUID();
+  applied(await issue({...reserveRun,runId:continuationRunId,taskId:continuationTaskId,
+    sessionId:continuationSessionId,expectedVersion:continuationReady.version}));
+  await runtime.beginDispatch(projectId,continuationRunId);
+  const beforeRefusal=await workflow.getRuntimeRun(principal,projectId,continuationRunId);
+  const fixedInputHash=createHash('sha256').update('controlled original input').digest('hex');
+  const refused=await runtime.markRunUnknown(projectId,continuationRunId,'Exact native thread/resume writer refusal',{
+    threadId:continuationThreadId,operationId:beforeRefusal.operationId,requestId:41,code:-32600,inputHash:fixedInputHash,
+  });
+  assert.equal(refused.preTurnProof?.status,'observed');
+  await assert.rejects(pool.query(`UPDATE runtime_run SET pre_turn_proof=jsonb_set(pre_turn_proof,'{status}','"approved"'),
+    version=version+1 WHERE project_id=$1 AND run_id=$2`,[projectId,continuationRunId]),
+    /blocked gate|durable review/,'direct proof mutation cannot bypass reviewed continuation');
+  const blockedGate=(await workflow.getSessionRecovery(principal,projectId,continuationSessionId)).gate!;
+  assert.equal(blockedGate.phase,'blocked');
+  let reviewFailure:unknown;
+  const reviewApp=await buildServer({service:workflow,credentials:[{
+    token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:['read','write','review'],
+  }],hasRuntimeGrant:()=>true,runtime:{
+    nativeStartsAvailable:()=>true,
+    approvePreTurnContinuation:async(p:string,id:string,actor:Principal,command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3])=>{
+      try{return await runtime.approvePreTurnContinuation(p,id,actor,command);}
+      catch(error){reviewFailure=error;throw error;}
+    },
+  } as unknown as RuntimeRunner});
+  try{
+    const reviewBody={operationId:randomUUID(),sessionId:continuationSessionId,originalOperationId:beforeRefusal.operationId,
+      expectedVersion:refused.version,expectedGateVersion:blockedGate.version,
+      evidenceRef:'fixture://writer-released',reason:'Controlled same Thread writer handoff'};
+    const reviewed=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:reviewBody});
+    assert.equal(reviewed.statusCode,200,`${reviewed.body}; ${String(reviewFailure)}`);
+    assert.equal(reviewed.json().preTurnProof.status,'approved');
+    const reviewEvents=await workflow.listRuntimeEvents(principal,projectId,continuationRunId);
+    assert.equal(reviewEvents.filter(event=>event.kind==='run.reviewed'&&event.actorId===principal.actorId).length,1);
+    const duplicate=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:reviewBody});
+    assert.notEqual(duplicate.statusCode,200,'the old review version cannot authorize a second attempt');
+  }finally{await reviewApp.close();}
+  const [claimed,secondClaim]=await Promise.all([
+    runtime.claimPreTurnContinuation(projectId,continuationRunId),
+    runtime.claimPreTurnContinuation(projectId,continuationRunId),
+  ]);
+  assert.equal([claimed,secondClaim].filter(Boolean).length,1);
+  assert.equal((await workflow.getRuntimeRun(principal,projectId,continuationRunId)).preTurnProof?.status,'attempting');
+  const resumed=await runtime.bindTurn(projectId,continuationRunId,{id:'original-operation-turn',status:'running'},
+    {kind:'startReply',operationId:beforeRefusal.operationId});
+  assert.equal(resumed.state,'running');
+  assert.equal(resumed.operationId,beforeRefusal.operationId);
+  assert.equal(resumed.preTurnProof?.status,'consumed');
+  assert.equal(await runtime.claimPreTurnContinuation(projectId,continuationRunId),null);
 });

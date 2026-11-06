@@ -2,7 +2,8 @@ import { createInterface } from "node:readline";
 
 const mode = process.argv[2] ?? "normal";
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
-const thread = { id: "thread-owned", sessionId: "thread-owned", cwd: "/tmp/evoloop-fixture", source: "appServer" };
+const thread = { id: mode === 'resume-writer-conflict' ? '01a19c3b-2123-74d1-918e-0add8d529455' : "thread-owned",
+  sessionId: "thread-owned", cwd: "/tmp/evoloop-fixture", source: "appServer" };
 const lines = createInterface({ input: process.stdin });
 let initialized = false;
 let approvalId = 800;
@@ -148,7 +149,7 @@ for await (const line of lines) {
   if (method === "thread/resume" && mode === "resume-rejected") { send({ id, error: { code: -32000, message: "thread resume unavailable: private fixture detail" } }); continue; }
   if (method === "thread/resume" && mode === "resume-writer-conflict") {
     if(writerConflicts++===0){
-      send({id,error:{code:-32600,message:'thread 01a19c3b-2123-74d1-918e-0add8d529455 already has an active writer'}});continue;
+      send({id,error:{code:-32600,message:`thread ${params.threadId} already has an active writer`}});continue;
     }
   }
   if (method === "thread/resume" && mode.startsWith("profile-transition")) {

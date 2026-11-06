@@ -250,6 +250,14 @@ HTTP 健康仅证明 coordinator 可访问，不证明受管原生 runtime 在�
 
 当前 preflight 可能在 `beginDispatch` 后才遇外部 writer 冲突，恢复前须排除冲突或正式隔离新派发；不能从一次 recover 请求推断队列消息安全等待。恢复后核原生 child、writer、原 Turn 结算、同 Thread 真实待办接续、执行 profile、后续 grant 额度及 `blockedReason`。预算耗尽与再次失联分开记录。此应急恢复的观察不证明所有版本、平台或根因修复；选择与停点见项目 Skill 的 `.agents/skills/evoloop-workflow/references/owned-runtime-recovery.md`。
 
+### 精确的原生 writer 拒绝后接续
+
+仅当原生 `thread/resume` 明确返回请求的同一 Thread 的 `-32600 active writer`，并且该操作尚未调用 `turn/start`，coordinator 才在原 Run 或消息 processing 保存 `preTurnProof`。普通超时、丢失回包、历史暂未找到 Turn、PG `owned` 或 Desktop 输入框均不是此凭证。先从原 Run 或消息详情读回 `operationId`、版本、`preTurnProof.status=observed`，从 Session recovery 读回 `blocked` gate 的版本及精确 cause，并核当前宿主已合法取得原 Thread 的写入控制权。单独的 HTTP 可用或 runtime `ready` 不证明控制权。
+
+有本项目 `review` 和该 Session 精确运行授权的复核者，可分别调用 `POST /api/projects/:projectId/runtime/runs/:runId/pre-turn-continue` 或 `POST /api/projects/:projectId/session-messages/:messageId/pre-turn-continue`。正文为 `operationId`（本次复核 UUID）、`sessionId`、`originalOperationId`、`expectedVersion`（Run 或 processing）、`expectedGateVersion`、`evidenceRef`、`reason`；消息还要 `expectedMessageVersion`。服务端逐项比对原拒绝、同 Thread、当前 profile/grant 和 gate，保存复核者、理由及证据。回包未知时按原对象读回 `preTurnProof.decisionOperationId`，不要换复核 ID 重发。
+
+泵只对 `approved` 的原对象按原输入哈希、原 operation 做一次持久 claim，再尝试原 Thread；claim 后回包丢失会回到对账，不能凭空再次取得许可。`attempting`、`consumed` 或无精确凭证的 `unknown` 不自动重投。再次遇到确证的 pre-turn writer 拒绝，须以新的 gate/版本和交还证据重新复核；任何已发 `turn/start` 的未知结果只能沿原 ID 查询终态。复核与接续均不新建 Run、消息或预算，也不代替正式的 Desktop 交还验证。
+
 本次实现新增的命令先用 `command schema TYPE` 读取准确输入；纯事务决定使用 `command run FILE` 和唯一 operationId。需要复核时，`read session SESSION_UUID --recovery` 读取当前配置档案、激活状态、gate、最近正式决定、各关联队列额度与下一动作；`read session SESSION_UUID --events` 查看原生配置激活记录，`read resident-queue QUEUE_UUID --attempts` 对照 attempt 与Run状态，`read run RUN_UUID` 读Run绑定的 Task 修订、inputHash 和启动时配置快照。跨越写入回执未知时另用 `operation OPERATION_UUID` 或 `receipts reconcile` 回读原操作；回读缺字段、权限或存储错误必须保留为未知，不能显示为零或空成功。
 
 Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也不会自动更新本机或全局 CLI。缺省为 `0.166.0-alpha.5.1`；`0.154.0` 与 `0.164.0-alpha.11.1` 仍须显式选择。启动前检查将要执行的二进制版本及对应标准／实验 schema 指纹。版本或 schema 不匹配时停止接入，不绕过固定校验。现代协议的 `currentTime/read` 只返回精确绑定 owned Thread 的只读时间；`model/list` 能列出模型不能证明 Turn 接受了该模型或实际使用了它，模型确认仍由 Lead 和真实运行证据完成。旧配置的 `readOnlyProtocolVerified` 仅解析兼容保留，忽略其值，不再要求设置或作为新 Session 准入条件。

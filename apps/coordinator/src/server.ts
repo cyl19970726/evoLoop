@@ -22,7 +22,7 @@ import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
 import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
-import { runtimeReconcileSchema } from "@evoloop/contracts/runtime";
+import { runtimeReconcileSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
 import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
 import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
@@ -538,6 +538,26 @@ export async function buildServer(options: {
     const p = params(request.params);
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用；已保存的运行状态仍可读取。");
     return options.runtime.result(who(request.principal), p.projectId!, p.id!);
+  });
+  app.post("/api/projects/:projectId/runtime/runs/:id/pre-turn-continue",async request=>{
+    const p=params(request.params),principal=who(request.principal);
+    const body=preTurnContinueSchema.parse(request.body);
+    if(!options.runtime?.nativeStartsAvailable())throw new DomainError("RUNTIME_UNAVAILABLE","native owner unavailable");
+    const session=await options.service.getRuntimeSession(principal,p.projectId!,body.sessionId);
+    if(!principal.permissions.includes("review")||!principal.projectIds.includes(p.projectId!)||
+      !await options.hasRuntimeGrant?.({projectId:p.projectId!,actorId:principal.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
+        model:session.model,approvalPolicy:session.approvalPolicy}))
+      throw new DomainError("FORBIDDEN","exact Session execution review grant required");
+    return options.runtime.approvePreTurnContinuation(p.projectId!,p.id!,principal,body);
+  });
+  app.post("/api/projects/:projectId/session-messages/:id/pre-turn-continue",async request=>{
+    const p=params(request.params),principal=who(request.principal);
+    const body=messagePreTurnContinueSchema.parse(request.body);
+    if(!options.sessionMessages||!options.runtime?.nativeStartsAvailable())
+      throw new DomainError("RUNTIME_UNAVAILABLE","native owner or message service unavailable");
+    await messageRecoverySession(principal,p.projectId!,body.sessionId);
+    return options.sessionMessages.approvePreTurnContinuation(p.projectId!,p.id!,principal,body);
   });
   app.get("/api/projects/:projectId/runtime/runs/:id/trace", async request => {
     const p = params(request.params);

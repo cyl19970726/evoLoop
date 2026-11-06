@@ -58,7 +58,8 @@ class FakeRuntime {
 test('runtime status exposes bounded native child loss without treating it as a Turn result',()=>{
   const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
     observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'stdout_closed' as const,
-    exitObserved:false,exitCode:null,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+    firstLossAtUtc:'2026-11-06T00:01:00.000Z',firstLossReason:'stdout_closed' as const,
+    exitObserved:false,exitedAtUtc:null,exitCode:null,exitSignal:null,nativeTurnOutcome:'unknown' as const};
   const native=Object.assign(new FakeRuntime(),{listChildDiagnostics:()=>[diagnostic]});
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&typeof native,
     workflow:{} as WorkflowService,trusted:{} as RuntimeWorkflowService,principals:[],
@@ -70,7 +71,8 @@ test('runtime status exposes bounded native child loss without treating it as a 
 test('native child diagnostic survives replacement of its adapter',async()=>{
   const diagnostic={startId:randomUUID(),pid:1234,startedAtUtc:'2026-11-06T00:00:00.000Z',
     observedAtUtc:'2026-11-06T00:01:00.000Z',stopReason:'process_exited' as const,
-    exitObserved:true,exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown' as const};
+    firstLossAtUtc:'2026-11-06T00:00:59.000Z',firstLossReason:'stdout_closed' as const,
+    exitObserved:true,exitedAtUtc:'2026-11-06T00:01:00.000Z',exitCode:1,exitSignal:null,nativeTurnOutcome:'unknown' as const};
   let created=0;
   const runner=new RuntimeRunner({runtimeFactory:()=>{
     created++;
@@ -94,7 +96,9 @@ test('runtime status reloads persisted child loss after coordinator restart',asy
   const earlier={...diagnostic,observedAtUtc:diagnostic.firstLossAtUtc,
     stopReason:'stdout_closed' as const,exitObserved:false,exitedAtUtc:null,exitCode:null};
   const trusted={recentNativeChildDiagnostics:async()=>[
-    {detail:JSON.stringify(diagnostic)},{detail:JSON.stringify(earlier)}],
+    {detail:JSON.stringify(diagnostic)},{detail:JSON.stringify(earlier)},
+    {detail:JSON.stringify({...diagnostic,startId:randomUUID(),privateMessage:'secret'})},
+    {detail:JSON.stringify({...diagnostic,startId:randomUUID(),pid:-1})}],
     recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>new FakeRuntime(),workflow,trusted,
     principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
@@ -1274,7 +1278,7 @@ test('a competing native writer does not turn a reserved Task Run into a busines
   const writerThreadId=randomUUID(),ownedSession={...session,nativeThreadId:writerThreadId};
   const native=new FakeRuntime();let resumes=0,permits=0,rejections=0,unknowns=0,reason='';
   native.resume=async()=>{resumes++;throw new RuntimeServerError('thread/resume',7,-32600,
-    `thread ${writerThreadId} already has an active writer`);};
+    `thread ${writerThreadId} already has an active writer`,writerThreadId);};
   const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[ownedSession],
     listRuntimeRuns:async()=>[requested],getRuntimeSession:async()=>ownedSession} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),canStartRecoveredRun:async()=>true,
@@ -1294,6 +1298,34 @@ test('a competing native writer does not turn a reserved Task Run into a busines
     assert.deepEqual([permits,resumes,native.starts,rejections,unknowns],[1,1,0,0,1]);
     assert.equal(requested.state,'unknown');
   }finally{await runner.stop();}
+});
+
+test('a reviewed pre-turn Run continues its original operation once, while unknown without proof stays read-only',async()=>{
+  const original:RuntimeRunRecord={...run,id:randomUUID(),state:'unknown',nativeTurnId:null,
+    preTurnProof:{threadId:session.nativeThreadId!,operationId:run.operationId,requestId:7,code:-32600,
+      inputHash:'a'.repeat(64),observedAtUtc:new Date().toISOString(),status:'approved',
+      decisionOperationId:randomUUID(),reviewerActorId:'reviewer',evidenceRef:'handoff:1'}};
+  let saved=original,claims=0,starts=0,resumes=0;
+  const native=new FakeRuntime();native.ready=true;
+  native.resume=async binding=>{resumes++;return binding;};
+  native.startTurn=async(_binding,_input,operationId)=>{assert.equal(operationId,original.operationId);starts++;return{id:'one-turn',status:'inProgress',completedAtUtc:null};};
+  native.listTurns=async()=>({data:[{id:'one-turn',status:'inProgress',completedAtUtc:null}],nextCursor:null});
+  const workflow={getRuntimeSession:async()=>session} as unknown as WorkflowService;
+  const trusted={claimPreTurnContinuation:async()=>{claims++;saved={...saved,preTurnProof:{...saved.preTurnProof!,status:'attempting'}};return saved;},
+    bindTurn:async()=>{saved={...saved,state:'running',nativeTurnId:'one-turn'};return saved;}} as unknown as RuntimeWorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+  (runner as unknown as {lightweightInput:()=>Promise<{input:string;protocol:string;contentHash:string;byteLength:number}>}).lightweightInput=
+    async()=>({input:'fixed Task input',protocol:'evoloop-lightweight-v1',contentHash:'a'.repeat(64),byteLength:16});
+  const process=(value:RuntimeRunRecord)=>(runner as unknown as {process:(p:Principal,r:RuntimeRunRecord)=>Promise<boolean>}).process(
+    {actorId,projectIds:[projectId],permissions:['read','write','review']},value);
+  await process(original);await process(saved);
+  assert.deepEqual([claims,resumes,starts],[1,1,1]);
+  const unknownWithoutProof={...original,id:randomUUID(),preTurnProof:null};
+  native.listTurns=async()=>({data:[],nextCursor:null});
+  await process(unknownWithoutProof);
+  assert.deepEqual([claims,resumes,starts],[1,1,1]);
 });
 
 test("rehydration of a bound dynamic Session ignores a colliding static grant until current dynamic authority returns",async()=>{

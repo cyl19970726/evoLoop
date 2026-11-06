@@ -2,6 +2,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageTransaction } from "@evoloop/contracts/session-messages";
 import { DomainError } from "@evoloop/contracts/ports";
+import { preTurnProofSchema } from "@evoloop/contracts/runtime";
 import { taskAttentionNoticeCurrent } from "./task-attention.js";
 
 const iso = (v: Date | string): string => v instanceof Date ? v.toISOString() : v;
@@ -26,6 +27,7 @@ const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
   failure:r.failure,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
+  preTurnProof:r.pre_turn_proof==null?null:preTurnProofSchema.parse(r.pre_turn_proof),
   interruptOperationId:r.interrupt_operation_id??null,interruptActorId:r.interrupt_actor_id??null,
   interruptReason:r.interrupt_reason??null,
   interruptRequestedAt:r.interrupt_requested_at?iso(r.interrupt_requested_at):null,
@@ -158,9 +160,10 @@ export class PgSessionMessages implements SessionMessageTransaction {
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
     this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,
-      interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13
+      interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13,pre_turn_proof=$14::jsonb
       WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion,
-      v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null]);
+      v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null,
+      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null]);
     if(!r.rowCount)throw new DomainError('VERSION_CONFLICT','message processing changed');
   }
   async insertSessionMessageManualStopEvidence(v:SessionMessageManualStopEvidence):Promise<void>{

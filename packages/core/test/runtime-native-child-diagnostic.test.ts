@@ -31,4 +31,9 @@ test('child loss has one project anchor and readback, including before native bi
   await service.recordNativeChildDiagnostic(projectId,diagnostic);
   assert.equal(events.length,1);
   assert.equal(events[0]?.sessionId,reserved.id);
+  await assert.rejects(service.recordNativeChildDiagnostic(projectId,{...diagnostic,privateMessage:'secret'} as typeof diagnostic),
+    (error:unknown)=>error instanceof Error&&error.message.includes('invalid bounded fields'));
+  await assert.rejects(service.recordNativeChildDiagnostic(projectId,{...diagnostic,pid:-1}),
+    (error:unknown)=>error instanceof Error&&error.message.includes('invalid bounded fields'));
+  assert.equal(events.length,1);
 });
