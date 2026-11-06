@@ -1,6 +1,7 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import { DomainError } from "@evoloop/contracts/ports";
+import { preTurnProofSchema } from "@evoloop/contracts/runtime";
+import { DomainError, type PreTurnReviewDecision } from "@evoloop/contracts/ports";
 
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
 const nativeEpoch = (value: unknown): number | null => {
@@ -58,6 +59,7 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   } : null,
   evaluationPacket: r.evaluation_packet ?? null,
   executionProfile: r.execution_profile_snapshot ?? null,
+  preTurnProof: r.pre_turn_proof == null ? null : preTurnProofSchema.parse(r.pre_turn_proof),
 });
 const event = (r: QueryResultRow): RuntimeRecordEvent => ({
   projectId: r.project_id, id: r.event_id, runId: r.run_id, sessionId: r.session_id,
@@ -105,6 +107,25 @@ export class PgRuntimeStore {
     const result = await this.client.query("SELECT * FROM runtime_record_event WHERE project_id=$1 AND session_id=$2 ORDER BY sequence LIMIT $3", [this.projectId, sessionId, limit + 1]);
     return bounded(result.rows.map(event), "runtime session events");
   }
+  async getPreTurnReviewDecision(operationId:string):Promise<PreTurnReviewDecision|null>{
+    const found=await this.client.query(`SELECT operation_id,actor_id,kind,subject_id,intent_json,result
+      FROM pre_turn_review_decision WHERE project_id=$1 AND operation_id=$2`,[this.projectId,operationId]);
+    const row=found.rows[0];
+    return row?{operationId:row.operation_id,actorId:row.actor_id,kind:row.kind,
+      subjectId:row.subject_id,intentJson:row.intent_json,result:row.result}:null;
+  }
+  async insertPreTurnReviewDecision(decision:PreTurnReviewDecision):Promise<void>{
+    await this.client.query(`INSERT INTO pre_turn_review_decision
+      (project_id,operation_id,actor_id,kind,subject_id,intent_json,result)
+      VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[this.projectId,decision.operationId,decision.actorId,
+      decision.kind,decision.subjectId,decision.intentJson,JSON.stringify(decision.result)]);
+  }
+  async listRuntimeHostEvents(count: number): Promise<RuntimeRecordEvent[]> {
+    if(!Number.isSafeInteger(count)||count<1||count>32)throw new RangeError('runtime host event limit must be 1..32');
+    const result=await this.client.query(`SELECT * FROM runtime_record_event WHERE project_id=$1 AND run_id IS NULL AND kind='native.childDiagnostic'
+      ORDER BY sequence DESC LIMIT $2`,[this.projectId,count]);
+    return result.rows.map(event);
+  }
   async insertRuntimeSession(item: RuntimeSessionRecord): Promise<void> {
     this.scope(item.projectId);
     await this.client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
@@ -134,10 +155,11 @@ export class PgRuntimeStore {
   }
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
-    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb
+    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb,pre_turn_proof=$11::jsonb
       WHERE project_id=$1 AND run_id=$2 AND version=$10`,
       [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,
-        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion]);
+        item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion,
+        item.preTurnProof ? JSON.stringify(preTurnProofSchema.parse(item.preTurnProof)) : null]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime run version changed", (await this.getRuntimeRun(item.id))?.version);
   }
   async appendRuntimeEvent(item: RuntimeRecordEvent): Promise<void> {

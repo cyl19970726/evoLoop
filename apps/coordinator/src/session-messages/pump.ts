@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { RuntimeBinding, RuntimePage, RuntimeTurn } from '@evoloop/contracts/runtime';
 import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
-import { RuntimeProtocolError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
+import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
 import { bindingOf, finalMessages } from '../runtime/runner.js';
 
 type MessageRuntime={isReady():boolean;registerBinding(binding:RuntimeBinding):Promise<void>;
@@ -74,10 +74,11 @@ export class SessionMessagePump {
     const binding=bindingOf(session);
     const runtime=this.deps.runtime();
     let record=await this.deps.service.processing(message.projectId,message.id);
-    if(message.state==='queued'){
-      if(record)return;
+    const continuation=message.state==='unknown'&&record?.state==='unknown'&&record.preTurnProof?.status==='approved';
+    if(message.state==='queued'||continuation){
+      if(message.state==='queued'&&record)return;
       if(this.deps.beforePreflight&&!await this.deps.beforePreflight(message))return;
-      try{await this.deps.service.preflightDispatch(message.projectId,message.id);}
+      try{if(!continuation)await this.deps.service.preflightDispatch(message.projectId,message.id);}
       catch(error){
         if(error instanceof DomainError){await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;}
         throw error;
@@ -92,18 +93,33 @@ export class SessionMessagePump {
         await this.deps.service.noteBlocked(message.projectId,message.id,qualification.reason);return;
       }
       // Persist before any native resume or Turn start. A lost response is never a retry signal.
-      try{record=await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint);}
+      if(continuation&&qualification.fingerprint!==record!.readOnlyPolicyFingerprint)return;
+      try{
+        record=continuation?record:
+          await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint);
+      }
       catch(error){
         if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED'].includes(error.code)){
           await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;
         }
         throw error;
       }
+      if(!record)return;
       const input=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not by itself record Task delivery or acceptance.\n${message.context?`Fixed Task context: ${message.context.taskId}@${message.context.taskRevisionId}\n`:''}${message.content}`;
+      const inputHash=createHash('sha256').update(input).digest('hex');
+      if(continuation&&inputHash!==record.preTurnProof?.inputHash){
+        return;
+      }
+      if(continuation){record=await this.deps.service.claimPreTurnContinuation(message.projectId,message.id);if(!record)return;}
       try{const turn=await runtime.startConversationTurn(binding,input,record.operationId);
         await this.deps.service.bindTurn(message.projectId,message.id,turn);}
       catch(error){
-        if(error instanceof RuntimeProtocolError && !(error instanceof RuntimeUnknownError))
+        if(error instanceof RuntimeServerError&&error.preTurnWriterConflict)
+          await this.deps.service.markUnknown(message.projectId,message.id,
+            'Native writer conflict before ordinary turn/start; original operation awaits exact reconciliation and authorized handoff',
+            {threadId:error.rejectedThreadId!,operationId:record.operationId,requestId:error.requestId,
+              code:-32600,inputHash});
+        else if(!continuation&&error instanceof RuntimeProtocolError && !(error instanceof RuntimeUnknownError))
           await this.deps.service.failBeforeStart(message.projectId,message.id,`Native pre-turn rejection: ${error.message}`);
         else await this.deps.service.markUnknown(message.projectId,message.id,'Native start acknowledgement unavailable; reconcile original marker before any retry');
       }

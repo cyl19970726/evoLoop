@@ -1,10 +1,12 @@
 import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import type { EvaluationPacketBinding, NativeResumeRejection, RuntimeBinding, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import { nativeChildDiagnosticSchema, preTurnProofSchema, type PreTurnProof, type EvaluationPacketBinding, type NativeChildDiagnosticRecord,
+  type NativeResumeRejection, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
+import { priorReviewDecision, reviewIntentJson } from "./pre-turn-review.js";
 
 export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory }
 const internalActor = "runtime-coordinator";
@@ -24,6 +26,26 @@ const canonicalUtc = (value: string): boolean => {
 /** Trusted coordinator entry. Never expose these result-recording methods as public HTTP commands. */
 export class RuntimeWorkflowService {
   constructor(private readonly deps: RuntimeWorkflowDependencies) {}
+
+  /** Append a bounded, source-free child observation; loss and exit are separate snapshots. */
+  async recordNativeChildDiagnostic(projectId:string, diagnostic:NativeChildDiagnosticRecord):Promise<void>{
+    const validated=nativeChildDiagnosticSchema.safeParse(diagnostic);
+    if(!validated.success)
+      throw new DomainError('INVALID_NATIVE_DIAGNOSTIC','native child diagnostic has invalid bounded fields');
+    await this.deps.uow.transaction(projectId,async tx=>{
+      const detail=JSON.stringify(validated.data);
+      const sessions=await tx.listRuntimeSessions();
+      // The event table requires a Session foreign key. Anchor each host snapshot
+      // once per project, including when only reserved Sessions exist. No fanout:
+      // two snapshots per child keep the last 16 starts within a 32-row read.
+      const anchor=sessions.find(session=>!!session.nativeThreadId&&['ready','closing'].includes(session.state))??sessions[0];
+      if(anchor)await this.emit(tx,null,anchor.id,'native.childDiagnostic',detail,null,projectId);
+    });
+  }
+
+  async recentNativeChildDiagnostics(projectId:string):Promise<RuntimeRecordEvent[]>{
+    return this.deps.uow.read(projectId,async reader=>await reader.listRuntimeHostEvents?.(32)??[]);
+  }
 
   async verifyBinding(projectId: string, binding: RuntimeBinding): Promise<RuntimeSessionRecord> {
     return this.deps.uow.read(projectId, async reader => {
@@ -315,12 +337,14 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (proof.operationId !== current.operationId || !turn.id) throw new DomainError("TURN_PROOF_MISMATCH", "turn must match durable dispatch operation");
-      if (current.state === "unknown" && proof.kind !== "historyMarker") {
+      if (current.state === "unknown" && proof.kind !== "historyMarker" &&
+          !(proof.kind === "startReply" && current.preTurnProof?.status === "attempting")) {
         throw new DomainError("HISTORY_PROOF_REQUIRED", "unknown start needs owned-history operation marker");
       }
       if (!["dispatching", "unknown"].includes(current.state)) throw new DomainError("RUN_NOT_DISPATCHING", "run cannot bind a new turn");
       if (current.nativeTurnId && current.nativeTurnId !== turn.id) throw new DomainError("FOREIGN_TURN", "run already has a different native turn");
       const next = { ...current, state: "running" as const, version: current.version + 1,
+        preTurnProof: current.preTurnProof ? { ...current.preTurnProof, status: "consumed" as const } : null,
         nativeTurnId: turn.id, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
       await this.emit(tx, runId, current.sessionId, "run.bound",
@@ -331,14 +355,91 @@ export class RuntimeWorkflowService {
     });
   }
 
-  async markRunUnknown(projectId: string, runId: string, reason: string): Promise<RuntimeRunRecord> {
+  async markRunUnknown(projectId: string, runId: string, reason: string,
+    writerProof?: Pick<PreTurnProof,"threadId"|"operationId"|"requestId"|"code"|"inputHash">): Promise<RuntimeRunRecord> {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
-      if (current.state === "unknown") return current;
-      if (!["dispatching", "running"].includes(current.state)) throw new DomainError("RUN_NOT_IN_FLIGHT", "only in-flight turn can become unknown");
-      const next = { ...current, state: "unknown" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
+      if (writerProof) {
+        const session=required(await tx.getRuntimeSession(current.sessionId),"runtime session");
+        if(writerProof.threadId!==session.nativeThreadId||writerProof.operationId!==current.operationId||
+          writerProof.code!==-32600||!Number.isSafeInteger(writerProof.requestId)||writerProof.requestId<1||
+          current.nativeTurnId||!(current.state==="dispatching"||current.state==="unknown"&&current.preTurnProof?.status==="attempting"))
+          throw new DomainError("PRE_TURN_PROOF_INVALID","native writer refusal does not match the original unstarted Run");
+      }
+      if (current.state === "unknown" && !writerProof && current.preTurnProof?.status!=="attempting") return current;
+      if (!["dispatching", "running"].includes(current.state) &&
+          !(current.state==="unknown"&&current.preTurnProof?.status==="attempting"))
+        throw new DomainError("RUN_NOT_IN_FLIGHT", "only in-flight turn can become unknown");
+      const preTurnProof: PreTurnProof|null=writerProof?preTurnProofSchema.parse({
+        ...writerProof,observedAtUtc:this.deps.clock.now(),status:"observed",decisionOperationId:null,reviewerActorId:null,evidenceRef:null,
+      }):current.preTurnProof?.status==="attempting"?{...current.preTurnProof,status:"consumed"}:current.preTurnProof??null;
+      const next = { ...current, state: "unknown" as const, preTurnProof, version: current.version + 1, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
       await this.emit(tx, runId, current.sessionId, "run.unknown", reason, current.nativeTurnId, projectId);
+      return next;
+    });
+  }
+
+  /** Reviewer grants one attempt for the same operation after an exact pre-turn rejection. */
+  async approvePreTurnContinuation(projectId:string,runId:string,principal:Principal,
+    command:{operationId:string;sessionId:string;originalOperationId:string;expectedVersion:number;expectedGateVersion:number;evidenceRef:string;reason:string}):Promise<RuntimeRunRecord>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+      throw new DomainError("FORBIDDEN","pre-turn continuation requires project review authority");
+    return this.deps.uow.transaction(projectId,async tx=>{
+      const intentJson=reviewIntentJson(principal.actorId,'run',runId,command);
+      const prior=await priorReviewDecision<RuntimeRunRecord>(tx,command.operationId,
+        principal.actorId,'run',runId,intentJson);
+      if(prior)return prior;
+      const run=required(await tx.getRuntimeRun(runId),"runtime run");
+      const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
+      const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
+      const proof=run.preTurnProof;
+      if(run.version!==command.expectedVersion||run.sessionId!==command.sessionId||
+        run.operationId!==command.originalOperationId||run.state!=="unknown"||run.nativeTurnId||
+        !proof||proof.status!=="observed"||proof.operationId!==run.operationId||
+        proof.threadId!==session.nativeThreadId||session.state!=="ready"||
+        gate.version!==command.expectedGateVersion||gate.phase!=="blocked"||gate.causeKind!=="run"||gate.causeId!==run.id||
+        session.executionProfile?.activationState!=="active"||
+        run.executionProfile?.revisionId!==session.executionProfile?.revision.revisionId)
+        throw new DomainError("PRE_TURN_CONTINUATION_CHANGED","original refusal, profile or recovery gate changed");
+      const next={...run,version:run.version+1,updatedAt:this.deps.clock.now(),
+        preTurnProof:preTurnProofSchema.parse({...proof,status:"approved",decisionOperationId:command.operationId,
+          reviewerActorId:principal.actorId,evidenceRef:command.evidenceRef,
+          decisionReason:safeDetail(command.reason),gateVersionAtApproval:gate.version})};
+      await tx.appendRuntimeEvent(event(projectId,this.deps.ids.next(),run.id,run.sessionId,'run.reviewed',
+        JSON.stringify({decisionOperationId:command.operationId,originalOperationId:run.operationId,
+          requestId:proof.requestId,observedAtUtc:proof.observedAtUtc,
+          evidenceRef:command.evidenceRef,reason:command.reason}),null,principal.actorId,this.deps.clock.now()));
+      await tx.updateRuntimeRun(next,run.version);
+      await tx.insertPreTurnReviewDecision({operationId:command.operationId,actorId:principal.actorId,
+        kind:'run',subjectId:runId,intentJson,result:next});
+      return next;
+    });
+  }
+  async readPreTurnContinuationDecision(projectId:string,runId:string,principal:Principal,
+    command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]):Promise<RuntimeRunRecord|null>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+      throw new DomainError("FORBIDDEN","pre-turn continuation requires project review authority");
+    return this.deps.uow.read(projectId,reader=>priorReviewDecision<RuntimeRunRecord>(reader,
+      command.operationId,principal.actorId,'run',runId,
+      reviewIntentJson(principal.actorId,'run',runId,command)));
+  }
+
+  /** Consumed before native I/O. A crash or lost reply cannot acquire another permit. */
+  async claimPreTurnContinuation(projectId:string,runId:string):Promise<RuntimeRunRecord|null>{
+    return this.deps.uow.transaction(projectId,async tx=>{
+      const run=required(await tx.getRuntimeRun(runId),"runtime run");
+      if(run.state!=="unknown"||run.preTurnProof?.status!=="approved"||run.nativeTurnId)return null;
+      const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
+      const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
+      if(gate.phase!=="blocked"||gate.causeKind!=="run"||gate.causeId!==run.id||
+        gate.version!==run.preTurnProof.gateVersionAtApproval||
+        session.state!=="ready"||session.nativeThreadId!==run.preTurnProof.threadId||
+        session.executionProfile?.activationState!=="active"||
+        run.executionProfile?.revisionId!==session.executionProfile.revision.revisionId)return null;
+      const next={...run,version:run.version+1,updatedAt:this.deps.clock.now(),
+        preTurnProof:preTurnProofSchema.parse({...run.preTurnProof,status:"attempting"})};
+      await tx.updateRuntimeRun(next,run.version);
       return next;
     });
   }
