@@ -240,6 +240,16 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 
 ### 受控 Session 故障恢复与配置变更
 
+#### 受管宿主失联与原会话恢复
+
+HTTP 健康仅证明 coordinator 可访问，不证明受管原生 runtime 在线。先核 `session` 身份及当前 `help`；用 `read session SESSION_UUID --recovery`、原 Run/Turn、消息与队列回读 Session/Thread/Role/profile、gate、原生终态和观察时间。PG 的 `owned`、`ready`、`busy`、`running` 是持久记录，不能单独证明当前 writer 或执行。Turn 空闲不证明锁已释放；`lsof` 显示锁文件被打开不能单独证明锁模式。Desktop 读历史、输入框可见和实际写入控制权分开核。现行已核原生版本有跨进程 writer 锁，`serviceName` 只是 metrics 标记。
+
+优先用当前宿主的正常释放／交还合同。外部 writer 仍活动、原 Turn 或后代在途、结果 unknown、历史或完成时间缺失时，保留原 ID 与占用，按原操作对账；不重投、清额度或新建替代 Session。特定已核版本且用户明确授权、指定原聊天空闲并无在途业务时，一次 archive/unarchive 可作为有界应急释放：核同一 Thread ID、历史和 writer 实际释放，失败或结果含糊即停。它不关闭项目 Session，也不证明长期交还已修复；不默认退出整个 ChatGPT。影响其他活动聊天的停机先约定维护窗口，不删锁或强杀共享 Desktop。
+
+冲突消除或新派发已正式隔离后，有权者读 `request schema runtime.recover`，以 `request runtime.recover --project UUID --file PRIVATE_JSON --receipt LOCAL_UUID` 请求恢复原生连接；正文为空，本地 receipt 用于原请求对账。随后读取精确原 Run 与 bound Turn 的原生历史、终态及 `completedAtUtc`。`request schema runtime.reconcile` 要求正文含原 Run 的 `expectedVersion` 和 `reason`，目标由 `--id RUN_UUID` 指定，可用 `turnCursor` 续读历史；只有 runtime 在线、PG Run 已是 `completed`／`failed`／`interrupted`，且原 Turn 有可核终态与完成时间，才用 `request runtime.reconcile --project UUID --id RUN_UUID --file PRIVATE_JSON --receipt LOCAL_UUID` 对账。它不能直接结算离线的 PG `running`。分页 `partial` 表示未写入，沿返回游标继续；回包未知先查原本地回执和原 Run/Turn，不换 ID 盲重试。
+
+当前 preflight 可能在 `beginDispatch` 后才遇外部 writer 冲突，恢复前须排除冲突或正式隔离新派发；不能从一次 recover 请求推断队列消息安全等待。恢复后核原生 child、writer、原 Turn 结算、同 Thread 真实待办接续、执行 profile、后续 grant 额度及 `blockedReason`。预算耗尽与再次失联分开记录。此应急恢复的观察不证明所有版本、平台或根因修复；选择与停点见项目 Skill 的 `.agents/skills/evoloop-workflow/references/owned-runtime-recovery.md`。
+
 本次实现新增的命令先用 `command schema TYPE` 读取准确输入；纯事务决定使用 `command run FILE` 和唯一 operationId。需要复核时，`read session SESSION_UUID --recovery` 读取当前配置档案、激活状态、gate、最近正式决定、各关联队列额度与下一动作；`read session SESSION_UUID --events` 查看原生配置激活记录，`read resident-queue QUEUE_UUID --attempts` 对照 attempt 与Run状态，`read run RUN_UUID` 读Run绑定的 Task 修订、inputHash 和启动时配置快照。跨越写入回执未知时另用 `operation OPERATION_UUID` 或 `receipts reconcile` 回读原操作；回读缺字段、权限或存储错误必须保留为未知，不能显示为零或空成功。
 
 Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也不会自动更新本机或全局 CLI。缺省为 `0.166.0-alpha.5.1`；`0.154.0` 与 `0.164.0-alpha.11.1` 仍须显式选择。启动前检查将要执行的二进制版本及对应标准／实验 schema 指纹。版本或 schema 不匹配时停止接入，不绕过固定校验。现代协议的 `currentTime/read` 只返回精确绑定 owned Thread 的只读时间；`model/list` 能列出模型不能证明 Turn 接受了该模型或实际使用了它，模型确认仍由 Lead 和真实运行证据完成。旧配置的 `readOnlyProtocolVerified` 仅解析兼容保留，忽略其值，不再要求设置或作为新 Session 准入条件。
