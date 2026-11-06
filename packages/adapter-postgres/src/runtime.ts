@@ -1,7 +1,7 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { preTurnProofSchema } from "@evoloop/contracts/runtime";
-import { DomainError } from "@evoloop/contracts/ports";
+import { DomainError, type PreTurnReviewDecision } from "@evoloop/contracts/ports";
 
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : value;
 const nativeEpoch = (value: unknown): number | null => {
@@ -106,6 +106,19 @@ export class PgRuntimeStore {
   async listRuntimeSessionEvents(sessionId: string): Promise<RuntimeRecordEvent[]> {
     const result = await this.client.query("SELECT * FROM runtime_record_event WHERE project_id=$1 AND session_id=$2 ORDER BY sequence LIMIT $3", [this.projectId, sessionId, limit + 1]);
     return bounded(result.rows.map(event), "runtime session events");
+  }
+  async getPreTurnReviewDecision(operationId:string):Promise<PreTurnReviewDecision|null>{
+    const found=await this.client.query(`SELECT operation_id,actor_id,kind,subject_id,intent_json,result
+      FROM pre_turn_review_decision WHERE project_id=$1 AND operation_id=$2`,[this.projectId,operationId]);
+    const row=found.rows[0];
+    return row?{operationId:row.operation_id,actorId:row.actor_id,kind:row.kind,
+      subjectId:row.subject_id,intentJson:row.intent_json,result:row.result}:null;
+  }
+  async insertPreTurnReviewDecision(decision:PreTurnReviewDecision):Promise<void>{
+    await this.client.query(`INSERT INTO pre_turn_review_decision
+      (project_id,operation_id,actor_id,kind,subject_id,intent_json,result)
+      VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[this.projectId,decision.operationId,decision.actorId,
+      decision.kind,decision.subjectId,decision.intentJson,JSON.stringify(decision.result)]);
   }
   async listRuntimeHostEvents(count: number): Promise<RuntimeRecordEvent[]> {
     if(!Number.isSafeInteger(count)||count<1||count>32)throw new RangeError('runtime host event limit must be 1..32');

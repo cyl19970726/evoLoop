@@ -375,7 +375,34 @@ test("runtime reservations freeze task basis and recover uncertain native starts
     assert.equal(reviewEvents.filter(event=>event.kind==='run.reviewed'&&event.actorId===principal.actorId).length,1);
     const duplicate=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
       headers:{authorization:`Bearer ${ownerToken}`},payload:reviewBody});
-    assert.notEqual(duplicate.statusCode,200,'the old review version cannot authorize a second attempt');
+    assert.equal(duplicate.statusCode,200,'the same decision reads its original result');
+    assert.equal(duplicate.json().version,reviewed.json().version);
+    const changedFirstIntent=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:{...reviewBody,reason:'changed old review'}});
+    assert.equal(changedFirstIntent.statusCode,409);
+    assert.equal(changedFirstIntent.json().code,'PRE_TURN_DECISION_REUSED');
+    const [firstClaim,duplicateClaim]=await Promise.all([
+      runtime.claimPreTurnContinuation(projectId,continuationRunId),
+      runtime.claimPreTurnContinuation(projectId,continuationRunId),
+    ]);
+    assert.equal([firstClaim,duplicateClaim].filter(Boolean).length,1);
+    const refusedAgain=await runtime.markRunUnknown(projectId,continuationRunId,
+      'Second exact writer refusal',{threadId:continuationThreadId,operationId:beforeRefusal.operationId,
+        requestId:42,code:-32600,inputHash:fixedInputHash});
+    const changedOld=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:{...reviewBody,expectedVersion:refusedAgain.version}});
+    assert.equal(changedOld.statusCode,409,'old decision cannot approve a later refusal with updated version');
+    assert.equal(changedOld.json().code,'PRE_TURN_DECISION_REUSED');
+    const originalReadback=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:reviewBody});
+    assert.equal(originalReadback.statusCode,200);
+    assert.equal(originalReadback.json().version,reviewed.json().version);
+    const newReview=await reviewApp.inject({method:'POST',url:`/api/projects/${projectId}/runtime/runs/${continuationRunId}/pre-turn-continue`,
+      headers:{authorization:`Bearer ${ownerToken}`},payload:{...reviewBody,operationId:randomUUID(),
+        expectedVersion:refusedAgain.version,evidenceRef:'fixture://writer-released-again'}});
+    assert.equal(newReview.statusCode,200,newReview.body);
+    assert.equal((await workflow.listRuntimeEvents(principal,projectId,continuationRunId))
+      .filter(event=>event.kind==='run.reviewed').length,2);
   }finally{await reviewApp.close();}
   const [claimed,secondClaim]=await Promise.all([
     runtime.claimPreTurnContinuation(projectId,continuationRunId),

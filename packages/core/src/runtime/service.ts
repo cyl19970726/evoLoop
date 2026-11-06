@@ -6,6 +6,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
+import { priorReviewDecision, reviewIntentJson } from "./pre-turn-review.js";
 
 export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory }
 const internalActor = "runtime-coordinator";
@@ -385,6 +386,10 @@ export class RuntimeWorkflowService {
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
       throw new DomainError("FORBIDDEN","pre-turn continuation requires project review authority");
     return this.deps.uow.transaction(projectId,async tx=>{
+      const intentJson=reviewIntentJson(principal.actorId,'run',runId,command);
+      const prior=await priorReviewDecision<RuntimeRunRecord>(tx,command.operationId,
+        principal.actorId,'run',runId,intentJson);
+      if(prior)return prior;
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
@@ -406,6 +411,8 @@ export class RuntimeWorkflowService {
           requestId:proof.requestId,observedAtUtc:proof.observedAtUtc,
           evidenceRef:command.evidenceRef,reason:command.reason}),null,principal.actorId,this.deps.clock.now()));
       await tx.updateRuntimeRun(next,run.version);
+      await tx.insertPreTurnReviewDecision({operationId:command.operationId,actorId:principal.actorId,
+        kind:'run',subjectId:runId,intentJson,result:next});
       return next;
     });
   }

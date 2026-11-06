@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from '@evoloop/contracts';
 import type { SessionMessageProcessing, SessionMessageRecord } from '@evoloop/contracts/session-messages';
-import type { UnitOfWork } from '@evoloop/contracts/ports';
+import type { PreTurnReviewDecision, UnitOfWork } from '@evoloop/contracts/ports';
 import { RuntimeWorkflowService } from '../src/runtime/service.ts';
 import { SessionMessageService } from '../src/session-messages/index.ts';
 
@@ -20,7 +20,10 @@ test('only an exact recorded pre-turn Run refusal can receive and consume one re
   let run={projectId,id:randomUUID(),sessionId,operationId:randomUUID(),state:'dispatching',version:4,
     nativeTurnId:null,executionProfile:{revisionId:profileId}} as RuntimeRunRecord;
   let currentGate=gate('run',run.id),events:unknown[]=[];
+  const decisions=new Map<string,PreTurnReviewDecision>();
   const tx={getRuntimeRun:async()=>run,getRuntimeSession:async()=>session,
+    getOperation:async()=>null,getPreTurnReviewDecision:async(id:string)=>decisions.get(id)??null,
+    insertPreTurnReviewDecision:async(value:PreTurnReviewDecision)=>{decisions.set(value.operationId,value);},
     updateRuntimeRun:async(value:RuntimeRunRecord,version:number)=>{assert.equal(run.version,version);run=value;},
     appendRuntimeEvent:async(value:unknown)=>{events.push(value);},
     recovery:{lockRecoveryGate:async()=>currentGate}};
@@ -35,6 +38,9 @@ test('only an exact recorded pre-turn Run refusal can receive and consume one re
   await service.approvePreTurnContinuation(projectId,run.id,principal,{
     operationId:decision,sessionId,originalOperationId:run.operationId,expectedVersion:run.version,
     expectedGateVersion:3,evidenceRef:'handoff:1',reason:'writer released'});
+  const originalReview={operationId:decision,sessionId,originalOperationId:run.operationId,
+    expectedVersion:run.version-1,expectedGateVersion:3,evidenceRef:'handoff:1',reason:'writer released'};
+  assert.equal((await service.approvePreTurnContinuation(projectId,run.id,principal,originalReview)).preTurnProof?.status,'approved');
   assert.equal(run.preTurnProof?.status,'approved');
   assert.equal((await service.claimPreTurnContinuation(projectId,run.id))?.preTurnProof?.status,'attempting');
   assert.equal(await service.claimPreTurnContinuation(projectId,run.id),null);
@@ -49,6 +55,7 @@ test('a lost Run start reply cannot be approved as a pre-turn refusal',async()=>
   const run={projectId,id:randomUUID(),sessionId,operationId:randomUUID(),state:'unknown',version:2,
     nativeTurnId:null,executionProfile:{revisionId:profileId}} as RuntimeRunRecord;
   const tx={getRuntimeRun:async()=>run,getRuntimeSession:async()=>session,
+    getOperation:async()=>null,getPreTurnReviewDecision:async()=>null,
     recovery:{lockRecoveryGate:async()=>gate('run',run.id)}};
   const service=new RuntimeWorkflowService({uow:{transaction:async(_p:string,fn:(value:typeof tx)=>Promise<unknown>)=>fn(tx)} as unknown as UnitOfWork,
     clock:{now:()=>now},ids:{next:randomUUID}});
@@ -67,6 +74,8 @@ test('ordinary message continuation retains its message and processing IDs and r
     updateSessionMessage:async(value:SessionMessageRecord,version:number)=>{assert.equal(message.version,version);message=value;},
     updateSessionMessageProcessing:async(value:SessionMessageProcessing,version:number)=>{assert.equal(processing.version,version);processing=value;}};
   const tx={getRuntimeSession:async()=>session,sessionMessages:store,
+    getOperation:async()=>null,getPreTurnReviewDecision:async()=>null,
+    insertPreTurnReviewDecision:async()=>{},
     appendRuntimeEvent:async()=>{},
     recovery:{lockRecoveryGate:async()=>gate('message',message.id)}};
   const service=new SessionMessageService({uow:{transaction:async(_p:string,fn:(value:typeof tx)=>Promise<unknown>)=>fn(tx)} as unknown as UnitOfWork,

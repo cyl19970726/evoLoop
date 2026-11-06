@@ -3,6 +3,7 @@ import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessage
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
+import { priorReviewDecision, reviewIntentJson } from "../runtime/pre-turn-review.js";
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -255,6 +256,10 @@ export class SessionMessageService {
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
     return this.deps.uow.transaction(projectId,async tx=>{
+      const intentJson=reviewIntentJson(principal.actorId,'message',messageId,command);
+      const prior=await priorReviewDecision<SessionMessageProcessing>(tx,command.operationId,
+        principal.actorId,'message',messageId,intentJson);
+      if(prior)return prior;
       const store=required(tx.sessionMessages??null,'message store');
       const message=required(await store.getSessionMessage(messageId),'message');
       const processing=required(await store.getSessionMessageProcessing(messageId),'processing');
@@ -283,6 +288,8 @@ export class SessionMessageService {
           evidenceRef:command.evidenceRef,reason:command.reason}),
         nativeTurnId:null,cursor:null,itemsDigest:null,actorId:principal.actorId,createdAt:this.deps.clock.now()});
       await store.updateSessionMessageProcessing(next,processing.version);
+      await tx.insertPreTurnReviewDecision({operationId:command.operationId,actorId:principal.actorId,
+        kind:'message',subjectId:messageId,intentJson,result:next});
       return next;
     });
   }
