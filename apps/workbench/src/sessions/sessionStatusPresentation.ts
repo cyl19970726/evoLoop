@@ -49,7 +49,7 @@ export function sessionHeaderStatusLabel(session: StatusSource, progress: Native
     return "原生 Turn 进行中 · 来源待核";
   }
   if (session.busy === true) return "PG有在途记录 · 原生执行待核";
-  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return "原生宿主回报空闲";
+  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return "原生活动空闲 · writer待核";
   return "原生执行状态待核对";
 }
 

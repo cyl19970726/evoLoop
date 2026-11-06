@@ -52,6 +52,9 @@ export function sessionStatus(snapshot: unknown, detail?: unknown, requestedMess
     runtime: { available: runtimeAvailable, readStatus: runtimeReadStatus,
       latestChildDiagnostic: runtimeReadStatus === "confirmed"
         ? latestChildDiagnostic(runtime?.nativeChildDiagnostics) : null },
+    writerControl: { state: "unknown", source: "read_only_native_observation",
+      observedAt: native?.observedAt ?? null, freshness: native?.freshness ?? null,
+      reason: "Native thread/read and connection freshness do not identify the current writer; confirm the original Thread with an authorized handoff and native execution evidence." },
     message: null,
     guidance: runtimeAvailable === false
       ? "HTTP Session snapshot is readable, but native runtime reports unavailable. PG ready/running and the last native Turn do not prove current execution; reconcile exact original IDs."

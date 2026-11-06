@@ -96,6 +96,9 @@ test("late message progress cannot mask a closing or closed owned Session", () =
   }
   assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }, null, true, true), "PG记录：有在途占用 · 原生状态待核");
   assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }, null, true, true), "PG记录：无在途占用 · 原生状态待核");
+  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: false },
+    { freshness: "live", status: "idle", turn: null } as Parameters<typeof sessionHeaderStatusLabel>[1],
+    true, true), "原生活动空闲 · writer待核");
 });
 
 test("a claimed Task uses its matching Run result before describing the next action", () => {

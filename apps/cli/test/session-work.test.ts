@@ -73,9 +73,13 @@ test("work status keeps native connection, activity and persistent processing se
       observedAt:"2026-11-03T03:42:00Z",currentTurn:{id:"turn-1",status:"inProgress"}}};
   const detail={message:{id,target:{kind:"owned",sessionId:id},state:"processing",version:2,updatedAt:"2026-11-03T00:47:30Z"},
     processing:{id:"processing-1",messageId:id,sessionId:id,state:"running",version:2,nativeTurnId:"turn-1"}};
-  const value=sessionStatus(snapshot,detail,id) as {native:{freshness:string;lastEventAt:string};message:{state:string;processing:{state:string}}};
+  const value=sessionStatus(snapshot,detail,id) as {native:{freshness:string;lastEventAt:string};
+    writerControl:{state:string;source:string;freshness:string;observedAt:string};
+    message:{state:string;processing:{state:string}}};
   assert.deepEqual([value.native.freshness,value.native.lastEventAt,value.message.state,value.message.processing.state],
     ["live","2026-11-03T00:54:15Z","processing","running"]);
+  assert.deepEqual([value.writerControl.state,value.writerControl.source,value.writerControl.freshness,value.writerControl.observedAt],
+    ["unknown","read_only_native_observation","live","2026-11-03T03:42:00Z"]);
   assert.throws(()=>sessionStatus(snapshot,{...detail,message:{...detail.message,target:{kind:"owned",sessionId:"another"}}},id),
     /target does not match/);
 });
