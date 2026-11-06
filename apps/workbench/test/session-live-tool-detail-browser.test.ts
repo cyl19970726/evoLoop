@@ -213,18 +213,18 @@ test("observable-owner tool detail remains readable after real history/live merg
   };
   const ordinary = await openSession("reader-token");
   await ordinary.timeline.getByRole("button", { name: `查看工具详情：${toolName}` }).click();
-  const ordinaryInspector = ordinary.page.getByRole("dialog", { name: "活动详情" });
+  const ordinaryInspector = ordinary.timeline.locator(".workspace-tool-inline");
   await ordinaryInspector.getByText("当前身份可阅读活动摘要；原始输入与输出未获授权。", { exact: true }).waitFor();
   assert.equal(await ordinaryInspector.getByRole("button", { name: "读取原始输入与输出" }).count(), 0);
   assertNoOriginal(await ordinary.page.locator("body").innerText());
   const deniedItem = await http(itemPath, "reader-token");
   assert.equal(deniedItem.status, 403, "ordinary project read cannot fetch this existing Tool's original content");
   assertNoOriginal(await deniedItem.json());
-  await ordinaryInspector.getByRole("button", { name: "关闭活动详情" }).click();
+  await ordinary.timeline.getByRole("button", { name: `收起工具详情：${toolName}` }).click();
 
   const authorized = await openSession("reviewer-token");
   await authorized.timeline.getByRole("button", { name: `查看工具详情：${toolName}` }).click();
-  const inspector = authorized.page.getByRole("dialog", { name: "活动详情" });
+  const inspector = authorized.timeline.locator(".workspace-tool-inline");
   const readOriginal = inspector.getByRole("button", { name: "读取原始输入与输出", exact: true });
   await readOriginal.waitFor({ timeout: 4000 }).catch(async cause => {
     const live = toolIn(initial.live.entries);
@@ -236,7 +236,7 @@ test("observable-owner tool detail remains readable after real history/live merg
   await inspector.getByText(originalInput, { exact: true }).waitFor();
   await inspector.getByText(originalOutput, { exact: true }).waitFor();
   assert.equal(toolIn(initial.live.entries).detailAvailable, true, "the live buffer must preserve provider capability before reviewer projection");
-  await inspector.getByRole("button", { name: "关闭活动详情" }).click();
+  await authorized.timeline.getByRole("button", { name: `收起工具详情：${toolName}` }).click();
 
   const updatedSummary = "后续 live 事件仍可读取同一工具详情";
   owner.observeCompletedTool(updatedSummary);
