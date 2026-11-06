@@ -1,38 +1,73 @@
 import {randomUUID} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {readFileSync,readdirSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import pg from 'pg';
+import {runner} from 'node-pg-migrate';
 import {migrate,PostgresUnitOfWork} from '@evoloop/adapter-postgres';
 import {WorkflowService} from '@evoloop/core';
 import {SessionMessageService} from '@evoloop/core/session-messages';
 import {buildServer} from '../../apps/coordinator/src/server.ts';
 import type {RuntimeRunner} from '../../apps/coordinator/src/runtime/runner.ts';
 
+test('both historical 055 layouts upgrade through 056 before later migrations',async t=>{
+const url=process.env.TEST_DATABASE_URL;
+if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))throw Error('dedicated isolated database required');
+const migrations=fileURLToPath(new URL('../../packages/adapter-postgres/migrations/',import.meta.url));
+const through055=readdirSync(migrations).filter(name=>name.endsWith('.mjs')).sort()
+  .indexOf('055_pre_turn_continuation.mjs')+1;
+assert.ok(through055>0,'055 migration must exist');
+const applyCount=(schema:string,count:number)=>runner({databaseUrl:url,dir:migrations,direction:'up',
+  migrationsTable:'pgmigrations',schema,count,createSchema:true,createMigrationsSchema:true,
+  singleTransaction:true,log:()=>{}});
+for(const preexistingTable of [false,true]){
+  await t.test(preexistingTable?'055 already has decision table':'original 055 has no decision table',async t=>{
+    const schema=`qa_host_legacy_${randomUUID().replaceAll('-','').slice(0,12)}`;
+    await applyCount(schema,through055);
+    const client=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
+    await client.connect();
+    t.after(async()=>{await client.end();const cleanup=new pg.Client({connectionString:url});
+      await cleanup.connect();try{await cleanup.query(`DROP SCHEMA "${schema}" CASCADE`)}finally{await cleanup.end()}});
+    assert.equal((await client.query('SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1')).rows[0].name,
+      '055_pre_turn_continuation');
+    assert.equal((await client.query("SELECT to_regclass('pre_turn_review_decision') AS name")).rows[0].name,null);
+    const projectId=randomUUID(),operationId=randomUUID();
+    if(preexistingTable){
+      // An intermediate candidate created this same table inside its already applied 055.
+      await client.query(readFileSync(new URL('../../packages/adapter-postgres/schema/056_pre_turn_review_decision.sql',import.meta.url),'utf8'));
+      await client.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,$3)',
+        [projectId,'Existing 055 decision',new Date().toISOString()]);
+      await client.query(`INSERT INTO pre_turn_review_decision
+        (project_id,operation_id,actor_id,kind,subject_id,intent_json,result)
+        VALUES($1,$2,'historical-reviewer','message',$3,$4,$5::jsonb)`,
+        [projectId,operationId,randomUUID(),'historical intent',JSON.stringify({status:'approved'})]);
+    }
+    const before=(await client.query("SELECT to_regclass('pre_turn_review_decision')::oid AS oid")).rows[0].oid;
+    await applyCount(schema,1);
+    const after=(await client.query("SELECT to_regclass('pre_turn_review_decision')::oid AS oid")).rows[0].oid;
+    assert.ok(after,'056 creates or retains the decision table');
+    if(preexistingTable){
+      assert.equal(after,before,'056 must preserve the existing table');
+      assert.equal((await client.query('SELECT intent_json FROM pre_turn_review_decision WHERE operation_id=$1',
+        [operationId])).rows[0].intent_json,'historical intent');
+    }
+    assert.equal((await client.query("SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1")).rows[0].name,
+      '056_pre_turn_review_decision');
+    await migrate(url,schema);
+    const applied=(await client.query("SELECT name FROM pgmigrations WHERE name IN ('055_pre_turn_continuation','056_pre_turn_review_decision') ORDER BY id")).rows;
+    assert.deepEqual(applied.map(row=>row.name),['055_pre_turn_continuation','056_pre_turn_review_decision']);
+    assert.equal((await client.query("SELECT to_regclass('pre_turn_review_decision')::oid AS oid")).rows[0].oid,after);
+  });
+}
+});
+
 test('HTTP review decision cannot be reused after a second writer refusal',async()=>{
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))throw Error('dedicated isolated database required');
 const schema=`qa_host_${randomUUID().replaceAll('-','').slice(0,12)}`;
 await migrate(url,schema);
-const decisionMigration=readFileSync(new URL('../../packages/adapter-postgres/schema/056_pre_turn_review_decision.sql',import.meta.url),'utf8');
-// An intermediate candidate had already created the table inside 055. Its
-// migration record is immutable, so 056 must also accept that layout. Exercise
-// the migration SQL directly: replaying the full migration runner after 058+
-// would correctly reject an out-of-order 056 record.
-const upgrade=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
-await upgrade.connect();
-try{
-  const applied=await upgrade.query("SELECT name FROM pgmigrations WHERE name IN ('055_pre_turn_continuation','056_pre_turn_review_decision')");
-  assert.equal(applied.rowCount,2);
-  await upgrade.query(decisionMigration);
-}finally{await upgrade.end()}
-// Also cover databases that applied the original 055 with no decision table.
-const original055=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
-await original055.connect();
-try{
-  await original055.query('DROP TABLE pre_turn_review_decision');
-  await original055.query(decisionMigration);
-}finally{await original055.end()}
+
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 assert.equal((await pool.query("SELECT to_regclass('pre_turn_review_decision') AS name")).rows[0]?.name,
   'pre_turn_review_decision');
