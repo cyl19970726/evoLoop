@@ -51,6 +51,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   }));
   const liveAnswer = timelineAssistant("live-answer", "部分回复", { phase: "partial_answer", state: "running", freshness: "live", turnId: "live-turn" });
   const protectedTool = timelineTool("live-tool", "实时命令", "仍在运行", "running", { freshness: "live", turnId: "live-turn" });
+  const longToolHistory = Array.from({ length: 100 }, (_, index) => timelineTool(`history-tool-${index}`, `工具 ${index}`, `已核目标 ${index}`,
+    index === 3 ? "failed" : "completed", { freshness: "persisted", turnId: "live-turn" }));
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
@@ -163,7 +165,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
           } else value = timelinePage(sessionKey, { title: "时间线分页会话", entries: nativeCurrent,
             turns: [...nativeCurrent.map((entry, index) => ({ id: `turn-${index}`, state: "completed" as const, startedAt: stamp, completedAt: stamp, origin: null })),
               { id: "historical-running-turn", state: "running", startedAt: stamp, completedAt: null, origin: null }],
-            nextCursor: "native-1", messagesCursor: "messages-1", cursor: "1", liveEntries: [liveAnswer, protectedTool],
+            nextCursor: "native-1", messagesCursor: "messages-1", cursor: "1", liveEntries: [liveAnswer, ...longToolHistory, protectedTool],
             liveTurns: [{ id: "live-turn", state: "running", startedAt: stamp, completedAt: null, origin: null }] });
         }
       } else if (url.pathname.endsWith("/timeline/updates")) {
@@ -257,6 +259,11 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await assertSessionReaderShell();
   const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
   await timeline.locator('[data-workspace-entry="current-0"]').waitFor();
+  assert.equal(await timeline.locator(".workspace-tool").count(), 5, "100+ tools initially show only newest and failed evidence");
+  if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR) {
+    console.log("desktop viewport", await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, scale: visualViewport?.scale ?? null })));
+    await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "desktop.png") });
+  }
   assert.equal(await timeline.locator('[data-workspace-entry="live-answer"]').count(), 1);
   await timeline.locator(".workspace-turn-state").getByText("处理中", { exact: true }).waitFor();
   assert.ok(await timeline.locator(".workspace-turn-state").getByText("处理中", { exact: true }).count() === 1,
@@ -366,6 +373,10 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
       composerBottom: composer.getBoundingClientRect().bottom, composerHeight: composer.getBoundingClientRect().height,
       inputHeight: input.getBoundingClientRect().height, pageWidth: document.documentElement.scrollWidth };
   });
+  if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR) {
+    console.log("mobile viewport", await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, scale: visualViewport?.scale ?? null })));
+    await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "mobile.png") });
+  }
   assert.ok(mobileBefore.messageHeight > 0 && mobileBefore.messageScrollHeight > mobileBefore.messageHeight,
     "long mobile history remains in a scrollable message pane");
   assert.ok(mobileBefore.composerBottom <= mobileBefore.viewportHeight + 1,
@@ -396,18 +407,30 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   const toolDetailTrigger = toolGroup.getByRole("button", { name: "查看工具详情：实时命令" });
   await toolDetailTrigger.focus();
   await toolDetailTrigger.press("Enter");
-  const inspector = page.getByRole("dialog", { name: "活动详情" });
+  const inspector = toolGroup.locator(".workspace-tool-inline");
   await inspector.waitFor();
   await inspector.getByRole("button", { name: "读取原始输入与输出" }).click();
   await inspector.getByText("原始工具证据需要复核权限").waitFor();
   assert.equal(await inspector.getByText("秘密", { exact: false }).count(), 0, "a 403 detail response does not expose original tool evidence");
-  await page.keyboard.press("Escape");
+  await toolGroup.getByRole("button", { name: "收起工具详情：实时命令" }).click();
   await inspector.waitFor({ state: "detached" });
   assert.equal(await toolDetailTrigger.evaluate(element => document.activeElement === element), true,
-    "Escape closes the keyboard-opened inspector and restores focus to its exact tool trigger");
+    "closing inline details restores focus to its exact tool trigger");
+  await page.setViewportSize({ width: 1280, height: 560 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const shortLayout = await page.evaluate(() => ({ historyHeight: document.querySelector<HTMLElement>(".workspace-timeline-scroll")!.clientHeight,
+    composerBottom: document.querySelector<HTMLElement>(".session-composer-host")!.getBoundingClientRect().bottom }));
+  assert.ok(shortLayout.historyHeight >= 90 && shortLayout.composerBottom <= 560,
+    `short window leaves a readable history viewport and visible composer: ${JSON.stringify(shortLayout)}`);
+  assert.ok(Number.parseFloat(await toolGroup.locator(".workspace-tools-toggle > svg:first-child").evaluate(element => getComputedStyle(element).transitionDuration)) < .001,
+    "reduced motion disables the tool disclosure transition");
+  if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR) {
+    console.log("short viewport", await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, scale: visualViewport?.scale ?? null })));
+    await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "short.png") });
+  }
   if (await toolGroup.locator(".workspace-tools-toggle").getAttribute("aria-expanded") !== "true") await toolGroup.locator(".workspace-tools-toggle").click();
   await toolGroup.getByRole("button", { name: "查看工具详情：实时命令" }).click();
-  const revokedInspector = page.getByRole("dialog", { name: "活动详情" });
+  const revokedInspector = toolGroup.locator(".workspace-tool-inline");
   await revokedInspector.waitFor();
   await fetch(`${base}/__fixture/deny-updates`);
   await revokedInspector.waitFor({ state: "detached", timeout: 5000 });
@@ -418,8 +441,15 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   for (const viewport of [{ width: 1536, height: 900 }, { width: 1440, height: 900 }, { width: 1171, height: 900 },
     { width: 871, height: 900 }, { width: 390, height: 844 }, { width: 1280, height: 560 }]) {
     await page.setViewportSize(viewport);
-    assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true,
-      `no horizontal overflow at ${viewport.width}×${viewport.height}`);
+    const overflow = await page.evaluate(() => ({ width: document.body.scrollWidth, offenders: [...document.querySelectorAll<HTMLElement>("body *")]
+      .filter(element => element.getBoundingClientRect().right > innerWidth + 1)
+      .slice(0, 8).map(element => ({ tag: element.tagName, className: element.className, text: element.textContent?.slice(0, 80),
+        parents: [element, element.parentElement, element.parentElement?.parentElement, element.parentElement?.parentElement?.parentElement]
+          .filter(Boolean).map(node => ({ name: node!.tagName, className: (node as HTMLElement).className, left: node!.getBoundingClientRect().left, width: node!.getBoundingClientRect().width })),
+        left: element.getBoundingClientRect().left, width: element.getBoundingClientRect().width,
+        right: element.getBoundingClientRect().right })) }));
+    assert.ok(overflow.width <= viewport.width,
+      `no horizontal overflow at ${viewport.width}×${viewport.height}: ${JSON.stringify(overflow)}`);
     const composer = await page.locator(".session-composer-host").boundingBox();
     assert.ok(composer && composer.width > 0 && composer.height > 0, `composer remains visible at ${viewport.width}×${viewport.height}`);
   }
@@ -783,12 +813,12 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
   await page.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   await page.getByLabel("访问令牌").fill("fixture-token"); await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByText("CURRENT_AUTHORIZED_BODY", { exact: true }).waitFor();
-  const dispatch = page.getByRole("article", { name: "项目派发的任务输入", exact: true });
+  const dispatch = page.locator(".workspace-system-strip");
   assert.equal(await dispatch.count(), 1, "a Run input remains project dispatch even when the initiating actor is the current reader");
   assert.equal(await dispatch.getAttribute("data-turn-id"), "dispatch-turn");
   assert.equal(await dispatch.locator(".lucide-user-round").count(), 0, "project dispatch does not use the personal chat avatar");
-  assert.match(await dispatch.innerText(), /项目派发 · reader/);
-  assert.ok((await dispatch.getByRole("link", { name: "查看来源任务" }).getAttribute("href"))?.includes(taskId));
+  assert.match(await dispatch.innerText(), /系统派发 · 本轮任务/);
+  assert.ok((await dispatch.getByRole("link", { name: "查看任务与指令" }).getAttribute("href"))?.includes(taskId));
   assert.equal(await page.getByRole("article", { name: "我发出的消息", exact: true }).count(), 1, "only the ordinary saved message is mine");
   await page.locator(".workspace-tools-toggle").click();
   await page.getByRole("button", { name: "查看工具详情：Command", exact: true }).click();
