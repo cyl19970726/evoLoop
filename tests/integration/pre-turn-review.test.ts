@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import pg from 'pg';
@@ -13,24 +14,25 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))throw Error('dedicated isolated database required');
 const schema=`qa_host_${randomUUID().replaceAll('-','').slice(0,12)}`;
 await migrate(url,schema);
+const decisionMigration=readFileSync(new URL('../../packages/adapter-postgres/schema/056_pre_turn_review_decision.sql',import.meta.url),'utf8');
 // An intermediate candidate had already created the table inside 055. Its
-// migration record is immutable, so 056 must also accept that layout.
+// migration record is immutable, so 056 must also accept that layout. Exercise
+// the migration SQL directly: replaying the full migration runner after 058+
+// would correctly reject an out-of-order 056 record.
 const upgrade=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
 await upgrade.connect();
 try{
   const applied=await upgrade.query("SELECT name FROM pgmigrations WHERE name IN ('055_pre_turn_continuation','056_pre_turn_review_decision')");
   assert.equal(applied.rowCount,2);
-  await upgrade.query("DELETE FROM pgmigrations WHERE name='056_pre_turn_review_decision'");
+  await upgrade.query(decisionMigration);
 }finally{await upgrade.end()}
-await migrate(url,schema);
 // Also cover databases that applied the original 055 with no decision table.
 const original055=new pg.Client({connectionString:url,options:`-c search_path=${schema}`});
 await original055.connect();
 try{
   await original055.query('DROP TABLE pre_turn_review_decision');
-  await original055.query("DELETE FROM pgmigrations WHERE name='056_pre_turn_review_decision'");
+  await original055.query(decisionMigration);
 }finally{await original055.end()}
-await migrate(url,schema);
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 assert.equal((await pool.query("SELECT to_regclass('pre_turn_review_decision') AS name")).rows[0]?.name,
   'pre_turn_review_decision');

@@ -19,6 +19,8 @@ import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
 import { PgTaskAttention } from "./task-attention.js";
+export { PgConnectorRoutes, PgConnectorMessageLinks } from "./message-connectors.js";
+export { PgConnectorDeliveryDecisions } from "./connector-delivery-decisions.js";
 export { PgTaskAttention, taskAttentionNoticeCurrent, disposeStaleTaskAttentionNotice,
   scanTaskAttentionCandidates } from "./task-attention.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
