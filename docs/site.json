@@ -185,6 +185,11 @@
       "group": "架构 · 运行与实现"
     },
     {
+      "path": "docs/architecture/message-connectors.md",
+      "title": "消息 Connector 候选边界",
+      "group": "架构 · 运行与实现"
+    },
+    {
       "path": "docs/architecture/frontend.md",
       "title": "前端架构旧入口",
       "group": "架构 · 界面与知识专题",

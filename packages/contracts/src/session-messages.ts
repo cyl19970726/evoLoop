@@ -79,8 +79,12 @@ export interface SessionMessageManualStopPreflight {
 export interface SessionMessageDispatchGrant {
   projectId: string; sessionId: string; senderActorId: string; receiverRoleId: string; receiverActorId: string;
   cwd: string; maxTurns: number; enabled: boolean;
+  /** Restricted execution is admitted only with this exact, current source binding. */
+  connector?: { bindingId: string; routeVersion: number; epoch: number; policyHash: string };
 }
 export interface SessionMessageReader {
+  /** Recheck persisted source and route. Transaction implementations lock both rows. */
+  assertCurrentConnectorSource?(messageId: string, grant: NonNullable<SessionMessageDispatchGrant["connector"]>): Promise<void>;
   getSessionMessage(id: string): Promise<SessionMessageRecord | null>;
   getSessionMessages?(ids: string[]): Promise<SessionMessageRecord[]>;
   listSessionMessages(target: SessionTarget, limit: number, cursor?: string): Promise<{ items: SessionMessageRecord[]; nextCursor: string | null }>;
