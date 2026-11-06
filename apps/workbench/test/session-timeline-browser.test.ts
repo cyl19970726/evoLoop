@@ -15,6 +15,8 @@ const sessionKey = `owned:${sessionId}`;
 const sessionBId = "97000003-0000-4000-8000-000000000003";
 const sessionBKey = `owned:${sessionBId}`;
 const taskId = "97000004-0000-4000-8000-000000000004";
+const taskTitle = "微信 Connector 首版：标准受管 Session 完整收取与使用微信消息";
+const publicProgress = "标准模式的准入和原生执行分支已接上，路由与数据库约束并行实现同步扩展。接下来处理 delivery 的持久化状态和发送决定；这个环节决定重启、忙时和未知结果如何核对。";
 const stamp = timelineStamp;
 const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
 const unavailable = { available: false, reason: "fixture unavailable" };
@@ -28,7 +30,9 @@ const snapshotFor = (key: string) => {
     capabilities: { observe: unavailable, send: { available: true, reason: null, mode: "owned-conversation" },
       open: { ...unavailable, ref: null }, interrupt: unavailable, close: unavailable },
     source: { kind: "session", id, revision: null, evidence: "project-record", href: "" }, metadata },
-    observationCursor: "0", currentWork: null, assignments: [], roleTasks: [], queue: [], results: [], questions: [], activity: [], resources, metadata };
+    observationCursor: "0", currentWork: key === sessionKey ? { id: taskId, title: taskTitle, state: "in_progress", revisionId: taskId,
+      owner: "reader", relation: "run", source: { kind: "task", id: taskId, revision: taskId, evidence: "project-record", href: "" } } : null,
+    assignments: [], roleTasks: [], queue: [], results: [], questions: [], activity: [], resources, metadata };
 };
 
 test("dual-source history keeps the reader anchor, exhausts cursors, merges live completion, and fits supported viewports", {
@@ -49,7 +53,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   const nativeCurrent = Array.from({ length: 25 }, (_, index) => timelineAssistant(`current-${index}`, `当前会话内容 ${index}`, {
     turnId: `turn-${index}`, nativeItemId: `native-${index}`, occurredAt: new Date(Date.parse(stamp) + index * 1000).toISOString(),
   }));
-  const liveAnswer = timelineAssistant("live-answer", "部分回复", { phase: "partial_answer", state: "running", freshness: "live", turnId: "live-turn" });
+  const liveAnswer = timelineAssistant("live-answer", publicProgress, { phase: "partial_answer", state: "running", freshness: "live", turnId: "live-turn" });
   const protectedTool = timelineTool("live-tool", "实时命令", "仍在运行", "running", { freshness: "live", turnId: "live-turn" });
   const longToolHistory = Array.from({ length: 100 }, (_, index) => timelineTool(`history-tool-${index}`, `工具 ${index}`, `已核目标 ${index}`,
     index === 3 ? "failed" : "completed", { freshness: "persisted", turnId: "live-turn" }));
@@ -69,7 +73,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
         items: [], nextCursor: "0", hasMore: false, resetRequired: false, metadata,
       };
       else if (url.pathname === `${root}/tasks/${taskId}`) {
-        const task = { projectId, id: taskId, version: 1, currentRevisionId: taskId, title: "时间线来源任务",
+        const task = { projectId, id: taskId, version: 1, currentRevisionId: taskId, title: taskTitle,
           content: "来源任务正文", contentDocumentId: taskId, contentRevisionId: taskId, kind: "implementation",
           acceptance: "可返回来源 Session", owner: "reader", state: "in_progress", basisSetId: null,
           actorId: "reader", reason: "fixture", createdAt: stamp };
@@ -166,7 +170,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
             turns: [...nativeCurrent.map((entry, index) => ({ id: `turn-${index}`, state: "completed" as const, startedAt: stamp, completedAt: stamp, origin: null })),
               { id: "historical-running-turn", state: "running", startedAt: stamp, completedAt: null, origin: null }],
             nextCursor: "native-1", messagesCursor: "messages-1", cursor: "1", liveEntries: [liveAnswer, ...longToolHistory, protectedTool],
-            liveTurns: [{ id: "live-turn", state: "running", startedAt: stamp, completedAt: null, origin: null }] });
+            liveTurns: [{ id: "live-turn", state: "running", startedAt: stamp, completedAt: null,
+              origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader" } }] });
         }
       } else if (url.pathname.endsWith("/timeline/updates")) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length, -"/timeline/updates".length));
@@ -223,7 +228,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await baselinePage.goto(`${base}/#/p/${projectId}/tasks/${taskId}`);
   await baselinePage.getByLabel("访问令牌").fill("fixture-token");
   await baselinePage.getByRole("button", { name: "进入", exact: true }).click();
-  await baselinePage.getByRole("heading", { name: "时间线来源任务" }).waitFor();
+  await baselinePage.getByRole("heading", { name: taskTitle }).waitFor();
   const taskShellBaseline = await baselinePage.locator(".workbench-layout").evaluate(element => ({
     active: element.getAttribute("data-session-reader"),
     header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
@@ -257,6 +262,68 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
       `non-Session routes restore the fresh Task shell after a Session visit (baseline=${JSON.stringify(taskShellBaseline)}, current=${JSON.stringify(shell)})`);
   };
   await assertSessionReaderShell();
+  const measureCurrent = async (target: typeof page) => target.evaluate(() => {
+    const strip = document.querySelector<HTMLElement>(".workspace-current-strip")!;
+    const label = strip.children[2].querySelector<HTMLElement>("small")!;
+    const progress = strip.children[2].querySelector<HTMLElement>("span")!;
+    const task = strip.children[0].querySelector<HTMLElement>("a")!;
+    const history = document.querySelector<HTMLElement>(".workspace-timeline-scroll")!;
+    const composer = document.querySelector<HTMLElement>(".session-composer-host")!;
+    return { dpr: devicePixelRatio, width: innerWidth, scale: visualViewport?.scale ?? null,
+      label: { width: label.getBoundingClientRect().width, height: label.getBoundingClientRect().height },
+      progress: { width: progress.getBoundingClientRect().width, height: progress.getBoundingClientRect().height },
+      stripHeight: strip.getBoundingClientRect().height, historyHeight: history.clientHeight,
+      composerBottom: composer.getBoundingClientRect().bottom, taskText: task.textContent ?? "",
+      progressText: progress.textContent ?? "", labelText: label.textContent ?? "" };
+  });
+  const narrowMeasurements: Array<{ dpr: number; label: { width: number; height: number }; progress: { width: number; height: number };
+    stripHeight: number; historyHeight: number; composerBottom: number; taskText: string; progressText: string; labelText: string;
+    width: number; scale: number | null }> = [];
+  for (const dpr of [1, 2]) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: dpr });
+    const narrow = await context.newPage();
+    await narrow.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+    await narrow.getByLabel("访问令牌").fill("fixture-token");
+    await narrow.getByRole("button", { name: "进入", exact: true }).click();
+    await narrow.locator(".workspace-current-strip > div:last-child span").waitFor();
+    const measure = await measureCurrent(narrow);
+    narrowMeasurements.push(measure);
+    if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR)
+      await narrow.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, `narrow-dpr${dpr}.png`) });
+    await context.close();
+  }
+  console.log("narrow current strip", narrowMeasurements);
+  for (const measurement of narrowMeasurements) {
+    assert.equal(measurement.width, 390);
+    assert.equal(measurement.scale, 1);
+    assert.equal(measurement.labelText, "本轮公开进展");
+    assert.equal(measurement.taskText, taskTitle);
+    assert.equal(measurement.progressText, publicProgress);
+    assert.ok(measurement.label.width >= 60 && measurement.label.height <= 20,
+      `progress label reads horizontally at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
+    assert.ok(measurement.progress.width >= 240 && measurement.progress.height <= 42,
+      `long public progress remains readable within two lines at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
+    assert.ok(measurement.stripHeight <= 135 && measurement.historyHeight >= 120 && measurement.composerBottom <= 844,
+      `narrow layout reserves a scrollable history and visible composer at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
+  }
+  const desktopCurrent = await measureCurrent(page);
+  assert.ok(desktopCurrent.label.width >= 60 && desktopCurrent.label.height <= 20 &&
+    desktopCurrent.progress.width >= 240 && desktopCurrent.historyHeight >= 200 && desktopCurrent.composerBottom <= 900,
+    `normal window keeps long progress and history readable: ${JSON.stringify(desktopCurrent)}`);
+  const shortContext = await browser.newContext({ viewport: { width: 1280, height: 560 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
+  const short = await shortContext.newPage();
+  await short.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await short.getByLabel("访问令牌").fill("fixture-token");
+  await short.getByRole("button", { name: "进入", exact: true }).click();
+  await short.locator(".workspace-current-strip > div:last-child span").waitFor();
+  const shortCurrent = await measureCurrent(short);
+  if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR)
+    await short.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "short-running-reduced.png") });
+  assert.equal(shortCurrent.progressText, publicProgress);
+  assert.ok(shortCurrent.label.width >= 60 && shortCurrent.progress.width >= 180 &&
+    shortCurrent.stripHeight <= 100 && shortCurrent.historyHeight >= 45 && shortCurrent.composerBottom <= 560,
+    `short reduced-motion window keeps the current progress and composer usable: ${JSON.stringify(shortCurrent)}`);
+  await shortContext.close();
   const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
   await timeline.locator('[data-workspace-entry="current-0"]').waitFor();
   assert.equal(await timeline.locator(".workspace-tool").count(), 5, "100+ tools initially show only newest and failed evidence");
@@ -306,7 +373,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   const roundtripAnchor = await sourceEntry.evaluate(element => element.getBoundingClientRect().top);
   await sourceTaskLink.click();
-  await page.getByRole("heading", { name: "时间线来源任务" }).waitFor();
+  await page.getByRole("heading", { name: taskTitle }).waitFor();
   await assertDefaultShell();
   assert.equal(await page.locator(".task-detail-backlinks").count(), 1,
     `Task route should retain its return control; route=${page.url()}, errors=${pageErrors.join(" | ")}, page=${(await page.locator("body").innerText()).slice(0, 500)}`);
@@ -319,8 +386,11 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   const returnedEntry = returnedTimeline.locator('[data-workspace-entry="older-native-0"]');
   await returnedEntry.waitFor();
   await assertSessionReaderShell();
-  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  const returnedTop = await returnedEntry.evaluate(element => element.getBoundingClientRect().top);
+  let returnedTop = await returnedEntry.evaluate(element => element.getBoundingClientRect().top);
+  for (let attempt = 0; attempt < 20 && Math.abs(returnedTop - roundtripAnchor) > 3; attempt++) {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    returnedTop = await returnedEntry.evaluate(element => element.getBoundingClientRect().top);
+  }
   assert.ok(Math.abs(returnedTop - roundtripAnchor) <= 3,
     `source Task roundtrip restores the same reading position (${roundtripAnchor} -> ${returnedTop})`);
   assert.equal(await returnedEntry.count(), 1, "the loaded native page remains single after returning from its source Task");
