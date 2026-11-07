@@ -24,6 +24,7 @@
 .task-focus h2 { font-size: 1.08rem; color: #202b42; }
 .task-focus p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-focus .panel-head { align-items: center; }
+#task-schedule { scroll-margin-top: 88px; }
 .task-page .quiet { color: #315ec7; }
 .task-page .button-link, .task-page button { border-color: #cbd5e9; color: #315ec7; }
 .task-page button.primary { background: #315ed3; border-color: #315ed3; color: #fff; }

@@ -12,6 +12,7 @@ export interface ScheduleGrant {
 
 export interface SchedulingPumpOptions {
   store: ScheduleStore;
+  taskTiming?: { tick(projectId: string, nowUtc: string, actorId: string, roleId: string, scopeId: string): Promise<{ created: boolean }[]> };
   canWrite(): boolean;
   credentials(): AuthConfig;
   grants(): readonly ScheduleGrant[];
@@ -152,15 +153,19 @@ export class SchedulingPump {
         return empty("no-authority");
       }
       const occurrences: Occurrence[] = [];
+      let taskCopies = 0;
       for (const grant of valid) {
         if (!this.permitted(grant)) continue;
         const principal = this.principal(grant);
         if (!principal) continue;
         const service = new SchedulingService(this.guardedStore(grant));
         occurrences.push(...await service.tick(principal, grant.projectId, now, [grant.scopeId]));
+        if (this.options.taskTiming && this.permitted(grant))
+          taskCopies += (await this.options.taskTiming.tick(grant.projectId, now, grant.actorId, grant.roleId, grant.scopeId))
+            .filter(item => item.created).length;
       }
       this.current = { state: "idle", lastTickAt: now, lastError: null,
-        lastCreated: occurrences.filter(item => item.state === "created").length };
+        lastCreated: occurrences.filter(item => item.state === "created").length + taskCopies };
       return { state: "completed", occurrences };
     } catch (error) {
       this.current = { ...this.current, state: "error", lastTickAt: now,
