@@ -1,6 +1,8 @@
 import { reviewMetadata, validatePreviousReview } from "./documents/organization-review.js";
 import { commandSchema } from "@evoloop/contracts";
 import { applyTaskAttention } from "./task-attention-command.js";
+import { requireTaskTimingReady } from "./task-timing-guard.js";
+import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
 export { assessTaskAttention, trialAttentionThreshold, trialAttentionThresholdMs } from "./task-attention.js";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
@@ -38,6 +40,7 @@ import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 export { DomainError } from "@evoloop/contracts/ports";
 
 export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory; hasher: ContentHasher;
+  taskTimingAuthority?: (projectId: string, actorId: string, roleId: string, scopeId: string) => Promise<boolean>;
   recoveryAuthority?: RecoveryAuthority;
   collaborationAuthority?: {
     actorForRole(projectId:string,roleId:string):Promise<string|null>;
@@ -120,6 +123,11 @@ export class WorkflowService {
     const command = parsed.data;
     const permission = this.commandPermission(command);
     requirePermission(principal, command.projectId, permission);
+    if (command.type === "task.create" && command.timing?.repeat === "daily" ||
+      command.type === "task.timing.set" && (command.repeat === "daily" || command.scope !== "this") ||
+      command.type === "task.timing.stop" ||
+      command.type === "task.update" && command.repeatScope === "this_and_future")
+      requirePermission(principal, command.projectId, "review");
     if (command.type.startsWith("task.attention.")) {
       requirePermission(principal, command.projectId, "read");
       requirePermission(principal, command.projectId, "write");
@@ -205,6 +213,27 @@ export class WorkflowService {
     }
     const base = { status: "applied" as const, operationId: command.operationId };
     const actorId = principal.actorId;
+    if (command.type === "task.timing.set") {
+      const task = required(await tx.getTask(command.taskId), "Task");
+      requireVersion(task.version, command.expectedTaskVersion);
+      if (!tx.taskTiming) throw new DomainError("TIMING_UNAVAILABLE", "Task timing store unavailable");
+      const existingTiming = await tx.taskTiming.get(task.id);
+      if ((command.repeat === "daily" || command.scope !== "this") &&
+        !await this.deps.taskTimingAuthority?.(command.projectId, actorId, task.owner,
+          taskTimingScopeId(existingTiming?.rootTaskId ?? task.id)))
+        throw new DomainError("TIMING_AUTHORITY_REQUIRED", "No current scheduling grant covers this Task Role and actor");
+      if (command.scope !== "future" && (command.title !== undefined || command.content !== undefined || command.acceptance !== undefined))
+        throw new DomainError("TASK_CONTENT_OWNED", "Edit current Task content through task.update and choose its repeat scope");
+      if (command.scope !== "future" && task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "Current Task has already started");
+      if (command.scope !== "future") await requireNoInflightRun(tx, task.id);
+      const view = await tx.taskTiming.set(command, actorId, now);
+      return { result: { ...base, entityId: task.id, version: view.version }, effects: [{ kind: "task.timing", entityId: task.id, version: view.version }] };
+    }
+    if (command.type === "task.timing.stop") {
+      if (!tx.taskTiming) throw new DomainError("TIMING_UNAVAILABLE", "Task timing store unavailable");
+      const view = await tx.taskTiming.stop(command, actorId, now);
+      return { result: { ...base, entityId: command.taskId, version: view.version }, effects: [{ kind: "task.timing", entityId: command.taskId, version: view.version }] };
+    }
     if (command.type === "task.create") await requireRealTaskOwner(tx, command.owner);
     if (command.type === "task.update") {
       const priorTask = await tx.getTask(command.taskId);
@@ -345,6 +374,9 @@ export class WorkflowService {
       }
       case "task.create": {
         if (await tx.getTask(command.taskId)) throw new DomainError("ALREADY_EXISTS", "Task already exists");
+        if (command.timing?.repeat === "daily" &&
+          !await this.deps.taskTimingAuthority?.(command.projectId, actorId, command.owner,taskTimingScopeId(command.taskId)))
+          throw new DomainError("TIMING_AUTHORITY_REQUIRED", "No current scheduling grant covers this Task Role and actor");
         requireBody(command.content);
         if (command.domainId) {
           const domain = required(await tx.getBusinessDomain(command.domainId), "Business domain");
@@ -393,6 +425,10 @@ export class WorkflowService {
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
+        if (command.timing) {
+          if (!tx.taskTiming) throw new DomainError("TIMING_UNAVAILABLE", "Task timing store unavailable");
+          await tx.taskTiming.create(task.id, command.timing, actorId, now);
+        }
         return { result: { ...base, entityId: task.id, version: 1, revisionId }, effects: [
           { kind: "task", entityId: task.id, version: 1 }, { kind: "document", entityId: documentId, version: 1 }] };
       }
@@ -519,6 +555,17 @@ export class WorkflowService {
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,
           id: this.deps.ids.next(), taskId: task.id, documentId: id, actorId, createdAt: now });
+        if (command.repeatScope === "this_and_future") {
+          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "Current Task has already started");
+          if (command.expectedTimingVersion === undefined)
+            throw new DomainError("TIMING_VERSION_REQUIRED", "Read the current timing version before editing future Tasks");
+          if (!tx.taskTiming?.updateFuture) throw new DomainError("TIMING_UNAVAILABLE", "Future Task template unavailable");
+          const timing = await tx.taskTiming.get(task.id);
+          if (!timing || !await this.deps.taskTimingAuthority?.(command.projectId, actorId, command.owner,
+            taskTimingScopeId(timing.rootTaskId)))
+            throw new DomainError("TIMING_AUTHORITY_REQUIRED", "No current scheduling grant covers this Task Role and actor");
+          await tx.taskTiming.updateFuture(task.id, { title: command.title, content: command.content, acceptance: command.acceptance }, command.expectedTimingVersion, actorId, now);
+        }
         return { result: { ...base, entityId: task.id, version: revision.version, revisionId },
           effects: [{ kind: "task", entityId: task.id, version: revision.version },
             ...(contentDocumentVersion === null ? [] : [{ kind: "document", entityId: task.contentDocumentId, version: contentDocumentVersion }])] };
@@ -527,6 +574,7 @@ export class WorkflowService {
         const task = required(await tx.getTask(command.taskId), "Task");
         requireVersion(task.version, command.expectedVersion);
         if (task.state !== "todo") throw new DomainError("INVALID_STATE", "Only a todo Task may start");
+        await requireTaskTimingReady(tx, task.id, now);
         await requireNoInflightRun(tx, task.id);
         const proposal = await tx.getTaskProposal(task.id);
         if (proposal?.stageId && (await tx.getStage(proposal.stageId))?.state !== "active")
@@ -664,6 +712,7 @@ export class WorkflowService {
               if(command.runOperationId!==command.operationId) throw new DomainError("RUN_OPERATION_MISMATCH", "queue and Run reservation must use the same operation ID");
               const entry=(await tx.queue.getResidentQueue(command.queueId))!.entries.find(x=>x.id===command.entryId)!;
               const task=required(await tx.getTask(entry.taskId),"Task");
+              await requireTaskTimingReady(tx, task.id, now);
               const taskRevision=required(await tx.getTaskRevision(task.id,task.currentRevisionId),"Task revision");
               if(!taskRevision.basisSetId)throw new DomainError("BASIS_UNAVAILABLE","Queue handoff requires a fixed Task basis");
               const session=required(await tx.getRuntimeSession(entry.sessionId),"Session");
@@ -773,6 +822,7 @@ export class WorkflowService {
           return applySchedule(tx, principal, command as ScheduleCommand, now);
         }
         if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
+          if (command.type === "runtime.run.reserve") await requireTaskTimingReady(tx, command.taskId, now);
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value) });
         }
         return applyWorkflow({ tx, command:command as Parameters<typeof applyWorkflow>[0]["command"], principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
@@ -873,6 +923,12 @@ export class WorkflowService {
       const revision = required(await reader.getTaskRevision(taskId, task.currentRevisionId), "Task revision");
       const basis = revision.basisSetId ? required(await reader.getBasisSet(taskId, revision.id, revision.basisSetId), "Basis set") : null;
       return { task, revision, basis, links: await reader.listLinks(taskId), impacts: await reader.listImpacts(taskId), decisions: await reader.listBasisDecisions(taskId), proposal: await reader.getTaskProposal(taskId), judgements: await reader.listTaskJudgements(taskId), deliveries: await reader.listDeliveries(taskId), observations: await reader.listObservations(taskId), closures: await reader.listTaskClosures(taskId) };
+    });
+  }
+  getTaskTiming(principal: Principal, projectId: string, taskId: string): Promise<import("@evoloop/contracts/task-timing").TaskTimingView | null> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getTask(taskId), "Task");
+      return await reader.taskTiming?.get(taskId) ?? null;
     });
   }
   getTaskRevision(principal: Principal, projectId: string, taskId: string, revisionId: string): Promise<{ revision: TaskRevision; basis: BasisSet | null }> {

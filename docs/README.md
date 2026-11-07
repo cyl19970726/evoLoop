@@ -88,8 +88,6 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | [接口与协作合同](architecture/contracts.md) | 任务、知识、会话如何交换，失败后怎样恢复 | 接口双方与整体验收负责人 |
 | [存储逻辑](architecture/storage.md) | 表、固定版本、外键、事务、外置原件和恢复怎么设计 | 数据与架构责任者 |
 | [Codex 接入](architecture/codex-integration.md) | 线程/轮次如何承接任务、回收和恢复，与桌面入口如何衔接 | 运行时适配责任者 |
-| [消息 Connector 标准模式](architecture/message-connectors.md) | 微信网关、标准 Session 链路和后置的受限执行路径 | 消息集成与运行时责任者 |
-| [微信 Connector 接入与核验](development/wechat-standard-connector.md) | 精确配置、启停与原操作读回 | 运行维护者与测试者 |
 | [前端架构](frontend/architecture.md) | 工作台技术、路由、查询/命令、会话衔接与部署边界，正文位于前端目录 | 前端与核心接口责任者 |
 | [Wiki 维护机制](architecture/wiki-maintenance.md) | 参考哪些编纂机制，如何形成候选、审阅发布和纠正旧认识 | 认知与知识集成责任者 |
 | [Wiki 工作区架构](architecture/wiki-workspace.md) | 参考 nashsu 怎样做知识点、专题、双链、来源、图谱与 Review 前端 | Wiki 产品与前端责任者 |
@@ -102,6 +100,7 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | [开发规范](development/standards.md) | 实际工作如何执行、验证、交接并改善 | 承担相应开发与方法维护工作的 session |
 | [Agent skill 与 CLI](development/agent-cli.md) | Agent 根据人类沟通读取固定依据、执行业务变更、恢复并核对共同状态 | 使用 evoLoop 推进实际工作的 Agent；人类从工作台观察结果 |
 | [Leader 结果回程](development/leader-result-return.md) | 受管 Leader 通知怎样显式接线、对账与回退 | 结果回程运行服务的维护者 |
+| [普通 Task 定时与复制](development/task-timing-copy.md) | 字段继承、时间规则及异常授权怎样处理 | Task 与调度实现的维护者 |
 | [文档维护](development/documentation.md) | 文档如何保持一致、生成 HTML 并发布 | 修改正文或构建工具的贡献者 |
 
 这里的维护责任是工作分配，不要求项目第一天就建立同名常设角色。专门产品、架构或开发规范 session 是否出现，由实际任务与职责演进决定。

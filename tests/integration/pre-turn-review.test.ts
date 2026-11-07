@@ -84,7 +84,6 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))throw Error('dedicated isolated database required');
 const schema=`qa_host_${randomUUID().replaceAll('-','').slice(0,12)}`;
 await migrate(url,schema);
-
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 assert.equal((await pool.query("SELECT to_regclass('pre_turn_review_decision') AS name")).rows[0]?.name,
   'pre_turn_review_decision');

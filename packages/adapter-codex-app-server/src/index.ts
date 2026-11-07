@@ -60,17 +60,8 @@ function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 const finite = (value: number): boolean => Number.isFinite(value) && value > 0;
 const FULL_SANDBOX = "danger-full-access" as const;
 const FULL_POLICY = {type:"dangerFullAccess"} as const;
-const CONNECTOR_SCOPE = /^connector-receiver:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
-const connectorReceiver = (value:{authorizationScope:string;sandbox:string;approvalPolicy:string}):boolean =>
-  CONNECTOR_SCOPE.test(value.authorizationScope)&&value.sandbox==='read-only'&&value.approvalPolicy==='never';
 const fullProfile = (value:{sandbox:string;approvalPolicy:string}):boolean =>
   value.sandbox===FULL_SANDBOX&&value.approvalPolicy==='never';
-const nativeProfile = (value:{authorizationScope:string;sandbox:string;approvalPolicy:string},version:PinnedProtocolVersion):boolean =>
-  (!value.authorizationScope.startsWith('connector-receiver:')&&fullProfile(value))||
-    (version==='codex-cli 0.166.0-alpha.6'&&connectorReceiver(value));
-const nativeSandboxConfirmed=(sandbox:Record<string,unknown>|null,requested:string):boolean=>
-  requested===FULL_SANDBOX?sandbox?.type==='dangerFullAccess':
-    requested==='read-only'&&sandbox?.type==='readOnly'&&sandbox.networkAccess===false;
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const policyJson=(value:unknown):string=>JSON.stringify(value,(_key,current)=>object(current)?
   Object.fromEntries(Object.entries(current).sort(([a],[b])=>a.localeCompare(b))):current);
@@ -735,8 +726,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (message.method === "item/tool/call") {
       const call = params;
       const key = nonempty(call?.threadId) && nonempty(call?.callId) ? `${call.threadId}\0${call.callId}` : null;
-      const valid = !!binding && !binding.authorizationScope.startsWith('connector-receiver:') &&
-        !!key && !this.seenToolCalls.has(key) && call?.namespace == null &&
+      const valid = !!binding && !!key && !this.seenToolCalls.has(key) && call?.namespace == null &&
         nonempty(call?.turnId) && nonempty(call?.tool) && !!object(call?.arguments) &&
         this.declaredTools.get(binding.nativeThreadId)?.has(call.tool) && !!this.options.callDynamicTool;
       if (!valid) { this.send({id,result:{contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false}}); return; }
@@ -780,7 +770,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       return;
     }
     let decision: "accept" | "decline" = "decline";
-    if (this.options.decideApproval && !binding.authorizationScope.startsWith('connector-receiver:')) {
+    if (this.options.decideApproval) {
       let timer: NodeJS.Timeout | undefined;
       try {
         decision = await Promise.race([
@@ -846,10 +836,6 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   private validateBinding(binding: RuntimeBinding): void {
     if (binding.owner !== OWNER || !nonempty(binding.authorizationScope) || !nonempty(binding.projectId) || !nonempty(binding.roleId) || !nonempty(binding.sessionId) || !nonempty(binding.nativeThreadId) || !binding.cwd.startsWith("/") || resolve(binding.cwd) !== binding.cwd) throw new RuntimeProtocolError("invalid runtime binding");
-    if(binding.authorizationScope.startsWith('connector-receiver:')&&
-      (this.expectedVersion!=='codex-cli 0.166.0-alpha.6'||!binding.resumeProfile||
-        !nonempty(binding.resumeProfile.actorId)||!connectorReceiver({...binding.resumeProfile,authorizationScope:binding.authorizationScope})))
-      throw new RuntimeProtocolError('connector receiver binding requires the pinned restricted native profile');
   }
 
   private rememberBinding(binding: RuntimeBinding): void {
@@ -868,28 +854,24 @@ export class CodexAppServerAdapter implements RuntimePort {
   async create(spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
     if (!this.ready) throw new RuntimeProtocolError("App Server not ready");
     if (!nonempty(spec.sessionId) || !nonempty(spec.roleId) || !nonempty(spec.projectId) || !nonempty(spec.authorizationScope) || !spec.cwd.startsWith("/") || resolve(spec.cwd) !== spec.cwd) throw new RuntimeProtocolError("invalid session scope or cwd");
-    if(!nativeProfile(spec,this.expectedVersion))throw new RuntimeProtocolError('new Session requires full policy or an exact alpha.6 connector receiver read-only/never scope');
-    if(connectorReceiver(spec)&&!nonempty(spec.actorId))throw new RuntimeProtocolError('connector receiver requires a fixed actor before native creation');
+    if(!fullProfile(spec))throw new RuntimeProtocolError('new Session requires danger-full-access and approval never');
     if (this.pendingCreate) throw new RuntimeProtocolError("another thread creation is pending");
     this.pendingCreate = { ...spec };
     const connectionId=this.connectionId;
     try {
-      const restricted=connectorReceiver(spec);
-      // Do not add host config or dynamic tools to a restricted Thread.
-      // Native built-in shell disablement is not proven, so its Turn start remains closed.
-      const config = restricted?undefined:await this.options.threadConfig?.(spec);
-      const dynamicTools = !restricted&&this.options.dynamicTools && this.options.callDynamicTool ? await this.options.dynamicTools(spec) : undefined;
+      const config = await this.options.threadConfig?.(spec);
+      const dynamicTools = this.options.dynamicTools && this.options.callDynamicTool ? await this.options.dynamicTools(spec) : undefined;
       // Freeze provider-owned objects before awaiting the native acknowledgement.
       const launchConfig=policyJson(config??null),launchTools=policyJson(dynamicTools??[]);
       const result = object(await this.request("thread/start", { cwd: spec.cwd, ...(spec.model ? { model: spec.model } : {}), sandbox: spec.sandbox, approvalPolicy: spec.approvalPolicy, serviceName: "evoloop", ...(config ? {config} : {}), ...(dynamicTools?.length ? {dynamicTools} : {}) }));
       const thread = object(result?.thread);
       if (!nonempty(thread?.id) || !nonempty(thread?.sessionId) || thread?.cwd !== spec.cwd) throw new RuntimeUnknownError("thread/start", null, "invalid acknowledgement; native thread may exist");
       const sandbox=object(result?.sandbox);
-      if(result?.cwd!==spec.cwd||result?.approvalPolicy!=='never'||!nativeSandboxConfirmed(sandbox,spec.sandbox)||
+      if(result?.cwd!==spec.cwd||result?.approvalPolicy!=='never'||sandbox?.type!=='dangerFullAccess'||
         !nonempty(result?.model)||!nonempty(result?.modelProvider)||
         (spec.model!=null&&result.model!==spec.model)||
         (thread.model!=null&&thread.model!==result.model))
-        throw new RuntimeUnknownError('thread/start',null,'Session creation acknowledgement did not confirm exact native policy');
+        throw new RuntimeUnknownError('thread/start',null,'full Session creation acknowledgement did not confirm native policy');
       const binding: RuntimeBinding = { sessionId: spec.sessionId, roleId: spec.roleId, projectId: spec.projectId, authorizationScope: spec.authorizationScope, cwd: spec.cwd, nativeThreadId: thread.id, nativeSessionId: thread.sessionId, owner: OWNER,
         observedModel:safeModelIdentity(result.model),observedProvider:safeModelIdentity(result.modelProvider),
         ...(spec.actorId ? {resumeProfile:{actorId:spec.actorId,model:spec.model??null,sandbox:spec.sandbox,
@@ -919,7 +901,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       if (!spec || !nonempty(spec.actorId) || spec.sessionId !== binding.sessionId || spec.roleId !== binding.roleId ||
         spec.projectId !== binding.projectId || spec.authorizationScope !== binding.authorizationScope ||
         spec.cwd !== binding.cwd || resolve(spec.cwd) !== spec.cwd ||
-        !nativeProfile(spec,this.expectedVersion) ||
+        !fullProfile(spec) ||
         !binding.resumeProfile || binding.resumeProfile.actorId !== spec.actorId ||
         binding.resumeProfile.model !== (spec.model??null) ||
         (binding.resumeProfile.reasoningEffort??null)!==(spec.reasoningEffort??null) ||
@@ -933,10 +915,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       // A failed provider or native RPC cannot
       // leave an earlier allowlist open.
       this.declaredTools.delete(binding.nativeThreadId);
-      const restricted=connectorReceiver(spec);
-      const config = restricted?undefined:await this.options.threadConfig?.(spec);
+      const config = await this.options.threadConfig?.(spec);
       let currentTools:DynamicToolSpec[]|undefined;
-      if (!restricted&&this.options.dynamicTools && this.options.callDynamicTool) {
+      if (this.options.dynamicTools && this.options.callDynamicTool) {
         try { currentTools=await this.options.dynamicTools(spec); }
         catch { throw new RuntimeProtocolError("current dynamic tool declaration is unavailable"); }
       }
@@ -1011,7 +992,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       (target.model!=null&&reply.model!==target.model)||
       (thread.model!=null&&thread.model!==reply.model)||
       !nonempty(reply?.modelProvider)||reply?.cwd!==current.cwd||
-      reply?.approvalPolicy!=='never'||!nativeSandboxConfirmed(sandbox,target.sandbox))
+      reply?.approvalPolicy!=='never'||sandbox?.type!=='dangerFullAccess')
       throw new RuntimeUnknownError('thread/resume',null,'execution profile reply did not confirm the exact owned Thread and model');
   }
 
@@ -1123,49 +1104,6 @@ export class CodexAppServerAdapter implements RuntimePort {
     return (status==='idle'||allowNotLoaded&&status==='notLoaded')&&
       (expectedModel===undefined||thread.model===expectedModel||
         allowNotLoaded&&status==='notLoaded'&&thread.model==null);
-  }
-
-  /** Identity evidence only. Alpha.6 exposes no verified switch that removes its built-in shell. */
-  async qualifyConnectorReceiver(binding:RuntimeBinding,connectorBindingId:string):Promise<{
-    available:boolean;reason:string;fingerprint:string|null}>{
-    this.owned(binding);
-    const unavailable=(reason:string)=>({available:false,reason,fingerprint:null});
-    if(!CONNECTOR_SCOPE.test(`connector-receiver:${connectorBindingId}`)||
-      binding.authorizationScope!==`connector-receiver:${connectorBindingId}`||
-      !binding.resumeProfile||!connectorReceiver({...binding.resumeProfile,authorizationScope:binding.authorizationScope})||
-      this.profileTransitionThreads.has(binding.nativeThreadId))
-      return unavailable('Connector receiver identity or restricted profile is not exact');
-    try{
-      const result=object(await this.request('thread/read',{threadId:binding.nativeThreadId,includeTurns:false}));
-      const thread=object(result?.thread);
-      if(thread?.id!==binding.nativeThreadId||thread?.sessionId!==binding.nativeSessionId||thread?.cwd!==binding.cwd)
-        return unavailable('Native Thread identity does not match connector receiver');
-      const status=object(thread.status)?.type;
-      if(status!=='idle'&&status!=='notLoaded')return unavailable('Native Thread is not idle');
-      if(thread.model!=null&&(!nonempty(thread.model)||
-        binding.resumeProfile.model!=null&&thread.model!==binding.resumeProfile.model))
-        return unavailable('Native Thread model differs from connector receiver profile');
-      const fingerprint=createHash('sha256').update(policyJson({
-        admission:'evoloop-connector-receiver-v1',protocol:this.expectedVersion,
-        connectorBindingId,projectId:binding.projectId,sessionId:binding.sessionId,
-        roleId:binding.roleId,threadId:binding.nativeThreadId,nativeSessionId:binding.nativeSessionId,
-        cwd:binding.cwd,scope:binding.authorizationScope,profile:binding.resumeProfile,
-        nativeModel:thread.model??null,status,sandboxPolicy:{type:'readOnly',networkAccess:false},
-        dynamicTools:[],nativeShellDisabled:false,
-      })).digest('hex');
-      return {available:false,reason:'Native alpha.6 shell disablement is not verified',fingerprint};
-    }catch{return unavailable('Native connector receiver Thread could not be read');}
-  }
-
-  /** No native Turn is sent until built-in shell disablement can be verified. */
-  async startConnectorTurn(binding:RuntimeBinding,input:string,operationId:string,
-    connectorBindingId:string,fingerprint:string):Promise<RuntimeTurn>{
-    if(!nonempty(input)||!nonempty(operationId)||!nonempty(fingerprint))
-      throw new RuntimeProtocolError('connector Turn requires input, durable operation ID and policy fingerprint');
-    const admission=await this.qualifyConnectorReceiver(binding,connectorBindingId);
-    if(!admission.fingerprint||admission.fingerprint!==fingerprint)
-      throw new RuntimeProtocolError('connector receiver policy fingerprint is unavailable or changed');
-    throw new RuntimeProtocolError(admission.reason);
   }
 
   /** Admission evidence for an owned full-profile Thread, not proof of per-Turn native policy. */

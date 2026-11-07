@@ -83,7 +83,6 @@ const help = {
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
     "work leader --project UUID [--documents] [--closed] [--limit 1..100 --cursor CURSOR]",
     "work task TASK_UUID --project UUID (one Task's current stage, timing and responsibility)",
-    "work connectors --project UUID [--limit 1..50 --cursor UUID]; work connector BINDING_UUID --project UUID; work connector-operation OPERATION_UUID --project UUID (saved route and original write receipt)",
     "work attention --project UUID [--task TASK_UUID --state open|resolved --phase PHASE --signal SIGNAL --waiting-on-kind KIND --waiting-on-id ID --limit 1..100 --cursor CURSOR]",
     "work attention task TASK_UUID --project UUID (follow-up and Task attention history)",
     "work attention item ITEM_UUID --project UUID (one attention item and its events)",

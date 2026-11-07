@@ -96,4 +96,6 @@ DEC-032 依据 2026-10-23 用户对完整功能场景、新的 Session 责任分
 
 DEC-033 依据 2026-10-27 用户对 Task9a v5 的明确新选择：每个新 Session 使用 full/never/正常网络，普通消息与业务工作共享原生会话和常规工具配置，取消消息专用 readonly/cold 权限状态机。它取代 Codex 接入文档中旧的消息只读资格、purpose 专用适配器和冷切恢复要求；保留历史实验及 0.154.0 记录作为当时证据，不改旧 Session/Run snapshot。消息 receiver/sender 授权与 `maxTurns` 预算仍约束身份和成本，GUI reader 的 Run 范围与 Document iframe sandbox 不变。当前代码证据限 fake adapter 与专用 PostgreSQL 检查，Lead 原生使用、发布与部署仍未验证。
 
+2026-11-07 后续用户决定（Task `281f3f07-abc2-47f3-9560-1b743e46077d`）更新了 DEC-033 中的普通消息预算部分：精确 sender/receiver 授权继续生效，`maxTurns` 缺省为不限累计次数，只有显式正整数仍构成有限额度。原历史 `used`、Session、Thread、失败和 Task/队列尝试限额均保留。代码合入、旧私有 grant 转换、正式发布与独立使用分别核实；此段不把候选实现记成已发布。
+
 DEC-034 依据 2026-10-29 用户对 Agent Company 完整蓝图、两张原图与相应场景的确认。固定来源是过程 Document `92e03220-59bb-4dea-b63a-bcd204f30f31` 的修订 `67b7ad3e-e64c-4800-a55e-784a50354492`；可公开的目标语义与原图已纳入[产品定义](product/definition.md#两张产品卫星图经营交付与组织改进)。原报告含本机运行和内部路径，不作为 Git 正文发布。此决定改变产品职责和阅读路径；现有运行配置、自动唤醒、真人亲用和持续收益各按[阶段路线](roadmap.md#当前基线)单独核验。

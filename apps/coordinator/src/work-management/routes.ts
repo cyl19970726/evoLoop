@@ -47,6 +47,10 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     app.get(`/api/projects/:projectId/roles/:id/${path}`, request => { const p = params(request.params); return query(principal(request), p.projectId, p.id!); });
   }
   app.get("/api/projects/:projectId/schedules", request => service.listSchedules(principal(request), params(request.params).projectId));
+  app.get("/api/projects/:projectId/tasks/:id/timing", request => {
+    const p = params(request.params);
+    return service.getTaskTiming(principal(request), p.projectId, p.id!);
+  });
   app.get("/api/projects/:projectId/resident-queues", request => service.listResidentQueues(principal(request),params(request.params).projectId));
   app.get("/api/projects/:projectId/resident-queues/:id", request => {const p=params(request.params);return service.getResidentQueue(principal(request),p.projectId,p.id!);});
   app.get("/api/projects/:projectId/resident-queues/:id/attempts", request => {

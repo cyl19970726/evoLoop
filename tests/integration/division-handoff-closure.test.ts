@@ -44,7 +44,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   // Seed the pre-023 database through its historical ports. The new optional
   // Session ports only become available after their real 030..032 migrations.
   uow.transaction=<T>(projectId:string,work:(tx:Transaction)=>Promise<T>)=>transaction(projectId,tx=>{
-    if(!migrated)Object.defineProperties(tx,{sessionAssignments:{value:undefined},sessionMessages:{value:undefined}});
+    if(!migrated)Object.defineProperties(tx,{sessionAssignments:{value:undefined},sessionMessages:{value:undefined},taskTiming:{value:undefined}});
     return work(tx);
   });
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});

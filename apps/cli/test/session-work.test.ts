@@ -31,11 +31,6 @@ test("Leader work discovery has runnable bounded Task, Document and change comma
   assert.equal(sessionWorkPath(["leader", "notices"], new Map([["task", id], ["limit", "25"]])),
     `/work-management/notices?taskId=${id}&limit=25`);
   assert.equal(sessionWorkPath(["task", id], new Map()), `/work-management/tasks/${id}`);
-  assert.equal(sessionWorkPath(["connectors"], new Map([["limit", "20"], ["cursor", id]])),
-    `/message-connectors/routes?limit=20&cursor=${id}`);
-  assert.equal(sessionWorkPath(["connector", id], new Map()), `/message-connectors/routes/${id}`);
-  assert.equal(sessionWorkPath(["connector-operation", id], new Map()), `/message-connectors/operations/${id}`);
-  assert.throws(() => sessionWorkPath(["connector", "../other"], new Map()));
   assert.throws(() => sessionWorkPath(["task", `${id}/other`], new Map()));
   assert.throws(() => sessionWorkPath(["leader", "notices"], new Map([["task", "other"]])));
   assert.throws(() => sessionWorkPath(["leader", "notices"], new Map([["documents", true]])));

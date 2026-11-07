@@ -41,6 +41,45 @@ test("two simultaneous idle starts share one persistent slot",async()=>{
     WHERE project_id=$1 AND session_id=$2`,[projectId,contentionSessionId])).rows[0].n,1);
 });
 
+test("unlimited direct start preserves prior usage while an explicit cap still blocks",async()=>{
+  const id=randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
+    sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/tmp/direct-test','project','danger-full-access','never','ready',1,$4,$5,$6,
+    'agent',now(),now())`,[projectId,id,roleId,`thread-${id}`,`native-${id}`,randomUUID()]);
+  for(let i=0;i<24;i++){
+    const messageId=randomUUID();
+    await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
+      sender_actor_id,content,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,'owned',$4,'user','old turn','replied',1,now(),now())`,
+      [projectId,messageId,randomUUID(),id]);
+    await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,
+      operation_id,receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,'agent','completed',$6,$7,1,now(),now())`,
+      [projectId,randomUUID(),messageId,id,randomUUID(),`old-turn-${i}`,hash]);
+  }
+  const unlimited={...grant(id),maxTurns:undefined};
+  assert.equal((await store.inspect(projectId,id,'user')).used,24);
+  const binding={projectId,sessionId:id,roleId,cwd:'/tmp/direct-test',authorizationScope:'project',
+    nativeThreadId:`thread-${id}`,nativeSessionId:`native-${id}`,owner:'evoloop-codex-app-server' as const,
+    resumeProfile:{actorId:'agent',model:null,sandbox:'danger-full-access' as const,approvalPolicy:'never' as const}};
+  let current=grant(id,24);
+  const service=new DirectInputService({store,canWrite:()=>true,
+    admission:async()=>({grant:current,binding}),bindingFor:async()=>binding,
+    runtime:()=>({isReady:()=>true,registerBinding:async()=>{},
+      qualifyConversationThread:async()=>({available:true,reason:'',fingerprint:hash}),
+      startConversationTurn:async()=>{throw Error('unused')},steerTurn:async()=>{throw Error('unused')},
+      listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})})});
+  const sender={actorId:'user',projectIds:[projectId],permissions:['read','write']} as never;
+  assert.equal((await service.capability(sender,projectId,id)).reasonCode,'MESSAGE_BUDGET_EXHAUSTED');
+  current=unlimited;
+  assert.equal((await service.capability(sender,projectId,id)).mode,'start');
+  await assert.rejects(()=>store.reserve(projectId,id,'user',input(),grant(id,24),hash),/budget is exhausted/);
+  const command=input();
+  assert.equal((await store.reserve(projectId,id,'user',command,unlimited,hash)).record.mode,'start');
+  assert.equal((await store.inspect(projectId,id,'user')).used,25,'old counted Turns remain counted');
+});
+
 test("automatic message processing remains the only source for two attached inputs",async()=>{
   const messageId=randomUUID(),processingId=randomUUID(),operationId=randomUUID();
   await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
@@ -51,12 +90,18 @@ test("automatic message processing remains the only source for two attached inpu
     operation_id,receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
     VALUES($1,$2,$3,$4,$5,'agent','running','notice-turn',$6,1,now(),now())`,
     [projectId,processingId,messageId,noticeSessionId,randomUUID(),hash]);
+  const acceptedIds:string[]=[];
   for(let i=0;i<2;i++){
     const command=input("notice-turn");
+    acceptedIds.push(command.inputId);
     const reserved=await store.reserve(projectId,noticeSessionId,"user",command,grant(noticeSessionId,1),"");
     assert.deepEqual(reserved.record.source,{kind:"message",id:messageId,processingId});
     await store.accept(projectId,command.inputId,"notice-turn",`notice-item-${i}`);
   }
+  const exact=await store.acceptedForInputs(projectId,noticeSessionId,acceptedIds);
+  assert.deepEqual(new Set(exact.map(item=>item.inputId)),new Set(acceptedIds));
+  assert.equal((await store.acceptedForInputs(projectId,sessionId,acceptedIds)).length,0,
+    'the same project cannot lend a steer Item to another Session');
   const other=input("notice-turn");
   await store.reserve(projectId,noticeSessionId,"other",other,{...grant(noticeSessionId),senderActorId:"other"},"");
   assert.equal((await store.list(projectId,noticeSessionId,1,undefined,"user")).items.length,1);

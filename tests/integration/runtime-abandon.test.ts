@@ -7,6 +7,7 @@ import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { runner } from "node-pg-migrate";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
+import { withoutTaskTimingBeforeMigration } from "./legacy-task-timing.js";
 import type { Command, CommandResult, Principal, RuntimeBinding } from "@evoloop/contracts";
 
 
@@ -28,6 +29,8 @@ if (!url || !/\/evoloop_[a-z0-9_]*test$/.test(new URL(url).pathname)) {
 const schema = `el_runtime_abandon_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
 const uow = new PostgresUnitOfWork(pool);
+let legacySchema = true;
+withoutTaskTimingBeforeMigration(uow, () => legacySchema);
 const deps = {
   uow,
   clock: { now: () => new Date().toISOString() },
@@ -126,6 +129,7 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
   await pool.query("ALTER TABLE task_proposal DROP COLUMN acceptance_mode; ALTER TABLE delivery DROP COLUMN submitted_by_actor_id; ALTER TABLE document_revision DROP COLUMN organization_review");
   assert.equal((await pool.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_schema=$1 AND table_name='document_revision' AND column_name='organization_review'",[schema])).rows[0].n,0,"seed-only review column is absent before historical upgrade");
   await migrate(url,schema);
+  legacySchema = false;
   assert.equal((await workflow.getRuntimeRun(owner,projectId,eligible.runId)).executionProfile?.sandbox,"read-only");
   const beforeRunEvents = await workflow.listRuntimeEvents(owner, projectId, eligible.runId);
   const beforeSessionEvents = await workflow.listRuntimeSessionEvents(owner, projectId, eligible.sessionId);

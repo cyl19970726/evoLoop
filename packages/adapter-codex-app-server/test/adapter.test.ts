@@ -77,9 +77,6 @@ const fixture = resolve(import.meta.dirname, "fixture.mjs");
 const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", model:"gpt-6-sol", sandbox: "danger-full-access", approvalPolicy: "never" };
 const fullSpec:RuntimeSessionSpec={...spec};
 const restoreSpec: RuntimeSessionSpec = { ...spec };
-const connectorBindingId='123e4567-e89b-42d3-a456-426614174000';
-const connectorSpec:RuntimeSessionSpec={...spec,authorizationScope:`connector-receiver:${connectorBindingId}`,
-  sandbox:'read-only',approvalPolicy:'never'};
 const supportedVersions = ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1", "codex-cli 0.166.0-alpha.5.1", "codex-cli 0.166.0-alpha.6"] as const;
 const modernVersions = supportedVersions.slice(1);
 // Whole-repository parallel tests can delay fake-child startup. Keep each test's
@@ -247,89 +244,6 @@ for(const expectedVersion of supportedVersions){
     assert.equal((await adapter.resume(binding,fullSpec)).nativeThreadId,binding.nativeThreadId);
   });
 }
-
-test('alpha.6 creates only the exact restricted connector receiver and blocks its native Turn',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'connector-normal'],
-    expectedVersion:'codex-cli 0.166.0-alpha.6'});
-  t.after(()=>adapter.close());await adapter.open();
-  for(const invalid of [
-    {...connectorSpec,authorizationScope:'connector-receiver:other'},
-    {...connectorSpec,authorizationScope:'task:fixture'},
-    {...connectorSpec,sandbox:'workspace-write' as const},
-    {...connectorSpec,approvalPolicy:'on-request' as const},
-    {...connectorSpec,sandbox:'danger-full-access' as const},
-    {...connectorSpec,actorId:undefined},
-  ])await assert.rejects(()=>adapter.create(invalid),RuntimeProtocolError);
-  const binding=await adapter.create(connectorSpec);
-  assert.equal(binding.authorizationScope,connectorSpec.authorizationScope);
-  assert.equal(binding.resumeProfile?.sandbox,'read-only');
-  assert.equal(binding.resumeProfile?.approvalPolicy,'never');
-  await assert.rejects(()=>adapter.registerBinding({...binding,
-    resumeProfile:{...binding.resumeProfile!,sandbox:'danger-full-access'}}),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.qualifyConnectorReceiver({...binding,sessionId:'foreign-session'},
-    connectorBindingId),RuntimeProtocolError);
-  assert.equal((await adapter.resume(binding,connectorSpec)).nativeThreadId,binding.nativeThreadId);
-  assert.equal((await adapter.resume(binding,connectorSpec)).nativeThreadId,binding.nativeThreadId);
-  const admission=await adapter.qualifyConnectorReceiver(binding,connectorBindingId);
-  assert.equal(admission.available,false);
-  assert.match(admission.fingerprint??'',/^[a-f0-9]{64}$/);
-  await assert.rejects(()=>adapter.startConnectorTurn(binding,'message','op-1',connectorBindingId,
-    admission.fingerprint!),/shell disablement is not verified/);
-  await assert.rejects(()=>adapter.startConnectorTurn(binding,'message','op-1',connectorBindingId,
-    '0'.repeat(64)),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.startTurn(binding,'business','run-1'),RuntimeProtocolError);
-  await assert.rejects(()=>adapter.startConversationTurn(binding,'message','op-2'),RuntimeProtocolError);
-  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-  assert.equal((await adapter.qualifyConnectorReceiver(binding,'123e4567-e89b-42d3-a456-426614174001')).available,false);
-});
-
-test('restricted creation is unavailable on older pinned native protocols',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'connector-normal'],
-    expectedVersion:'codex-cli 0.166.0-alpha.5.1'});
-  t.after(()=>adapter.close());await adapter.open();
-  await assert.rejects(()=>adapter.create(connectorSpec),RuntimeProtocolError);
-});
-
-for(const mode of ['connector-wrong-sandbox','connector-wrong-network','connector-wrong-approval']){
-  test(`${mode} cannot register a restricted native creation`,async t=>{
-    const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
-      expectedVersion:'codex-cli 0.166.0-alpha.6'});
-    t.after(()=>adapter.close());await adapter.open();
-    await assert.rejects(()=>adapter.create(connectorSpec),RuntimeUnknownError);
-  });
-}
-
-test('restricted resume rejects native full-policy acknowledgement',async t=>{
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'connector-resume-wrong'],
-    expectedVersion:'codex-cli 0.166.0-alpha.6'});
-  t.after(()=>adapter.close());await adapter.open();
-  const binding=await adapter.create(connectorSpec);
-  await adapter.resume(binding,connectorSpec); // consume the same-connection thread/start proof
-  await assert.rejects(()=>adapter.resume(binding,connectorSpec),RuntimeUnknownError);
-});
-
-test('restricted receiver host declines shell tool and approval requests', {timeout:5000},async t=>{
-  let invoked=0;
-  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'connector-host-shell'],
-    expectedVersion:'codex-cli 0.166.0-alpha.6',
-    threadConfig:async()=>{invoked++;return {tools:{shell:true}};},
-    dynamicTools:async()=>{invoked++;return [{type:'function',name:'shell',description:'Shell',inputSchema:{type:'object'}}];},
-    decideApproval:async()=>{invoked++;return 'accept';},
-    callDynamicTool:async()=>{invoked++;return {contentItems:[],success:true};}});
-  t.after(()=>adapter.close());await adapter.open();
-  const binding=await adapter.create(connectorSpec);
-  const tool=new Promise<unknown>(resolveResult=>adapter.onEvent(event=>{
-    if(event.method==='fixture/toolDecision')resolveResult((event.params as {result:unknown}).result);
-  }));
-  const approval=new Promise<unknown>(resolveResult=>adapter.onEvent(event=>{
-    if(event.method==='fixture/approvalDecision')resolveResult((event.params as {decision:unknown}).decision);
-  }));
-  await adapter.qualifyConnectorReceiver(binding,connectorBindingId);
-  assert.equal((await tool as {success:boolean}).success,false);
-  assert.equal(await approval,'decline');
-  assert.equal(invoked,0);
-  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
-});
 
 for(const expectedVersion of modernVersions){
   test(`${expectedVersion} full Thread can receive an ordinary Turn`,async t=>{

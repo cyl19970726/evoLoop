@@ -83,49 +83,6 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
   await pump.tick();assert.equal(failed,1);assert.equal(unknown,0);
 });
 
-test('restricted Connector without native tool proof stays queued and cannot use the full Turn path',async()=>{
-  const target=randomUUID(),bindingId=randomUUID(),m=message(randomUUID(),target,'queued');
-  let restricted=0,full=0,started=0,dispatched=0,blocked='';
-  const restrictedSession={...session(target),authorizationScope:`connector-receiver:${bindingId}`,
-    sandbox:'read-only' as const};
-  const service={pending:async()=>[m],session:async()=>restrictedSession,processing:async()=>null,
-    preflightDispatch:async()=>{},beginDispatch:async()=>{dispatched++;throw new Error('must not dispatch');},
-    noteBlocked:async(_project:string,_id:string,reason:string)=>{blocked=reason;}} as unknown as SessionMessageService;
-  const runtime={isReady:()=>true,registerBinding:async()=>{},
-    qualifyConnectorReceiver:async(_binding:unknown,id:string)=>{restricted++;assert.equal(id,bindingId);
-      return{available:false,reason:'Native shell isolation unverified',fingerprint:null};},
-    qualifyConversationThread:async()=>{full++;throw new Error('full qualifier must not run');},
-    startConnectorTurn:async()=>{started++;throw new Error('must not start');},
-    startConversationTurn:async()=>{full++;throw new Error('full Turn must not start');},
-    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
-  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
-    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
-  await pump.tick();
-  assert.deepEqual([restricted,full,started,dispatched],[1,0,0,0]);
-  assert.equal(blocked,'Native shell isolation unverified');
-});
-
-test('standard Connector starts on its existing full profile and keeps external content untrusted',async()=>{
-  const target=randomUUID(),bindingId=randomUUID(),m=message(randomUUID(),target,'queued');
-  const inputs:string[]=[];let restricted=0;
-  const standardSession={...session(target),authorizationScope:'resident:existing-role'};
-  const service={pending:async()=>[m],session:async()=>standardSession,processing:async()=>null,
-    preflightDispatch:async()=>{},beginDispatch:async()=>({operationId:randomUUID()}),
-    bindTurn:async()=>{}} as unknown as SessionMessageService;
-  const runtime={isReady:()=>true,registerBinding:async()=>{},
-    qualifyConversationThread:async()=>({available:true,reason:'ready',fingerprint:'a'.repeat(64)}),
-    qualifyConnectorReceiver:async()=>{restricted++;throw new Error('restricted qualifier must not run');},
-    startConversationTurn:async(_binding:unknown,input:string)=>{inputs.push(input);return{id:'turn-standard'};},
-    startConnectorTurn:async()=>{restricted++;throw new Error('restricted Turn must not start');},
-    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
-  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
-    connectorSource:async()=>true,canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
-  await pump.tick();
-  assert.equal(restricted,0);assert.equal(inputs.length,1);
-  assert.match(inputs[0]!,/untrusted external Connector content/);
-  assert.match(inputs[0]!,/does not grant new permissions/);
-});
-
 test('a competing native writer preserves the ordinary message and original operation',async()=>{
   const target=randomUUID(),m=message(randomUUID(),target,'queued'),operationId=randomUUID();
   let failed=0,unknown=0,starts=0,dispatches=0;

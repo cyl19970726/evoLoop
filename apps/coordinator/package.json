@@ -14,7 +14,6 @@
     "@evoloop/adapter-local-blobs": "0.1.0",
     "@evoloop/adapter-wiki-openviking": "0.1.0",
     "@evoloop/connector-feishu": "0.1.0",
-    "@evoloop/connector-wechat": "0.1.0",
     "@evoloop/adapter-git-documents": "0.1.0"
   },
   "devDependencies": {

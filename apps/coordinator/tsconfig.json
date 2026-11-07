@@ -31,9 +31,6 @@
       "path": "../../packages/connector-feishu"
     },
     {
-      "path": "../../packages/connector-wechat"
-    },
-    {
       "path": "../../packages/adapter-git-documents"
     }
   ]

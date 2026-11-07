@@ -6,6 +6,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./scheduling": "./dist/scheduling.js",
+    "./task-timing": "./dist/task-timing.js",
     "./documents": "./dist/documents.js",
     "./roles": "./dist/roles.js",
     "./delivery": "./dist/delivery.js",

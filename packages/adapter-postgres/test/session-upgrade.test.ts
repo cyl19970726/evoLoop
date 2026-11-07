@@ -360,7 +360,7 @@ test('036 upgrades an idle legacy Session by immutable same-model revision witho
     approval_policy,state,version,operation_id,actor_id,created_at,updated_at)
     VALUES($1,$2,$3,'/legacy','project','legacy-model','read-only','on-request','reserved',1,$4,'legacy-author',now(),now())`;
   await assert.rejects(client.query(rejectedInsert,[projectId,randomUUID(),roleId,randomUUID()]),
-    /full execution or exact restricted connector receiver scope/);
+    /full-access execution policy/);
   await assert.rejects(client.query(`UPDATE runtime_session SET sandbox='danger-full-access',approval_policy='never',
     version=version+1 WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]),
     /adopted immutable profile revision/);

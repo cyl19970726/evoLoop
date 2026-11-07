@@ -53,27 +53,6 @@ test("work attention CLI entry forwards filters and cursor while rejecting inval
     assert.equal(urls.length, commands.length, "invalid filters must not reach the API");
   } finally { fetch.mock.restore(); }
 });
-test("connector status CLI reads the fixed route and bounded page without creating a subscription", async () => {
-  const project = "00000000-0000-4000-8000-000000000001";
-  const binding = "00000000-0000-4000-8000-000000000002";
-  const urls: string[] = [];
-  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
-    urls.push(String(url)); return new Response(JSON.stringify({ state: "disabled", items: [], nextCursor: null }));
-  });
-  try {
-    const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project };
-    assert.equal((await run(["work", "connectors", "--limit", "2", "--cursor", binding], env)).code, 0);
-    assert.equal((await run(["work", "connector", binding], env)).code, 0);
-    assert.equal((await run(["work", "connector-operation", binding], env)).code, 0);
-    assert.deepEqual(urls.map(url => new URL(url).pathname + new URL(url).search), [
-      `/api/projects/${project}/message-connectors/routes?limit=2&cursor=${binding}`,
-      `/api/projects/${project}/message-connectors/routes/${binding}`,
-      `/api/projects/${project}/message-connectors/operations/${binding}`,
-    ]);
-    assert.equal((await run(["work", "connector", "../other"], env)).code, 2);
-    assert.equal(urls.length, 3);
-  } finally { fetch.mock.restore(); }
-});
 test("an unauthenticated fresh Agent can discover help, IDs, exact command schemas and named routes", async () => {
   const help = await run(["help"]); assert.equal(help.code, 0); assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("context ")));
   assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("receipts retry ")));
@@ -317,11 +296,11 @@ test("the CLI entry point reads resident queue attempts and preserves ordinary r
 });
 
 
-test("CLI discovers full default and the restricted profile option for core authorization",async()=>{
+test("CLI discovers the single full execution policy and rejects new restricted Sessions",async()=>{
   const discovery=await run(["command","schema","runtime.session.reserve"]);
   assert.equal(discovery.code,0);
   const schema=JSON.parse(discovery.stdout);
-  assert.deepEqual(schema.properties.sandbox.enum,["danger-full-access","read-only"]);
+  assert.equal(schema.properties.sandbox.const,"danger-full-access");
   assert.equal(schema.properties.sandbox.default,"danger-full-access");
   assert.equal(schema.properties.approvalPolicy.const,"never");
   const input={type:"runtime.session.reserve",projectId:"00000000-0000-4000-8000-000000000001",
@@ -332,11 +311,7 @@ test("CLI discovers full default and the restricted profile option for core auth
   if(parsed.type==="runtime.session.reserve"){
     assert.equal(parsed.sandbox,"danger-full-access");assert.equal(parsed.approvalPolicy,"never");
   }
-  assert.equal(commandSchema.safeParse({...input,sandbox:"read-only"}).success,true);
-  assert.equal(commandSchema.safeParse({...input,sandbox:"workspace-write"}).success,false);
-  assert.equal(commandSchema.safeParse({...input,sandbox:"read-only",
-    authorizationScope:"connector-receiver:00000000-0000-4000-8000-000000000004"}).success,true);
-  // Scope and grant pairing are checked by core and the server, beyond this
-  // field-level CLI schema; CLI parsing alone does not authorize a Session.
+  for(const sandbox of ["read-only","workspace-write"])
+    assert.equal(commandSchema.safeParse({...input,sandbox}).success,false);
   assert.equal(commandSchema.safeParse({...input,approvalPolicy:"on-request"}).success,false);
 });

@@ -143,28 +143,15 @@ export class SessionMessageService {
     const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
     if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
+    if(session.sandbox!=='danger-full-access'||session.approvalPolicy!=='never')
+      throw new DomainError('FULL_EXECUTION_REQUIRED','Upgrade the Session execution profile before conversation execution');
     const grant=await this.deps.grantFor(item,session);
     if(!grant||!grant.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||
       grant.senderActorId!==item.senderActorId||grant.receiverRoleId!==session.roleId||grant.cwd!==session.cwd||
       !grant.receiverActorId?.trim()||grant.receiverActorId===item.senderActorId||
-      !Number.isInteger(grant.maxTurns)||grant.maxTurns<1)
+      (grant.maxTurns!==undefined&&(!Number.isSafeInteger(grant.maxTurns)||grant.maxTurns<1)))
       throw new DomainError('MESSAGE_GRANT_MISSING','exact ordinary conversation grant is unavailable');
-    const full=session.sandbox==='danger-full-access'&&session.approvalPolicy==='never'&&!grant.connector;
-    const standard=grant.connector?.mode==='standard'&&session.sandbox==='danger-full-access'&&
-      session.approvalPolicy==='never'&&!!session.authorizationScope&&
-      !session.authorizationScope.startsWith('connector-receiver:')&&
-      /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
-    const restricted=grant.connector?.mode==='restricted'&&session.sandbox==='read-only'&&session.approvalPolicy==='never'&&
-      session.authorizationScope===`connector-receiver:${grant.connector.bindingId}`&&
-      /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
-    if(!full&&!standard&&!restricted)
-      throw new DomainError('EXECUTION_PROFILE_NOT_ALLOWED','Message requires its exact full, standard Connector or restricted Connector execution grant');
-    if(standard||restricted){
-      if(!store.assertCurrentConnectorSource)
-        throw new DomainError('CONNECTOR_SOURCE_UNAVAILABLE','Connector source verification is unavailable');
-      await store.assertCurrentConnectorSource(item.id,grant.connector!);
-    }
-    if(await store.countSessionMessageTurns(session.id,item.senderActorId)>=grant.maxTurns)
+    if(grant.maxTurns!==undefined&&await store.countSessionMessageTurns(session.id,item.senderActorId)>=grant.maxTurns)
       throw new DomainError('MESSAGE_BUDGET_EXHAUSTED','ordinary conversation grant is exhausted');
     return{item,session,grant};
   }

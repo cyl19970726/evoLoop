@@ -29,6 +29,14 @@ export class PgDirectInputs {
     const r=await this.pool.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2",[projectId,inputId]);
     return r.rows[0]?map(r.rows[0]):null;
   }
+  /** Read only, scoped lookup for native Items that carry an exact client ID. */
+  async acceptedForInputs(projectId:string,sessionId:string,inputIds:string[]):Promise<DirectInputRecord[]>{
+    if(!inputIds.length)return [];
+    const r=await this.pool.query(`SELECT * FROM session_direct_input WHERE project_id=$1 AND session_id=$2
+      AND input_id=ANY($3::uuid[]) AND mode='steer' AND state='accepted'
+      AND actual_turn_id IS NOT NULL`,[projectId,sessionId,inputIds]);
+    return r.rows.map(map);
+  }
   async hasPrimary(projectId:string,sessionId:string):Promise<boolean>{
     const r=await this.pool.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
       AND state IN ('requested','dispatching','running','unknown')) OR EXISTS(
@@ -82,7 +90,8 @@ export class PgDirectInputs {
         throw new DomainError("SESSION_NOT_READY","Owned full-profile Session is unavailable");
       if(!grant.enabled||grant.projectId!==projectId||grant.sessionId!==sessionId||
         grant.senderActorId!==actorId||grant.receiverRoleId!==session.role_id||grant.cwd!==session.cwd||
-        !grant.receiverActorId||grant.receiverActorId===actorId||!Number.isInteger(grant.maxTurns)||grant.maxTurns<1)
+        !grant.receiverActorId||grant.receiverActorId===actorId||
+        (grant.maxTurns!==undefined&&(!Number.isSafeInteger(grant.maxTurns)||grant.maxTurns<1)))
         throw new DomainError("DIRECT_GRANT_MISSING","Exact direct input grant is unavailable");
       const runs=(await client.query(`SELECT run_id,state,native_turn_id FROM runtime_run WHERE project_id=$1 AND session_id=$2
         AND state IN ('requested','dispatching','running','unknown')`,[projectId,sessionId])).rows;
@@ -107,7 +116,8 @@ export class PgDirectInputs {
           JOIN session_message m ON m.project_id=p.project_id AND m.message_id=p.message_id
           WHERE p.project_id=$1 AND p.session_id=$2 AND m.sender_actor_id=$3
           AND NOT (p.state='failed' AND p.native_turn_id IS NULL)`,[projectId,sessionId,actorId])).rows[0].n;
-        if(count>=grant.maxTurns)throw new DomainError("MESSAGE_BUDGET_EXHAUSTED","Direct start Turn budget is exhausted");
+        if(grant.maxTurns!==undefined&&count>=grant.maxTurns)
+          throw new DomainError("MESSAGE_BUDGET_EXHAUSTED","Direct start Turn budget is exhausted");
         if(!/^[a-f0-9]{64}$/.test(fingerprint))throw new DomainError("NATIVE_ADMISSION_MISSING","Fresh native qualification is required");
         mode="start";source={kind:"message",id:command.inputId,processingId:randomUUID()};
         await client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,

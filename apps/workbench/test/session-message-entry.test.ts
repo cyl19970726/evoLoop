@@ -59,3 +59,14 @@ test("external Session keeps manual handoff wording and uses its observed reason
   assert.doesNotMatch(revoked.introduction, /需人工转交/);
   assert.equal(revoked.executionReason, "已撤销的连接不可人工转交。");
 });
+
+test("ordinary message usage distinguishes unlimited and explicit limits",()=>{
+  const execution={state:"unverified" as const,reasonCode:"NATIVE_EXECUTION_UNVERIFIED",reason:"待核验",observedAt};
+  assert.equal(sessionMessageEntry("owned",{...base,ordinaryExecution:{...execution,
+    messageBudget:{used:1201,limit:null,remaining:null}}}).budgetLabel,
+    "普通回复已用 1201 次 · 不限累计次数");
+  assert.equal(sessionMessageEntry("owned",{...base,ordinaryExecution:{...execution,
+    messageBudget:{used:60,limit:200,remaining:140}}}).budgetLabel,
+    "普通回复已用 60 / 200 次 · 剩余 140 次");
+  assert.equal(sessionMessageEntry("owned",base).budgetLabel,null);
+});

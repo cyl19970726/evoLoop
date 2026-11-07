@@ -13,14 +13,13 @@ import { PgSessionObservation } from "./session-observation.js";
 import { PgAllocationRelations } from "./allocation-relations.js";
 import { PgRoleQueries } from "./roles.js";
 import { PgSchedulingQueries } from "./scheduling-queries.js";
+import { PgTaskTimingQueries } from "./task-timing.js";
 import { scheduledSourceFacts } from "./schedule-source.js";
 import { verifiedOrchestrationSource } from "./orchestration.js";
 import { PgDocumentPayloadStore } from "./documents.js";
 import { PgDiscussionQueries } from "./discussions.js";
 import { PgEvaluationStore } from "./evaluation.js";
 import { PgTaskAttention } from "./task-attention.js";
-export { PgConnectorRoutes, PgConnectorMessageLinks } from "./message-connectors.js";
-export { PgConnectorDeliveryDecisions } from "./connector-delivery-decisions.js";
 export { PgTaskAttention, taskAttentionNoticeCurrent, disposeStaleTaskAttentionNotice,
   scanTaskAttentionCandidates } from "./task-attention.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
@@ -116,6 +115,7 @@ function page<T>(rows: Row[], limit: number, map: (row: Row) => T, id: (row: Row
 
 class PgReader implements Reader {
   getPreTurnReviewDecision(id:string){return this.runtime.getPreTurnReviewDecision(id);}
+  readonly taskTiming: PgTaskTimingQueries;
   readonly attention: PgTaskAttention;
   sessionObservation(scope: string) { return new PgSessionObservation(this.client, this.projectId, scope); }
   allocationRelations(scope: string) { return new PgAllocationRelations(this.client, this.projectId, scope); }
@@ -146,6 +146,7 @@ class PgReader implements Reader {
     this.roles = new PgRoleQueries(client, projectId);
     this.residents = new PgResidentHosts(client, projectId);
     this.scheduling = new PgSchedulingQueries(client, projectId);
+    this.taskTiming = new PgTaskTimingQueries(client, projectId);
     this.payloads = new PgDocumentPayloadStore(client, projectId);
     this.discussions = new PgDiscussionQueries(client, projectId);
     this.evaluations = new PgEvaluationStore(client, projectId);

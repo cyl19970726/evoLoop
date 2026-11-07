@@ -20,9 +20,6 @@ import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
 import { registerDirectInputRoutes } from "./direct-input/routes.js";
 import type { DirectInputService } from "./direct-input/service.js";
-import { registerConnectorRouteReads, type ConnectorRouteReader, type ConnectorDeliveryReader,
-  type ConnectorSourceReader } from "./message-connectors/routes.js";
-import type { VersionedConnectorRoute } from "@evoloop/contracts/message-connectors";
 import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
@@ -60,10 +57,6 @@ export async function buildServer(options: {
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
   directInput?: DirectInputService;
-  connectorRoutes?: ConnectorRouteReader;
-  connectorDeliveries?: ConnectorDeliveryReader;
-  connectorSources?: ConnectorSourceReader;
-  canActivateConnectorRoute?: (route:VersionedConnectorRoute)=>Promise<boolean>;
   sessionTimeline?: SessionTimelineService;
   nativeInputs?: NativeInputBridge;
   nativeObservation?: NativeObservationBridge;
@@ -463,9 +456,6 @@ export async function buildServer(options: {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });
   if (options.directInput) registerDirectInputRoutes(app, options.directInput);
-  if (options.connectorRoutes) registerConnectorRouteReads(app, options.service, options.connectorRoutes,
-    options.canWrite ?? (() => true), options.connectorDeliveries, options.connectorSources,
-    options.canActivateConnectorRoute);
   app.get("/api/projects/:projectId/session-messages/:id/manual-stop-preview", async request => {
     const {projectId,id}=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
     const principal=who(request.principal);

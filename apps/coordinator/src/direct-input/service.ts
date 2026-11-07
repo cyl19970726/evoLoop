@@ -66,7 +66,8 @@ export class DirectInputService {
       }catch{return result(false,null,null,"NATIVE_TURN_UNKNOWN");}
     }
     if(!grant.canStart)return result(false,null,null,"DIRECT_START_DISABLED");
-    if(state.used>=grant.maxTurns)return result(false,null,null,"MESSAGE_BUDGET_EXHAUSTED");
+    if(grant.maxTurns!==undefined&&state.used>=grant.maxTurns)
+      return result(false,null,null,"MESSAGE_BUDGET_EXHAUSTED");
     try{
       await runtime.registerBinding(binding);
       const native=await runtime.qualifyConversationThread(binding);
