@@ -28,6 +28,7 @@ import { PgTaskTimingStore } from "@evoloop/adapter-postgres/task-timing";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
+import { CompactionMaintenance } from "./runtime/compaction.js";
 import { supportsFixedHandoff, supportsMaterialCli } from "./runtime/material-cli-capability.js";
 import { PreflightError } from "./runtime/preflight-report.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -599,6 +600,7 @@ if (runner) {
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
+  ...(runner ? {compaction:new CompactionMaintenance(pool,runner)} : {}),
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
