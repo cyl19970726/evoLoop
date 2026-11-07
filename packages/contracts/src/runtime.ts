@@ -249,7 +249,7 @@ export interface RuntimePort {
   resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
   inspect(binding: RuntimeBinding): Promise<unknown>;
   /** Only the existing owner connection may issue this once for a durable operation. */
-  compactThread?(binding: RuntimeBinding, beforeSend: (requestId: number) => Promise<void>): Promise<string | null>;
+  compactThread?(binding: RuntimeBinding, baselineTurnId: string, beforeSend: (requestId: number) => Promise<void>): Promise<string | null>;
   observeCompaction?(binding: RuntimeBinding, targetTurnId?: string): Promise<RuntimeCompactionObservation>;
   /** Read the exact owned Thread's native title; null means no title is set. */
   readThreadName?(binding: RuntimeBinding): Promise<string | null>;

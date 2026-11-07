@@ -29,6 +29,30 @@ test('compaction readback requires the exact persisted item entry, not a Turn su
   assert.equal(observed.compactionItemCompleted,true);
 });
 
+test('failed owner Thread is reattached with its fixed profile before compaction', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  const binding={sessionId:'session',roleId:'role',projectId:'project',nativeThreadId:'thread',
+    nativeSessionId:'thread',cwd:'/tmp/compact',authorizationScope:'project',owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
+  let latest='old-turn',resumed=0,sent=0;
+  internals.owned=()=>{};
+  internals.resumeBinding=async(_binding:unknown,spec:{model:string;reasoningEffort:string})=>{
+    assert.equal(spec.model,'gpt-6-astra');assert.equal(spec.reasoningEffort,'max');resumed++;
+  };
+  internals.inspect=async()=>({thread:{id:'thread',status:{type:'systemError'},model:'gpt-6-astra',reasoningEffort:'max'}});
+  internals.request=async(method:string)=>{
+    if(method==='thread/turns/list')return {data:[{id:latest,status:'failed',completedAt:1700000001}]};
+    if(method==='thread/compact/start'){sent++;throw new RuntimeServerError(method,17,-32000,'controlled refusal')}
+    assert.fail(method);
+  };
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{}),RuntimeServerError);
+  assert.equal(resumed,1);assert.equal(sent,1);
+  latest='different-turn';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{}),RuntimeProtocolError);
+  assert.equal(sent,1,'a changed native history cannot consume the compaction request');
+});
+
 import { mapWorkItem } from "../src/work-trace.js";
 import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 

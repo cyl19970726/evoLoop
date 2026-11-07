@@ -194,9 +194,9 @@ export class RuntimeRunner {
     if(!this.runtime.observeCompaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction observation unsupported');
     return this.runtime.observeCompaction(binding,targetTurnId);
   }
-  async compactThread(binding:RuntimeBinding,beforeSend:(requestId:number)=>Promise<void>):Promise<string|null>{
+  async compactThread(binding:RuntimeBinding,baselineTurnId:string,beforeSend:(requestId:number)=>Promise<void>):Promise<string|null>{
     if(!this.runtime.compactThread)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction unsupported');
-    return this.runtime.compactThread(binding,beforeSend);
+    return this.runtime.compactThread(binding,baselineTurnId,beforeSend);
   }
   /** Read-only capability check, never a replacement for execute's transactional authorization/version checks. */
   async preflightExecutionProfileRevision(principal:Principal,

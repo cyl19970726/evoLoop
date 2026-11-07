@@ -45,7 +45,7 @@ const observation:RuntimeCompactionObservation={threadId,threadStatus:'idle',mod
   latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
   compactionItemCompleted:false,tokenUsage:null};
 const runner={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
-  compactThread:async(_binding:RuntimeBinding,beforeSend:(id:number)=>Promise<void>)=>{
+  compactThread:async(_binding:RuntimeBinding,_baselineTurnId:string,beforeSend:(id:number)=>Promise<void>)=>{
     await beforeSend(17);throw new RuntimeUnknownError('thread/compact/start',17,'controlled lost reply');
   }} as unknown as RuntimeRunner;
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},

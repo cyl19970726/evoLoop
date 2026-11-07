@@ -61,7 +61,10 @@ export class CompactionMaintenance {
     const binding=await this.runner.compactionBinding(principal,projectId,sessionId,
       input.expectedSessionVersion,input.threadId);
     const before=await this.runner.observeCompaction(binding);
-    if(before.threadStatus!=='idle'||before.model!==binding.resumeProfile?.model||
+    if(!['idle','systemError','notLoaded'].includes(before.threadStatus)||
+      before.threadStatus!=='idle'&&
+        (before.latestTurnStatus!=='failed'||!before.latestTurnCompletedAtUtc)||
+      before.model!==binding.resumeProfile?.model||
       before.reasoningEffort!==binding.resumeProfile?.reasoningEffort||
       before.latestTurnId&&!before.latestTurnCompletedAtUtc)
       throw new DomainError('COMPACTION_NATIVE_BUSY','Owned Thread is not idle with settled history and the exact profile');
@@ -132,7 +135,7 @@ export class CompactionMaintenance {
       RETURNING operation_id`,[projectId,input.operationId]);
     if(claim.rowCount!==1)return this.read(principal,projectId,input.operationId);
     try{
-      const turnId=await this.runner.compactThread(binding,async requestId=>{
+      const turnId=await this.runner.compactThread(binding,saved.baseline_turn_id!,async requestId=>{
         await this.pool.query(`UPDATE session_compaction SET native_request_id=$3,updated_at=now()
           WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,[projectId,input.operationId,requestId]);
       });

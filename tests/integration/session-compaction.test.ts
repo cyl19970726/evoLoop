@@ -41,13 +41,14 @@ test('durable compaction uses one native request and never opens a blocked gate 
     const binding:RuntimeBinding={projectId,sessionId,roleId:'role',cwd:'/tmp/compact-test',
       authorizationScope:'project',nativeThreadId:threadId,nativeSessionId:'native',owner:'evoloop-codex-app-server',
       resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}};
-    const before:RuntimeCompactionObservation={threadId,threadStatus:'idle',model:'gpt-6-astra',
+    const before:RuntimeCompactionObservation={threadId,threadStatus:'systemError',model:'gpt-6-astra',
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
     let observation=before,starts=0;
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
-      compactThread:async(_binding:RuntimeBinding,beforeSend:(id:number)=>Promise<void>)=>{
+      compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>)=>{
+        assert.equal(baselineTurnId,'old-turn');
         starts++;await beforeSend(17);const lost=new RuntimeUnknownError('thread/compact/start',17,'lost response');
         lost.observedTurnId='compact-turn';throw lost;
       }} as unknown as RuntimeRunner;
@@ -85,7 +86,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
     observation={...observation,latestTurnId:'compact-turn',compactionItemId:null};
     assert.equal((await service.reconcile(actor,projectId,operationId)).state,'unknown',
       'outer Turn completion without a compaction Item is insufficient');
-    observation={...before,latestTurnId:'compact-turn',latestTurnStatus:'completed',
+    observation={...before,threadStatus:'idle',latestTurnId:'compact-turn',latestTurnStatus:'completed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:'compact-item',
       compactionItemCompleted:true,tokenUsage:{inputTokens:300000,outputTokens:101}};
     const settled=await service.reconcile(actor,projectId,operationId);
