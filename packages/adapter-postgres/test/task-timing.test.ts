@@ -136,7 +136,9 @@ test("this-only time and prose edits keep future template and audit previous slo
     AND dr.document_id=t.content_document_id AND dr.revision_id=t.content_revision_id
     WHERE t.project_id=$1 AND t.task_id=$2`,[projectId,b.taskId]);
   assert.equal(body.rows[0].body,"Original prompt");
-  assert.equal((await queries(q=>q.get(a)))?.nextAtUtc,second);
+  const rootView=await queries(q=>q.get(a));
+  assert.equal(rootView?.nextTaskId,b.taskId);
+  assert.equal(rootView?.nextAtUtc,third);
 });
 
 test("future template revision, stop and latest outage are bounded",async()=>{
@@ -158,6 +160,9 @@ test("future template revision, stop and latest outage are bounded",async()=>{
   const stopped=await queries(q=>q.stop({type:"task.timing.stop",projectId,operationId:randomUUID(),
     taskId:a,expectedTimingVersion:2,reason:"End series"},actorId,late));
   assert.equal(stopped.seriesState,"stopped");
+  assert.equal(stopped.nextTaskId,b.taskId);
+  assert.equal(stopped.nextAtUtc,null);
+  assert.equal((await queries(q=>q.get(b.taskId)))?.nextAtUtc,null);
   assert.equal((await tick(a).tick(projectId,"2026-11-14T00:00:00.000Z",actorId,roleId))
     .filter(item=>item.seriesId===revised.seriesId).length,0);
 });
@@ -171,6 +176,19 @@ test("once uses the root Task even when late, without making a copy",async()=>{
   const view=await queries(q=>q.get(a));
   assert.equal(view?.nextAtUtc,null);
   assert.equal(view?.occurrences.length,1);
+});
+
+test("Role timing tick handles newly created series without inheriting another actor's authority",async()=>{
+  const own=await task("Ordinary daily","Own prompt");
+  const other=await task("Another actor daily","Other prompt");
+  await queries(q=>q.create(own,timing(first),actorId,"2026-11-06T00:00:00.000Z"));
+  await queries(q=>q.create(other,timing(first),"other-writer","2026-11-06T00:00:00.000Z"));
+  const store=new PgTaskTimingStore(pool);
+  assert.deepEqual(await store.tick(projectId,first,"other-writer",randomUUID(),"task-timing:*"),[]);
+  const due=await store.tick(projectId,first,actorId,roleId,"task-timing:*");
+  assert.deepEqual(due.map(item=>item.taskId),[own]);
+  assert.equal((await queries(q=>q.get(other)))?.occurrences.length,1);
+  assert.deepEqual(await store.tick(projectId,first,actorId,roleId,"task-timing:*"),[]);
 });
 
 test("this and future changes current prose and later copy, retaining the old Task revision",async()=>{

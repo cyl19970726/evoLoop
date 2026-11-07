@@ -20,7 +20,7 @@ import type { TaskAttentionItem } from "@evoloop/contracts";
 import { request } from "../api";
 import { latestProgressPresentation, taskType } from "./taskWorkspacePresentation";
 import { timingDate, timingDuration, timingStageLabel, timingWaitingFor } from "./LeaderTaskFacts";
-import { formatScheduled, repeatLabel } from "./taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 import {
   appendLeaderWorkPage, leaderPhaseLabel, leaderSessionDisplayName, leaderWorkItemPresentation,
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
@@ -659,7 +659,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
             {cognition && <>判断接续记录 · <a href={href(projectId, "task", t.id)}>查看来源</a></>}
             {!cognition && t.legacyDecision && legacyDecisionLabel(t.legacyDecision)}</small>
           {attentionCount > 0 && <div className="task-attention-row"><a className="task-attention-list-link" href={`${taskLink}${taskLink.includes("?") ? "&" : "?"}tab=overview&section=attention`}>{attentionCount} 项待关注</a></div>}
-          {taskTiming && <small>约定执行 {formatScheduled(taskTiming.executeAtUtc, taskTiming.timezone)} · {repeatLabel(taskTiming.repeat)}{taskTiming.nextAtUtc ? ` · 下次 ${formatScheduled(taskTiming.nextAtUtc, taskTiming.timezone)}` : ""}</small>}
+          {taskTiming && <small>约定执行 {formatScheduled(taskTiming.executeAtUtc, taskTiming.timezone)} · {repeatLabel(taskTiming.repeat)} · {nextTimingLabel(taskTiming)}</small>}
           {taskTiming?.repeat === "daily" && <small>同系列最近 {taskTiming.occurrences.length} 份{latestSeriesTask && <> · 最新 <a href={href(projectId, "task", latestSeriesTask.taskId)}>{states[latestSeriesTask.state]}任务</a></>}{latestFinishedSeriesTask ? <> · <a href={href(projectId, "task", latestFinishedSeriesTask.taskId)}>查看最近已完成任务的结果</a></> : " · 尚无已完成结果"}{taskTiming.waitingReason && ` · 等待：${taskTiming.waitingReason}`}</small>}
           {taskTimingReads?.errors[t.id] && <small title={taskTimingReads.errors[t.id]}>执行时间暂未读回</small>}
           {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}

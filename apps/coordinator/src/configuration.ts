@@ -67,7 +67,11 @@ const integrationSchema = z.strictObject({
     enabled: z.boolean(), baseUrl: z.url(), manifestRoot: absolute, maintainerId: z.string().min(1).max(100), projectIds: z.array(z.uuid()).max(200),
   }).optional(),
   scheduling: z.strictObject({
-    enabled: z.boolean(), grants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), scopeId: z.string().min(1).max(4000), roleId: z.string().min(1).max(4000) })).max(200),
+    enabled: z.boolean(), grants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), scopeId: z.string().min(1).max(4000).refine(value => value !== "task-timing:*"), roleId: z.string().min(1).max(4000) })).max(200),
+    /** Create and continue ordinary daily Task series for this exact project, actor and Role. */
+    taskTimingGrants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), roleId: z.uuid() }))
+      .max(200).refine(values => new Set(values.map(value => `${value.projectId}:${value.actorId}:${value.roleId}`)).size === values.length,
+        "Task timing grants must be unique per project, actor and Role").default([]),
   }).optional(),
   residentQueue: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
@@ -136,6 +140,16 @@ const integrationSchema = z.strictObject({
   }).optional(),
 });
 type EngineeringActionGrant=NonNullable<z.infer<typeof integrationSchema>["residentQueue"]>["actionGrants"][number];
+type SchedulingConfiguration = NonNullable<z.infer<typeof integrationSchema>["scheduling"]>;
+export function hasTaskTimingGrant(configuration: SchedulingConfiguration | undefined,
+  projectId: string, actorId: string, roleId: string, scopeId: string): boolean {
+  if (!configuration?.enabled || !scopeId.startsWith("task-timing:") ||
+    !z.uuid().safeParse(scopeId.slice("task-timing:".length)).success) return false;
+  return configuration.grants.some(grant => grant.projectId === projectId && grant.actorId === actorId &&
+    grant.roleId === roleId && grant.scopeId === scopeId) ||
+    configuration.taskTimingGrants.some(grant => grant.projectId === projectId &&
+      grant.actorId === actorId && grant.roleId === roleId);
+}
 export type MaterialCliBinding = NonNullable<z.infer<typeof integrationSchema>["runtime"]>["materialCli"][number];
 export function selectMaterialCli(entries: MaterialCliBinding[], projectId: string, sessionId: string,
   sessionActorId: string, taskId?: string, roleId?: string): MaterialCliBinding | null {
