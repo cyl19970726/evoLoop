@@ -51,6 +51,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   let denyNativeHistoryB = false;
   let holdMessagePage = false, messagePageHeld = false, releaseMessagePage: (() => void) | undefined;
   let directEnabled = false, directPostCount = 0;
+  let directPostMode: "lost-reply" | "server-error" | "invalid-input" = "lost-reply";
   let directReceipt: Record<string, unknown> | null = null;
   const nativeCurrent = Array.from({ length: 25 }, (_, index) => timelineAssistant(`current-${index}`, `当前会话内容 ${index}`, {
     turnId: `turn-${index}`, nativeItemId: `native-${index}`, occurredAt: new Date(Date.parse(stamp) + index * 1000).toISOString(),
@@ -70,13 +71,20 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
           reasonCode: directEnabled ? "READY_TO_START" : "DIRECT_GRANT_MISSING", observedAt: stamp };
       } else if (url.pathname === `${directBase}/direct-inputs` && req.method === "POST") {
         directPostCount++;
-        const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
-        const command = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        directReceipt = { projectId, sessionId, inputId: command.inputId, operationId: command.operationId,
-          actorId: "reader", mode: "start", source: { kind: "message", id: command.inputId, processingId: "fixture-processing" },
-          expectedTurnId: null, actualTurnId: null, nativeItemId: null, state: "unknown", reason: "lost acknowledgement",
-          version: 2, createdAt: stamp, updatedAt: stamp };
-        res.writeHead(200, { "content-type": "application/json" }); res.end("{"); return;
+        if (directPostMode !== "lost-reply") {
+          status = directPostMode === "server-error" ? 503 : 400;
+          value = directPostMode === "server-error"
+            ? { code: "SERVICE_UNAVAILABLE", message: "result may have committed" }
+            : { code: "INVALID_INPUT", message: "request rejected before reservation" };
+        } else {
+          const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
+          const command = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          directReceipt = { projectId, sessionId, inputId: command.inputId, operationId: command.operationId,
+            actorId: "reader", mode: "start", source: { kind: "message", id: command.inputId, processingId: "fixture-processing" },
+            expectedTurnId: null, actualTurnId: null, nativeItemId: null, state: "unknown", reason: "lost acknowledgement",
+            version: 2, createdAt: stamp, updatedAt: stamp };
+          res.writeHead(200, { "content-type": "application/json" }); res.end("{"); return;
+        }
       } else if (url.pathname.startsWith(`${directBase}/direct-inputs/`)) {
         if (!directReceipt || !url.pathname.includes(String(directReceipt.inputId))) { status = 404; value = { message: "Not found" }; }
         else {
@@ -215,6 +223,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     }
     if (url.pathname === "/__fixture/update") { updated = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/direct-enable") { directEnabled = true; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/direct-server-error") { directPostMode = "server-error"; res.end("ok"); return; }
+    if (url.pathname === "/__fixture/direct-invalid-input") { directPostMode = "invalid-input"; res.end("ok"); return; }
     if (url.pathname === "/__fixture/direct-count") { res.end(String(directPostCount)); return; }
     if (["short", "auto-cap", "auto-fill", "manual"].some(mode => url.pathname === `/__fixture/session-b-${mode}`)) {
       sessionBMode = url.pathname.endsWith("-short") ? "short" : url.pathname.endsWith("-auto-cap") ? "auto-cap"
@@ -695,6 +705,43 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1",
     "lost acknowledgement and reload never repost the original input");
   await directPage.close();
+  await fetch(`${base}/__fixture/direct-server-error`);
+  const uncertainPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await uncertainPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await uncertainPage.getByLabel("访问令牌").fill("fixture-token");
+  await uncertainPage.getByRole("button", { name: "进入", exact: true }).click();
+  await uncertainPage.getByLabel("即时发送到原 Session").fill("保留未知的原输入");
+  await uncertainPage.getByRole("button", { name: "开始一轮对话" }).click();
+  await uncertainPage.getByText("发送结果未知；保留原输入 ID，请核对后继续。").waitFor();
+  const uncertainId = (await uncertainPage.locator(".session-direct-receipt small").first().innerText()).split("：")[1];
+  assert.ok(uncertainId, "the 503 and missing readback retain the original input ID");
+  const held = await uncertainPage.evaluate(([project, session]) => ({
+    inputId: sessionStorage.getItem(`direct-input:${project}:${session}:reader`),
+    operationId: sessionStorage.getItem(`direct-input:${project}:${session}:reader:operation`),
+  }), [projectId, sessionId]);
+  assert.equal(held.inputId, uncertainId);
+  assert.match(held.operationId ?? "", /^[0-9a-f-]{36}$/, "the original operation ID survives the unknown response");
+  await uncertainPage.reload();
+  await uncertainPage.getByLabel("访问令牌").fill("fixture-token");
+  await uncertainPage.getByRole("button", { name: "进入", exact: true }).click();
+  await uncertainPage.getByText(`输入 ID：${uncertainId}`).waitFor();
+  assert.equal(await uncertainPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true,
+    "an unknown response cannot silently enable a second send");
+  assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "2", "reload does not repost a 503 intent");
+  await uncertainPage.close();
+
+  await fetch(`${base}/__fixture/direct-invalid-input`);
+  const rejectedPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await rejectedPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await rejectedPage.getByLabel("访问令牌").fill("fixture-token");
+  await rejectedPage.getByRole("button", { name: "进入", exact: true }).click();
+  await rejectedPage.getByLabel("即时发送到原 Session").fill("明确未接收的输入");
+  await rejectedPage.getByRole("button", { name: "开始一轮对话" }).click();
+  await rejectedPage.getByText(/未接收：/).waitFor();
+  assert.equal(await rejectedPage.locator(".session-direct-receipt").count(), 0,
+    "a server validation rejection before reservation frees the draft");
+  assert.equal(await rejectedPage.getByRole("button", { name: "开始一轮对话" }).isEnabled(), true);
+  await rejectedPage.close();
 });
 
 test("a reset survives a busy read, unavailable history and stale pagination responses", {

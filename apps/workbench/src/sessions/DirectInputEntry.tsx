@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { DirectInputCapability, DirectInputReceipt } from "@evoloop/contracts/direct-input";
 import { ApiError, errorText } from "../api";
-import { directInputClient } from "./directInputClient";
+import { directInputClient, explicitlyUnaccepted } from "./directInputClient";
 
 const stateLabel: Record<DirectInputReceipt["state"], string> = {
   pending: "准备发送", attempted: "发送中，等待原操作回执", accepted: "原生已接收；不代表 Agent 已阅读或采用",
@@ -14,6 +14,7 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
 }) {
   const client = directInputClient(token, projectId, sessionId);
   const storageKey = `direct-input:${projectId}:${sessionId}:${actorId}`;
+  const operationStorageKey = `${storageKey}:operation`;
   const [capability, setCapability] = useState<DirectInputCapability | null>(null);
   const [content, setContent] = useState("");
   const [pendingId, setPendingId] = useState(() => sessionStorage.getItem(storageKey));
@@ -23,7 +24,7 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
   useEffect(() => {
     const controller = new AbortController();
     const read = () => { void client.capability(controller.signal).then(value => setCapability(old =>
-      old?.available === value.available && old.mode === value.mode &&
+      old !== null && old.available === value.available && old.mode === value.mode &&
       old.expectedTurnId === value.expectedTurnId && old.reasonCode === value.reasonCode ? old : value
     )).catch(() => setCapability(null)); };
     read();
@@ -33,14 +34,14 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
   useEffect(() => {
     if (!pendingId) return;
     let live = true;
-    void client.read(pendingId).then(value => { if (live) setReceipt(value); })
+    void client.read(pendingId).then(value => { if (live) finish(value); })
       .catch(cause => { if (live) setError(`原输入回执暂不可读取：${errorText(cause)}`); });
     return () => { live = false; };
   }, [token, projectId, sessionId, pendingId]);
   const finish = (value: DirectInputReceipt) => {
     setReceipt(value); setError("");
     if (value.state === "accepted" || value.state === "rejected") {
-      sessionStorage.removeItem(storageKey); setPendingId(null);
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(operationStorageKey); setPendingId(null);
       if (value.state === "accepted") { setContent(""); onApplied(); }
     }
   };
@@ -48,6 +49,7 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
     if (!capability?.available || !capability.mode || busy || pendingId || !content.trim()) return;
     const inputId = crypto.randomUUID(), operationId = crypto.randomUUID();
     sessionStorage.setItem(storageKey, inputId);
+    sessionStorage.setItem(operationStorageKey, operationId);
     setPendingId(inputId); setReceipt(null); setError(""); setBusy(true);
     try { finish(await client.submit({ inputId, operationId, content: content.trim(),
       expectedTurnId: capability.mode === "steer" ? capability.expectedTurnId : null })); }
@@ -55,8 +57,8 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
       // Read the original intent even after a clear HTTP error: the server may have reserved it.
       try { finish(await client.read(inputId)); }
       catch (readError) {
-        if (cause instanceof ApiError && cause.status > 0 && readError instanceof ApiError && readError.status === 404) {
-          sessionStorage.removeItem(storageKey); setPendingId(null);
+        if (explicitlyUnaccepted(cause) && readError instanceof ApiError && readError.status === 404) {
+          sessionStorage.removeItem(storageKey); sessionStorage.removeItem(operationStorageKey); setPendingId(null);
           setError(`未接收：${errorText(cause)}`);
         } else setError("发送结果未知；保留原输入 ID，请核对后继续。");
       }
