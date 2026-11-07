@@ -80,7 +80,15 @@ export interface SessionMessageManualStopPreflight {
 /** A separate, explicit ordinary-conversation grant. Business queue or Loop quotas do not satisfy it. */
 export interface SessionMessageDispatchGrant {
   projectId: string; sessionId: string; senderActorId: string; receiverRoleId: string; receiverActorId: string;
-  cwd: string; maxTurns: number; enabled: boolean;
+  /** Omitted means no cumulative ordinary-message turn limit. Existing explicit limits stay finite. */
+  cwd: string; maxTurns?: number | undefined; enabled: boolean;
+}
+
+export function ordinaryMessageBudget(used:number,maxTurns:number|undefined){
+  if(!Number.isSafeInteger(used)||used<0)throw new Error('Invalid ordinary message usage');
+  if(maxTurns!==undefined&&(!Number.isSafeInteger(maxTurns)||maxTurns<1))
+    throw new Error('Invalid ordinary message limit');
+  return {used,limit:maxTurns??null,remaining:maxTurns===undefined?null:Math.max(0,maxTurns-used)};
 }
 export interface SessionMessageReader {
   getSessionMessage(id: string): Promise<SessionMessageRecord | null>;

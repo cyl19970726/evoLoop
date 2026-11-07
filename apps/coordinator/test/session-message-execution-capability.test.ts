@@ -126,13 +126,24 @@ test("full execution and exact current grants stay honest, including receiver id
 
 test("budget and busy hold execution, and a fully configured path remains unverified",async()=>{
   const exhausted=setup({turnsUsed:async()=>2});
-  assert.equal((await exhausted.read(principal,projectId,observed)).reasonCode,"MESSAGE_BUDGET_EXHAUSTED");
+  const exhaustedResult=await exhausted.read(principal,projectId,observed);
+  assert.equal(exhaustedResult.reasonCode,"MESSAGE_BUDGET_EXHAUSTED");
+  assert.deepEqual(exhaustedResult.messageBudget,{used:2,limit:2,remaining:0});
   const busy=setup();
   assert.equal((await busy.read(principal,projectId,{...observed,busy:true})).reasonCode,"SESSION_BUSY");
   const ready=setup();
   const result=await ready.read(principal,projectId,observed);
   assert.equal(result.state,"unverified");assert.equal(result.reasonCode,"NATIVE_EXECUTION_UNVERIFIED");
   assert.equal(result.observedAt,at);assert.match(result.reason,/原生完整执行/);
+});
+
+test("an unlimited grant exposes historical usage without exhausting execution",async()=>{
+  const {maxTurns: _limit,...unlimited}=grant;
+  const {read}=setup({loadConfiguration:async()=>({runtime:{enabled:true,protocolVersion:"0.164.0-alpha.11.1",grants:[],delegationTemplates:[]},
+    sessionMessages:{enabled:true,pollIntervalMs:2000,grants:[unlimited]}}),turnsUsed:async()=>1201});
+  const result=await read(principal,projectId,observed);
+  assert.equal(result.reasonCode,"NATIVE_EXECUTION_UNVERIFIED");
+  assert.deepEqual(result.messageBudget,{used:1201,limit:null,remaining:null});
 });
 
 test("dependency failures are sanitized and never expose native or configuration secrets",async()=>{

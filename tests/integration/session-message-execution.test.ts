@@ -31,6 +31,7 @@ test("disabled execution keeps ready owned message storage available and snapsho
   let dispatchGrantChecks=0;
   let configurationMode:"missing"|"disabled"|"enabled"="missing";
   let exactGrant=false;
+  let grantLimit:number|undefined=1;
   let runtimeUp=false;
   const countedMessages=new SessionMessageService({uow,clock:{now:()=>now},ids:{next:randomUUID},grantFor:async()=>{
     dispatchGrantChecks++;return null;
@@ -41,7 +42,7 @@ test("disabled execution keeps ready owned message storage available and snapsho
     sessionMessages:configurationMode==="missing" ? undefined : {
       enabled:configurationMode==="enabled",pollIntervalMs:2000,
       grants:exactGrant ? [{projectId,sessionId,senderActorId:actorId,receiverActorId,receiverRoleId:roleId,
-        cwd:"/tmp/evoloop-message-execution",maxTurns:1,enabled:true}] : [],
+        cwd:"/tmp/evoloop-message-execution",maxTurns:grantLimit,enabled:true}] : [],
     }}),
     runtimeAvailable:()=>runtimeUp,
     canExecuteSession:async()=>true,
@@ -154,6 +155,11 @@ test("disabled execution keeps ready owned message storage available and snapsho
   assert.equal(exhaustedCapability.send.available,true,"exhausted execution budget does not revoke message storage");
   assert.deepEqual({state:exhaustedCapability.ordinaryExecution.state,reasonCode:exhaustedCapability.ordinaryExecution.reasonCode},
     {state:"blocked",reasonCode:"MESSAGE_BUDGET_EXHAUSTED"});
+  grantLimit=undefined;
+  const unlimited=await app.inject({method:"GET",url:snapshotUrl,headers:auth(token)});
+  assert.equal(unlimited.statusCode,200,unlimited.body);
+  assert.deepEqual(unlimited.json<{session:{capabilities:{ordinaryExecution:{state:string;messageBudget:unknown}}}}>()
+    .session.capabilities.ordinaryExecution.messageBudget,{used:1,limit:null,remaining:null});
   assert.deepEqual(await counts(),beforeReads,"grant and quota projections must not mutate stored work");
   assert.equal((await messages.detail(projectId,unknownMessageId)).processing?.operationId,unknownProcessingOperationId);
   assert.deepEqual({state:(await messages.detail(projectId,queuedMessageId)).message.state,

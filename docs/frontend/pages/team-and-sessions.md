@@ -54,7 +54,7 @@ flowchart TD
 
 ## 运行、消息与观察的阅读边界
 
-普通消息与业务 Run 共用同一 Session、Thread、adapter 和 full/never/联网执行配置；消息不切换专用进程、工具集或只读资格门。共享 Session 忙碌时，展示原消息仍在排队及具体原因；sender/receiver grant 与 `maxTurns` 预算继续说明身份和成本。`ordinaryExecution` 在原生 Thread start/resume 明确回执 full/never 前保持 `unverified`／`unknown`；`thread/read` 没有权限字段不能推断已 active 或回执丢失。消息回复、处理结果和业务对象权限分别表达。GUI 阅读桥仍按 Run 的 reader、路由和证据范围限制业务对象访问；OS full access 不移除 Task/Document 授权边界，也不改变 Document iframe sandbox。后台控制原语完成不自动代表当前服务已启用，当前执行能力沿 Session snapshot 的实际回执读取。
+普通消息与业务 Run 共用同一 Session、Thread、adapter 和 full/never/联网执行配置；消息不切换专用进程、工具集或只读资格门。共享 Session 忙碌时，展示原消息仍在排队及具体原因；sender/receiver grant 仍限定身份；缺省消息 grant 不限累计处理次数，显式 `maxTurns` 才设上限。能力读取保留 `used`，无限时 `limit` 和 `remaining` 为 `null`；未核计数不显示为零。`ordinaryExecution` 在原生 Thread start/resume 明确回执 full/never 前保持 `unverified`／`unknown`；`thread/read` 没有权限字段不能推断已 active 或回执丢失。消息回复、处理结果和业务对象权限分别表达。GUI 阅读桥仍按 Run 的 reader、路由和证据范围限制业务对象访问；OS full access 不移除 Task/Document 授权边界，也不改变 Document iframe sandbox。后台控制原语完成不自动代表当前服务已启用，当前执行能力沿 Session snapshot 的实际回执读取。
 
 原生运行中的文字／选项提问单独显示在对应 Session，带准确的运行或消息来源、待答／已保存／原生已清理／不可用状态和真实回复者。它不改变 Task 状态，也不要求新建验收任务。允许的发起者或项目复核者可回复当前仍有效的问题；保存回复、发入原生连接、原生清理和答案实际采用分别表达。已失效问题提供原因，不让用户在新连接补答旧请求。不支持的表单、认证和敏感问题诚实显示能力边界。具体桥接合同及运行模式限制见[原生提问](../../architecture/codex-integration.md#原生提问与业务问答)；工程接线通过不代替当前环境的真实可达性与亲用验收。
 

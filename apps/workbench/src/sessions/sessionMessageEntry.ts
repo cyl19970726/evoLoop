@@ -16,6 +16,12 @@ export function sessionMessageEntry(kind: "owned" | "external", capabilities: Se
   const execution = capabilities.ordinaryExecution;
   const knownState = !!execution && Object.hasOwn(executionLabels, execution.state);
   const state = knownState ? execution.state : "unknown";
+  const budget=knownState ? execution.messageBudget : undefined;
+  const budgetLabel=budget && Number.isSafeInteger(budget.used) && budget.used>=0 &&
+    (budget.limit===null || Number.isSafeInteger(budget.limit)&&budget.limit>0)
+    ? budget.limit===null ? `普通回复已用 ${budget.used} 次 · 不限累计次数`
+      : `普通回复已用 ${budget.used} / ${budget.limit} 次 · 剩余 ${budget.remaining} 次`
+    : null;
   return {
     canSave: capabilities.send.available,
     actionTitle: kind === "external" ? "保存人工转交" : "保存待处理",
@@ -27,6 +33,7 @@ export function sessionMessageEntry(kind: "owned" | "external", capabilities: Se
     executionLabel: executionLabels[state],
     executionReason: knownState ? execution.reason?.trim() || executionFallbacks[state] : executionFallbacks.unknown,
     executionObservedAt: knownState ? execution.observedAt || null : null,
+    budgetLabel,
     sendReason: capabilities.send.reason?.trim() || null,
   };
 }

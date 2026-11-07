@@ -149,9 +149,9 @@ export class SessionMessageService {
     if(!grant||!grant.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||
       grant.senderActorId!==item.senderActorId||grant.receiverRoleId!==session.roleId||grant.cwd!==session.cwd||
       !grant.receiverActorId?.trim()||grant.receiverActorId===item.senderActorId||
-      !Number.isInteger(grant.maxTurns)||grant.maxTurns<1)
+      (grant.maxTurns!==undefined&&(!Number.isSafeInteger(grant.maxTurns)||grant.maxTurns<1)))
       throw new DomainError('MESSAGE_GRANT_MISSING','exact ordinary conversation grant is unavailable');
-    if(await store.countSessionMessageTurns(session.id,item.senderActorId)>=grant.maxTurns)
+    if(grant.maxTurns!==undefined&&await store.countSessionMessageTurns(session.id,item.senderActorId)>=grant.maxTurns)
       throw new DomainError('MESSAGE_BUDGET_EXHAUSTED','ordinary conversation grant is exhausted');
     return{item,session,grant};
   }

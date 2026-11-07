@@ -67,12 +67,15 @@ test("ordinary message grants have independent bounds, actual receiver identity 
     const config = await loadIntegrations(path);
     assert.equal(config.sessionMessages?.readOnlyProtocolVerified, undefined);
     assert.equal(config.sessionMessages?.grants[0]?.maxTurns, 2);
+    const {maxTurns: _limit, ...unlimited} = grant;
+    await writeFile(path, JSON.stringify({ sessionMessages: { enabled: true, grants: [unlimited] } }));
+    assert.equal((await loadIntegrations(path)).sessionMessages?.grants[0]?.maxTurns, undefined);
     assert.equal(config.residentQueue, undefined);
-    for (const maxTurns of [100, 200, 1000]) {
+    for (const maxTurns of [100, 200, 1000, 1001]) {
       await writeFile(path, JSON.stringify({ sessionMessages: { enabled: true, grants: [{ ...grant, maxTurns }] } }));
       assert.equal((await loadIntegrations(path)).sessionMessages?.grants[0]?.maxTurns, maxTurns);
     }
-    for (const maxTurns of [0, 1.5, 1001]) {
+    for (const maxTurns of [0, 1.5, -1]) {
       await writeFile(path, JSON.stringify({ sessionMessages: { enabled: true, grants: [{ ...grant, maxTurns }] } }));
       await assert.rejects(loadIntegrations(path), /Invalid integration configuration/);
     }
