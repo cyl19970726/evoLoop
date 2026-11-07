@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, Command, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimeCompactionObservation, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -166,6 +166,59 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
   nativeAdapter():ManagedRuntime { return this.runtime; }
+  async compactionBinding(principal:Principal, projectId:string, sessionId:string,
+    expectedVersion:number, threadId:string):Promise<RuntimeBinding>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||
+      !principal.permissions.includes('write')||principal.actorId.startsWith('worker-'))
+      throw new DomainError('FORBIDDEN','Compaction requires a project maintenance reviewer');
+    if(!this.nativeStartsAvailable()||!this.runtime.isReady())
+      throw new DomainError('RUNTIME_UNAVAILABLE','Original owner connection is unavailable');
+    const session=await this.deps.workflow.getRuntimeSession(principal,projectId,sessionId);
+    if(session.version!==expectedVersion)throw new DomainError('VERSION_CONFLICT','Session changed',session.version);
+    if(session.state!=='ready'||session.nativeThreadId!==threadId||!session.nativeSessionId||
+      session.executionProfile?.activationState!=='active'||
+      session.executionProfile.activeRevisionId!==session.executionProfile.revision.revisionId||
+      !session.executionProfile.revision.reasoningEffort||
+      session.sandbox!=='danger-full-access'||session.approvalPolicy!=='never')
+      throw new DomainError('COMPACTION_PROFILE_UNVERIFIED','Exact active full owner profile is required');
+    if(!await this.owned(session)||!await this.deps.allowedCwd(projectId,session.cwd)||
+      !await this.deps.hasGrant({projectId,actorId:principal.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
+        model:session.model,approvalPolicy:session.approvalPolicy},session))
+      throw new DomainError('FORBIDDEN','Current maintainer lacks the exact owned Session grant');
+    const binding=bindingOf(session);
+    await this.runtime.registerBinding(binding);
+    return binding;
+  }
+  async observeCompaction(binding:RuntimeBinding,targetTurnId?:string):Promise<RuntimeCompactionObservation>{
+    if(!this.runtime.observeCompaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction observation unsupported');
+    return this.runtime.observeCompaction(binding,targetTurnId);
+  }
+  async compactionTurnsAfter(binding:RuntimeBinding,baselineTurnId:string):Promise<string[]|null>{
+    const successors:string[]=[];
+    const cursors=new Set<string>();
+    let cursor:string|undefined;
+    for(let pageNumber=0;pageNumber<5;pageNumber++){
+      const page=await this.runtime.listTurns(binding,cursor);
+      for(const turn of page.data){
+        if(turn.id===baselineTurnId)return successors;
+        successors.push(turn.id);
+        if(successors.length>1)return null;
+      }
+      if(!page.nextCursor||cursors.has(page.nextCursor))return null;
+      cursors.add(page.nextCursor);
+      cursor=page.nextCursor;
+    }
+    return null;
+  }
+  async compactThread(binding:RuntimeBinding,baselineTurnId:string,beforeSend:(requestId:number)=>Promise<void>,
+    afterAccepted?:(connectionId:string)=>Promise<void>):Promise<string|null>{
+    if(!this.runtime.compactThread)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction unsupported');
+    return this.runtime.compactThread(binding,baselineTurnId,beforeSend,afterAccepted);
+  }
+  compactionConnectionId():string|null{
+    return this.runtime.nativeInputConnectionId?.()??null;
+  }
   /** Read-only capability check, never a replacement for execute's transactional authorization/version checks. */
   async preflightExecutionProfileRevision(principal:Principal,
     command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
