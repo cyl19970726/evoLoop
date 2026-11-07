@@ -7,8 +7,22 @@ import {CompactionMaintenance} from '../../apps/coordinator/src/runtime/compacti
 import {buildServer} from '../../apps/coordinator/src/server.ts';
 import {WorkflowService} from '@evoloop/core';
 import {RuntimeUnknownError} from '@evoloop/adapter-codex-app-server';
-import type {RuntimeRunner} from '../../apps/coordinator/src/runtime/runner.ts';
+import {RuntimeRunner} from '../../apps/coordinator/src/runtime/runner.ts';
 import type {RuntimeBinding,RuntimeCompactionObservation} from '@evoloop/contracts/runtime';
+
+test('lost compaction notification requires complete unique successor history',async()=>{
+  const binding={nativeThreadId:'thread'} as RuntimeBinding;
+  const page=async(cursor?:string)=>cursor
+    ? {data:[{id:'old-turn'}],nextCursor:null}
+    : {data:[{id:'compact-turn'}],nextCursor:'older'};
+  const runner=Object.create(RuntimeRunner.prototype) as RuntimeRunner;
+  Object.assign(runner,{runtime:{listTurns:async(_binding:RuntimeBinding,cursor?:string)=>page(cursor)}});
+  assert.deepEqual(await runner.compactionTurnsAfter(binding,'old-turn'),['compact-turn']);
+  Object.assign(runner,{runtime:{listTurns:async()=>({data:[{id:'compact-turn'}],nextCursor:null})}});
+  assert.equal(await runner.compactionTurnsAfter(binding,'old-turn'),null,'missing baseline is incomplete');
+  Object.assign(runner,{runtime:{listTurns:async()=>({data:[{id:'other-turn'},{id:'compact-turn'},{id:'old-turn'}],nextCursor:null})}});
+  assert.equal(await runner.compactionTurnsAfter(binding,'old-turn'),null,'two successors are ambiguous');
+});
 
 test('durable compaction uses one native request and never opens a blocked gate on a lost reply',async()=>{
   const url=process.env.TEST_DATABASE_URL;
@@ -45,8 +59,9 @@ test('durable compaction uses one native request and never opens a blocked gate 
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
-    let observation=before,starts=0,noEvent=false;
+    let observation=before,starts=0,noEvent=false,successors:string[]|null=null;
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
+      compactionTurnsAfter:async()=>successors,
       compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>)=>{
         assert.equal(baselineTurnId,'old-turn');
         starts++;await beforeSend(noEvent?18:17);
@@ -107,7 +122,28 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal(acceptedWithoutTurn.nativeTurnId,null);
     assert.equal(acceptedWithoutTurn.nativeRequestId,18);
     assert.equal((await service.reconcile(actor,projectId,next.operationId)).state,'unknown');
+    successors=null;
+    observation={...before,threadStatus:'idle',latestTurnId:'compact-turn-2',latestTurnStatus:'completed',
+      latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:'compact-item-2',
+      compactionItemCompleted:true};
+    assert.equal((await service.reconcile(actor,projectId,next.operationId)).state,'unknown',
+      'ambiguous or incomplete history cannot identify the lost Turn');
+    successors=['compact-turn-2'];
+    const recovered=await service.reconcile(actor,projectId,next.operationId);
+    assert.equal(recovered.state,'completed');assert.equal(recovered.nativeTurnId,'compact-turn-2');
     assert.equal(starts,2);
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    noEvent=false;successors=null;observation=before;
+    const failedInput={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+2};
+    const failedStarted=await service.start(actor,projectId,sessionId,failedInput);
+    assert.equal(failedStarted.nativeTurnId,'compact-turn');
+    observation={...before,latestTurnId:'compact-turn',latestTurnStatus:'failed',
+      latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null};
+    const knownFailure=await service.reconcile(actor,projectId,failedInput.operationId);
+    assert.equal(knownFailure.state,'failed');assert.equal(knownFailure.errorCode,'native_compaction_failed');
+    assert.equal((await pool.query(`SELECT phase FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2`,
+      [projectId,sessionId])).rows[0].phase,'blocked');
     }finally{await app.close()}
   }finally{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)}finally{await admin.end()}}

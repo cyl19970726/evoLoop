@@ -194,6 +194,23 @@ export class RuntimeRunner {
     if(!this.runtime.observeCompaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction observation unsupported');
     return this.runtime.observeCompaction(binding,targetTurnId);
   }
+  async compactionTurnsAfter(binding:RuntimeBinding,baselineTurnId:string):Promise<string[]|null>{
+    const successors:string[]=[];
+    const cursors=new Set<string>();
+    let cursor:string|undefined;
+    for(let pageNumber=0;pageNumber<5;pageNumber++){
+      const page=await this.runtime.listTurns(binding,cursor);
+      for(const turn of page.data){
+        if(turn.id===baselineTurnId)return successors;
+        successors.push(turn.id);
+        if(successors.length>1)return null;
+      }
+      if(!page.nextCursor||cursors.has(page.nextCursor))return null;
+      cursors.add(page.nextCursor);
+      cursor=page.nextCursor;
+    }
+    return null;
+  }
   async compactThread(binding:RuntimeBinding,baselineTurnId:string,beforeSend:(requestId:number)=>Promise<void>):Promise<string|null>{
     if(!this.runtime.compactThread)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction unsupported');
     return this.runtime.compactThread(binding,baselineTurnId,beforeSend);

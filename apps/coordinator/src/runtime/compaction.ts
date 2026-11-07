@@ -183,15 +183,31 @@ export class CompactionMaintenance {
     if(saved.state==='completed'||saved.state==='failed')return this.read(principal,projectId,operationId);
     const binding=await this.runner.compactionBinding(principal,projectId,saved.session_id,
       saved.session_version,saved.thread_id);
-    const seen:RuntimeCompactionObservation=await this.runner.observeCompaction(binding,saved.native_turn_id??undefined);
-    if(saved.native_turn_id&&seen.latestTurnId===saved.native_turn_id&&
-      seen.latestTurnId!==saved.baseline_turn_id&&seen.compactionItemId){
+    let turnId=saved.native_turn_id;
+    if(!turnId&&saved.native_request_id&&saved.baseline_turn_id){
+      const successors=await this.runner.compactionTurnsAfter(binding,saved.baseline_turn_id);
+      if(successors?.length===1){
+        const candidate=await this.runner.observeCompaction(binding,successors[0]);
+        // A lost notification can be attributed only to the sole successor
+        // with persisted compaction evidence. A failed Turn without an Item
+        // needs its captured turn/started ID to establish ownership.
+        if(candidate.latestTurnId===successors[0]&&candidate.compactionItemId)
+          turnId=successors[0]!;
+      }
+    }
+    if(!turnId)return this.read(principal,projectId,operationId);
+    const seen:RuntimeCompactionObservation=await this.runner.observeCompaction(binding,turnId);
+    if(seen.latestTurnId===turnId&&seen.latestTurnId!==saved.baseline_turn_id){
       const completed=seen.compactionItemCompleted&&seen.latestTurnStatus==='completed'&&
         !!seen.latestTurnCompletedAtUtc&&seen.threadStatus==='idle';
       const failed=!!seen.latestTurnCompletedAtUtc&&seen.latestTurnStatus==='failed';
       await this.pool.query(`UPDATE session_compaction SET state=$3,native_turn_id=$4,
         compaction_item_id=$5,after_input_tokens=$6,error_code=$7,updated_at=now()
-        WHERE project_id=$1 AND operation_id=$2 AND state IN ('unknown','accepted')`,
+        WHERE project_id=$1 AND operation_id=$2 AND state IN ('unknown','accepted')
+          AND (native_turn_id IS NULL OR native_turn_id=$4)
+          AND EXISTS (SELECT 1 FROM session_recovery_gate g WHERE g.project_id=$1
+            AND g.session_id=session_compaction.session_id AND g.phase='blocked'
+            AND g.version=session_compaction.gate_version)`,
         [projectId,operationId,completed?'completed':failed?'failed':saved.state,
           seen.latestTurnId,seen.compactionItemId,seen.tokenUsage?.inputTokens??null,
           failed?'native_compaction_failed':null]);
