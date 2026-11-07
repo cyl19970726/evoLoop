@@ -197,7 +197,8 @@ export class SessionMessageService {
   async isBusy(projectId:string,sessionId:string){return this.deps.uow.read(projectId,async r=>await r.sessionMessages?.hasActiveSessionMessage(sessionId)??false);}
   async noteBlocked(projectId:string,messageId:string,reason:string|null){await this.deps.uow.transaction(projectId,async tx=>{
     await tx.sessionMessages?.setSessionMessageBlockedReason(messageId,reason);});}
-  async beginDispatch(projectId:string,messageId:string,processingId:string,operationId:string,readOnlyPolicyFingerprint:string):Promise<SessionMessageProcessing>{
+  async beginDispatch(projectId:string,messageId:string,processingId:string,operationId:string,readOnlyPolicyFingerprint:string,
+    roleContext:string|null=null):Promise<SessionMessageProcessing>{
     return this.deps.uow.transaction(projectId,async tx=>{
       if(!/^[a-f0-9]{64}$/.test(readOnlyPolicyFingerprint))throw new DomainError('POLICY_PROOF_MISSING','Session execution admission fingerprint is required');
       const {item,session,grant}=await this.admission(projectId,messageId,tx);
@@ -208,7 +209,7 @@ export class SessionMessageService {
       const now=this.deps.clock.now();
       const processing:SessionMessageProcessing={projectId,id:processingId,messageId,sessionId:session.id,operationId,
         receiverActorId:grant.receiverActorId,
-        state:'dispatching',nativeTurnId:null,response:null,failure:null,readOnlyPolicyFingerprint,
+        state:'dispatching',nativeTurnId:null,response:null,failure:null,readOnlyPolicyFingerprint,roleContext,
         version:1,startedAt:now,updatedAt:now};
       await store.insertSessionMessageProcessing(processing);
       await store.updateSessionMessage({...item,state:'processing',blockedReason:null,version:item.version+1,updatedAt:now},item.version);

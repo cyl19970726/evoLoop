@@ -4,6 +4,7 @@ import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowle
 import { runtimeReconcileSchema, runtimeCompactionIntentSchema } from "@evoloop/contracts/runtime";
 import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
 import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
+import { acceptanceArrangeSchema, retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
 import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { Intent, Recovery } from "./receipts.js";
@@ -14,6 +15,7 @@ export type RequestName =
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
   | "work.plan.set" | "work.dependencies.set" | "work.review.set"
   | "leader.notice.recover"
+  | "acceptance.assign" | "session.retirement.approve"
   | "runtime.reconcile" | "runtime.recover" | "runtime.compact.start" | "runtime.compact.reconcile" | "ordinary.submit";
 
 export class RequestInputError extends Error {
@@ -42,6 +44,8 @@ const help: readonly RequestHelp[] = [
   { name: "work.dependencies.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedDependencyVersion", "dependsOnTaskIds", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "expectedWorkChangeSequence", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "leader.notice.recover", requiredBodyKeys: ["expectedOperationId", "newNoticeId", "newMessageId", "newOperationId", "reason"], targetId: "original noticeId", operationId: "localReceipt", recovery: "manual" },
+  { name: "acceptance.assign", requiredBodyKeys: ["projectId","taskId","operationId","relayId","expectedTaskVersion","deliveryId","stage","scopeKey","mode","recipientActorId"], targetId: "taskId", operationId: "body", recovery: "manual" },
+  { name: "session.retirement.approve", requiredBodyKeys: ["operationId","decisionId","closeOperationId","expectedSessionVersion","reason","handoffEvidence"], targetId: "sessionId", operationId: "body", recovery: "manual" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.compact.start", requiredBodyKeys: ["operationId","threadId","expectedSessionVersion","expectedGateVersion","evidenceRef","reason"], targetId: "sessionId", operationId: "body", recovery: "manual" },
@@ -94,6 +98,8 @@ function bodySchema(name: string) {
     case "work.dependencies.set": return workDependenciesBody;
     case "work.review.set": return workReviewBody;
     case "leader.notice.recover": return leaderNoticeRecoverySchema;
+    case "acceptance.assign": return acceptanceArrangeSchema;
+    case "session.retirement.approve": return retirementApprovalSchema;
     case "runtime.reconcile": return runtimeReconcileSchema;
     case "runtime.compact.start": return runtimeCompactionIntentSchema;
     case "ordinary.submit": return ordinaryRunSubmissionSchema;
@@ -165,6 +171,8 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
   scoped(body, projectId);
   const id = target(targetId, spec.targetId);
   if (name === "reference.task-decide" && body.taskId !== undefined && body.taskId !== id)
+    throw new RequestInputError("Body taskId differs from route taskId");
+  if (name === "acceptance.assign" && body.taskId !== id)
     throw new RequestInputError("Body taskId differs from route taskId");
   requireKeys(body, spec.requiredBodyKeys, name);
   if (spec.operationId === "body" && localReceiptId !== undefined) throw new RequestInputError("This request uses body.operationId, not --receipt");
@@ -251,6 +259,18 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       path = `${base}/work-management/notices/${id}/recover`;
       recovery = { kind: "manual", path: `${base}/work-management/notices/${id}` };
       confirmation = "leader-notice-recovery";
+      break;
+    }
+    case "acceptance.assign": {
+      path = `${base}/tasks/${id}/acceptance-relay`;
+      recovery = {kind:"manual",path:`${base}/tasks/${id}/acceptance-relay`};
+      confirmation = "ack";
+      break;
+    }
+    case "session.retirement.approve": {
+      path = `${base}/runtime/sessions/${id}/retirement`;
+      recovery = {kind:"manual",path};
+      confirmation = "ack";
       break;
     }
     case "runtime.reconcile": {

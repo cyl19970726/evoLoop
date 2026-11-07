@@ -23,6 +23,7 @@ import { leaderPhaseLabel, leaderProjectionMatchesTask } from "./leaderWorkLoad"
 import "./task-page.css";
 import "./task-experience.css";
 import { currentDelivery } from "./taskExperience";
+import { AcceptanceRelayPanel } from "./AcceptanceRelayPanel";
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
@@ -360,6 +361,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <section className="panel task-focus task-main-content"><div className="panel-head"><h2>任务正文</h2><a href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件 <ShortId value={detail.task.contentRevisionId} /> ↗</a></div><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} /><p className="task-fineprint">正文来自任务固定的主文档修订；通过“更新任务内容”修改，不从文档页绕过任务。</p></section>
         </div>
         <aside className="task-evidence-rail" aria-label="交付、依据与关联">
+        {!selectedRevision && <AcceptanceRelayPanel token={token} projectId={projectId} taskId={id} refresh={refresh+readVersion} />}
         <section className="panel task-focus task-detail-result"><div className="panel-head"><h2>当前结果</h2><button type="button" className="quiet" onClick={() => selectTab("delivery")}>查看完整记录 →</button></div>
           <dl className="task-result-facts">
             <div><dt>主进展</dt><dd>{progressLabel}</dd></div>

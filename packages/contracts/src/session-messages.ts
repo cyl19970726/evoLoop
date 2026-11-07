@@ -47,6 +47,8 @@ export interface SessionMessageProcessing {
   state: SessionMessageProcessingState; nativeTurnId: string | null; response: string | null;
   /** Legacy field name retained for immutable processing records; new values identify the full Session admission profile. */
   failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
+  /** Fixed Role/Skill read instructions captured before the first native start. */
+  roleContext?: string | null;
   /** Fixed by the same transaction as the original processing's native-start permit. */
   nativeEnvironmentEpoch?: number | null;
   preTurnProof?: PreTurnProof | null;

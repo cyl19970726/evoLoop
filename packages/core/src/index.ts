@@ -419,9 +419,12 @@ export class WorkflowService {
           throw new DomainError("ACCEPTANCE_POLICY", "new business Tasks require current delivery use under their acceptance mode");
         if (command.acceptanceMode === "human_required" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "human-required Tasks need the exact human consumer actor");
+        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (command.acceptanceMode === "human_required"))
+          throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
         await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
           stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,
           acceptanceMode: decisionOnly ? null : command.acceptanceMode ?? "independent_agent",
+          acceptanceTarget: decisionOnly ? null : command.acceptanceTarget ?? null,
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
@@ -458,6 +461,13 @@ export class WorkflowService {
         }
         const priorProposal = await tx.getTaskProposal(task.id);
         const acceptanceMode = command.acceptanceMode ?? priorProposal?.acceptanceMode ?? null;
+        const acceptanceTarget = command.acceptanceTarget ?? priorProposal?.acceptanceTarget ?? null;
+        if (acceptanceTarget && (acceptanceTarget === "human") !== (acceptanceMode === "human_required"))
+          throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
+        if (command.acceptanceTarget && command.acceptanceTarget !== priorProposal?.acceptanceTarget) {
+          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance target changes require review permission");
+          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing acceptance target");
+        }
         if (priorProposal?.acceptanceMode === "human_required" &&
           (acceptanceMode !== "human_required" || command.consumer !== undefined && command.consumer !== priorProposal.consumer) &&
           (principal.identityKind !== "human" || principal.actorId !== priorProposal.consumer))
@@ -496,6 +506,7 @@ export class WorkflowService {
           command.consumer !== undefined && command.consumer !== priorProposal?.consumer ||
           command.useRequired !== undefined && command.useRequired !== priorProposal?.useRequired ||
           command.acceptanceMode !== undefined && command.acceptanceMode !== priorProposal?.acceptanceMode ||
+          command.acceptanceTarget !== undefined && command.acceptanceTarget !== priorProposal?.acceptanceTarget ||
           command.evidence !== undefined && command.evidence !== priorProposal?.evidence ||
           command.stopCondition !== undefined && command.stopCondition !== priorProposal?.stopCondition))
           throw new DomainError("REOPEN_REQUIRED", "Return the Task to todo before changing its execution scope");
@@ -546,11 +557,12 @@ export class WorkflowService {
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
           title: revision.title, content: revision.content, contentRevisionId, kind, domainId, acceptance: revision.acceptance,
           owner: revision.owner }, task.version);
-        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined) {
+        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined || command.acceptanceTarget !== undefined) {
           await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
             stageId, consumer,
             useRequired: acceptanceMode ? true : command.useRequired ?? priorProposal?.useRequired ?? false,
             acceptanceMode,
+            acceptanceTarget,
             evidence, stopCondition, createdAt: now });
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,

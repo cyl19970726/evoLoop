@@ -33,6 +33,8 @@ export interface SessionMessagePumpDeps {
   now?():number;
   /** Retire a known obsolete queued source before a revoked grant can pin it at the head. */
   beforePreflight?(message:SessionMessageRecord):Promise<boolean>;
+  /** Fixed Role/Skill source references for this business recipient, when a verified material CLI exists. */
+  roleContext?(message:SessionMessageRecord):Promise<string|null>;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
   canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
@@ -94,18 +96,24 @@ export class SessionMessagePump {
       }
       // Persist before any native resume or Turn start. A lost response is never a retry signal.
       if(continuation&&qualification.fingerprint!==record!.readOnlyPolicyFingerprint)return;
+      const roleContext=continuation ? record!.roleContext??null : await this.deps.roleContext?.(message)??null;
       try{
         record=continuation?record:
-          await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint);
+          await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint,roleContext);
       }
       catch(error){
-        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED'].includes(error.code)){
+        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED','ACCEPTANCE_SOURCE_SUPERSEDED'].includes(error.code)){
           await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;
         }
         throw error;
       }
       if(!record)return;
-      const input=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not by itself record Task delivery or acceptance.\n${message.context?`Fixed Task context: ${message.context.taskId}@${message.context.taskRevisionId}\n`:''}${message.content}`;
+      const baseInput=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not by itself record Task delivery or acceptance.\n${message.context?`Fixed Task context: ${message.context.taskId}@${message.context.taskRevisionId}\n`:''}`;
+      const withRole=`${baseInput}${roleContext?`${roleContext}\n`:''}${message.content}`;
+      const legacy=`${baseInput}${message.content}`;
+      // A reviewed continuation is bound to its original input hash. Older messages predate RoleContext.
+      const input=continuation&&createHash('sha256').update(legacy).digest('hex')===record.preTurnProof?.inputHash
+        ? legacy : withRole;
       const inputHash=createHash('sha256').update(input).digest('hex');
       if(continuation&&inputHash!==record.preTurnProof?.inputHash){
         return;
