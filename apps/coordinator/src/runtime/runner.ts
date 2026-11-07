@@ -181,11 +181,14 @@ export class RuntimeRunner {
       !session.executionProfile.revision.reasoningEffort||
       session.sandbox!=='danger-full-access'||session.approvalPolicy!=='never')
       throw new DomainError('COMPACTION_PROFILE_UNVERIFIED','Exact active full owner profile is required');
-    if(!await this.owned(session)||!await this.deps.allowedCwd(projectId,session.cwd)||
+    // Historical dynamic settlement is not current start authority. Static
+    // Sessions have no Dispatch to settle; hasGrant checks their current grant
+    // and denies a dynamic origin when its current admission has expired.
+    if(!await this.deps.allowedCwd(projectId,session.cwd)||
       !await this.deps.hasGrant({projectId,actorId:principal.actorId,roleId:session.roleId,
         authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
         model:session.model,approvalPolicy:session.approvalPolicy},session))
-      throw new DomainError('FORBIDDEN','Current maintainer lacks the exact owned Session grant');
+      throw new DomainError('FORBIDDEN','Current maintainer lacks the exact Session grant');
     const binding=bindingOf(session);
     await this.runtime.registerBinding(binding);
     return binding;

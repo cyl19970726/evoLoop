@@ -9,6 +9,111 @@ import {WorkflowService} from '@evoloop/core';
 import {RuntimeUnknownError} from '@evoloop/adapter-codex-app-server';
 import {RuntimeRunner} from '../../apps/coordinator/src/runtime/runner.ts';
 import type {RuntimeBinding,RuntimeCompactionObservation} from '@evoloop/contracts/runtime';
+import type {RuntimeSessionRecord} from '@evoloop/contracts';
+import {currentSessionGrant} from '../../apps/coordinator/src/orchestration/dynamic-admission.ts';
+import {grantAllowsModel} from '../../apps/coordinator/src/configuration.ts';
+
+test('HTTP compaction admits a current static grant and rejects revoked or changed authority',async()=>{
+  const url=process.env.TEST_DATABASE_URL;
+  if(!url||!/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname))
+    throw Error('dedicated isolated database required');
+  const schema=`compact_static_${randomUUID().replaceAll('-','').slice(0,12)}`;
+  await migrate(url,schema);
+  const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
+  try{
+    const projectId=randomUUID(),sessionId=randomUUID(),threadId=randomUUID(),roleId=randomUUID();
+    const reviewer={actorId:'maintainer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+    const revisionId=randomUUID();
+    const owner={projectId,id:sessionId,roleId,actorId:'leader',cwd:'/tmp/compact-static',
+      authorizationScope:'resident:leader',model:'gpt-6-astra',sandbox:'danger-full-access',
+      approvalPolicy:'never',state:'ready',version:1,nativeThreadId:threadId,
+      nativeSessionId:randomUUID(),operationId:randomUUID(),createdAt:new Date().toISOString(),
+      updatedAt:new Date().toISOString(),executionProfile:{revision:{projectId,sessionId,
+        revisionId,version:2,previousRevisionId:randomUUID(),model:'gpt-6-astra',
+        reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never',
+        cwd:'/tmp/compact-static',authorizationScope:'resident:leader',provenance:'revised',
+        operationId:randomUUID(),actorId:'leader',reason:'active profile',evidenceRef:null,
+        createdAt:new Date().toISOString()},activationState:'active',activeRevisionId:revisionId,
+        activeModel:'gpt-6-astra',activeReasoningEffort:'max',activationOperationId:randomUUID(),
+        attemptedAt:new Date().toISOString(),activationEvidence:'same Thread readback'}} as RuntimeSessionRecord;
+    await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,now())',[projectId,'static grant test']);
+    await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,
+      sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,'danger-full-access','never','ready',1,$7,$8,$9,$10,now(),now())`,
+      [projectId,sessionId,roleId,owner.cwd,owner.authorizationScope,owner.model,threadId,
+        owner.nativeSessionId,owner.operationId,owner.actorId]);
+    const messageId=randomUUID();
+    await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
+      sender_actor_id,content,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,'owned',$4,'sender','terminal error','failed',1,now(),now())`,
+      [projectId,messageId,randomUUID(),sessionId]);
+    await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,
+      operation_id,receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,'leader','failed','old-turn',$6,1,now(),now())`,
+      [projectId,randomUUID(),messageId,sessionId,randomUUID(),'a'.repeat(64)]);
+    await pool.query(`UPDATE session_recovery_gate SET phase='blocked',cause_kind='message',
+      cause_id=$3,cause_state='failed',version=version+1 WHERE project_id=$1 AND session_id=$2`,
+      [projectId,sessionId,messageId]);
+    const gateVersion=(await pool.query<{version:number}>(`SELECT version FROM session_recovery_gate
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId])).rows[0]!.version;
+    let grantEnabled=true,cwdAllowed=true,starts=0;
+    const grant={projectId,actorId:reviewer.actorId,roleId,authorizationScope:owner.authorizationScope,
+      cwd:owner.cwd,sandbox:owner.sandbox,model:'gpt-6-sol',models:['gpt-6-astra'],
+      approvalPolicy:owner.approvalPolicy};
+    const runtime={isReady:()=>true,registerBinding:async()=>{},
+      observeCompaction:async()=>({threadId,threadStatus:'systemError',model:'gpt-6-astra',
+        reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
+        latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
+        compactionItemCompleted:false} as RuntimeCompactionObservation),
+      compactThread:async(_binding:RuntimeBinding,_baseline:string,beforeSend:(id:number)=>Promise<void>,
+        afterAccepted:(connectionId:string)=>Promise<void>)=>{
+        starts++;await beforeSend(17);await afterAccepted('isolated-connection');return 'compact-turn';}};
+    const runner=new RuntimeRunner({runtimeFactory:()=>runtime as never,
+      workflow:{getRuntimeSession:async()=>owner} as WorkflowService,
+      trusted:{} as never,principals:[reviewer],canWrite:()=>true,
+      allowedCwd:async()=>cwdAllowed,canSettleOwned:async()=>false,ownedCwd:async()=>true,
+      hasGrant:(scope,source)=>currentSessionGrant(pool,source!,()=>grantEnabled&&
+        Object.entries(scope).every(([key,value])=>key==='model'
+          ? grantAllowsModel(grant,value as string)
+          : grant[key as keyof typeof grant]===value))});
+    Object.assign(runner,{available:true});
+    const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),
+      clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:(value:string)=>value}});
+    const service=new CompactionMaintenance(pool,runner);
+    const token='s'.repeat(40),otherToken='t'.repeat(40),foreignToken='u'.repeat(40);
+    const app=await buildServer({service:workflow,credentials:[{token,...reviewer},
+      {token:otherToken,...reviewer,actorId:'other-maintainer'},
+      {token:foreignToken,...reviewer,projectIds:[randomUUID()]}],compaction:service});
+    try{
+      const address=await app.listen({host:'127.0.0.1',port:0});
+      const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/compactions`;
+      const input={operationId:randomUUID(),threadId,expectedSessionVersion:1,expectedGateVersion:gateVersion,
+        evidenceRef:'incident://static-rejection',reason:'one authorized maintenance attempt'};
+      const post=async(bearer=token)=>{
+        const response=await fetch(`${address}${path}`,{method:'POST',
+          headers:{authorization:`Bearer ${bearer}`,'content-type':'application/json'},body:JSON.stringify(input)});
+        const body=await response.text();
+        return {statusCode:response.status,body,json:()=>JSON.parse(body)};
+      };
+      grantEnabled=false;assert.equal((await post()).statusCode,403);
+      grantEnabled=true;cwdAllowed=false;assert.equal((await post()).statusCode,403);
+      cwdAllowed=true;assert.equal((await post(otherToken)).statusCode,403);
+      assert.equal((await post(foreignToken)).statusCode,403);
+      owner.authorizationScope='other-scope';assert.equal((await post()).statusCode,403);
+      owner.authorizationScope='resident:leader';owner.executionProfile!.activeRevisionId=randomUUID();
+      assert.equal((await post()).statusCode,409);
+      owner.executionProfile!.activeRevisionId=revisionId;
+      assert.equal(starts,0,'denied requests cannot dispatch native work');
+      const accepted=await post();
+      assert.equal(accepted.statusCode,200,accepted.body);
+      assert.equal(accepted.json().state,'accepted');
+      assert.equal(starts,1);
+      assert.equal((await post()).statusCode,200);
+      assert.equal(starts,1,'same original operation cannot dispatch twice');
+    }finally{await app.close()}
+  }finally{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
+    try{await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)}finally{await admin.end()}}
+});
 
 test('lost compaction notification requires complete unique successor history',async()=>{
   const binding={nativeThreadId:'thread'} as RuntimeBinding;
