@@ -155,7 +155,7 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 新写入沿用 `command schema TYPE` 和 `command run FILE` 的幂等回执入口。`session.profile.set` 维护项目展示名与用途；`task.assignment.set` 指定同 Role 的实际会话，建议先 start 固定 Task 再分派。指定 actor 用 `task.assignment.acknowledge` 接手；Lead 的实际人工沟通记录另用 `observeAcceptance`，不能冒用执行者。新队列／直接 Run 不得绕过已有的具体分派；旧输入变更后明确重确认。
 
-`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通 Session 消息用 `work message MESSAGE_ID` 核原消息及处理；Task 问题、答复和结果用该 Run 的 Task discussion 与固定 Document，不拿 discussion 事件证明普通消息已处理。普通对话无需新 Task；新的独立工作仍须正式 Task 与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；实际收件人按 `command schema session.message.receipt` 对原消息签 read，发送者看到回复不能代签。 原消息已在精确 Session 绑定真实 Turn 且正在处理时即可签 read，无需为补已读再启动一轮；排队、未绑定和 unknown 仍不可签。已读不改变消息处理状态、队列占用或交付验收，失败或超时仍先按原 operation ID 回读，不能把旧的 rejected 意图换内容重试。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 及 `maxTurns` 预算继续限定身份与成本，不是权限等级。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
+`session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通 Session 消息用 `work message MESSAGE_ID` 核原消息及处理；Task 问题、答复和结果用该 Run 的 Task discussion 与固定 Document，不拿 discussion 事件证明普通消息已处理。普通对话无需新 Task；新的独立工作仍须正式 Task 与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；实际收件人按 `command schema session.message.receipt` 对原消息签 read，发送者看到回复不能代签。 原消息已在精确 Session 绑定真实 Turn 且正在处理时即可签 read，无需为补已读再启动一轮；排队、未绑定和 unknown 仍不可签。已读不改变消息处理状态、队列占用或交付验收，失败或超时仍先按原 operation ID 回读，不能把旧的 rejected 意图换内容重试。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 继续限定身份；缺省不限累计消息次数，显式 `maxTurns` 正整数才限定该发送者和 Session 的处理次数。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
 
 ### 读取和回复原生提问
 
@@ -337,3 +337,9 @@ npm run --silent cli -- allocations --project PROJECT_UUID --discussion DISCUSSI
 关系返回决议与目标固定修订、当前状态和来源；旧决定的固定正文不能被讨论最新 Document 偷换。同 Task 修订的 accepted 历史才能提供确切 Session，assigned 或同 Role 成员不算接受；direct与lead-observed的署名分开。正常未关联为空页；权限、对象不存在、未安装能力或存储故障按错误处理，不改成空成功。已有 Task 尚无分派时，`work assignment UUID` 正常返回null，供首次分派；未知Task仍拒绝。
 
 要把新决定落实为可追溯事实，按当前 `command schema` 核字段，正常记录讨论决定，并用 `discussion.action.link` 固定当前 Role/Task 修订；Task先start后再固定分派和接收。写操作沿原operationId、版本和回查规则。链接本身不创建角色或授予执行许可；没有完整实际使用证据不得借此关闭任务。
+
+### 普通消息累计用量与旧试用 grant 转换
+
+普通消息 grant 省略 `maxTurns` 表示不限累计次数；显式正整数仍为上限。历史 `used` 继续累计。Session snapshot 的 `ordinaryExecution.messageBudget` 在精确 grant 和计数核实后给出 `used`、`limit`、`remaining`；无限时后两项为 `null`，未核计数时该字段缺失。账户模型额度、Task 和队列尝试上限须分别核对。
+
+Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-grants.mjs PRIVATE_CONFIG PRIVATE_SELECTIONS NEW_PRIVATE_CANDIDATE` 生成权限 0600 的新候选。选择文件是精确 `{projectId,sessionId,senderActorId,receiverActorId,receiverRoleId,cwd,expectedMaxTurns}` 数组。脚本要求旧 grant 启用、限额匹配、输出文件不存在，只移除指定 grant 的 `maxTurns`。发布前后读回原 Session/Thread、grant、累计计数、原消息和处理状态；回退保留的旧私有配置并按正常发布流程执行，不清计数或重放 unknown。

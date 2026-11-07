@@ -32,6 +32,8 @@ export interface OrdinaryMessageExecutionCapability {
   reasonCode: string;
   reason: string;
   observedAt: string;
+  /** Present only after the exact grant and durable usage have been read. Null limit means unlimited. */
+  messageBudget?: { used:number; limit:number|null; remaining:number|null };
 }
 export interface SessionCapabilities {
   observe: SessionActionCapability;
