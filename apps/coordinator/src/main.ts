@@ -74,6 +74,8 @@ import { createMessageExecutionReader } from "./session-messages/execution-capab
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
 import { TaskAttentionPump } from "./task-attention/pump.js";
+import { AcceptanceRelayService } from "./acceptance-relay/service.js";
+import { ordinaryRoleContext } from "./session-messages/role-context.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -471,6 +473,30 @@ const messageService = new SessionMessageService({ uow, clock, ids, grantFor: as
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
   try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
 } });
+const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messages:messageService,
+  principals:currentIdentity,canWrite:lease.canWrite,
+  leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
+    .find(x=>x.projectId===projectId)?.sessionId??null,
+  qualify:async ({projectId,session,senderActorId,receiverActorId}) => {
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    if(session.state!=="ready"||!session.nativeThreadId||!await currentSessionExecutionAuthority(session))return "SESSION_NOT_READY";
+    if(!await currentProjectWriter(projectId,senderActorId)||!await currentProjectWriter(projectId,receiverActorId))return "BUSINESS_IDENTITY_UNAVAILABLE";
+    const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,session.id,session.actorId,undefined,session.roleId) : null;
+    if(material?.cliActorId!==receiverActorId)return "RECIPIENT_BINDING_MISSING";
+    if(!current.sessionMessages?.enabled||!current.sessionMessages.grants.some(g=>g.enabled&&g.projectId===projectId&&
+      g.sessionId===session.id&&g.senderActorId===senderActorId&&g.receiverActorId===receiverActorId&&
+      g.receiverRoleId===session.roleId&&g.cwd===session.cwd))return "MESSAGE_GRANT_MISSING";
+    return null;
+  }});
+let acceptanceTickBusy=false;
+const acceptanceTimer=setInterval(()=>{
+  if(acceptanceTickBusy||!lease.canWrite())return;
+  acceptanceTickBusy=true;
+  void acceptanceRelay.tick([...new Set(credentials.flatMap(p=>p.projectIds))])
+    .catch(()=>console.error("Acceptance relay needs original-operation reconciliation."))
+    .finally(()=>{acceptanceTickBusy=false;});
+},2000);
+acceptanceTimer.unref();
 const leaderResultNoticePump = new LeaderResultNoticePump({
   store: {
     listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
@@ -521,17 +547,38 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  roleContext: async message => {
+    if(message.target.kind!=="owned")return null;
+    const session=await messageService.session(message.projectId,message.target.sessionId);
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const grant=current.sessionMessages?.grants.find(g=>g.enabled&&g.projectId===message.projectId&&
+      g.sessionId===session.id&&g.senderActorId===message.senderActorId&&g.receiverRoleId===session.roleId&&g.cwd===session.cwd);
+    const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,message.projectId,
+      session.id,session.actorId,undefined,session.roleId) : null;
+    if(!grant||!material||material.cliActorId!==grant.receiverActorId||
+      !await currentProjectWriter(message.projectId,material.cliActorId))return null;
+    const reader=(await currentIdentity()).find(p=>p.projectIds.includes(message.projectId)&&p.permissions.includes("read"));
+    if(!reader)return null;
+    const role=await service.getRole(reader,message.projectId,session.roleId);
+    const paths=current.runtime?.roleSkills.find(x=>x.projectId===message.projectId&&x.roleId===session.roleId)?.paths??
+      [".agents/skills/evoloop-workflow/SKILL.md"];
+    const skills=await roleSkillReferences(skillSourceRoot,paths);
+    return ordinaryRoleContext({command:material.command,projectId:message.projectId,roleId:role.id,
+      revisionId:role.currentRevisionId,skills});
+  },
   nativeTurn: (projectId, sessionId) => nativeObservation.current(projectId, sessionId),
   projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   pollIntervalMs: integrations.sessionMessages?.pollIntervalMs ?? 2000,
   beforePreflight: async message => {
+    if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const admission=await leaderResultNoticePump.messageAdmission(message);
     if(!admission.allowed&&admission.reason)
       await messageService.noteBlocked(message.projectId,message.id,admission.reason);
     return admission.allowed;
   },
   canStart: async message => {
+    if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
     if (!current?.enabled) {
       await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用，消息保留待处理。");
@@ -599,6 +646,7 @@ if (runner) {
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
+  acceptanceRelay,
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
@@ -707,7 +755,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
+  try { clearInterval(acceptanceTimer); taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.

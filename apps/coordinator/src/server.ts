@@ -32,6 +32,8 @@ import type { DeliveryStore } from "@evoloop/contracts/delivery";
 import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
+import { registerAcceptanceRelayRoutes } from "./acceptance-relay/routes.js";
+import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
 import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerLeaderNoticeRoutes, type LeaderNoticeReader } from "./work-management/leader-notice-routes.js";
 import { registerTaskAttentionRoutes } from "./task-attention/routes.js";
@@ -96,6 +98,7 @@ export async function buildServer(options: {
   orchestration?: OrchestrationRouteOptions;
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
+  acceptanceRelay?: AcceptanceRelayService;
   leaderNotices?: LeaderNoticeReader;
   taskAttentionPool?: Pool;
   planningSources?: PlanningSourcesReader;
@@ -656,6 +659,7 @@ export async function buildServer(options: {
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
+  if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);

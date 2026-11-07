@@ -83,6 +83,12 @@ const help = {
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
     "work leader --project UUID [--documents] [--closed] [--limit 1..100 --cursor CURSOR]",
     "work task TASK_UUID --project UUID (one Task's current stage, timing and responsibility)",
+    "work acceptance --project UUID [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
+    "work acceptance TASK_UUID --project UUID (exact acceptance arrangements and dispatch outcomes)",
+    "work acceptance mine --project UUID (human recipient's acceptance inbox)",
+    "work retirement SESSION_UUID --project UUID (temporary Session blockers, decision and archive readback)",
+    "request acceptance.assign --project UUID --id TASK_UUID --file BODY.json (persist one exact Delivery/recipient handoff)",
+    "request session.retirement.approve --project UUID --id SESSION_UUID --file BODY.json (approve a temporary instance's exact close operation)",
     "work attention --project UUID [--task TASK_UUID --state open|resolved --phase PHASE --signal SIGNAL --waiting-on-kind KIND --waiting-on-id ID --limit 1..100 --cursor CURSOR]",
     "work attention task TASK_UUID --project UUID (follow-up and Task attention history)",
     "work attention item ITEM_UUID --project UUID (one attention item and its events)",
@@ -263,6 +269,17 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "work") {
+    if (args.words[1] === "acceptance") {
+      check(args,args.words[2]?3:2,["project","limit","cursor"]);
+      if(args.words[2] === "mine")return client.get(`${prefix}/acceptance-relay/mine`);
+      if(args.words[2])return client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);
+      const limit=option(args,"limit")??"50",cursor=option(args,"cursor");
+      return client.get(`${prefix}/acceptance-relay/overview?limit=${encodeURIComponent(limit)}${cursor?`&cursor=${encodeURIComponent(cursor)}`:""}`);
+    }
+    if (args.words[1] === "retirement") {
+      check(args,3,["project"]);
+      return client.get(`${prefix}/runtime/sessions/${uuid(args.words[2],"Session")}/retirement`);
+    }
     if (args.words[1] === "manual-stop-preview") {
       check(args, 3, ["project"]);
       return client.get(`${prefix}/session-messages/${uuid(args.words[2], "Message")}/manual-stop-preview`);
