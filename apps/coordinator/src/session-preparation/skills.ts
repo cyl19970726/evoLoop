@@ -7,6 +7,8 @@ const run = promisify(execFile);
 const safeSkill = /^\.agents\/skills\/[A-Za-z0-9_-]+\/SKILL\.md$/;
 const safeCommit = /^[a-f0-9]{40}$/;
 const safeSource = /^(?:docs\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.md|\.agents\/skills\/[A-Za-z0-9_-]+\/references\/[A-Za-z0-9_-]+\.md)$/;
+// Keep fixed reads bounded while allowing current linked guides above 96 KiB.
+const fixedSourceMaxBytes = 512 * 1024;
 const digest = (body: string) => createHash("sha256").update(body, "utf8").digest("hex");
 
 export async function currentSkillCommit(root: string): Promise<string> {
@@ -19,7 +21,7 @@ export async function currentSkillCommit(root: string): Promise<string> {
 export async function readFixedSkill(root: string, path: string, commit: string, expectedHash?: string) {
   if (!safeSkill.test(path) || !safeCommit.test(commit)) throw new Error("Invalid fixed skill reference");
   const { stdout: body } = await run("git", ["-C", root, "show", `${commit}:${path}`],
-    { maxBuffer: 96 * 1024, encoding: "utf8" });
+    { maxBuffer: fixedSourceMaxBytes, encoding: "utf8" });
   const contentHash = digest(body);
   if (expectedHash && contentHash !== expectedHash) throw new Error("Fixed skill hash mismatch");
   return { path, commit, contentHash, body };
@@ -40,7 +42,7 @@ function linkedSources(path:string,body:string):string[] {
 async function readSource(root:string,path:string,commit:string,expectedHash?:string){
   if(!safeSource.test(path)||!safeCommit.test(commit))throw new Error("Invalid fixed source reference");
   const {stdout:body}=await run("git",["-C",root,"show",`${commit}:${path}`],
-    {maxBuffer:96*1024,encoding:"utf8"});
+    {maxBuffer:fixedSourceMaxBytes,encoding:"utf8"});
   const contentHash=digest(body);
   if(expectedHash&&expectedHash!==contentHash)throw new Error("Fixed source hash mismatch");
   return {path,commit,contentHash,body};

@@ -1,8 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { WorkflowService } from "@evoloop/core";
 import { DomainError } from "@evoloop/contracts/ports";
 import { buildServer } from "../src/server.js";
+import { readFixedSkill, roleSkillSourceReferences } from "../src/session-preparation/skills.js";
 
 const projectId="00000000-0000-4000-8000-000000000001";
 const roleId="00000000-0000-4000-8000-000000000002";
@@ -121,4 +128,43 @@ test("fixed skill child read requires project authority and a bounded source tra
     const foreign=url.replace(projectId,"00000000-0000-4000-8000-000000000099");
     assert.equal((await app.inject({url:foreign,headers:{authorization:`Bearer ${readerToken}`}})).statusCode,403);
   } finally {await app.close();}
+});
+
+test("ordinary Role skill HTTP read includes metadata for a large fixed child",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"evoloop-role-http-large-"));
+  const skillPath=".agents/skills/example/SKILL.md";
+  const sourcePath="docs/development/agent-cli.md";
+  const body="界".repeat(34_000);
+  const run=promisify(execFile);
+  try {
+    await run("git",["init","-q",root]);
+    await mkdir(join(root,".agents/skills/example"),{recursive:true});
+    await mkdir(join(root,"docs/development"),{recursive:true});
+    await writeFile(join(root,skillPath),"[CLI](../../../docs/development/agent-cli.md)\n");
+    await writeFile(join(root,sourcePath),body);
+    await run("git",["-C",root,"add","."]);
+    await run("git",["-C",root,"-c","user.name=Test","-c","user.email=test@example.invalid","commit","-qm","source"]);
+    const commit=(await run("git",["-C",root,"rev-parse","HEAD"])).stdout.trim();
+    const fixed=await readFixedSkill(root,skillPath,commit);
+    const empty=async()=>[];
+    const service={getRole:async()=>({id:roleId}),listRoleRevisions:empty,listRoleReviews:empty,
+      listRoleHandoffs:empty,listRoleSessionBindings:empty,listSchedules:empty,
+      listScheduleRevisions:empty,listScheduleOccurrences:empty,
+      listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
+    const app=await buildServer({service,credentials:[{token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]}],
+      readRoleSkill:async(_project,_role,_name,readCommit,hash)=>({
+        ...await readFixedSkill(root,skillPath,readCommit,hash),
+        references:await roleSkillSourceReferences(root,skillPath,readCommit)})});
+    try {
+      const url=`/api/projects/${projectId}/roles/${roleId}/skills/example?commit=${commit}&hash=${fixed.contentHash}`;
+      const response=await app.inject({url,headers:{authorization:`Bearer ${readerToken}`}});
+      assert.equal(response.statusCode,200);
+      const child=response.json().references[0];
+      assert.equal(child.path,sourcePath);
+      assert.equal(child.contentHash,createHash("sha256").update(body).digest("hex"));
+      assert.equal(child.commit,commit);
+      assert.equal((await app.inject({url:url.replace(fixed.contentHash,"0".repeat(64)),
+        headers:{authorization:`Bearer ${readerToken}`}})).statusCode,409);
+    } finally {await app.close();}
+  } finally {await rm(root,{recursive:true,force:true});}
 });
