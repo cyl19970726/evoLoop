@@ -192,6 +192,8 @@ export interface TaskProposal {
   useRequired: boolean;
   /** Null is the historical contract; new Tasks always set an explicit mode. */
   acceptanceMode?: AcceptanceMode | null;
+  /** Explicitly permits Leader acceptance; historical null requires a concrete arrangement decision. */
+  acceptanceTarget?: "human" | "leader" | "business_session" | null;
   evidence: string;
   stopCondition: string;
   createdAt: string;
