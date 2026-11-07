@@ -105,3 +105,24 @@ export function workspaceReadingGroups(entries: WorkspaceEntry[]): WorkspaceRead
   }
   return groups;
 }
+
+/** Keep the newest evidence and the last failure visible while a long tool group is folded. */
+export function workspaceToolPreview(entries: Extract<WorkspaceEntry, { kind: "tool" }>[], pinnedId: string | null = null) {
+  if (entries.length <= 4) return entries;
+  const selected = new Set(entries.slice(-4).map(entry => entry.id));
+  const failed = [...entries].reverse().find(entry => ["failed", "interrupted", "declined"].includes(entry.state));
+  const running = [...entries].reverse().find(entry => entry.state === "running" && entry.freshness === "live");
+  if (failed) selected.add(failed.id);
+  if (running) selected.add(running.id);
+  if (pinnedId) selected.add(pinnedId);
+  return entries.filter(entry => selected.has(entry.id));
+}
+
+/** A public message or plan in the exact active Turn is the only available progress evidence. */
+export function workspaceCurrentProgress(entries: WorkspaceEntry[], activeTurnId: string | null) {
+  if (!activeTurnId) return null;
+  const entry = [...entries].reverse().find(entry => entry.turnId === activeTurnId &&
+    (entry.kind === "message" && entry.role === "assistant" && !!entry.body.trim() ||
+      entry.kind === "plan" && !!entry.body.trim()));
+  return entry?.kind === "message" || entry?.kind === "plan" ? entry : null;
+}
