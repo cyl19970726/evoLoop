@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
+import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCompactionObservation, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import type { NativeInputCapture, NativeInputEvent, NativeInputQuestion } from "@evoloop/contracts/native-input";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
@@ -106,6 +106,7 @@ function runtimeTurn(value: unknown): RuntimeTurn | null {
 
 /** Unknown means the process may have accepted an operation whose reply was lost. Never retry it automatically. */
 export class RuntimeUnknownError extends Error {
+  observedTurnId?: string;
   constructor(public readonly method: string, public readonly requestId: number | null, reason: string) {
     super(`${method}: outcome unknown (${reason})`); this.name = "RuntimeUnknownError";
   }
@@ -543,7 +544,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  private request(method: string, params: unknown, timeoutMs = this.timeout): Promise<unknown> {
+  private request(method: string, params: unknown, timeoutMs = this.timeout,
+    beforeSend?: (requestId: number) => Promise<void>): Promise<unknown> {
     if (!this.child) return Promise.reject(new RuntimeProtocolError("App Server not open"));
     const threadId=object(params)?.threadId;
     // Invalidate before sending, including rejected or unknown native operations.
@@ -568,12 +570,15 @@ export class CodexAppServerAdapter implements RuntimePort {
           this.freshThreads.delete(threadId);
         resolveResult(value);
       }, reject, timer });
-      try { this.send({ id, method, params }); }
-      catch (error) {
+      const fail = (error: unknown) => {
         clearTimeout(timer); this.pending.delete(id);
         this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, error instanceof Error ? error.message : "send failed"));
-      }
+      };
+      if (beforeSend) void beforeSend(id).then(() => {
+        if (this.pending.has(id)) this.send({ id, method, params });
+      }).catch(fail);
+      else try { this.send({ id, method, params }); } catch (error) { fail(error); }
     });
   }
 
@@ -1217,6 +1222,81 @@ export class CodexAppServerAdapter implements RuntimePort {
     const thread = object(result?.thread);
     if (thread?.id !== binding.nativeThreadId || thread?.sessionId !== binding.nativeSessionId || thread?.cwd !== binding.cwd) throw new RuntimeProtocolError("read thread does not match binding");
     return result;
+  }
+
+  async observeCompaction(binding: RuntimeBinding, targetTurnId?:string): Promise<RuntimeCompactionObservation> {
+    this.owned(binding);
+    if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
+      throw new RuntimeProtocolError("compaction observation requires pinned alpha.6");
+    const read = object(await this.inspect(binding));
+    const thread = object(read?.thread)!;
+    const listed = object(await this.request("thread/turns/list", {
+      threadId: binding.nativeThreadId, limit: 5, sortDirection: "desc", itemsView: "summary",
+    }));
+    if (!Array.isArray(listed?.data)) throw new RuntimeProtocolError("compaction Turn listing unavailable");
+    const first = targetTurnId
+      ? listed.data.map(object).find(candidate=>candidate?.id===targetTurnId)??null
+      : object(listed.data[0]);
+    const turn = first ? runtimeTurn(first) : null;
+    if (first && !turn) throw new RuntimeProtocolError("invalid compaction Turn");
+    // The summary view is deliberately incomplete. Read the exact Turn's
+    // persisted item entries before treating a compaction as completed.
+    const itemPage = turn ? object(await this.request("thread/items/list", {
+      threadId: binding.nativeThreadId, turnId: turn.id, limit: 20, sortDirection: "desc",
+    })) : null;
+    if (turn && !Array.isArray(itemPage?.data))
+      throw new RuntimeProtocolError("compaction item history unavailable");
+    const entries = Array.isArray(itemPage?.data) ? itemPage.data.map(object) : [];
+    const entry = entries.find(value => object(value?.item)?.type === "contextCompaction") ?? null;
+    const item = object(entry?.item);
+    const usage = object(thread.tokenUsage);
+    const total = object(usage?.total);
+    return {
+      threadId: binding.nativeThreadId,
+      threadStatus: String(object(thread.status)?.type ?? "unknown"),
+      model: typeof thread.model === "string" ? thread.model : null,
+      reasoningEffort: typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null,
+      latestTurnId: turn?.id ?? null, latestTurnStatus: turn?.status ?? null,
+      latestTurnCompletedAtUtc: turn?.completedAtUtc ?? null,
+      compactionItemId: typeof item?.id === "string" ? item.id : null,
+      compactionItemCompleted: Number.isSafeInteger(entry?.completedAtMs) && Number(entry?.completedAtMs) > 0,
+      tokenUsage: total ? {
+        inputTokens: Number.isSafeInteger(total.inputTokens) ? Number(total.inputTokens) : null,
+        outputTokens: Number.isSafeInteger(total.outputTokens) ? Number(total.outputTokens) : null,
+      } : null,
+    };
+  }
+
+  async compactThread(binding: RuntimeBinding, beforeSend: (requestId: number) => Promise<void>): Promise<string | null> {
+    this.owned(binding);
+    if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
+      throw new RuntimeProtocolError("owned compaction requires pinned alpha.6");
+    const profile = binding.resumeProfile;
+    if (!profile || !fullProfile(profile) || !nonempty(profile.model) || !nonempty(profile.reasoningEffort))
+      throw new RuntimeProtocolError("compaction requires the active full owner profile");
+    const read = object(await this.inspect(binding));
+    const thread = object(read?.thread);
+    if (object(thread?.status)?.type !== "idle" || thread?.model !== profile.model ||
+      thread?.reasoningEffort !== profile.reasoningEffort)
+      throw new RuntimeProtocolError("owned Thread is not idle with the exact active model and effort");
+    let resolveStarted:(value:string)=>void=()=>{};
+    let startedTurnId:string|null=null;
+    let startTimer:ReturnType<typeof setTimeout>|null=null;
+    const started=new Promise<string>(resolve=>{resolveStarted=resolve});
+    const off=this.onEvent(event=>{
+      if(event.method==='turn/started'&&event.threadId===binding.nativeThreadId&&event.turnId){
+        startedTurnId=event.turnId;resolveStarted(event.turnId);
+      }
+    });
+    try{
+      const response = object(await this.request("thread/compact/start", {threadId:binding.nativeThreadId}, this.timeout, beforeSend));
+      if (!response || Object.keys(response).length !== 0)
+        throw new RuntimeUnknownError("thread/compact/start", null, "unexpected acknowledgement; outcome must be reconciled");
+      return await Promise.race([started,new Promise<null>(resolve=>{startTimer=setTimeout(()=>resolve(null),5000)})]);
+    }catch(error){
+      if(error instanceof RuntimeUnknownError&&startedTurnId)error.observedTurnId=startedTurnId;
+      throw error;
+    }finally{off();if(startTimer)clearTimeout(startTimer)}
   }
 
   async readThreadName(binding: RuntimeBinding): Promise<string | null> {

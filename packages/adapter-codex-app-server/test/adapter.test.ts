@@ -5,6 +5,30 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { CodexAppServerAdapter, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type CodexAppServerOptions } from "../src/index.js";
 
+test('compaction readback requires the exact persisted item entry, not a Turn summary', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const calls:string[]=[];
+  const internals=adapter as unknown as Record<string,unknown>;
+  internals.owned=()=>{};
+  internals.inspect=async()=>({thread:{id:'thread',status:{type:'idle'},model:'gpt-6-astra',reasoningEffort:'max'}});
+  internals.request=async(method:string,params:{turnId?:string})=>{
+    calls.push(method);
+    if(method==='thread/turns/list')return {data:[{id:'compact-turn',status:'completed',completedAt:1700000001,
+      items:[{id:'summary-item',type:'contextCompaction'}]}]};
+    if(method==='thread/items/list'){
+      assert.equal(params.turnId,'compact-turn');
+      return {data:[{turnId:'compact-turn',item:{id:'persisted-item',type:'contextCompaction'},
+        completedAtMs:1700000001000}],nextCursor:null};
+    }
+    assert.fail(method);
+  };
+  const binding={nativeThreadId:'thread'} as Parameters<typeof adapter.observeCompaction>[0];
+  const observed=await adapter.observeCompaction(binding,'compact-turn');
+  assert.deepEqual(calls,['thread/turns/list','thread/items/list']);
+  assert.equal(observed.compactionItemId,'persisted-item');
+  assert.equal(observed.compactionItemCompleted,true);
+});
+
 import { mapWorkItem } from "../src/work-trace.js";
 import type { RuntimeBinding, RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 
