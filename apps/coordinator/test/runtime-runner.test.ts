@@ -14,6 +14,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { SessionTimelineService } from "../src/session-timeline/index.js";
 import { currentSessionGrant } from "../src/orchestration/dynamic-admission.js";
+import { grantAllowsModel } from "../src/configuration.js";
 import { loopIntentId } from "../src/orchestration/runner.js";
 
 const projectId = randomUUID();
@@ -30,6 +31,55 @@ const run: RuntimeRunRecord = {
   version: 3, nativeTurnId: null, interruptRequested: false, resultSummary: null, actorId,
   createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
 };
+
+test("compaction uses current static authority and never settles a dynamic origin with historical authority", async () => {
+  const revisionId=randomUUID(),dispatchId=randomUUID();
+  const owner={...session,id:loopIntentId(dispatchId,"session"),actorId:"leader",roleId:randomUUID(),
+    cwd:"/tmp/compact-owner",authorizationScope:"project",model:"gpt-6-astra",
+    sandbox:"danger-full-access" as const,approvalPolicy:"never" as const,version:4,
+    executionProfile:{revision:{projectId,sessionId:"",revisionId,version:2,model:"gpt-6-astra",
+      reasoningEffort:"max",sandbox:"danger-full-access",approvalPolicy:"never",
+      cwd:"/tmp/compact-owner",authorizationScope:"project",provenance:"revised",
+      previousRevisionId:null,operationId:randomUUID(),actorId:"leader",reason:"active profile",
+      evidenceRef:null,createdAt:new Date().toISOString()},activeRevisionId:revisionId,
+      activationState:"active",activationOperationId:randomUUID(),attemptedAt:new Date().toISOString(),
+      activationEvidence:null}} as RuntimeSessionRecord;
+  owner.executionProfile!.revision.sessionId=owner.id;
+  const reviewer:Principal={actorId:"maintainer",projectIds:[projectId],permissions:["read","write","review"]};
+  const grant={projectId,actorId:reviewer.actorId,roleId:owner.roleId,
+    authorizationScope:owner.authorizationScope,cwd:owner.cwd,sandbox:owner.sandbox,
+    model:"gpt-6-sol",models:["gpt-6-astra"],approvalPolicy:owner.approvalPolicy};
+  let currentGrant=true,cwdAllowed=true,dynamic=false,dynamicCurrent=false,registered=0;
+  const persisted={query:async()=>({rows:dynamic?[{dispatch_id:dispatchId}]:[]})} as never;
+  const runtime=new FakeRuntime();runtime.ready=true;
+  runtime.registerBinding=async()=>{registered++;};
+  const workflow={getRuntimeSession:async()=>owner} as unknown as WorkflowService;
+  const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
+    workflow,trusted:{} as RuntimeWorkflowService,principals:[reviewer],canWrite:()=>true,
+    allowedCwd:async()=>cwdAllowed,canSettleOwned:async()=>dynamic,ownedCwd:async()=>true,
+    hasGrant:(scope,record)=>currentSessionGrant(persisted,record!,()=>currentGrant&&
+      Object.entries(scope).every(([key,value])=>key==='model'
+        ? grantAllowsModel(grant,value as string)
+        : grant[key as keyof typeof grant]===value),async()=>dynamicCurrent)});
+  Object.assign(runner,{available:true});
+  const check=()=>runner.compactionBinding(reviewer,projectId,owner.id,owner.version,owner.nativeThreadId!);
+  await check();assert.equal(registered,1,"valid static Session reaches the original owner");
+  currentGrant=false;await assert.rejects(check,/grant/);currentGrant=true;
+  cwdAllowed=false;await assert.rejects(check,/grant/);cwdAllowed=true;
+  for(const changed of [{actorId:"foreign"},{projectIds:[randomUUID()]},
+    {permissions:["read"] as Principal["permissions"]}])
+    await assert.rejects(()=>runner.compactionBinding({...reviewer,...changed},projectId,owner.id,
+      owner.version,owner.nativeThreadId!),/Compaction|grant/);
+  for(const key of ["roleId","authorizationScope","cwd","sandbox","approvalPolicy","model"] as const){
+    const previous=owner[key];(owner as unknown as Record<string,unknown>)[key]=key==="model"?"other-model":"other-value";
+    await assert.rejects(check,/Compaction|grant|profile/);
+    (owner as unknown as Record<string,unknown>)[key]=previous;
+  }
+  dynamic=true;dynamicCurrent=false;
+  await assert.rejects(check,/grant/,"historical settlement cannot authorize a dynamic start");
+  dynamicCurrent=true;await check();
+  assert.equal(registered,2,"current dynamic admission can reach the original owner");
+});
 
 class FakeRuntime {
   ready = false;
