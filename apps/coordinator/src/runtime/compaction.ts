@@ -19,6 +19,10 @@ interface Row {
   created_at:Date; updated_at:Date;
 }
 const hash=(input:CompactionIntent)=>createHash('sha256').update(JSON.stringify(input)).digest('hex');
+const assertSame=(row:Row,sessionId:string,input:CompactionIntent,actorId:string)=>{
+  if(row.session_id!==sessionId||row.request_hash!==hash(input)||row.actor_id!==actorId)
+    throw new DomainError('OPERATION_REUSED','Compaction operation ID has a different intent');
+};
 const view=(row:Row)=>({projectId:row.project_id,operationId:row.operation_id,
   sessionId:row.session_id,threadId:row.thread_id,gateVersion:row.gate_version,
   sessionVersion:row.session_version,state:row.state,nativeRequestId:row.native_request_id,
@@ -54,20 +58,27 @@ export class CompactionMaintenance {
     this.authorize(principal,projectId);
     const existing=await this.row(projectId,input.operationId);
     if(existing){
-      if(existing.session_id!==sessionId||existing.request_hash!==hash(input)||existing.actor_id!==principal.actorId)
-        throw new DomainError('OPERATION_REUSED','Compaction operation ID has a different intent');
+      assertSame(existing,sessionId,input,principal.actorId);
       return view(existing);
     }
-    const binding=await this.runner.compactionBinding(principal,projectId,sessionId,
-      input.expectedSessionVersion,input.threadId);
-    const before=await this.runner.observeCompaction(binding);
-    if(!['idle','systemError','notLoaded'].includes(before.threadStatus)||
-      before.threadStatus!=='idle'&&
-        (before.latestTurnStatus!=='failed'||!before.latestTurnCompletedAtUtc)||
-      before.model!==binding.resumeProfile?.model||
-      before.reasoningEffort!==binding.resumeProfile?.reasoningEffort||
-      before.latestTurnId&&!before.latestTurnCompletedAtUtc)
-      throw new DomainError('COMPACTION_NATIVE_BUSY','Owned Thread is not idle with settled history and the exact profile');
+    let binding:Awaited<ReturnType<RuntimeRunner['compactionBinding']>>;
+    let before:RuntimeCompactionObservation;
+    try{
+      binding=await this.runner.compactionBinding(principal,projectId,sessionId,
+        input.expectedSessionVersion,input.threadId);
+      before=await this.runner.observeCompaction(binding);
+      if(!['idle','systemError','notLoaded'].includes(before.threadStatus)||
+        before.threadStatus!=='idle'&&
+          (before.latestTurnStatus!=='failed'||!before.latestTurnCompletedAtUtc)||
+        before.model!==binding.resumeProfile?.model||
+        before.reasoningEffort!==binding.resumeProfile?.reasoningEffort||
+        before.latestTurnId&&!before.latestTurnCompletedAtUtc)
+        throw new DomainError('COMPACTION_NATIVE_BUSY','Owned Thread lacks settled history or the exact profile');
+    }catch(error){
+      const raced=await this.row(projectId,input.operationId);
+      if(raced){assertSame(raced,sessionId,input,principal.actorId);return view(raced)}
+      throw error;
+    }
     const client=await this.pool.connect();
     let saved:Row;
     let inserted=false;
@@ -75,8 +86,7 @@ export class CompactionMaintenance {
       await client.query('BEGIN');
       const prior=await this.row(projectId,input.operationId,client);
       if(prior){
-        if(prior.session_id!==sessionId||prior.request_hash!==hash(input)||prior.actor_id!==principal.actorId)
-          throw new DomainError('OPERATION_REUSED','Compaction operation ID has a different intent');
+        assertSame(prior,sessionId,input,principal.actorId);
         saved=prior;
       }else{
         const gate=await client.query<{version:number;phase:string;cause_kind:string|null;cause_id:string|null}>(`SELECT version,phase,cause_kind,cause_id FROM session_recovery_gate
@@ -126,7 +136,13 @@ export class CompactionMaintenance {
         inserted=true;
       }
       await client.query('COMMIT');
-    }catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
+    }catch(error){
+      await client.query('ROLLBACK');
+      // The other request may have committed while this one waited on the gate.
+      const raced=await this.row(projectId,input.operationId);
+      if(raced){assertSame(raced,sessionId,input,principal.actorId);return view(raced)}
+      throw error;
+    }finally{client.release()}
     if(!inserted)return view(saved);
     // A concurrent identical HTTP request can read the same freshly inserted row.
     // Claim the one send with a durable CAS before invoking the adapter.

@@ -64,8 +64,10 @@ test('durable compaction uses one native request and never opens a blocked gate 
     const input={operationId,threadId,expectedSessionVersion:1,expectedGateVersion:gateVersion,
       evidenceRef:'incident://known-three-terminal-errors',reason:'one authorized maintenance attempt'};
     const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/compactions`;
-    const firstResponse=await app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:input});
+    const [firstResponse,concurrent]=await Promise.all([1,2].map(()=>
+      app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:input})));
     assert.equal(firstResponse.statusCode,200,firstResponse.body);
+    assert.equal(concurrent.statusCode,200,concurrent.body);
     const first=firstResponse.json();
     assert.equal(first.state,'unknown');assert.equal(first.nativeRequestId,17);
     const duplicate=await app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:input});
