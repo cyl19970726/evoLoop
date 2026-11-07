@@ -2,7 +2,7 @@
 
 `runtime.compact.start` 只面向有当前项目复核、写入和精确 Session 运行授权的维护者。请求指明原 managed Session、原 native Thread、当前 Session 版本和**blocked** 恢复门版本。服务先核原失败 Run 或消息的已知终态及其最后原生 Turn，再将意图存入 `session_compaction`，随后才在当前 owner 的 App Server 连接发送一次 `thread/compact/start`。这里不产生普通业务消息，也不开启恢复门。
 
-发包前的 native request ID 仅表示尝试。只有同一 owner 连接收到合法 `{}` 应答，才记录受理时间和连接 ID；丢失 `turn/started` 时，回填还要求该连接仍有效、原基线之后只有一个 Turn，且该 Turn 有持久 compaction Item。没有应答、连接已更换或历史有歧义时，原操作保持 unknown，按原 ID 对账，不再次发送。
+发包前的 native request ID 仅表示尝试。原 owner 连接在发包后捕获的精确 `turn/started` ID 可直接用于同一 Turn 的只读对账，即使 RPC 应答丢失或连接随后更换。没有精确 Turn ID 时，只有同一 owner 连接收到合法 `{}` 应答，才记录受理时间和连接 ID；历史回填还要求该连接仍有效、原基线之后只有一个 Turn，且该 Turn 有持久 compaction Item。既无 ACK 又无精确 Turn、连接已更换或历史有歧义时，原操作保持 unknown，按原 ID 对账，不再次发送。
 
 命令入口：`request runtime.compact.start --project PROJECT --id SESSION --file intent.json`。文件正文为 `operationId`、`threadId`、`expectedSessionVersion`、`expectedGateVersion`、`evidenceRef`、`reason`。先用 `request schema runtime.compact.start` 核字段。相同 operation ID 和完全相同正文只读回原结果；不同正文被拒绝。原操作可用 `get /api/projects/PROJECT/runtime/compactions/OPERATION` 读取，再用 `request runtime.compact.reconcile --project PROJECT --id OPERATION --file empty.json` 只读原生证据并更新原记录。`empty.json` 为 `{}`。
 

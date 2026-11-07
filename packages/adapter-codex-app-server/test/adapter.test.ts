@@ -67,10 +67,17 @@ test('compaction acceptance is recorded only for a valid reply on the same owner
   internals.inspect=async()=>({thread:{id:'thread',status:{type:'idle'},model:'gpt-6-astra',reasoningEffort:'max'}});
   let listener:((event:{method:string;threadId:string;turnId:string})=>void)|null=null;
   internals.onEvent=(callback:typeof listener)=>{listener=callback;return ()=>{listener=null}};
-  internals.request=async(method:string,_params:unknown,_timeout:unknown,beforeSend?: (id:number)=>Promise<void>)=>{
+  internals.request=async(method:string,_params:unknown,_timeout:unknown,beforeSend?: (id:number)=>Promise<void>,
+    afterSend?:()=>void)=>{
     if(method==='thread/turns/list')return {data:[{id:'old-turn',status:'failed',completedAt:1700000001}]};
     assert.equal(method,'thread/compact/start');
     await beforeSend?.(17);
+    if(reply==='event-before-send')listener?.({method:'turn/started',threadId:'thread',turnId:'foreign-turn'});
+    afterSend?.();
+    if(reply==='event-then-timeout'){
+      listener?.({method:'turn/started',threadId:'thread',turnId:'captured-turn'});
+      throw new RuntimeUnknownError(method,17,'response timeout');
+    }
     if(reply instanceof Error)throw reply;
     if(reply==='connection-changed')connectionId='connection-B';
     if(reply==='valid-event')listener?.({method:'turn/started',threadId:'thread',turnId:'compact-turn'});
@@ -90,6 +97,12 @@ test('compaction acceptance is recorded only for a valid reply on the same owner
   reply='connection-changed';
   await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),RuntimeUnknownError);
   assert.deepEqual(accepted,['connection-A']);
+  connectionId='connection-A';reply='event-before-send';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),
+    error=>error instanceof RuntimeUnknownError&&error.observedTurnId===undefined);
+  reply='event-then-timeout';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),
+    error=>error instanceof RuntimeUnknownError&&error.observedTurnId==='captured-turn');
 });
 
 import { mapWorkItem } from "../src/work-trace.js";

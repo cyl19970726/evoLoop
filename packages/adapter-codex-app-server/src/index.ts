@@ -545,7 +545,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
 
   private request(method: string, params: unknown, timeoutMs = this.timeout,
-    beforeSend?: (requestId: number) => Promise<void>): Promise<unknown> {
+    beforeSend?: (requestId: number) => Promise<void>, afterSend?: () => void): Promise<unknown> {
     if (!this.child) return Promise.reject(new RuntimeProtocolError("App Server not open"));
     const threadId=object(params)?.threadId;
     // Invalidate before sending, including rejected or unknown native operations.
@@ -575,10 +575,11 @@ export class CodexAppServerAdapter implements RuntimePort {
         this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, error instanceof Error ? error.message : "send failed"));
       };
+      const write=()=>{this.send({ id, method, params });afterSend?.()};
       if (beforeSend) void beforeSend(id).then(() => {
-        if (this.pending.has(id)) this.send({ id, method, params });
+        if (this.pending.has(id)) write();
       }).catch(fail);
-      else try { this.send({ id, method, params }); } catch (error) { fail(error); }
+      else try { write(); } catch (error) { fail(error); }
     });
   }
 
@@ -1304,16 +1305,18 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(!sendConnectionId)throw new RuntimeProtocolError('owner connection unavailable before compaction');
     let resolveStarted:(value:string)=>void=()=>{};
     let startedTurnId:string|null=null;
+    let sent=false;
     let startTimer:ReturnType<typeof setTimeout>|null=null;
     const started=new Promise<string>(resolve=>{resolveStarted=resolve});
     const off=this.onEvent(event=>{
-      if(event.method==='turn/started'&&event.threadId===binding.nativeThreadId&&event.turnId&&
+      if(sent&&event.method==='turn/started'&&event.threadId===binding.nativeThreadId&&event.turnId&&
         this.nativeInputConnectionId()===sendConnectionId){
         startedTurnId=event.turnId;resolveStarted(event.turnId);
       }
     });
     try{
-      const response = object(await this.request("thread/compact/start", {threadId:binding.nativeThreadId}, this.timeout, beforeSend));
+      const response = object(await this.request("thread/compact/start", {threadId:binding.nativeThreadId},
+        this.timeout, beforeSend, ()=>{sent=true}));
       if (!response || Object.keys(response).length !== 0)
         throw new RuntimeUnknownError("thread/compact/start", null, "unexpected acknowledgement; outcome must be reconciled");
       if(this.nativeInputConnectionId()!==sendConnectionId)

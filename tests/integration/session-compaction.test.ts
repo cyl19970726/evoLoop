@@ -59,7 +59,8 @@ test('durable compaction uses one native request and never opens a blocked gate 
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
-    let observation=before,starts=0,noEvent=false,unacknowledged=false,successors:string[]|null=null;
+    let observation=before,starts=0,noEvent=false,unacknowledged=false;
+    let observedWithoutAck=false,capturedTurnId='captured-turn',successors:string[]|null=null;
     let connectionId='connection-A';
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
       compactionConnectionId:()=>connectionId,
@@ -68,7 +69,11 @@ test('durable compaction uses one native request and never opens a blocked gate 
         afterAccepted:(connectionId:string)=>Promise<void>)=>{
         assert.equal(baselineTurnId,'old-turn');
         starts++;await beforeSend(noEvent?18:17);
-        if(unacknowledged)throw new RuntimeUnknownError('thread/compact/start',17,'no native acknowledgement');
+        if(unacknowledged){
+          const lost=new RuntimeUnknownError('thread/compact/start',17,'no native acknowledgement');
+          if(observedWithoutAck)lost.observedTurnId=capturedTurnId;
+          throw lost;
+        }
         await afterAccepted(connectionId);
         if(noEvent)return null;
         return 'compact-turn';
@@ -156,8 +161,36 @@ test('durable compaction uses one native request and never opens a blocked gate 
       [projectId,sessionId])).rows[0].phase,'blocked');
     await pool.query(`UPDATE session_recovery_gate SET version=version+1
       WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
-    unacknowledged=true;observation=before;
-    const unackInput={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+3};
+    unacknowledged=true;observedWithoutAck=true;observation=before;
+    const capturedInput={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+3};
+    const captured=await service.start(actor,projectId,sessionId,capturedInput);
+    assert.equal(captured.state,'unknown');assert.equal(captured.nativeAcknowledgedAt,null);
+    assert.equal(captured.nativeTurnId,'captured-turn','the original owner observed the exact native Turn');
+    connectionId='connection-B';
+    observation={...before,latestTurnId:'captured-turn',latestTurnStatus:'failed',
+      latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null};
+    const capturedFailure=await service.reconcile(actor,projectId,capturedInput.operationId);
+    assert.equal(capturedFailure.state,'failed','an exact captured Turn must settle after a lost ACK and reconnect');
+    assert.equal(capturedFailure.nativeTurnId,'captured-turn');
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    connectionId='connection-A';capturedTurnId='captured-completed-turn';observation=before;
+    const completedInput={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+4};
+    const capturedCompletion=await service.start(actor,projectId,sessionId,completedInput);
+    assert.equal(capturedCompletion.state,'unknown');
+    assert.equal(capturedCompletion.nativeTurnId,capturedTurnId);
+    assert.equal(capturedCompletion.nativeAcknowledgedAt,null);
+    connectionId='connection-B';
+    observation={...before,threadStatus:'idle',latestTurnId:capturedTurnId,latestTurnStatus:'completed',
+      latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:'captured-item',
+      compactionItemCompleted:true};
+    const capturedSuccess=await service.reconcile(actor,projectId,completedInput.operationId);
+    assert.equal(capturedSuccess.state,'completed','exact captured Turn and completed Item settle after lost ACK');
+    assert.equal(capturedSuccess.nativeTurnId,capturedTurnId);
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    connectionId='connection-A';observedWithoutAck=false;observation=before;
+    const unackInput={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+5};
     const unack=await app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:unackInput});
     assert.equal(unack.statusCode,200);assert.equal(unack.json().state,'unknown');
     assert.equal(unack.json().nativeRequestId,17,'request ID was saved before native send');
@@ -171,6 +204,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal(foreign.statusCode,200);
     assert.equal(foreign.json().state,'unknown','another controller’s compaction cannot settle an unacknowledged request');
     assert.equal(foreign.json().nativeTurnId,null);
+    assert.equal(starts,6,'each original operation starts at most once');
     }finally{await app.close()}
   }finally{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)}finally{await admin.end()}}

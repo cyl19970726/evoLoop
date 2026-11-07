@@ -192,11 +192,12 @@ export class CompactionMaintenance {
     if(saved.state==='completed'||saved.state==='failed')return this.read(principal,projectId,operationId);
     // The request ID is saved before writing to native stdin. A lost response
     // and an unrelated later compaction Turn cannot establish acceptance.
-    if(!saved.native_acknowledged_at)return this.read(principal,projectId,operationId);
+    if(!saved.native_acknowledged_at&&!saved.native_turn_id)
+      return this.read(principal,projectId,operationId);
     const binding=await this.runner.compactionBinding(principal,projectId,saved.session_id,
       saved.session_version,saved.thread_id);
     let turnId=saved.native_turn_id;
-    if(!turnId&&saved.native_request_id&&saved.baseline_turn_id){
+    if(!turnId&&saved.native_acknowledged_at&&saved.native_request_id&&saved.baseline_turn_id){
       // A later owner process can observe a different writer's sole successor.
       // History alone does not identify the original accepted request.
       if(!saved.native_connection_id||this.runner.compactionConnectionId()!==saved.native_connection_id)
