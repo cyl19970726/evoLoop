@@ -287,7 +287,10 @@ export class PgTaskTimingQueries implements TaskTimingQueries {
     return { projectId: this.projectId, taskId, seriesId: row.series_id, rootTaskId: row.root_task_id, version: row.version,
       seriesState: row.state, executeAtUtc: iso(current.planned_at_utc), timezone: row.timezone,
       repeat: row.repeat, previousTaskId: current.previous_task_id ?? null,
-      nextTaskId: next?.task_id ?? null, nextAtUtc: next ? iso(next.planned_at_utc) : nextAt,
+      // A generated successor is history in this chain, even when viewed from A.
+      // The next calendar slot belongs to the series, never to that existing Task.
+      nextTaskId: next?.task_id ?? null,
+      nextAtUtc: row.state === "active" && row.repeat === "daily" ? nextAt : null,
       waitingReason, futureTemplate: {title:row.template.title,content:row.template.content,
         acceptance:row.template.acceptance},
       occurrences: recent.rows.reverse().map(r => ({taskId:r.task_id,executeAtUtc:iso(r.planned_at_utc),state:r.state})) };
@@ -458,7 +461,7 @@ export class PgTaskTimingStore {
       await client.query("BEGIN");
       const matching = await client.query(`SELECT series_id FROM task_timing_series
         WHERE project_id=$1 AND authorized_actor_id=$2 AND authorized_role_id=$3 AND state='active'
-          AND ($4 = 'task-timing:' || root_task_id::text)
+          AND ($4 = 'task-timing:*' OR $4 = 'task-timing:' || root_task_id::text)
         ORDER BY series_id FOR UPDATE SKIP LOCKED`,[projectId,actorId,roleId,scopeId]);
       for (const item of matching.rows) {
         const completedBefore = created.length;

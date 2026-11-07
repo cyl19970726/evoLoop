@@ -12,7 +12,7 @@ import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskE
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
 import { TaskTiming } from "./LeaderTaskFacts";
 import { taskPreviewResponsibility } from "./taskPreviewResponsibility";
-import { formatScheduled, repeatLabel } from "./taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 
 const empty: NonNullable<TaskDetail["deliveries"]> = [];
 
@@ -79,7 +79,7 @@ export function TaskPreview({ token, projectId, id, item, returnTo, sessionName,
       <section className="task-summary-section" aria-label="阶段时间与当前关注">
         <h3>阶段时间与当前关注</h3>
         <TaskTiming timing={projection?.timing} />
-        {scheduled?.value && <p>约定执行 {formatScheduled(scheduled.value.executeAtUtc, scheduled.value.timezone)} · {repeatLabel(scheduled.value.repeat)}{scheduled.value.nextAtUtc && ` · 下次 ${formatScheduled(scheduled.value.nextAtUtc, scheduled.value.timezone)}`}</p>}
+        {scheduled?.value && <p>约定执行 {formatScheduled(scheduled.value.executeAtUtc, scheduled.value.timezone)} · {repeatLabel(scheduled.value.repeat)} · {nextTimingLabel(scheduled.value)}</p>}
         {scheduled?.problem && <p role="status">执行时间暂未读回：{scheduled.problem}</p>}
         <a href={`${fullHref}&tab=overview&section=task-schedule`}>查看执行时间与重复任务 <ArrowRight size={14} /></a>
         <a href={`${fullHref}&tab=overview&section=timing`}>查看时间区间与来源 <ArrowRight size={14} /></a>

@@ -48,6 +48,15 @@ export function repeatLabel(repeat: TaskTimingView["repeat"]): string {
   return repeat === "daily" ? "每天固定时间" : "仅本次";
 }
 
+export function nextTimingLabel(timing: TaskTimingView, nowUtc = new Date().toISOString()): string {
+  if (timing.seriesState === "stopped") return "已停止后续复制";
+  if (timing.repeat === "none") return "仅本次，无后续时点";
+  if (!timing.nextAtUtc) return "下一时点尚未安排";
+  const prefix = Date.parse(timing.nextAtUtc) <= Date.parse(nowUtc)
+    ? "待补的约定时点" : "未来下一时点";
+  return `${prefix} ${formatScheduled(timing.nextAtUtc, timing.timezone)}`;
+}
+
 export function timingSetPayload(taskId: string, taskVersion: number, current: TaskTimingView | null,
   values: { executeAtUtc: string; timezone: string; repeat: "none" | "daily"; scope: "this" | "this_and_future" | "future"; reason: string }) {
   return { type: "task.timing.set" as const, taskId, expectedTaskVersion: taskVersion,

@@ -3,7 +3,7 @@ import { commandSchema, type Command, type TaskDetail } from "@evoloop/contracts
 import { api, errorText, type TaskTimingView } from "../api";
 import { href } from "../ui/shared";
 import { ActionForm, option, type Field, type MutationContext, type RecoverableCommand } from "./ActionForm";
-import { formatScheduled, repeatLabel, timingSetPayload, timingStopPayload, timingVersion } from "./taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel, timingSetPayload, timingStopPayload, timingVersion } from "./taskTimingPresentation";
 
 function validateTimingCommand(command: Record<string, unknown>) {
   commandSchema.parse(command);
@@ -15,14 +15,14 @@ function TimingFacts({ timing, projectId }: { timing: TaskTimingView; projectId:
     <dl className="task-timing-facts">
       <div><dt>本次约定执行</dt><dd>{formatScheduled(timing.executeAtUtc, timing.timezone)}</dd></div>
       <div><dt>重复规则</dt><dd>{repeatLabel(timing.repeat)}{timing.repeat === "daily" ? ` · ${timing.seriesState === "active" ? "继续重复" : "已停止后续复制"}` : ""}</dd></div>
-      <div><dt>下一约定时点</dt><dd>{formatScheduled(timing.nextAtUtc, timing.timezone)}</dd></div>
+      <div><dt>后续复制</dt><dd>{nextTimingLabel(timing)}</dd></div>
       <div><dt>重复工作</dt><dd><code title={timing.seriesId}>{timing.seriesId.slice(0, 8)}</code> · 每份任务单独执行和验收</dd></div>
       {timing.repeat === "daily" && <div><dt>调度授权范围</dt><dd><code>task-timing:{timing.rootTaskId}</code></dd></div>}
       {timing.waitingReason && <div><dt>当前等待</dt><dd>{timing.waitingReason}</dd></div>}
     </dl>
     {(timing.previousTaskId || timing.nextTaskId) && <p>
       {timing.previousTaskId && <><a href={href(projectId, "task", timing.previousTaskId)}>上一份任务 →</a>{" · "}</>}
-      {timing.nextTaskId && <a href={href(projectId, "task", timing.nextTaskId)}>下一份任务 →</a>}
+      {timing.nextTaskId && <a href={href(projectId, "task", timing.nextTaskId)}>后一份已生成任务 →</a>}
     </p>}
     {timing.occurrences?.length > 0 && <details><summary>同系列最近任务与各自状态（{timing.occurrences.length}）</summary>
       <ol>{timing.occurrences.map(item => <li key={item.taskId}>

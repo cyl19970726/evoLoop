@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { api, ApiError, type TaskTimingView } from "../src/api.ts";
 import { commandSchema } from "@evoloop/contracts";
-import { dailyScheduledInstant, formatScheduled, scheduledInstant, scheduledTimezone, timingSetPayload, timingStopPayload, timingVersion } from "../src/workflow/taskTimingPresentation.ts";
+import { dailyScheduledInstant, formatScheduled, nextTimingLabel, scheduledInstant, scheduledTimezone, timingSetPayload, timingStopPayload, timingVersion } from "../src/workflow/taskTimingPresentation.ts";
 
 const timing: TaskTimingView = {
   projectId: "project-1", taskId: "task-1", seriesId: "series-1", rootTaskId: "task-1", version: 4,
@@ -11,6 +11,15 @@ const timing: TaskTimingView = {
   nextAtUtc: "2026-11-08T00:00:00.000Z", waitingReason: null, occurrences: [],
   futureTemplate: { title: "Check architecture", content: "Review current architecture", acceptance: "Report" },
 };
+
+test("stopped series keeps a generated successor without presenting it as a future slot", () => {
+  const stopped = { ...timing, seriesState: "stopped" as const,
+    nextTaskId: crypto.randomUUID(), nextAtUtc: null };
+  assert.equal(nextTimingLabel(stopped), "已停止后续复制");
+  assert.match(nextTimingLabel(timing, "2026-11-07T00:00:00.000Z"), /未来下一时点/);
+  assert.match(nextTimingLabel(timing, "2026-11-09T00:00:00.000Z"), /待补的约定时点/);
+  assert.equal(nextTimingLabel({ ...timing, repeat: "none", nextAtUtc: null }), "仅本次，无后续时点");
+});
 
 test("a scheduled local time becomes a fixed UTC instant and displays in its declared zone", () => {
   assert.equal(scheduledInstant("2026-11-07T08:00:00+08:00"), timing.executeAtUtc);

@@ -9,6 +9,7 @@ export interface ScheduleGrant {
   scopeId: string;
   roleId: string;
 }
+export type TaskTimingGrant = Pick<ScheduleGrant, "projectId" | "actorId" | "roleId">;
 
 export interface SchedulingPumpOptions {
   store: ScheduleStore;
@@ -16,6 +17,8 @@ export interface SchedulingPumpOptions {
   canWrite(): boolean;
   credentials(): AuthConfig;
   grants(): readonly ScheduleGrant[];
+  /** Separate from legacy Schedule grants; never authorizes a Schedule. */
+  taskTimingGrants?(): Promise<readonly TaskTimingGrant[]> | readonly TaskTimingGrant[];
   enabled(): boolean;
   now?(): string;
   intervalMs?: number;
@@ -102,6 +105,13 @@ export class SchedulingPump {
     return credential ? { actorId: credential.actorId, projectIds: [...credential.projectIds], permissions: [...credential.permissions] } : null;
   }
 
+  private taskTimingPermitted(grant: TaskTimingGrant): boolean {
+    return !this.stopped && this.options.enabled() && this.options.canWrite() &&
+      this.options.credentials().some(item => item.actorId === grant.actorId &&
+        item.projectIds.includes(grant.projectId) && item.permissions.includes("write") &&
+        item.permissions.includes("review"));
+  }
+
   private permitted(grant: ScheduleGrant, definition?: ScheduleDefinition): boolean {
     if (this.stopped || !this.options.enabled() || !this.options.canWrite() || !this.principal(grant)) return false;
     if (!this.options.grants().some(item => sameGrant(item, grant))) return false;
@@ -148,7 +158,11 @@ export class SchedulingPump {
       if (!Number.isFinite(Date.parse(now))) throw new Error("invalid schedule clock");
       const grants = [...new Map(this.options.grants().map(grant => [grantKey(grant), grant])).values()];
       const valid = grants.filter(grant => this.permitted(grant));
-      if (!valid.length) {
+      const taskTimingGrants = await this.options.taskTimingGrants?.() ?? [];
+      const validTiming = [...new Map(taskTimingGrants.map(grant =>
+        [`${grant.projectId}\0${grant.actorId}\0${grant.roleId}`, grant])).values()]
+        .filter(grant => this.taskTimingPermitted(grant));
+      if (!valid.length && !validTiming.length) {
         this.current = { ...this.current, state: "no-authority", lastTickAt: now, lastCreated: 0 };
         return empty("no-authority");
       }
@@ -163,6 +177,14 @@ export class SchedulingPump {
         if (this.options.taskTiming && this.permitted(grant))
           taskCopies += (await this.options.taskTiming.tick(grant.projectId, now, grant.actorId, grant.roleId, grant.scopeId))
             .filter(item => item.created).length;
+      }
+      for (const grant of validTiming) {
+        if (!this.options.taskTiming || !this.taskTimingPermitted(grant)) continue;
+        const current = await this.options.taskTimingGrants?.() ?? [];
+        if (!current.some(item => item.projectId === grant.projectId &&
+          item.actorId === grant.actorId && item.roleId === grant.roleId)) continue;
+        taskCopies += (await this.options.taskTiming.tick(grant.projectId, now,
+          grant.actorId, grant.roleId, "task-timing:*")).filter(item => item.created).length;
       }
       this.current = { state: "idle", lastTickAt: now, lastError: null,
         lastCreated: occurrences.filter(item => item.state === "created").length + taskCopies };

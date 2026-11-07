@@ -55,7 +55,7 @@ export function CreateTaskPage({ context, refresh }: { context: MutationContext;
           ...(v.stopCondition.trim() ? { stopCondition: v.stopCondition.trim() } : {}) };
       }}
         onApplied={result => { window.location.hash = `/p/${projectId}/tasks/${result.entityId}`; }} />}
-      <p className="muted">每日重复还需要调度授权范围 <code>task-timing:{draftTaskId}</code>。未预先配置时，先创建仅本次任务，再为任务配置授权并在详情中改为每日重复。</p>
+      <p className="muted">每日重复需维护者为当前项目、创建身份与负责角色配置普通任务时间授权；已有系列也可使用精确范围 <code>task-timing:{draftTaskId}</code>。若尚未授权，可先创建仅本次任务，授权后在详情改为每日重复。</p>
       {!canReview && <p className="muted">当前身份可创建一次性定时任务；每日重复需由有审阅权限的身份设置。</p>}
     </section><aside className="create-task-check"><h2>交办前检查</h2><ol><li><strong>目标具体</strong><span>说明要解决的问题和可交付结果。</span></li><li><strong>结果可核对</strong><span>写明独立验收要看的证据。</span></li><li><strong>责任真实</strong><span>选择项目中实际负责分流或执行的角色。</span></li></ol><p>创建只保存任务记录。保存后在任务详情设置计划时间、截止、优先级、前置依赖，再确认 Session 承接、队列与运行。</p></aside></div></>}
   </div>;

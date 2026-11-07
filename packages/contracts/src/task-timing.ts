@@ -29,7 +29,9 @@ export interface TaskTimingView extends TaskTimingInput {
   version: number;
   seriesState: "active" | "stopped";
   previousTaskId: string | null;
+  /** Already materialized successor in the chain; it may be completed history. */
   nextTaskId: string | null;
+  /** Next unmaterialized calendar slot, only while daily repetition is active. */
   nextAtUtc: string | null;
   waitingReason: string | null;
   futureTemplate: { title: string; content: string; acceptance: string };

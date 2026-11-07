@@ -39,7 +39,7 @@ import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
+import { hasExactEngineeringActionGrant, hasTaskTimingGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
@@ -135,8 +135,7 @@ const service = new WorkflowService({
   hasher,
   taskTimingAuthority: async (projectId, actorId, roleId, scopeId) => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
-    return !!current?.enabled && current.grants.some(grant =>
-      grant.projectId === projectId && grant.actorId === actorId && grant.roleId === roleId && grant.scopeId === scopeId) &&
+    return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
       await currentProjectWriter(projectId, actorId);
   },
   recoveryAuthority: staticRecoveryAuthority(
@@ -458,6 +457,15 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   }) : null;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
+  taskTimingGrants: async () => {
+    const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
+    if (!current?.enabled) return [];
+    const writers = await currentIdentity();
+    return current.taskTimingGrants.filter(grant => writers.some(identity =>
+      identity.actorId === grant.actorId && identity.projectIds.includes(grant.projectId) &&
+      identity.permissions.includes("read") && identity.permissions.includes("write") &&
+      identity.permissions.includes("review")));
+  },
   enabled: () => integrations.scheduling?.enabled ?? false,
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });

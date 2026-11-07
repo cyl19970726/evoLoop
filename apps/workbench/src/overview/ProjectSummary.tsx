@@ -8,7 +8,7 @@ import { Alert, date, href } from "../ui/shared";
 import { isRoleOwnerId, readOwnerRole } from "../workflow/ownerRole";
 import { scanProjectTasks, selectSummary, taskMatchesQueue, type SummaryItem } from "./summary";
 import { visibleWorkGroups, type WorkTaskStatus } from "../workflow/workStatusPresentation";
-import { formatScheduled, repeatLabel } from "../workflow/taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel } from "../workflow/taskTimingPresentation";
 
 import { ProjectContext } from "./ProjectContext";
 import "./overview.css";
@@ -185,10 +185,10 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
         const latestDone = timing.occurrences.slice().reverse().find(item => item.state === "done");
         return <li key={task.id}><a href={href(projectId, "task", task.id)}>{task.title}</a>
           <div className="muted">本次 {formatScheduled(timing.executeAtUtc, timing.timezone)} · {repeatLabel(timing.repeat)}
-            {timing.nextAtUtc && ` · 下次 ${formatScheduled(timing.nextAtUtc, timing.timezone)}`}</div>
+            {` · ${nextTimingLabel(timing)}`}</div>
           <div className="muted">同系列最近 {timing.occurrences.length} 份
             {timing.previousTaskId && <> · <a href={href(projectId, "task", timing.previousTaskId)}>上一份</a></>}
-            {timing.nextTaskId && <> · <a href={href(projectId, "task", timing.nextTaskId)}>下一份</a></>}
+            {timing.nextTaskId && <> · <a href={href(projectId, "task", timing.nextTaskId)}>后一份已生成任务</a></>}
             {latestDone ? <> · <a href={href(projectId, "task", latestDone.taskId)}>查看最近已完成任务的结果</a></> : " · 尚无已完成结果"}
             {timing.waitingReason && ` · 等待：${timing.waitingReason}`}</div></li>;
       })}</ul> : current && !stale ? <p className="empty">已读范围内没有约定执行的未结束任务。</p> : <p>约定执行任务待读回。</p>}
