@@ -82,6 +82,18 @@ try {
   });
   app.setErrorHandler((error,_request,reply)=>reply.code(error instanceof Error&&error.message==="isolated actor mismatch"?403:409).send({error:error instanceof Error?error.message:"unknown"}));
   registerDirectInputRoutes(app,service);
+  // Candidate-only readback for an independent reviewer. Never return tool payloads.
+  app.get("/candidate/evidence",async(request,reply)=>{
+    if(!request.principal)return reply.code(403).send({error:"fixture token required"});
+    const inputs=(await store.list(projectId,sessionId,50)).items;
+    const turnId=inputs.find(input=>input.mode==="start")?.actualTurnId??null;
+    const turns=turnId?(await native.listTurns(binding)).data.filter(turn=>turn.id===turnId):[];
+    const items=turnId?(await native.listItems(binding,turnId)).data as Array<Record<string,unknown>>:[];
+    const processing=(await pool.query("SELECT processing_id,message_id,native_turn_id,state FROM session_message_processing WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows;
+    return {inputs:inputs.map(({inputId,operationId,mode,state,source,actualTurnId,nativeItemId})=>({inputId,operationId,mode,state,source,actualTurnId,nativeItemId})),
+      turns,processing,userItems:items.filter(item=>item.type==="userMessage").map(item=>({id:item.id,clientId:item.clientId})),
+      publicReplies:items.filter(item=>item.type==="agentMessage"&&item.phase==="final_answer").map(item=>({id:item.id,text:item.text}))};
+  });
   address=await app.listen({host:"127.0.0.1",port:Number(process.env.LIVE_DIRECT_PORT??0)});
   const endpoint=`${address}/api/projects/${projectId}/sessions/${sessionId}/direct-inputs`;
   if(process.env.LIVE_DIRECT_SERVE==="1"){
@@ -89,6 +101,7 @@ try {
     const manifestPath=process.env.LIVE_DIRECT_MANIFEST??join(cwd,"access.json");
     await writeFile(manifestPath,JSON.stringify({kind:"isolated-fixture-auth",address,endpoint,
       capabilityUrl:`${address}/api/projects/${projectId}/sessions/${sessionId}/direct-input-capability`,
+      evidenceUrl:`${address}/candidate/evidence`,
       actorId,token,projectId,sessionId,cwd,threadId:binding.nativeThreadId,
       databaseSchema:schema,exampleInput:"Read cases.csv; write report.md with counts and sums by group, every hold ID, and all tied maximum ready IDs. Verify the report against the CSV."},null,2),{mode:0o600});
     console.log(JSON.stringify({state:"ready",manifestPath,address,projectId,sessionId,actorId,schema}));
