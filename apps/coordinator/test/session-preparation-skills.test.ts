@@ -62,3 +62,31 @@ test("linked references and repo docs remain readable from the same fixed commit
     await assert.rejects(readRoleSkillSource(root,skill,guide,reference.commit,hash("new CLI\n"),[skill,guide]),/trail/);
   } finally {await rm(root,{recursive:true,force:true});}
 });
+
+test("large UTF-8 linked sources retain fixed metadata and bounded reads",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"evoloop-role-large-link-"));
+  const skill=".agents/skills/example/SKILL.md";
+  const guide="docs/development/agent-cli.md";
+  const large="界".repeat(34_000); // 102 KiB in UTF-8, beyond the old 96 KiB pipe limit.
+  try {
+    await run("git",["init","-q",root]);
+    await mkdir(join(root,".agents/skills/example"),{recursive:true});
+    await mkdir(join(root,"docs/development"),{recursive:true});
+    await writeFile(join(root,skill),"[CLI](../../../docs/development/agent-cli.md)\n");
+    await writeFile(join(root,guide),large);
+    await run("git",["-C",root,"add","."]);
+    await run("git",["-C",root,"-c","user.name=Test","-c","user.email=test@example.invalid","commit","-qm","source"]);
+    const [fixed]=await roleSkillReferences(root,[skill]);
+    assert.ok(fixed);
+    assert.deepEqual(await roleSkillSourceReferences(root,skill,fixed.commit),
+      [{path:guide,commit:fixed.commit,contentHash:hash(large)}]);
+    assert.equal((await readRoleSkillSource(root,skill,guide,fixed.commit,hash(large))).body,large);
+    await assert.rejects(readRoleSkillSource(root,skill,guide,fixed.commit,hash("wrong")),/hash mismatch/);
+    await assert.rejects(readRoleSkillSource(root,skill,"private.md",fixed.commit,hash(large)),/not linked/);
+    await writeFile(join(root,guide),"界".repeat(180_000)); // 540 KiB, beyond the bounded limit.
+    await run("git",["-C",root,"add",guide]);
+    await run("git",["-C",root,"-c","user.name=Test","-c","user.email=test@example.invalid","commit","-qm","oversize"]);
+    const oversizedCommit=(await run("git",["-C",root,"rev-parse","HEAD"])).stdout.trim();
+    await assert.rejects(roleSkillSourceReferences(root,skill,oversizedCommit),/maxBuffer|stdout/);
+  } finally {await rm(root,{recursive:true,force:true});}
+});
