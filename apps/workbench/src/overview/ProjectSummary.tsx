@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { Task, TaskDetail } from "@evoloop/contracts";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { ResidentQueue, QueueHoldCode } from "@evoloop/contracts/queues";
-import { api, errorText, request } from "../api";
+import { api, errorText, request, type TaskTimingView } from "../api";
 import { queueClient } from "../queues/client";
 import { Alert, date, href } from "../ui/shared";
 import { isRoleOwnerId, readOwnerRole } from "../workflow/ownerRole";
 import { scanProjectTasks, selectSummary, taskMatchesQueue, type SummaryItem } from "./summary";
 import { visibleWorkGroups, type WorkTaskStatus } from "../workflow/workStatusPresentation";
+import { formatScheduled, repeatLabel } from "../workflow/taskTimingPresentation";
 
 import { ProjectContext } from "./ProjectContext";
 import "./overview.css";
@@ -16,6 +17,9 @@ interface Snapshot {
   scope: string;
   queues: ResidentQueue[];
   activeTasks: Task[];
+  scheduled: { task: Task; timing: TaskTimingView }[];
+  timingReadFailed: number;
+  timingScanLimited: boolean;
   taskScan: { total: number; truncated: boolean; pages: number };
   tasks: Record<string, Task>;
   roles: Record<string, RoleRecord>;
@@ -44,6 +48,22 @@ async function readSnapshot(token: string, projectId: string, scope: string, sig
   const selection = selectSummary(queues);
   const entries = [...selection.current, ...selection.next, ...selection.held];
   const activeTasks = scan.items.filter(task => task.state === "in_progress");
+  const timingCandidates = scan.items.filter(task => task.state === "todo" || task.state === "in_progress");
+  const timingScanLimited = scan.truncated || timingCandidates.length > 60;
+  const scheduled: { task: Task; timing: TaskTimingView }[] = [];
+  let timingReadFailed = 0, timingCursor = 0;
+  async function readTiming() {
+    while (!signal.aborted && timingCursor < Math.min(60, timingCandidates.length)) {
+      const task = timingCandidates[timingCursor++]!;
+      try {
+        const timing = await api(token).taskTiming(projectId, task.id);
+        if (timing) scheduled.push({ task, timing });
+      } catch { if (!signal.aborted) timingReadFailed++; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, timingCandidates.length) }, () => readTiming()));
+  if (signal.aborted) throw new Error("读取已取消");
+  scheduled.sort((a, b) => Date.parse(a.timing.executeAtUtc) - Date.parse(b.timing.executeAtUtc));
   let statuses: Record<string, WorkTaskStatus> = {}, statusError = "";
   if (activeTasks.length) {
     const chunks: Task[][] = [];
@@ -89,7 +109,8 @@ async function readSnapshot(token: string, projectId: string, scope: string, sig
   }
   await Promise.all(Array.from({ length: Math.min(4, work.length) }, () => worker()));
   if (signal.aborted) throw new Error("读取已取消");
-  return { scope, queues, activeTasks: shownActive, taskScan: { total: activeTasks.length, truncated: scan.truncated, pages: scan.pages },
+  return { scope, queues, activeTasks: shownActive, scheduled, timingReadFailed, timingScanLimited,
+    taskScan: { total: activeTasks.length, truncated: scan.truncated, pages: scan.pages },
     tasks, roles, statuses, statusError, failedNames, observedAt: new Date().toISOString() };
 }
 
@@ -158,6 +179,21 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
     {error && <Alert kind="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Alert>}
     {current?.failedNames ? <Alert>有 {current.failedNames} 个名称未读回；仅显示登记 ID，并保留原任务与承载入口。</Alert> : null}
     <ProjectContext token={token} projectId={projectId} refresh={refresh + reread} active={active} />
+
+    <section className="panel overview-current-work"><div className="overview-current-head"><h2>约定执行与重复任务</h2><a href={href(projectId, "work")}>查看任务列表 →</a></div>
+      {current?.scheduled.length ? <ul>{current.scheduled.slice(0, 8).map(({ task, timing }) => {
+        const latestDone = timing.occurrences.slice().reverse().find(item => item.state === "done");
+        return <li key={task.id}><a href={href(projectId, "task", task.id)}>{task.title}</a>
+          <div className="muted">本次 {formatScheduled(timing.executeAtUtc, timing.timezone)} · {repeatLabel(timing.repeat)}
+            {timing.nextAtUtc && ` · 下次 ${formatScheduled(timing.nextAtUtc, timing.timezone)}`}</div>
+          <div className="muted">同系列最近 {timing.occurrences.length} 份
+            {timing.previousTaskId && <> · <a href={href(projectId, "task", timing.previousTaskId)}>上一份</a></>}
+            {timing.nextTaskId && <> · <a href={href(projectId, "task", timing.nextTaskId)}>下一份</a></>}
+            {latestDone ? <> · <a href={href(projectId, "task", latestDone.taskId)}>查看最近已完成任务的结果</a></> : " · 尚无已完成结果"}
+            {timing.waitingReason && ` · 等待：${timing.waitingReason}`}</div></li>;
+      })}</ul> : current && !stale ? <p className="empty">已读范围内没有约定执行的未结束任务。</p> : <p>约定执行任务待读回。</p>}
+      {current && (current.timingScanLimited || current.timingReadFailed > 0) && <p className="muted">本区块最多核对已载入的前 60 项未结束任务；{current.timingReadFailed} 项执行时间未读回，完整范围请到任务列表核对。</p>}
+    </section>
 
     <section className="panel overview-current-work"><div className="overview-current-head"><h2>当前工作</h2><a href={href(projectId, "work")}>全部工作 →</a></div>
       {groups?.primary.length ? <ul>{groups.primary.slice(0,4).map(task => <ActiveTaskItem key={task.id} task={task} snapshot={current!} projectId={projectId} />)}</ul>

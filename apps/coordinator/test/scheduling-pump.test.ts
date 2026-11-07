@@ -19,7 +19,7 @@ const definition: ScheduleDefinition = {
     actorId: grant.actorId, reason: "explicit scope", createdAtUtc: "2026-10-20T09:00:00.000Z" },
 };
 
-function fixture() {
+function fixture(taskTiming?: { tick(projectId: string, nowUtc: string, actorId: string, roleId: string, scopeId: string): Promise<{ created: boolean }[]> }) {
   let currentGrants: ScheduleGrant[] = [grant];
   let currentCredentials: AuthConfig = credentials;
   let enabled = true, writable = true, created = 0;
@@ -40,7 +40,7 @@ function fixture() {
     listQueued: async () => [],
     advanceWatermark: async () => undefined,
   };
-  const pump = new SchedulingPump({ store, canWrite: () => writable, credentials: () => currentCredentials,
+  const pump = new SchedulingPump({ store, taskTiming, canWrite: () => writable, credentials: () => currentCredentials,
     grants: () => currentGrants, enabled: () => enabled, now: () => at, intervalMs: 60_000 });
   return { pump, get created() { return created; }, setGrants: (value: ScheduleGrant[]) => { currentGrants = value; },
     setCredentials: (value: AuthConfig) => { currentCredentials = value; }, setEnabled: (value: boolean) => { enabled = value; },
@@ -90,4 +90,16 @@ test("start ticks immediately and stop prevents later work", async () => {
   await f.pump.stop();
   assert.equal((await f.pump.tickOnce()).state, "stopped");
   assert.equal(f.created, 1);
+});
+
+test("Task copies receive the exact current scheduling grant scope", async () => {
+  const received: string[] = [];
+  const f = fixture({ tick: async (project, now, actor, role, scope) => {
+    assert.deepEqual([project, now, actor, role], [projectId, at, grant.actorId, grant.roleId]);
+    received.push(scope);
+    return [{ created: true }];
+  } });
+  assert.equal((await f.pump.tickOnce()).state, "completed");
+  assert.deepEqual(received, [grant.scopeId]);
+  assert.equal(f.pump.status().lastCreated, 2);
 });

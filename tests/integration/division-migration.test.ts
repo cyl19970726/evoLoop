@@ -7,6 +7,7 @@ import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 import { runner } from "node-pg-migrate";
 import { PostgresUnitOfWork, migrate } from "@evoloop/adapter-postgres";
 import { WorkflowService } from "@evoloop/core";
+import { withoutTaskTimingBeforeMigration } from "./legacy-task-timing.js";
 
 const database=process.env.TEST_DATABASE_URL;
 if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(database).pathname))
@@ -26,7 +27,9 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),taskId=randomUUID(),loopId=randomUUID();
   const inboxId=randomUUID(),dispatchId=randomUUID(),role=fixtureRoleId("legacy-business"),cognition="legacy-cognition";
   const principal={actorId:"migration-reviewer",projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
-  const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
+  const uow=new PostgresUnitOfWork(pool);
+  withoutTaskTimingBeforeMigration(uow,()=>true);
+  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
   const issue=async(command:Record<string,unknown>)=>{const r=await workflow.execute(principal,
     {projectId,operationId:randomUUID(),...command} as never);assert.equal(r.status,"applied",JSON.stringify(r));};
