@@ -1,6 +1,50 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { splitMarkdown } from "../src/ui/markdownContent.ts";
+import { legacyWorkbenchRoute } from "../src/ui/legacyWorkbenchLink.ts";
+
+const migrationProject = "dfb56cce-4ecd-452d-94dc-bf9611babf11";
+const migrationTask = "21199600-fb2b-4d32-a540-7a03da8de4e8";
+const migrationDoc = "26b5d939-fc55-479f-8f48-619a8a0c2fbe";
+const oldLink = `http://127.0.0.1:55431/#/p/${migrationProject}/tasks/${migrationTask}`;
+
+test("fixed Markdown links from the former workbench use the reader's current origin", () => {
+  const fixed = `http://127.0.0.1:55431/#/p/${migrationProject}/documents/${migrationDoc}?revision=02a1fcc9-f3a3-4b2b-918b-7ecf7c74d4f0`;
+  const rendered = splitMarkdown(`[任务](${oldLink}) [报告](${fixed})`, { projectId: migrationProject }).map(part => part.value).join("");
+  assert.match(rendered, new RegExp(`href="#/p/${migrationProject}/tasks/${migrationTask}"`));
+  assert.match(rendered, new RegExp(`href="#/p/${migrationProject}/documents/${migrationDoc}\\?revision=02a1fcc9-f3a3-4b2b-918b-7ecf7c74d4f0"`));
+  assert.doesNotMatch(rendered, /href="http:\/\/127\.0\.0\.1:55431/);
+  assert.match(splitMarkdown(`[任务](${oldLink})`).map(part => part.value).join(""), /href="http:\/\/127\.0\.0\.1:55431/,
+    "without a verified project context the source link is left alone");
+});
+
+test("only exact former-origin same-project Task and Document routes become trusted internal links", () => {
+  const other = "11111111-1111-4111-8111-111111111111";
+  for (const invalid of [
+    oldLink.replace("55431", "55432"), oldLink.replace("127.0.0.1", "localhost"),
+    oldLink.replace(migrationProject, other), oldLink.replace("/#/", "/other#/"),
+    oldLink.replace("/#/", "/?x=1#/"), oldLink.replace("http://", "https://"),
+    oldLink.replace("127.0.0.1", "user:pass@127.0.0.1"),
+    oldLink.replace("/tasks/", "/tasks/not-a-uuid/"),
+    `${oldLink}#https://evil.example`, `${oldLink}?return=https%3A%2F%2Fevil.example`,
+    "javascript:alert(1)", "data:text/html,evil", "https://example.com/#/p/" + migrationProject + "/tasks/" + migrationTask,
+  ]) assert.equal(legacyWorkbenchRoute(invalid, migrationProject), null, invalid);
+  assert.equal(legacyWorkbenchRoute(oldLink, migrationProject), `#/p/${migrationProject}/tasks/${migrationTask}`);
+});
+
+test("migration retains valid route context and rejects forged nested returns", () => {
+  const source = `#/p/${migrationProject}/sessions?session=owned%3A${migrationTask}`;
+  const valid = `${oldLink}?${new URLSearchParams({ tab: "history", return: source, actor: "product-docs-owner", returnTitle: "原 Session" })}`;
+  assert.equal(legacyWorkbenchRoute(valid, migrationProject), valid.slice("http://127.0.0.1:55431/".length));
+  const list = `${oldLink}?${new URLSearchParams({ list: `#/p/${migrationProject}/work?search=report` })}`;
+  assert.equal(legacyWorkbenchRoute(list, migrationProject), list.slice("http://127.0.0.1:55431/".length));
+  for (const value of [`#/p/${migrationProject}/not-a-route`, `#/p/${migrationProject}/work#https://evil.example`,
+    `#/p/${migrationProject}/work\nnext`]) {
+    assert.equal(legacyWorkbenchRoute(`${oldLink}?${new URLSearchParams({ return: value })}`, migrationProject), null);
+  }
+  assert.equal(legacyWorkbenchRoute(`${oldLink}?tab=unknown`, migrationProject), null);
+  assert.equal(legacyWorkbenchRoute(`${oldLink}?list=${encodeURIComponent(`#/p/${migrationProject}/evil`)}`, migrationProject), null);
+});
 
 const fence = (body: string) => `\`\`\`mermaid\n${body}\n\`\`\``;
 
