@@ -3,7 +3,9 @@ import type {
   Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, DocumentTaskReference, Goal, GoalRevision, Stage, StageRevision, StageReview,
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
+  TaskTimingView,
 } from "@evoloop/contracts";
+export type { TaskTimingView } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workflow/workStatusPresentation";
 import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
@@ -120,6 +122,15 @@ export function api(token: string, timeoutMs = 15000) {
     leaderNotices: (p: string, taskId: string, cursor?: string) => call<import("@evoloop/contracts/leader-notices").LeaderNoticePage>(
       `${projectPath(p)}/work-management/notices?taskId=${key(taskId)}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
+    taskTiming: async (p: string, id: string) => {
+      const timing = await requestNullable<TaskTimingView>(token, `${projectPath(p)}/tasks/${key(id)}/timing`, timeoutMs);
+      if (timing && (timing.projectId !== p || timing.taskId !== id || typeof timing.rootTaskId !== "string" || !timing.rootTaskId
+        || !Number.isSafeInteger(timing.version) || timing.version < 1
+        || !timing.futureTemplate || ![timing.futureTemplate.title, timing.futureTemplate.content, timing.futureTemplate.acceptance].every(value => typeof value === "string" && value.trim())
+        || !Array.isArray(timing.occurrences) || timing.occurrences.some(item => typeof item.taskId !== "string")))
+        throw new ApiError(0, "执行时间响应与所选任务不符；请重新读取。");
+      return timing;
+    },
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),
     evaluations: (p: string, cursor?: string, taskId?: string, knowledgePageId?: string) => call<Page<EvaluationRevision>>(`${projectPath(p)}/evaluations?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${taskId ? `&taskId=${key(taskId)}` : ""}${knowledgePageId ? `&knowledgePageId=${key(knowledgePageId)}` : ""}`),

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Document, Impact, Page, Task } from "@evoloop/contracts";
 import { ChevronRight, CirclePlay, Clock3, Columns3, Plus, RefreshCw, Search, TriangleAlert } from "lucide-react";
-import { ApiError, api, errorText } from "../api";
+import { ApiError, api, errorText, type TaskTimingView } from "../api";
 import { sessionClient } from "../sessions/client";
 import { ActionForm, option, type MutationContext } from "./ActionForm";
 import { UploadDocument } from "../documents/UploadDocument";
@@ -20,6 +20,7 @@ import type { TaskAttentionItem } from "@evoloop/contracts";
 import { request } from "../api";
 import { latestProgressPresentation, taskType } from "./taskWorkspacePresentation";
 import { timingDate, timingDuration, timingStageLabel, timingWaitingFor } from "./LeaderTaskFacts";
+import { formatScheduled, repeatLabel } from "./taskTimingPresentation";
 import {
   appendLeaderWorkPage, leaderPhaseLabel, leaderSessionDisplayName, leaderWorkItemPresentation,
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
@@ -61,6 +62,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [documents, setDocuments] = useState<Page<Document>>({ items: [], nextCursor: null });
   const [impacts, setImpacts] = useState<Impact[]>([]);
   const [statuses, setStatuses] = useState<Record<string, WorkTaskStatus>>({});
+  const [taskTimingReads, setTaskTimingReads] = useState<{ scope: string; values: Record<string, TaskTimingView | null>; errors: Record<string, string> }>({ scope: "", values: {}, errors: {} });
   const [statusProblem, setStatusProblem] = useState<WorkStatusProblem | null>(null);
   const [statusRetrying, setStatusRetrying] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -367,11 +369,34 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   }, [view, projectId, listRoute]);
   const listProps = { projections: projections.items, sessionNames: leaderSessionNames, actorId: context.principal.actorId,
     attentionItems: attentionRead?.projectId === projectId ? attentionRead.items : [],
-    returnTo: listRoute, selected: selectedTask, onSelect: setSelectedTask, optionalColumns };
+    returnTo: listRoute, selected: selectedTask, onSelect: setSelectedTask, optionalColumns,
+    taskTimingReads: taskTimingReads.scope === `${projectId}:${refresh}:${recheck}` ? taskTimingReads : undefined };
   const pending = impacts.filter(i => i.state === "pending");
   const visibleTasks = projectionTasks.filter(t => (scope !== "mine" || !!projections.items[t.id] && isMyCurrentWork(projections.items[t.id]!, context.principal.actorId)))
     .sort((a, b) => ({ in_progress: 0, todo: 1, done: 2, cancelled: 3 })[a.state] - ({ in_progress: 0, todo: 1, done: 2, cancelled: 3 })[b.state]);
   const visibleTaskSignature = visibleTasks.map(task => task.id).join(",");
+  useEffect(() => {
+    let active = true;
+    const timingScope = `${projectId}:${refresh}:${recheck}`;
+    setTaskTimingReads({ scope: timingScope, values: {}, errors: {} });
+    if (view === "documents" || !visibleTaskSignature) return () => { active = false; };
+    const queue = visibleTaskSignature.split(",");
+    const read = async () => {
+      while (active && queue.length) {
+        const taskId = queue.shift()!;
+        try {
+          const timing = await api(token).taskTiming(projectId, taskId);
+          if (active) setTaskTimingReads(current => current.scope === timingScope
+            ? { ...current, values: { ...current.values, [taskId]: timing } } : current);
+        } catch (cause) {
+          if (active) setTaskTimingReads(current => current.scope === timingScope
+            ? { ...current, errors: { ...current.errors, [taskId]: errorText(cause) } } : current);
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(4, queue.length) }, () => read()));
+    return () => { active = false; };
+  }, [token, projectId, refresh, recheck, view, visibleTaskSignature]);
   useEffect(() => {
     if (view !== "work" || selectedTask || !visibleTasks.length) return;
     setSelectedTask(myWork[0]?.taskId ?? visibleTasks[0].id);
@@ -497,7 +522,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
           {primaryTasks.length ? <TaskListTable tasks={primaryTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} {...(view === "work" ? listProps : {})} /> : <p className="work-status-note">{primaryKind === "unclassified" ? "当前尚无已载入任务。" : "已载入部分暂无可确认的业务任务。"}{tasks.nextCursor ? "仍有下一页任务可读取。" : ""}</p>}</div>
         {unknownTasks.length > 0 && <section className="work-status-section work-status-group" aria-label="来源与状态待核对"><h2>来源与状态待核对 <span>{unknownTasks.length} 项已载入</span></h2><p>状态投影未读全，暂不把这些任务归为业务或系统记录。</p><TaskListTable tasks={unknownTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} {...(view === "work" ? listProps : {})} /></section>}
         {cognitionTasks.length > 0 && <details className="work-status-group"><summary>判断与接续记录 · {cognitionTasks.length} 项已载入</summary><p>由正式认知派发关联的任务；原任务与历史记录均可打开。这里的本轮结果不改写任务状态。</p><TaskListTable tasks={cognitionTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} {...(view === "work" ? listProps : {})} /></details>}
-      </> : <TaskListTable tasks={visibleTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners} />}
+      </> : <TaskListTable tasks={visibleTasks} statuses={statuses} projectId={projectId} pending={pending} ownerNames={resolvedOwners}
+        taskTimingReads={taskTimingReads.scope === `${projectId}:${refresh}:${recheck}` ? taskTimingReads : undefined} />}
       {!searching && !fillingFilteredPage && !awaitingAssignments && !searchError && !(view === "documents" ? visibleDocuments : visibleTasks).length && <div className="list-empty"><FileEmpty /><h2>{view === "work" && tasks.nextCursor ? "已载入范围内没有匹配任务" : view === "work" && tasks.items.length || query || filter !== "open" || kindFilter !== "all" || view === "documents" && documentStatus !== "active" ? "没有匹配项" : view === "inbox" ? "没有待办任务" : `还没有${title}`}</h2><p>{view === "work" && tasks.nextCursor ? "仍有后续页面，可继续载入或搜索全部已读取范围。" : view === "work" && tasks.items.length ? "可以调整筛选，查看其他状态的工作。" : "可以清除筛选，或创建一项有明确正文与验收条件的工作。"}</p><button onClick={() => { setQuery(""); setFilter("open"); setKindFilter("all"); setDocumentStatus("active"); setScope("all"); }}>清除筛选</button></div>}
       <div className="list-footer"><span>{footerSummary}</span><div className="list-footer-actions">{(view === "documents" ? documents.nextCursor : tasks.nextCursor) && <button disabled={busy || searching} onClick={() => void more()}>{busy || searching ? "加载中…" : "加载更多"}</button>}{view === "work" && observedAt && <small>读取于 {observedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small>}</div></div></>}
     </section>
@@ -577,12 +603,13 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatu
 function FileEmpty() { return <Search size={27} strokeWidth={1.4} aria-hidden="true" />; }
 
 function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projections = {}, sessionNames = {}, attentionItems = [], actorId = "",
-  returnTo, selected, onSelect, optionalColumns = defaultOptionalTaskColumns }: {
+  returnTo, selected, onSelect, optionalColumns = defaultOptionalTaskColumns, taskTimingReads }: {
   tasks: Task[]; statuses: Record<string, WorkTaskStatus>;
   projectId: string; pending: Impact[]; ownerNames: Record<string, OwnerName>;
   projections?: Record<string, LeaderWorkTask>; sessionNames?: Record<string, LeaderSessionName>; attentionItems?: TaskAttentionItem[]; actorId?: string;
   returnTo?: string; selected?: string; onSelect?: (id: string) => void;
   optionalColumns?: Record<OptionalTaskColumn, boolean>;
+  taskTimingReads?: { values: Record<string, TaskTimingView | null>; errors: Record<string, string> };
 }) {
   return <div className="task-table-scroll task-scan-region" tabIndex={0} role="region" aria-label="任务列表，可横向滚动查看六列和附加属性">
     <table className="task-list-table"><colgroup>
@@ -618,6 +645,9 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
       const attentionCount = attentionItems.filter(item => item.taskId === t.id && item.taskRevisionId === t.currentRevisionId).length;
       const ownerName = ownerNames[t.owner]?.title;
       const ownerUnavailable = ownerNames[t.owner]?.error;
+      const taskTiming = taskTimingReads?.values[t.id];
+      const latestSeriesTask = taskTiming?.occurrences.at(-1);
+      const latestFinishedSeriesTask = taskTiming?.occurrences.slice().reverse().find(item => item.state === "done");
       return <tr key={t.id} className={selected === t.id ? "selected-task-row" : undefined}>
         <td className="task-list-title" data-label="任务">
           <div className="task-title-actions">
@@ -629,6 +659,9 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
             {cognition && <>判断接续记录 · <a href={href(projectId, "task", t.id)}>查看来源</a></>}
             {!cognition && t.legacyDecision && legacyDecisionLabel(t.legacyDecision)}</small>
           {attentionCount > 0 && <div className="task-attention-row"><a className="task-attention-list-link" href={`${taskLink}${taskLink.includes("?") ? "&" : "?"}tab=overview&section=attention`}>{attentionCount} 项待关注</a></div>}
+          {taskTiming && <small>约定执行 {formatScheduled(taskTiming.executeAtUtc, taskTiming.timezone)} · {repeatLabel(taskTiming.repeat)}{taskTiming.nextAtUtc ? ` · 下次 ${formatScheduled(taskTiming.nextAtUtc, taskTiming.timezone)}` : ""}</small>}
+          {taskTiming?.repeat === "daily" && <small>同系列最近 {taskTiming.occurrences.length} 份{latestSeriesTask && <> · 最新 <a href={href(projectId, "task", latestSeriesTask.taskId)}>{states[latestSeriesTask.state]}任务</a></>}{latestFinishedSeriesTask ? <> · <a href={href(projectId, "task", latestFinishedSeriesTask.taskId)}>查看最近已完成任务的结果</a></> : " · 尚无已完成结果"}{taskTiming.waitingReason && ` · 等待：${taskTiming.waitingReason}`}</small>}
+          {taskTimingReads?.errors[t.id] && <small title={taskTimingReads.errors[t.id]}>执行时间暂未读回</small>}
           {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}
         </td>
         <td className="task-list-kind" data-label="工作类型"><span className="mobile-field-label">工作类型</span><span>{taskType(projection?.taskKind ?? t.kind)}</span></td>

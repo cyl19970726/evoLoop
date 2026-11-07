@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { ArrowRight } from "lucide-react";
-import { api, errorText } from "../api";
+import { api, errorText, type TaskTimingView } from "../api";
 import { href } from "../ui/shared";
 import { acceptancePoints } from "./acceptancePresentation";
 import { DeliveryArtifact, useDeliveryNames } from "./DeliveryPanel";
@@ -12,6 +12,7 @@ import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskE
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
 import { TaskTiming } from "./LeaderTaskFacts";
 import { taskPreviewResponsibility } from "./taskPreviewResponsibility";
+import { formatScheduled, repeatLabel } from "./taskTimingPresentation";
 
 const empty: NonNullable<TaskDetail["deliveries"]> = [];
 
@@ -20,6 +21,7 @@ export function TaskPreview({ token, projectId, id, item, returnTo, sessionName,
   sessionName?: string | null; roleName?: string | null; roleNameId?: string | null; outsideFilter?: boolean;
 }) {
   const [read, setRead] = useState<{ projectId: string; taskId: string; detail: TaskDetail | null; problem: string } | null>(null);
+  const [timingRead, setTimingRead] = useState<{ taskId: string; value: TaskTimingView | null; problem: string } | null>(null);
   const selectedRead = read?.projectId === projectId && read.taskId === id ? read : null;
   const detail = matchingTaskDetail(selectedRead?.detail ?? null, projectId, id);
   const problem = selectedRead?.problem ?? "";
@@ -34,11 +36,22 @@ export function TaskPreview({ token, projectId, id, item, returnTo, sessionName,
     });
     return () => { active = false; };
   }, [token, projectId, id, item?.workChangeSequence]);
+  useEffect(() => {
+    let active = true;
+    setTimingRead(null);
+    api(token).taskTiming(projectId, id).then(value => {
+      if (active) setTimingRead({ taskId: id, value, problem: "" });
+    }).catch(cause => {
+      if (active) setTimingRead({ taskId: id, value: null, problem: errorText(cause) });
+    });
+    return () => { active = false; };
+  }, [token, projectId, id, item?.workChangeSequence]);
 
   const names = useDeliveryNames(token, projectId, detail?.deliveries ?? empty);
   const latest = detail && currentDelivery(detail);
   const latestObservations = latest ? observationsForDelivery(detail.observations ?? [], latest.id) : [];
   const projection = detail ? matchingProjection(detail.task, item) : undefined;
+  const scheduled = timingRead?.taskId === id ? timingRead : null;
   const acceptance = detail ? acceptancePoints(detail.task.acceptance) : null;
   const visibleAcceptance = acceptance?.slice(0, 2) ?? [];
   const hiddenAcceptance = acceptance?.slice(2) ?? [];
@@ -66,6 +79,9 @@ export function TaskPreview({ token, projectId, id, item, returnTo, sessionName,
       <section className="task-summary-section" aria-label="阶段时间与当前关注">
         <h3>阶段时间与当前关注</h3>
         <TaskTiming timing={projection?.timing} />
+        {scheduled?.value && <p>约定执行 {formatScheduled(scheduled.value.executeAtUtc, scheduled.value.timezone)} · {repeatLabel(scheduled.value.repeat)}{scheduled.value.nextAtUtc && ` · 下次 ${formatScheduled(scheduled.value.nextAtUtc, scheduled.value.timezone)}`}</p>}
+        {scheduled?.problem && <p role="status">执行时间暂未读回：{scheduled.problem}</p>}
+        <a href={`${fullHref}&tab=overview&section=task-schedule`}>查看执行时间与重复任务 <ArrowRight size={14} /></a>
         <a href={`${fullHref}&tab=overview&section=timing`}>查看时间区间与来源 <ArrowRight size={14} /></a>
         <a href={`${fullHref}&tab=overview&section=attention`}>查看当前关注 <ArrowRight size={14} /></a>
       </section>

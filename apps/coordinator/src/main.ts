@@ -27,6 +27,7 @@ import type { VersionedConnectorRoute } from "@evoloop/contracts/message-connect
 import { PgOutboxDeliveryStore } from "@evoloop/adapter-postgres/delivery";
 import { CollaborationRunner } from "./collaboration/runner.js";
 import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
+import { PgTaskTimingStore } from "@evoloop/adapter-postgres/task-timing";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
@@ -139,6 +140,12 @@ const hasher = { hash: (value: string) => createHash("sha256").update(value, "ut
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
+  taskTimingAuthority: async (projectId, actorId, roleId, scopeId) => {
+    const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
+    return !!current?.enabled && current.grants.some(grant =>
+      grant.projectId === projectId && grant.actorId === actorId && grant.roleId === roleId && grant.scopeId === scopeId) &&
+      await currentProjectWriter(projectId, actorId);
+  },
   recoveryAuthority: staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
   collaborationAuthority: {
@@ -457,7 +464,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
-const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), canWrite: lease.canWrite,
+const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   enabled: () => integrations.scheduling?.enabled ?? false,
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
