@@ -143,24 +143,36 @@ export class DirectInputService {
     const binding=await this.deps.bindingFor(projectId,record.sessionId);
     const runtime=this.deps.runtime();
     await runtime.registerBinding(binding);
-    const turns=(record.actualTurnId??record.expectedTurnId)?
-      [await this.findTurn(runtime,binding,(record.actualTurnId??record.expectedTurnId)!)].filter(Boolean) as RuntimeTurn[]:
-      (await runtime.listTurns(binding)).data.slice(0,20);
     const matches:{turnId:string;itemId:string|null}[]=[];
-    for(const turn of turns){
-      let cursor:string|undefined;
-      for(let page=0;page<10;page++){
-        const items=await runtime.listItems(binding,turn.id,cursor);
-        for(const item of items.data){
-          const x=object(item);
-          if(x?.type!=="userMessage")continue;
-          const clientId=x.clientUserMessageId??x.client_user_message_id;
-          if(clientId===record.inputId||record.mode==="start"&&textOf(item).startsWith(marker(record.operationId)))
-            matches.push({turnId:turn.id,itemId:typeof x.id==="string"?x.id:null});
+    try{
+      const turns=(record.actualTurnId??record.expectedTurnId)?
+        [await this.findTurn(runtime,binding,(record.actualTurnId??record.expectedTurnId)!)].filter(Boolean) as RuntimeTurn[]:
+        (await runtime.listTurns(binding)).data.slice(0,20);
+      for(const turn of turns){
+        let cursor:string|undefined;
+        for(let page=0;page<10;page++){
+          const items=await runtime.listItems(binding,turn.id,cursor);
+          for(const item of items.data){
+            const x=object(item);
+            if(x?.type!=="userMessage")continue;
+            // Materialized alpha.6 Items use clientId for clientUserMessageId.
+            const clientId=x.clientUserMessageId??x.client_user_message_id??x.clientId;
+            if(clientId===record.inputId||record.mode==="start"&&textOf(item).startsWith(marker(record.operationId)))
+              matches.push({turnId:turn.id,itemId:typeof x.id==="string"?x.id:null});
+          }
+          if(!items.nextCursor)break;
+          cursor=items.nextCursor;
         }
-        if(!items.nextCursor)break;
-        cursor=items.nextCursor;
       }
+    }catch(error){
+      // Zero-Turn history can be unmaterialized; other native history reads may be unsupported.
+      // Neither condition proves that the original send was rejected.
+      if(error instanceof RuntimeServerError&&
+        (error.method==="thread/turns/list"&&error.code===-32600||
+          error.method==="thread/items/list"&&error.code===-32601))
+        return publicDirectInput(record.state==="attempted"?
+          await this.deps.store.unknown(projectId,inputId,"Native history unavailable; original input remains unresolved"):record);
+      throw error;
     }
     if(matches.length===1)return publicDirectInput(await this.deps.store.accept(projectId,inputId,matches[0]!.turnId,matches[0]!.itemId));
     if(record.state==="attempted")return publicDirectInput(await this.deps.store.unknown(projectId,inputId,"No unique original input in bounded native history"));
