@@ -2,9 +2,11 @@
 
 `runtime.compact.start` 只面向有当前项目复核、写入和精确 Session 运行授权的维护者。请求指明原 managed Session、原 native Thread、当前 Session 版本和**blocked** 恢复门版本。服务先核原失败 Run 或消息的已知终态及其最后原生 Turn，再将意图存入 `session_compaction`，随后才在当前 owner 的 App Server 连接发送一次 `thread/compact/start`。这里不产生普通业务消息，也不开启恢复门。
 
+发包前的 native request ID 仅表示尝试。只有同一 owner 连接收到合法 `{}` 应答，才记录受理时间和连接 ID；丢失 `turn/started` 时，回填还要求该连接仍有效、原基线之后只有一个 Turn，且该 Turn 有持久 compaction Item。没有应答、连接已更换或历史有歧义时，原操作保持 unknown，按原 ID 对账，不再次发送。
+
 命令入口：`request runtime.compact.start --project PROJECT --id SESSION --file intent.json`。文件正文为 `operationId`、`threadId`、`expectedSessionVersion`、`expectedGateVersion`、`evidenceRef`、`reason`。先用 `request schema runtime.compact.start` 核字段。相同 operation ID 和完全相同正文只读回原结果；不同正文被拒绝。原操作可用 `get /api/projects/PROJECT/runtime/compactions/OPERATION` 读取，再用 `request runtime.compact.reconcile --project PROJECT --id OPERATION --file empty.json` 只读原生证据并更新原记录。`empty.json` 为 `{}`。
 
-压缩 RPC 的 `{}` 应答只记录为 `accepted`。完成需同一个已绑定压缩 Turn、`contextCompaction` Item 的完成时间、Turn 终态和原 Thread idle。丢失 `turn/started` 通知时，仅在原请求 ID 已保存、原失败 Turn 基线仍可见、其后只有一个 Turn 且该 Turn 有持久压缩 Item 时回填 Turn ID；分页不完整或多于一个后继 Turn 保持 `unknown`。已绑定 Turn 明确 `failed` 且有完成时间时，即使没有 Item 也记为失败，并保留 blocked 门。外层 Turn `completed` 缺成功 Item 不算成功；不得以新操作 ID 重发或自行打开恢复门。确认完成后，仍由现有 `runtime.session.recovery.resume` 对当前 cause、version 和 pin 作独立决定。
+压缩 RPC 的 `{}` 应答只记录为 `accepted`。完成需同一个已绑定压缩 Turn、`contextCompaction` Item 的完成时间、Turn 终态和原 Thread idle。丢失 `turn/started` 通知时，仅在合法应答和原 owner 连接均已持久确认、该连接仍有效、原失败 Turn 基线仍可见、其后只有一个 Turn 且该 Turn 有持久压缩 Item 时回填 Turn ID；分页不完整或多于一个后继 Turn 保持 `unknown`。已绑定 Turn 明确 `failed` 且有完成时间时，即使没有 Item 也记为失败，并保留 blocked 门。外层 Turn `completed` 缺成功 Item 不算成功；不得以新操作 ID 重发或自行打开恢复门。确认完成后，仍由现有 `runtime.session.recovery.resume` 对当前 cause、version 和 pin 作独立决定。
 
 此功能使用迁移 058，紧接正式已发布的 057；其它在途 PR 原占 058–063，须在各自整合时按最新 main 顺次重排并验证迁移。隔离迁移与 PG/HTTP 回归不代表原 Leader 的真实压缩已验证。正式操作前应回读原 Thread 的模型、思考强度、权限、当前 writer、最后原生 Turn、未知在途和有效 hooks；若其中任一项无法证明，保留 blocked 门并记录准确缺项。
 

@@ -5,7 +5,11 @@ CREATE TABLE session_compaction (
   gate_version integer NOT NULL, session_version integer NOT NULL,
   actor_id text NOT NULL, evidence_ref text NOT NULL, reason text NOT NULL,
   state text NOT NULL CHECK(state IN ('unknown','accepted','completed','failed')),
-  native_request_id integer, baseline_turn_id text, native_turn_id text,
+  native_request_id integer, native_acknowledged_at timestamptz, native_connection_id text,
+  CONSTRAINT compaction_ack_connection CHECK (
+    (native_acknowledged_at IS NULL AND native_connection_id IS NULL) OR
+    (native_acknowledged_at IS NOT NULL AND native_connection_id IS NOT NULL AND native_request_id IS NOT NULL)),
+  baseline_turn_id text, native_turn_id text,
   compaction_item_id text, error_code text,
   before_input_tokens bigint, after_input_tokens bigint,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),

@@ -1268,7 +1268,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
 
   async compactThread(binding: RuntimeBinding, baselineTurnId: string,
-    beforeSend: (requestId: number) => Promise<void>): Promise<string | null> {
+    beforeSend: (requestId: number) => Promise<void>, afterAccepted?: (connectionId: string) => Promise<void>): Promise<string | null> {
     this.owned(binding);
     if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
       throw new RuntimeProtocolError("owned compaction requires pinned alpha.6");
@@ -1300,12 +1300,15 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(last?.id!==baselineTurnId||!last.completedAtUtc||
       status==="systemError"&&last.status!=="failed")
       throw new RuntimeProtocolError("owned Thread changed after exact owner resume");
+    const sendConnectionId=this.nativeInputConnectionId();
+    if(!sendConnectionId)throw new RuntimeProtocolError('owner connection unavailable before compaction');
     let resolveStarted:(value:string)=>void=()=>{};
     let startedTurnId:string|null=null;
     let startTimer:ReturnType<typeof setTimeout>|null=null;
     const started=new Promise<string>(resolve=>{resolveStarted=resolve});
     const off=this.onEvent(event=>{
-      if(event.method==='turn/started'&&event.threadId===binding.nativeThreadId&&event.turnId){
+      if(event.method==='turn/started'&&event.threadId===binding.nativeThreadId&&event.turnId&&
+        this.nativeInputConnectionId()===sendConnectionId){
         startedTurnId=event.turnId;resolveStarted(event.turnId);
       }
     });
@@ -1313,6 +1316,9 @@ export class CodexAppServerAdapter implements RuntimePort {
       const response = object(await this.request("thread/compact/start", {threadId:binding.nativeThreadId}, this.timeout, beforeSend));
       if (!response || Object.keys(response).length !== 0)
         throw new RuntimeUnknownError("thread/compact/start", null, "unexpected acknowledgement; outcome must be reconciled");
+      if(this.nativeInputConnectionId()!==sendConnectionId)
+        throw new RuntimeUnknownError('thread/compact/start',null,'owner connection changed after acknowledgement');
+      await afterAccepted?.(sendConnectionId);
       return await Promise.race([started,new Promise<null>(resolve=>{startTimer=setTimeout(()=>resolve(null),5000)})]);
     }catch(error){
       if(error instanceof RuntimeUnknownError&&startedTurnId)error.observedTurnId=startedTurnId;

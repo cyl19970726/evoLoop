@@ -59,15 +59,19 @@ test('durable compaction uses one native request and never opens a blocked gate 
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
-    let observation=before,starts=0,noEvent=false,successors:string[]|null=null;
+    let observation=before,starts=0,noEvent=false,unacknowledged=false,successors:string[]|null=null;
+    let connectionId='connection-A';
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
+      compactionConnectionId:()=>connectionId,
       compactionTurnsAfter:async()=>successors,
-      compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>)=>{
+      compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>,
+        afterAccepted:(connectionId:string)=>Promise<void>)=>{
         assert.equal(baselineTurnId,'old-turn');
         starts++;await beforeSend(noEvent?18:17);
+        if(unacknowledged)throw new RuntimeUnknownError('thread/compact/start',17,'no native acknowledgement');
+        await afterAccepted(connectionId);
         if(noEvent)return null;
-        const lost=new RuntimeUnknownError('thread/compact/start',17,'lost response');
-        lost.observedTurnId='compact-turn';throw lost;
+        return 'compact-turn';
       }} as unknown as RuntimeRunner;
     const service=new CompactionMaintenance(pool,fake);
     const actor={actorId:'maintainer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
@@ -86,7 +90,8 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal(firstResponse.statusCode,200,firstResponse.body);
     assert.equal(concurrent.statusCode,200,concurrent.body);
     const first=firstResponse.json();
-    assert.equal(first.state,'unknown');assert.equal(first.nativeRequestId,17);
+    assert.equal(first.state,'accepted');assert.equal(first.nativeRequestId,17);
+    assert.ok(first.nativeAcknowledgedAt);
     const duplicate=await app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:input});
     assert.equal(duplicate.statusCode,200);assert.equal(duplicate.json().operationId,operationId);
     assert.equal(starts,1,'same operation never sends another native request');
@@ -97,13 +102,13 @@ test('durable compaction uses one native request and never opens a blocked gate 
     await assert.rejects(()=>service.start(actor,projectId,sessionId,{...input,operationId:randomUUID()}));
     await assert.rejects(()=>pool.query(`UPDATE session_recovery_gate SET phase='open',version=version+1
       WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]));
-    assert.equal((await service.reconcile(actor,projectId,operationId)).state,'unknown');
+    assert.equal((await service.reconcile(actor,projectId,operationId)).state,'accepted');
     observation={...before,latestTurnId:'other-turn',latestTurnStatus:'completed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:'other-item',compactionItemCompleted:true};
-    assert.equal((await service.reconcile(actor,projectId,operationId)).state,'unknown',
+    assert.equal((await service.reconcile(actor,projectId,operationId)).state,'accepted',
       'a later unrelated completed Turn cannot settle this request');
     observation={...observation,latestTurnId:'compact-turn',compactionItemId:null};
-    assert.equal((await service.reconcile(actor,projectId,operationId)).state,'unknown',
+    assert.equal((await service.reconcile(actor,projectId,operationId)).state,'accepted',
       'outer Turn completion without a compaction Item is insufficient');
     observation={...before,threadStatus:'idle',latestTurnId:'compact-turn',latestTurnStatus:'completed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:'compact-item',
@@ -121,6 +126,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal(acceptedWithoutTurn.state,'unknown');
     assert.equal(acceptedWithoutTurn.nativeTurnId,null);
     assert.equal(acceptedWithoutTurn.nativeRequestId,18);
+    assert.ok(acceptedWithoutTurn.nativeAcknowledgedAt);
     assert.equal((await service.reconcile(actor,projectId,next.operationId)).state,'unknown');
     successors=null;
     observation={...before,threadStatus:'idle',latestTurnId:'compact-turn-2',latestTurnStatus:'completed',
@@ -129,6 +135,10 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal((await service.reconcile(actor,projectId,next.operationId)).state,'unknown',
       'ambiguous or incomplete history cannot identify the lost Turn');
     successors=['compact-turn-2'];
+    connectionId='connection-B';
+    assert.equal((await service.reconcile(actor,projectId,next.operationId)).state,'unknown',
+      'a successor observed by another owner connection cannot be attributed to the accepted operation');
+    connectionId='connection-A';
     const recovered=await service.reconcile(actor,projectId,next.operationId);
     assert.equal(recovered.state,'completed');assert.equal(recovered.nativeTurnId,'compact-turn-2');
     assert.equal(starts,2);
@@ -144,6 +154,23 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal(knownFailure.state,'failed');assert.equal(knownFailure.errorCode,'native_compaction_failed');
     assert.equal((await pool.query(`SELECT phase FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2`,
       [projectId,sessionId])).rows[0].phase,'blocked');
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    unacknowledged=true;observation=before;
+    const unackInput={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+3};
+    const unack=await app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:unackInput});
+    assert.equal(unack.statusCode,200);assert.equal(unack.json().state,'unknown');
+    assert.equal(unack.json().nativeRequestId,17,'request ID was saved before native send');
+    assert.equal(unack.json().nativeAcknowledgedAt,null);
+    successors=['foreign-turn'];
+    observation={...before,threadStatus:'idle',latestTurnId:'foreign-turn',latestTurnStatus:'completed',
+      latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:'foreign-item',
+      compactionItemCompleted:true};
+    const foreign=await app.inject({method:'POST',url:`/api/projects/${projectId}/runtime/compactions/${unackInput.operationId}/reconcile`,
+      headers:{authorization:`Bearer ${token}`},payload:{}});
+    assert.equal(foreign.statusCode,200);
+    assert.equal(foreign.json().state,'unknown','another controller’s compaction cannot settle an unacknowledged request');
+    assert.equal(foreign.json().nativeTurnId,null);
     }finally{await app.close()}
   }finally{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)}finally{await admin.end()}}

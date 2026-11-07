@@ -37,6 +37,7 @@ test('failed owner Thread is reattached with its fixed profile before compaction
     resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
   let latest='old-turn',resumed=0,sent=0;
   internals.owned=()=>{};
+  internals.nativeInputConnectionId=()=> 'connection-A';
   internals.resumeBinding=async(_binding:unknown,spec:{model:string;reasoningEffort:string})=>{
     assert.equal(spec.model,'gpt-6-astra');assert.equal(spec.reasoningEffort,'max');resumed++;
   };
@@ -51,6 +52,44 @@ test('failed owner Thread is reattached with its fixed profile before compaction
   latest='different-turn';
   await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{}),RuntimeProtocolError);
   assert.equal(sent,1,'a changed native history cannot consume the compaction request');
+});
+
+test('compaction acceptance is recorded only for a valid reply on the same owner connection', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  const binding={sessionId:'session',roleId:'role',projectId:'project',nativeThreadId:'thread',
+    nativeSessionId:'thread',cwd:'/tmp/compact',authorizationScope:'project',owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
+  let connectionId='connection-A',reply:unknown={},accepted:string[]=[];
+  internals.owned=()=>{};
+  internals.nativeInputConnectionId=()=>connectionId;
+  internals.resumeBinding=async()=>{};
+  internals.inspect=async()=>({thread:{id:'thread',status:{type:'idle'},model:'gpt-6-astra',reasoningEffort:'max'}});
+  let listener:((event:{method:string;threadId:string;turnId:string})=>void)|null=null;
+  internals.onEvent=(callback:typeof listener)=>{listener=callback;return ()=>{listener=null}};
+  internals.request=async(method:string,_params:unknown,_timeout:unknown,beforeSend?: (id:number)=>Promise<void>)=>{
+    if(method==='thread/turns/list')return {data:[{id:'old-turn',status:'failed',completedAt:1700000001}]};
+    assert.equal(method,'thread/compact/start');
+    await beforeSend?.(17);
+    if(reply instanceof Error)throw reply;
+    if(reply==='connection-changed')connectionId='connection-B';
+    if(reply==='valid-event')listener?.({method:'turn/started',threadId:'thread',turnId:'compact-turn'});
+    return reply==='valid-event'||reply==='connection-changed'?{}:reply;
+  };
+  const beforeSend=async()=>{};
+  const afterAccepted=async(id:string)=>{accepted.push(id)};
+  reply='valid-event';
+  assert.equal(await adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),'compact-turn');
+  assert.deepEqual(accepted,['connection-A']);
+  for(const invalid of [new RuntimeUnknownError('thread/compact/start',17,'timeout'),
+    new RuntimeServerError('thread/compact/start',17,-32000,'controlled refusal'),{unexpected:true}]){
+    reply=invalid;
+    await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted));
+    assert.deepEqual(accepted,['connection-A']);
+  }
+  reply='connection-changed';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),RuntimeUnknownError);
+  assert.deepEqual(accepted,['connection-A']);
 });
 
 import { mapWorkItem } from "../src/work-trace.js";

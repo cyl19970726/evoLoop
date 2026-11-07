@@ -211,9 +211,13 @@ export class RuntimeRunner {
     }
     return null;
   }
-  async compactThread(binding:RuntimeBinding,baselineTurnId:string,beforeSend:(requestId:number)=>Promise<void>):Promise<string|null>{
+  async compactThread(binding:RuntimeBinding,baselineTurnId:string,beforeSend:(requestId:number)=>Promise<void>,
+    afterAccepted?:(connectionId:string)=>Promise<void>):Promise<string|null>{
     if(!this.runtime.compactThread)throw new DomainError('CAPABILITY_UNAVAILABLE','Native compaction unsupported');
-    return this.runtime.compactThread(binding,baselineTurnId,beforeSend);
+    return this.runtime.compactThread(binding,baselineTurnId,beforeSend,afterAccepted);
+  }
+  compactionConnectionId():string|null{
+    return this.runtime.nativeInputConnectionId?.()??null;
   }
   /** Read-only capability check, never a replacement for execute's transactional authorization/version checks. */
   async preflightExecutionProfileRevision(principal:Principal,

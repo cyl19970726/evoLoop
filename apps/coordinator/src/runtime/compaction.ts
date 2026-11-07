@@ -14,6 +14,7 @@ interface Row {
   project_id:string; operation_id:string; session_id:string; thread_id:string;
   request_hash:string; gate_version:number; session_version:number; actor_id:string;
   state:'unknown'|'accepted'|'completed'|'failed'; native_request_id:number|null;
+  native_acknowledged_at:Date|null; native_connection_id:string|null;
   baseline_turn_id:string|null; native_turn_id:string|null; compaction_item_id:string|null;
   error_code:string|null; before_input_tokens:string|null; after_input_tokens:string|null;
   created_at:Date; updated_at:Date;
@@ -26,6 +27,7 @@ const assertSame=(row:Row,sessionId:string,input:CompactionIntent,actorId:string
 const view=(row:Row)=>({projectId:row.project_id,operationId:row.operation_id,
   sessionId:row.session_id,threadId:row.thread_id,gateVersion:row.gate_version,
   sessionVersion:row.session_version,state:row.state,nativeRequestId:row.native_request_id,
+  nativeAcknowledgedAt:row.native_acknowledged_at?.toISOString()??null,
   baselineTurnId:row.baseline_turn_id,nativeTurnId:row.native_turn_id,
   compactionItemId:row.compaction_item_id,errorCode:row.error_code,
   beforeInputTokens:row.before_input_tokens==null?null:Number(row.before_input_tokens),
@@ -154,6 +156,13 @@ export class CompactionMaintenance {
       const turnId=await this.runner.compactThread(binding,saved.baseline_turn_id!,async requestId=>{
         await this.pool.query(`UPDATE session_compaction SET native_request_id=$3,updated_at=now()
           WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,[projectId,input.operationId,requestId]);
+      },async connectionId=>{
+        const acknowledged=await this.pool.query(`UPDATE session_compaction SET native_acknowledged_at=now(),native_connection_id=$3,updated_at=now()
+          WHERE project_id=$1 AND operation_id=$2 AND state='unknown'
+            AND native_request_id IS NOT NULL AND native_acknowledged_at IS NULL RETURNING operation_id`,
+          [projectId,input.operationId,connectionId]);
+        if(acknowledged.rowCount!==1)
+          throw new DomainError('COMPACTION_ACK_NOT_SAVED','Native acknowledgement could not be persisted');
       });
       await this.pool.query(`UPDATE session_compaction SET state=CASE WHEN $3::text IS NULL THEN 'unknown' ELSE 'accepted' END,
         native_turn_id=$3,updated_at=now()
@@ -181,10 +190,17 @@ export class CompactionMaintenance {
     const saved=await this.row(projectId,operationId);
     if(!saved)throw new DomainError('NOT_FOUND','Compaction operation not found');
     if(saved.state==='completed'||saved.state==='failed')return this.read(principal,projectId,operationId);
+    // The request ID is saved before writing to native stdin. A lost response
+    // and an unrelated later compaction Turn cannot establish acceptance.
+    if(!saved.native_acknowledged_at)return this.read(principal,projectId,operationId);
     const binding=await this.runner.compactionBinding(principal,projectId,saved.session_id,
       saved.session_version,saved.thread_id);
     let turnId=saved.native_turn_id;
     if(!turnId&&saved.native_request_id&&saved.baseline_turn_id){
+      // A later owner process can observe a different writer's sole successor.
+      // History alone does not identify the original accepted request.
+      if(!saved.native_connection_id||this.runner.compactionConnectionId()!==saved.native_connection_id)
+        return this.read(principal,projectId,operationId);
       const successors=await this.runner.compactionTurnsAfter(binding,saved.baseline_turn_id);
       if(successors?.length===1){
         const candidate=await this.runner.observeCompaction(binding,successors[0]);
@@ -197,6 +213,8 @@ export class CompactionMaintenance {
     }
     if(!turnId)return this.read(principal,projectId,operationId);
     const seen:RuntimeCompactionObservation=await this.runner.observeCompaction(binding,turnId);
+    if(!saved.native_turn_id&&this.runner.compactionConnectionId()!==saved.native_connection_id)
+      return this.read(principal,projectId,operationId);
     if(seen.latestTurnId===turnId&&seen.latestTurnId!==saved.baseline_turn_id){
       const completed=seen.compactionItemCompleted&&seen.latestTurnStatus==='completed'&&
         !!seen.latestTurnCompletedAtUtc&&seen.threadStatus==='idle';
