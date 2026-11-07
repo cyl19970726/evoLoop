@@ -87,7 +87,7 @@ const integrationSchema = z.strictObject({
     readOnlyProtocolVerified: z.boolean().optional(),
     grants: z.array(z.strictObject({ projectId: z.uuid(), sessionId: z.uuid(), senderActorId: z.string().min(1).max(100),
       receiverActorId: z.string().min(1).max(100),
-      receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().min(1).max(1000), enabled: z.boolean(),
+      receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().positive().safe().optional(), enabled: z.boolean(),
     })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
   }).optional(),

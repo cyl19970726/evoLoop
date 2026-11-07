@@ -1,4 +1,5 @@
 import type { Principal } from "@evoloop/contracts";
+import { ordinaryMessageBudget } from "@evoloop/contracts/session-messages";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
@@ -62,7 +63,7 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
         item.sessionId===session.id&&item.senderActorId===principal.actorId&&
         item.receiverRoleId===session.roleId&&item.cwd===session.cwd&&
         !!item.receiverActorId.trim()&&item.receiverActorId!==principal.actorId&&
-        Number.isInteger(item.maxTurns)&&item.maxTurns>=1);
+        (item.maxTurns===undefined||Number.isSafeInteger(item.maxTurns)&&item.maxTurns>=1));
       if(!grant||!await deps.isProjectWriter(projectId,principal.actorId)||
         !await deps.isProjectWriter(projectId,grant.receiverActorId))
         return result("blocked","MESSAGE_GRANT_MISSING","当前发送人与接收会话没有完整的精确授权。");
@@ -71,12 +72,13 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
       const used=await deps.turnsUsed(projectId,session.id,principal.actorId);
       if(!Number.isSafeInteger(used)||used<0)
         return result("unknown","EXECUTION_STATUS_UNAVAILABLE","暂时无法核对普通回复执行状态，请稍后重试。");
-      if(used>=grant.maxTurns)
-        return result("blocked","MESSAGE_BUDGET_EXHAUSTED","此发送人与会话的普通回复额度已用完。");
+      const messageBudget=ordinaryMessageBudget(used,grant.maxTurns);
+      if(messageBudget.remaining===0)
+        return {...result("blocked","MESSAGE_BUDGET_EXHAUSTED","此发送人与会话的普通回复额度已用完。"),messageBudget};
       if(observed.busy===true)
-        return result("blocked","SESSION_BUSY","会话正在处理另一项工作，普通回复需等待。");
-      return result("unverified","NATIVE_EXECUTION_UNVERIFIED",
-        "配置准入已核对；执行前仍需核对原生完整执行配置、Task 答复顺序与持久占用。保存消息不保证回复。");
+        return {...result("blocked","SESSION_BUSY","会话正在处理另一项工作，普通回复需等待。"),messageBudget};
+      return {...result("unverified","NATIVE_EXECUTION_UNVERIFIED",
+        "配置准入已核对；执行前仍需核对原生完整执行配置、Task 答复顺序与持久占用。保存消息不保证回复。"),messageBudget};
     }catch{
       return result("unknown","EXECUTION_STATUS_UNAVAILABLE","暂时无法核对普通回复执行状态，请稍后重试。");
     }

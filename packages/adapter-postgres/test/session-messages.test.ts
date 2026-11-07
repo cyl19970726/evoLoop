@@ -458,6 +458,12 @@ test('raising one ordinary message grant from 100 to 200 preserves all billed tu
     await assert.rejects(()=>guarded.beginDispatch(projectId,exhausted.id,randomUUID(),randomUUID(),qualified),
       /grant is exhausted/);
     assert.equal((await guarded.detail(projectId,exhausted.id)).processing,null);
+    current={...current,maxTurns:undefined};
+    await seedBilled(1001);
+    assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),1201);
+    await guarded.preflightDispatch(projectId,exhausted.id);
+    assert.equal((await guarded.detail(projectId,exhausted.id)).processing,null,
+      'unlimited admission leaves the original queued message and history intact');
   } finally {
     for(const messageId of inserted){
       const pending=await guarded.get(projectId,messageId);
@@ -468,6 +474,14 @@ test('raising one ordinary message grant from 100 to 200 preserves all billed tu
     }
   }
   assert.equal((await guarded.get(projectId,exhausted.id)).state,'cancelled');
+  const unrestricted={...item(),senderActorId:sender};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(unrestricted));
+  await guarded.beginDispatch(projectId,unrestricted.id,randomUUID(),randomUUID(),qualified);
+  await guarded.bindTurn(projectId,unrestricted.id,{id:`unlimited-turn-${unrestricted.id}`,status:'inProgress'});
+  await guarded.settle(projectId,unrestricted.id,
+    {id:`unlimited-turn-${unrestricted.id}`,status:'completed',completedAtUtc:now},null);
+  assert.equal(await uow.read(projectId,r=>r.sessionMessages!.countSessionMessageTurns(sessionId,sender)),1202,
+    'a new dispatch remains allowed and the durable used count continues increasing');
 });
 
 test('pending scanning can pass the old ten-thousand offset while each page stays bounded',async()=>{
