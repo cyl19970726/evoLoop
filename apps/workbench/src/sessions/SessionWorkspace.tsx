@@ -7,6 +7,7 @@ import { ApiError, api, errorText, isUnconfirmed } from "../api";
 import { ActionForm, option, type MutationContext } from "../workflow/ActionForm";
 import { deliveryTarget } from "../workflow/deliveryPresentation";
 import { Alert, date, href } from "../ui/shared";
+import { runtimeClient } from "../runtime/client";
 import { sessionClient } from "./client";
 import { SessionOpenEntry } from "./SessionOpenEntry";
 import { AllocationBacklinks } from "../discussions/AllocationBacklinks";
@@ -14,7 +15,7 @@ import { queuePosition, queueStateLabel } from "./queuePresentation";
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
-import { currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
+import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, sessionHeaderStatusLabel, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
@@ -96,6 +97,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   const [taskTimingRead, setTaskTimingRead] = useState<{ projectId: string; taskId: string; revisionId: string; value: LeaderWorkTask | null; error: string } | null>(null);
   const [accessReadAgain, setAccessReadAgain] = useState(0);
   const [recoveryRead, setRecoveryRead] = useState<RecoveryRead>({ status: "loading" });
+  const [runtimeAvailable, setRuntimeAvailable] = useState<boolean | null>(null);
   const epoch = useRef(0);
   const activityDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const pendingActivityScroll = useRef<string | null>(null);
@@ -179,7 +181,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     let pollOwnedSnapshot = saved?.session.kind === "owned" && saved.session.target.kind === "owned";
     setSnapshot(saved); setActivity(saved?.activity ?? []); setHistoryCursor(null); setHistoryLoaded(false);
     setHistoryPartial(false); setHistoryLimitations([]); setHistoryError(""); setHistoryBusy(false); setError(""); setConfirmedRead(""); setLoading(true);
-    setRecoveryRead({ status: "loading" });
+    setRecoveryRead({ status: "loading" }); setRuntimeAvailable(null);
     async function readRecovery(sessionId: string, snapshotVersion = latestSnapshotVersion) {
       if (document.visibilityState === "hidden" || recoveryChecking || !snapshotVersion) return;
       recoveryChecking = true;
@@ -206,11 +208,17 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
       snapshotChecking = true;
       const version = ++requestVersion.current;
       try {
-        const result = await client.snapshot(sessionKey, controller.signal);
+        const [result, runtimeStatus] = await Promise.all([
+          client.snapshot(sessionKey, controller.signal),
+          sessionKey.startsWith("owned:")
+            ? runtimeClient(context.token, context.projectId).status().catch(() => null)
+            : Promise.resolve(null),
+        ]);
         if (epoch.current !== current || version !== requestVersion.current) return;
         if (result.session.key !== sessionKey) throw new Error("会话响应与所选 Session 不符");
         cursor.current = result.observationCursor;
         rememberSnapshot(scope, result); setSnapshot(result); setConfirmedRead(readKey);
+        setRuntimeAvailable(typeof runtimeStatus?.available === "boolean" ? runtimeStatus.available : null);
         setActivity(old => bounded(old, result.activity)); setError("");
         latestSnapshotVersion = version;
         pollOwnedSnapshot = result.session.kind === "owned" && result.session.target.kind === "owned";
@@ -220,7 +228,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         if (recoveryTarget) void readRecovery(recoveryTarget, version);
       } catch (cause) { if (!controller.signal.aborted && epoch.current === current && version === requestVersion.current) {
         recoveryTarget = null;
-        setError(errorText(cause)); setConfirmedRead(""); setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
+        setError(errorText(cause)); setConfirmedRead(""); setRuntimeAvailable(null);
+        setRecoveryRead({ status: "failed", message: "请先重新读取当前会话。" });
       } }
       finally { if (epoch.current === current && version === requestVersion.current) { snapshotChecking = false; setLoading(false); } }
     }
@@ -344,13 +353,12 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     }
   }
   const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations, ...historyLimitations])];
-  const messageRunning = nativeReadCurrent && observation.progress?.freshness === "live" && observation.progress.status === "active" && observation.progress.turn?.status === "inProgress" && observation.progress.turn.source?.kind === "message";
-  const statusLabel = sessionHeaderStatusLabel(session, messageRunning);
+  const messageRunning = runtimeAvailable === true && nativeReadCurrent && observation.progress?.freshness === "live" && observation.progress.status === "active" && observation.progress.turn?.status === "inProgress" && observation.progress.turn.source?.kind === "message";
+  const statusLabel = sessionHeaderStatusLabel(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable);
   const activeBusy = session.runtimeState === "ready" && session.busy === true;
   const displayedTaskId = work?.id ?? idleResult?.taskId;
   const relationLabel = work ? currentWorkRelationLabel(work, session, recoveryRead.status === "ready" ? recoveryRead.view.gate?.phase : undefined) : null;
-  const currentRunId = activeBusy && ["requested", "dispatching", "running", "unknown"].includes(session.latestBusinessRun?.state ?? "")
-    ? session.latestBusinessRun?.id ?? null : null;
+  const currentRunId = currentNativeRunId(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable);
   const queueAttention = current.queue.find(item => item.state === "claimed" || item.state === "held") ?? current.queue.find(item => item.state === "queued");
   const currentAssignment = current.assignments.find(item => item.task.id === work?.id && !item.stale && item.assignment.state !== "released");
   const recentResult = latestSessionResult(current.results);
@@ -390,7 +398,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
             ? <small>此 Task 阶段时间暂不可读：{exactTaskTiming.error}</small>
             : <TaskTiming timing={exactTaskTiming?.value?.timing} />}</div>}
         </div>{displayedTaskId && <a className="session-task-link" href={taskHref(displayedTaskId)}>查看任务</a>}</section>
-        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>目标模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>目标强度</dt><dd>{executionProfile?.revision.reasoningEffort??"未配置"}</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <><p>实际运行 {String(actualModel)} · 最近 Turn {turnLabel.split(" · ")[0]}</p>{session.target.kind === "owned"&&<SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status==='ready'?recoveryRead.view:null} busy={session.busy===true} onApplied={()=>setReadAgain(value=>value+1)}/>}</>}
+        <section className="session-agent-card" aria-labelledby="session-agent-title"><div className="session-agent-card-head"><h2 id="session-agent-title">Agent 信息</h2><span>{session.kind === "owned" ? "受管" : "外部"}</span></div><dl><div><dt>目标模型</dt><dd>{String(configuredModel)}</dd></div><div><dt>目标强度</dt><dd>{executionProfile?.revision.reasoningEffort??"未配置"}</dd></div><div><dt>权限</dt><dd>{permissionScope}</dd></div></dl>{session.kind === "external" ? <p>外部实时状态、模型与工具未同步。</p> : <><p>实际模型记录 {String(actualModel)} · 上次 Turn 记录 {turnLabel.split(" · ")[0]}{observation.progress?.freshness === "stale" && "（原生观察已过期）"}</p>{session.target.kind === "owned"&&<SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status==='ready'?recoveryRead.view:null} busy={session.busy===true} onApplied={()=>setReadAgain(value=>value+1)}/>}</>}
           <details className="session-identity-settings"><summary>调整颜色与图标</summary><SessionIdentityControl context={context} session={session} onApplied={() => setReadAgain(value => value + 1)} /></details>
         </section>
       </div>}

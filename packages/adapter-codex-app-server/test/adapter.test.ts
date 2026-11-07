@@ -14,6 +14,65 @@ test("native thread read permission failure keeps permission category without ex
   assert.equal(error.message.includes("/private/credential"), false);
 });
 
+test('only an exact native resume writer rejection is a pre-Turn writer conflict',()=>{
+  const writer='thread 01a19c3b-2123-74d1-918e-0add8d529455 already has an active writer';
+  const threadId='01a19c3b-2123-74d1-918e-0add8d529455';
+  const conflict=new RuntimeServerError('thread/resume',9,-32600,writer,threadId);
+  assert.equal(conflict.category,'writer_conflict');
+  assert.equal(conflict.preTurnWriterConflict,true);
+  assert.equal(new RuntimeServerError('thread/resume',9,-32600,writer,'01a19c3b-2123-74d1-918e-0add8d529456').preTurnWriterConflict,false);
+  assert.doesNotMatch(conflict.message,/01a19c3b/);
+  for(const [method,code,message] of [
+    ['thread/read',-32600,writer],
+    ['thread/resume',-32600,'no rollout found for new thread'],
+    ['thread/resume',-32000,writer],
+    ['thread/resume',-32600,`${writer}: private credential`],
+  ] as const){
+    const error=new RuntimeServerError(method,10,code,message);
+    assert.equal(error.preTurnWriterConflict,false);
+    assert.notEqual(error.category,'writer_conflict');
+  }
+});
+
+test('native resume writer rejection surfaces before any Turn start',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'resume-writer-conflict']});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding=await adapter.create(fullSpec);
+  await adapter.resume(binding,fullSpec); // Consume the local thread/start proof.
+  await assert.rejects(()=>adapter.resume(binding,fullSpec),error=>
+    error instanceof RuntimeServerError&&error.method==='thread/resume'&&
+    error.category==='writer_conflict'&&error.preTurnWriterConflict);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
+});
+
+test('ordinary Turn may reuse its operation after a writer conflict, but never after native start',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'resume-writer-conflict'],
+    expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding=await adapter.create(fullSpec);
+  await adapter.resume(binding,fullSpec); // The next resume must acquire native writer ownership.
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'fixed message','original-operation'),error=>
+    error instanceof RuntimeServerError&&error.preTurnWriterConflict);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,0);
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  assert.equal((await adapter.startConversationTurn(binding,'fixed message','original-operation')).id,'turn-1');
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'duplicate','original-operation'),RuntimeProtocolError);
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+});
+
+test('ordinary Turn reserves the Thread during pre-start work',async t=>{
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'full-normal'],
+    expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  t.after(()=>adapter.close());await adapter.open();
+  const binding=await adapter.create(fullSpec);
+  assert.equal((await adapter.qualifyConversationThread(binding)).available,true);
+  const first=adapter.startConversationTurn(binding,'first','first-operation');
+  await assert.rejects(()=>adapter.startConversationTurn(binding,'concurrent','first-operation'),RuntimeProtocolError);
+  assert.equal((await first).id,'turn-1');
+  assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
+});
+
 const fixture = resolve(import.meta.dirname, "fixture.mjs");
 const spec: RuntimeSessionSpec = { actorId:"original-actor", sessionId: "session-1", roleId: "role-1", projectId: "project-1", cwd: "/tmp/evoloop-fixture", authorizationScope: "task:fixture", model:"gpt-6-sol", sandbox: "danger-full-access", approvalPolicy: "never" };
 const fullSpec:RuntimeSessionSpec={...spec};
@@ -32,7 +91,7 @@ const open = async (mode = "normal", timeout = 500): Promise<CodexAppServerAdapt
 for (const expectedVersion of modernVersions) test(`${expectedVersion} native naming changes only the exact owned Thread and verifies its readback`, async t => {
   for (const mode of ["name-sync", "name-sync-lost", "name-sync-reject"]) await t.test(mode, async () => {
     const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, mode],
-      expectedVersion, requestTimeoutMs: 100,
+      expectedVersion, requestTimeoutMs: 750,
       verifyBinding: async () => true });
     t.after(() => adapter.close());
     await adapter.open();
@@ -62,8 +121,14 @@ test("only the four reviewed CLI protocol versions can be selected", () => {
 
 test('transport EOF does not prove child exit and close waits for the actual receipt',async t=>{
   const exits:Array<{pid:number;code:number|null;signal:NodeJS.Signals|null}>=[];
+  const delivered:Array<{startId:string;exitObserved:boolean;firstLossAtUtc:string;stopReason:string}>=[];
   const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'stdout-eof-live'],
     onExited:receipt=>{exits.push(receipt);}});
+  adapter.onChildDiagnostic(async diagnostic=>{
+    await new Promise(resolveWait=>setTimeout(resolveWait,10));
+    delivered.push({startId:diagnostic.startId,exitObserved:diagnostic.exitObserved,
+      firstLossAtUtc:diagnostic.firstLossAtUtc,stopReason:diagnostic.stopReason});
+  });
   let pid=0;
   const disconnected=new Promise<void>(resolveDisconnected=>adapter.onDisconnect(()=>resolveDisconnected()));
   t.after(async()=>{if(pid)try{process.kill(pid,'SIGKILL');}catch{}await adapter.close().catch(()=>undefined);});
@@ -72,6 +137,18 @@ test('transport EOF does not prove child exit and close waits for the actual rec
   pid=child.pid!;
   assert.equal(adapter.hasProcessHandle(),true);
   await disconnected;
+  const beforeExit=adapter.lastChildDiagnostic();
+  assert.equal(beforeExit?.pid,pid);
+  assert.match(beforeExit?.startId??'',/^[0-9a-f-]{36}$/);
+  assert.equal(beforeExit?.stopReason,'stdout_closed');
+  assert.equal(beforeExit?.firstLossReason,'stdout_closed');
+  assert.equal(beforeExit?.firstLossAtUtc,beforeExit?.observedAtUtc);
+  assert.equal(beforeExit?.exitObserved,false);
+  assert.equal(beforeExit?.exitCode,null);
+  assert.equal(beforeExit?.exitSignal,null);
+  assert.equal(beforeExit?.nativeTurnOutcome,'unknown');
+  assert.equal(beforeExit?.exitedAtUtc,null);
+  assert.ok(Date.parse(beforeExit!.startedAtUtc)<=Date.parse(beforeExit!.observedAtUtc));
   assert.deepEqual(exits,[]);
   let closed=false;
   const closing=adapter.close().then(()=>{closed=true;});
@@ -80,7 +157,80 @@ test('transport EOF does not prove child exit and close waits for the actual rec
   process.kill(pid,'SIGKILL');
   await closing;
   assert.deepEqual(exits,[{pid,code:null,signal:'SIGKILL'}]);
+  const afterExit=adapter.lastChildDiagnostic();
+  assert.equal(afterExit?.stopReason,'process_exited');
+  assert.equal(afterExit?.firstLossReason,'stdout_closed');
+  assert.equal(afterExit?.firstLossAtUtc,beforeExit?.firstLossAtUtc);
+  assert.equal(afterExit?.observedAtUtc,beforeExit?.observedAtUtc);
+  assert.equal(afterExit?.exitObserved,true);
+  assert.equal(afterExit?.exitCode,null);
+  assert.equal(afterExit?.exitSignal,'SIGKILL');
+  assert.ok(Date.parse(afterExit!.exitedAtUtc!)>=Date.parse(beforeExit!.firstLossAtUtc));
+  assert.deepEqual(adapter.listChildDiagnostics(),[afterExit]);
+  assert.deepEqual(delivered,[
+    {startId:beforeExit!.startId,exitObserved:false,firstLossAtUtc:beforeExit!.firstLossAtUtc,stopReason:'stdout_closed'},
+    {startId:beforeExit!.startId,exitObserved:true,firstLossAtUtc:beforeExit!.firstLossAtUtc,stopReason:'process_exited'},
+  ]);
   assert.equal(adapter.hasProcessHandle(),true);
+});
+
+test('unexpected child exit retains a bounded private-free diagnostic and no Turn terminal event',async t=>{
+  let exited!:()=>void;
+  const exit=new Promise<void>(resolveExit=>{exited=resolveExit;});
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'exit-private-stderr'],
+    onExited:()=>exited()});
+  t.after(()=>adapter.close());
+  const events:string[]=[];
+  adapter.onEvent(event=>events.push(event.method));
+  const disconnected=new Promise<void>(resolveDisconnected=>adapter.onDisconnect(()=>resolveDisconnected()));
+  await adapter.open();
+  await disconnected;
+  await exit;
+  const diagnostic=adapter.lastChildDiagnostic();
+  assert.equal(diagnostic?.stopReason,'process_exited');
+  assert.equal(diagnostic?.exitObserved,true);
+  assert.equal(diagnostic?.exitCode,23);
+  assert.equal(diagnostic?.exitSignal,null);
+  assert.equal(diagnostic?.nativeTurnOutcome,'unknown');
+  assert.ok(diagnostic?.pid && diagnostic.pid>0);
+  assert.ok(Date.now()-Date.parse(diagnostic!.observedAtUtc)<10_000);
+  assert.doesNotMatch(JSON.stringify(diagnostic),/private fixture credential|stderr|user body/);
+  assert.deepEqual(events,[]);
+  await adapter.close();
+  assert.deepEqual(adapter.lastChildDiagnostic(),diagnostic);
+});
+
+test('child diagnostics retain only the newest sixteen separate starts',async t=>{
+  let exitDone:()=>void=()=>{};
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'exit-private-stderr'],
+    onExited:()=>exitDone()});
+  t.after(()=>adapter.close());
+  const starts:string[]=[];
+  for(let index=0;index<18;index++){
+    const exited=new Promise<void>(resolveExit=>{exitDone=resolveExit;});
+    await adapter.open();
+    await exited;
+    starts.push(adapter.lastChildDiagnostic()!.startId);
+  }
+  const history=adapter.listChildDiagnostics();
+  assert.equal(history.length,16);
+  assert.deepEqual(history.map(entry=>entry.startId),starts.slice(2).reverse());
+  history[0]!.exitCode=999;
+  assert.equal(adapter.lastChildDiagnostic()?.exitCode,23);
+  assert.equal(JSON.stringify(history).includes('private fixture credential'),false);
+});
+
+test('failed diagnostic persistence cannot be reported as flushed',async t=>{
+  let exited!:()=>void;
+  const exit=new Promise<void>(resolveExit=>{exited=resolveExit;});
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'exit-private-stderr'],
+    onExited:()=>exited()});
+  t.after(()=>adapter.close().catch(()=>undefined));
+  adapter.onChildDiagnostic(async()=>{throw new Error('private observer credential');});
+  await adapter.open();await exit;
+  await assert.rejects(()=>adapter.flushChildDiagnostics(),error=>
+    error instanceof RuntimeUnknownError&&error.method==='child-diagnostic'&&
+    !error.message.includes('private observer credential'));
 });
 
 for(const expectedVersion of supportedVersions){

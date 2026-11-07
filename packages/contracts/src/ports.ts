@@ -43,6 +43,10 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listRuntimeRuns(taskId?: string): Promise<RuntimeRunRecord[]>;
   listRuntimeEvents(runId: string): Promise<RuntimeRecordEvent[]>;
   listRuntimeSessionEvents(sessionId: string): Promise<RuntimeRecordEvent[]>;
+  /** Immutable result of a reviewed pre-turn decision, scoped by project and operation ID. */
+  getPreTurnReviewDecision(operationId: string): Promise<PreTurnReviewDecision | null>;
+  /** Recent project-scoped host diagnostics; no raw native output or Session content. */
+  listRuntimeHostEvents?(limit: number): Promise<RuntimeRecordEvent[]>;
   getGoal(id: string): Promise<Goal | null>;
   listGoals(limit: number, cursor?: string): Promise<Page<Goal>>;
   listGoalRevisions(goalId: string): Promise<GoalRevision[]>;
@@ -91,6 +95,16 @@ export interface TaskDependencyBlocker {
   currentRevisionId: string;
   reason: string;
 }
+export interface PreTurnReviewDecision {
+  operationId: string;
+  actorId: string;
+  kind: "run" | "message";
+  subjectId: string;
+  /** Canonical full request, including expected versions and evidence. */
+  intentJson: string;
+  /** Original approved snapshot; a duplicate read never makes a new claim. */
+  result: RuntimeRunRecord | import("./session-messages.js").SessionMessageProcessing;
+}
 export interface CognitiveClosureFact {
   projectId: string; decisionId: string; actorId: string; kind: "no_action" | "waiting" | "stop" | "failed";
   taskId: string; taskRevisionId: string; runId: string; runState: "completed" | "failed" | "interrupted";
@@ -131,6 +145,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   insertRuntimeRun(run: RuntimeRunRecord): Promise<void>;
   updateRuntimeRun(run: RuntimeRunRecord, expectedVersion: number): Promise<void>;
   appendRuntimeEvent(event: RuntimeRecordEvent): Promise<void>;
+  insertPreTurnReviewDecision(decision: PreTurnReviewDecision): Promise<void>;
   insertGoal(goal: Goal, reason: string): Promise<void>;
   updateGoal(goal: Goal, expectedVersion: number, reason: string): Promise<void>;
   insertStage(stage: Stage, revision: StageRevision): Promise<void>;

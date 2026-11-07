@@ -159,26 +159,86 @@
 .workbench-layout .doc-original-reader .doc-original-integrity { margin: 0 0 18px; font-size: 14px; color: #607291; }
 /* 固定原件保持 100% 实际宽度，不缩放；宽内容在 iframe 内部横向滚动。 */
 .workbench-layout .doc-original-reader iframe { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }
-/* HTML 完整主阅读：页头紧凑，正文占满剩余高度并在 iframe 内连续阅读。 */
-.workbench-layout .content.html-continuous-reading { display: flex; flex-direction: column; height: calc(100dvh - 120px); min-height: 560px; padding-bottom: 0; overflow: hidden; }
+/* HTML uses the space below the workbench header; the iframe is the primary scroll surface. */
+.workbench-layout .content.html-continuous-reading {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  height: calc(100dvh - 64px);
+  min-height: 0;
+  padding: 12px clamp(16px, 2vw, 28px);
+  overflow: visible;
+}
 .html-continuous-reading .document-reading-toolbar,
-.html-continuous-reading .document-reading-header { flex-shrink: 0; }
-.html-continuous-reading .document-reading-header { margin-bottom: 12px; }
-.html-continuous-reading .doc-version-actions { margin: 8px 0 10px; }
-.html-continuous-reading .document-read-layout { flex: 1; min-height: 0; margin-bottom: 12px; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+.html-continuous-reading .document-reading-header { flex: none; }
+.html-continuous-reading .document-reading-toolbar { gap: 4px 14px; margin-bottom: 6px; }
+.html-continuous-reading .doc-read-status { flex: 1 1 auto; }
+.html-continuous-reading .document-reading-header { margin: 0 0 8px; }
+.workbench-layout .html-continuous-reading .document-reading-header h1 {
+  margin: 0 0 4px;
+  font-size: clamp(21px, 2vw, 27px);
+  line-height: 1.25;
+}
+.workbench-layout .html-continuous-reading .document-reading-header .doc-reading-version {
+  margin: 0;
+  gap: 3px 10px;
+  font-size: 12px;
+}
+.html-continuous-reading .doc-version-actions { margin: 5px 0 0; }
+.html-continuous-reading .doc-html-aside-button { flex: none; min-height: 30px; padding: 4px 8px; font-size: 13px; }
+.workbench-layout .html-continuous-reading .document-read-layout {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 220px;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  margin: 0;
+}
+.workbench-layout .html-continuous-reading .document-read-layout.aside-collapsed { grid-template-columns: minmax(0, 1fr); }
 .html-continuous-reading .document-read-main,
 .html-continuous-reading .doc-primary-body { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; max-width: none; }
-.html-continuous-reading .doc-original-reader.doc-html-continuous { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; padding: 14px 16px; border-radius: 6px; }
-.html-continuous-reading .doc-html-continuous .panel-head { flex-shrink: 0; margin-bottom: 10px; }
-.html-continuous-reading .doc-html-frame { flex: 1; min-height: 260px; height: auto; background: #fff; }
-.html-continuous-reading .doc-continuous-secondary { flex-shrink: 0; margin-top: 10px; border: 1px solid #dfe5ee; border-radius: 5px; background: #fff; }
-.html-continuous-reading .doc-continuous-secondary > summary { padding: 10px 14px; cursor: pointer; color: #354b79; font-size: 14px; font-weight: 600; }
-.html-continuous-reading .doc-continuous-secondary-body { max-height: 42vh; overflow: auto; border-top: 1px solid #e5eaf1; padding: 12px 14px; }
-.html-continuous-reading .doc-continuous-secondary-body > .doc-original-integrity { margin-bottom: 10px; font-size: 14px; color: #607291; }
+.workbench-layout .html-continuous-reading .document-read-aside { display: block; min-height: 0; max-height: 100%; overflow: auto; padding-left: 14px; }
+.html-continuous-reading .doc-original-reader.doc-html-continuous {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.html-continuous-reading .doc-html-frame { display: block; flex: 1 1 auto; height: 100%; min-height: 0; background: #fff; }
+.html-continuous-reading .doc-continuous-secondary { flex: none; margin-top: 4px; border: 1px solid #dfe5ee; border-radius: 5px; background: #fff; }
+.html-continuous-reading .doc-continuous-secondary > summary { padding: 7px 10px; cursor: pointer; color: #354b79; font-size: 13px; font-weight: 600; }
+.html-continuous-reading .doc-continuous-secondary-body { max-height: 42vh; overflow: auto; border-top: 1px solid #e5eaf1; padding: 10px; }
+.html-continuous-reading .doc-continuous-secondary-body > .doc-original-integrity { margin-bottom: 8px; font-size: 13px; color: #607291; }
 @media (max-width: 1180px) {
-  .workbench-layout .content.html-continuous-reading { height: auto; min-height: 0; overflow: visible; padding-bottom: 24px; }
-  .html-continuous-reading .doc-html-frame { min-height: 70vh; }
-  .html-continuous-reading .doc-continuous-secondary-body { max-height: none; }
+  .workbench-layout .html-continuous-reading .document-read-layout { grid-template-columns: minmax(0, 1fr); }
+  .workbench-layout .html-continuous-reading .document-read-aside {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 2;
+    box-sizing: border-box;
+    width: min(350px, 100%);
+    max-height: 100%;
+    padding: 12px;
+    border: 1px solid #dce4f0;
+    background: #fff;
+    box-shadow: -8px 0 24px rgb(20 38 74 / 12%);
+  }
+}
+@media (max-width: 760px) {
+  .workbench-layout .content.html-continuous-reading { height: calc(100dvh - 60px); padding: 10px 12px; }
+  .html-continuous-reading .doc-read-status { flex-basis: 100%; justify-content: flex-start; }
+  .workbench-layout .html-continuous-reading .document-reading-header h1 { font-size: 21px; }
 }
 .workbench-layout .document-index .list-footer .doc-index-read { display: block; margin-top: 5px; padding: 0; border: 0; background: transparent; color: #607291; font-size: 14px; }
 .workbench-layout .document-index td details summary,

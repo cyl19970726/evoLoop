@@ -75,7 +75,7 @@ const help = {
     "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
     "work snapshot|history|messages OWNED_OR_EXTERNAL_KEY --project UUID [--limit 1..50 --cursor CURSOR for history/messages]",
-    "work status OWNED_OR_EXTERNAL_KEY --project UUID [--message UUID] (read only; separate service, native, activity and message facts)",
+    "work status OWNED_OR_EXTERNAL_KEY --project UUID [--message UUID] (read only; separate PG, runtime connection, native Turn and message facts)",
     "work manual-stop-preview MESSAGE_UUID --project UUID (reviewer read of exact original native Turn and Items; no state change)",
     "work timeline KEY --project UUID [--source both|native|messages --limit 1..50 --cursor NATIVE_CURSOR --messages-cursor MESSAGES_CURSOR]",
     "work item KEY ITEM_ID --project UUID --turn-id TURN_ID (selected public message or authorized tool detail)",
@@ -272,8 +272,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const snapshotPath = sessionWorkPath(["snapshot", args.words[2]!], new Map([["project", projectId]]));
       const messageId = option(args, "message") ? uuid(option(args, "message"), "Message") : undefined;
       const snapshot = await client.get(`${prefix}${snapshotPath}`);
-      const detail = messageId ? await client.get(`${prefix}/session-messages/${messageId}`) : undefined;
-      try { return sessionStatus(snapshot, detail, messageId); }
+      const [detail, runtimeRead] = await Promise.all([
+        messageId ? client.get(`${prefix}/session-messages/${messageId}`) : Promise.resolve(undefined),
+        client.get(`${prefix}/runtime`).then(value => ({ state: "ok" as const, value }),
+          () => ({ state: "failed" as const })),
+      ]);
+      try { return sessionStatus(snapshot, detail, messageId, runtimeRead); }
       catch (error) { throw new ReceiptError("INVALID_STATUS_SOURCE", error instanceof Error ? error.message : "Cannot verify status sources."); }
     }
     let path: string;
