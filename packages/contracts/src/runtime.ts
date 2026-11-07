@@ -5,6 +5,11 @@ import type { NativeInputEvent } from "./native-input.js";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "./session-timeline.js";
 
 export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000), turnCursor: z.string().min(1).max(2048).optional() });
+export const runtimeCompactionIntentSchema = z.strictObject({
+  operationId:z.uuid(), threadId:z.uuid(), expectedSessionVersion:z.number().int().positive(),
+  expectedGateVersion:z.number().int().positive(), evidenceRef:z.string().trim().min(1).max(4000),
+  reason:z.string().trim().min(1).max(4000),
+});
 export const preTurnContinueSchema = z.strictObject({
   operationId: z.uuid(), sessionId: z.uuid(), originalOperationId: z.uuid(),
   expectedVersion: z.number().int().positive(), expectedGateVersion: z.number().int().positive(),
@@ -155,6 +160,20 @@ export interface RuntimeTurnFailure {
   summary: string;
 }
 
+/** Bounded native evidence for one maintenance compaction on an owned Thread. */
+export interface RuntimeCompactionObservation {
+  threadId: string;
+  threadStatus: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  latestTurnId: string | null;
+  latestTurnStatus: string | null;
+  latestTurnCompletedAtUtc: string | null;
+  compactionItemId: string | null;
+  compactionItemCompleted: boolean;
+  tokenUsage: { inputTokens: number | null; outputTokens: number | null } | null;
+}
+
 export interface RuntimePage<T> {
   data: T[];
   nextCursor: string | null;
@@ -229,6 +248,10 @@ export interface RuntimePort {
   /** Resume the owned Thread with the current versioned execution profile. */
   resume(binding: RuntimeBinding, spec: RuntimeSessionSpec): Promise<RuntimeBinding>;
   inspect(binding: RuntimeBinding): Promise<unknown>;
+  /** Only the existing owner connection may issue this once for a durable operation. */
+  compactThread?(binding: RuntimeBinding, baselineTurnId: string,
+    beforeSend: (requestId: number) => Promise<void>, afterAccepted?: (connectionId: string) => Promise<void>): Promise<string | null>;
+  observeCompaction?(binding: RuntimeBinding, targetTurnId?: string): Promise<RuntimeCompactionObservation>;
   /** Read the exact owned Thread's native title; null means no title is set. */
   readThreadName?(binding: RuntimeBinding): Promise<string | null>;
   /** Name metadata only; this must never start a model Turn. */

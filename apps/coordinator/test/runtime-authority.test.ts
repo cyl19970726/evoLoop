@@ -41,12 +41,17 @@ test("runtime protocol version defaults to the reviewed 0.166 schema and preserv
     assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.166.0-alpha.5.1");
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.166.0-alpha.5.1",nativeUserInput:true,grants:[]}}));
     assert.equal((await loadIntegrations(file)).runtime?.nativeUserInput, true);
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.167.0-alpha.3.2",nativeUserInput:true,grants:[]}}));
+    assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.167.0-alpha.3.2");
+    assert.equal((await loadIntegrations(file)).runtime?.nativeUserInput, true);
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.166.0-alpha.6",nativeUserInput:true,grants:[]}}));
     assert.equal((await loadIntegrations(file)).runtime?.protocolVersion, "0.166.0-alpha.6");
     assert.equal((await loadIntegrations(file)).runtime?.nativeUserInput, true);
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.154.0",nativeUserInput:true,grants:[]}}));
     await assert.rejects(loadIntegrations(file), /Invalid integration configuration/);
     await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.165.0",grants:[]}}));
+    await assert.rejects(loadIntegrations(file), /Invalid integration configuration/);
+    await writeFile(file, JSON.stringify({runtime:{enabled:true,protocolVersion:"0.167.0-alpha.3.1",grants:[]}}));
     await assert.rejects(loadIntegrations(file), /Invalid integration configuration/);
   } finally { await rm(directory,{recursive:true,force:true}); }
 });

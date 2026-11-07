@@ -16,7 +16,7 @@ test("registry exposes every bounded named route and target/body requirements", 
     "document.import", "knowledge.propose", "knowledge.review", "knowledge.publish", "knowledge.reconcile", "knowledge.retract-source",
     "reference.git-register", "reference.formal-decide", "reference.task-decide",
     "work.plan.set", "work.dependencies.set", "work.review.set", "leader.notice.recover",
-    "runtime.reconcile", "runtime.recover", "ordinary.submit",
+    "runtime.reconcile", "runtime.recover", "runtime.compact.start", "runtime.compact.reconcile", "ordinary.submit",
   ]);
   assert.ok(names.find(item => item.name === "document.import")?.requiredBodyKeys.includes("command.operationId"));
   assert.equal(names.find(item => item.name === "knowledge.reconcile")?.targetId, "original publish operationId");

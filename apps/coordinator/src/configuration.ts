@@ -121,8 +121,8 @@ const integrationSchema = z.strictObject({
         "Role skill sources must be unique per project and Role").default([]),
     /** Fixed modern experimental Default-mode input, scoped to this owned child only. */
     nativeUserInput: z.boolean().default(false),
-    /** Exact locally reviewed App Server protocol; new configurations use the reviewed 0.166 interface. */
-    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1", "0.166.0-alpha.5.1", "0.166.0-alpha.6"]).default("0.166.0-alpha.5.1"),
+    /** Exact locally reviewed App Server protocol; new configurations keep the reviewed 0.166 default. */
+    protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1", "0.166.0-alpha.5.1", "0.166.0-alpha.6", "0.167.0-alpha.3.2"]).default("0.166.0-alpha.5.1"),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
     browserRead: z.strictObject({scopePath:absolute,playwrightModulePath:absolute}).optional(),
     delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>
@@ -131,7 +131,7 @@ const integrationSchema = z.strictObject({
       value.projectId, value.actorId, value.roleId, value.authorizationScope, value.cwd, value.sandbox,
     ]))).size === values.length, "Runtime authorization profiles must be unique"),
   }).refine(value => !value.nativeUserInput ||
-    value.protocolVersion === "0.164.0-alpha.11.1" || value.protocolVersion === "0.166.0-alpha.5.1" || value.protocolVersion === "0.166.0-alpha.6",
+    value.protocolVersion === "0.164.0-alpha.11.1" || value.protocolVersion === "0.166.0-alpha.5.1" || value.protocolVersion === "0.166.0-alpha.6" || value.protocolVersion === "0.167.0-alpha.3.2",
   "Native user input requires a reviewed modern protocol").optional(),
   orchestration: z.strictObject({
     enabled: z.boolean(), controllerActorId: z.string().min(1).max(100), workerRoot: absolute,

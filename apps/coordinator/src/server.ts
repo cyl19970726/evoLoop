@@ -22,7 +22,8 @@ import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
 import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
-import { runtimeReconcileSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
+import { runtimeReconcileSchema, runtimeCompactionIntentSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
+import type { CompactionMaintenance } from "./runtime/compaction.js";
 import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
 import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
@@ -51,6 +52,7 @@ const errorStatus = (code: string) => code === "FORBIDDEN" ? 403 : code === "NOT
 export async function buildServer(options: {
   service: WorkflowService; credentials: AuthConfig; webRoot?: string; canWrite?: () => boolean;
   runtime?: RuntimeRunner; allowedRuntimeCwds?: (projectId: string) => string[];
+  compaction?: CompactionMaintenance;
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
@@ -416,6 +418,22 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/runtime/sessions/:id/recovery", async request => {
     const p=params(request.params);
     return options.service.getSessionRecovery(who(request.principal),p.projectId!,p.id!);
+  });
+  app.post("/api/projects/:projectId/runtime/sessions/:id/compactions", async request => {
+    const p=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    if(!options.compaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Compaction maintenance is unavailable');
+    return options.compaction.start(who(request.principal),p.projectId,p.id,runtimeCompactionIntentSchema.parse(request.body));
+  });
+  app.get("/api/projects/:projectId/runtime/compactions/:id", async request => {
+    const p=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    if(!options.compaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Compaction maintenance is unavailable');
+    return options.compaction.read(who(request.principal),p.projectId,p.id);
+  });
+  app.post("/api/projects/:projectId/runtime/compactions/:id/reconcile", async request => {
+    const p=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    z.strictObject({}).parse(request.body??{});
+    if(!options.compaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Compaction maintenance is unavailable');
+    return options.compaction.reconcile(who(request.principal),p.projectId,p.id);
   });
   if (options.allocationRelations) registerAllocationRelationRoutes(app, options.allocationRelations);
   if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, session) => ({
