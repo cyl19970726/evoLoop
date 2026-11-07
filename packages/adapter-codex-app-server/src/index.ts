@@ -31,12 +31,17 @@ const PINNED_PROTOCOLS = {
     standard: "e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465",
     experimental: "f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0",
   },
+  "codex-cli 0.167.0-alpha.3.2": {
+    standard: "f2576ca5d46be4cfb159906264fbc173efcfcc917ea8fdc38323770e7b657b5a",
+    experimental: "b1e5d17224b9d9732b5976012438ba78e2cf7e418b67f8f8a5f5cffe301b875d",
+  },
 } as const;
 type PinnedProtocolVersion = keyof typeof PINNED_PROTOCOLS;
 const supportsModernProtocol = (version: PinnedProtocolVersion): boolean =>
   version !== "codex-cli 0.154.0";
 const supportsExperimentalWorkspace = (version: PinnedProtocolVersion): boolean =>
-  version === "codex-cli 0.166.0-alpha.5.1" || version === "codex-cli 0.166.0-alpha.6";
+  version === "codex-cli 0.166.0-alpha.5.1" || version === "codex-cli 0.166.0-alpha.6" ||
+  version === "codex-cli 0.167.0-alpha.3.2";
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
 // The App Server and its probes must not inherit coordinator credentials or Node execution flags.
@@ -307,7 +312,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(options.workspaceExperimental!==undefined&&typeof options.workspaceExperimental!=='boolean')
       throw new RuntimeProtocolError('workspaceExperimental must be boolean');
     if(options.workspaceExperimental&&!supportsExperimentalWorkspace(this.expectedVersion))
-      throw new RuntimeProtocolError('workspaceExperimental requires the pinned 0.166 experimental protocol');
+      throw new RuntimeProtocolError('workspaceExperimental requires a pinned experimental workspace protocol');
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
