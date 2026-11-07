@@ -72,19 +72,21 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
     finally { setBusy(false); }
   };
   const direct = capability?.available === true && !!capability.mode;
+  const form = direct && <form className="session-direct-form" onSubmit={event => { event.preventDefault(); void send(); }}>
+    <label htmlFor="session-direct-content">即时发送到原 Session</label>
+    <textarea id="session-direct-content" value={content} onChange={event => setContent(event.target.value)}
+      maxLength={16000} placeholder={capability.mode === "steer" ? "补充到当前 Turn…" : "开始原 Session 的一轮对话…"}
+      onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send(); } }} />
+    <button type="submit" disabled={busy || !!pendingId || !content.trim()}>{busy ? "发送中…" : capability.mode === "steer" ? "补充当前 Turn" : "开始一轮对话"}</button>
+    <small>{capability.mode === "steer" ? `目标 Turn：${capability.expectedTurnId}` : "原 Thread 空闲直启；按原额度计一轮。"}</small>
+  </form>;
   return <>
-    {(pendingId || receipt) && <div className="session-direct-receipt" role="status"><strong>{receipt ? stateLabel[receipt.state] : "正在读取原输入回执"}</strong>
+    {(pendingId || receipt) && <div className="session-direct-receipt" role={pendingId && error ? "alert" : "status"}><strong>{receipt ? stateLabel[receipt.state] : error || "正在读取原输入回执"}</strong>
       <small>输入 ID：{receipt?.inputId ?? pendingId}</small>{receipt?.actualTurnId && <small>原 Turn：{receipt.actualTurnId}</small>}
       {receipt?.reason && <span>{receipt.reason}</span>}
       {pendingId && <button type="button" disabled={busy} onClick={() => void reconcile()}>按原输入核对</button>}</div>}
-    {error && <p className="session-direct-error" role="alert">{error}</p>}
-    {direct ? <form className="session-direct-form" onSubmit={event => { event.preventDefault(); void send(); }}>
-      <label htmlFor="session-direct-content">即时发送到原 Session</label>
-      <textarea id="session-direct-content" value={content} onChange={event => setContent(event.target.value)}
-        maxLength={16000} placeholder={capability.mode === "steer" ? "补充到当前 Turn…" : "开始原 Session 的一轮对话…"}
-        onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send(); } }} />
-      <button type="submit" disabled={busy || !!pendingId || !content.trim()}>{busy ? "发送中…" : capability.mode === "steer" ? "补充当前 Turn" : "开始一轮对话"}</button>
-      <small>{capability.mode === "steer" ? `目标 Turn：${capability.expectedTurnId}` : "原 Thread 空闲直启；按原额度计一轮。"}</small>
-    </form> : !pendingId ? fallback : null}
+    {error && !pendingId && <p className="session-direct-error" role="alert">{error}</p>}
+    {pendingId && form ? <details className="session-direct-pending-draft"><summary>查看输入草稿</summary>{form}</details>
+      : form || (!pendingId ? fallback : null)}
   </>;
 }

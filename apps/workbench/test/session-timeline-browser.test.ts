@@ -699,6 +699,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await directPage.getByRole("button", { name: "进入", exact: true }).click();
   await directPage.getByText("结果未知，请按原输入核对").waitFor();
   assert.ok((await directPage.locator(".session-direct-receipt").innerText()).includes(originalInputId));
+  await directPage.locator(".session-direct-pending-draft > summary").click();
   assert.equal(await directPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true);
   await directPage.getByRole("button", { name: "按原输入核对" }).click();
   await directPage.getByRole("button", { name: "开始一轮对话" }).waitFor();
@@ -725,6 +726,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await uncertainPage.getByLabel("访问令牌").fill("fixture-token");
   await uncertainPage.getByRole("button", { name: "进入", exact: true }).click();
   await uncertainPage.getByText(`输入 ID：${uncertainId}`).waitFor();
+  await uncertainPage.locator(".session-direct-pending-draft > summary").click();
   assert.equal(await uncertainPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true,
     "an unknown response cannot silently enable a second send");
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "2", "reload does not repost a 503 intent");
