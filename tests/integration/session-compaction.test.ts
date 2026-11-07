@@ -45,11 +45,13 @@ test('durable compaction uses one native request and never opens a blocked gate 
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
-    let observation=before,starts=0;
+    let observation=before,starts=0,noEvent=false;
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
       compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>)=>{
         assert.equal(baselineTurnId,'old-turn');
-        starts++;await beforeSend(17);const lost=new RuntimeUnknownError('thread/compact/start',17,'lost response');
+        starts++;await beforeSend(noEvent?18:17);
+        if(noEvent)return null;
+        const lost=new RuntimeUnknownError('thread/compact/start',17,'lost response');
         lost.observedTurnId='compact-turn';throw lost;
       }} as unknown as RuntimeRunner;
     const service=new CompactionMaintenance(pool,fake);
@@ -95,6 +97,17 @@ test('durable compaction uses one native request and never opens a blocked gate 
     assert.equal(settled.state,'completed');assert.equal(settled.nativeTurnId,'compact-turn');
     assert.equal(settled.compactionItemId,'compact-item');assert.equal(settled.afterInputTokens,300000);
     assert.equal(starts,1);
+    // A native acknowledgement without a captured Turn is still indeterminate.
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    noEvent=true;observation=before;
+    const next={...input,operationId:randomUUID(),expectedGateVersion:gateVersion+1};
+    const acceptedWithoutTurn=await service.start(actor,projectId,sessionId,next);
+    assert.equal(acceptedWithoutTurn.state,'unknown');
+    assert.equal(acceptedWithoutTurn.nativeTurnId,null);
+    assert.equal(acceptedWithoutTurn.nativeRequestId,18);
+    assert.equal((await service.reconcile(actor,projectId,next.operationId)).state,'unknown');
+    assert.equal(starts,2);
     }finally{await app.close()}
   }finally{await pool.end();const admin=new pg.Client({connectionString:url});await admin.connect();
     try{await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)}finally{await admin.end()}}

@@ -155,7 +155,8 @@ export class CompactionMaintenance {
         await this.pool.query(`UPDATE session_compaction SET native_request_id=$3,updated_at=now()
           WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,[projectId,input.operationId,requestId]);
       });
-      await this.pool.query(`UPDATE session_compaction SET state='accepted',native_turn_id=$3,updated_at=now()
+      await this.pool.query(`UPDATE session_compaction SET state=CASE WHEN $3::text IS NULL THEN 'unknown' ELSE 'accepted' END,
+        native_turn_id=$3,updated_at=now()
         WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,[projectId,input.operationId,turnId]);
     }catch(error){
       if(error instanceof RuntimeServerError){
