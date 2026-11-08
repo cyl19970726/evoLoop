@@ -251,8 +251,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await toolToggle.getAttribute("aria-expanded"), "true");
   await tools.getByText("核对图片", { exact: true }).waitFor();
   await tools.getByRole("button", { name: "查看工具详情：核对图片" }).click();
-  await page.getByRole("dialog", { name: "活动详情" }).getByText("来源标识与读取范围", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "关闭活动详情" }).click();
+  const inlineTool = tools.getByRole("region", { name: "核对图片详情" });
+  await inlineTool.getByText("来源标识与读取范围", { exact: true }).waitFor();
+  await tools.getByRole("button", { name: "收起工具详情：核对图片" }).click();
+  assert.equal(await inlineTool.count(), 0, "the selected tool detail collapses in place without leaving the timeline");
   await page.getByRole("button", { name: "会话详情" }).click();
   const informationPanel = page.locator(".session-information");
   assert.equal(await informationPanel.evaluate(element => (element as HTMLDetailsElement).open), true);
