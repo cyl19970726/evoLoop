@@ -164,7 +164,8 @@ test('durable compaction uses one native request and never opens a blocked gate 
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
-    let observation=before,starts=0,noEvent=false,unacknowledged=false,preflightRejected=false;
+    let observation=before,starts=0,noEvent=false,unacknowledged=false;
+    let preflightFailure:'thread_read'|'send_connection'|null=null;
     let observedWithoutAck=false,capturedTurnId='captured-turn',successors:string[]|null=null;
     let connectionId='connection-A';
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
@@ -173,8 +174,9 @@ test('durable compaction uses one native request and never opens a blocked gate 
       compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>,
         afterAccepted:(connectionId:string)=>Promise<void>)=>{
         assert.equal(baselineTurnId,'old-turn');
-        if(preflightRejected)
-          throw new RuntimeCompactionPreflightError('thread_read',new Error('native profile mismatch'));
+        if(preflightFailure)
+          throw new RuntimeCompactionPreflightError(preflightFailure,
+            new Error(preflightFailure==='thread_read'?'native profile mismatch':'owner connection disappeared'));
         starts++;await beforeSend(noEvent?18:17);
         if(unacknowledged){
           const lost=new RuntimeUnknownError('thread/compact/start',17,'no native acknowledgement');
@@ -195,7 +197,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
       {token:readToken,actorId:'reader',projectIds:[projectId],permissions:['read']}],compaction:service});
     try{
     const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/compactions`;
-    preflightRejected=true;
+    preflightFailure='thread_read';
     const rejectedInput={operationId:randomUUID(),threadId,expectedSessionVersion:1,expectedGateVersion:gateVersion,
       evidenceRef:'incident://known-three-terminal-errors',reason:'one authorized maintenance attempt'};
     const rejectedResponse=await app.inject({method:'POST',url:path,
@@ -214,7 +216,28 @@ test('durable compaction uses one native request and never opens a blocked gate 
       WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId])).rows[0]?.phase,'blocked');
     await pool.query(`UPDATE session_recovery_gate SET version=version+1
       WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
-    gateVersion+=1;preflightRejected=false;
+    gateVersion+=1;
+    preflightFailure='send_connection';
+    const connectionLostInput={operationId:randomUUID(),threadId,expectedSessionVersion:1,
+      expectedGateVersion:gateVersion,evidenceRef:'incident://connection-lost-before-send',
+      reason:'one authorized maintenance attempt'};
+    const connectionLostResponse=await app.inject({method:'POST',url:path,
+      headers:{authorization:`Bearer ${token}`},payload:connectionLostInput});
+    assert.equal(connectionLostResponse.statusCode,200,connectionLostResponse.body);
+    const connectionLost=connectionLostResponse.json();
+    assert.equal(connectionLost.state,'failed');
+    assert.equal(connectionLost.errorCode,'preflight_send_connection_rejected');
+    assert.equal(connectionLost.nativeRequestId,null);
+    assert.equal(starts,0,'a missing owner connection cannot write the compaction request');
+    const connectionLostAgain=await app.inject({method:'POST',url:path,
+      headers:{authorization:`Bearer ${token}`},payload:connectionLostInput});
+    assert.equal(connectionLostAgain.statusCode,200,connectionLostAgain.body);
+    assert.deepEqual(connectionLostAgain.json(),connectionLost,'same operation returns the settled connection-loss result');
+    assert.equal((await pool.query<{phase:string}>(`SELECT phase FROM session_recovery_gate
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId])).rows[0]?.phase,'blocked');
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    gateVersion+=1;preflightFailure=null;
     const input={...rejectedInput,operationId,expectedGateVersion:gateVersion};
     const [firstResponse,concurrent]=await Promise.all([1,2].map(()=>
       app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:input})));

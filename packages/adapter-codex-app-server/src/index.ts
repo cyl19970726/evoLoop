@@ -148,7 +148,7 @@ export class RuntimeServerError extends RuntimeProtocolError {
   }
 }
 
-export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resume" | "thread_read" | "history";
+export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resume" | "thread_read" | "history" | "send_connection";
 /**
  * A known failure before `thread/compact/start` was sent. The stage and safe
  * cause distinguish this from a lost compaction acknowledgement.
@@ -1371,6 +1371,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     let stage: RuntimeCompactionPreflightStage = "request_validation";
     let status: unknown;
     let last: RuntimeTurn | null = null;
+    let preparedConnectionId: string | null = null;
     try {
       this.owned(binding);
       if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
@@ -1405,12 +1406,15 @@ export class CodexAppServerAdapter implements RuntimePort {
       if(last?.id!==baselineTurnId||!last.completedAtUtc||
         status==="systemError"&&last.status!=="failed")
         throw new RuntimeProtocolError("owned Thread changed after exact owner resume");
+      stage = "send_connection";
+      preparedConnectionId=this.nativeInputConnectionId();
+      if(!preparedConnectionId)
+        throw new RuntimeProtocolError("owner connection unavailable before compaction");
     } catch (error) {
       if (error instanceof RuntimeCompactionPreflightError) throw error;
       throw new RuntimeCompactionPreflightError(stage, error);
     }
-    const sendConnectionId=this.nativeInputConnectionId();
-    if(!sendConnectionId)throw new RuntimeProtocolError('owner connection unavailable before compaction');
+    const sendConnectionId=preparedConnectionId;
     let resolveStarted:(value:string)=>void=()=>{};
     let startedTurnId:string|null=null;
     let sent=false;
@@ -1432,6 +1436,14 @@ export class CodexAppServerAdapter implements RuntimePort {
       await afterAccepted?.(sendConnectionId);
       return await Promise.race([started,new Promise<null>(resolve=>{startTimer=setTimeout(()=>resolve(null),5000)})]);
     }catch(error){
+      if(startedTurnId&&error instanceof RuntimeServerError){
+        // Notifications carry no request ID. Once the exact Turn has started,
+        // a later server error cannot prove that rejecting this request settles it.
+        const unknown=new RuntimeUnknownError('thread/compact/start',error.requestId,
+          'server error followed a matching turn/started notification');
+        unknown.observedTurnId=startedTurnId;
+        throw unknown;
+      }
       if(error instanceof RuntimeUnknownError&&startedTurnId)error.observedTurnId=startedTurnId;
       throw error;
     }finally{off();if(startTimer)clearTimeout(startTimer)}
