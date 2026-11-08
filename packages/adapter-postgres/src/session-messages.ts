@@ -1,6 +1,6 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
-import type { SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageTransaction } from "@evoloop/contracts/session-messages";
+import type { SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageTransaction } from "@evoloop/contracts/session-messages";
 import { DomainError } from "@evoloop/contracts/ports";
 import { preTurnProofSchema } from "@evoloop/contracts/runtime";
 import { taskAttentionNoticeCurrent } from "./task-attention.js";
@@ -64,6 +64,71 @@ const SELECT_MESSAGE = `SELECT m.*, rr.actor_id AS receipt_actor_id,rr.evidence 
 export class PgSessionMessages implements SessionMessageTransaction {
   constructor(private readonly client:PoolClient,private readonly projectId:string){}
   private scope(projectId:string){if(projectId!==this.projectId)throw new DomainError('PROJECT_SCOPE','message belongs to another project');}
+  async assertCurrentConnectorSource(messageId:string,
+    grant:NonNullable<SessionMessageDispatchGrant['connector']>):Promise<void>{
+    // Preflight uses a read-only transaction; native-start admission calls this
+    // again in a write transaction and holds row locks through the state change.
+    const mode=await this.client.query('SHOW transaction_read_only');
+    const lock=mode.rows[0]?.transaction_read_only==='on'?'':' FOR SHARE OF l,r,m,s';
+    const result=await this.client.query(`SELECT l.*,r.mode AS route_mode,r.state AS route_state,r.version AS current_route_version,
+      r.owner AS current_owner,r.epoch AS current_epoch,r.session_ref AS current_session_ref,
+      r.policy_hash AS current_policy_hash,r.target_session_id,r.target_thread_id,
+      r.target_actor_id,r.sender_actor_id,
+      r.provider AS current_provider,r.connection_id AS current_connection_id,
+      r.conversation_id AS current_conversation_id,
+      m.operation_id AS current_message_operation_id,m.session_id AS current_message_session_id,
+      m.sender_actor_id AS current_message_sender_id,
+      s.state AS session_state,s.actor_id AS session_actor_id,s.native_thread_id,s.native_session_id,
+      s.sandbox,s.approval_policy,s.authorization_scope,
+      p.activation_state,p.revision_id,p.active_revision_id,
+      pr.sandbox AS profile_sandbox,pr.approval_policy AS profile_approval,
+      pr.authorization_scope AS profile_scope
+      FROM connector_message_link l
+      JOIN connector_route r ON r.project_id=l.project_id AND r.binding_id=l.binding_id
+      JOIN session_message m ON m.project_id=l.project_id AND m.message_id=l.message_id
+      JOIN runtime_session s ON s.project_id=r.project_id AND s.session_id=r.target_session_id
+      LEFT JOIN session_execution_profile p ON p.project_id=s.project_id AND p.session_id=s.session_id
+      LEFT JOIN session_execution_profile_revision pr ON pr.project_id=p.project_id
+        AND pr.session_id=p.session_id AND pr.revision_id=p.revision_id
+      WHERE l.project_id=$1 AND l.message_id=$2${lock}`,
+      [this.projectId,messageId]);
+    const row=result.rows[0];
+    if(!row || row.binding_id!==grant.bindingId || row.route_version!==grant.routeVersion ||
+      row.route_epoch!==grant.epoch || row.route_policy_hash!==grant.policyHash ||
+      row.route_mode!=='standard' || grant.mode!=='standard' ||
+      !['active','paused','disabled'].includes(row.route_state) ||
+      row.current_owner!==row.route_owner || row.current_epoch!==row.route_epoch ||
+      row.current_session_ref!==row.route_session_ref ||
+      row.current_policy_hash!==row.route_policy_hash ||
+      row.current_provider!==row.provider || row.current_connection_id!==row.connection_id ||
+      row.current_conversation_id!==row.conversation_id ||
+      row.current_message_operation_id!==row.message_operation_id ||
+      row.current_message_session_id!==row.target_session_id ||
+      row.current_message_sender_id!==row.sender_actor_id ||
+      row.session_state!=='ready' || !row.native_thread_id || !row.native_session_id ||
+      row.native_thread_id!==row.target_thread_id ||
+      row.sandbox!=='danger-full-access' || row.approval_policy!=='never' ||
+      !row.authorization_scope ||
+      row.activation_state!=='active' || row.revision_id!==row.active_revision_id ||
+      row.profile_sandbox!==row.sandbox || row.profile_approval!==row.approval_policy ||
+      row.profile_scope!==row.authorization_scope)
+      throw new DomainError('CONNECTOR_SOURCE_STALE','Exact standard connector source or receiver changed');
+    if(lock){
+      const profile=await this.client.query(`SELECT p.revision_id,p.active_revision_id,p.activation_state,
+        pr.sandbox,pr.approval_policy,pr.authorization_scope
+        FROM session_execution_profile p JOIN session_execution_profile_revision pr
+          ON pr.project_id=p.project_id AND pr.session_id=p.session_id AND pr.revision_id=p.revision_id
+        WHERE p.project_id=$1 AND p.session_id=$2 FOR SHARE OF p,pr`,
+        [this.projectId,row.target_session_id]);
+      const current=profile.rows[0];
+      if(!current || current.revision_id!==row.revision_id ||
+        current.active_revision_id!==row.active_revision_id ||
+        current.activation_state!=='active' || current.sandbox!==row.sandbox ||
+        current.approval_policy!==row.approval_policy ||
+        current.authorization_scope!==row.authorization_scope)
+        throw new DomainError('CONNECTOR_SOURCE_STALE','Standard receiver profile changed');
+    }
+  }
   async getSessionMessage(id:string):Promise<SessionMessageRecord|null>{
     const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.message_id=$2`,[this.projectId,id]);
     return r.rows[0]?message(r.rows[0]):null;

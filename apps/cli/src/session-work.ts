@@ -27,6 +27,18 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
     case "assignment": path = `/tasks/${id()}/assignment${options.has("history") ? "/history" : ""}`;
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
     case "task": path = `/work-management/tasks/${id()}`; allowed = []; break;
+    case "connectors": path = "/message-connectors/routes"; allowed = ["limit", "cursor"]; break;
+    case "connector": path = `/message-connectors/routes/${id()}`; allowed = []; break;
+    case "connector-deliveries": {
+      const bindingId=z.uuid().parse(words[1]);
+      path=`/message-connectors/routes/${bindingId}/deliveries`;allowed=["limit"];break;
+    }
+    case "connector-delivery": {
+      const bindingId=z.uuid().parse(words[1]);
+      const deliveryId=z.coerce.number().int().positive().safe().parse(words[2]);
+      path=`/message-connectors/routes/${bindingId}/deliveries/${deliveryId}`;allowed=[];break;
+    }
+    case "connector-operation": path = `/message-connectors/operations/${id()}`; allowed = []; break;
     case "attention": {
       const target = words[1];
       if (!target) {
@@ -54,10 +66,11 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
         if (options.has("closed")) query.set("includeClosed", "true");
       }
       break;
-    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes|notices]|task UUID|attention [task UUID|item UUID|thresholds]|history KEY|timeline KEY|item KEY ITEM_ID|updates KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
+    default: throw new Error("Use work list|snapshot KEY|changes [KEY]|leader [changes|notices]|task UUID|connectors|connector UUID|connector-deliveries UUID|connector-delivery UUID DELIVERY_ID|connector-operation UUID|attention [task UUID|item UUID|thresholds]|history KEY|timeline KEY|item KEY ITEM_ID|updates KEY|messages KEY|message UUID|profile KEY|assignment UUID.");
   }
   const count = kind === "attention" ? (!words[1] ? 1 : words[1] === "thresholds" ? 2 : 3) :
-    kind === "list" ? 1 : kind === "changes" && !words[1] ? 1 :
+    kind === "list" || kind === "connectors" ? 1 : kind === "connector-deliveries" ? 2 :
+    kind === "connector-delivery" ? 3 : kind === "changes" && !words[1] ? 1 :
     kind === "leader" ? (words[1] === "changes" || words[1] === "notices" ? 2 : 1) : kind === "item" ? 3 : 2;
   if (words.length !== count) throw new Error("Unexpected Session work arguments.");
   for (const [name, value] of options) {

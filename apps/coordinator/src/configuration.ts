@@ -38,7 +38,11 @@ export function runtimeThreadConfig(grants: RuntimeGrant[], spec: RuntimeSession
     value.roleId === spec.roleId && value.authorizationScope === spec.authorizationScope && value.cwd === spec.cwd &&
     value.sandbox === spec.sandbox && grantAllowsModel(value,spec.model) &&
     (value.approvalPolicy ?? (value.sandbox === "danger-full-access" ? "never" : "on-request")) === spec.approvalPolicy);
-  return current && spec.sandbox === "workspace-write"
+  if (!current) return undefined;
+  // Restricted receiver creation does not inherit project host tools or config.
+  // Native execution stays blocked until a separately proven host boundary exists.
+  if (spec.authorizationScope.startsWith("connector-receiver:")) return undefined;
+  return spec.sandbox === "workspace-write"
     ? {"sandbox_workspace_write.network_access": current.networkAccess === true} : undefined;
 }
 /** A dynamic Session's exact binding takes precedence over every static or other-template profile. */
@@ -96,6 +100,18 @@ const integrationSchema = z.strictObject({
       receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().positive().safe().optional(), enabled: z.boolean(),
     })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
+    /** Separate from full-access ordinary grants; each entry names one reviewed conversation route. */
+    connectorReceivers: z.array(z.strictObject({projectId:z.uuid(),bindingId:z.uuid(),sessionId:z.uuid(),
+      mode:z.enum(["standard","restricted"]).default("restricted"),
+      senderActorId:z.string().min(1).max(100),receiverActorId:z.string().min(1).max(100),
+      receiverRoleId:z.uuid(),cwd:absolute,policyHash:z.string().regex(/^[a-f0-9]{64}$/),
+      maxTurns:z.number().int().min(1).max(1000),enabled:z.boolean()})).max(200).default([])
+      .refine(values=>new Set(values.map(g=>`${g.projectId}:${g.bindingId}`)).size===values.length,
+        "Connector receiver grants must be unique per project and route"),
+  }).optional(),
+  messageConnectors: z.strictObject({
+    enabled: z.boolean().default(false), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
+    gateway: z.strictObject({executable:absolute,configPath:absolute}),
   }).optional(),
   leaderResultNotices: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
@@ -193,5 +209,10 @@ export async function loadIntegrations(path?: string) {
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
     return { template, hash: delegationTemplateHash(template) };
   };
-  return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs, leaderResultNotices: configuration.leaderResultNotices, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
+  return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs,
+    messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices,
+    residentQueue: configuration.residentQueue, orchestration: configuration.orchestration,
+    repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge,
+    scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant,
+    getDelegationTemplate };
 }
