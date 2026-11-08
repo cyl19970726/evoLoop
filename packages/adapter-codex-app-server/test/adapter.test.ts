@@ -54,6 +54,44 @@ test('failed owner Thread is reattached with its fixed profile before compaction
   assert.equal(sent,1,'a changed native history cannot consume the compaction request');
 });
 
+test('compaction accepts the Thread default effort but still requires the exact model', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  const binding={sessionId:'session',roleId:'role',projectId:'project',nativeThreadId:'thread',
+    nativeSessionId:'thread',cwd:'/tmp/compact',authorizationScope:'project',owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
+  let threadModel='gpt-6-astra',sendCount=0,resumeEffort='';
+  let listener:((event:{method:string;threadId:string;turnId:string})=>void)|null=null;
+  internals.owned=()=>{};
+  internals.nativeInputConnectionId=()=> 'connection-A';
+  internals.resumeBinding=async(_binding:unknown,spec:{model:string;reasoningEffort:string})=>{
+    assert.equal(spec.model,'gpt-6-astra');
+    resumeEffort=spec.reasoningEffort;
+  };
+  internals.inspect=async()=>({thread:{id:'thread',status:{type:'idle'},model:threadModel,reasoningEffort:'high'}});
+  internals.onEvent=(callback:typeof listener)=>{listener=callback;return()=>{listener=null}};
+  internals.request=async(method:string,params:Record<string,unknown>,_timeout:number,
+    beforeSend?:()=>Promise<void>,afterSend?:()=>void)=>{
+    if(method==='thread/turns/list')return {data:[{id:'old-turn',status:'failed',completedAt:1700000001}]};
+    assert.equal(method,'thread/compact/start');
+    assert.equal(params.threadId,'thread');
+    assert.equal(Object.hasOwn(params,'effort'),false,'compaction has no per-Turn effort parameter');
+    sendCount++;
+    await beforeSend?.();
+    afterSend?.();
+    listener?.({method:'turn/started',threadId:'thread',turnId:'compact-turn'});
+    return {};
+  };
+  const beforeSend=async()=>{};
+  assert.equal(await adapter.compactThread(binding,'old-turn',beforeSend),'compact-turn');
+  assert.equal(resumeEffort,'max');
+  assert.equal(sendCount,1);
+  threadModel='gpt-6-sol';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend),
+    error=>error instanceof RuntimeCompactionPreflightError&&error.code==='thread_read_rejected');
+  assert.equal(sendCount,1,'a different native model cannot consume another compaction request');
+});
+
 test('known compaction preflight failure is distinct from a lost native request', async () => {
   const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
   const internals=adapter as unknown as Record<string,unknown>;

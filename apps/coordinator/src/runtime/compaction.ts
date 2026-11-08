@@ -73,7 +73,6 @@ export class CompactionMaintenance {
         before.threadStatus!=='idle'&&
           (before.latestTurnStatus!=='failed'||!before.latestTurnCompletedAtUtc)||
         before.model!==binding.resumeProfile?.model||
-        before.reasoningEffort!==binding.resumeProfile?.reasoningEffort||
         before.latestTurnId&&!before.latestTurnCompletedAtUtc)
         throw new DomainError('COMPACTION_NATIVE_BUSY','Owned Thread lacks settled history or the exact profile');
     }catch(error){

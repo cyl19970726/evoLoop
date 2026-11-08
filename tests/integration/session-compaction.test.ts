@@ -161,7 +161,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
       authorizationScope:'project',nativeThreadId:threadId,nativeSessionId:'native',owner:'evoloop-codex-app-server',
       resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}};
     const before:RuntimeCompactionObservation={threadId,threadStatus:'systemError',model:'gpt-6-astra',
-      reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
+      reasoningEffort:'high',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
     let observation=before,starts=0,noEvent=false,unacknowledged=false;
@@ -197,6 +197,15 @@ test('durable compaction uses one native request and never opens a blocked gate 
       {token:readToken,actorId:'reader',projectIds:[projectId],permissions:['read']}],compaction:service});
     try{
     const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/compactions`;
+    observation={...before,model:'gpt-6-sol'};
+    const modelMismatchInput={operationId:randomUUID(),threadId,expectedSessionVersion:1,
+      expectedGateVersion:gateVersion,evidenceRef:'incident://model-mismatch',
+      reason:'reject a different native model before persistence'};
+    await assert.rejects(()=>service.start(actor,projectId,sessionId,modelMismatchInput),
+      error=>(error as {code?:string}).code==='COMPACTION_NATIVE_BUSY');
+    assert.equal((await pool.query(`SELECT 1 FROM session_compaction
+      WHERE project_id=$1 AND operation_id=$2`,[projectId,modelMismatchInput.operationId])).rowCount,0);
+    observation=before;
     preflightFailure='thread_read';
     const rejectedInput={operationId:randomUUID(),threadId,expectedSessionVersion:1,expectedGateVersion:gateVersion,
       evidenceRef:'incident://known-three-terminal-errors',reason:'one authorized maintenance attempt'};
